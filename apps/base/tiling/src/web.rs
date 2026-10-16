@@ -250,15 +250,13 @@ impl Core {
                 walk(&node.children, &deeper, out);
             }
         }
-        let tree = self
-            .menu
-            .visible_tree(&|key| {
-                if key == bilibi_menu::OWNER_STANDING {
-                    standing.owner
-                } else {
-                    standing.capabilities.contains(key)
-                }
-            });
+        let tree = self.menu.visible_tree(&|key| {
+            if key == bilibi_menu::OWNER_STANDING {
+                standing.owner
+            } else {
+                standing.capabilities.contains(key)
+            }
+        });
         let mut out = Vec::new();
         walk(&tree, &[], &mut out);
         out
