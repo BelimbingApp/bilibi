@@ -1,14 +1,78 @@
 # Bilibi
 
-A minimal MIT-licensed Rust port of [Bilimbi](https://github.com/BelimbingApp/bilimbi),
-the Phoenix implementation of Belimbing. This is a working Companies slice,
-not a replacement for the full platform or a bake-off benchmark implementation.
+Bilibi is an MIT-licensed Rust platform for building business applications. It supplies the shared foundation (companies, users, permissions, audit) so a team builds only what its business needs.
 
-## Run locally
+- Rust, Axum, Askama, PostgreSQL 18.
+- Live server-rendered pages. No SPA framework.
+- Agent-operable: people and AI agents act through the same checks.
+- Modular: Base, Core, Domains, Extensions.
+- Companies own their customisations as ordinary, version-controlled source.
 
-Install stable Rust 1.99, Node.js >=22 with npm, PostgreSQL 18 server and client tools, Caddy, mkcert
-and Python 3.11+. Caddy must already be running with its admin API at
-`http://localhost:2019`. On Ubuntu/WSL2:
+## Who it is for
+
+- Teams that want a business application without rebuilding sign-in, tenancy, roles and audit.
+- Companies that want to own and change their software, not rent a fixed product.
+- Developers who work with coding agents and want conventions the agents can follow.
+
+## Principles
+
+- **Start beyond the boilerplate.** Tenants, companies, people, accounts, roles, settings, mail, audit and notifications ship in the platform.
+- **AI-native.** An agent operation boundary exposes search, describe, guide and read. Agent connections use OAuth device codes and per-person tokens. An agent request carries the same actor and permission checks as a browser request.
+- **Company-owned customisation.** A company adds its own Domain and Extension repositories. The Platform stays unmodified and updatable.
+- **Self-contained modules.** Each module owns its routes, templates, SQL and migrations. Modules reach each other through declared APIs and optional ports.
+- **Tenant-safe by default.** Tenant comes from the session, never from client input. Every application query binds data and filters by tenant.
+- **Evidence over trust.** Capability checks and mutations are written to append-only audit tables in the same transaction.
+- **Scan-first UI.** Compact, warm, consistent pages for long working sessions. See `DESIGN.md`.
+
+## For agents and designers
+
+- [`AGENTS.md`](AGENTS.md): how agents build, test and change this repository.
+- [`DESIGN.md`](DESIGN.md): the UI design rules.
+- [`apps/domains/AGENTS.md`](apps/domains/AGENTS.md): mounting Domain repositories.
+- [`apps/extensions/AGENTS.md`](apps/extensions/AGENTS.md): mounting Extension repositories.
+
+## What is in it today
+
+- **Sign-in and sessions**
+  - Server-held random sessions. Argon2id passwords. 24-hour expiry.
+  - Forgotten-password and reset pages. Reset ends all sessions.
+  - Password change at `/settings/password`.
+  - Session and tenant are re-checked on every request, live event and push.
+  - No sign-in attempt throttle yet.
+- **Authorization**
+  - Roles, capabilities and direct grants. Direct denies override every allow.
+  - Every capability check writes a tenant-scoped decision-log row.
+  - Field restrictions mask values before rendering. Admin at `/authz/field-restrictions`.
+  - See [Authz](apps/base/authz/README.md).
+- **Companies**
+  - Tenant-scoped, soft-delete-aware list: search, status filter, sort, 25/50/100 rows.
+  - Detail with inline edits. A row lock and version check reject stale edits.
+  - Accounts link to a Person and a company. Archiving a company freezes its accounts.
+  - See [User](apps/core/user/README.md).
+- **Audit**
+  - Old and new values plus actor, in the same transaction as the save.
+  - Append-only. Secrets redacted by field name.
+  - See [Audit](apps/base/audit/README.md).
+- **Notifications**
+  - Saved changes create a durable notification and push the bell of the recipient only.
+  - `/notifications` lists them with All, Unread and Read tabs.
+- **Mail**
+  - Messages go to `.local/mailbox/` (newest 100) unless `MAIL_HOST` sets an SMTP relay.
+  - Email verification links need `BILIBI_USER_SIGNING_KEY` (64 hex characters).
+  - See [Mail](apps/base/mail/README.md).
+
+## Requirements
+
+- Stable Rust 1.99
+- Node.js 22 or later with npm (only to rebuild CSS and JS)
+- PostgreSQL 18 server and client tools
+- Caddy, running with its admin API at `http://localhost:2019`
+- mkcert
+- Python 3.11 or later
+
+## Quick start
+
+Ubuntu or WSL2:
 
 ```sh
 sudo apt install caddy mkcert libnss3-tools postgresql-18 postgresql-client-18 python3
@@ -16,34 +80,38 @@ cargo install cargo-watch --version 8.5.3 --locked
 ./scripts/start-app.sh
 ```
 
-Open <https://bilibi.localhost>. This one command checks prerequisites, starts
-the private PostgreSQL 18 instance in `.local/` (or uses your `DATABASE_URL`),
-discovers deep modules, compiles, migrates, seeds, configures local HTTPS and
-watches for changes. The first login is `ai@agent.my` with password `bilibi-dev`.
-Cargo diagnostics and wall-clock build times stay visible;
-`target/cargo-timings/cargo-timing.html` shows the compile breakdown.
-Changes under `apps/` (Rust, templates, CSS/JS, migrations and discovered module
-crates), workspace manifests/lockfile, and `scripts/` trigger a rebuild,
-pending migrations and an app restart. In development, an open page shows “Rebuilding…” while the server is
-restarting, reconnects with backoff, then reloads the same URL automatically.
-Release builds reconnect with the same backoff, remount the page in place so
-drafts survive, and say how many requests were in flight when the connection
-dropped.
-Restart `./scripts/start-app.sh` after changing startup environment variables
-such as `DATABASE_URL`, `APP_ORIGIN`, `BIND_ADDR`, `PG18_BIN`, or
-`BILIBI_DEV_PORT`; watched file changes do not reload the launcher's environment.
-Ctrl-C stops this app; the shared Caddy service continues running.
+Then open <https://bilibi.localhost> and sign in.
 
-HTTPS uses a mkcert leaf certificate loaded into the running shared Caddy through
-its admin API. The launcher updates only its tagged route, TLS policy and
-certificate, then reapplies them on each start. It keeps certificate files in
-`.local/https`, makes no shared Caddy file changes and uses the default backend
-port 4300 (or the next free port).
+| Field | Value |
+|-------|-------|
+| Email | `ai@agent.my` |
+| Password | `bilibi-dev` |
 
-The launcher initializes and reuses its private PostgreSQL 18 data directory in
-`.local/postgres18` on port 5438. Its development role and database are both
-`bilibi` with password `bilibi`. Set `DATABASE_URL` to use another database.
-For manual HTTP development, use:
+What `./scripts/start-app.sh` does:
+
+- Checks prerequisites.
+- Starts a private PostgreSQL 18 in `.local/postgres18` on port 5438, or uses your `DATABASE_URL`.
+- Discovers modules, builds assets and compiles.
+- Migrates and seeds.
+- Configures local HTTPS and watches for changes.
+
+Watch behaviour:
+
+- Changes under `apps/`, workspace manifests, the lockfile and `scripts/` rebuild, migrate and restart.
+- An open page shows "Rebuilding…", reconnects with backoff, then reloads.
+- Restart the launcher after changing `DATABASE_URL`, `APP_ORIGIN`, `BIND_ADDR`, `PG18_BIN` or `BILIBI_DEV_PORT`.
+- Ctrl-C stops the app. Caddy keeps running.
+- Build timings: `target/cargo-timings/cargo-timing.html`.
+
+## Local HTTPS
+
+- A mkcert certificate is loaded into the running Caddy through its admin API.
+- The launcher changes only its own tagged route, TLS policy and certificate.
+- Certificate files live in `.local/https`. No shared Caddy file is edited.
+- Backend port is 4300, or the next free port.
+- Helper scripts: `scripts/local-https.sh`, `scripts/local-https-api.py`.
+
+## Manual HTTP run
 
 ```sh
 export DATABASE_URL='postgres://bilibi:bilibi@127.0.0.1:5438/bilibi'
@@ -54,197 +122,109 @@ cargo run -p bilibi-web -- seed
 cargo run -p bilibi-web -- run
 ```
 
-Open <http://localhost:3000> and sign in as `ai@agent.my` with password
-`bilibi-dev`; the email alone names the account, as in Bilimbi.
+- Open <http://localhost:3000>. Same sign-in as above.
+- `scripts/dev-run.sh` is the watched build, migrate and run step the launcher calls.
+- Migrations and seeding never run automatically on app boot.
 
-`seed` is the development seed (Bilimbi `mix bilimbi.dev.seed`). It runs the
-installed production seeds, then provisions the platform operator once: tenant
-`Bilibi local development`, its primary company `Bilibi Development` and
-`ai@agent.my` holding the grant-all `core_admin` system role. The modules'
-development sample data (two departments) is added in the same run. That is
-everything a fresh install contains. The bootstrap runs once (its
-`user_bootstrap` receipt): re-running preserves the account, its password and
-its roles, so a revoked grant stays revoked. Once per receipt the
-administrator also gets an agent Person affiliated with that company, which is
-how it signs in under it (`bilibi_user::bootstrap`); a database bootstrapped
-before that step gets it on its next seed, and a later unlink stands. A database that already holds accounts or a platform
-operator without that administrator is refused rather than promoted; the
-start-up form, `seed --at-startup`, reports the refusal and carries on.
-`seed-production` runs only the production seeds.
+## Cloud and agent machines
 
-A database seeded before the demo seed was removed is cleaned by the next
-`seed`, which prints each change: the five `example.test` accounts with their
-sessions, roles and preferences (tenant 2's `manager@other.example.test` and
-`contractor@example.test` included), the demo Persons and affiliations, the demo
-roles and their grants, the generated companies 2–62, tenant 2 and its company
-100, and the unused demo legal-entity and department types. The agent Person
-linked to `ai@agent.my` is kept with its link. The operator's primary company keeps its id but gets a
-fresh install's name and loses the demo contact facts nobody changed. Rows that
-something else still uses are kept and reported
-([`retire-demo.sql`](apps/web/src/retire-demo.sql)).
+- `.agents/setup`: one-time setup of Rust, PostgreSQL 18 and a warm `target/` on a Debian 12 machine.
+- `.agents/resume`: per-session step. Puts cargo on `PATH` and starts the private PostgreSQL on port 5438.
+- Both are idempotent and share the layout of `scripts/start-app.sh`.
 
-Login emails are unique across tenants; requests and events derive the tenant
-from the session, never from client page parameters. Seeding and migrations are explicit
-and transactional.
+## Configuration
 
-Examples and slice walkthroughs never use a seeded database. Each one installs
-the [walkthrough fixture](fixtures/walkthrough/src/lib.rs) (fixed accounts,
-roles, two tenants, 62 companies and the linked Persons) into a freshly migrated disposable
-database. For a running-app walkthrough, migrate a new database and run
-`cargo run -p bilibi-walkthrough-fixture` against it.
+| Variable | Default and use |
+|----------|-----------------|
+| `DATABASE_URL` | Private instance on port 5438 when unset |
+| `BIND_ADDR` | `127.0.0.1:3000` |
+| `APP_ORIGIN` | Must match the browser origin exactly, no trailing slash |
+| `PG18_BIN` | PostgreSQL 18 binaries directory |
+| `BILIBI_DEV_PORT` | Launcher backend port, default 4300 |
+| `MAIL_HOST` | SMTP relay. Unset writes to `.local/mailbox/` |
+| `BILIBI_USER_SIGNING_KEY` | 64 hex characters, for email verification |
 
-Outgoing mail goes to `.local/mailbox/` (one file per message, newest 100) unless
-`MAIL_HOST` configures an SMTP relay; see [Mail](apps/base/mail/README.md).
-Email verification links also need `BILIBI_USER_SIGNING_KEY` (64 hex characters).
+- POST requests and WebSocket upgrades require the `APP_ORIGIN` Origin.
+- HTTPS origins set Secure cookies. Terminate TLS at a reverse proxy.
+- PostgreSQL connections use `NoTls`. Use a trusted private connection.
 
-`BIND_ADDR` defaults to `127.0.0.1:3000`. `APP_ORIGIN` must exactly match the
-browser's origin, without a trailing slash. POST requests and WebSocket upgrades
-require that Origin. HTTPS origins set Secure session cookies; terminate TLS at
-a reverse proxy when using HTTPS. PostgreSQL connections use `NoTls`, intended
-for this local slice or a trusted private connection. No migrations or seeding
-run automatically on app boot.
+## Seed data
 
-## What is ported
+- `seed` runs production seeds, then provisions once:
+  - tenant `Bilibi local development`
+  - company `Bilibi Development`
+  - `ai@agent.my` with the grant-all `core_admin` role
+  - sample departments
+- The bootstrap runs once. Re-running keeps the account, password and roles.
+- A database with other accounts or a platform operator, but no such administrator, is refused.
+- `seed-production` runs only the production seeds.
+- Older databases with demo data are cleaned by the next `seed`, which prints each change ([`retire-demo.sql`](apps/web/src/retire-demo.sql)).
+- Walkthroughs never use a seeded database. They install the [walkthrough fixture](fixtures/walkthrough/src/lib.rs) into a fresh, migrated database.
+- To run it: `cargo run -p bilibi-walkthrough-fixture` against that database.
 
-- Server-held random sessions, Argon2id passwords, sign out, a 24-hour expiry,
-  and throttled activity touches. Session and active tenant/user are refreshed
-  for every authenticated request, live event and push.
-- The sign-in page is the homepage (`/`, with `/login` as an alias), on
-  Bilimbi's centered credential layout with its forgotten-password and reset
-  cards: `/forgot-password` always confirms without saying whether the account
-  exists, and the emailed `/reset-password/{token}` link replaces the password
-  once and ends every session of the account. A completed reset and an expired
-  session each reach the sign-in page as a one-shot flash cookie that names a
-  message, never carries one. Signed-in visitors are forwarded to the
-  workspace. `/settings/password` is the account's self-service change inside
-  the shell: a live page whose form submits as a module event, requiring the
-  current password and ending the account's other sessions. Sign-in has no
-  attempt throttle yet.
-- An account may be linked to a Core Person and, through one of that Person's
-  affiliations, to the company it signs in under. Every session check and
-  bearer proof re-proves those links through their owners, so a browser
-  request and an agent request carry the same actor facets, and archiving a
-  company freezes its accounts at once: sign-in says so, open sessions end on
-  their next check, and reset links are neither issued nor redeemed. See
-  [User](apps/core/user/README.md).
-- Roles, role capabilities and direct grants; direct denies override every
-  allow, including admin `grant_all`. Each capability check writes a tenant-scoped
-  decision-log row, whether allowed or denied. Unknown capabilities cannot be
-  granted by persisted data unless declared in the contributed vocabulary.
-  Platform capabilities additionally require explicit operator identity. Named
-  system principals need a declared capability and a durable tenant grant;
-  anonymous system identities always deny. See [Authz](apps/base/authz/README.md).
-- Any held restricting role masks the field, even alongside an unrestricted
-  or admin role. Masked values are removed before rendering and cannot be edited.
-  The shared masking API supports other tables, JSON projections and audit values.
-  `/authz/field-restrictions` administers them: roles, then tables, then fields
-  as chips, committed together; see [Authz](apps/base/authz/README.md).
-- Tenant-scoped, soft-delete-aware Companies list with search, status filter,
-  sorting and 25/50/100-row pages; detail with inline edits and archived read-only
-  behavior. A row lock plus version check rejects stale edits.
-- Old/new company values and actor recorded in `base_audit_mutations`, plus a
-  committed `company.update` row in `base_audit_actions`, in the same transaction
-  as the save. An audit error rolls back the company update and notification.
-  Notification creation/read changes are audited too. Session creation, deletion
-  and activity touches are authentication housekeeping. Evidence is append-only;
-  secrets are redacted by field name; the read-only SQL console engine records
-  every command. See `apps/base/audit/README.md`.
-- Warm stone shell, lime orientation markers, compact ruled tables, header,
-  sidebar, account/tenant disclosure and a notification bell, drawn from
-  Bilimbi's `DESIGN.md` and shell components. System fonts provide a local
-  fallback for Instrument Sans; no remote font dependency.
-- A company save creates a durable notification for its actor and pushes the
-  bell to that user's connected pages. The bell opens Bilimbi's dropdown of
-  recent notifications (mark all read, open one, view all); `/notifications`
-  lists them with All/Unread/Read tabs, mark read and paging. A notification
-  wakes only its recipient's bell and list (matched by tenant **and** user), so
-  the page underneath, and any draft on it, is not re-rendered.
+## Module layout
 
-The public sign-in, forgotten-password and reset pages, their submissions and
-static assets have no signed-in actor and therefore no capability decision;
-the password settings page, sign out and the bell (the account's own
-notifications, as in Bilimbi) need a session and no capability; company
-operations check the `admin.company.*` capabilities. Invalid wire input is
-rejected.
-Permissions, tenant/user status and restrictions are read afresh, not cached.
+Each module is a Cargo crate under one of four roots.
 
-## Live pages and module boundaries
+| Root | Holds |
+|------|-------|
+| `apps/base/` | Foundations: database, audit, authz, mail, workflow, UI, module registry |
+| `apps/core/` | Core business modules: user, company, person, address, affiliation, agent access |
+| `apps/domains/` | Optional business domains. Empty here. Mounted as nested checkouts |
+| `apps/extensions/` | Company extensions. Empty here. Mounted as nested checkouts |
+| `apps/web/` | Executable host: routes, sockets, explicit seed |
+| `fixtures/walkthrough/` | Example-only data. Never a product dependency |
 
-The stack is axum on Tokio, tokio-postgres with a bounded deadpool pool, embedded
-SQL migrations and Askama templates. Askama plus the browser's native WebSocket
-API was chosen because both are small, established tools: compiled templates
-escape data by default, and axum already provides socket support. A short shared
-browser adapter queues intent and patches server-rendered HTML into the page by
-element id. There is no SPA
-framework or client model. A pinned Tailwind build produces the committed CSS;
-Node is needed only to rebuild assets, not to run the Rust app. See the
-[UI asset contract](apps/base/ui/assets/README.md) for sources and licenses.
+Dependency rule: Base, then Core, then Domains, then Extensions. Lower layers never depend on higher ones.
 
-Each connection owns its route, list parameters, loaded redacted records, and
-rendered page. Sort/search/page events reload through the same domain APIs as
-HTTP. List state is reflected in the URL for reloads and sharing. Detail saves
-reload the rendered page, avoiding client-side permission logic. Notifications
-publish after commit and re-render only their recipient's bell and list, through
-authorization. A 15-second refresh also catches account suspension, session
-expiry, logout, changed roles, and notifications written by another process. Denied access clears the displayed page and closes the
-socket. The browser patches replies into the existing DOM, so focus, scroll, unfinished
-drafts (with their version, so concurrent changes still conflict) and iframe
-documents survive bell and refresh patches; every intent is queued and
-acknowledged by request ID, so rapid input is never dropped. A lost connection
-reconnects with backoff and remounts the same URL; development reloads after the
-watcher restarts the server. See [docs/live-pages.md](docs/live-pages.md).
+Notable Base modules:
 
-```text
-apps/base/            Base composition root
-apps/core/            Core composition root
-apps/domains/         Domain composition root; containers mount here (apps/domains/AGENTS.md)
-apps/extensions/      Extension composition root; containers mount here (apps/extensions/AGENTS.md)
-apps/base/module_registry  discovered module graph and typed service registry
-apps/base/database    pool, migrations ledger, errors, mutation boundary
-apps/base/audit       audit evidence schema, capture, redaction, SQL console engine
-apps/base/security    compatibility facade for Session, Tenancy and Authz
-apps/base/authz       contributed vocabulary, live grants, decisions, masking
-apps/base/grid        contributed table/field/link catalog, scoped and restriction-aware
-apps/base/mail        validated outgoing mail: SMTP relay or dev mailbox files
-apps/base/notifications  transactional notification sink and adapter readiness
-apps/base/workflow    status definitions, append-only history, owner-transaction transition kernel
-apps/base/ui          shared shell, credential layout and cards, styles, small live browser adapter
-apps/core/user        credentials, password reset/verification, settings pages, sessions, notifications, owned SQL
-apps/core/company     Companies API, relationship roles and links, owned SQL, page templates
-apps/web              executable host, route/socket transport, explicit seed
-fixtures/walkthrough  example-only accounts, roles and companies; never a product dependency
+- `module_registry`: discovered module graph and typed service registry
+- `database`: pool, migrations ledger, mutation boundary
+- `audit`: evidence schema, capture, redaction, SQL console engine
+- `authz`: vocabulary, live grants, decisions, masking
+- `agent_api`: operation boundary for agents
+- `ui`: shell, credential layout, styles, small live browser adapter
+
+How modules compose:
+
+- Each module submits a `bilibi_module_registry::Module` descriptor through `inventory`.
+- The descriptor names ID, layer, dependencies, migrations and service factories.
+- `python3 scripts/discover-modules.py` generates composition files before Cargo resolves packages. The launcher runs it. CI checks it.
+- Boot rejects missing or duplicate modules, upward dependencies, cycles, duplicate migrations and conflicting service names.
+- A service factory sees only its own module and declared direct dependencies.
+- See [module registry](apps/base/module_registry/README.md).
+
+## Domains and Extensions
+
+- A Domain is its own repository, `BelimbingApp/bilibi-dom-<id>`.
+- Mount it as a real nested checkout at `apps/domains/<container>`. Not a submodule, not a symlink.
+
+```sh
+git clone <repository URL> apps/domains/<container>
+python3 scripts/discover-modules.py
 ```
 
-Base does not depend on Core. Core depends on Base and declared public Core APIs
-(Company uses the Base notification sink; User binds its adapter at boot). Each deep module is a Cargo
-crate below one of the four roots, preserving Bilimbi's composition topology.
-`python3 scripts/discover-modules.py` discovers its Cargo manifest and generates
-composition dependencies/linkage before Cargo resolves packages. The launcher
-runs this automatically; CI checks that composition files are current.
+- Never commit mounted composition files or `Cargo.lock` changes to the Platform.
+- Reach another container through an optional port (`apps/base/ports/README.md`).
+- Domains own no CSS or JavaScript.
+- Full rules, unmounting, CI and build pinning: [`apps/domains/AGENTS.md`](apps/domains/AGENTS.md).
+- Extensions mount under `apps/extensions/`. See [`apps/extensions/AGENTS.md`](apps/extensions/AGENTS.md).
 
-Each deep module submits one `bilibi_module_registry::Module` descriptor through
-`inventory`, naming its stable ID, layer, dependencies, embedded migrations and
-service factories. Runtime discovery rejects missing/duplicate modules, upward
-dependencies, cycles, duplicate migrations and conflicting service names, and the
-`bilibi-web` binary refuses Domain or Extension descriptors that differ from the
-mounted crates discovery found. It
-orders Base → Core → Domains → Extensions and dependencies before consumers,
-then initializes typed services. The host resolves named services and runs
-module-contributed SQL; it keeps no module or migration list. Company resolves the Base notification boundary; User installs its persistence
-adapter and contributes the bell as the `shell.notifications` embed. Boot refuses missing or duplicate bindings. The same bus serves
-both notification writes and Web subscribers. Typed route/embed/seed contributions
-carry module/file/line provenance and are validated into an immutable catalog
-(see `apps/base/module_registry/README.md`). Unknown consumers, wrong payload
-types, duplicate contribution IDs and missing service references fail discovery.
-Service factories can resolve only their own module and declared direct dependencies.
-Domains and Extensions are empty in the Platform repository; Domain and Extension
-repositories mount there as nested checkouts, two levels deep, and are never committed to it.
-All application SQL binds data and includes tenant predicates; session-token
-bootstrap and the explicit seed/migration commands are the exceptions.
+## Live pages
+
+- Each connection owns its route, list parameters and rendered page.
+- Sort, search and paging events reload through the same APIs as HTTP.
+- The browser patches server HTML by element id. Focus, scroll and drafts survive.
+- Intents are queued and acknowledged by request ID.
+- Lost connections reconnect with backoff and remount the same URL.
+- A 15-second refresh catches suspension, expiry and role changes.
+- Details: [docs/live-pages.md](docs/live-pages.md).
+- CSS is a pinned Tailwind build, committed. Node is only needed to rebuild it ([assets](apps/base/ui/assets/README.md)).
 
 ## Checks
 
-Bilibi has no unit tests. The checks are the compiler, Clippy and running the app.
+There are no unit tests. The checks are discovery, formatting, Clippy and running the app.
 
 ```sh
 python3 scripts/discover-modules.py --check
@@ -253,14 +233,16 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo build --workspace --release --locked
 ```
 
-## Left out
+## Limits
 
-Other business modules, user/role administration, registration, the password
-reset, forgot-password and verification pages (their services exist, see
-`apps/core/user/README.md`),
-saved column layouts, tiling, settings, audit and decision-log
-screens, distributed notification fan-out, production login throttling and
-operational hardening. Broadcasts are process-local; use one app process for this
-slice. A reconnect/periodic refresh reads durable notification counts. This
-creates a fresh schema and does not adopt a Belimbing/Laravel database. No agent
-API, plugin system, Laravel compatibility layer, or optional domain modules.
+- Broadcasts are process-local. Run one app process.
+- No production login throttling or distributed notification fan-out yet.
+- Creates its own schema. It does not adopt an existing database.
+
+## Lineage
+
+Bilibi follows the ideas of [Belimbing](https://github.com/BelimbingApp/belimbing), a Laravel platform for business applications.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
