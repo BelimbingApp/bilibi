@@ -284,6 +284,7 @@ fn requirement(requirement: Requirement) -> String {
         Requirement::Open => "—".into(),
         Requirement::Capability(key) => key.into(),
         Requirement::AnyOf(keys) => keys.join(" or "),
+        Requirement::Owner => "installation owner".into(),
     }
 }
 fn matches_path(pattern: &str, path: &str) -> bool {

@@ -66,6 +66,7 @@ impl bilibi_tenancy::ActorVerifier for SpecimenVerifier {
                 person: None,
                 organisation: None,
                 affiliation: None,
+                installation_owner: false,
             })
         })
     }

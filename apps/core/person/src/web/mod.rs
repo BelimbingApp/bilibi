@@ -54,6 +54,14 @@ impl Pages {
         if !capability {
             return Ok(false);
         }
+        if matches!(access, Access::Owner) {
+            let client = self.db.get().await?;
+            return match bilibi_tenancy::prove_owner(&**client, scope).await {
+                Ok(_) => Ok(true),
+                Err(Error::Forbidden) => Ok(false),
+                Err(error) => Err(error),
+            };
+        }
         if matches!(access, Access::Operator | Access::OperatorCapability(_)) {
             let client = self.db.get().await?;
             return match bilibi_tenancy::prove_operator(&**client, scope).await {

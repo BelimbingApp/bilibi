@@ -341,6 +341,9 @@ pub async fn check_access(
         Access::OperatorCapability(key) => {
             bilibi_authz::authorize_operator(&**client, &scope, key).await?;
         }
+        Access::Owner => {
+            bilibi_tenancy::prove_owner(&**client, &scope).await?;
+        }
         Access::SignedIn => {}
         Access::Public => unreachable!(),
     }

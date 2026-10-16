@@ -115,6 +115,7 @@ struct PickerPage {
 pub(crate) struct Standing {
     capabilities: BTreeSet<&'static str>,
     operator: bool,
+    owner: bool,
     saved: Saved,
     /// The company's shared layouts this account may see.
     shared: Vec<Entry>,
@@ -129,11 +130,17 @@ impl Core {
             Err(Error::Forbidden) => false,
             Err(error) => return Err(error),
         };
+        let owner = match bilibi_tenancy::prove_owner(&**client, scope).await {
+            Ok(_) => true,
+            Err(Error::Forbidden) => false,
+            Err(error) => return Err(error),
+        };
         let saved = self.layouts.saved(&**client, scope).await?;
         let shared = self.layouts.shared_visible(&**client, scope).await?;
         Ok(Standing {
             capabilities,
             operator,
+            owner,
             saved,
             shared,
         })
@@ -213,6 +220,7 @@ impl Core {
             Access::Public | Access::SignedIn => true,
             Access::Capability(key) => standing.capabilities.contains(key),
             Access::Operator => standing.operator,
+            Access::Owner => standing.owner,
             Access::OperatorCapability(key) => {
                 standing.operator && standing.capabilities.contains(key)
             }
@@ -244,7 +252,13 @@ impl Core {
         }
         let tree = self
             .menu
-            .visible_tree(&|key| standing.capabilities.contains(key));
+            .visible_tree(&|key| {
+                if key == bilibi_menu::OWNER_STANDING {
+                    standing.owner
+                } else {
+                    standing.capabilities.contains(key)
+                }
+            });
         let mut out = Vec::new();
         walk(&tree, &[], &mut out);
         out

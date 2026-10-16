@@ -96,7 +96,19 @@ async fn context<'a>(
 ) -> Result<ShellContext<'a>> {
     let client = app.db.get().await?;
     let capabilities = authz::effective_capabilities(&**client, scope).await?;
-    let tree = app.menu.visible_tree(&|key| capabilities.contains(key));
+    // Owner-only items answer the live owner proof, never a capability.
+    let owner = match tenancy::prove_owner(&**client, scope).await {
+        Ok(_) => true,
+        Err(Error::Forbidden) => false,
+        Err(error) => return Err(error),
+    };
+    let tree = app.menu.visible_tree(&|key| {
+        if key == menu::OWNER_STANDING {
+            owner
+        } else {
+            capabilities.contains(key)
+        }
+    });
     let active = active_item(&tree, path);
     let nodes: Vec<_> = tree.iter().map(|node| nav_node(node, active)).collect();
     // The tenant's standing, from the explicit operator proof only.
@@ -212,6 +224,7 @@ async fn permits(app: &App, scope: &Scope, access: Access) -> Result<bool> {
         Access::Public | Access::SignedIn => Ok(()),
         Access::Capability(key) => authz::authorize_key(client, scope, key).await,
         Access::Operator => tenancy::prove_operator(client, scope).await.map(|_| ()),
+        Access::Owner => tenancy::prove_owner(client, scope).await.map(|_| ()),
         Access::OperatorCapability(key) => authz::authorize_operator(client, scope, key)
             .await
             .map(|_| ()),

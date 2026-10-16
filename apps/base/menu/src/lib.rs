@@ -19,11 +19,18 @@ pub enum Requirement {
     Open,
     Capability(&'static str),
     AnyOf(&'static [&'static str]),
+    /// The installation owner only (`Access::Owner`): never a capability.
+    Owner,
 }
+/// The key a menu decision is asked for [`Requirement::Owner`]: it answers
+/// with the live owner proof (`bilibi_tenancy::prove_owner`). It has no dot,
+/// so no capability can ever be declared under it; a caller that does not
+/// know it answers `false` and the item stays hidden.
+pub const OWNER_STANDING: &str = "installation-owner";
 impl Requirement {
     pub fn is_valid(self) -> bool {
         match self {
-            Self::Open => true,
+            Self::Open | Self::Owner => true,
             Self::Capability(key) => !key.trim().is_empty(),
             Self::AnyOf(keys) => {
                 !keys.is_empty()
@@ -40,11 +47,12 @@ impl Requirement {
                 Self::Open => true,
                 Self::Capability(key) => decide(key),
                 Self::AnyOf(keys) => keys.iter().any(|key| decide(key)),
+                Self::Owner => decide(OWNER_STANDING),
             }
     }
     pub fn keys(self) -> Vec<&'static str> {
         match self {
-            Self::Open => Vec::new(),
+            Self::Open | Self::Owner => Vec::new(),
             Self::Capability(key) => vec![key],
             Self::AnyOf(keys) => keys.to_vec(),
         }

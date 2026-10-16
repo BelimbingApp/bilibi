@@ -105,7 +105,7 @@ pub async fn standing(client: &dyn ProofClient, tenant: i64, user: i64) -> Resul
     }
     let Some(row) = client
         .query_opt(
-            "SELECT name,email,person_id,affiliation_id,organisation_id FROM users WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL AND status='active'",
+            "SELECT name,email,person_id,affiliation_id,organisation_id,EXISTS(SELECT 1 FROM user_bootstrap b WHERE b.tenant_id=users.tenant_id AND b.user_id=users.id) FROM users WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL AND status='active'",
             &[&tenant, &user],
         )
         .await?
@@ -140,6 +140,9 @@ pub async fn standing(client: &dyn ProofClient, tenant: i64, user: i64) -> Resul
         person: links.person,
         organisation: links.organisation,
         affiliation: links.affiliation,
+        // The bootstrap receipt names the installation's owner; Tenancy adds
+        // the operator proof (`bilibi_tenancy::prove_owner`).
+        installation_owner: row.get(5),
     }))
 }
 

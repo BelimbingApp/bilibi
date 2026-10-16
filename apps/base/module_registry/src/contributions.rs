@@ -258,6 +258,10 @@ pub enum Access {
     Operator,
     /// Both requirements apply; an operator identity is not a capability grant.
     OperatorCapability(&'static str),
+    /// The installation owner only (`bilibi_tenancy::prove_owner`): the
+    /// bootstrap account in the operator tenant, in its own browser session.
+    /// No role, capability or grant extends it to anyone else.
+    Owner,
 }
 /// Metadata consumed by the Web adapter; registration does not bypass guards.
 #[derive(Clone, Copy, Debug)]
