@@ -88,12 +88,18 @@ impl Show {
                 == Mask::Clear
         };
         // Sorting by a masked column would disclose the order of its values.
+        let sortable: Vec<&str> = found
+            .iter()
+            .filter(|column| column.orderable && clear(column))
+            .map(|column| column.name.as_str())
+            .collect();
         let spec = ListSpec {
-            sortable: found
+            sortable: sortable
                 .iter()
-                .filter(|column| column.orderable && clear(column))
-                .map(|column| (column.name.clone(), SortDir::Asc))
+                .map(|name| ((*name).to_owned(), SortDir::Asc))
                 .collect(),
+            // The first orderable column, usually the key, as rows come.
+            default_sort: sortable.first().map(|name| (*name).to_owned()),
             page_sizes: SIZES.to_vec(),
             page_size_aliases: vec!["perPage".into()],
             filters: BTreeMap::from([
