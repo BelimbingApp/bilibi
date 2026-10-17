@@ -480,9 +480,11 @@ impl Show {
                 "block px-4 pb-2 text-xs text-ink-muted",
             )?);
         }
-        let sort_id = order.map(|(column, _)| column_id(column));
         let mut flex = FlexTable::new("database-table-data", data.flex_columns(), flex_rows)
-            .sorted(sort_id.as_deref(), self.list.sort_dir);
+            .sorted(
+                order.map(|(column, _)| column.name.as_str()),
+                self.list.sort_dir,
+            );
         flex.caption = "Table data";
         flex.event = "grid";
         flex.framed = false;

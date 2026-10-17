@@ -404,7 +404,12 @@ fn results(state: &detail::Detail, result: &ConsoleResult) -> Result<Html> {
         .columns
         .iter()
         .enumerate()
-        .map(|(i, name)| FlexColumn::new(&format!("c{i}"), &format!("c{i}"), name).fixed())
+        .map(|(i, name)| {
+            let mut column = FlexColumn::new(&format!("c{i}"), &format!("c{i}"), name).fixed();
+            column.sort_key = Some(name.clone());
+            column.sortable = !result.columns[..i].contains(name);
+            column
+        })
         .collect();
     let columns = state
         .columns
@@ -429,13 +434,8 @@ fn results(state: &detail::Detail, result: &ConsoleResult) -> Result<Html> {
         }
         rows.push(row);
     }
-    let sort_key = state
-        .sort
-        .as_ref()
-        .and_then(|name| result.columns.iter().position(|column| column == name))
-        .map(|i| format!("c{i}"));
     let mut table = FlexTable::new("query-results-table", columns, rows)
-        .sorted(sort_key.as_deref(), state.sort_dir());
+        .sorted(state.sort.as_deref(), state.sort_dir());
     table.event = "results_grid";
     table.caption = "Query results";
     table.framed = false;

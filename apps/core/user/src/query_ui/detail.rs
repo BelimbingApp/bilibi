@@ -130,7 +130,14 @@ impl Detail {
                         .iter()
                         .enumerate()
                         .map(|(i, label)| {
-                            BuiltinColumn::new(&format!("c{i}"), label).sortable(label)
+                            let column = BuiltinColumn::new(&format!("c{i}"), label);
+                            // C9 resolves a name to its first position. A later
+                            // duplicate cannot be independently sorted by name.
+                            if result.columns[..i].contains(label) {
+                                column
+                            } else {
+                                column.sortable(label)
+                            }
                         })
                         .collect::<Vec<_>>();
                     if !builtins.is_empty() && builtins.len() <= 2048 {

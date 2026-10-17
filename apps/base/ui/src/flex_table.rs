@@ -764,13 +764,10 @@ impl<'a> FlexTable<'a> {
         let own = self.sort_event.is_empty();
         SortView {
             table_id: self.id,
-            sort_by: self.sort_by.map(|key| {
-                if column.sort_key.as_deref() == Some(key) {
-                    column.spec.as_str()
-                } else {
-                    key
-                }
-            }),
+            sort_by: self
+                .sort_by
+                .filter(|key| *key == column.sort_key.as_deref().unwrap_or(&column.spec))
+                .map(|_| column.spec.as_str()),
             sort_dir: self.sort_dir,
             event: if own { self.event } else { self.sort_event },
             target: if own { self.target } else { self.sort_target },
