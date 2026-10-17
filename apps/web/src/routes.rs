@@ -390,6 +390,9 @@ async fn check_base(
         Access::OperatorCapability(key) => {
             bilibi_authz::authorize_operator(&**client, &scope, key).await?;
         }
+        Access::Owner => {
+            bilibi_tenancy::prove_owner(&**client, &scope).await?;
+        }
         Access::SignedIn => {}
         // `base()` unwrapped the one wrapper boot allows.
         Access::StepUp(_) => return Err(Error::Internal),

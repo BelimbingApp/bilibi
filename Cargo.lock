@@ -965,6 +965,7 @@ name = "bilibi-system"
 version = "0.1.0"
 dependencies = [
  "askama",
+ "bilibi-audit",
  "bilibi-authz",
  "bilibi-database",
  "bilibi-locale",
@@ -974,10 +975,12 @@ dependencies = [
  "bilibi-queue",
  "bilibi-tenancy",
  "bilibi-ui",
+ "deadpool-postgres",
  "inventory",
  "libc",
  "serde_json",
  "tokio",
+ "tokio-postgres",
 ]
 
 [[package]]

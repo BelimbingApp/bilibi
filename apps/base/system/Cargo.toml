@@ -7,6 +7,7 @@ license.workspace = true
 
 [dependencies]
 askama.workspace = true
+bilibi-audit.workspace = true
 bilibi-authz = { path = "../authz" }
 bilibi-database.workspace = true
 bilibi-locale = { path = "../locale" }
@@ -16,7 +17,9 @@ bilibi-perf = { path = "../perf" }
 bilibi-queue = { path = "../queue" }
 bilibi-tenancy = { path = "../tenancy" }
 bilibi-ui.workspace = true
+deadpool-postgres.workspace = true
 inventory.workspace = true
 libc = "0.2.190"
 serde_json.workspace = true
 tokio.workspace = true
+tokio-postgres.workspace = true

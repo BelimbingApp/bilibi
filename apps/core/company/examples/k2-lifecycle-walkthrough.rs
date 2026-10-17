@@ -39,6 +39,7 @@ impl ActorVerifier for OwnCompany {
                 person: None,
                 organisation: Some(self.0),
                 affiliation: None,
+                installation_owner: false,
             })
         })
     }

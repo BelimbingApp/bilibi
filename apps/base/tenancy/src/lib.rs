@@ -39,6 +39,10 @@ pub struct AccountIdentity {
     pub person: Option<PersonId>,
     pub organisation: Option<OrganisationId>,
     pub affiliation: Option<AffiliationId>,
+    /// Whether this account is the installation owner: the one account the
+    /// installation's bootstrap receipt names (Core User `user_bootstrap`).
+    /// Owner standing; never a grant, and read afresh on every proof.
+    pub installation_owner: bool,
 }
 pub trait ActorVerifier: Send + Sync {
     fn verify<'a>(
@@ -123,6 +127,9 @@ pub struct Scope {
     actor: Actor,
     agent: Option<AgentFacet>,
     impersonator: Option<Impersonator>,
+    /// The actor's live installation-owner standing, sealed by the verifier.
+    /// Read only through [`prove_owner`], which adds the operator proof.
+    owner: bool,
     pub tenant_name: String,
     pub user_name: String,
     pub email: String,
@@ -265,6 +272,7 @@ impl Authentication {
             },
             agent: None,
             impersonator,
+            owner: identity.installation_owner,
             tenant_name: row.get(0),
             user_name: identity.name,
             email: identity.email,
@@ -354,6 +362,34 @@ pub async fn prove_operator(
         return Err(Error::Forbidden);
     }
     Ok(OperatorProof {
+        scope: scope.clone(),
+    })
+}
+
+/// The installation owner, proved for one unit of work: see [`prove_owner`].
+#[derive(Clone, Debug)]
+pub struct OwnerProof {
+    scope: Scope,
+}
+impl OwnerProof {
+    pub fn scope(&self) -> &Scope {
+        &self.scope
+    }
+}
+/// Owner standing: the account the installation's one-time bootstrap receipt
+/// names, still live in the platform-operator tenant, acting for itself in a
+/// browser session. An impersonated session or an agent grant never carries
+/// it, and no role or capability confers it. The verifier re-reads the
+/// receipt on every authentication; this re-proves the operator marker.
+pub async fn prove_owner(
+    client: &(impl GenericClient + Sync),
+    scope: &Scope,
+) -> Result<OwnerProof> {
+    if !scope.owner || scope.impersonator.is_some() || scope.agent.is_some() {
+        return Err(Error::Forbidden);
+    }
+    prove_operator(client, scope).await?;
+    Ok(OwnerProof {
         scope: scope.clone(),
     })
 }

@@ -2,7 +2,8 @@
 
 `base/system` owns `/system/info`, `/system/localization` and
 `/system/menu-inspector`. Each requires its contributed platform capability
-**and** the persisted operator identity. The `system_viewer` role contributes
+**and** the persisted operator identity. It also owns the owner-only
+`/system/database-tables` (below). The `system_viewer` role contributes
 Info and Inspector read capabilities; use the normal explicit
 `authz-reconcile` command to reconcile an existing installation. No grant or
 operator marker is installed by visiting a page.
@@ -50,3 +51,44 @@ browser event controller duplicates those components.
 Runtime and screenshot evidence for slice O5 is recorded outside the checkout
 under the task's `data/bilibi-o5/` directory. Follow `docs/runtime-parity.md`
 from the repository root for disposable database and browser procedures.
+
+## Database Tables (`src/database_tables/`)
+
+Port of Belimbing `admin/system/database-tables`. `/system/database-tables`
+lists the base and partitioned tables of the application schema
+(`current_schema()`) with the module and migration that create them, read
+from the mounted modules' migration SQL (Bilibi has no table registry; the
+`bilibi_migrations` ledger is Database's). `/system/database-tables/{table}`
+shows Data, Schema (columns, indexes, constraints, migration source) and
+Relationships (outgoing and incoming foreign keys) as `tab` patch links. Every
+list is a FlexTable through `ListColumns`; Data sorts, pages (25/50/100) and
+searches text columns through `ListState`, and a referenced value links to the
+other table filtered by `col`/`eq`.
+
+Controls:
+
+- **Owner only.** Routes are `Access::Owner` and the menu item
+  `Requirement::Owner`: the account the `user_bootstrap` receipt names, live in
+  the platform-operator tenant, in its own browser session (no impersonation,
+  no agent grant). The host re-proves it on every request, mount, event and
+  params change, and the pages prove it again. No role or grant extends it, so
+  a `core_admin` of the operator tenant gets the standard 403 and no menu item.
+  Because only the owner reads, Data shows rows of every tenant.
+- **Step-up.** Each mounted page first asks for the owner's password
+  (`Authentication::confirm_password`, the stored-secret reveal's re-proof,
+  five failures a minute). The first paint carries no data.
+- **Audit.** `system.database_tables.step_up` records each attempt and
+  `system.database_tables.viewed` each distinct view (table, tab, page, page
+  size, sort, whether a search or which filter column was used). Search text,
+  filter values and row values are never recorded; a view whose record cannot
+  be written is refused.
+- **Masking.** Columns Audit redacts by name, credential-like names
+  (`password`, `token`, `secret`, `*_hash`, `api_key`, ...), the session id and
+  CSRF value, and an encrypted setting's value are never selected; the page
+  learns only whether they are set, cannot search or sort by them, and has no
+  unmask control (`src/database_tables/sensitive.rs`).
+- **Read-only and bounded.** No SQL entry. Identifiers come from `pg_catalog`
+  and are quoted from its spelling; request text binds as parameters. Rows are
+  read in a `READ ONLY` transaction with a 5 s statement timeout, at most 100 a
+  page and 120 characters a cell; a count past the timeout leaves the total
+  unknown rather than failing the page.

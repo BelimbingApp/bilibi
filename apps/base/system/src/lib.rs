@@ -1,5 +1,6 @@
-//! Operator-only System pages. Locale and Menu remain the policy owners;
+//! Operator-only System pages, and the owner-only Database Tables. Locale and Menu remain the policy owners;
 //! these adapters compose their public APIs and the shared UI components.
+mod database_tables;
 mod info;
 mod inspector;
 mod localization;
@@ -32,6 +33,7 @@ struct Pages {
     menu: Arc<bilibi_menu::Menu>,
     routes: Arc<Vec<&'static Route>>,
     modules: Arc<Vec<&'static str>>,
+    tables: database_tables::DatabaseTables,
 }
 impl Pages {
     async fn authorize(&self, scope: &Scope, capability: &str) -> Result<()> {
@@ -49,11 +51,21 @@ impl Page<Scope, Error> for Pages {
             "info" => "System Info",
             "localization" => "Language & Region",
             "inspector" => "Menu Inspector",
+            "tables" | "table" => "Database Tables",
             _ => return None,
         })
     }
     fn render<'a>(&'a self, request: PageRequest<'a, Scope>) -> PageFuture<'a, Error> {
         Box::pin(async move {
+            if matches!(request.operation, "tables" | "table") {
+                let html = self.tables.render(&request).await?;
+                let title = request.path.get("table").cloned();
+                return Ok(PageBody {
+                    html: html.to_string(),
+                    live: true,
+                    title,
+                });
+            }
             let scope = request.scope.ok_or(Error::Unauthorized)?;
             let html = match request.operation {
                 "info" => {
@@ -81,6 +93,9 @@ impl Page<Scope, Error> for Pages {
     }
     fn mount<'a>(&'a self, request: PageRequest<'a, Scope>) -> MountFuture<'a, Scope, Error> {
         Box::pin(async move {
+            if matches!(request.operation, "tables" | "table") {
+                return Ok(Some(self.tables.mount(&request).await?));
+            }
             let scope = request.scope.ok_or(Error::Unauthorized)?;
             let state: Box<dyn LiveState<Scope, Error>> = match request.operation {
                 "localization" => {
@@ -127,6 +142,31 @@ macro_rules! page {
 page!("info", "/system/info", INFO_VIEW);
 page!("localization", "/system/localization", LOCALIZATION_MANAGE);
 page!("inspector", "/system/menu-inspector", MENU_VIEW);
+// The installation owner only: no capability or grant opens these pages.
+// Outside development each also needs a recent authenticator check (step-up,
+// Core User's two-factor), which the host asks for before the page renders.
+macro_rules! owner_page {
+    ($operation:literal, $path:literal) => {
+        inventory::submit! { Contribution::new(ROUTES, concat!("base/system.", $operation), provenance!(), &Route {
+            method: Method::Get, path: $path, service: "base/system.pages", operation: $operation,
+            access: Access::StepUp(&Access::Owner), framed: true,
+        }) }
+    };
+}
+owner_page!("tables", "/system/database-tables");
+owner_page!("table", "/system/database-tables/{table}");
+bilibi_menu::contribute!(
+    "base/system",
+    bilibi_menu::MenuItem::page(
+        "admin.system.database-table",
+        "Database Tables",
+        "/system/database-tables"
+    )
+    .under("admin.system.database")
+    .icon("hero-table-cells")
+    .requires(bilibi_menu::Requirement::Owner)
+    .order(10)
+);
 bilibi_menu::contribute!(
     "base/system",
     bilibi_menu::MenuItem::page("admin.system.info", "System Info", "/system/info")
@@ -161,7 +201,7 @@ bilibi_menu::contribute!(
 );
 inventory::submit! {
     Module { id: "base/system", layer: bilibi_module_registry::Layer::Base,
-        dependencies: &["base/module_registry", "base/database", "base/authz", "base/locale", "base/menu", "base/perf", "base/tenancy", "base/ui"],
+        dependencies: &["base/module_registry", "base/database", "base/authz", "base/locale", "base/menu", "base/perf", "base/tenancy", "base/ui", "base/audit"],
         migrations: &[], services: &[Service { id: "base/system.pages", factory: |services| {
             let modules = bilibi_module_registry::discover()?;
             let catalog = Catalog::discover(&modules)?;
@@ -173,6 +213,11 @@ inventory::submit! {
                 menu: Arc::new(bilibi_menu::Menu::from_catalog(&catalog)?),
                 routes: Arc::new(catalog.entries::<Route>(ROUTES)?.iter().map(|e| e.get::<Route>()).collect::<bilibi_module_registry::Result<_>>()?),
                 modules: Arc::new({ let mut names: Vec<_> = modules.iter().map(|m| m.id).collect(); names.sort(); names }),
+                tables: database_tables::DatabaseTables::new(
+                    services.get::<Db>("base/database.pool")?.as_ref().clone(),
+                    services.get("base/tenancy.authentication")?,
+                    &modules,
+                ),
             }))))
         }}],
     }
