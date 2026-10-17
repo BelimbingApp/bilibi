@@ -16,6 +16,8 @@ pub mod password;
 mod preferences;
 mod query_ui;
 mod reset;
+mod two_factor;
+mod two_factor_ui;
 mod verification;
 pub mod web;
 
@@ -28,6 +30,10 @@ pub use password::PolicyViolation;
 pub use preferences::{
     list_pins, normalize_label, normalize_url, presentation, Pin, PreferenceError, Presentation,
     MAX_PINS, THEMES, THEME_KEY,
+};
+pub use two_factor::{
+    safe_return, Enrollment, TwoFactorError, TwoFactorStatus, CONFIRM_PATH, ISSUER_KEY,
+    SETTINGS_PATH as TWO_FACTOR_PATH, STEP_UP_MINUTES_KEY,
 };
 pub use verification::{Signer, Verification};
 
@@ -63,6 +69,10 @@ pub const BOOTSTRAP_AFFILIATION_MIGRATION: (&str, &str) = (
 pub const MOVED_PINS_MIGRATION: (&str, &str) = (
     "core-user-011-moved-pins",
     include_str!("../migrations/011-moved-pins.sql"),
+);
+pub const TWO_FACTOR_MIGRATION: (&str, &str) = (
+    "core-user-012-two-factor",
+    include_str!("../migrations/012-two-factor.sql"),
 );
 pub const ACCOUNTS_MIGRATION: (&str, &str) = (
     "core-user-008-accounts",
@@ -153,7 +163,7 @@ pub struct UserService {
 inventory::submit! {
     bilibi_module_registry::Module {
         id:"core/user",layer:bilibi_module_registry::Layer::Core,
-        dependencies:&["base/database","base/security","base/notifications","base/tenancy","base/session","base/principal_directory","base/mail","base/settings","base/datetime","base/locale","base/ui","base/audit","base/authz","base/menu","base/grid","base/dashboard","base/party_ids","core/company","core/person","core/affiliation"],migrations:&[MIGRATION,CREDENTIALS_MIGRATION,PINS_MIGRATION,NOTIFICATIONS_MIGRATION,database_queries::MIGRATION,BOOTSTRAP_MIGRATION,IDENTITY_MIGRATION,ACCOUNTS_MIGRATION,IMPERSONATION_MIGRATION,BOOTSTRAP_AFFILIATION_MIGRATION,MOVED_PINS_MIGRATION],
+        dependencies:&["base/database","base/security","base/notifications","base/tenancy","base/session","base/principal_directory","base/mail","base/settings","base/datetime","base/locale","base/ui","base/audit","base/authz","base/menu","base/grid","base/dashboard","base/party_ids","core/company","core/person","core/affiliation"],migrations:&[MIGRATION,CREDENTIALS_MIGRATION,PINS_MIGRATION,NOTIFICATIONS_MIGRATION,database_queries::MIGRATION,BOOTSTRAP_MIGRATION,IDENTITY_MIGRATION,ACCOUNTS_MIGRATION,IMPERSONATION_MIGRATION,BOOTSTRAP_AFFILIATION_MIGRATION,MOVED_PINS_MIGRATION,TWO_FACTOR_MIGRATION],
         services:&[bilibi_module_registry::Service {id:"core/user.database_queries",factory:|services| {
             Ok(std::sync::Arc::new(database_queries::QueryService::new(services.get::<Db>("base/database.pool")?.as_ref().clone(), services.get("base/database.mutations")?, services.get("base/tenancy.authentication")?)))
         }},bilibi_module_registry::Service {id:"core/user.query-pages",factory:|services| {

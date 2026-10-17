@@ -32,6 +32,7 @@ askama.workspace = true
 serde.workspace = true
 bilibi-mail = { path = "../../base/mail" }
 bilibi-settings = { path = "../../base/settings" }
+bilibi-session.workspace = true
 bilibi-datetime = { path = "../../base/datetime" }
 bilibi-locale = { path = "../../base/locale" }
 serde_urlencoded = "0.7.1"
@@ -42,6 +43,10 @@ sha2 = "0.11.1"
 subtle = "2.6.1"
 base64 = "0.23.1"
 getrandom = "0.4.3"
+sha1.workspace = true
+data-encoding.workspace = true
+percent-encoding.workspace = true
+qrcode.workspace = true
 
 [dev-dependencies]
 bilibi-walkthrough-fixture = { path = "../../../fixtures/walkthrough" }

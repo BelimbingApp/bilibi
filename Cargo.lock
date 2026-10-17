@@ -147,7 +147,7 @@ dependencies = [
  "serde_json",
  "serde_path_to_error",
  "serde_urlencoded",
- "sha1",
+ "sha1 0.10.7",
  "sync_wrapper",
  "tokio",
  "tokio-tungstenite",
@@ -1052,18 +1052,23 @@ dependencies = [
  "bilibi-person",
  "bilibi-principal-directory",
  "bilibi-security",
+ "bilibi-session",
  "bilibi-settings",
  "bilibi-tenancy",
  "bilibi-ui",
  "bilibi-walkthrough-fixture",
  "bilibi-web",
+ "data-encoding",
  "getrandom 0.4.3",
  "hmac",
  "inventory",
  "jiff",
+ "percent-encoding",
+ "qrcode",
  "serde",
  "serde_json",
  "serde_urlencoded",
+ "sha1 0.11.0",
  "sha2",
  "subtle",
  "thiserror",
@@ -2485,6 +2490,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "qrcode"
+version = "0.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d68782463e408eb1e668cf6152704bd856c78c5b6417adaee3203d8f4c1fc9ec"
+
+[[package]]
 name = "quote"
 version = "1.0.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2847,6 +2858,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sha1"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aacc4cc499359472b4abe1bf11d0b12e688af9a805fa5e3016f9a386dc2d0214"
+dependencies = [
+ "cfg-if",
+ "cpufeatures 0.3.1",
+ "digest 0.11.3",
+]
+
+[[package]]
 name = "sha2"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3205,7 +3227,7 @@ dependencies = [
  "httparse",
  "log",
  "rand 0.9.5",
- "sha1",
+ "sha1 0.10.7",
  "thiserror",
 ]
 

@@ -208,8 +208,8 @@ pub fn embeds(app: &App) -> Result<Vec<ShellEmbed>> {
 async fn permits(app: &App, scope: &Scope, access: Access) -> Result<bool> {
     let client = app.db.get().await?;
     let client = &**client;
-    let result = match access {
-        Access::Public | Access::SignedIn => Ok(()),
+    let result = match access.base() {
+        Access::Public | Access::SignedIn | Access::StepUp(_) => Ok(()),
         Access::Capability(key) => authz::authorize_key(client, scope, key).await,
         Access::Operator => tenancy::prove_operator(client, scope).await.map(|_| ()),
         Access::OperatorCapability(key) => authz::authorize_operator(client, scope, key)

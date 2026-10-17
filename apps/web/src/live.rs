@@ -205,10 +205,29 @@ struct Session {
 impl Session {
     async fn scope(&mut self, app: &App, token: &str) -> Result<Scope> {
         let page = self.page.as_ref().ok_or(Error::Invalid)?;
-        let scope = routes::check_access(app, page.access, Some(token))
-            .await?
-            .ok_or(Error::Forbidden)?;
+        let path = self.path.clone();
+        let scope = self.admit(app, page.access, token, path).await?;
         self.bound(scope)
+    }
+    /// A page route's access for this socket. A step-up the session owes
+    /// (never confirmed, or the window ran out while the page was open) sends
+    /// the browser through `path` over HTTP, whose guard shows the prompt and
+    /// comes back; nothing acts on the request.
+    async fn admit(
+        &mut self,
+        app: &App,
+        access: bilibi_module_registry::contributions::Access,
+        token: &str,
+        path: String,
+    ) -> Result<Scope> {
+        match routes::admit(app, access, Some(token)).await? {
+            routes::Admission::Admitted(scope) => scope.ok_or(Error::Forbidden),
+            routes::Admission::StepUp(_) => {
+                self.path = path;
+                self.stale = true;
+                Err(Error::Unauthorized)
+            }
+        }
     }
     /// Refuses a scope the socket was not opened for; nothing acts on it.
     fn bound(&mut self, scope: Scope) -> Result<Scope> {
@@ -229,9 +248,9 @@ impl Session {
         if self.framed && !bound.route.framed {
             return Err(Error::Forbidden);
         }
-        let scope = routes::check_access(app, bound.route.access, Some(token))
-            .await?
-            .ok_or(Error::Forbidden)?;
+        let scope = self
+            .admit(app, bound.route.access, token, path.clone())
+            .await?;
         let scope = self.bound(scope)?;
         let state = bound
             .page
@@ -281,9 +300,9 @@ impl Session {
         {
             return Ok(None);
         }
-        let scope = routes::check_access(app, bound.route.access, Some(token))
-            .await?
-            .ok_or(Error::Forbidden)?;
+        let scope = self
+            .admit(app, bound.route.access, token, path.to_owned())
+            .await?;
         self.bound(scope)?;
         self.path = path.to_owned();
         self.route = bound.route.path.to_owned();
@@ -810,7 +829,8 @@ pub async fn run(app: App, token: String, identity: Identity, mut socket: WebSoc
             },
         };
         // A stale socket's request is refused before it acted; the page is
-        // reloaded rather than told of an error it did not cause.
+        // reloaded rather than told of an error it did not cause. A step-up
+        // the session owes reloads the same way, through the page's address.
         if session.stale {
             reload(&mut socket, &session.path).await;
             break;
