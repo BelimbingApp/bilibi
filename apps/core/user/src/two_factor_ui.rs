@@ -50,7 +50,9 @@ fn code_field(id: &str, label: &str, errors: &[String]) -> Result<Html, Error> {
 /// The browser's return address from the query, kept only when it is a
 /// local path ([`crate::safe_return`]).
 fn return_to(query: &HashMap<String, String>) -> Option<String> {
-    query.get("return").and_then(|path| crate::safe_return(path))
+    query
+        .get("return")
+        .and_then(|path| crate::safe_return(path))
 }
 
 enum Stage {
@@ -136,7 +138,11 @@ impl TwoFactorPage {
         let status = users.two_factor_status(scope).await?;
         Ok(Self {
             users,
-            stage: if status.enabled { Stage::On } else { Stage::Off },
+            stage: if status.enabled {
+                Stage::On
+            } else {
+                Stage::Off
+            },
             status,
             return_to: return_to(query),
             errors: Vec::new(),
@@ -309,7 +315,11 @@ impl TwoFactorPage {
             key: enrollment.map_or("", |e| e.key.as_str()),
             issuer: enrollment.map_or("", |e| e.issuer.as_str()),
             account: enrollment.map_or("", |e| e.account.as_str()),
-            code: code_field("two_factor_code", "Authentication code", &errors_for("setup"))?,
+            code: code_field(
+                "two_factor_code",
+                "Authentication code",
+                &errors_for("setup"),
+            )?,
             codes,
             download,
             returning: self.return_to.is_some(),

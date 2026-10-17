@@ -40,7 +40,11 @@ pub fn settings_entries() -> Vec<SettingsEntry> {
     [
         ("profile", "Profile", "/settings/profile"),
         ("password", "Password", "/settings/password"),
-        ("two-factor", "Two-factor authentication", crate::TWO_FACTOR_PATH),
+        (
+            "two-factor",
+            "Two-factor authentication",
+            crate::TWO_FACTOR_PATH,
+        ),
         ("appearance", "Appearance", "/settings/appearance"),
         (
             "chatgpt-plugin",
