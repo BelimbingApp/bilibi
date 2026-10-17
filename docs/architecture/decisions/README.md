@@ -26,7 +26,7 @@ Every record carries these header lines: Document Type, Status, Agents, Scope, L
 - More than one: add the role in parentheses, comma separated: `claude-cloud/sonnet-5.5-default (author), amp/gpt-6-astra-low (review)`
 - Other examples: `amp/gpt-6-astra-high`, `codex/sol-high`
 - A reviewer is appended after the review.
-- Write only what the agent knows. Omit an unknown part rather than guess it.
+- If the agent does not know a part, it asks its human and writes what the human says. It never guesses. Omit a part nobody can give.
 
 ## Numbering
 

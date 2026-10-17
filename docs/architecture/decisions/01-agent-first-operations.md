@@ -75,7 +75,9 @@ A contract declares:
 
 - **Bilibi identifies an agent by its connection**: the person it acts for, the registered client, the grant and its expiry. Each request also gets a trace ID, which is the correlation ID of the recorded exchange and of any mutation it commits.
 - **The agent also reports itself**: harness, model, version and effort, in the same `harness/model-version-effort` form the ADR headers use (for example `amp/gpt-6-astra-high`).
-- Report known values only. Omit an unknown part rather than guess it. Never reject an otherwise authorized request for missing metadata. Ordinary machine callers need not send it.
+- Report known values only. When the agent does not know a value of harness, model, version or effort, it **asks its human and reports what the human says**. It still never guesses, and omits a part the human cannot give.
+- The value stays labelled self-reporting. A request is never rejected for missing metadata, and ordinary machine callers need not send it.
+- Follow-up code change: the harness plugins (the skills `core/agent_plugins` generates) must instruct the agent to ask its human for unknown values.
 - That report is labelled **self-reporting**: what the agent reports about itself. It is recorded beside the harness/model-version-effort value for audit and support. It is **never used for authorization**.
 - Today the API records only the self-reporting `X-Bilibi-Agent-Id` and `X-Bilibi-Run-Id` labels (`apps/web/README.md`). Recording the harness/model-version-effort form is a follow-up code change.
 
@@ -106,8 +108,8 @@ Verified against the code on 2026-10-17.
 | GUI | Built. Pages call module facades and check capabilities themselves. They do not yet call contracts | `apps/web/README.md`, each module's `web.rs` |
 | API `/api/v1` | Built. Search, describe, guide, call, plans, commit. OAuth device grant, per-person grants, live proof on every request | `apps/web/src/api.rs`, `apps/web/README.md` |
 | MCP `/mcp` | Built. Stateless Streamable HTTP. Six tools: `search`, `describe`, `guide`, `read`, `plan`, `commit` | `apps/web/src/mcp.rs`, `apps/base/agent_api/src/mcp.rs` |
-| CLI | **Not built.** `bilibi-web` has only server commands (`migrate`, `seed`, `seed-production`) | `apps/web/src/main.rs` |
-| Harness plugins | **Not built.** No plugin or adapter exists in this repository | |
+| CLI | **Client not built.** `bilibi-web` has only operator commands (`migrate`, `seed`, `seed-production`, `authz-reconcile`, `geonames-import`, `media-cleanup`, `plugin-export`), none of which calls an operation contract | `apps/web/src/main.rs` |
+| Harness plugins | **Built for ChatGPT.** `core/agent_plugins` generates the downloadable package: a thin adapter over `/mcp`, with skills generated from the registry. Other harnesses are added when needed | `apps/core/agent_plugins/README.md` |
 
 The registry is `base/agent_api` (`apps/base/agent_api/README.md`). It is the partial form of this decision:
 
@@ -139,7 +141,7 @@ The registry is `base/agent_api` (`apps/base/agent_api/README.md`). It is the pa
 | CLI client | Not built. Needs a design for login (device grant) and output for agents |
 | Prompt injection | Deferred to the agentic design |
 | Cost per document | Unmeasured. An agent that reads, searches and drafts per document spends model tokens on every call. The harness owner bears this. Bilibi can keep it down with small results, paging and clear guides. Measure it on a real document flow before promising anything |
-| Harness plugins | ChatGPT first. Not started |
+| Other harness plugins | Added when needed, one thin adapter each |
 
 **Risk this decision accepts:**
 
