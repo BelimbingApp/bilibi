@@ -9,7 +9,7 @@ Bilibi is the Rust port of Bilimbi. Belimbing (Laravel) gives the business meani
 
 - **Status marks:** *built* means the code exists and was checked. *planned* means it is not built yet.
 - **Authority:** where this file and the code differ, the code wins. Fix this file.
-- **Decisions:** each architectural decision is a record in [`decisions/`](decisions/README.md). Start with [0001 Agent-first operations](decisions/0001-agent-first-operations.md).
+- **Decisions:** each architectural decision is a record in [`decisions/`](decisions/README.md). Start with [01 Agent-first operations](decisions/01-agent-first-operations.md).
 
 
 ## Layers

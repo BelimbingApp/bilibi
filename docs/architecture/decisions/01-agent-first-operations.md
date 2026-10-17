@@ -1,4 +1,4 @@
-# ADR 0001: Agent-first operations: one contract, four doors
+# ADR 01: Agent-first operations: one contract, four doors
 
 **Document Type:** Architecture Decision Record
 **Status:** Accepted for the direction. The implementation is a follow-up Platform slice.

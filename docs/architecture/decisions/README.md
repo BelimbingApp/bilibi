@@ -28,8 +28,16 @@ Every record carries these header lines: Document Type, Status, Agents, Scope, L
 - A reviewer is appended after the review.
 - Write only what the agent knows. Omit an unknown part rather than guess it.
 
+## Numbering
+
+- Records are numbered with two digits, sequentially, in the order the decisions are made: `01`, `02`, `03`.
+- A file is named `NN-short-title.md`.
+- Bilibi does not copy ADRs from other repositories. Bilimbi and Belimbing records are cited as prior art by link only.
+
 ## Records
+
+### Agents and operations
 
 | Record | Status |
 | --- | --- |
-| [0001 Agent-first operations: one contract, four doors](./0001-agent-first-operations.md) | Accepted |
+| [01 Agent-first operations: one contract, four doors](./01-agent-first-operations.md) | Accepted |
