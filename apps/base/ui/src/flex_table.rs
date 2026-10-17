@@ -309,6 +309,9 @@ pub struct FlexColumn {
     pub lens: Lens,
     pub lenses: Vec<Lens>,
     pub sortable: bool,
+    /// The owner's list sort key when it differs from the column spec.
+    /// Events still carry the spec; ListColumns maps it to this key.
+    pub sort_key: Option<String>,
     pub removable: bool,
     pub align_right: bool,
     /// The sort button's id; defaults to `<table>-sort-<id>`.
@@ -336,6 +339,7 @@ impl FlexColumn {
             lens: Lens::Value,
             lenses: vec![Lens::Value],
             sortable: true,
+            sort_key: None,
             removable: true,
             align_right: false,
             sort_id: None,
@@ -756,11 +760,17 @@ impl<'a> FlexTable<'a> {
         )
     }
 
-    pub fn sort_view(&self) -> SortView<'_> {
+    pub fn sort_view<'c>(&'c self, column: &'c FlexColumn) -> SortView<'c> {
         let own = self.sort_event.is_empty();
         SortView {
             table_id: self.id,
-            sort_by: self.sort_by,
+            sort_by: self.sort_by.map(|key| {
+                if column.sort_key.as_deref() == Some(key) {
+                    column.spec.as_str()
+                } else {
+                    key
+                }
+            }),
             sort_dir: self.sort_dir,
             event: if own { self.event } else { self.sort_event },
             target: if own { self.target } else { self.sort_target },
@@ -789,7 +799,7 @@ impl<'a> FlexTable<'a> {
 
     pub fn aria_sort(&self, column: &FlexColumn) -> Option<&'static str> {
         if column.sortable {
-            self.sort_view().aria_sort(&column.spec)
+            self.sort_view(column).aria_sort(&column.spec)
         } else {
             None
         }

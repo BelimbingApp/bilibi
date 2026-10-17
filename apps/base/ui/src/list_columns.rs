@@ -250,6 +250,7 @@ pub fn flex_column(builtin: &BuiltinColumn) -> FlexColumn {
         .typed(builtin.kind)
         .kind(ColumnKind::Slot);
     column.sortable = builtin.sortable_column();
+    column.sort_key = builtin.sort.clone();
     column.align_right = builtin.align_right;
     column.sort_id = builtin.sort_id.clone();
     column
