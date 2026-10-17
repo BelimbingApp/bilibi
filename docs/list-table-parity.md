@@ -6,7 +6,7 @@ Every operational table in the Base/Core/Web composition uses the shared FlexTab
 
 - Reference: [Bilimbi at f1a1e10](https://github.com/BelimbingApp/bilimbi/tree/f1a1e101a89e3b6fea857004ec4567556adbabbb), read-only LiveViews and their inline or adjacent HEEx templates. Paths below are relative to `apps/`; `.ex` identifies the LiveView and its adjacent `.html.heex` where present.
 - Business-only fallback: [Belimbing at 80acb0b](https://github.com/BelimbingApp/belimbing/tree/80acb0b7f9f22e808fe6916ac92104f51b7301a4), for the database-table inspector absent from the Bilimbi pin. No Laravel implementation was ported.
-- Bilibi before: `origin/main` at [c0db458](https://github.com/belimbingapp/bilibi/commit/c0db458). Run: 17 October 2026, PostgreSQL 18, disposable `list_parity` database populated from `fixtures/walkthrough` plus temporary asymmetric records; no fixture or product seed changes committed.
+- Bilibi before baseline: [c0db458](https://github.com/belimbingapp/bilibi/commit/c0db458); rebased onto main's subsequent documentation-only ADR update before delivery. Run: 17 October 2026, PostgreSQL 18, disposable `list_parity` database populated from `fixtures/walkthrough` plus temporary asymmetric records; no fixture or product seed changes committed.
 - Browser: agent-browser Chromium, desktop fine pointer, America/New_York, 1280px viewport, device scale 2. The app was browsed at exactly its configured `APP_ORIGIN`; separate managed services ran the app and list-reference example. No Bilimbi runtime or pixel-equivalence claim is made: reference features were established from source, Bilibi behavior from the running system.
 - Coverage: 46 app route/state variants containing 60 distinct FlexTable IDs, plus the standalone list-reference specimen and its forbidden/empty state. The matrix separates embedded surfaces and conditional/modal tables rather than counting only index routes.
 
@@ -18,12 +18,12 @@ Every operational table in the Base/Core/Web composition uses the shared FlexTab
 
 | Key | Fix commits |
 |---|---|
-| C1 | [Company/contact parity](https://github.com/belimbingapp/bilibi/commit/9bcd0fe) |
-| C2 | [Notifications/connections FlexTables](https://github.com/belimbingapp/bilibi/commit/c611518), [compact actions](https://github.com/belimbingapp/bilibi/commit/bb80516) |
-| C3 | [Interactive specimens](https://github.com/belimbingapp/bilibi/commit/dd46ab8) |
-| C4 | [Sort-key presentation](https://github.com/belimbingapp/bilibi/commit/981647a), [alias and duplicate-name disambiguation](https://github.com/belimbingapp/bilibi/commit/040f75d) |
-| C5 | [Local calendar bounds and remount handshake](https://github.com/belimbingapp/bilibi/commit/ff4ecc1), [history replacement](https://github.com/belimbingapp/bilibi/commit/2c46927) |
-| C6 | [Embedded URL namespaces](https://github.com/belimbingapp/bilibi/commit/2847180), [shared Users search toolbar](https://github.com/belimbingapp/bilibi/commit/40eb49a) |
+| C1 | [Company/contact parity](https://github.com/belimbingapp/bilibi/commit/e01ad15) |
+| C2 | [Notifications/connections FlexTables](https://github.com/belimbingapp/bilibi/commit/57d03b7), [compact actions](https://github.com/belimbingapp/bilibi/commit/cc53618) |
+| C3 | [Interactive specimens](https://github.com/belimbingapp/bilibi/commit/e43940b) |
+| C4 | [Sort-key presentation](https://github.com/belimbingapp/bilibi/commit/54eb4bb), [alias and duplicate-name disambiguation](https://github.com/belimbingapp/bilibi/commit/1917d5f), [registry owner keys](https://github.com/belimbingapp/bilibi/commit/30040a6) |
+| C5 | [Local calendar bounds and remount handshake](https://github.com/belimbingapp/bilibi/commit/5becec3), [history replacement](https://github.com/belimbingapp/bilibi/commit/9cc5598) |
+| C6 | [Embedded URL namespaces](https://github.com/belimbingapp/bilibi/commit/1dd5263), [shared Users search toolbar](https://github.com/belimbingapp/bilibi/commit/4e3084c) |
 
 ## Core lists and record panels
 
@@ -80,7 +80,7 @@ Every operational table in the Base/Core/Web composition uses the shared FlexTab
 | `/workspace` — Saved layouts modal | `base/tiling/lib/tiling/web/workspace_live.ex`: LC; no sort/search/pager; open/rename/default/layout/save/update/confirmed delete | LC | OK; modal opened before exercising controls |
 | `/workspace` — Shared with you modal | Same owner: separate LC; no sort/search/pager; open/copy | LC | OK |
 | `/workspace/shared-layouts` | `tiling/web/shared_layouts_live.ex`: LC; no sort/search/pager; publish/name/audience/confirmed delete | LC | OK |
-| `/system/database-tables` | Absent from Bilimbi pin; Belimbing `app/Base/Database/Livewire/DatabaseTables/Index.php`: registry search/wildcards, table/module/migration sorting, paging | LC plus step-up gate, P3 | Retained established Bilibi contract; browser checked after step-up |
+| `/system/database-tables` | Absent from Bilimbi pin; Belimbing `app/Base/Database/Livewire/DatabaseTables/Index.php`: registry search/wildcards, table/module/migration sorting, paging | LC plus step-up gate, P3 | C4: canonical owner-key sort indicators; retained established Bilibi contract; browser checked after step-up |
 | `/system/database-tables/{table}` — Data | Belimbing `resources/core/views/livewire/admin/system/database-tables/partials/show-data-tab.blade.php`: dynamic columns, search/sort, raw/formatted and foreign-key links | LC dynamic projection | C4: owner-name sort indicator; step-up/raw/formatted/search/paging retained |
 | DB table — Schema | Belimbing `…/partials/show-schema-tab.blade.php`: columns/indexes; Bilibi also shows constraints | Three LCs | OK; columns/indexes/constraints all exercised |
 | DB table — Relationships | Same business inspection contract; outgoing/incoming references | Two LCs | OK; both directions exercised |
