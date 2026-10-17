@@ -2,7 +2,7 @@
 
 **Document Type:** Architecture Decision Record
 **Status:** Accepted for the direction. The implementation is a follow-up Platform slice.
-**Agents:** claude-cloud/sonnet-5.5-default (author)
+**Agents:** claude-cloud/sonnet-5.5-default (author), amp/gpt-6-luna-default (review), oracle amp/gpt-6-astra
 **Scope:** How a business action is defined once and reached from the GUI, a CLI, an HTTP API and MCP, with the same rules for a human and for an agent acting for a human
 **Last Updated:** 2026-10-17
 
@@ -23,13 +23,13 @@ Bilibi has four doors. Each serves a different caller.
 | API (`/api/v1`) | Machines | Agents |
 | MCP (`/mcp`) | Agents | |
 
-**Example: the accounting clerk.** Today a clerk keys every incoming and outgoing document and every ledger entry by hand. It is slow and typos creep in. With an agent in a harness, the clerk says what arrived, the agent reads the document, searches for the vendor, drafts the entries and shows them. The clerk reviews and approves in the harness. Bilibi writes, audits and keeps the evidence.
+**Example: the accounting clerk.** Today a clerk keys every incoming and outgoing document and every ledger entry by hand. It is slow and typos creep in. With an agent in a harness, the clerk says what arrived, the agent reads the document, searches for the vendor and drafts the entries. The agent may post them within what the clerk may do. Bilibi checks the capability and the tenant's step-up policy, writes, audits and keeps the evidence.
 
 What this needs from the platform:
 
 - An agent finds what it can do without a hand-kept list. The mounted modules differ per installation.
 - An agent searches and reads as much as it writes. Most clerical work is lookup: does this vendor exist, which invoice is this, what was posted last month.
-- A write is shown before it is made, and the person agrees. The harness is expected to obtain that agreement. Bilibi does not enforce or verify it (see section 2).
+- A write is previewed before it is committed, so the exact change is known and checked. Bilibi does not require or verify a human's approval of each write (see section 2).
 - The agent can do whatever the person can do, and never more.
 - Every door gives the same answer for the same action. A rule fixed in one door must not stay broken in another.
 
@@ -51,7 +51,7 @@ A contract declares:
 | Idempotency | How a repeated call is recognised: a version fence, or a single-use code |
 | Preview and commit | For writes: a preview with no business write, then a commit |
 | Audit | The change records, taken in the same transaction as the write |
-| Channels | Optional: which doors may call it, for technical reasons only (for example an action that needs a browser session). Never a way to withhold from an agent what its person may do |
+| Channels | Optional: which doors may call it, for technical reasons only (for example an action that needs a browser session). Never a channel restriction on who may do a sensitive action: that is authorization and step-up |
 
 - GUI pages, the CLI, `/api/v1` and `/mcp` are **callers** of contracts. A page's button invokes the contract. For an action a contract covers, it never calls the module facade directly.
 - Every door then gets the same authorization, validation, audit, idempotency and step-up with no extra work.
@@ -63,17 +63,17 @@ A contract declares:
 - **Agents act as the human.** The person is the actor. The agent is a facet on the scope. Separation of duties still applies: an agent cannot approve what its person may not approve.
 - **An agent may perform any action its person may perform, and never more.** That includes authority administration (roles, grants, field restrictions, settings, agent connections) and platform actions, when the person holds them. The agent's reach is the person's live capabilities, read afresh on every call.
 - **Step-up protects sensitive actions** (section 4), for agents and humans alike. A capability alone is not the guard on a sensitive action.
-- **Impersonation is treated like any other action.** Today's code refuses it for agents by policy (`apps/base/agent_api/src/reach.rs`), not because something makes it impossible: the scope already carries both the actor and the impersonator, and audit records both. No policy reason keeps it human-only, so it follows the same rule: allowed when the person holds it, and guarded by step-up. It also needs design work, listed under the follow-up slice below.
+- **Impersonation is the one exception to agent/person parity.** An agent does not impersonate. The agent acts as its person, and an agent switching to another identity would break that in the audit trail: the actor would no longer be the person who granted the connection. This is a named exception. Every other action follows the parity rule and is guarded by authorization and step-up, not by channel restrictions.
 - **Reads and searches are first-class.** Search, describe, guide and read are contracts too. They are cheap, fresh and capability-filtered.
-- **Writes are preview, then a single-use commit.** The preview writes nothing and returns a review and a random code. The commit consumes the code once, rechecks everything, and rolls back all writes and audit rows together if any step fails. **The code proves the reviewed contract, not human consent.** The same agent credential can preview and commit (`apps/base/agent_api/src/plans.rs`), so Bilibi cannot tell a reviewed write from an unattended one. Person approval is an assumption of the harness until independently verified approval evidence is added. Unattended writes are therefore not excluded by the platform today; whether to exclude or allow them is open.
-- **Audit evidence is append-only.** Every correction, reversal or deletion leaves an audit record that cannot be changed. Each module defines which of correction, reversal or deletion its records allow. Some operations delete today and keep the old value in a `Change` (for example department delete in `apps/core/company/src/departments.rs`). Reversal rather than deletion is the preferred direction for business records. Making it a universal rule is a separate decision with migration implications, and is open.
+- **Writes are preview, then a single-use commit.** The preview writes nothing and returns a review and a random code. The commit consumes the code once, rechecks everything, and rolls back all writes and audit rows together if any step fails. **The code proves the reviewed contract, not consent.** Bilibi does not enforce that a human approves each agent write. The same agent credential can preview and commit (`apps/base/agent_api/src/plans.rs`). Agents may write unattended within their person's reach. What Bilibi enforces is the capability check and the tenant's step-up policy (2FA, section 4; not built yet).
+- **Audit evidence is append-only.** Every change leaves an audit record that cannot be altered. Each module defines its own correction behaviour. Financial and other evidentiary records (ledger entries, posted documents) are corrected by reversal: a new, dated, audited record that reverses or replaces the old one. Ordinary master data may be deleted, with the change audited. Today's code already deletes some master data and keeps the old value in a `Change` (for example department delete, `apps/core/company/src/departments.rs`).
 - **Tenant and actor come from the credential**, never from input.
 
 ### Agent identity at runtime
 
 - **Bilibi identifies an agent by its connection**: the person it acts for, the registered client, the grant and its expiry. Each request also gets a trace ID, which is the correlation ID of the recorded exchange and of any mutation it commits.
 - **The agent also reports itself**: harness, model, version and effort, in the same `harness/model-version-effort` form the ADR headers use (for example `amp/gpt-6-astra-high`).
-- Report known values only. An unknown value is omitted (or written `unknown`). Never guess it. Missing metadata does not reject an otherwise authorized request, and an ordinary machine caller does not have to invent an agent identity.
+- Report known values only. Omit an unknown part rather than guess it. Never reject an otherwise authorized request for missing metadata. Ordinary machine callers need not send it.
 - That report is labelled **self-reporting**: what the agent reports about itself. It is recorded beside the harness/model-version-effort value for audit and support. It is **never used for authorization**.
 - Today the API records only the self-reporting `X-Bilibi-Agent-Id` and `X-Bilibi-Run-Id` labels (`apps/web/README.md`). Recording the harness/model-version-effort form is a follow-up code change.
 
@@ -93,7 +93,7 @@ A contract declares:
 
 ### 5. Prompt injection is deferred
 
-Protection against hostile content in documents an agent reads is **deliberately deferred to the agentic design**. Until then, the controls above limit the damage: agents get no more power than their person, step-up guards sensitive actions (once built), grants are revocable, and every call is logged. Person review of each write is a harness expectation, not a Bilibi guarantee, so it is not a control this deferral can rely on. Results already carry an untrusted-content notice.
+Protection against hostile content in documents an agent reads is **deliberately deferred to the agentic design**. It stays an open item. No control above claims to prevent it: Bilibi does not enforce human review of agent writes. Results carry an untrusted-content notice, grants are revocable and every call is logged, which help detection and cleanup only.
 
 ## Status of each door today
 
@@ -112,7 +112,7 @@ The registry is `base/agent_api` (`apps/base/agent_api/README.md`). It is the pa
 - It is **agent-facing only**. Pages do not use it.
 - Only three Core modules contribute operations: `core/company` (companies, relationship roles and relationships), `core/person` and `core/affiliation`.
 - No Domain or Extension contributes yet. None is mounted in this repository.
-- Discovery refuses authority-administration capabilities for agents (role, grant and field administration, impersonation, settings, agent-connection management). `apps/base/agent_api/src/reach.rs` and `apps/core/agent_access/src/lib.rs` hold these refusals. This contradicts the decision above.
+- Discovery refuses authority-administration capabilities for agents (role, grant and field administration, impersonation, settings, agent-connection management). `apps/base/agent_api/src/reach.rs` and `apps/core/agent_access/src/lib.rs` hold these refusals. This contradicts the decision above, except for impersonation, which stays refused for agents.
 - Writes use the plan service: preview, then a single-use code. Idempotency today is that code plus version fencing in each owner. There is no caller-supplied idempotency key.
 - Step-up is not generic. Two password confirmations exist, each hard-wired: the database tables page (`apps/base/system/src/database_tables/gate.rs`) and secret reveal (`apps/base/settings_editor/src/reveal.rs`, which also checks permission, throttles attempts and audits each one before a value is returned). No 2FA exists and no operation can declare a policy.
 - There are no per-channel declarations. Every registered operation is reachable by agents.
@@ -121,12 +121,12 @@ The registry is `base/agent_api` (`apps/base/agent_api/README.md`). It is the pa
 
 **Follow-up Platform slice** (this record sets the direction and does not change code):
 
-- The registry becomes channel-agnostic. A contract may declare the channels allowed to call it for technical reasons. There is no general human-only exception. Sensitive actions are protected by shared authorization and step-up. Any exception to person/agent parity needs a narrow scope and an explicit owner decision.
+- The registry becomes channel-agnostic. A contract may declare the channels allowed to call it for technical reasons. There is no general human-only option. Sensitive actions are expressed through authorization and step-up. Impersonation is the one named exception to agent/person parity (section 2).
 - GUI write events invoke contracts. Pages keep rendering and live patching.
 - A platform check (boot or CI) refuses a page write event that names no registered contract. This replaces any separate parity rule.
 - Step-up declarations become a property of the contract. 2FA, the tenant policy and the window rules in section 4 are built on that. The two existing password confirmations (database tables, secret reveal) move onto the same mechanism.
 - The CLI client is built over the same contracts, as a caller like `/api/v1`.
-- Design work, because lifting the refusals is not enough: today impersonation switches a browser session using its session token and CSRF proof (`apps/core/user/src/impersonation.rs`); an agent connection reconstructs its owner, not an impersonated identity (`apps/core/agent_access/src/lib.rs`); and `prove_owner` rejects impersonated and agent scopes (`apps/base/tenancy/src/lib.rs`). Credential-bound impersonation and platform-owner standing or delegation need a design that keeps actor attribution and live revocation. The existing scope fields alone do not provide them.
+- Design work, because lifting the refusals is not enough. **Platform-owner standing for agents:** `prove_owner` rejects agent scopes today (`apps/base/tenancy/src/lib.rs`), so an agent cannot reach platform-owner actions or owner-only pages even when its person is the owner. Define how an agent may hold the owner's standing, and any agent path to owner-only pages, with actor attribution and live revocation preserved. The existing scope fields alone do not provide this.
 - `base/agent_api` stops refusing authority-administration capabilities for agents, as part of this slice. Agent reach becomes the person's live capabilities. Step-up policies on those contracts must land first or together, so the refusal is not lifted before its replacement exists.
 
 **Open items:**
@@ -143,7 +143,7 @@ The registry is `base/agent_api` (`apps/base/agent_api/README.md`). It is the pa
 
 - Lifting the refusal widens what a stolen or misused agent grant can do. A grant could change roles or grant `core_admin` if its person may.
 - Two controls contain this: step-up policy on sensitive contracts, and grants that are per person, time-limited and revocable at any moment. Revocation is proved live on every request.
-- Prompt injection stays deferred to the agentic design (section 5). The wider reach raises the stakes of that gap. Revisit it before agents run unattended.
+- Prompt injection stays an open item, deferred to the agentic design (section 5). The wider reach and unattended writes raise the stakes of that gap. No control here mitigates it.
 
 **Costs of the decision:**
 
