@@ -74,11 +74,13 @@ Controls:
   params change, and the pages prove it again. No role or grant extends it, so
   a `core_admin` of the operator tenant gets the standard 403 and no menu item.
   Because only the owner reads, Data shows rows of every tenant.
-- **Step-up.** Outside development (`BILIBI_ENV`) the routes are
-  `Access::StepUp(&Access::Owner)`: the host sends the owner to an
-  authenticator-code prompt first, unless this session confirmed one within
-  the window (Core User, `two_factor.step_up_minutes`, 15 by default), and
-  the open page leaves for the prompt when the window runs out. In every
+- **Step-up.** Opening the pages is the Base Step-up operation
+  `base.system.database_tables.view` ("Open the database tables pages"),
+  declared here on the installation floor, so tenants cannot turn it off.
+  The routes are `Access::StepUp { operation, inner: &Access::Owner }`: outside
+  development (`BILIBI_ENV`) the host sends the owner to confirm first unless
+  the session's window holds, and an open page leaves for the prompt when the
+  window runs out. In every
   environment each mounted page then asks for the owner's password
   (`Authentication::confirm_password`, the stored-secret reveal's re-proof,
   five failures a minute). The first paint carries no data.

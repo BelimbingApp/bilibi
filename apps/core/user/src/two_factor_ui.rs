@@ -317,7 +317,7 @@ impl TwoFactorPage {
             entries: settings_entries(),
             current: "two-factor".into(),
             heading: "Two-factor authentication",
-            subheading: "Protect sensitive pages with a code from an authenticator app.",
+            subheading: "Confirm protected actions with a code from an authenticator app.",
             stage,
             notice: &self.notice,
             password,

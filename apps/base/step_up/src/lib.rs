@@ -56,7 +56,8 @@ inventory::submit! {
         services: &[bilibi_module_registry::Service { id: SERVICE, factory: |services| Ok(std::sync::Arc::new(StepUp::new(
             services.get::<bilibi_database::Db>("base/database.pool")?.as_ref().clone(),
             services.get("base/settings.store")?,
-            services.catalog()?,
+            // The linked modules' declarations; an unmounted module declares none.
+            &bilibi_module_registry::Catalog::discover(&bilibi_module_registry::discover()?)?,
         )?)) }],
     }
 }

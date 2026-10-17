@@ -165,3 +165,9 @@ Compact/Normal presets and Reset. The account's column order, lenses and row
 height are saved automatically by shared `PageViews`; an explicit column URL
 wins on load. Bilimbi documents no named/shared Grid views, so the persisted
 account arrangement and shareable URL are the saved-view contract here too.
+
+## Step-up
+
+- Retiring a person is the Base Step-up operation `core.person.retire` (`src/step_up.rs`), off by default.
+- A tenant that turns it on in `/authz/step-up` gets the account holder's code asked for both the page facade (`PersonService::retire`) and the agent write (`core.person.retire`).
+- See `apps/base/step_up/README.md`.

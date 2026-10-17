@@ -174,7 +174,12 @@ fn storage(error: &bilibi_database::Error) -> bool {
     use bilibi_database::Error as E;
     !matches!(
         error,
-        E::Forbidden | E::NotFound | E::Conflict | E::Invalid | E::Unauthorized
+        E::Forbidden
+            | E::NotFound
+            | E::Conflict
+            | E::Invalid
+            | E::Unauthorized
+            | E::StepUpRequired { .. }
     )
 }
 

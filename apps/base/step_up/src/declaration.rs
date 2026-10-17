@@ -46,7 +46,7 @@ impl Operation {
 }
 
 /// Declares one step-up-capable operation from module `$module`:
-/// `bilibi_step_up::declare!("core/person", Operation::new("core.person.retire", "Retire a person").off_by_default());`
+/// `bilibi_step_up::declare!("domain/module", Operation::new("domain.module.thing.approve", "Approve a thing").off_by_default());`
 #[macro_export]
 macro_rules! declare {
     ($module:literal, $operation:expr) => {

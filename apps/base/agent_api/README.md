@@ -110,6 +110,8 @@ back all writes, audit rows and code consumption. A competing submission waits
 for the row lock then sees the consumed code. Failed commits leave the code
 usable until expiry, subject to a fresh successful revalidation.
 
+An owner's commit may answer `Error::StepUpRequired` (Base Step-up). The whole commit rolls back, and the plan code stays usable until it expires. The edges answer `step_up_required` with the operation and reason. The client asks its human for a current authenticator code and commits the same plan again with `step_up_code`. That code is used once, for that operation, and opens the agent connection's window (`apps/base/step_up/README.md`).
+
 Owners implement deterministic `WriteHandler::preview` without business writes,
 including defaults, versions, reference facts and restricted fields in the
 review. `commit` must lock and revalidate its owner facts (including concurrent

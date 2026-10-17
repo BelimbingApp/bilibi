@@ -30,7 +30,7 @@ use tokio_postgres::GenericClient;
 pub const ISSUER_KEY: &str = "two_factor.issuer";
 /// The account's two-factor settings page (enrollment and management).
 pub const SETTINGS_PATH: &str = "/settings/two-factor";
-/// The step-up prompt a guarded page sends the browser to.
+/// The step-up prompt a browser is sent to (Base Step-up's web proof).
 pub const CONFIRM_PATH: &str = "/settings/two-factor/confirm";
 /// The record the sealed secret is bound to (`Settings::seal_owned`).
 const OWNER: &str = "core/user.two_factor";

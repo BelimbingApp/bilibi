@@ -20,7 +20,7 @@ const COMPONENT: &AsciiSet = &NON_ALPHANUMERIC
 const QUIET_ZONE: usize = 4;
 
 /// The key URI for one account. `issuer` is the installation's setting and
-/// `account` the sign-in email, so the app lists the entry as
+/// `account` the account's email, so the app lists the entry as
 /// `Issuer (email)`.
 pub fn key_uri(issuer: &str, account: &str, secret_base32: &str) -> String {
     let issuer = utf8_percent_encode(issuer, COMPONENT).to_string();
