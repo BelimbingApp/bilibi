@@ -24,10 +24,22 @@ page's exact pattern, and answers GET with a 308 that keeps the parameter
 segments and the query string. It checks no access; the destination does.
 
 Access is checked before the owner renders: Public, SignedIn, Capability(key),
-Operator, or OperatorCapability(key). Operator requires the persisted Tenancy
+Operator, OperatorCapability(key), Owner, or StepUp(&inner). Operator requires the persisted Tenancy
 proof, never a tenant-ID convention or an admin grant. OperatorCapability
 requires both proof and capability; direct denials still win. Browser GETs
 without a valid session redirect to login. Authenticated refusals return 403.
+`StepUp(&inner)` checks `inner`, then, unless `BILIBI_ENV` is `development`,
+asks Core User whether this session passed an authenticator check within
+`two_factor.step_up_minutes`. A GET that has not is redirected to
+`/settings/two-factor/confirm?return=<address>` (or to
+`/settings/two-factor?return=…` for an account with no authenticator yet);
+any other method, an embed or a panel is refused with 403. A live socket on a
+step-up page re-asks on every event and 15 s refresh and, once the window has
+run out, reloads its address so the HTTP guard shows the prompt. Boot refuses
+a step-up of `Public` or of another step-up. Wrap a route's access to guard
+it: `access: Access::StepUp(&Access::Owner)` (the database-tables pages in
+`apps/base/system/src/lib.rs`). Menus and tile pickers check only the inner
+access.
 Other methods also require the configured Origin and, for an authenticated
 scope, `X-CSRF-Token`. The secret rotates when the session switches identity
 (impersonation), so a request from a page rendered before the switch is refused;

@@ -143,6 +143,18 @@ cargo run -p bilibi-web -- run
 | `BILIBI_DEV_PORT` | Launcher backend port, default 4300 |
 | `MAIL_HOST` | SMTP relay. Unset writes to `.local/mailbox/` |
 | `BILIBI_USER_SIGNING_KEY` | 64 hex characters, for email verification |
+| `BILIBI_SETTINGS_KEY` | 64 hex characters. Encrypts secret settings and authenticator keys. Two-factor setup refuses without it |
+| `BILIBI_ENV` | `development`, `staging` or `production`. Unset means `production`. Any other value refuses to boot |
+
+`BILIBI_ENV` decides one thing today: whether step-up applies.
+
+| `BILIBI_ENV` | Pages marked `Access::StepUp` (database tables) |
+|--------------|-----------------------------------------------|
+| `development` | Open as before, no authenticator check |
+| `staging`, `production`, unset | Need an authenticator code within the last 15 minutes (`two_factor.step_up_minutes`) |
+
+- Set `BILIBI_ENV=development` only on a developer machine. A missing value never weakens a guard.
+- Each account sets up its authenticator at `/settings/two-factor`. See [Core User](apps/core/user/README.md#two-factor-authentication-and-step-up).
 
 - POST requests and WebSocket upgrades require the `APP_ORIGIN` Origin.
 - HTTPS origins set Secure cookies. Terminate TLS at a reverse proxy.
