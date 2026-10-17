@@ -262,24 +262,31 @@ pub enum Access {
     /// bootstrap account in the operator tenant, in its own browser session.
     /// No role, capability or grant extends it to anyone else.
     Owner,
-    /// The inner access, then step-up ("sudo mode"): outside a development
-    /// deployment the session must have passed an authenticator check
-    /// recently (Core User's window), or a GET is sent to confirm access
-    /// first. Wrap a signed-in access, never `Public` or another `StepUp`;
-    /// Web refuses either at boot.
-    StepUp(&'static Access),
+    /// The inner access, then Base Step-up's check of `operation` (a key
+    /// the route's owner declared with `bilibi_step_up::declare!`): when the
+    /// tenant's policy requires it, a GET without a holding check is sent to
+    /// confirm first. Wrap a signed-in access, never `Public` or another
+    /// `StepUp`; Web refuses either, and an undeclared operation, at boot.
+    StepUp {
+        operation: &'static str,
+        inner: &'static Access,
+    },
 }
 impl Access {
     /// The access without its step-up wrapper: what menus and embeds check,
     /// since step-up gates opening a page, not seeing that it exists.
     pub fn base(self) -> Access {
         match self {
-            Access::StepUp(inner) => *inner,
+            Access::StepUp { inner, .. } => *inner,
             access => access,
         }
     }
-    pub fn steps_up(self) -> bool {
-        matches!(self, Access::StepUp(_))
+    /// The declared step-up operation of a wrapped access.
+    pub fn step_up(self) -> Option<&'static str> {
+        match self {
+            Access::StepUp { operation, .. } => Some(operation),
+            _ => None,
+        }
     }
 }
 /// Metadata consumed by the Web adapter; registration does not bypass guards.

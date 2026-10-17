@@ -1,0 +1,16 @@
+[package]
+name = "bilibi-step-up"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+bilibi-audit.workspace = true
+bilibi-database.workspace = true
+bilibi-module-registry.workspace = true
+bilibi-settings = { path = "../settings" }
+bilibi-tenancy = { path = "../tenancy" }
+inventory.workspace = true
+serde_json.workspace = true
+tokio-postgres.workspace = true

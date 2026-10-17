@@ -405,6 +405,7 @@ pub struct ConfirmPage {
     users: Arc<UserService>,
     enabled: bool,
     minutes: i64,
+    hours: i64,
     return_to: Option<String>,
     errors: Vec<String>,
     notice: String,
@@ -426,6 +427,7 @@ struct ConfirmView<'a> {
     notice: &'a str,
     enabled: bool,
     minutes: i64,
+    hours: i64,
     code: Html,
     setup_href: &'a str,
 }
@@ -437,11 +439,12 @@ impl ConfirmPage {
         query: &HashMap<String, String>,
     ) -> Result<Self, Error> {
         let enabled = users.two_factor_status(scope).await?.enabled;
-        let minutes = users.step_up_minutes().await?;
+        let window = users.step_up.window(scope).await?;
         Ok(Self {
             users,
             enabled,
-            minutes,
+            minutes: window.window_minutes,
+            hours: window.cap_hours,
             return_to: return_to(query),
             errors: Vec::new(),
             notice: if scope.impersonator().is_some() {
@@ -464,13 +467,14 @@ impl ConfirmPage {
         ConfirmView {
             header: fragment(Html::render(&Header {
                 title: Html::text("Confirm access"),
-                subtitle: "This page asks for your authenticator again before it opens.",
+                subtitle: "This action asks for your authenticator before it goes ahead.",
                 title_actions: Html::EMPTY,
                 actions: Html::EMPTY,
             }))?,
             notice: &self.notice,
             enabled: self.enabled,
             minutes: self.minutes,
+            hours: self.hours,
             code: code_field("two_factor_code", "Authentication code", &self.errors)?,
             setup_href: &setup_href,
         }

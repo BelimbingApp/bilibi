@@ -250,7 +250,7 @@ inventory::submit! { Contribution::new(VOCABULARY,"authz.builtin",Provenance {mo
         C::tenant("admin.authz.role.list"), C::tenant("admin.authz.role.view"), C::tenant("admin.authz.role.create"), C::tenant("admin.authz.role.update"), C::tenant("admin.authz.role.delete"),
         C::tenant("admin.authz.capability.list"), C::tenant("admin.authz.decision-log.list"),
         C::tenant("admin.authz.system-principal.list"), C::tenant("admin.authz.system-principal.grant"), C::tenant("admin.authz.system-principal.revoke"),
-        C::tenant("admin.authz.field.manage"), C::tenant("admin.user.impersonate"),
+        C::tenant("admin.authz.field.manage"), C::tenant("admin.authz.step-up.manage"), C::tenant("admin.user.impersonate"),
     ],
     roles:&[
         RoleDefinition {
@@ -259,7 +259,7 @@ inventory::submit! { Contribution::new(VOCABULARY,"authz.builtin",Provenance {mo
         },
         RoleDefinition {
             description: "Full control within a single tenant: commerce, AI, messaging, company, employees, and addresses. No platform administration.",
-            ..role("tenant_owner", "Tenant Owner", false, &["admin.authz.field.manage"])
+            ..role("tenant_owner", "Tenant Owner", false, &["admin.authz.field.manage", "admin.authz.step-up.manage"])
         },
         RoleDefinition {
             description: "Read-only access to decision logs, system logs, and sessions for compliance.",

@@ -159,15 +159,6 @@ inventory::submit! {
             capability: Some(bilibi_session::MANAGE), reveal_duration_ms: 5_000 }),
     }))
 }
-inventory::submit! {
-    Contribution::new(DEFINITIONS, crate::STEP_UP_MINUTES_KEY, Provenance { module: "core/user", source: file!(), line: line!() }, &Setting::Definition(Definition {
-        value_type: bilibi_settings::ValueType::Integer, scopes: &[ScopeKind::Global], default: || serde_json::json!(15),
-        nullable: false, encrypted: false, minimum: Some(1.0), maximum: Some(120.0), validator: None,
-        editor: Some(bilibi_settings::Editor { group: "Two-factor authentication", label: "Confirmed access window",
-            help: "Minutes a sensitive page stays open after an authenticator code before it asks again.",
-            capability: Some(bilibi_session::MANAGE), reveal_duration_ms: 5_000 }),
-    }))
-}
 
 inventory::submit! {
     Contribution::new(ROUTES, "core/user.settings.appearance", Provenance { module: "core/user", source: file!(), line: line!() }, &Route {

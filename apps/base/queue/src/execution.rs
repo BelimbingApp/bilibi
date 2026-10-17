@@ -103,7 +103,8 @@ inventory::submit! { Consumer::new::<ObserverBinding>(OBSERVERS,"base/queue",val
 #[derive(Clone, Debug)]
 pub enum Identity {
     /// The user who enqueued the job, with the same party facets as then.
-    User(Scope),
+    /// Boxed: a sealed scope is far larger than a system identity.
+    User(Box<Scope>),
     /// A named system principal, declared in Authz with a durable tenant grant.
     System(SystemScope),
 }
@@ -355,7 +356,7 @@ impl Executor {
                     return Err(Error::Unauthorized);
                 }
                 bilibi_authz::authorize_key(&**client, &scope, bound.capability).await?;
-                Identity::User(scope)
+                Identity::User(Box::new(scope))
             }
             "system" => {
                 // Declaration and durable grant are read live; a principal whose

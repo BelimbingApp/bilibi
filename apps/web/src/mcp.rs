@@ -118,6 +118,7 @@ async fn handle(State(app): State<App>, request: Request) -> Response {
         claims,
         trace,
     } = agent;
+    let scope = scope.over_mcp();
     let outcome = match app.db.get().await {
         Ok(client) => {
             let authority = Grant {

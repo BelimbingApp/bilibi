@@ -17,6 +17,7 @@ serde_json.workspace = true
 serde.workspace = true
 bilibi-menu.workspace = true
 bilibi-settings = { path = "../settings" }
+bilibi-step-up.workspace = true
 bilibi-ui.workspace = true
 bilibi-datetime = { path = "../datetime" }
 bilibi-locale = { path = "../locale" }

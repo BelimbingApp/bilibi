@@ -1,10 +1,10 @@
-//! Authenticator-app two-factor authentication (TOTP, RFC 6238) and the
-//! step-up check ("sudo mode") built on it. Bilimbi has no counterpart yet;
-//! the flow follows GitHub's: re-enter the password, scan a QR code, confirm
-//! with a current code, keep ten one-time recovery codes. A sensitive page
-//! asks for a fresh code through the host's `Access::StepUp` guard, which
-//! reads [`UserService::stepped_up`] and sends the browser to
-//! [`CONFIRM_PATH`] or, with no authenticator yet, [`SETTINGS_PATH`].
+//! Authenticator-app two-factor authentication (TOTP, RFC 6238), and the
+//! second-factor provider behind Base Step-up (`provider.rs`). Bilimbi has
+//! no counterpart yet; the flow follows GitHub's: re-enter the password, scan
+//! a QR code, confirm with a current code, keep ten one-time recovery codes.
+//! This module knows nothing of what step-up guards: it checks the account
+//! holder, opens the browser session's window ([`CONFIRM_PATH`]) and spends a
+//! code an agent carries, for whatever purpose the contract names.
 //!
 //! Every account-level write is one `MutationBoundary` transaction whose
 //! action names what happened (`user.two_factor.enabled`, `.failed`,
@@ -12,9 +12,12 @@
 //! `Change`, an action payload or a log line. The secret is sealed with the
 //! installation key (`Settings::seal_owned`) and never leaves the server
 //! except inside the enrollment page, once, after the password was re-entered.
+mod provider;
 mod qr;
 mod recovery;
 mod totp;
+
+pub use provider::Authenticator;
 
 use crate::{password, UserService};
 use bilibi_audit::{record_action, Attribution};
@@ -25,7 +28,6 @@ use serde_json::json;
 use tokio_postgres::GenericClient;
 
 pub const ISSUER_KEY: &str = "two_factor.issuer";
-pub const STEP_UP_MINUTES_KEY: &str = "two_factor.step_up_minutes";
 /// The account's two-factor settings page (enrollment and management).
 pub const SETTINGS_PATH: &str = "/settings/two-factor";
 /// The step-up prompt a guarded page sends the browser to.
@@ -83,7 +85,13 @@ pub struct Enrollment {
 
 /// What a proven code is spent on.
 enum Spend {
+    /// Opens the browser session's step-up window.
     StepUp,
+    /// Covers one step-up action the contract names (an agent's code).
+    Purpose {
+        operation: String,
+        channel: &'static str,
+    },
     /// The new set's Argon2id hashes.
     Regenerate(Vec<String>),
     Disable,
@@ -102,6 +110,7 @@ async fn spent_for(
     let (tenant, user) = (scope.tenant(), scope.user());
     match spend {
         Spend::StepUp => sessions.step_up(sql, scope).await?,
+        Spend::Purpose { .. } => {}
         Spend::Regenerate(hashes) => replace_recovery_codes(sql, tenant, user, &hashes).await?,
         Spend::Disable => {
             sql.execute(
@@ -185,31 +194,6 @@ impl UserService {
         let enabled = self.two_factor_status(scope).await?.enabled;
         let base = if enabled { CONFIRM_PATH } else { SETTINGS_PATH };
         Ok(with_return(base, Some(return_to)))
-    }
-
-    /// Whether this session passed an authenticator check within the
-    /// installation's step-up window (`two_factor.step_up_minutes`). An
-    /// impersonated session never has: the check proves the account's own
-    /// holder, so an operator cannot step up as someone else.
-    pub async fn stepped_up(&self, scope: &Scope) -> Result<bool> {
-        if scope.impersonator().is_some() {
-            return Ok(false);
-        }
-        let minutes = self.step_up_minutes().await?;
-        let client = self.db.get().await?;
-        self.sessions
-            .stepped_up_within(&**client, scope, minutes.saturating_mul(60))
-            .await
-    }
-
-    /// The installation's step-up window in minutes.
-    pub async fn step_up_minutes(&self) -> Result<i64> {
-        let client = self.db.get().await?;
-        self.settings
-            .get_global(&**client, STEP_UP_MINUTES_KEY)
-            .await?
-            .as_i64()
-            .ok_or(Error::Internal)
     }
 
     /// Step one of enrollment: the password again, then a fresh secret,
@@ -461,10 +445,18 @@ impl UserService {
             Proof::Recovery(_) => "recovery_code",
         };
         let event = match (&spend, &proof) {
-            (Spend::StepUp, Proof::Recovery(_)) => "user.two_factor.recovery_code_used",
-            (Spend::StepUp, Proof::Authenticator(_)) => "user.two_factor.verified",
+            (Spend::StepUp | Spend::Purpose { .. }, Proof::Recovery(_)) => {
+                "user.two_factor.recovery_code_used"
+            }
+            (Spend::StepUp | Spend::Purpose { .. }, Proof::Authenticator(_)) => {
+                "user.two_factor.verified"
+            }
             (Spend::Regenerate(_), _) => "user.two_factor.recovery_codes_regenerated",
             (Spend::Disable, _) => "user.two_factor.disabled",
+        };
+        let purpose = match &spend {
+            Spend::Purpose { operation, channel } => json!({"for": operation, "channel": channel}),
+            _ => json!({}),
         };
         let sessions = self.sessions.clone();
         let session = scope.clone();
@@ -495,7 +487,15 @@ impl UserService {
                     }
                     clear_failures(sql, tenant, user).await?;
                     let new = match spent_for(sql, &sessions, &session, spend).await? {
-                        Spent::Kept => json!({"status": "enabled", "checked_with": method}),
+                        Spent::Kept => {
+                            let mut new = json!({"status": "enabled", "checked_with": method});
+                            if let (Some(new), Some(purpose)) =
+                                (new.as_object_mut(), purpose.as_object())
+                            {
+                                new.extend(purpose.clone());
+                            }
+                            new
+                        }
                         Spent::Deleted => json!({}),
                     };
                     Ok(((), vec![change(user, json!({"status": "enabled"}), new)]))
