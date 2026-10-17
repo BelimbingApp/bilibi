@@ -9,7 +9,7 @@
 
 ## Context
 
-**A person should be able to do all daily work on Bilibi by talking to an agent in a harness.** The harness runs the model. Bilibi runs no model.
+**People should not key data by hand. Agents do the routine work.** A person should be able to do all daily work on Bilibi by talking to an agent in a harness, including administration. The harness runs the model. Bilibi runs no model.
 
 Bilibi has four doors. Each serves a different caller.
 
@@ -27,7 +27,7 @@ What this needs from the platform:
 - An agent finds what it can do without a hand-kept list. The mounted modules differ per installation.
 - An agent searches and reads as much as it writes. Most clerical work is lookup: does this vendor exist, which invoice is this, what was posted last month.
 - A write is shown before it is made, and the person agrees.
-- The agent never has more power than the person it acts for.
+- The agent can do whatever the person can do, and never more.
 - Every door gives the same answer for the same action. A rule fixed in one door must not stay broken in another.
 
 ## Decision
@@ -58,7 +58,9 @@ A contract declares:
 ### 2. Rules that hold for every caller
 
 - **Agents act as the human.** The person is the actor. The agent is a facet on the scope. Separation of duties still applies: an agent cannot approve what its person may not approve.
-- **Agents never exceed their person.** Platform capabilities and authority administration (roles, grants, field restrictions, impersonation, settings, agent connections) are refused for agents.
+- **An agent may perform any action its person may perform, and never more.** That includes authority administration (roles, grants, field restrictions, settings, agent connections) and platform actions, when the person holds them. The agent's reach is the person's live capabilities, read afresh on every call.
+- **Step-up protects sensitive actions** (section 4), for agents and humans alike. A capability alone is not the guard on a sensitive action.
+- **Impersonation is treated like any other action.** Today's code refuses it for agents by policy (`apps/base/agent_api/src/reach.rs`), not because something makes it impossible: the scope already carries both the actor and the impersonator, and audit records both. No technical reason keeps it human-only, so it follows the same rule: allowed when the person holds it, guarded by step-up, and a contract may still mark it human-only.
 - **Reads and searches are first-class.** Search, describe, guide and read are contracts too. They are cheap, fresh and capability-filtered.
 - **Writes are preview, then a single-use commit.** The preview writes nothing and returns a review and a random code. The commit consumes the code once, rechecks everything, and rolls back all writes and audit rows together if any step fails.
 - **Corrections are reversals, never deletion.** A mistake is fixed by a new, dated, audited record that reverses or replaces the old one. Evidence stays append-only.
@@ -80,7 +82,7 @@ A contract declares:
 
 ### 5. Prompt injection is deferred
 
-Protection against hostile content in documents an agent reads is **deliberately deferred to the agentic design**. Until then, the controls above limit the damage: the person reviews every write, agents get no more power than their person, and every call is logged. Results already carry an untrusted-content notice.
+Protection against hostile content in documents an agent reads is **deliberately deferred to the agentic design**. Until then, the controls above limit the damage: the person reviews every write, agents get no more power than their person, step-up guards sensitive actions, and every call is logged. Results already carry an untrusted-content notice.
 
 ## Status of each door today
 
@@ -99,7 +101,7 @@ The registry is `base/agent_api` (`apps/base/agent_api/README.md`). It is the pa
 - It is **agent-facing only**. Pages do not use it.
 - Only three Core modules contribute operations: `core/company` (companies, relationship roles and relationships), `core/person` and `core/affiliation`.
 - No Domain or Extension contributes yet. None is mounted in this repository.
-- Discovery refuses authority-administration capabilities for agents.
+- Discovery refuses authority-administration capabilities for agents (role, grant and field administration, impersonation, settings, agent-connection management). `apps/base/agent_api/src/reach.rs` and `apps/core/agent_access/src/lib.rs` hold these refusals. This contradicts the decision above.
 - Writes use the plan service: preview, then a single-use code. Idempotency today is that code plus version fencing in each owner. There is no caller-supplied idempotency key.
 - Step-up is not generic. The only one is a password step-up on the database tables page (`apps/base/system/src/database_tables/gate.rs`). No 2FA exists and no operation can declare a policy.
 - There are no per-channel declarations. Every registered operation is reachable by agents.
@@ -113,6 +115,7 @@ The registry is `base/agent_api` (`apps/base/agent_api/README.md`). It is the pa
 - A platform check (boot or CI) refuses a page write event that names no registered contract. This replaces any separate parity rule.
 - Step-up declarations become a property of the contract. 2FA, the tenant policy and the window rules in section 4 are built on that.
 - The CLI client is built over the same contracts, as a caller like `/api/v1`.
+- `base/agent_api` stops refusing authority-administration capabilities for agents, as part of this slice. Agent reach becomes the person's live capabilities. Step-up policies on those contracts must land first or together, so the refusal is not lifted before its replacement exists.
 
 **Open items:**
 
@@ -123,6 +126,12 @@ The registry is `base/agent_api` (`apps/base/agent_api/README.md`). It is the pa
 | Prompt injection | Deferred to the agentic design |
 | Cost per document | Unmeasured. An agent that reads, searches and drafts per document spends model tokens on every call. The harness owner bears this. Bilibi can keep it down with small results, paging and clear guides. Measure it on a real document flow before promising anything |
 | Harness plugins | ChatGPT first. Not started |
+
+**Risk this decision accepts:**
+
+- Lifting the refusal widens what a stolen or misused agent grant can do. A grant could change roles or grant `core_admin` if its person may.
+- Two controls contain this: step-up policy on sensitive contracts, and grants that are per person, time-limited and revocable at any moment. Revocation is proved live on every request.
+- Prompt injection stays deferred to the agentic design (section 5). The wider reach raises the stakes of that gap. Revisit it before agents run unattended.
 
 **Costs of the decision:**
 
