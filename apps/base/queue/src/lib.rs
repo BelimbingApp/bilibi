@@ -87,6 +87,33 @@ impl Queue {
         self.insert(tx, scope.tenant(), actor, worker_id, args)
             .await
     }
+    /// Enqueue, inside another actor's transaction, a job that runs as a named
+    /// system principal: a Platform delivery edge (Base Events) whose work is
+    /// not that actor's command. The job and its audit row commit with the
+    /// owner's writes and stay attributed to the transaction's actor. The job
+    /// executes only as the principal, which re-proves its live declaration and
+    /// durable tenant grant on every attempt, so it gains nothing the principal
+    /// is not already granted in that tenant.
+    pub async fn enqueue_system_within(
+        &self,
+        tx: &mut MutationTransaction<'_>,
+        scope: &SystemScope,
+        worker_id: &str,
+        args: Value,
+    ) -> Result<JobRef> {
+        let principal = scope.principal().ok_or(Error::Forbidden)?;
+        if tx.context().tenant != scope.tenant()
+            || tx.context().impersonator.is_some()
+            || !bilibi_authz::vocabulary()?
+                .system_principals
+                .contains_key(principal)
+        {
+            return Err(Error::Forbidden);
+        }
+        let actor = Actor::System(principal.to_owned());
+        self.insert(tx, scope.tenant(), actor, worker_id, args)
+            .await
+    }
     async fn insert(
         &self,
         tx: &mut MutationTransaction<'_>,

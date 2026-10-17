@@ -48,6 +48,7 @@ bilibi-audit-views = { path = "apps/base/audit_views" }
 bilibi-authz = { path = "apps/base/authz" }
 bilibi-dashboard = { path = "apps/base/dashboard" }
 bilibi-datetime = { path = "apps/base/datetime" }
+bilibi-events = { path = "apps/base/events" }
 bilibi-design-library = { path = "apps/base/design_library" }
 bilibi-grid = { path = "apps/base/grid" }
 bilibi-integration = { path = "apps/base/integration" }

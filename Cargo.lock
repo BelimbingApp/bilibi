@@ -417,6 +417,7 @@ dependencies = [
  "bilibi-database",
  "bilibi-datetime",
  "bilibi-design-library",
+ "bilibi-events",
  "bilibi-grid",
  "bilibi-integration",
  "bilibi-locale",
@@ -566,6 +567,21 @@ dependencies = [
 [[package]]
 name = "bilibi-domains"
 version = "0.1.0"
+
+[[package]]
+name = "bilibi-events"
+version = "0.1.0"
+dependencies = [
+ "bilibi-authz",
+ "bilibi-database",
+ "bilibi-module-registry",
+ "bilibi-queue",
+ "bilibi-tenancy",
+ "inventory",
+ "serde_json",
+ "tokio",
+ "tokio-postgres",
+]
 
 [[package]]
 name = "bilibi-extensions"
