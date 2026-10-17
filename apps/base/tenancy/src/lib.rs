@@ -86,12 +86,67 @@ impl Actor {
         self.affiliation
     }
 }
+/// The surface a request arrived through. Step-up (`base/step_up`) picks
+/// its proof by it and audit records it; it grants nothing.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum Channel {
+    /// A browser session.
+    #[default]
+    Web,
+    /// The agent edge `/api/v1`.
+    Api,
+    /// The agent edge `/mcp`.
+    Mcp,
+}
+impl Channel {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Web => "web",
+            Self::Api => "api",
+            Self::Mcp => "mcp",
+        }
+    }
+}
+
+/// A step-up code the human account holder gave for this one request (an
+/// agent's commit carries it). A claim, not a proof: only the step-up
+/// provider can verify and spend it. Its `Debug` never shows the value.
+///
+/// The code covers the one request it came with: once the provider accepted
+/// it, every further step-up check of this request (clones of the scope share
+/// the mark) passes on that acceptance instead of spending it again.
+#[derive(Clone)]
+pub struct PresentedCode {
+    value: String,
+    accepted: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+impl PresentedCode {
+    pub fn expose(&self) -> &str {
+        &self.value
+    }
+    /// Whether the provider already accepted this code for this request.
+    pub fn accepted(&self) -> bool {
+        self.accepted.load(std::sync::atomic::Ordering::SeqCst)
+    }
+    /// Recorded by Base Step-up after the provider accepted the code.
+    pub fn mark_accepted(&self) {
+        self.accepted
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+impl std::fmt::Debug for PresentedCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("PresentedCode([redacted])")
+    }
+}
+
 /// The OAuth grant a request authenticated with, sealed by the host's bearer
 /// edge after live actor proof. It narrows the account; it never widens it.
 #[derive(Clone, Debug)]
 pub struct AgentFacet {
     connection: i64,
     trace: String,
+    channel: Channel,
 }
 impl AgentFacet {
     pub fn connection(&self) -> i64 {
@@ -130,6 +185,8 @@ pub struct Scope {
     /// The actor's live installation-owner standing, sealed by the verifier.
     /// Read only through [`prove_owner`], which adds the operator proof.
     owner: bool,
+    /// A step-up code presented with this request, if any.
+    step_up: Option<Box<PresentedCode>>,
     pub tenant_name: String,
     pub user_name: String,
     pub email: String,
@@ -161,10 +218,44 @@ impl Scope {
     /// the browser CSRF value is replaced so no form check can match.
     pub fn for_agent(self, connection: i64, trace: String) -> Self {
         Self {
-            agent: Some(AgentFacet { connection, trace }),
+            agent: Some(AgentFacet {
+                connection,
+                trace,
+                channel: Channel::Api,
+            }),
             csrf: uuid::Uuid::new_v4().simple().to_string(),
             ..self
         }
+    }
+    /// Web for a browser session; the agent edge it came through otherwise.
+    pub fn channel(&self) -> Channel {
+        self.agent
+            .as_ref()
+            .map_or(Channel::Web, |agent| agent.channel)
+    }
+    /// Marks an agent scope as arriving over `/mcp` rather than `/api/v1`.
+    /// Descriptive only; a browser scope is left as it is.
+    pub fn over_mcp(mut self) -> Self {
+        if let Some(agent) = &mut self.agent {
+            agent.channel = Channel::Mcp;
+        }
+        self
+    }
+    /// Attaches a step-up code the request carried. Bounded and trimmed; an
+    /// empty or oversized value attaches nothing.
+    pub fn presenting_step_up(mut self, code: &str) -> Self {
+        let code = code.trim();
+        self.step_up = (!code.is_empty() && code.len() <= 64).then(|| {
+            Box::new(PresentedCode {
+                value: code.to_owned(),
+                accepted: std::sync::Arc::default(),
+            })
+        });
+        self
+    }
+    /// The code this request presented for step-up.
+    pub fn step_up_code(&self) -> Option<&PresentedCode> {
+        self.step_up.as_deref()
     }
     pub fn mutation_context(&self, action: impl Into<String>) -> Context {
         let mut context = Context::user(self.tenant, self.user(), action);
@@ -273,21 +364,22 @@ impl Authentication {
             agent: None,
             impersonator,
             owner: identity.installation_owner,
+            step_up: None,
             tenant_name: row.get(0),
             user_name: identity.name,
             email: identity.email,
             csrf,
         })
     }
-    /// Re-proves a scope an edge already sealed, keeping its impersonator and
-    /// agent facet: owners refresh eligibility with this rather than
+    /// Re-proves a scope an edge already sealed, keeping its impersonator,
+    /// agent facet and presented step-up code: owners refresh eligibility with this rather than
     /// `authenticate`, which would drop the operator from the audit pair.
     pub async fn reprove(
         &self,
         client: &(impl GenericClient + Sync),
         scope: &Scope,
     ) -> Result<Scope> {
-        let fresh = self
+        let mut fresh = self
             .authenticate_session(
                 client,
                 scope.tenant(),
@@ -296,10 +388,11 @@ impl Authentication {
                 scope.csrf.clone(),
             )
             .await?;
-        Ok(match scope.agent() {
-            Some(agent) => fresh.for_agent(agent.connection(), agent.trace().into()),
-            None => fresh,
-        })
+        // The request's own facts stay: its agent grant and channel, and a
+        // step-up code it presented. The CSRF value is the scope's already.
+        fresh.agent.clone_from(&scope.agent);
+        fresh.step_up.clone_from(&scope.step_up);
+        Ok(fresh)
     }
 }
 

@@ -1,11 +1,12 @@
 //! Authenticated grant writes and explicit authoritative system-role reconciliation.
+use crate::step_up;
 use crate::{
     authorize_key,
     roles::{NewRole, RoleErrors},
     vocabulary::{SystemRole, Vocabulary},
 };
 use bilibi_audit::{record_action, Attribution};
-use bilibi_database::{Change, Db, Error, MutationBoundary, Result};
+use bilibi_database::{Change, Db, Error, MutationBoundary, MutationTransaction, Result};
 use bilibi_party_ids::OrganisationId;
 use bilibi_tenancy::{PartyProofs, Scope};
 use serde_json::json;
@@ -23,6 +24,7 @@ pub struct Grants {
     vocabulary: Vocabulary,
     authentication: Arc<bilibi_tenancy::Authentication>,
     parties: Arc<PartyProofs>,
+    step_up: Arc<bilibi_step_up::StepUp>,
 }
 impl Grants {
     pub fn new(
@@ -31,6 +33,7 @@ impl Grants {
         vocabulary: Vocabulary,
         authentication: Arc<bilibi_tenancy::Authentication>,
         parties: Arc<PartyProofs>,
+        step_up: Arc<bilibi_step_up::StepUp>,
     ) -> Self {
         Self {
             db,
@@ -38,6 +41,7 @@ impl Grants {
             vocabulary,
             authentication,
             parties,
+            step_up,
         }
     }
     pub fn vocabulary(&self) -> &Vocabulary {
@@ -83,12 +87,48 @@ impl Grants {
                 actor.mutation_context("authz.principal_role.set"),
             )
             .await?;
+        self.assign_role_in(&mut tx, actor, user, role, assigned)
+            .await?;
+        tx.commit().await
+    }
+    /// [`Grants::assign_role`] inside the caller's audited transaction (an agent
+    /// plan's commit): the same checks, step-up and write, committed by the caller.
+    pub async fn assign_role_in(
+        &self,
+        tx: &mut MutationTransaction<'_>,
+        actor: &Scope,
+        user: i64,
+        role: i64,
+        assigned: bool,
+    ) -> Result<()> {
         self.verify_user(tx.sql(), actor, actor.user()).await?;
         authorize_key(tx.sql(), actor, "admin.authz.role.update").await?;
         // PrincipalDirectory is a read/discovery API, not proof. The account
         // owner establishes eligibility through Tenancy's bound verifier.
         self.verify_user(tx.sql(), actor, user).await?;
         let tenant = actor.tenant();
+        let (code, grant_all): (Option<String>, bool) = tx
+            .sql()
+            .query_opt(
+                "SELECT code,grant_all FROM roles WHERE tenant_id=$1 AND id=$2",
+                &[&tenant, &role],
+            )
+            .await?
+            .map(|row| (row.get(0), row.get(1)))
+            .ok_or(Error::Invalid)?;
+        let target = format!(
+            "user:{user} role:{} {}",
+            code.unwrap_or_else(|| role.to_string()),
+            if assigned { "assign" } else { "remove" }
+        );
+        self.step_up
+            .require(actor, step_up::PRINCIPAL_ROLE, &target)
+            .await?;
+        if assigned && grant_all {
+            self.step_up
+                .require(actor, step_up::GRANT_ALL_ROLE, &target)
+                .await?;
+        }
         tx.mutate(|sql|Box::pin(async move {
             let exists=sql.query_opt("SELECT id FROM roles WHERE tenant_id=$1 AND id=$2 FOR UPDATE",&[&tenant,&role]).await?.is_some();
             if !exists {return Err(Error::Invalid);}
@@ -97,7 +137,7 @@ impl Grants {
             else {sql.execute("DELETE FROM principal_roles WHERE tenant_id=$1 AND user_id=$2 AND role_id=$3",&[&tenant,&user,&role]).await?;}
             Ok(((),vec![Change{kind:"authz.principal_role".into(),id:role,old:json!({"user":user,"assigned":old}),new:json!({"user":user,"assigned":assigned})}]))
         })).await?;
-        tx.commit().await
+        Ok(())
     }
     /// Direct deny always overrides direct allow, role grants and grant_all.
     /// None removes an override; grants become effective at the next decision.
@@ -117,9 +157,31 @@ impl Grants {
                 actor.mutation_context("authz.principal_capability.set"),
             )
             .await?;
+        self.set_direct_in(&mut tx, actor, user, key, allowed)
+            .await?;
+        tx.commit().await
+    }
+    /// [`Grants::set_direct`] inside the caller's audited transaction (an agent
+    /// plan's commit): the same checks, step-up and write, committed by the caller.
+    pub async fn set_direct_in(
+        &self,
+        tx: &mut MutationTransaction<'_>,
+        actor: &Scope,
+        user: i64,
+        key: &str,
+        allowed: Option<bool>,
+    ) -> Result<()> {
+        self.known(key)?;
         self.verify_user(tx.sql(), actor, actor.user()).await?;
         authorize_key(tx.sql(), actor, "admin.authz.role.update").await?;
         self.verify_user(tx.sql(), actor, user).await?;
+        self.step_up
+            .require(
+                actor,
+                step_up::PRINCIPAL_CAPABILITY,
+                &format!("user:{user} capability:{key} {allowed:?}"),
+            )
+            .await?;
         let tenant = actor.tenant();
         let key = key.to_owned();
         tx.mutate(|sql|Box::pin(async move {
@@ -131,7 +193,7 @@ impl Grants {
             }
             Ok(((),vec![Change{kind:"authz.principal_capability".into(),id:user,old:json!({"capability":key,"allowed":old}),new:json!({"capability":key,"allowed":allowed})}]))
         })).await?;
-        tx.commit().await
+        Ok(())
     }
     pub async fn set_role_capability(
         &self,
@@ -149,8 +211,33 @@ impl Grants {
                 actor.mutation_context("authz.role_capability.set"),
             )
             .await?;
+        self.set_role_capability_in(&mut tx, actor, role, key, granted)
+            .await?;
+        tx.commit().await
+    }
+    /// [`Grants::set_role_capability`] inside the caller's audited transaction (an agent
+    /// plan's commit): the same checks, step-up and write, committed by the caller.
+    pub async fn set_role_capability_in(
+        &self,
+        tx: &mut MutationTransaction<'_>,
+        actor: &Scope,
+        role: i64,
+        key: &str,
+        granted: bool,
+    ) -> Result<()> {
+        self.known(key)?;
         self.verify_user(tx.sql(), actor, actor.user()).await?;
         authorize_key(tx.sql(), actor, "admin.authz.role.update").await?;
+        self.step_up
+            .require(
+                actor,
+                step_up::ROLE_CAPABILITY,
+                &format!(
+                    "role:{role} capability:{key} {}",
+                    if granted { "grant" } else { "remove" }
+                ),
+            )
+            .await?;
         let tenant = actor.tenant();
         let key = key.to_owned();
         tx.mutate(|sql|Box::pin(async move {
@@ -161,7 +248,7 @@ impl Grants {
             else {sql.execute("DELETE FROM role_capabilities WHERE tenant_id=$1 AND role_id=$2 AND capability=$3",&[&tenant,&role,&key]).await?;}
             Ok(((),vec![Change{kind:"authz.role_capability".into(),id:role,old:json!({"capability":key,"granted":old}),new:json!({"capability":key,"granted":granted})}]))
         })).await?;
-        tx.commit().await
+        Ok(())
     }
     /// Create a custom role (never system, never grant-all) owned by a
     /// company of the actor's tenant (Bilimbi `create_role/3`). It starts with
@@ -260,6 +347,13 @@ impl Grants {
         };
         self.verify_user(tx.sql(), actor, actor.user()).await?;
         authorize_key(tx.sql(), actor, gate).await?;
+        self.step_up
+            .require(
+                actor,
+                step_up::SYSTEM_PRINCIPAL,
+                &format!("principal:{principal} capability:{key} {allowed:?}"),
+            )
+            .await?;
         let tenant = actor.tenant();
         let key = key.to_owned();
         let principal = principal.to_owned();
@@ -274,6 +368,16 @@ impl Grants {
             Ok(((),vec![Change{kind:"authz.system_principal".into(),id,old:json!({"principal":principal,"capability":key,"allowed":old}),new:json!({"principal":principal,"capability":key,"allowed":allowed})}]))
         })).await?;
         tx.commit().await
+    }
+    /// Proves `user` is a live account of the actor's tenant, as every write
+    /// here does first; for an adapter's review before it writes.
+    pub async fn verify_principal(
+        &self,
+        client: &(impl GenericClient + Sync),
+        actor: &Scope,
+        user: i64,
+    ) -> Result<()> {
+        self.verify_user(client, actor, user).await
     }
     async fn verify_user(
         &self,

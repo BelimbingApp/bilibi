@@ -49,6 +49,11 @@ impl StorageScope {
         .into_bytes()
     }
 }
+fn owned_identity(owner: &str, tenant: i64, record: i64) -> Vec<u8> {
+    json!(["bilibi-owned-secret-v1", owner, tenant, record])
+        .to_string()
+        .into_bytes()
+}
 /// Do not Debug/log the result: it may contain an explicitly requested secret.
 pub struct Resolved {
     pub value: Value,
@@ -192,6 +197,32 @@ impl Settings {
     /// values can be deleted but neither read nor written.
     pub fn encryption_available(&self) -> bool {
         self.encryption.available()
+    }
+    /// Encrypts a secret an owner keeps in its own table rather than as a
+    /// setting (Core User's authenticator secrets), with the installation's
+    /// `BILIBI_SETTINGS_KEY`. The associated data names the owner, tenant and
+    /// record in a domain no setting uses, so a copied ciphertext opens
+    /// neither under another record nor as a setting. Refuses without a key.
+    pub fn seal_owned(
+        &self,
+        owner: &str,
+        tenant: i64,
+        record: i64,
+        value: &Value,
+    ) -> Result<Value> {
+        self.encryption
+            .encrypt(value, &owned_identity(owner, tenant, record))
+    }
+    /// The counterpart of [`Settings::seal_owned`]. Never log the result.
+    pub fn open_owned(
+        &self,
+        owner: &str,
+        tenant: i64,
+        record: i64,
+        sealed: &Value,
+    ) -> Result<Value> {
+        self.encryption
+            .decrypt(sealed, &owned_identity(owner, tenant, record))
     }
     async fn resolve(
         &self,

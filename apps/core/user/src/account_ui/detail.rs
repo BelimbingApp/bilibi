@@ -1440,6 +1440,8 @@ impl Detail {
             }
         };
         match outcome {
+            // Base Step-up: the host sends the browser to confirm and back.
+            Err(error @ Error::StepUpRequired { .. }) => return Err(error),
             Ok(()) => self.flash.success(match &rule {
                 AuthzRule::RemoveRole { name, .. } => format!("The {name} role was removed."),
                 AuthzRule::Deny(key) => format!("{key} is denied for this user."),
@@ -1602,6 +1604,8 @@ impl Detail {
                             {
                                 Ok(()) => assigned += 1,
                                 Err(Error::Unauthorized) => return Err(Error::Unauthorized),
+                                // Base Step-up: confirm, come back, assign again.
+                                Err(error @ Error::StepUpRequired { .. }) => return Err(error),
                                 Err(_) => refused = true,
                             }
                         }
@@ -1684,6 +1688,8 @@ impl Detail {
                                 {
                                     Ok(()) => granted += 1,
                                     Err(Error::Unauthorized) => return Err(Error::Unauthorized),
+                                    // Base Step-up: confirm, come back, grant again.
+                                    Err(error @ Error::StepUpRequired { .. }) => return Err(error),
                                     Err(_) => {}
                                 }
                             }

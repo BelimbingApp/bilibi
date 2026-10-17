@@ -39,6 +39,22 @@ secret; a session that no longer holds `from` is `Conflict`. A switch is not
 announced as a termination. `end_user_sessions` also ends the sessions a user
 holds as an impersonating operator.
 
+## Step-up
+
+The web proof of Base Step-up (`apps/base/step_up/README.md`) lives on the session row (migration `003-step-up`), so sign-out, termination and expiry end it, and `switch` clears it.
+
+| Column | Meaning |
+|---|---|
+| `stepped_up_at` | The holder's last check here. The cap counts from it |
+| `step_up_used_at` | The last protected action the window covered. The sliding window counts from it |
+| `step_up_spent_at` | When an "ask every time" action used the last check |
+
+- `step_up(sql, scope)` records a check inside the verifying owner's transaction (Core User's authenticator). It names the session by the sealed scope's CSRF proof, never a token.
+- `step_up_window(client, scope, window, cap, extend)` reads, and with `extend` restarts, the window.
+- `spend_fresh_step_up(client, scope, seconds)` lets one recent check cover one "ask every time" action.
+- An impersonated session is never stepped up.
+- `end_user_sessions` also ends the holder's agent step-up windows (`bilibi_step_up::end_agent_windows`).
+
 ## Listing
 
 `/system/sessions` needs the platform operator identity and

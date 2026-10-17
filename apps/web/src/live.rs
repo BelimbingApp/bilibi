@@ -205,10 +205,39 @@ struct Session {
 impl Session {
     async fn scope(&mut self, app: &App, token: &str) -> Result<Scope> {
         let page = self.page.as_ref().ok_or(Error::Invalid)?;
-        let scope = routes::check_access(app, page.access, Some(token))
-            .await?
-            .ok_or(Error::Forbidden)?;
+        let path = self.path.clone();
+        let scope = self.admit(app, page.access, token, path).await?;
         self.bound(scope)
+    }
+    /// A page route's access for this socket. A step-up the session owes
+    /// (never confirmed, or the window ran out while the page was open) sends
+    /// the browser through `path` over HTTP, whose guard shows the prompt and
+    /// comes back; nothing acts on the request.
+    async fn admit(
+        &mut self,
+        app: &App,
+        access: bilibi_module_registry::contributions::Access,
+        token: &str,
+        path: String,
+    ) -> Result<Scope> {
+        match routes::admit(app, access, Some(token), None).await? {
+            routes::Admission::Admitted(scope) => scope.ok_or(Error::Forbidden),
+            routes::Admission::StepUp(_) => {
+                self.path = path;
+                self.stale = true;
+                Err(Error::Unauthorized)
+            }
+        }
+    }
+    /// Where this page's browser confirms a step-up and comes back.
+    async fn prompt(&mut self, app: &App, token: &str) -> Option<String> {
+        let scope = self.scope(app, token).await.ok()?;
+        let back = if self.canonical.is_empty() {
+            self.path.clone()
+        } else {
+            self.canonical.clone()
+        };
+        app.step_up.prompt(&scope, &back).await.ok()
     }
     /// Refuses a scope the socket was not opened for; nothing acts on it.
     fn bound(&mut self, scope: Scope) -> Result<Scope> {
@@ -229,9 +258,9 @@ impl Session {
         if self.framed && !bound.route.framed {
             return Err(Error::Forbidden);
         }
-        let scope = routes::check_access(app, bound.route.access, Some(token))
-            .await?
-            .ok_or(Error::Forbidden)?;
+        let scope = self
+            .admit(app, bound.route.access, token, path.clone())
+            .await?;
         let scope = self.bound(scope)?;
         let state = bound
             .page
@@ -281,9 +310,9 @@ impl Session {
         {
             return Ok(None);
         }
-        let scope = routes::check_access(app, bound.route.access, Some(token))
-            .await?
-            .ok_or(Error::Forbidden)?;
+        let scope = self
+            .admit(app, bound.route.access, token, path.to_owned())
+            .await?;
         self.bound(scope)?;
         self.path = path.to_owned();
         self.route = bound.route.path.to_owned();
@@ -810,10 +839,29 @@ pub async fn run(app: App, token: String, identity: Identity, mut socket: WebSoc
             },
         };
         // A stale socket's request is refused before it acted; the page is
-        // reloaded rather than told of an error it did not cause.
+        // reloaded rather than told of an error it did not cause. A step-up
+        // the session owes reloads the same way, through the page's address.
         if session.stale {
             reload(&mut socket, &session.path).await;
             break;
+        }
+        // An owner's facade asked for step-up during this event: the
+        // browser confirms (or enrolls) and comes back to this address, where
+        // the person repeats the action. Nothing acted.
+        if let Err(Error::StepUpRequired { reason, .. }) = &result {
+            if *reason != "impersonating" {
+                if let Some(destination) = session.prompt(&app, &token).await {
+                    let message = json!({"type":"page", "target":"app", "html":"", "url":Value::Null, "notice":"", "rows":0, "redirect":destination, "request_id":request_id, "history":"push"});
+                    if socket
+                        .send(Message::Text(message.to_string().into()))
+                        .await
+                        .is_err()
+                    {
+                        return;
+                    }
+                    continue;
+                }
+            }
         }
         let (mut messages, close) = match result {
             Ok(messages) => (messages, false),

@@ -1,4 +1,7 @@
-//! Agent reach excludes authority administration, even under grant_all.
+//! Agent reach is exactly what the agent's person holds (grant-all, direct
+//! deny and the platform gate as `decide` applies them), with one exception:
+//! impersonation, since an agent switching identity would break "the agent
+//! acts as its person" in the audit trail.
 use bilibi_database::Result;
 use bilibi_tenancy::Scope;
 use std::collections::BTreeSet;
@@ -11,12 +14,9 @@ pub fn read(capability: &str) -> bool {
             Some("view" | "list" | "search")
         )
 }
-pub fn access_control(capability: &str) -> bool {
-    capability.starts_with("admin.authz.")
-        || capability.starts_with("base.settings.")
-        || capability.starts_with("admin.agent-connection.")
-        || capability == "admin.user.impersonate"
-        || capability.ends_with(".impersonate")
+/// An identity switch: never agent reach, even under grant-all.
+pub fn impersonation(capability: &str) -> bool {
+    capability.ends_with(".impersonate")
 }
 /// One fresh snapshot for discovery; no decision-log noise per candidate.
 /// Dispatch still performs the normal logged Authz decision independently.
@@ -54,7 +54,7 @@ pub async fn capabilities(client: &impl GenericClient, scope: &Scope) -> Result<
         .capabilities
         .iter()
         .filter(|(key, cap)| {
-            !access_control(key)
+            !impersonation(key)
                 && (!cap.definition.platform || operator)
                 && !deny.contains(**key)
                 && (all || allow.contains(**key))

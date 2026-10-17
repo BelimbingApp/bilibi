@@ -28,7 +28,7 @@ const SHOWN_HEADERS: [&str; 5] = [
 pub fn status_of(error: &Error) -> StatusCode {
     match error {
         Error::Unauthorized => StatusCode::UNAUTHORIZED,
-        Error::Forbidden => StatusCode::FORBIDDEN,
+        Error::Forbidden | Error::StepUpRequired { .. } => StatusCode::FORBIDDEN,
         Error::NotFound => StatusCode::NOT_FOUND,
         Error::Invalid => StatusCode::BAD_REQUEST,
         Error::Conflict => StatusCode::CONFLICT,

@@ -192,7 +192,8 @@ BILIBI_COMPANY_ACCOUNTS_DEMO=disposable cargo run -p bilibi-user --example compa
 ## Pages (`core/user.pages`)
 
 `/settings/profile`, `/settings/password` (`src/web.rs`,
-`templates/password.html`) and `/settings/appearance` are the signed-in
+`templates/password.html`), `/settings/two-factor` (below) and
+`/settings/appearance` are the signed-in
 account's own settings inside the shell, on the settings layout of
 `templates/settings.html` (Bilimbi `SettingsComponents.settings_layout`).
 Agent connections links to `core/agent_access`'s own page, as in Bilimbi.
@@ -316,6 +317,44 @@ a settled receipt is never revisited, so a later unlink or retirement stands.
 A refusal (the administrator lost the capability, the company is archived)
 leaves it unsettled and the seed says why. Linking ends the account's open
 sessions, as any company change does.
+
+## Two-factor authentication (the step-up provider)
+
+Authenticator-app codes (TOTP, RFC 6238: HMAC-SHA-1, 6 digits, 30 s) for the signed-in account. It is the second factor behind Base Step-up (`apps/base/step_up/README.md`). Bilimbi has no counterpart yet.
+
+- **Boundary:** this module checks the account holder and nothing else. It never names what step-up protects, and those owners never name it. They declare operations and call `StepUp::require`; tenant policy decides.
+- **Code:** `src/two_factor/` (facade on `UserService`, provider in `provider.rs`), pages in `src/two_factor_ui.rs`, migration `012-two-factor.sql`.
+
+| Method | Purpose |
+|---|---|
+| `two_factor_status(scope)` | On or off, and unused recovery codes |
+| `begin_two_factor(scope, password)` | Password again, then a fresh 160-bit secret (OS CSPRNG), sealed and stored pending. Returns the QR code and typed key, once |
+| `confirm_two_factor(scope, code)` | A current code turns it on, stores 10 new recovery codes (returned once) and opens the session's step-up window |
+| `step_up(scope, code)` | A current code or one recovery code opens the session's step-up window (the confirm page) |
+| `regenerate_recovery_codes(scope, code)` / `disable_two_factor(scope, code)` | Need a current code or a recovery code. The old set stops working / everything is deleted |
+| `two_factor::Authenticator` | The `bilibi_step_up::Provider`, bound at boot: enrolled? session window, spend an agent's code for a purpose, where to prompt |
+
+Pages (signed in only, live, `Cache-Control: no-store` like every page):
+
+- `/settings/two-factor`: set up (password, QR code, setup key, first code), recovery codes with a text download, new codes, turn off.
+- `/settings/two-factor/confirm?return=<path>`: the step-up prompt. Success returns to `return`, which must be a local path (`safe_return`).
+
+Security rules:
+
+- **Secret at rest.** `user_two_factor.secret` is the AES-256-GCM envelope of `Settings::seal_owned` (`BILIBI_SETTINGS_KEY`), bound to `core/user.two_factor`, tenant and account. Without the key, setup refuses.
+- **QR code.** The `otpauth://totp/<issuer>:<email>?secret=…&issuer=…&algorithm=SHA1&digits=6&period=30` URI is drawn on the server as one inline SVG path (`qrcode` crate, encoder only). It is sent only over the page's socket. No QR service, image URL or Bilibi URL carries it, and nothing logs it.
+- **Pending until proved.** A secret is unconfirmed until a current code arrives. Leaving setup keeps the pending row; the next setup replaces it.
+- **Verification.** Steps −1, 0 and +1 are each computed and compared in constant time (`subtle`). `last_step` only moves forward, by compare-and-set in the spending transaction, so a code is never accepted twice, even by two racing requests.
+- **Recovery codes.** 10 per set, 50 bits each (`xxxxx-xxxxx`, base32), stored as Argon2id hashes through `password::hash`. Every unused hash is checked. A used code keeps `used_at`.
+- **Throttle.** Applies per account to every failed check: password, code, recovery code, and an agent's code too. The fifth failure within 15 minutes locks every check for 15 minutes (`user_two_factor_attempts`). A success resets the count.
+- **Impersonation.** An impersonated session cannot enroll, change or check two-factor.
+- **Audit.** Each write is a `MutationBoundary` transaction: `user.two_factor.enrollment_started`, `.enabled`, `.verified`, `.recovery_code_used`, `.recovery_codes_regenerated`, `.disabled`, `.failed` and `.locked`. A code spent for an agent records the purpose's operation key and channel (`for`, `channel`). A check refused while locked is the action `user.two_factor.refused`. No code, secret or recovery code is ever in a change, payload or log.
+
+| Setting | Default | Use |
+|---|---|---|
+| `two_factor.issuer` (global, `admin.system.session.manage`) | `Bilibi` | The name apps list the account under (company or deployment name). No `:`; applies to new setups |
+
+The step-up window, cap and per-operation policy belong to Base Step-up, not here.
 
 ## Audit
 

@@ -10,6 +10,7 @@ askama.workspace = true
 bilibi-audit.workspace = true
 bilibi-authz = { path = "../authz" }
 bilibi-database.workspace = true
+bilibi-step-up.workspace = true
 bilibi-locale = { path = "../locale" }
 bilibi-menu.workspace = true
 bilibi-module-registry.workspace = true

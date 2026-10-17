@@ -20,6 +20,7 @@ bilibi-media = { path = "../../base/media" }
 bilibi-module-registry.workspace = true
 bilibi-party = { path = "../party" }
 bilibi-party-ids = { path = "../../base/party_ids" }
+bilibi-step-up.workspace = true
 bilibi-principal-directory.workspace = true
 bilibi-tenancy = { path = "../../base/tenancy" }
 inventory.workspace = true

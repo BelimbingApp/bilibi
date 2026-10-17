@@ -10,6 +10,8 @@ pub mod restrictions;
 mod restrictions_web;
 pub mod roles;
 mod roles_web;
+mod step_up;
+mod step_up_web;
 pub mod vocabulary;
 mod web;
 use bilibi_database::{Error, Result};
@@ -363,12 +365,12 @@ pub async fn restrictions_for(
 }
 inventory::submit! { bilibi_module_registry::Module {
     id:"base/authz",layer:bilibi_module_registry::Layer::Base,
-    dependencies:&["base/module_registry","base/database","base/tenancy","base/audit","base/menu","base/settings","base/ui","base/locale","base/datetime"],
+    dependencies:&["base/module_registry","base/database","base/tenancy","base/audit","base/menu","base/settings","base/ui","base/locale","base/datetime","base/step_up"],
     migrations:&[("007-authz-policy",include_str!("../migrations/007-policy.sql")),("base-authz-008-decision-log-restrictions",include_str!("../migrations/008-decision-log-restrictions.sql")),("base-authz-009-roles-admin",include_str!("../migrations/009-roles-admin.sql")),("base-authz-010-decision-log-retention",include_str!("../migrations/010-decision-log-retention.sql")),("base-authz-011-role-company",include_str!("../migrations/011-role-company.sql"))],
     services:&[bilibi_module_registry::Service {id:"base/authz.grants",factory:|services| Ok(Arc::new(grants::Grants::new(
         services.get::<bilibi_database::Db>("base/database.pool")?.as_ref().clone(),
         services.get("base/database.mutations")?, vocabulary::Vocabulary::from_inventory()?, services.get("base/tenancy.authentication")?,
-        services.get("base/tenancy.parties")?,
+        services.get("base/tenancy.parties")?, services.get(bilibi_step_up::SERVICE)?,
     ))) }, bilibi_module_registry::Service { id:"base/authz.seeds", factory:|services| Ok(Arc::new(bilibi_database::seeds::SeedService(services.get::<grants::Grants>("base/authz.grants")?))) },
     bilibi_module_registry::Service {id:"base/authz.field_restrictions",factory:|services| Ok(Arc::new(restrictions::FieldRestrictions::new(
         services.get::<bilibi_database::Db>("base/database.pool")?.as_ref().clone(),
@@ -386,6 +388,8 @@ inventory::submit! { bilibi_module_registry::Module {
         grants: services.get("base/authz.grants")?,
         restrictions: services.get("base/authz.field_restrictions")?,
         parties: services.get("base/tenancy.parties")?,
+        step_up: services.get(bilibi_step_up::SERVICE)?,
+        mutations: services.get("base/database.mutations")?,
     })))) }],
 } }
 
@@ -475,6 +479,24 @@ bilibi_menu::contribute!(
     .under("admin.authz")
     .requires(bilibi_menu::Requirement::Capability(decision_logs::LIST))
     .order(50)
+);
+page_route!(
+    "base/authz.step-up",
+    "/authz/step-up",
+    "step-up",
+    step_up_web::MANAGE
+);
+bilibi_menu::contribute!(
+    "base/authz",
+    bilibi_menu::MenuItem::page(
+        "admin.authz.step-up",
+        "Two-factor Requirements",
+        "/authz/step-up"
+    )
+    .icon("lock-closed")
+    .under("admin.authz")
+    .requires(bilibi_menu::Requirement::Capability(step_up_web::MANAGE))
+    .order(70)
 );
 bilibi_menu::contribute!(
     "base/authz",

@@ -24,10 +24,19 @@ page's exact pattern, and answers GET with a 308 that keeps the parameter
 segments and the query string. It checks no access; the destination does.
 
 Access is checked before the owner renders: Public, SignedIn, Capability(key),
-Operator, or OperatorCapability(key). Operator requires the persisted Tenancy
+Operator, OperatorCapability(key), Owner, or StepUp { operation, inner }. Operator requires the persisted Tenancy
 proof, never a tenant-ID convention or an admin grant. OperatorCapability
 requires both proof and capability; direct denials still win. Browser GETs
 without a valid session redirect to login. Authenticated refusals return 403.
+
+Step-up (`apps/base/step_up/README.md`) is the same on every surface:
+
+- `StepUp { operation, inner }` checks `inner`, then `StepUp::require` for the declared `operation`. A GET that owes a check is redirected to the provider's prompt with `return=<address>`; any other method, an embed or a panel is refused with 403. Boot refuses a step-up of `Public`, of another step-up, or of an undeclared operation. Menus and tile pickers check only `inner`.
+- A live socket on such a page rereads the window on each event and 15 s refresh without extending it. Once the window has run out, the socket reloads its address so the HTTP guard asks again.
+- When an owner's facade answers `Error::StepUpRequired` during a GET render or a live event, the browser goes to the prompt and comes back to the page; nothing acted.
+- `/api/v1` commit and the MCP `commit` tool take an optional `step_up_code` and answer `step_up_required` (`bilibi_step_up::refusal`): 403 on the API, an `isError` result on MCP.
+- `BILIBI_ENV=development` turns enforcement off at boot (`StepUp::set_enforced`).
+
 Other methods also require the configured Origin and, for an authenticated
 scope, `X-CSRF-Token`. The secret rotates when the session switches identity
 (impersonation), so a request from a page rendered before the switch is refused;

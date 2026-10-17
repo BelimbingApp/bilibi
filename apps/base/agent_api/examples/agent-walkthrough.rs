@@ -186,11 +186,11 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     );
     grants.set_direct(&admin, admin.user(), cap, None).await?;
     println!(
-        "access-control absent from admin reach: {}",
+        "impersonation absent from admin reach: {}",
         reach::capabilities(client, &admin)
             .await?
             .iter()
-            .any(|key| reach::access_control(key))
+            .any(|key| reach::impersonation(key))
     );
     let restrictions = HashSet::from(["private_note".to_string()]);
     let page = Output::Page(Page {

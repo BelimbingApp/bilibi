@@ -11,7 +11,7 @@ Keys start with the contributing module ID with `/` changed to `.`. Operations
 need an additional segment; guides may use the module prefix itself. Keys must
 be unique across operations and guides. Discovery rejects malformed metadata,
 foreign handler ownership, unsupported schema keywords, undeclared capabilities,
-read operations on write capabilities, and authority administration capabilities.
+read operations on write capabilities, and impersonation capabilities (`*.impersonate`).
 Titles have a 120-character limit, summaries 500, guide bodies 8 KiB. Registry
 entries retain source provenance and materialized schemas.
 
@@ -27,8 +27,12 @@ or cache reach across requests.
 
 Search uses one fresh capability snapshot without per-candidate decision logs.
 Direct deny wins over grants and `grant_all`; platform capabilities additionally
-need explicit operator identity. Role/grant/field administration, impersonation,
-settings and agent-connection management cannot be agent reach. Search defaults
+need explicit operator identity. An agent reaches every capability its person
+holds, administration included, and never more. The one exception is
+impersonation (`*.impersonate`): an agent switching to another identity would
+break "the agent acts as its person" in the audit trail, so it is never agent
+reach and no agent operation may declare it. Sensitive writes ask the person
+for a code through Base Step-up instead. Search defaults
 to ten results, clamps limits to 1–50, supports a read/write filter and optional
 unavailable entries. Rankings follow Bilimbi's token stemming, field weights and
 key tie breaker. Describe and guide reads also check fresh reach.
@@ -109,6 +113,8 @@ write. Every owner error, capture error, expiry or final identity failure rolls
 back all writes, audit rows and code consumption. A competing submission waits
 for the row lock then sees the consumed code. Failed commits leave the code
 usable until expiry, subject to a fresh successful revalidation.
+
+An owner's commit may answer `Error::StepUpRequired` (Base Step-up). The whole commit rolls back, and the plan code stays usable until it expires. The edges answer `step_up_required` with the operation and reason. The client asks its human for a current authenticator code and commits the same plan again with `step_up_code`. That code is used once, for that operation, and opens the agent connection's window (`apps/base/step_up/README.md`).
 
 Owners implement deterministic `WriteHandler::preview` without business writes,
 including defaults, versions, reference facts and restricted fields in the

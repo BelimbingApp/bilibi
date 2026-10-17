@@ -5,6 +5,7 @@ mod directory;
 pub mod files;
 pub mod identity;
 pub mod model;
+mod step_up;
 mod web;
 
 use bilibi_database::{Db, Error, MutationBoundary, MutationTransaction, Result};
@@ -117,6 +118,7 @@ impl PersonService {
     ) -> std::result::Result<Person, WriteError> {
         let mut client = self.db.get().await.map_err(Error::from)?;
         let scope = self.fresh(&**client, scope).await?;
+        step_up::retire(&scope, id).await?;
         let mut tx = self
             .mutations
             .begin(&mut client, scope.mutation_context("person.retire"))
@@ -151,7 +153,7 @@ impl PersonService {
 inventory::submit! {
     bilibi_module_registry::Module {
         id: "core/person", layer: bilibi_module_registry::Layer::Core,
-        dependencies: &["base/database", "base/tenancy", "base/authz", "base/grid", "base/agent_api", "base/principal_directory", "base/ui", "base/menu", "base/datetime", "base/locale", "base/media", "base/artifacts", "core/party"],
+        dependencies: &["base/database", "base/tenancy", "base/authz", "base/grid", "base/agent_api", "base/principal_directory", "base/ui", "base/menu", "base/datetime", "base/locale", "base/media", "base/artifacts", "base/step_up", "core/party"],
         migrations: &[("001-core-person", include_str!("../migrations/001-person.sql"))],
         services: &[bilibi_module_registry::Service { id: SERVICE, factory: |services| {
             let parties = services.get::<bilibi_tenancy::PartyProofs>("base/tenancy.parties")?;
@@ -163,6 +165,7 @@ inventory::submit! {
             CHANGES.set(broadcast::channel(128).0).map_err(|_| bilibi_module_registry::RegistryError::Service("duplicate person change sender".into()))?;
             let db = services.get::<Db>("base/database.pool")?.as_ref().clone();
             agent_operations::bind(db.clone())?;
+            step_up::bind(services.get(bilibi_step_up::SERVICE)?)?;
             Ok(Arc::new(PersonService { db, mutations: services.get("base/database.mutations")?, authentication: services.get("base/tenancy.authentication")? }))
         }}, bilibi_module_registry::Service { id: web::SERVICE, factory: |services| {
             Ok(Arc::new(bilibi_ui::page::PageService::<Scope, Error>(Arc::new(web::Pages {

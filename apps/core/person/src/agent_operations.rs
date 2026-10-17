@@ -171,7 +171,10 @@ impl WriteHandler for Write {
                     )
                     .await
                 }
-                Self::Retire => identity::retire(tx, scope, id(input)?, version(input)?).await,
+                Self::Retire => {
+                    crate::step_up::retire(scope, id(input)?).await?;
+                    identity::retire(tx, scope, id(input)?, version(input)?).await
+                }
             }
             .map_err(invalid)?;
             Ok(Output::Data(record(person)))

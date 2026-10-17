@@ -111,6 +111,8 @@ pub struct Pages {
     pub restrictions: Arc<crate::restrictions::FieldRestrictions>,
     /// Names and proves the companies custom roles belong to.
     pub parties: Arc<bilibi_tenancy::PartyProofs>,
+    pub step_up: Arc<bilibi_step_up::StepUp>,
+    pub mutations: Arc<bilibi_database::MutationBoundary>,
 }
 impl Pages {
     async fn view(
@@ -400,6 +402,7 @@ impl Page<Scope, Error> for Pages {
             "roles" => "Roles",
             "role-create" => "Create Role",
             restrictions_web::OPERATION => "Field Restrictions",
+            crate::step_up_web::OPERATION => "Two-factor requirements",
             // A role page is titled by the role's name (PageBody.title).
             _ => return None,
         })
@@ -443,6 +446,7 @@ impl Page<Scope, Error> for Pages {
                         .body(scope)
                         .await?
                 }
+                crate::step_up_web::OPERATION => self.step_up_view(scope, request.query).await?,
                 _ => return Err(Error::NotFound),
             };
             Ok(PageBody {
@@ -482,6 +486,10 @@ impl Page<Scope, Error> for Pages {
                     let scope = request.scope.ok_or(Error::Unauthorized)?;
                     Box::new(restrictions_web::Screen::mount(self, scope).await?)
                 }
+                crate::step_up_web::OPERATION => Box::new(crate::step_up_web::StepUpPolicy::mount(
+                    self,
+                    request.query,
+                )?),
                 _ => return Err(Error::NotFound),
             };
             Ok(Some(state))
