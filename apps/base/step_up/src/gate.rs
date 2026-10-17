@@ -248,6 +248,11 @@ impl StepUp {
             return Ok(Outcome::Refused("unavailable"));
         };
         if let Some(code) = scope.step_up_code() {
+            // One action may need several checks (a role change and a
+            // full-access role): the holder's code covers this whole request.
+            if code.accepted() {
+                return Ok(Outcome::Passed("request_code"));
+            }
             let purpose = Purpose {
                 operation: declared.operation.key,
                 target,
@@ -255,6 +260,7 @@ impl StepUp {
             };
             let spent = provider.spend(scope, code.expose(), purpose).await?;
             if spent == Spent::Accepted {
+                code.mark_accepted();
                 if let Some(agent) = scope.agent() {
                     self.open_agent_window(scope, agent.connection()).await?;
                 }

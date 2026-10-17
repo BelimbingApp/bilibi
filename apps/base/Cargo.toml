@@ -12,6 +12,7 @@ bilibi-artifacts = { path = "artifacts" }
 bilibi-audit = { path = "audit" }
 bilibi-audit-views = { path = "audit_views" }
 bilibi-authz = { path = "authz" }
+bilibi-authz-agent = { path = "authz_agent" }
 bilibi-dashboard = { path = "dashboard" }
 bilibi-database = { path = "database" }
 bilibi-datetime = { path = "datetime" }

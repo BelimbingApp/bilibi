@@ -199,7 +199,7 @@ fn validate_common(
         || !text(summary, 500)
         || keywords.iter().any(|word| word.trim().is_empty())
         || !bilibi_authz::vocabulary::valid_key(cap)
-        || reach::access_control(cap)
+        || reach::impersonation(cap)
     {
         return Err(invalid(format!(
             "invalid agent definition {key} owned by {owner}"

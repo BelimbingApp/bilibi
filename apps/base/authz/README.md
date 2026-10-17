@@ -120,6 +120,8 @@ Authz is a Base Step-up consumer (`src/step_up.rs`, `apps/base/step_up/README.md
   - For the installation owner: the floor and the installation maxima.
   - Every change rechecks the capability in its audited transaction and first passes step-up itself (`base.step_up.policy.update`).
 - `examples/p6-authz.rs` changes grants from a console, so run it with `BILIBI_ENV=development`.
+- Agents reach the same writes: `base/authz_agent` adds reviewed-plan agent operations over the `*_in` variants (`assign_role_in`, `set_direct_in`, `set_role_capability_in`), which run inside the plan's transaction. See `apps/base/authz_agent/README.md`.
+- The account page (`core/user`) passes `Error::StepUpRequired` up, so the host sends the browser to confirm and back.
 
 ## Running evidence
 

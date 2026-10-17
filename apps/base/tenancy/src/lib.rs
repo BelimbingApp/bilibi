@@ -111,11 +111,27 @@ impl Channel {
 /// A step-up code the human account holder gave for this one request (an
 /// agent's commit carries it). A claim, not a proof: only the step-up
 /// provider can verify and spend it. Its `Debug` never shows the value.
+///
+/// The code covers the one request it came with: once the provider accepted
+/// it, every further step-up check of this request (clones of the scope share
+/// the mark) passes on that acceptance instead of spending it again.
 #[derive(Clone)]
-pub struct PresentedCode(String);
+pub struct PresentedCode {
+    value: String,
+    accepted: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
 impl PresentedCode {
     pub fn expose(&self) -> &str {
-        &self.0
+        &self.value
+    }
+    /// Whether the provider already accepted this code for this request.
+    pub fn accepted(&self) -> bool {
+        self.accepted.load(std::sync::atomic::Ordering::SeqCst)
+    }
+    /// Recorded by Base Step-up after the provider accepted the code.
+    pub fn mark_accepted(&self) {
+        self.accepted
+            .store(true, std::sync::atomic::Ordering::SeqCst);
     }
 }
 impl std::fmt::Debug for PresentedCode {
@@ -229,8 +245,12 @@ impl Scope {
     /// empty or oversized value attaches nothing.
     pub fn presenting_step_up(mut self, code: &str) -> Self {
         let code = code.trim();
-        self.step_up = (!code.is_empty() && code.len() <= 64)
-            .then(|| Box::new(PresentedCode(code.to_owned())));
+        self.step_up = (!code.is_empty() && code.len() <= 64).then(|| {
+            Box::new(PresentedCode {
+                value: code.to_owned(),
+                accepted: std::sync::Arc::default(),
+            })
+        });
         self
     }
     /// The code this request presented for step-up.
