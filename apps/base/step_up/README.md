@@ -35,7 +35,7 @@ Two lines in the owning module, nothing anywhere else.
 
 - A module that is not mounted declares nothing, so its rows leave the policy page.
 - Never decide in code whether step-up applies. That is the tenant's policy.
-- Call `require` once per action. A presented code is spent by the first call.
+- Call `require` as often as the action needs: a presented code is spent by the first call and covers the rest of the request.
 
 ## Policy
 
@@ -62,7 +62,7 @@ Tenants decide per operation on **Administration › Authorization › Two-facto
 
 - **Window:** sliding. Each protected action inside it restarts it. The cap counts from the check and wins.
 - **Ask every time:** each action needs its own check. On the web, one check made within 5 minutes covers one such action. For an agent, a code per action.
-- **Codes:** a presented code is verified and used in one step, for the operation and target it was presented for. A used code is refused everywhere after that.
+- **Codes:** a presented code is verified and used in one step, for the operation and target of the first check that meets it. It then covers the rest of that one request, for example a role change that also gives full access, or every operation in one committed plan. In any later request the same code is refused.
 - **Never:** an impersonating operator or an agent cannot satisfy step-up with anything but the account holder's own code.
 - Signing the holder out everywhere (`Sessions::end_user_sessions`) also ends their agent windows.
 
