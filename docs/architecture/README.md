@@ -112,7 +112,7 @@ The host is generic. Modules plug into it.
 - **UTC storage.** `base/datetime` owns display policy: timezone, clock mode, periods.
 - **No unbounded reads.** Page, or ask PostgreSQL for the aggregate.
 - **Private files** go through `base/media`. Jobs go through `base/queue`. Outbound HTTP goes through `base/integration`.
-- **Settings over constants.** Operator-settable values are settings with an editor. Secrets are encrypted and never shown back.
+- **Settings over constants.** Operator-settable values are settings with an editor. Secrets are encrypted and masked by default. An explicitly authorized, password-confirmed and audited reveal can show one (`apps/base/settings_editor/src/reveal.rs`).
 
 ## Tenancy and identity
 
