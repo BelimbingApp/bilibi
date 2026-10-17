@@ -177,7 +177,7 @@ Each module is a Cargo crate under one of four roots.
 | Root | Holds |
 |------|-------|
 | `apps/base/` | Foundations: database, audit, authz, mail, workflow, UI, module registry |
-| `apps/core/` | Core business modules: user, company, person, address, affiliation, agent access |
+| `apps/core/` | Core business modules: user, company, person, address, affiliation, agent access, agent plugins |
 | `apps/domains/` | Optional business domains. Empty here. Mounted as nested checkouts |
 | `apps/extensions/` | Company extensions. Empty here. Mounted as nested checkouts |
 | `apps/web/` | Executable host: routes, sockets, explicit seed |

@@ -79,6 +79,39 @@ C5). The flash outlet renders inside each page until the shared shell owns it.
 Agent facets and impersonation are refused by `self_service` in
 `src/lib.rs`, not by the pages.
 
+## Agent plugins
+
+One answer: plugins are thin, per harness. This module, `base/agent_api`
+and the host's `/api/v1` and `/mcp` edges are the base layer every harness
+shares; none of them holds harness-specific code.
+
+- `public_clients` lists the registered OAuth public clients (ID and name,
+  never callbacks): global, non-secret configuration for the exporter.
+- `clients_for(scope)` is the same list behind the `self_service` gate, for a
+  person's own setup page. It refuses impersonation and agent facets.
+- Neither creates or approves a grant. The `/oauth/authorize` consent still
+  names the person and the end date.
+- The package builder, the harness adapters (ChatGPT is the first), the
+  `/settings/<harness>-plugin` pages and their downloads live in
+  `core/agent_plugins` ([README](../agent_plugins/README.md)).
+- The Agent connections header links to the ChatGPT setup page.
+
+### How to add a harness
+
+1. Add `apps/core/agent_plugins/src/<harness>.rs` implementing `Harness`:
+   name, title, page path, archive name, page copy and `files(&Package)` (its
+   manifest, MCP configuration and skill layout). Nothing else.
+2. Add it to `HARNESSES` in `src/harness.rs`.
+3. Submit its `Route` and `Download` in `src/contributions.rs`, with the
+   harness key as the operation.
+4. Optional: link the page from the settings nav (`core/user`
+   `settings_entries`) and from the Agent connections header.
+5. Run the app: open the page, download, unzip and check the files.
+
+The builder, archive, page, download and exporter stay unchanged, and nothing
+in this module changes. The exporter (`bilibi-web plugin-export`) writes the
+same package. A general Bilibi CLI client over `/api/v1` does not exist yet.
+
 ## Injected identity
 
 Company/person validation is injected, as the port plan requires. On every

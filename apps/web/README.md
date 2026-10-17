@@ -153,6 +153,19 @@ as at `/api/v1`; storage failure is `503`. Commit results whose items carry a
 `path` get an absolute `url` from `APP_ORIGIN`. Each request is one exchange
 row with operation `mcp.<tool>` or `mcp.<method>`.
 
+# Agent plugins
+
+The downloadable plugin package for an agent harness (Plugin for ChatGPT at
+`/settings/chatgpt-plugin`) is a `core/agent_plugins` page and `Download`,
+not a host route. It points the harness at this `/mcp` edge from
+`APP_ORIGIN`. The host only parses the exporter subcommand:
+
+```sh
+bilibi-web plugin-export --harness chatgpt --client <registered-id> --output <new-directory>
+```
+
+See `apps/core/agent_plugins/README.md`.
+
 # Webhooks (`src/webhooks.rs`)
 
 `POST /webhooks/{identifier}` is the only signed machine namespace. Register a

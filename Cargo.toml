@@ -24,7 +24,9 @@ askama = "0.16"
 sha1 = "0.11"
 data-encoding = "2.11"
 percent-encoding = "2.3"
-qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
+# Encoder only: our template draws the SVG.
+qrcode = { version = "0.14.1", default-features = false }
+zip = { version = "9.0.4", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 bilibi-database = { path = "apps/base/database" }
 bilibi-audit = { path = "apps/base/audit" }
 bilibi-security = { path = "apps/base/security" }
@@ -72,6 +74,7 @@ bilibi-workflow = { path = "apps/base/workflow" }
 bilibi-address = { path = "apps/core/address" }
 bilibi-affiliation = { path = "apps/core/affiliation" }
 bilibi-agent-access = { path = "apps/core/agent_access" }
+bilibi-agent-plugins = { path = "apps/core/agent_plugins" }
 bilibi-geonames = { path = "apps/core/geonames" }
 bilibi-party = { path = "apps/core/party" }
 bilibi-person = { path = "apps/core/person" }

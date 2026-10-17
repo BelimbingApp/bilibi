@@ -7,7 +7,7 @@
 <div data-shared-ui>
 {% call feedback::flash_group(messages=flash) %}{% endcall %}
 {% call ui::page(variant=bilibi_ui::PageVariant::List) %}
-{% call ui::header() %}Agent connections{% endcall %}
+{% call ui::header(actions=plugin) %}Agent connections{% endcall %}
 {% if let Some(error) = error %}
 <div id="connections-error" class="text-center text-sm">
   <p class="font-medium text-ink">Connections unavailable</p>
