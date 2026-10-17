@@ -199,15 +199,9 @@ impl Index {
                 )],
             )
         })?;
-        let sort_column = match key.as_str() {
-            "module_name" => "module",
-            "migration_file" => "migration",
-            "rows" => "rows",
-            _ => "table",
-        };
         let mut table = FlexTable::new("database-tables-table", self.columns.flex_columns(), rows)
             .sorted(
-                Some(sort_column),
+                Some(key.as_str()),
                 Some(self.list.sort_dir.unwrap_or_default()),
             );
         table.caption = "Database tables";
