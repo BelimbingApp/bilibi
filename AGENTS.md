@@ -1,6 +1,6 @@
 # Bilibi agent guidelines
 
-Read this file and `DESIGN.md` before changing code, templates, migrations, assets or docs.
+Read this file and `DESIGN.md` (UI design) before changing code, templates, migrations, assets or docs. Architecture is in `docs/architecture/README.md`. Decisions that shape it are records in `docs/architecture/decisions/`; read the index before changing a convention they cover.
 
 - **Bilimbi** (<https://github.com/BelimbingApp/bilimbi>) is the reference for behaviour, DOM and module topology. Say in a comment which Bilimbi module a file mirrors.
 - **Belimbing** (<https://github.com/BelimbingApp/belimbing>) is the reference for business meaning, not for Laravel details.
