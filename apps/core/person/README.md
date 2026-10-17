@@ -120,12 +120,7 @@ employment type/status/dates, supervisor, department or automatic account
 controls. Human/agent is identity kind; current/retired is identity availability.
 Retirement preserves history and is independent of HR employment.
 
-The directory composes shared `ListState` and Grid `PageColumns`, with bounded
-25/50/100/300 row pages, search through visible contacts, kind and retired filters,
-name/kind/identity/creation-date sorting and stable ID ties. Search, filters, sort,
-pagination and Grid `cols/lens/z/since` state survive reload and Back; column
-arrangements use shared per-account Grid persistence. Add personal email/phone
-through the notch; fresh restrictions prune walked columns and suggestions.
+The directory composes shared `ListState` and Grid `PageColumns`, with bounded 25/50/100/300 row pages, search through visible contacts, kind and retired filters, name sorting, accepted kind/identity/creation-date URL sorts and stable ID ties. Search, filters, sort, pagination and Grid `cols/lens/z/since` state survive reload and Back; column arrangements use shared per-account Grid persistence. The default columns mirror Bilimbi Contacts: Name, Email and Phone. Personal contacts come from the redacted Person read model, without an implicit work-contact fallback. Fresh restrictions prune both built-in and walked contact columns and suggestions, including on empty pages.
 
 Creation uses the owner validator, shared form errors, non-binding duplicate
 suggestions, and creates no login. Detail fields use shared inline text/choice
@@ -163,9 +158,7 @@ edit a personal contact, and verify it in the ordinary Person page. The referenc
 host resolves the Person through its public API on every update; a production
 company host additionally resolves its owned affiliation before supplying that ID.
 
-The directory follows Bilimbi Employee Index's FlexTable configuration, including
-its 300-row page size and identity/status heading sort, while omitting the HR
-columns under the approved Person model. Large pages load walked columns in
+The directory follows Bilimbi Contacts' FlexTable configuration, retaining the approved Person model's identity filters, name sort and additional 300-row page size. It omits HR columns and does not infer company work contacts under that model. Large pages load walked columns in
 batches bounded by Grid's `query::MAX_ROWS`; they retain every visible row.
 The customization notch offers show/hide, drag reorder, row-height steps,
 Compact/Normal presets and Reset. The account's column order, lenses and row

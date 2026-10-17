@@ -8,7 +8,7 @@
 //!   only; no access grant follows it.
 //! - `/companies/{id}/relationships` (`company`, `admin.company.view`): one
 //!   company's directed links to organisations and persons with their
-//!   direction, dates and status; add, edit dates and unlink, and a history
+//!   direction, dates and status; add, edit dates, end and unlink, and a history
 //!   switch that brings ended and unlinked links back.
 //! - Embed `company.relationships` (slot `record.relationships`, operation
 //!   `panel`, `admin.company.view`): the Relationships card a record page
@@ -1043,6 +1043,13 @@ fn link_row(
         unlink.name = "id";
         unlink.value = &value;
         let mut body = render(&edit)?;
+        let end_id = format!("end-rel-{id}");
+        let mut end = IconButton::new("stop", "End relationship");
+        end.id = &end_id;
+        end.event = "end";
+        end.name = "id";
+        end.value = &value;
+        body.push(&render(&end)?);
         body.push(&render(&unlink)?);
         row.actions = render(&Actions { body })?;
     }
@@ -1077,6 +1084,7 @@ struct Options {
 }
 struct LinkModal {
     editing: Option<Entry>,
+    ending: bool,
     values: HashMap<String, String>,
     errors: Vec<FieldError>,
     options: Options,
@@ -1336,6 +1344,9 @@ impl LinksPage {
             ("effective_from", "Effective From"),
             ("effective_to", "Effective To"),
         ] {
+            if modal.ending && key == "effective_from" {
+                continue;
+            }
             fields.push(render(
                 &Field::named(key)
                     .id(format!("relationship-{}", key.replace('_', "-")))
@@ -1355,6 +1366,10 @@ impl LinksPage {
             save,
         })?;
         let (title, description) = match &modal.editing {
+            Some(entry) if modal.ending => (
+                "End Relationship".to_owned(),
+                format!("End the relationship with {} on the selected date (inclusive). Its start date and history are kept.", entry.other_name),
+            ),
             Some(entry) => (
                 "Edit Relationship Dates".to_owned(),
                 format!(
@@ -1428,6 +1443,7 @@ impl LinksPage {
                     .get(0);
                 self.modal = Some(LinkModal {
                     editing: None,
+                    ending: false,
                     values: HashMap::from([
                         ("target_kind".to_owned(), "organisation".to_owned()),
                         ("effective_from".to_owned(), today),
@@ -1436,14 +1452,14 @@ impl LinksPage {
                     options,
                 });
             }
-            "edit" => {
+            "edit" | "end" => {
                 if !self.guard(&**client, scope).await? {
                     return Ok(());
                 }
                 match self.find(scope, link_id(value)?).await? {
                     Some(entry) => {
                         let dates = &entry.relationship.dates;
-                        let values = HashMap::from([
+                        let mut values = HashMap::from([
                             (
                                 "effective_from".to_owned(),
                                 dates
@@ -1455,8 +1471,16 @@ impl LinksPage {
                                 dates.to().map_or(String::new(), |d| d.as_str().to_owned()),
                             ),
                         ]);
+                        if kind == "end" {
+                            let today: String = client
+                                .query_one("SELECT CURRENT_DATE::text", &[])
+                                .await?
+                                .get(0);
+                            values.insert("effective_to".into(), today);
+                        }
                         self.modal = Some(LinkModal {
                             editing: Some(entry),
+                            ending: kind == "end",
                             values,
                             errors: Vec::new(),
                             options: Options {
@@ -1492,6 +1516,40 @@ impl LinksPage {
                     return Ok(());
                 };
                 modal.values = values_of(value);
+                if modal.ending {
+                    let Some(entry) = modal.editing.as_ref() else {
+                        return Err(Error::Internal);
+                    };
+                    let date = modal
+                        .values
+                        .get("effective_to")
+                        .cloned()
+                        .unwrap_or_default();
+                    let Ok(date) = CalendarDate::try_from(date) else {
+                        modal.errors =
+                            vec![FieldError::new("effective_to", "choose a valid end date")];
+                        return Ok(());
+                    };
+                    match self
+                        .shared
+                        .company
+                        .end_relationship(
+                            scope,
+                            entry.relationship.id,
+                            entry.relationship.version,
+                            &date,
+                        )
+                        .await
+                    {
+                        Ok(_) => {
+                            self.modal = None;
+                            self.flash
+                                .success("Relationship ended. Its history is kept.");
+                        }
+                        Err(error) => self.write_error(error, true),
+                    }
+                    return Ok(());
+                }
                 let mut errors = Vec::new();
                 let dates = parse_dates(&modal.values, &mut errors);
                 match modal.editing.clone() {

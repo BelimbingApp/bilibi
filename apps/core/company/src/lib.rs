@@ -15,7 +15,7 @@ pub mod reference_types;
 mod relationship_operations;
 pub mod relationship_roles;
 pub mod relationships;
-pub mod web;
+mod web;
 
 pub use contributions::{CAPABILITIES, CREATE, DELETE, LIST, TENANT_WIDE, UPDATE, VIEW};
 pub use organisation::{

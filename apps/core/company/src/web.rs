@@ -7,7 +7,7 @@
 mod dashboard;
 mod departments;
 mod reference_types;
-pub mod relationships;
+pub(super) mod relationships;
 mod setup;
 mod views;
 use crate::{lifecycle::Operation, CreateOutcome, Edit, FieldError, Params};
@@ -176,6 +176,11 @@ impl Pages {
                 views::department_builtins(),
             )
             .map_err(|_| Error::Internal)?,
+            children_columns: ListColumns::mount(
+                "company-subsidiaries",
+                views::children_builtins(),
+            )
+            .map_err(|_| Error::Internal)?,
             form: HashMap::from([("status".into(), "active".into())]),
             errors: Vec::new(),
             pending: None,
@@ -321,6 +326,8 @@ struct CompanyPage {
     /// The detail page's Departments table arrangement (Bilimbi
     /// `departments_columns`).
     departments_columns: ListColumns,
+    /// Bilimbi Company.ShowLive's independent `children_grid`.
+    children_columns: ListColumns,
     form: HashMap<String, String>,
     errors: Vec<FieldError>,
     pending: Option<Pending>,
@@ -454,6 +461,8 @@ impl CompanyPage {
                         notice: &self.notice,
                         pending_activity: self.pending_activity.as_ref(),
                         departments_columns: &mut self.departments_columns,
+                        children_columns: &self.children_columns,
+                        workspace: self.framed,
                         panels: &anchors,
                     },
                 )
@@ -503,6 +512,10 @@ impl CompanyPage {
             }
             "departments_grid" if self.operation == "detail" => {
                 self.departments_columns
+                    .handle(&bilibi_ui::params::string_values(value));
+            }
+            "children_grid" if self.operation == "detail" => {
+                self.children_columns
                     .handle(&bilibi_ui::params::string_values(value));
             }
             "sort" => self.sort(if get("sort").is_empty() {

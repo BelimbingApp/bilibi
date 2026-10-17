@@ -642,7 +642,6 @@ impl Detail {
     fn linked(&mut self, record: &Record) -> Result<Html> {
         let mut owners: Vec<&LinkedOwner> = record.owners.iter().collect();
         sort_owners(&mut owners, &self.sort_by, self.sort_dir);
-        self.columns.load(&owners, |o| o.attachment.id.to_string());
         let dash = || "<span class=\"text-ink-muted\">—</span>".to_owned();
         let mut rows = Vec::with_capacity(owners.len());
         for owner in owners {

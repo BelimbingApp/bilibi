@@ -444,6 +444,8 @@ pub(super) struct DetailState<'a> {
     pub notice: &'a str,
     pub pending_activity: Option<&'a (String, i64)>,
     pub departments_columns: &'a mut ListColumns,
+    pub children_columns: &'a ListColumns,
+    pub workspace: bool,
     /// Anchors of the contributed record panels the reader may mount.
     pub panels: &'a [String],
 }
@@ -459,6 +461,8 @@ pub(super) async fn detail(
         notice,
         pending_activity,
         departments_columns,
+        children_columns,
+        workspace,
         panels,
     } = state;
     let (company, masked) = crate::detail(client, scope, id).await?;
@@ -723,10 +727,15 @@ pub(super) async fn detail(
     })?;
     // Child-owning slices contribute the remaining panels; subsidiaries are
     // Company-owned and can be shown immediately without an upward dependency.
-    let children=client.query("SELECT id,name,status FROM companies WHERE tenant_id=$1 AND parent_id=$2 AND deleted_at IS NULL ORDER BY name,id LIMIT 300",&[&scope.tenant(),&id]).await?;
+    // Keep the platform's bounded read; the extra row makes truncation explicit.
+    let children = client.query(
+        "SELECT c.id,c.name,c.status,t.name AS legal_entity_type_name,CASE WHEN $3 THEN NULL ELSE c.jurisdiction END AS jurisdiction FROM companies c LEFT JOIN company_legal_entity_types t ON t.id=c.legal_entity_type_id WHERE c.tenant_id=$1 AND c.parent_id=$2 AND c.deleted_at IS NULL ORDER BY c.id LIMIT 301",
+        &[&scope.tenant(), &id, &masked.contains("jurisdiction")],
+    ).await?;
     if !children.is_empty() {
+        let truncated = children.len() > 300;
         let mut rows = Vec::new();
-        for child in children {
+        for child in children.into_iter().take(300) {
             let key = child.get::<_, i64>(0).to_string();
             let href = format!("/companies/{key}");
             let name = child.get::<_, String>(1);
@@ -736,7 +745,7 @@ pub(super) async fn detail(
                     .slot(
                         "name",
                         render(&RecordLink {
-                            workspace: false,
+                            workspace,
                             kind: "core/company",
                             record_id: &key,
                             href: &href,
@@ -744,25 +753,50 @@ pub(super) async fn detail(
                             body: Html::text(&name),
                         })?,
                     )
-                    .slot("status", badge(&status)?),
+                    .slot("status", badge(&status)?)
+                    .slot(
+                        "legal_entity_type",
+                        Html::text(
+                            child
+                                .get::<_, Option<String>>("legal_entity_type_name")
+                                .as_deref()
+                                .unwrap_or("—"),
+                        ),
+                    )
+                    .slot(
+                        "jurisdiction",
+                        if masked.contains("jurisdiction") {
+                            render(&Restricted::new(format!("subsidiary-{key}-jurisdiction")))?
+                        } else {
+                            Html::text(
+                                child
+                                    .get::<_, Option<String>>("jurisdiction")
+                                    .as_deref()
+                                    .unwrap_or("—"),
+                            )
+                        },
+                    ),
             );
         }
         let mut children_body = render(&SectionHeading {
             title: "Subsidiaries",
             count: Some(rows.len()),
+            description: if truncated {
+                "Showing the first 300 subsidiaries. Use Companies to search the full directory."
+            } else {
+                ""
+            },
             ..SectionHeading::default()
         })?;
-        let mut table = FlexTable::new(
-            "company-subsidiaries",
-            vec![
-                FlexColumn::new("name", "name", "Name"),
-                FlexColumn::new("status", "status", "Status"),
-            ],
-            rows,
-        );
+        let mut table = FlexTable::new(&children_columns.id, children_columns.flex_columns(), rows);
+        table.event = "children_grid";
+        table.zoom = children_columns.zoom;
+        table.suggestions = children_columns.flex_suggestions();
+        table.add_query = &children_columns.add_query;
+        table.framed = false;
         table.caption = "Subsidiaries";
         children_body.push(&render(&table)?);
-        content.push(&card("company-subsidiaries-card", children_body, false)?);
+        content.push(&card("company-subsidiaries-card", children_body, true)?);
     }
     content.push(&departments_section(client, scope, id, departments_columns).await?);
     // The Relationships section arrives as the `company.relationships` panel
@@ -1140,6 +1174,15 @@ struct MutedValue<'a> {
     text: &'a str,
 }
 
+// Bilimbi Company.ShowLive children_columns; independent of Departments.
+pub(super) fn children_builtins() -> Vec<BuiltinColumn> {
+    vec![
+        BuiltinColumn::new("name", "Name"),
+        BuiltinColumn::new("status", "Status"),
+        BuiltinColumn::new("legal_entity_type", "Legal Entity Type"),
+        BuiltinColumn::new("jurisdiction", "Jurisdiction"),
+    ]
+}
 /// The detail page's Departments table (Bilimbi `ShowLive` section 5):
 /// built-in columns only, with Manage leading to the departments page.
 pub(super) fn department_builtins() -> Vec<BuiltinColumn> {
@@ -1171,7 +1214,6 @@ async fn departments_section(
     )
     .await?;
     let heads = crate::departments::head_names(client, scope, &departments).await?;
-    columns.load(&departments, |department| department.id.to_string());
     let href = format!("/companies/{id}/departments");
     let heading = render(&SectionHeading {
         id: "company-departments-heading",

@@ -364,6 +364,10 @@ the shell's existing account pin API, with a resolved record label and URL. The 
 panel retains its mount through detail patches. Child-owned panels are attached
 by their later owner slices.
 
+Subsidiaries and Departments keep independent `ListColumns` arrangements, including column re-add suggestions and density controls. Subsidiaries mirror Bilimbi's Name, Status, Legal Entity Type and masked Jurisdiction columns and workspace-aware record links. The list is bounded to the first 300 direct children in ID order; a truncation notice points to the full Companies directory.
+
+Relationship administration also exposes End separately from Edit dates and Unlink, through `CompanyService::end_relationship`. It holds the opened version, retains the start date and records an inclusive end date; ending today does not make the relationship inactive until tomorrow. Invalid dates and stale writes keep the modal draft.
+
 ## Reference-type and department pages (K4)
 
 `web/reference_types.rs` serves `/companies/legal-entity-types` and

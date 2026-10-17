@@ -1,12 +1,12 @@
 use super::*;
-use crate::{contributions::CREATE, model::kind_key, PersonKind, Search};
+use crate::{contributions::CREATE, PersonKind, Search};
 use bilibi_grid::{Outcome, PageColumns};
 use bilibi_ui::{
     choices,
     list_state::{InvalidPageSize, ParamNames},
     lists::RecordLink,
-    Badge, BadgeKind, BuiltinColumn, Card, CreateButton, Filter, FilterToolbar, Header, IconButton,
-    IconContext, ListSpec, ListState, Pagination, SortDir, TableEmpty, ToolbarControl,
+    BuiltinColumn, Card, CreateButton, Filter, FilterToolbar, Header, IconButton, IconContext,
+    ListSpec, ListState, Pagination, SortDir, TableEmpty, ToolbarControl,
 };
 use serde_json::json;
 use std::{collections::BTreeMap, sync::LazyLock};
@@ -51,7 +51,25 @@ pub(super) struct Index {
     pages: Pages,
     list: ListState,
     columns: PageColumns,
+    masked: std::collections::HashSet<String>,
     framed: bool,
+}
+// Bilimbi Person.IndexLive: personal contact columns by default. Identity
+// filters and URL sorts remain the approved Person model's additional controls.
+fn columns(pages: &Pages, masked: &std::collections::HashSet<String>) -> Result<PageColumns> {
+    PageColumns::mount(
+        pages.views.clone(),
+        "persons",
+        [
+            BuiltinColumn::new("name", "Name").sortable("name"),
+            BuiltinColumn::new("email", "Email"),
+            BuiltinColumn::new("phone", "Phone"),
+        ]
+        .into_iter()
+        .filter(|column| !masked.contains(&column.id))
+        .collect(),
+    )
+    .map_err(|_| Error::Internal)
 }
 impl Index {
     pub async fn new(
@@ -60,25 +78,27 @@ impl Index {
         query: &HashMap<String, String>,
         framed: bool,
     ) -> Result<Self> {
-        let mut columns = PageColumns::mount(
-            pages.views.clone(),
-            "persons",
-            vec![
-                BuiltinColumn::new("name", "Name").sortable("name"),
-                BuiltinColumn::new("kind", "Kind").sortable("kind"),
-                BuiltinColumn::new("state", "Identity").sortable("state"),
-            ],
-        )
-        .map_err(|_| Error::Internal)?;
+        let client = pages.db.get().await?;
+        let masked = bilibi_authz::restrictions_for(&**client, scope, "persons").await?;
+        let mut columns = columns(&pages, &masked)?;
         columns.from_params(scope, query).await?;
         Ok(Self {
             pages,
             list: ListState::parse(query, SPEC.clone()).map_err(|_| Error::Internal)?,
             columns,
+            masked,
             framed,
         })
     }
     async fn view(&mut self, scope: &Scope) -> Result<LiveBody> {
+        let client = self.pages.db.get().await?;
+        let masked = bilibi_authz::restrictions_for(&**client, scope, "persons").await?;
+        if masked != self.masked {
+            let query = self.columns.params();
+            self.columns = columns(&self.pages, &masked)?;
+            self.columns.from_params(scope, &query).await?;
+            self.masked = masked;
+        }
         self.list.search = self.list.search.trim().chars().take(200).collect();
         let search = |list: &ListState| Search {
             search: list.search.trim().chars().take(200).collect(),
@@ -192,28 +212,12 @@ impl Index {
                     body: Html::text(&person.name),
                 })?,
             );
-            row.slots.insert(
-                "kind".into(),
-                render(Badge {
-                    body: Html::text(kind_key(person.kind)),
-                    ..Badge::default()
-                })?,
-            );
-            row.slots.insert(
-                "state".into(),
-                render(Badge::status(
-                    if person.retired_at.is_some() {
-                        BadgeKind::Neutral
-                    } else {
-                        BadgeKind::Success
-                    },
-                    if person.retired_at.is_some() {
-                        "retired"
-                    } else {
-                        "current"
-                    },
-                ))?,
-            );
+            for (key, value) in [("email", &person.email), ("phone", &person.phone)] {
+                if !person.restricted.iter().any(|field| field == key) {
+                    row.slots
+                        .insert(key.into(), Html::text(value.as_deref().unwrap_or("—")));
+                }
+            }
         }
         let mut table = self
             .columns
