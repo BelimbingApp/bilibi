@@ -75,9 +75,9 @@ A contract declares:
 
 - **Bilibi identifies an agent by its connection**: the person it acts for, the registered client, the grant and its expiry. Each request also gets a trace ID, which is the correlation ID of the recorded exchange and of any mutation it commits.
 - **The agent also reports itself**: harness, model, version and effort, in the same `harness/model-version-effort` form the ADR headers use (for example `amp/gpt-6-astra-high`).
-- Report known values only. When the agent does not know a value of harness, model, version or effort, it **asks its human and reports what the human says**. It still never guesses, and omits a part the human cannot give.
+- Report known values only. When the agent does not know a value of harness, model, version or effort, it **asks the user who is using the harness and reports what that user says**. That is the person who chose the model in the harness, normally the account the agent acts for. It never asks the installation owner or a Bilibi administrator. It still never guesses, and omits a part that user cannot give.
 - The value stays labelled self-reporting. A request is never rejected for missing metadata, and ordinary machine callers need not send it.
-- Follow-up code change: the harness plugins (the skills `core/agent_plugins` generates) must instruct the agent to ask its human for unknown values.
+- Follow-up code change: the harness plugins (the skills `core/agent_plugins` generates) must instruct the agent to ask the user of the harness for unknown values.
 - That report is labelled **self-reporting**: what the agent reports about itself. It is recorded beside the harness/model-version-effort value for audit and support. It is **never used for authorization**.
 - Today the API records only the self-reporting `X-Bilibi-Agent-Id` and `X-Bilibi-Run-Id` labels (`apps/web/README.md`). Recording the harness/model-version-effort form is a follow-up code change.
 

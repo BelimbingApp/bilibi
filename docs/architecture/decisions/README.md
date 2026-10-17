@@ -26,7 +26,7 @@ Every record carries these header lines: Document Type, Status, Agents, Scope, L
 - More than one: add the role in parentheses, comma separated: `claude-cloud/sonnet-5.5-default (author), amp/gpt-6-astra-low (review)`
 - Other examples: `amp/gpt-6-astra-high`, `codex/sol-high`
 - A reviewer is appended after the review.
-- If the agent does not know a part, it asks its human and writes what the human says. It never guesses. Omit a part nobody can give.
+- If the agent does not know a part, it asks the user who is using the harness (the person who chose the model there, normally the account the agent acts for) and writes what that user says. It never asks the installation owner or a Bilibi administrator. It never guesses. Omit a part nobody can give.
 
 ## Numbering
 
