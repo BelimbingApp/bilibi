@@ -399,11 +399,50 @@ impl Sessions {
         let csrf = uuid::Uuid::new_v4().simple().to_string();
         let moved = sql
             .query_opt(
-                "UPDATE sessions SET user_id=$5,impersonator_id=$6,csrf=$7,last_activity=now() WHERE id=$1 AND tenant_id=$2 AND user_id=$3 AND impersonator_id IS NOT DISTINCT FROM $4 AND expires_at>now() AND last_activity>now()-make_interval(secs => $8::double precision) RETURNING id",
+                "UPDATE sessions SET user_id=$5,impersonator_id=$6,csrf=$7,last_activity=now(),stepped_up_at=NULL WHERE id=$1 AND tenant_id=$2 AND user_id=$3 AND impersonator_id IS NOT DISTINCT FROM $4 AND expires_at>now() AND last_activity>now()-make_interval(secs => $8::double precision) RETURNING id",
                 &[&token, &tenant, &from.user, &from.impersonator, &to.user, &to.impersonator, &csrf, &(policy.idle_seconds as f64)],
             )
             .await?;
         moved.map(|_| csrf).ok_or(Error::Conflict)
+    }
+    /// Records that the signed-in session just passed an authenticator check,
+    /// inside the caller's transaction (the verification that proved it).
+    /// The session is named by the proof Tenancy sealed, never a token; an
+    /// impersonated session is refused, since the check proves the person
+    /// behind the account and an operator is not the account's holder.
+    pub async fn step_up(&self, sql: &impl GenericClient, scope: &Scope) -> Result<()> {
+        if scope.impersonator().is_some() {
+            return Err(Error::Forbidden);
+        }
+        let updated = sql
+            .execute(
+                "UPDATE sessions SET stepped_up_at=now() WHERE tenant_id=$1 AND user_id=$2 AND csrf=$3 AND impersonator_id IS NULL AND expires_at>now()",
+                &[&scope.tenant(), &scope.user(), &scope.csrf],
+            )
+            .await?;
+        if updated != 1 {
+            return Err(Error::Unauthorized);
+        }
+        Ok(())
+    }
+    /// Whether the signed-in session passed an authenticator check within the
+    /// last `window_seconds`. Reads only; never renews the window.
+    pub async fn stepped_up_within(
+        &self,
+        client: &impl GenericClient,
+        scope: &Scope,
+        window_seconds: i64,
+    ) -> Result<bool> {
+        if window_seconds <= 0 {
+            return Err(Error::Invalid);
+        }
+        Ok(client
+            .query_opt(
+                "SELECT 1 FROM sessions WHERE tenant_id=$1 AND user_id=$2 AND csrf=$3 AND impersonator_id IS NULL AND stepped_up_at>now()-make_interval(secs => $4::double precision)",
+                &[&scope.tenant(), &scope.user(), &scope.csrf, &(window_seconds as f64)],
+            )
+            .await?
+            .is_some())
     }
     /// Publishes terminations the caller already committed.
     pub fn announce(&self, ids: Vec<String>) {
@@ -474,6 +513,7 @@ inventory::submit! {
         migrations: &[
             ("base-session-001-client", include_str!("../migrations/001-client.sql")),
             ("base-session-002-impersonation", include_str!("../migrations/002-impersonation.sql")),
+            ("base-session-003-step-up", include_str!("../migrations/003-step-up.sql")),
         ],
         services: &[
             bilibi_module_registry::Service { id: "base/session.sessions", factory: |services| Ok(Arc::new(Sessions::new(services.get("base/tenancy.authentication")?, services.get("base/settings.store")?))) },

@@ -216,8 +216,9 @@ impl Core {
         let Some(route) = self.route(path).filter(|route| route.framed) else {
             return Reach::Unserved;
         };
-        let allowed = match route.access {
-            Access::Public | Access::SignedIn => true,
+        // A step-up page still opens in a tile; the frame shows its prompt.
+        let allowed = match route.access.base() {
+            Access::Public | Access::SignedIn | Access::StepUp(_) => true,
             Access::Capability(key) => standing.capabilities.contains(key),
             Access::Operator => standing.operator,
             Access::Owner => standing.owner,

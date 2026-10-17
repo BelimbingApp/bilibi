@@ -1,0 +1,14 @@
+{#- The step-up prompt (GitHub's "Confirm access"; src/two_factor_ui.rs): a
+    guarded page sent the browser here; a current authenticator code or one
+    recovery code confirms access for the installation's window and returns
+    to that page. -#}
+{% import "components.html" as ui %}
+{% import "feedback.html" as fb %}
+<div data-shared-ui class="mx-auto w-full max-w-md space-y-4 py-8">{{ header }}
+{%- if !notice.is_empty() %}{% call fb::alert(kind=bilibi_ui::StatusKind::Warning, id="confirm-access-notice") %}{{ notice }}{% endcall %}{% endif -%}
+{%- if enabled %}
+<form id="confirm-access-form" data-event="verify" class="space-y-4 rounded-xl border border-line bg-surface p-6"><p class="text-sm text-muted">Open your authenticator app and enter the 6-digit code for this account. You will not be asked again for {{ minutes }} minute(s). Lost your phone? Enter one of your recovery codes instead.</p>{{ code }}<div class="flex justify-end">{% call ui::button(variant=bilibi_ui::ButtonVariant::Primary, id="confirm-access-verify", button_type="submit", working="Verifying…") %}Verify{% endcall %}</div></form>
+{%- else %}
+<div id="confirm-access-setup" class="space-y-4 rounded-xl border border-line bg-surface p-6"><p class="text-sm text-muted">This page needs two-factor authentication. Set up an authenticator app first; you will come back here afterwards.</p><div class="flex justify-end">{% call ui::button(variant=bilibi_ui::ButtonVariant::Primary, id="confirm-access-setup-link", href=setup_href) %}Set up authenticator{% endcall %}</div></div>
+{%- endif %}
+</div>

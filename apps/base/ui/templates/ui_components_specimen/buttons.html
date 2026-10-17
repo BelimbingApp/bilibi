@@ -1,6 +1,6 @@
 {%- import "components.html" as ui -%}
 <div id="specimen-buttons" class="flex flex-wrap items-center gap-3 rounded-xl border border-line bg-surface p-4 shadow-xs">
-{% call ui::button() %}Secondary{% endcall %}{% call ui::button(variant=ButtonVariant::Primary) %}Primary{% endcall %}{% call ui::button(variant=ButtonVariant::Danger) %}Danger{% endcall %}{% call ui::button(disabled=true) %}Disabled{% endcall %}{% call ui::button(href="/system/design-library") %}Navigation{% endcall %}{% call ui::button(variant=ButtonVariant::Primary, busy=true) %}Saving…{% endcall %}
+{% call ui::button() %}Secondary{% endcall %}{% call ui::button(variant=ButtonVariant::Primary) %}Primary{% endcall %}{% call ui::button(variant=ButtonVariant::Danger) %}Danger{% endcall %}{% call ui::button(disabled=true) %}Disabled{% endcall %}{% call ui::button(href="/system/design-library") %}Navigation{% endcall %}{% call ui::button(href="data:text/plain;charset=utf-8,Specimen%0A", download="specimen.txt") %}Download{% endcall %}{% call ui::button(variant=ButtonVariant::Primary, busy=true) %}Saving…{% endcall %}
 </div>
 <div id="specimen-button-icons" class="flex flex-wrap gap-2 rounded-xl border border-line bg-surface p-4 shadow-xs">
 {% call ui::button() %}{% call ui::icon(name="create") %}{% endcall %} Add{% endcall %}

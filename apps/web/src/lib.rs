@@ -2,6 +2,7 @@
 //! page per socket.
 mod api;
 mod auth;
+mod environment;
 mod errors;
 mod impersonation;
 mod landing;
@@ -27,6 +28,8 @@ use bilibi_ui::Document;
 use serde::Deserialize;
 use std::{collections::HashMap, sync::Arc};
 
+pub use environment::Environment;
+
 #[derive(Clone)]
 pub struct App {
     routes: Arc<Vec<routes::BoundRoute>>,
@@ -34,6 +37,8 @@ pub struct App {
     moved: Arc<Vec<&'static bilibi_module_registry::contributions::Moved>>,
     pub db: Db,
     pub origin: Arc<str>,
+    /// `BILIBI_ENV`: development relaxes the step-up guard, nothing else.
+    pub environment: Environment,
     /// The host the server listens on, for the development status bar only;
     /// the serving command sets it from `BIND_ADDR`.
     pub listen_address: Option<Arc<str>>,
@@ -53,6 +58,7 @@ pub struct App {
 }
 impl App {
     pub fn new(db: Db, origin: &str) -> Result<Self> {
+        let environment = Environment::from_env()?;
         let modules = modules()?;
         let mut services = bilibi_module_registry::Services::default();
         services.provide("bootstrap.database", Arc::new(db))?;
@@ -80,6 +86,7 @@ impl App {
             moved,
             db,
             origin: origin.into(),
+            environment,
             listen_address: None,
             company,
             user,

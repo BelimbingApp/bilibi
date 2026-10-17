@@ -262,6 +262,25 @@ pub enum Access {
     /// bootstrap account in the operator tenant, in its own browser session.
     /// No role, capability or grant extends it to anyone else.
     Owner,
+    /// The inner access, then step-up ("sudo mode"): outside a development
+    /// deployment the session must have passed an authenticator check
+    /// recently (Core User's window), or a GET is sent to confirm access
+    /// first. Wrap a signed-in access, never `Public` or another `StepUp`;
+    /// Web refuses either at boot.
+    StepUp(&'static Access),
+}
+impl Access {
+    /// The access without its step-up wrapper: what menus and embeds check,
+    /// since step-up gates opening a page, not seeing that it exists.
+    pub fn base(self) -> Access {
+        match self {
+            Access::StepUp(inner) => *inner,
+            access => access,
+        }
+    }
+    pub fn steps_up(self) -> bool {
+        matches!(self, Access::StepUp(_))
+    }
 }
 /// Metadata consumed by the Web adapter; registration does not bypass guards.
 #[derive(Clone, Copy, Debug)]

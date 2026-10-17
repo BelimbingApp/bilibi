@@ -283,7 +283,7 @@ impl Badge<'_> {
 /// shows while the click's round trip is in flight.
 #[derive(Template, Debug, Default)]
 #[template(
-    source = r#"{% import "components.html" as ui %}{% call ui::button(variant=variant, class=class, href=href, id=id, button_type=button_type, name=name, value=value, disabled=disabled, busy=busy, aria_busy=aria_busy, event=event, working=working) %}{{ body|safe }}{% endcall %}"#,
+    source = r#"{% import "components.html" as ui %}{% call ui::button(variant=variant, class=class, href=href, id=id, button_type=button_type, name=name, value=value, disabled=disabled, busy=busy, aria_busy=aria_busy, event=event, working=working, download=download) %}{{ body|safe }}{% endcall %}"#,
     ext = "html"
 )]
 pub struct Button<'a> {
@@ -301,6 +301,10 @@ pub struct Button<'a> {
     pub aria_busy: bool,
     pub event: &'a str,
     pub working: &'a str,
+    /// With `href`, the link saves its target under this file name instead
+    /// of opening it (a `data:` text the page itself built, such as
+    /// recovery codes that exist nowhere else).
+    pub download: &'a str,
     pub body: Html,
 }
 

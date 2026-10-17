@@ -61,6 +61,7 @@ pub fn bind(services: &Services) -> Result<Vec<BoundRoute>> {
     for entry in services.catalog()?.entries::<Route>(ROUTES)? {
         let route = entry.get::<Route>()?;
         validate_host_free(entry, route.path)?;
+        validate_access(entry, route.access)?;
         for previous in &bound {
             validate_pair(
                 (previous.route.method, previous.route.path),
@@ -82,6 +83,7 @@ pub fn bind_downloads(services: &Services, pages: &[BoundRoute]) -> Result<Vec<B
     for entry in services.catalog()?.entries::<Download>(DOWNLOADS)? {
         let download = entry.get::<Download>()?;
         validate_host_free(entry, download.path)?;
+        validate_access(entry, download.access)?;
         for page in pages {
             validate_pair(
                 (page.route.method, page.route.path),
@@ -117,6 +119,17 @@ fn validate_host_free(entry: &bilibi_module_registry::Entry, path: &str) -> Resu
                 entry.id, entry.provenance.source, entry.provenance.line
             )));
         }
+    }
+    Ok(())
+}
+/// Step-up wraps a signed-in access once: a public page has no session to
+/// step up, and a nested wrapper would mean nothing more.
+fn validate_access(entry: &bilibi_module_registry::Entry, access: Access) -> Result<()> {
+    if let Access::StepUp(Access::Public | Access::StepUp(_)) = access {
+        return Err(invalid(format!(
+            "{} at {}:{} steps up a public or already stepped-up access",
+            entry.id, entry.provenance.source, entry.provenance.line
+        )));
     }
     Ok(())
 }
@@ -203,10 +216,11 @@ pub fn install(
             bound.download.path,
             get(
                 move |State(app): State<App>,
+                      uri: Uri,
                       headers: HeaderMap,
                       Path(path): Path<HashMap<String, String>>,
                       Query(query): Query<HashMap<String, String>>| {
-                    download(app, bound, headers, path, query)
+                    download(app, bound, uri, headers, path, query)
                 },
             ),
         );
@@ -320,7 +334,42 @@ fn moved_destination(moved: &Moved, uri: &Uri) -> String {
     destination
 }
 
+/// What a request's access check concluded.
+pub enum Admission {
+    /// Through, with the proven scope (none for a public route).
+    Admitted(Option<bilibi_security::Scope>),
+    /// A step-up route outside development, and this session has not
+    /// confirmed access within the window: a GET goes to the prompt first.
+    StepUp(bilibi_security::Scope),
+}
+
+pub async fn admit(app: &App, access: Access, credential: Option<&str>) -> Result<Admission> {
+    let scope = check_base(app, access.base(), credential).await?;
+    if !(access.steps_up() && app.environment.requires_step_up()) {
+        return Ok(Admission::Admitted(scope));
+    }
+    let scope = scope.ok_or(Error::Forbidden)?;
+    if app.user.stepped_up(&scope).await? {
+        Ok(Admission::Admitted(Some(scope)))
+    } else {
+        Ok(Admission::StepUp(scope))
+    }
+}
+
+/// [`admit`] for a caller with no prompt to send anyone to (an embed, a
+/// panel): a step-up still owed is a refusal.
 pub async fn check_access(
+    app: &App,
+    access: Access,
+    credential: Option<&str>,
+) -> Result<Option<bilibi_security::Scope>> {
+    match admit(app, access, credential).await? {
+        Admission::Admitted(scope) => Ok(scope),
+        Admission::StepUp(_) => Err(Error::Forbidden),
+    }
+}
+
+async fn check_base(
     app: &App,
     access: Access,
     credential: Option<&str>,
@@ -345,9 +394,25 @@ pub async fn check_access(
             bilibi_tenancy::prove_owner(&**client, &scope).await?;
         }
         Access::SignedIn => {}
+        // `base()` unwrapped the one wrapper boot allows.
+        Access::StepUp(_) => return Err(Error::Internal),
         Access::Public => unreachable!(),
     }
     Ok(Some(scope))
+}
+
+/// Sends a browser that owes a step-up to the prompt (or to enrollment),
+/// carrying the address it asked for so it comes back there.
+async fn step_up_redirect(
+    app: &App,
+    scope: &bilibi_security::Scope,
+    uri: &Uri,
+) -> Result<Response> {
+    let back = uri
+        .path_and_query()
+        .map_or(uri.path(), |address| address.as_str());
+    let destination = app.user.step_up_destination(scope, back).await?;
+    Ok(axum::response::Redirect::to(&destination).into_response())
 }
 
 async fn dispatch(
@@ -360,11 +425,16 @@ async fn dispatch(
     body: Bytes,
 ) -> std::result::Result<Response, HttpError> {
     let credential = token(&headers).ok();
-    let scope = match check_access(&app, bound.route.access, credential.as_deref()).await {
+    let scope = match admit(&app, bound.route.access, credential.as_deref()).await {
         Err(Error::Unauthorized) if bound.route.method == Method::Get => {
             return Ok(crate::auth::sign_in_redirect(&app, credential.is_some()))
         }
-        result => result?,
+        Ok(Admission::StepUp(scope)) if bound.route.method == Method::Get => {
+            return Ok(step_up_redirect(&app, &scope, &uri).await?)
+        }
+        Ok(Admission::StepUp(_)) => return Err(Error::Forbidden.into()),
+        Ok(Admission::Admitted(scope)) => scope,
+        Err(error) => return Err(error.into()),
     };
     if bound.route.method != Method::Get {
         origin(&app, &headers)?;
@@ -465,16 +535,19 @@ async fn dispatch(
 async fn download(
     app: App,
     bound: BoundDownload,
+    uri: Uri,
     headers: HeaderMap,
     path: HashMap<String, String>,
     query: HashMap<String, String>,
 ) -> std::result::Result<Response, HttpError> {
     let credential = token(&headers).ok();
-    let scope = match check_access(&app, bound.download.access, credential.as_deref()).await {
+    let scope = match admit(&app, bound.download.access, credential.as_deref()).await {
         Err(Error::Unauthorized) => {
             return Ok(crate::auth::sign_in_redirect(&app, credential.is_some()))
         }
-        result => result?,
+        Ok(Admission::StepUp(scope)) => return Ok(step_up_redirect(&app, &scope, &uri).await?),
+        Ok(Admission::Admitted(scope)) => scope,
+        Err(error) => return Err(error.into()),
     };
     // Registration refuses a public download; a scope is always proven here.
     let (Some(scope), Some(credential)) = (scope, credential) else {

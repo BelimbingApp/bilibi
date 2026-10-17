@@ -20,6 +20,12 @@ thiserror = "2"
 argon2 = "0.6"
 askama = "0.16"
 zip = { version = "9.0.4", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+# Authenticator two-factor (Core User): RFC 6238 over RustCrypto SHA-1, the
+# base32 key, the otpauth label and the QR code drawn server-side as SVG.
+sha1 = "0.11"
+data-encoding = "2.11"
+percent-encoding = "2.3"
+qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
 bilibi-database = { path = "apps/base/database" }
 bilibi-audit = { path = "apps/base/audit" }
 bilibi-security = { path = "apps/base/security" }

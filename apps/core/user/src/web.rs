@@ -40,6 +40,7 @@ pub fn settings_entries() -> Vec<SettingsEntry> {
     [
         ("profile", "Profile", "/settings/profile"),
         ("password", "Password", "/settings/password"),
+        ("two-factor", "Two-factor authentication", crate::TWO_FACTOR_PATH),
         ("appearance", "Appearance", "/settings/appearance"),
         (
             "chatgpt-plugin",
@@ -153,9 +154,10 @@ pub struct Pages {
 }
 
 impl Pages {
-    /// The account administration and profile pages (`account_ui`), whose
-    /// first render is their mounted state's refresh, as Person's pages do.
-    fn account_state(
+    /// The account administration, profile and two-factor pages
+    /// (`account_ui`, `two_factor_ui`), whose first render is their mounted
+    /// state's refresh, as Person's pages do.
+    async fn account_state(
         &self,
         request: &PageRequest<'_, Scope>,
     ) -> Result<Option<Box<dyn LiveState<Scope, Error>>>, Error> {
@@ -167,6 +169,22 @@ impl Pages {
                 request.framed,
             )?),
             "profile" => Box::new(crate::account_ui::Profile::new(self.clone())),
+            "two_factor" => Box::new(
+                crate::two_factor_ui::TwoFactorPage::new(
+                    self.users.clone(),
+                    request.scope.ok_or(Error::Unauthorized)?,
+                    request.query,
+                )
+                .await?,
+            ),
+            "confirm_access" => Box::new(
+                crate::two_factor_ui::ConfirmPage::new(
+                    self.users.clone(),
+                    request.scope.ok_or(Error::Unauthorized)?,
+                    request.query,
+                )
+                .await?,
+            ),
             _ => return Ok(None),
         }))
     }
@@ -201,7 +219,7 @@ impl Page<Scope, Error> for Pages {
     fn render<'a>(&'a self, request: PageRequest<'a, Scope>) -> PageFuture<'a, Error> {
         Box::pin(async move {
             let scope = request.scope.ok_or(Error::Unauthorized)?;
-            if let Some(mut state) = self.account_state(&request)? {
+            if let Some(mut state) = self.account_state(&request).await? {
                 let body = state
                     .update(LiveRequest {
                         scope,
@@ -245,7 +263,7 @@ impl Page<Scope, Error> for Pages {
     }
     fn mount<'a>(&'a self, request: PageRequest<'a, Scope>) -> MountFuture<'a, Scope, Error> {
         Box::pin(async move {
-            if let Some(state) = self.account_state(&request)? {
+            if let Some(state) = self.account_state(&request).await? {
                 request.scope.ok_or(Error::Unauthorized)?;
                 return Ok(Some(state));
             }
