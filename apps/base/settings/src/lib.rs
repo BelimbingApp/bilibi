@@ -203,12 +203,24 @@ impl Settings {
     /// `BILIBI_SETTINGS_KEY`. The associated data names the owner, tenant and
     /// record in a domain no setting uses, so a copied ciphertext opens
     /// neither under another record nor as a setting. Refuses without a key.
-    pub fn seal_owned(&self, owner: &str, tenant: i64, record: i64, value: &Value) -> Result<Value> {
+    pub fn seal_owned(
+        &self,
+        owner: &str,
+        tenant: i64,
+        record: i64,
+        value: &Value,
+    ) -> Result<Value> {
         self.encryption
             .encrypt(value, &owned_identity(owner, tenant, record))
     }
     /// The counterpart of [`Settings::seal_owned`]. Never log the result.
-    pub fn open_owned(&self, owner: &str, tenant: i64, record: i64, sealed: &Value) -> Result<Value> {
+    pub fn open_owned(
+        &self,
+        owner: &str,
+        tenant: i64,
+        record: i64,
+        sealed: &Value,
+    ) -> Result<Value> {
         self.encryption
             .decrypt(sealed, &owned_identity(owner, tenant, record))
     }

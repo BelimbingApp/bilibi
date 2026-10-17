@@ -170,10 +170,12 @@ impl UserService {
                 &[&scope.tenant(), &scope.user()],
             )
             .await?;
-        Ok(row.map_or_else(TwoFactorStatus::default, |row| TwoFactorStatus {
-            enabled: row.get(0),
-            recovery_codes_left: row.get(1),
-        }))
+        Ok(
+            row.map_or_else(TwoFactorStatus::default, |row| TwoFactorStatus {
+                enabled: row.get(0),
+                recovery_codes_left: row.get(1),
+            }),
+        )
     }
 
     /// Where a step-up guard sends a browser that has not confirmed access:
@@ -230,8 +232,8 @@ impl UserService {
             .map_err(Error::from)?
             .ok_or(Error::Unauthorized)?;
         let (stored, email): (String, String) = (row.get(0), row.get(1));
-        let matched =
-            current.len() <= password::MAX_LENGTH && password::verify(current, Some(&stored)).await?;
+        let matched = current.len() <= password::MAX_LENGTH
+            && password::verify(current, Some(&stored)).await?;
         if !matched {
             self.failed(scope, "password").await?;
             return Err(TwoFactorError::IncorrectPassword);
@@ -324,7 +326,10 @@ impl UserService {
         let mut client = self.db.get().await.map_err(Error::from)?;
         let mut tx = self
             .mutations
-            .begin(&mut client, scope.mutation_context("user.two_factor.enabled"))
+            .begin(
+                &mut client,
+                scope.mutation_context("user.two_factor.enabled"),
+            )
             .await?;
         let sessions = self.sessions.clone();
         let scope_for_tx = scope.clone();
@@ -382,7 +387,8 @@ impl UserService {
     ) -> Outcome<Vec<String>> {
         let proof = self.prove(scope, code).await?;
         let (codes, hashes) = fresh_recovery_codes().await?;
-        self.consume(scope, proof, Spend::Regenerate(hashes)).await?;
+        self.consume(scope, proof, Spend::Regenerate(hashes))
+            .await?;
         Ok(codes)
     }
 
@@ -544,7 +550,10 @@ impl UserService {
         let mut client = self.db.get().await?;
         let mut tx = self
             .mutations
-            .begin(&mut client, scope.mutation_context("user.two_factor.failed"))
+            .begin(
+                &mut client,
+                scope.mutation_context("user.two_factor.failed"),
+            )
             .await?;
         let failures = tx
             .mutate(move |sql| {
@@ -569,7 +578,10 @@ impl UserService {
         }
         let mut tx = self
             .mutations
-            .begin(&mut client, scope.mutation_context("user.two_factor.locked"))
+            .begin(
+                &mut client,
+                scope.mutation_context("user.two_factor.locked"),
+            )
             .await?;
         tx.mutate(move |sql| {
             Box::pin(async move {

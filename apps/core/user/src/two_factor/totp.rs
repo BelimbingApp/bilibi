@@ -46,7 +46,11 @@ pub fn code(secret: &[u8], step: i64) -> Result<String> {
         digest[offset + 2],
         digest[offset + 3],
     ]);
-    Ok(format!("{:0width$}", binary % 10u32.pow(DIGITS as u32), width = DIGITS))
+    Ok(format!(
+        "{:0width$}",
+        binary % 10u32.pow(DIGITS as u32),
+        width = DIGITS
+    ))
 }
 
 /// Whether `presented` is exactly six ASCII digits once spaces are dropped
