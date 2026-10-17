@@ -7,6 +7,13 @@ the same way (`PeopleSource`); Finance builds and runs without either, and
 matching or posting is then unavailable. Rust has no `apply/3`, so the
 provider registers a typed-JSON call instead. This module owns no tables.
 
+Use a port when the caller needs an answer now, inside its own transaction,
+and can handle `Unavailable`. When a container reacts to another container's
+fact after it commits (Payables copying a goods receipt), use a domain event
+(`apps/base/events/README.md`), not a port: the publisher does not wait on
+the reaction and the subscriber keeps its own copy. Never use a Cargo
+dependency, a descriptor edge or SQL on another container's tables instead.
+
 ## Provider
 
 A module contributes one `Port` per call, under an ID in its own namespace,
