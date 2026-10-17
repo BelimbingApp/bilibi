@@ -1,19 +1,20 @@
 #!/usr/bin/env bash
 # One development entrypoint; no daemon management or automatic installation.
+# Install prerequisites first with ./scripts/setup.sh.
 set -euo pipefail
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 cd "$root"
 for tool in rustc cargo psql pg_isready caddy mkcert python3 openssl curl ss flock; do
-    command -v "$tool" >/dev/null || { echo "Missing prerequisite: $tool" >&2; exit 1; }
+    command -v "$tool" >/dev/null || { echo "Missing prerequisite: $tool. Run ./scripts/setup.sh" >&2; exit 1; }
 done
-cargo watch --version >/dev/null 2>&1 || { echo 'Install the rebuild watcher: cargo install cargo-watch --version 8.5.3 --locked' >&2; exit 1; }
+cargo watch --version >/dev/null 2>&1 || { echo 'Missing prerequisite: cargo-watch. Run ./scripts/setup.sh' >&2; exit 1; }
 echo "$(rustc --version); $(cargo --version)"
 python3 scripts/discover-modules.py
 ./scripts/build-assets.sh
 if [[ -z ${DATABASE_URL:-} ]]; then
     pg_bin=${PG18_BIN:-/usr/lib/postgresql/18/bin}
     [[ -x "$pg_bin/initdb" && -x "$pg_bin/pg_ctl" ]] || {
-        echo 'PostgreSQL 18 binaries are required; install them or set DATABASE_URL.' >&2
+        echo 'Missing prerequisite: PostgreSQL 18 binaries. Run ./scripts/setup.sh (or set DATABASE_URL).' >&2
         exit 1
     }
     pg_root="$root/.local/postgres18"

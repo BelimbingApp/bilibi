@@ -3,42 +3,16 @@
 # cloud, or any similar sandbox): Rust toolchain, PostgreSQL 18 and a warm
 # target/. Idempotent; the whole run must stay well inside Amp's 20 minute cap.
 # Runs from the repository root. Starts no long-lived processes: .agents/resume
-# starts the database.
+# starts the database. The installs are the steps of scripts/setup.sh; Caddy,
+# mkcert, Node and cargo-watch are not needed on a cloud machine and are skipped.
 set -euo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
 
-sudo_cmd=()
-if [[ $(id -u) -ne 0 ]]; then
-    sudo_cmd=(sudo -n)
-fi
-
-# Debian's postgresql-common would create and start a default cluster on 5432;
-# the project runs its own private cluster on 5438 (see .agents/resume).
-if ! command -v psql >/dev/null || [[ ! -x /usr/lib/postgresql/18/bin/pg_ctl ]]; then
-    export DEBIAN_FRONTEND=noninteractive
-    "${sudo_cmd[@]}" apt-get update -qq
-    "${sudo_cmd[@]}" apt-get install -y -qq --no-install-recommends \
-        ca-certificates curl gnupg lsb-release build-essential pkg-config libssl-dev python3
-    "${sudo_cmd[@]}" install -d /usr/share/postgresql-common/pgdg
-    "${sudo_cmd[@]}" curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
-        https://www.postgresql.org/media/keys/ACCC4CF8.asc
-    echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" |
-        "${sudo_cmd[@]}" tee /etc/apt/sources.list.d/pgdg.list >/dev/null
-    "${sudo_cmd[@]}" install -d /etc/postgresql-common
-    echo 'create_main_cluster = false' |
-        "${sudo_cmd[@]}" tee /etc/postgresql-common/createcluster.conf >/dev/null
-    "${sudo_cmd[@]}" apt-get update -qq
-    "${sudo_cmd[@]}" apt-get install -y -qq --no-install-recommends postgresql-18 postgresql-client-18
-fi
-
-if [[ ! -x $HOME/.cargo/bin/rustup ]]; then
-    curl -fsSL --proto '=https' --tlsv1.2 https://sh.rustup.rs |
-        sh -s -- -y --profile minimal --default-toolchain stable
-fi
+for step in 10-packages 20-rust 30-postgresql; do
+    bash "scripts/setup-steps/$step.sh"
+done
 # shellcheck disable=SC1091
 source "$HOME/.cargo/env"
-rustup toolchain install stable --profile minimal --component clippy --component rustfmt
-rustup default stable
 
 cargo fetch --locked
 cargo build -p bilibi-web --locked

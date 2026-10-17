@@ -204,7 +204,13 @@ def main():
     host, requested_port = sys.argv[1], int(sys.argv[2])
     certificate = Path(sys.argv[3]).read_text()
     private_key = Path(sys.argv[4]).read_text()
-    tls_config = request("GET", "/config/apps/tls/certificates") or {}
+    try:
+        tls_config = request("GET", "/config/apps/tls/certificates") or {}
+    except ApiError as error:
+        # A TLS app without loaded certificates has no such key yet.
+        if error.status != 400:
+            raise
+        tls_config = {}
     config = request("GET", "/config/apps/http/servers")
     report_missing_certificate_files(tls_config, config)
     candidates = [
@@ -224,12 +230,21 @@ def main():
         "key": private_key,
         "tags": [CERT_TAG],
     }
-    upsert_id(
-        CERT_ID,
-        certificate_config,
-        "/config/apps/tls/certificates/load_pem",
-        [certificate_config],
-    )
+    if tls_config:
+        upsert_id(
+            CERT_ID,
+            certificate_config,
+            "/config/apps/tls/certificates/load_pem",
+            [certificate_config],
+        )
+    else:
+        # No certificates yet, and possibly no TLS app at all (a bare :443 server).
+        try:
+            request("PUT", "/config/apps/tls/certificates", {"load_pem": [certificate_config]})
+        except ApiError as error:
+            if error.status != 400:
+                raise
+            request("PUT", "/config/apps/tls", {"certificates": {"load_pem": [certificate_config]}})
 
     tls_policy = {
         "@id": TLS_POLICY_ID,
@@ -278,7 +293,10 @@ def main():
         "terminal": True,
     }
     if own_route is None:
-        request("POST", server_path + "/routes", route_config)
+        if "routes" in server:
+            request("POST", server_path + "/routes", route_config)
+        else:
+            request("PUT", server_path + "/routes", [route_config])
     else:
         request("PATCH", "/id/" + quote(ROUTE_ID, safe=""), route_config)
     install_waiting_route(server_path, server, host)
