@@ -56,6 +56,13 @@ already locked business transaction; it cannot undo a committed effect.
 At-least-once delivery requires an owner idempotency key, including for external
 IO and when a business commit succeeds before queue completion is recorded.
 
+`Queue::enqueue_system_within` is the same system job enqueued from inside
+another actor's transaction, for a Platform delivery edge whose work is not
+that actor's command (Base Events delivers a recorded event as
+`domain-events`). The job and its audit row commit with the owner's writes and
+are attributed to the transaction's actor; it executes only as the principal,
+under the same per-attempt declaration and grant checks below.
+
 `Queue::enqueue_system` enqueues as a named system principal (`SystemScope`,
 for example Schedule's `scheduler`) instead of a user. The audit context must
 already name that principal in the same tenant, and the principal must be
