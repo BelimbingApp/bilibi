@@ -2,6 +2,7 @@
 
 **Document Type:** Architecture Decision Record
 **Status:** Accepted for the direction. The implementation is a follow-up Platform slice.
+**Agents:** claude-cloud/sonnet-5.5-default (author)
 **Scope:** How a business action is defined once and reached from the GUI, a CLI, an HTTP API and MCP, with the same rules for a human and for an agent acting for a human
 **Last Updated:** 2026-10-17
 
@@ -65,6 +66,13 @@ A contract declares:
 - **Writes are preview, then a single-use commit.** The preview writes nothing and returns a review and a random code. The commit consumes the code once, rechecks everything, and rolls back all writes and audit rows together if any step fails.
 - **Corrections are reversals, never deletion.** A mistake is fixed by a new, dated, audited record that reverses or replaces the old one. Evidence stays append-only.
 - **Tenant and actor come from the credential**, never from input.
+
+### Agent identity at runtime
+
+- **Bilibi identifies an agent by its connection**: the person it acts for, the registered client, the grant and its expiry. Each request also gets a trace ID, which is the correlation ID of the recorded exchange and of any mutation it commits.
+- **The agent also reports itself**: harness, model, version and effort, in the same `harness/model-version-effort` form the ADR headers use (for example `amp/gpt-6-astra-high`).
+- That report is **best-effort, self-reported metadata, labelled unverified**. It is recorded for audit and support. It is **never used for authorization**.
+- Today the API records only the self-reported `X-Bilibi-Agent-Id` and `X-Bilibi-Run-Id` labels (`apps/web/README.md`). Recording the harness/model-version-effort form is a follow-up code change.
 
 ### 3. Plugins are thin adapters
 

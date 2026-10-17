@@ -16,6 +16,17 @@ Each record states one decision, its context and its consequences. The format fo
 
 The owner decides a status.
 
+## Header rule
+
+Every record carries these header lines: Document Type, Status, Agents, Scope, Last Updated.
+
+`**Agents:**` lists who wrote and who reviewed the record. Each agent is written as `harness/model-version-effort`, in lower case. The value is what the agent reports about itself, best effort. It is not verified.
+
+- One agent: `claude-cloud/sonnet-5.5-default`
+- More than one: add the role in parentheses, comma separated: `claude-cloud/sonnet-5.5-default (author), amp/gpt-6-astra-low (review)`
+- Other examples: `amp/gpt-6-astra-high`, `codex/sol-high`
+- A reviewer is appended after the review.
+
 ## Records
 
 | Record | Status |
