@@ -2,12 +2,13 @@
 //! Run with an isolated, migrated DATABASE_URL, APP_ORIGIN and BIND_ADDR.
 //!
 //! `/list-reference` lists 137 deterministic vendors held in memory through
-//! `ListState`, `FilterToolbar`, `Table`, `Pagination` and `EmptyState`, with
+//! `ListState`, `FilterToolbar`, `FlexTable`, `Pagination` and `EmptyState`, with
 //! the query keys Bilimbi's Companies list uses (`search`, `status_filter`,
 //! `sort_by`, `sort_dir`, `page`, `per_page`). Search, filter, sort, page and
 //! page size change the URL; Back and reload restore the same rows, and a forged
 //! query falls back to defaults. `/list-reference/forbidden` is the permission
 //! empty state.
+//! Mirrors Bilimbi UI DesignLibraryLive's built-in list hosting.
 use bilibi_database::{Error, Result};
 use bilibi_module_registry::{
     contributions::{Access, Contribution, Method, Route, ROUTES},
@@ -19,9 +20,9 @@ use bilibi_ui::page::{
     PageFuture, PageRequest, PageService,
 };
 use bilibi_ui::{
-    choices, list_state::FILTERS_FORM, params, Badge, BadgeKind, Button, Card, Column, EmptyState,
-    Filter, FilterToolbar, Header, Html, ListSpec, ListState, Pagination, Row, SortDir, Table,
-    TableEmpty, ToolbarControl,
+    choices, list_state::FILTERS_FORM, params, Badge, BadgeKind, BuiltinColumn, Button, Card,
+    EmptyState, Filter, FilterToolbar, FlexRow, FlexTable, Header, Html, ListColumns, ListSpec,
+    ListState, Pagination, SortDir, TableEmpty, ToolbarControl,
 };
 use std::{
     collections::{BTreeMap, HashMap},
@@ -105,6 +106,22 @@ static VENDORS: LazyLock<Vec<Vendor>> = LazyLock::new(|| {
 struct Reference;
 struct ReferenceState {
     state: ListState,
+    columns: ListColumns,
+}
+
+fn columns() -> ListColumns {
+    ListColumns::mount(
+        "vendors",
+        vec![
+            BuiltinColumn::new("name", "Name").sortable("name"),
+            BuiltinColumn::new("code", "Code"),
+            BuiltinColumn::new("status", "Status").sortable("status"),
+            BuiltinColumn::new("balance", "Balance")
+                .sortable("balance")
+                .right(),
+        ],
+    )
+    .expect("vendor columns")
 }
 
 fn parse(query: &HashMap<String, String>) -> Result<ListState> {
@@ -158,7 +175,7 @@ fn badge(status: &str) -> BadgeKind {
     }
 }
 
-fn body(state: &mut ListState) -> Result<String> {
+fn body(state: &mut ListState, columns: &ListColumns) -> Result<String> {
     let rows = filtered(state);
     let page = state.paginate(&rows);
     let header = render(Header {
@@ -192,44 +209,40 @@ fn body(state: &mut ListState) -> Result<String> {
             ),
         ],
     ))?;
-    let mut table = Table::new(
-        "vendors",
-        vec![
-            Column::new("Name")
-                .sort("name")
-                .sort_id("vendors-sort-name"),
-            Column::new("Code"),
-            Column::new("Status")
-                .sort("status")
-                .sort_id("vendors-sort-status"),
-            Column::new("Balance")
-                .sort("balance")
-                .sort_id("vendors-sort-balance")
-                .right(),
-        ],
-    )
-    .sorted(state.sort_by.as_deref(), state.sort_dir);
+    let mut table = FlexTable::new("vendors", columns.flex_columns(), vec![])
+        .sorted(state.sort_by.as_deref(), state.sort_dir);
+    table.event = "vendor-columns";
+    table.sort_event = "sort";
+    table.zoom = columns.zoom;
+    table.suggestions = columns.flex_suggestions();
+    table.add_query = &columns.add_query;
     table.caption = "Vendors";
     table.framed = false;
     for vendor in page.entries {
-        table.rows.push(Row {
-            id: format!("vendors-{}", vendor.id),
-            cells: vec![
-                Html::raw(format!(
-                    "<span class=\"font-medium text-ink-strong\">{}</span>",
-                    Html::text(&vendor.name)
-                )),
-                Html::raw(format!(
-                    "<code class=\"text-xs font-medium tabular-nums\">{}</code>",
-                    Html::text(&vendor.code)
-                )),
-                render(Badge::status(badge(vendor.status), vendor.status))?,
-                Html::raw(format!(
-                    "<span class=\"tabular-nums\">{}</span>",
-                    money(vendor.balance)
-                )),
-            ],
+        table.rows.push(FlexRow {
+            key: vendor.id.to_string(),
+            dom_id: Some(format!("vendors-{}", vendor.id)),
+            slots: ["name", "code", "status", "balance"]
+                .into_iter()
+                .map(str::to_owned)
+                .zip(vec![
+                    Html::raw(format!(
+                        "<span class=\"font-medium text-ink-strong\">{}</span>",
+                        Html::text(&vendor.name)
+                    )),
+                    Html::raw(format!(
+                        "<code class=\"text-xs font-medium tabular-nums\">{}</code>",
+                        Html::text(&vendor.code)
+                    )),
+                    render(Badge::status(badge(vendor.status), vendor.status))?,
+                    Html::raw(format!(
+                        "<span class=\"tabular-nums\">{}</span>",
+                        money(vendor.balance)
+                    )),
+                ])
+                .collect(),
             actions: Html::EMPTY,
+            ..FlexRow::default()
         });
     }
     if page.entries.is_empty() {
@@ -297,7 +310,7 @@ impl Page<Scope, Error> for Reference {
         Box::pin(async move {
             let html = match request.operation {
                 "forbidden" => forbidden()?,
-                _ => body(&mut parse(request.query)?)?,
+                _ => body(&mut parse(request.query)?, &columns())?,
             };
             Ok(PageBody {
                 html,
@@ -313,6 +326,7 @@ impl Page<Scope, Error> for Reference {
             }
             let state: Box<dyn LiveState<Scope, Error>> = Box::new(ReferenceState {
                 state: parse(request.query)?,
+                columns: columns(),
             });
             Ok(Some(state))
         })
@@ -328,6 +342,9 @@ impl LiveState<Scope, Error> for ReferenceState {
                 LiveInput::Event(value) => {
                     let get = |key: &str| value.get(key).and_then(|v| v.as_str());
                     match get("type") {
+                        Some("vendor-columns") => {
+                            self.columns.handle(&params::string_values(value));
+                        }
                         Some("filters") => self
                             .state
                             .apply_filters(&params::form_values(value, FILTERS_FORM)),
@@ -345,7 +362,7 @@ impl LiveState<Scope, Error> for ReferenceState {
                     }
                 }
             }
-            let html = body(&mut self.state)?;
+            let html = body(&mut self.state, &self.columns)?;
             Ok(LiveBody {
                 html,
                 query: self.state.to_params(),

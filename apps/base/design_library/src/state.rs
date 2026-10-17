@@ -1,8 +1,8 @@
 use bilibi_database::{Error, Result};
 use bilibi_datetime::DisplayContext;
 use bilibi_ui::{
-    flex_sample::FlexSample, CommitStates, CommitStatus, ListSpec, ListState, SortDir, UploadSpec,
-    Uploads,
+    flex_sample::FlexSample, BuiltinColumn, CommitStates, CommitStatus, ListColumns, ListSpec,
+    ListState, SortDir, UploadSpec, Uploads,
 };
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -44,6 +44,9 @@ pub struct State {
     pub sample: BTreeMap<String, Value>,
     pub list: ListState,
     pub pattern: ListState,
+    pub sample_columns: ListColumns,
+    pub pattern_columns: ListColumns,
+    pub confirm_columns: ListColumns,
     pub flex: FlexSample,
     pub plain: FlexSample,
     pub display: DisplayContext,
@@ -97,6 +100,32 @@ impl State {
             pattern: ListState::parse(&HashMap::new(), PATTERN_SPEC.clone())
                 .map_err(|_| Error::Invalid)?,
             flex: FlexSample::default(),
+            // Mirrors Bilimbi UI DesignLibraryLive; live lists use independent hosts.
+            sample_columns: ListColumns::mount(
+                "sample-table",
+                vec![
+                    BuiltinColumn::new("name", "Company").sortable("name"),
+                    BuiltinColumn::new("code", "Code").sortable("code"),
+                    BuiltinColumn::new("status", "Status").sortable("status"),
+                    BuiltinColumn::new("updated_at", "Updated").sortable("updated_at"),
+                ],
+            )
+            .expect("sample columns"),
+            pattern_columns: ListColumns::mount(
+                "design-library-pattern-table",
+                vec![
+                    BuiltinColumn::new("name", "Company"),
+                    BuiltinColumn::new("code", "Code"),
+                    BuiltinColumn::new("status", "Status"),
+                    BuiltinColumn::new("updated_at", "Updated"),
+                ],
+            )
+            .expect("pattern columns"),
+            confirm_columns: ListColumns::mount(
+                "design-library-confirm-rows",
+                vec![BuiltinColumn::new("name", "Name")],
+            )
+            .expect("confirmation columns"),
             plain: FlexSample::default(),
             display: DisplayContext::anonymous(),
             browser_zone: None,
@@ -158,6 +187,18 @@ impl State {
         };
         let ty = get("type").unwrap_or_default();
         match ty.as_str() {
+            "sample-columns" => {
+                self.sample_columns
+                    .handle(&bilibi_ui::params::string_values(event));
+            }
+            "pattern-columns" => {
+                self.pattern_columns
+                    .handle(&bilibi_ui::params::string_values(event));
+            }
+            "confirm-columns" => {
+                self.confirm_columns
+                    .handle(&bilibi_ui::params::string_values(event));
+            }
             "sample-flex" => self.flex.apply(&get),
             "sample-flex-plain" => self.plain.apply(&get),
             // The source preview has no workspace: selection counts as a click.

@@ -1,9 +1,10 @@
+//! Mirrors Bilimbi UI Web DesignLibraryLive; interactive lists use FlexTable.
 use crate::state::{self, State};
 use askama::Template;
 use bilibi_datetime::{Format, Precision};
 use bilibi_ui::{
-    Badge, BadgeKind, Column, EmptyState, Html, IconButton, IconKind, PageCounts, Pagination, Row,
-    Table, TableEmpty,
+    Badge, BadgeKind, Column, EmptyState, FlexRow, FlexTable, Html, IconButton, IconKind,
+    PageCounts, Pagination, Row, Table, TableEmpty,
 };
 
 #[derive(Template)]
@@ -233,7 +234,12 @@ impl View<'_> {
     }
     fn table(&self, id: &str) -> askama::Result<Html> {
         if id == "design-library-confirm-rows" {
-            let mut table = Table::new(id, vec![Column::new("Name")]);
+            let columns = &self.state.confirm_columns;
+            let mut table = FlexTable::new(id, columns.flex_columns(), vec![]);
+            table.event = "confirm-columns";
+            table.zoom = columns.zoom;
+            table.suggestions = columns.flex_suggestions();
+            table.add_query = &columns.add_query;
             table.framed = false;
             table.actions = true;
             table.caption = "Example legal entity types";
@@ -255,10 +261,12 @@ impl View<'_> {
                     button.event = "confirm-request";
                     button.name = "id";
                     button.value = key;
-                    Ok(Row {
-                        id: format!("design-library-confirm-row-{key}"),
-                        cells: vec![Html::text(name)],
+                    Ok(FlexRow {
+                        key: key.to_string(),
+                        dom_id: Some(format!("design-library-confirm-row-{key}")),
+                        slots: [("name".into(), Html::text(name))].into(),
                         actions: render(button)?,
+                        ..FlexRow::default()
                     })
                 })
                 .collect::<askama::Result<_>>()?;
@@ -300,30 +308,36 @@ impl View<'_> {
         } else {
             &self.state.pattern
         };
-        let mut table = Table::new(
-            id,
-            vec![
-                Column::new("Company"),
-                Column::new("Code"),
-                Column::new("Status"),
-                Column::new("Updated"),
-            ],
-        );
+        let columns = if id == "sample-table" {
+            &self.state.sample_columns
+        } else {
+            &self.state.pattern_columns
+        };
+        let mut table = FlexTable::new(id, columns.flex_columns(), vec![]);
+        table.event = if id == "sample-table" {
+            "sample-columns"
+        } else {
+            "pattern-columns"
+        };
+        table.zoom = columns.zoom;
+        table.suggestions = columns.flex_suggestions();
+        table.add_query = &columns.add_query;
         table.framed = false;
         table.caption = "Example companies";
         if id == "sample-table" {
-            for (i, key) in ["name", "code", "status", "updated_at"].iter().enumerate() {
-                table.columns[i].sort = key;
-                table.columns[i].sort_id = [
-                    "sample-sort-name",
-                    "sample-sort-code",
-                    "sample-sort-status",
-                    "sample-sort-updated",
-                ][i];
+            for column in &mut table.columns {
+                column.sort_id = Some(format!(
+                    "sample-sort-{}",
+                    if column.id == "updated_at" {
+                        "updated"
+                    } else {
+                        &column.id
+                    }
+                ));
             }
-            table.sort.event = "sample-sort";
-            table.sort.sort_by = list.sort_by.as_deref();
-            table.sort.sort_dir = list.sort_dir;
+            table.sort_event = "sample-sort";
+            table.sort_by = list.sort_by.as_deref();
+            table.sort_dir = list.sort_dir;
             table.actions = true;
         }
         let rows = state::companies(list);
@@ -384,7 +398,17 @@ impl View<'_> {
                     button.value = &value;
                     result.actions = render(button)?;
                 }
-                Ok(result)
+                Ok(FlexRow {
+                    key: row.id.to_string(),
+                    dom_id: Some(result.id),
+                    slots: ["name", "code", "status", "updated_at"]
+                        .into_iter()
+                        .map(str::to_owned)
+                        .zip(result.cells)
+                        .collect(),
+                    actions: result.actions,
+                    ..FlexRow::default()
+                })
             })
             .collect::<askama::Result<_>>()?;
         let mut empty = EmptyState::missing(
