@@ -37,19 +37,21 @@ are the base layer and stay where they are.
 
 ## Harness adapters (`src/harness.rs`)
 
-- A `Harness` names itself (`key`, `name`), its setup page and download paths,
-  the archive's file name, the page copy (install, public, LAN/VPN steps and
-  guide links) and `files(&Package)`: the manifest, MCP configuration and skill
-  files in that harness's layout.
+- A `Harness` names itself (`key`, `name`, `title`), its setup page path (the
+  download is that path plus `/download`), the archive's file name, the page
+  copy (install, public and LAN/VPN steps, guide links) and `files(&Package)`:
+  the manifest, MCP configuration and skill files in that harness's layout.
 - Adapters know formats only. They never read settings, scopes or the registry.
-- ChatGPT (`src/chatgpt.rs`): `bilibi/plugin.json` with the `com.openai`
-  interface, `bilibi/mcp.json` with `com.openai` OAuth (`mode: provided`,
-  `tokenEndpointAuthMethod: none`), `bilibi/skills/<name>/SKILL.md`.
+- ChatGPT (`src/chatgpt.rs`): `plugin.json` with the `com.openai` interface
+  and onboarding skill, `mcp.json` with `com.openai` OAuth (`mode: provided`,
+  `tokenEndpointAuthMethod: none`), `skills/<name>/SKILL.md`. The ZIP puts
+  them under `bilibi/`; the exporter writes them at the folder root.
 
 ### How to add a harness
 
-1. Add `src/<harness>.rs` implementing `Harness`: manifest, MCP configuration,
-   skill layout and page copy. Nothing else.
+1. Add `src/<harness>.rs` implementing `Harness`: names, page path, archive
+   name, page copy, and the manifest, MCP configuration and skill layout.
+   Nothing else.
 2. Add it to `HARNESSES` in `src/harness.rs`.
 3. Submit its `Route` and `Download` contributions in `src/contributions.rs`
    (operation = the harness key).
@@ -70,8 +72,16 @@ The builder, archive, page, download and exporter do not change.
   what the administrator must fix and offers no download.
 - `/settings/<harness>-plugin/download?client_id=…` (a `Download` contribution)
   answers the ZIP built in memory. It re-checks the client registration and
-  the HTTPS origin on every request: 403 for impersonation or an agent facet,
-  404 for an unregistered client, 409 for an HTTP origin.
+  the HTTPS origin on every request:
+
+| Request | Answer |
+| --- | --- |
+| Signed out | Sent to sign in |
+| Impersonation or agent facet | 403 |
+| Missing or unregistered `client_id` | 404 |
+| HTTP `APP_ORIGIN` | 409 |
+| Any other query parameter | 400 |
+
 - Neither the page nor the download creates or approves a grant. The archive
   holds public configuration and skills only: no token, credential, record or
   executable.
@@ -82,7 +92,9 @@ The builder, archive, page, download and exporter do not change.
 bilibi-web plugin-export --harness chatgpt --client <registered-id> --output <new-directory>
 ```
 
-- Same builder as the download, from `APP_ORIGIN`; refuses an existing output
-  directory. It writes a local package; it does not publish or register it.
+- Same builder as the download, from `APP_ORIGIN` (required). It refuses an
+  existing output directory, an unknown harness, an unregistered client and an
+  HTTP origin, each with a message.
+- It writes a local package; it does not publish or register it.
 - It is an exporter, not a client. A general Bilibi CLI client over `/api/v1`
   does not exist yet.
