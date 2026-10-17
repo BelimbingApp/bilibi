@@ -23,13 +23,13 @@ Bilibi has four doors. Each serves a different caller.
 | API (`/api/v1`) | Machines | Agents |
 | MCP (`/mcp`) | Agents | |
 
-**Example: the accounting clerk.** Today a clerk keys every incoming and outgoing document and every ledger entry by hand. It is slow and typos creep in. With an agent in a harness, the clerk says what arrived, the agent reads the document, searches for the vendor and drafts the entries. The agent may post them within what the clerk may do. Bilibi checks the capability and the tenant's step-up policy, writes, audits and keeps the evidence.
+**Example: the accounting clerk.** Today a clerk keys every incoming and outgoing document and every ledger entry by hand. It is slow and typos creep in. With an agent in a harness, the clerk says what arrived, the agent reads the document, searches for the vendor and drafts the entries. The clerk sees the preview and approves it in the harness, and the agent commits it. Bilibi checks the capability and the tenant's step-up policy, writes, audits and keeps the evidence.
 
 What this needs from the platform:
 
 - An agent finds what it can do without a hand-kept list. The mounted modules differ per installation.
 - An agent searches and reads as much as it writes. Most clerical work is lookup: does this vendor exist, which invoice is this, what was posted last month.
-- A write is previewed before it is committed, so the exact change is known and checked. Bilibi does not require or verify a human's approval of each write (see section 2).
+- A write is previewed before it is committed, and a human approves it in the harness (the operating rule in section 2). Bilibi does not verify that approval.
 - The agent can do whatever the person can do, and never more.
 - Every door gives the same answer for the same action. A rule fixed in one door must not stay broken in another.
 
@@ -65,7 +65,9 @@ A contract declares:
 - **Step-up protects sensitive actions** (section 4), for agents and humans alike. A capability alone is not the guard on a sensitive action.
 - **Impersonation is the one exception to agent/person parity.** An agent does not impersonate. The agent acts as its person, and an agent switching to another identity would break that in the audit trail: the actor would no longer be the person who granted the connection. This is a named exception. Every other action follows the parity rule and is guarded by authorization and step-up, not by channel restrictions.
 - **Reads and searches are first-class.** Search, describe, guide and read are contracts too. They are cheap, fresh and capability-filtered.
-- **Writes are preview, then a single-use commit.** The preview writes nothing and returns a review and a random code. The commit consumes the code once, rechecks everything, and rolls back all writes and audit rows together if any step fails. **The code proves the reviewed contract, not consent.** Bilibi does not enforce that a human approves each agent write. The same agent credential can preview and commit (`apps/base/agent_api/src/plans.rs`). Agents may write unattended within their person's reach. What Bilibi enforces is the capability check and the tenant's step-up policy (2FA, section 4; not built yet).
+- **Writes are preview, then a single-use commit.** The preview writes nothing and returns a review and a random code. The commit consumes the code once, rechecks everything, and rolls back all writes and audit rows together if any step fails. **The code proves the reviewed contract, not consent.**
+- **Operating rule: a human is present for every agent write and approves it in the harness.** The human enforces this rule. Bilibi does not technically verify the approval: the same agent credential can preview and commit (`apps/base/agent_api/src/plans.rs`). Bilibi's enforced controls are authorization (the capability check) and the tenant's step-up policy (2FA, section 4; not built yet).
+- **Accountability.** The person the agent acts for is accountable for each write it commits. The audit trail names that person as the actor.
 - **Audit evidence is append-only.** Every change leaves an audit record that cannot be altered. Each module defines its own correction behaviour. Financial and other evidentiary records (ledger entries, posted documents) are corrected by reversal: a new, dated, audited record that reverses or replaces the old one. Ordinary master data may be deleted, with the change audited. Today's code already deletes some master data and keeps the old value in a `Change` (for example department delete, `apps/core/company/src/departments.rs`).
 - **Tenant and actor come from the credential**, never from input.
 
@@ -93,7 +95,7 @@ A contract declares:
 
 ### 5. Prompt injection is deferred
 
-Protection against hostile content in documents an agent reads is **deliberately deferred to the agentic design**. It stays an open item. No control above claims to prevent it: Bilibi does not enforce human review of agent writes. Results carry an untrusted-content notice, grants are revocable and every call is logged, which help detection and cleanup only.
+Protection against hostile content in documents an agent reads is **deliberately deferred to the agentic design**. It stays an open item. The operating rule (a human approves every agent write) is not a Bilibi control, and no control here is claimed to prevent prompt injection. Results carry an untrusted-content notice, grants are revocable and every call is logged, which help detection and cleanup only.
 
 ## Status of each door today
 
@@ -143,7 +145,7 @@ The registry is `base/agent_api` (`apps/base/agent_api/README.md`). It is the pa
 
 - Lifting the refusal widens what a stolen or misused agent grant can do. A grant could change roles or grant `core_admin` if its person may.
 - Two controls contain this: step-up policy on sensitive contracts, and grants that are per person, time-limited and revocable at any moment. Revocation is proved live on every request.
-- Prompt injection stays an open item, deferred to the agentic design (section 5). The wider reach and unattended writes raise the stakes of that gap. No control here mitigates it.
+- Prompt injection stays an open item, deferred to the agentic design (section 5). The wider reach raises the stakes of that gap. No control here mitigates it, and the human-approval rule is not enforced by Bilibi.
 
 **Costs of the decision:**
 
