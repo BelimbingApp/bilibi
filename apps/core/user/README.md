@@ -192,7 +192,8 @@ BILIBI_COMPANY_ACCOUNTS_DEMO=disposable cargo run -p bilibi-user --example compa
 ## Pages (`core/user.pages`)
 
 `/settings/profile`, `/settings/password` (`src/web.rs`,
-`templates/password.html`) and `/settings/appearance` are the signed-in
+`templates/password.html`), `/settings/two-factor` (below) and
+`/settings/appearance` are the signed-in
 account's own settings inside the shell, on the settings layout of
 `templates/settings.html` (Bilimbi `SettingsComponents.settings_layout`).
 Agent connections links to `core/agent_access`'s own page, as in Bilimbi.
@@ -316,6 +317,48 @@ a settled receipt is never revisited, so a later unlink or retirement stands.
 A refusal (the administrator lost the capability, the company is archived)
 leaves it unsettled and the seed says why. Linking ends the account's open
 sessions, as any company change does.
+
+## Two-factor authentication and step-up
+
+Authenticator-app codes (TOTP, RFC 6238: HMAC-SHA-1, 6 digits, 30 s) for the
+signed-in account, and the step-up check ("sudo mode", as GitHub's) that
+`Access::StepUp` routes ask for outside development (`BILIBI_ENV`). Bilimbi
+has no counterpart yet. Code: `src/two_factor/` (facade on `UserService`),
+pages `src/two_factor_ui.rs`, migration `012-two-factor.sql`.
+
+| Method | Purpose |
+|---|---|
+| `two_factor_status(scope)` | On or off, and unused recovery codes |
+| `begin_two_factor(scope, password)` | Password again, then a fresh 160-bit secret (OS CSPRNG), sealed and stored pending. Returns the QR code and typed key, once |
+| `confirm_two_factor(scope, code)` | A current code turns it on, stores 10 new recovery codes (returned once) and steps the session up |
+| `step_up(scope, code)` | A current code or one recovery code steps the session up |
+| `regenerate_recovery_codes(scope, code)` / `disable_two_factor(scope, code)` | Need a current code or a recovery code. The old set stops working / everything is deleted |
+| `stepped_up(scope)` / `step_up_destination(scope, return)` | The host guard's questions: confirmed within the window? where to send the browser? |
+
+Pages, signed in only, live, `Cache-Control: no-store` like every page:
+
+- `/settings/two-factor`: set up (password, QR code, setup key, first code), recovery codes with a text download, new codes, turn off.
+- `/settings/two-factor/confirm?return=<path>`: the prompt. Success returns to `return` (a local path only, `safe_return`).
+
+Security rules:
+
+- **Secret at rest.** `user_two_factor.secret` is the AES-256-GCM envelope of `Settings::seal_owned` (`BILIBI_SETTINGS_KEY`), bound to `core/user.two_factor`, tenant and account. Without the key, setup refuses.
+- **QR code.** The `otpauth://totp/<issuer>:<email>?secret=…&issuer=…&algorithm=SHA1&digits=6&period=30` URI is drawn on the server as one inline SVG path (`qrcode` crate, encoder only) and sent over the page's socket. No QR service, no image URL, no Bilibi URL carries it. Nothing logs it.
+- **Pending until proved.** A secret is unconfirmed until a current code arrives. Leaving setup keeps the pending row; the next setup replaces it.
+- **Verification.** Steps −1, 0, +1 are each computed and compared in constant time (`subtle`). `last_step` only moves forward, by compare-and-set in the spending transaction, so a code is never accepted twice, even by two racing requests.
+- **Recovery codes.** 10 per set, 50 bits each (`xxxxx-xxxxx`, base32), Argon2id hashes through `password::hash`. Every unused hash is checked. A used code keeps `used_at`.
+- **Throttle.** Failed checks (password, code, recovery code) per account: the fifth within 15 minutes locks every check for 15 minutes (`user_two_factor_attempts`). A success resets the count.
+- **Step-up.** `sessions.stepped_up_at` (Base Session), so sign-out, termination and expiry end it. Window: setting `two_factor.step_up_minutes` (default 15, 1–120). An impersonated session cannot step up or change two-factor.
+- **Audit.** Each write is a `MutationBoundary` transaction: `user.two_factor.enrollment_started`, `.enabled`, `.verified`, `.recovery_code_used`, `.recovery_codes_regenerated`, `.disabled`, `.failed`, `.locked`. A check refused while locked is the action `user.two_factor.refused`. No code, secret or recovery code is ever in a change, payload or log.
+
+Settings (global, edited with `admin.system.session.manage`):
+
+| Key | Default | Use |
+|---|---|---|
+| `two_factor.issuer` | `Bilibi` | The name apps list the account under (company or deployment name). No `:`; applies to new setups |
+| `two_factor.step_up_minutes` | 15 | How long a confirmed code opens step-up pages |
+
+Sign-in itself does not ask for a code yet.
 
 ## Audit
 

@@ -53,6 +53,12 @@ plaintext fallback and no Laravel codec. Deleting ciphertext needs no key.
 `Resolved` and `Encryption` deliberately have no Debug implementation. Callers
 must never log values or put stored secrets into generic editor HTML.
 
+An owner that keeps a secret in its own table (Core User's authenticator
+keys) seals it with `seal_owned(owner, tenant, record, value)` and opens it
+with `open_owned`: the same key and envelope, with associated data in a
+separate `bilibi-owned-secret-v1` domain naming owner, tenant and record, so
+the ciphertext opens neither under another record nor as a setting.
+
 There is deliberately no value cache: transaction reads see their own writes,
 rollbacks publish nothing, and other processes read committed changes directly.
 `Settings::subscribe` emits identity-only notifications after commit; lagged

@@ -55,6 +55,16 @@ fn return_to(query: &HashMap<String, String>) -> Option<String> {
         .and_then(|path| crate::safe_return(path))
 }
 
+/// The canonical query: the return address the page was opened with, so
+/// the live transport keeps it in the address bar and a reload still knows
+/// where to go back to.
+fn canonical(return_to: &Option<String>) -> HashMap<String, String> {
+    return_to
+        .iter()
+        .map(|path| ("return".to_owned(), path.clone()))
+        .collect()
+}
+
 enum Stage {
     Off,
     Setup(Enrollment),
@@ -381,6 +391,7 @@ impl LiveState<Scope, Error> for TwoFactorPage {
             }
             Ok(LiveBody {
                 html: self.render()?,
+                query: canonical(&self.return_to),
                 rows: 1,
                 redirect,
                 ..LiveBody::default()
@@ -502,6 +513,7 @@ impl LiveState<Scope, Error> for ConfirmPage {
             }
             Ok(LiveBody {
                 html: self.render()?,
+                query: canonical(&self.return_to),
                 rows: 1,
                 ..LiveBody::default()
             })

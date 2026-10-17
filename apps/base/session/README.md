@@ -39,6 +39,16 @@ secret; a session that no longer holds `from` is `Conflict`. A switch is not
 announced as a termination. `end_user_sessions` also ends the sessions a user
 holds as an impersonating operator.
 
+## Step-up
+
+`sessions.stepped_up_at` (migration `003-step-up`) is when the session last
+passed an authenticator check. `step_up(sql, scope)` records it inside the
+verifying owner's transaction (Core User's two-factor), naming the session by
+the sealed scope's CSRF proof, never a token; `stepped_up_within(client,
+scope, seconds)` reads it for the host's `Access::StepUp` guard. It lives on
+the row, so sign-out, termination and expiry end it, and `switch` clears it:
+an impersonated session is never stepped up, and both calls refuse one.
+
 ## Listing
 
 `/system/sessions` needs the platform operator identity and
