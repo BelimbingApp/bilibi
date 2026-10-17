@@ -1,50 +1,10 @@
-{#- The signed-in account's notifications (Bilimbi
-    `Core.User.Web.NotificationsLive` template at the pinned source): filter
-    tabs, the newest-first list with mark-read and visit, and the shared
-    pagination. Each row keeps a stable id so a refresh patches it in place.
-    The flash group renders inside the page because the shell has no outlet. -#}
-{%- import "components.html" as ui -%}
-{%- import "feedback.html" as feedback -%}
-{%- import "lists.html" as lists -%}
-<div data-shared-ui>
+{# Mirrors Bilimbi Core.User.Web.NotificationsLive; the standing list contract uses FlexTable. #}
+{% import "components.html" as ui %}
+{% import "feedback.html" as feedback %}
 {% call feedback::flash_group(messages=flash) %}{% endcall %}
-{% call ui::page(variant=bilibi_ui::PageVariant::Form) %}
-{{ header|safe }}
-<div class="mt-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-line pb-2">
-<div class="flex items-center gap-2">
-<a href="{{ tab_href("all") }}" id="filter-all-tab" class="rounded-md px-3 py-1.5 text-xs font-medium transition {% if filter == "all" %}bg-surface-sunken text-ink font-semibold{% else %}text-ink-subtle hover:text-ink hover:bg-surface-muted{% endif %}">All</a>
-<a href="{{ tab_href("unread") }}" id="filter-unread-tab" class="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition {% if filter == "unread" %}bg-surface-sunken text-ink font-semibold{% else %}text-ink-subtle hover:text-ink hover:bg-surface-muted{% endif %}">Unread{% if unread > 0 %}<span id="notifications-unread-tab-badge" class="inline-flex items-center justify-center rounded-full bg-brand-strong px-1.5 py-0.2 text-[10px] font-semibold text-white tabular-nums">{{ unread }}</span>{% endif %}</a>
-<a href="{{ tab_href("read") }}" id="filter-read-tab" class="rounded-md px-3 py-1.5 text-xs font-medium transition {% if filter == "read" %}bg-surface-sunken text-ink font-semibold{% else %}text-ink-subtle hover:text-ink hover:bg-surface-muted{% endif %}">Read</a>
-</div>
-</div>
-{% if items.is_empty() %}
-<div id="notifications-empty" class="mt-4 rounded-xl border border-line bg-surface p-12 text-center">
-{% call ui::icon(name="hero-bell-slash", class="mx-auto size-8 text-ink-faint") %}{% endcall %}
-<p class="mt-2 text-sm font-medium text-ink">No notifications</p>
-</div>
-{% else %}
-<div id="notifications-list" class="mt-4 divide-y divide-line rounded-xl border border-line bg-surface overflow-hidden shadow-xs">
-{%- for row in items %}
-<div id="notifications-{{ row.item.id }}" class="group flex items-start justify-between gap-3 p-4 transition {% if row.item.read %}bg-surface-muted/40{% else %}bg-surface{% endif %}">
-<div class="flex min-w-0 flex-1 items-start gap-3">
-<span class="mt-1.5 size-2 shrink-0 rounded-full {% if row.item.read %}bg-transparent{% else %}bg-brand{% endif %}" aria-hidden="true"></span>
-<div class="grid size-8 shrink-0 place-items-center rounded-lg bg-surface-sunken text-ink-muted">{% call ui::icon(name=row.icon, class="size-4 shrink-0") %}{% endcall %}</div>
-<div class="min-w-0 flex-1">
-<div class="flex items-center gap-2">
-<p class="truncate text-sm {% if row.item.read %}font-normal text-ink-muted{% else %}font-semibold text-ink{% endif %}">{{ row.item.title }}</p>
-<time id="{{ row.created.id }}" datetime="{{ row.created.iso }}" data-format="datetime" data-precision="minute" data-mode="{{ row.created.mode }}" data-text-company="{{ row.created.company }}" data-text-utc="{{ row.created.utc }}" data-follow-shell="true" data-hook="DateTime" class="tabular-nums text-[11px] text-ink-faint shrink-0">{{ row.created.text }}</time>
-</div>
-{% if !row.item.body.is_empty() %}<p class="mt-0.5 text-xs text-ink-subtle line-clamp-2">{{ row.item.body }}</p>{% endif %}
-{% if row.item.url.is_some() %}<div class="mt-2"><button id="visit-{{ row.item.id }}" type="button" data-event="visit" name="id" value="{{ row.item.id }}" class="text-xs font-medium text-brand hover:underline inline-flex items-center gap-1 cursor-pointer">View details {% call ui::icon(name="forward", class="size-3") %}{% endcall %}</button></div>{% endif %}
-</div>
-</div>
-<div class="shrink-0">
-{% if !row.item.read %}{% call ui::button(id=row.mark_read_id, button_type="button", name="id", value=row.id, event="mark_read", class="text-xs px-2.5 py-1") %}Mark read{% endcall %}{% endif %}
-</div>
-</div>
-{%- endfor %}
-</div>
-{% endif %}
-<div class="mt-4">{{ pagination|safe }}</div>
+{% call ui::page(variant=bilibi_ui::PageVariant::List) %}
+{{ header }}
+{{ tabs }}
+{{ table }}
+{{ pagination }}
 {% endcall %}
-</div>

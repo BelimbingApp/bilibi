@@ -16,8 +16,9 @@ use bilibi_security::Scope;
 use bilibi_ui::{
     list_state::FILTERS_FORM,
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, PageBody, Subscription},
-    params, Button, Filter, FlashMap, Header, Html, Icon, ListSpec, ListState, PageCounts,
-    Pagination,
+    params, BuiltinColumn, Button, EmptyState, Filter, FlashMap, FlexRow, FlexTable, Header, Html,
+    Icon, ListColumns, ListSpec, ListState, PageCounts, Pagination, SectionHeading, Tab,
+    TableEmpty, Tabs,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -152,35 +153,28 @@ impl LiveState<Scope, Error> for Bell {
 
 // ---- /notifications -----------------------------------------------------------
 
-/// One rendered instant (Bilimbi `<.datetime>`): both server-decidable texts
-/// travel with the element so the shell's display-mode control can swap them.
-struct Instant {
-    id: String,
-    iso: String,
-    text: String,
-    company: String,
-    utc: String,
-    mode: &'static str,
-}
-fn instant(display: &DisplayContext, id: String, at: SystemTime) -> Result<Instant> {
+fn instant(display: &DisplayContext, at: SystemTime) -> Result<bilibi_ui::flex_table::Instant> {
     let timestamp = jiff::Timestamp::try_from(at).map_err(|_| Error::Internal)?;
     let rendered = display.render(timestamp, Format::DateTime, Precision::Minute);
-    Ok(Instant {
-        id,
-        iso: rendered.iso,
-        text: rendered.text,
-        company: rendered.company,
-        utc: rendered.utc,
-        mode: rendered.mode.as_str(),
-    })
+    Ok(bilibi_ui::flex_table::Instant::new(
+        &rendered.iso,
+        &rendered.text,
+        &rendered.company,
+        &rendered.utc,
+        rendered.mode.as_str(),
+    ))
 }
 
-struct Row {
-    id: String,
-    mark_read_id: String,
-    icon: String,
-    created: Instant,
-    item: Item,
+fn inbox_columns() -> Result<ListColumns> {
+    ListColumns::mount(
+        "notifications-list",
+        vec![
+            BuiltinColumn::new("notification", "Notification"),
+            BuiltinColumn::new("status", "Status"),
+            BuiltinColumn::new("created", "Created"),
+        ],
+    )
+    .map_err(|_| Error::Internal)
 }
 
 #[derive(Template)]
@@ -188,25 +182,16 @@ struct Row {
 struct InboxView<'a> {
     flash: FlashMap<'a>,
     header: Html,
-    filter: &'static str,
-    per_page: u64,
-    unread: i64,
-    items: Vec<Row>,
+    tabs: Html,
+    table: Html,
     pagination: Html,
-}
-impl InboxView<'_> {
-    fn tab_href(&self, filter: &str) -> String {
-        format!(
-            "/notifications?filter={filter}&page=1&per_page={}",
-            self.per_page
-        )
-    }
 }
 
 async fn render_inbox(
     pages: &Pages,
     scope: &Scope,
     list: &mut ListState,
+    columns: &ListColumns,
     flash: FlashMap<'_>,
 ) -> Result<String> {
     let client = pages.users.db.get().await?;
@@ -222,7 +207,7 @@ async fn render_inbox(
     let found = notifications::list(client, scope, status, limit, offset).await?;
     let locale = pages.locales.resolve(client, scope, None).await?.locale;
     let display = pages.display.display(client, scope, None, locale).await?;
-    let items = found
+    let rows = found
         .into_iter()
         .map(|item| {
             let icon = item
@@ -230,17 +215,56 @@ async fn render_inbox(
                 .clone()
                 .filter(|name| bilibi_ui::icons::renderable(name))
                 .unwrap_or_else(|| "notify".into());
-            Ok(Row {
-                id: item.id.to_string(),
-                mark_read_id: format!("mark-read-{}", item.id),
-                icon,
-                created: instant(
-                    &display,
-                    format!("notification-created-{}", item.id),
-                    item.created_at,
-                )?,
-                item,
-            })
+            let id = item.id.to_string();
+            let mut title = fragment(Html::render(&Icon {
+                name: &icon,
+                class: "size-4",
+            }))?;
+            title.push(&Html::text(&item.title));
+            let content = if columns.mode() == bilibi_ui::RowMode::Compact {
+                title
+            } else {
+                fragment(Html::render(&SectionHeading {
+                    title: &item.title,
+                    title_actions: fragment(Html::render(&Icon {
+                        name: &icon,
+                        class: "size-4",
+                    }))?,
+                    description: &item.body,
+                    ..SectionHeading::default()
+                }))?
+            };
+            let mut row = FlexRow::new(&id).slot("notification", content).slot(
+                "status",
+                Html::text(if item.read { "Read" } else { "Unread" }),
+            );
+            row.cells.insert(
+                "created".into(),
+                bilibi_ui::flex_table::Cell::instant(instant(&display, item.created_at)?),
+            );
+            // The shared typed timestamp renderer owns the clock hook.
+            if item.url.is_some() {
+                row.actions.push(&fragment(Html::render(&Button {
+                    id: &format!("visit-{id}"),
+                    event: "visit",
+                    name: "id",
+                    value: &id,
+                    body: Html::text("View details"),
+                    ..Button::default()
+                }))?);
+            }
+            if !item.read {
+                row.actions.push(&fragment(Html::render(&Button {
+                    id: &format!("mark-read-{id}"),
+                    event: "mark_read",
+                    name: "id",
+                    value: &id,
+                    body: Html::text("Mark read"),
+                    ..Button::default()
+                }))?);
+            }
+            row.dom_id = Some(format!("notifications-{id}"));
+            Ok(row)
         })
         .collect::<Result<Vec<_>>>()?;
     let actions = if unread > 0 {
@@ -271,13 +295,58 @@ async fn render_inbox(
         PageCounts::new(list.page, list.page_size, total),
         &PAGE_SIZES,
     )))?;
+    let addresses: Vec<_> = ["all", "unread", "read"]
+        .iter()
+        .map(|filter| {
+            format!(
+                "/notifications?filter={filter}&page=1&per_page={}",
+                list.page_size
+            )
+        })
+        .collect();
+    let unread_label = if unread > 0 {
+        format!("Unread ({unread})")
+    } else {
+        "Unread".into()
+    };
+    let mut tabs = Tabs {
+        id: "notifications-tabs",
+        label: "Notifications",
+        ..Tabs::default()
+    };
+    for ((filter, label), href) in [
+        ("all", "All"),
+        ("unread", unread_label.as_str()),
+        ("read", "Read"),
+    ]
+    .into_iter()
+    .zip(&addresses)
+    {
+        let mut tab = Tab::patch(href, label, status.key() == filter);
+        tab.id = match filter {
+            "all" => "filter-all-tab",
+            "unread" => "filter-unread-tab",
+            _ => "filter-read-tab",
+        };
+        tabs.tabs.push(tab);
+    }
+    let mut views = columns.flex_columns();
+    if let Some(created) = views.iter_mut().find(|column| column.id == "created") {
+        created.kind = bilibi_ui::flex_table::ColumnKind::Field;
+    }
+    let mut table = FlexTable::new("notifications-list", views, rows);
+    table.zoom = columns.zoom;
+    table.suggestions = columns.flex_suggestions();
+    table.add_query = &columns.add_query;
+    table.actions = true;
+    table.empty = Some(TableEmpty::State(
+        EmptyState::missing("No notifications", "").id("notifications-empty"),
+    ));
     InboxView {
         flash,
         header,
-        filter: status.key(),
-        per_page: list.page_size,
-        unread,
-        items,
+        tabs: fragment(Html::render(&tabs))?,
+        table: fragment(Html::render(&table))?,
         pagination,
     }
     .render()
@@ -295,7 +364,14 @@ pub(crate) async fn render_page(
 ) -> Result<PageBody> {
     let mut list = parse(query)?;
     Ok(PageBody {
-        html: render_inbox(pages, scope, &mut list, FlashMap::default()).await?,
+        html: render_inbox(
+            pages,
+            scope,
+            &mut list,
+            &inbox_columns()?,
+            FlashMap::default(),
+        )
+        .await?,
         live: true,
         title: None,
     })
@@ -309,6 +385,7 @@ pub(crate) fn mount_page(
         pages: pages.clone(),
         users: pages.users.clone(),
         list: parse(query)?,
+        columns: inbox_columns()?,
         all_read: false,
     }))
 }
@@ -317,6 +394,7 @@ struct Inbox {
     pages: Pages,
     users: Arc<UserService>,
     list: ListState,
+    columns: ListColumns,
     /// The "all marked as read" flash, shown until dismissed.
     all_read: bool,
 }
@@ -343,6 +421,9 @@ impl Inbox {
                 .list
                 .apply_filters(&params::form_values(value, FILTERS_FORM)),
             "page" => self.list.put_page(get("page")),
+            "grid" => {
+                self.columns.handle(&params::string_values(value));
+            }
             "clear-flash" => self.all_read = false,
             _ => return Err(Error::Invalid),
         }
@@ -364,7 +445,14 @@ impl LiveState<Scope, Error> for Inbox {
                 success: if self.all_read { ALL_READ } else { "" },
                 ..FlashMap::default()
             };
-            let html = render_inbox(&self.pages, request.scope, &mut self.list, flash).await?;
+            let html = render_inbox(
+                &self.pages,
+                request.scope,
+                &mut self.list,
+                &self.columns,
+                flash,
+            )
+            .await?;
             Ok(LiveBody {
                 html,
                 query: self.list.to_params(),

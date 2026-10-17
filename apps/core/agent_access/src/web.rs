@@ -19,7 +19,8 @@ use bilibi_ui::{
         LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, MountFuture, Page, PageBody,
         PageFuture, PageRequest,
     },
-    Button, CodeInput, FlashMap, Html, StatusKind, NO_FLASH,
+    params, Badge, BadgeKind, BuiltinColumn, Button, CodeInput, EmptyState, FlashMap, FlexRow,
+    FlexTable, Html, ListColumns, StatusKind, TableEmpty, NO_FLASH,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -596,12 +597,17 @@ impl LiveState<Scope, Error> for AuthorizePage {
 
 struct ConnectionsPage {
     pages: Pages,
+    columns: ListColumns,
     pending: Option<i64>,
     flash: Option<Flash>,
 }
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum ConnectionsEvent {
+    Grid {
+        #[serde(flatten)]
+        fields: BTreeMap<String, Value>,
+    },
     Revoke {
         id: String,
     },
@@ -629,8 +635,7 @@ struct ConnectionsView {
     flash: FlashMap<'static>,
     /// Header action: the agent plugin setup page (`core/agent_plugins`).
     plugin: Html,
-    error: Option<&'static str>,
-    rows: Vec<ConnectionRow>,
+    table: Html,
     pending: Option<i64>,
 }
 impl ConnectionsPage {
@@ -638,6 +643,16 @@ impl ConnectionsPage {
         only(query, &[])?;
         Ok(Self {
             pages,
+            columns: ListColumns::mount(
+                "agent-connections",
+                vec![
+                    BuiltinColumn::new("agent", "Agent"),
+                    BuiltinColumn::new("expiry", "Ends"),
+                    BuiltinColumn::new("status", "Status"),
+                    BuiltinColumn::new("seen", "Also seen as"),
+                ],
+            )
+            .map_err(|_| Error::Internal)?,
             pending: None,
             flash: None,
         })
@@ -693,11 +708,68 @@ impl ConnectionsPage {
             ..Button::default()
         })
         .map_err(|_| Error::Internal)?;
+        let rows = rows
+            .into_iter()
+            .map(|row| {
+                let mut rendered = FlexRow::new(&row.id)
+                    .slot("agent", Html::text(&row.agent_id))
+                    .cell(
+                        "expiry",
+                        bilibi_ui::flex_table::Cell::instant(bilibi_ui::flex_table::Instant::new(
+                            &row.expiry.iso,
+                            &row.expiry.text,
+                            &row.expiry.company,
+                            &row.expiry.utc,
+                            row.expiry.mode,
+                        )),
+                    )
+                    .slot("status", Html::text(row.status))
+                    .slot(
+                        "seen",
+                        if row.seen.is_empty() {
+                            Html::EMPTY
+                        } else {
+                            Html::render(&Badge::status(BadgeKind::Warning, &row.seen))
+                                .map_err(|_| Error::Internal)?
+                        },
+                    );
+                rendered.dom_id = Some(row.dom_id);
+                if !row.revoked {
+                    rendered.actions = Html::render(&Button {
+                        id: &row.revoke_id,
+                        event: "revoke",
+                        name: "id",
+                        value: &row.id,
+                        body: Html::text("Revoke"),
+                        ..Button::default()
+                    })
+                    .map_err(|_| Error::Internal)?;
+                }
+                Ok(rendered)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let mut columns = self.columns.flex_columns();
+        if let Some(expiry) = columns.iter_mut().find(|column| column.id == "expiry") {
+            expiry.kind = bilibi_ui::flex_table::ColumnKind::Field;
+        }
+        let mut table = FlexTable::new("agent-connections", columns, rows);
+        table.zoom = self.columns.zoom;
+        table.suggestions = self.columns.flex_suggestions();
+        table.add_query = &self.columns.add_query;
+        table.actions = true;
+        table.empty = Some(TableEmpty::State(if let Some(error) = error {
+            EmptyState::missing("Connections unavailable", error).id("connections-error")
+        } else {
+            EmptyState::missing(
+                "No connections",
+                "Connect an app or agent through its sign-in flow.",
+            )
+            .id("connections-empty")
+        }));
         html(ConnectionsView {
             flash: flash_map(self.flash),
             plugin,
-            error,
-            rows,
+            table: Html::render(&table).map_err(|_| Error::Internal)?,
             pending: self.pending,
         })
     }
@@ -731,6 +803,10 @@ impl LiveState<Scope, Error> for ConnectionsPage {
                     match serde_json::from_value::<ConnectionsEvent>(value.clone())
                         .map_err(|_| Error::Invalid)?
                     {
+                        ConnectionsEvent::Grid { fields } => {
+                            let value = serde_json::to_value(fields).map_err(|_| Error::Invalid)?;
+                            self.columns.handle(&params::string_values(&value));
+                        }
                         ConnectionsEvent::Revoke { id } => {
                             self.pending = Some(
                                 id.parse::<i64>()

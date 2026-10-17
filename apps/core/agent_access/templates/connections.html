@@ -1,44 +1,12 @@
-{#- The person's own grants and observed identity changes (Bilimbi
-    connections_live.ex); no token value reaches this page. -#}
-{%- import "components.html" as ui -%}
-{%- import "feedback.html" as feedback -%}
-{%- import "dialog.html" as dialog -%}
-{%- import "datetime.html" as time -%}
-<div data-shared-ui>
+{# Mirrors Bilimbi connections_live.ex; the standing list contract uses FlexTable. #}
+{% import "components.html" as ui %}
+{% import "feedback.html" as feedback %}
+{% import "dialog.html" as dialog %}
 {% call feedback::flash_group(messages=flash) %}{% endcall %}
 {% call ui::page(variant=bilibi_ui::PageVariant::List) %}
 {% call ui::header(actions=plugin) %}Agent connections{% endcall %}
-{% if let Some(error) = error %}
-<div id="connections-error" class="text-center text-sm">
-  <p class="font-medium text-ink">Connections unavailable</p>
-  <p class="mt-1 text-ink-muted">{{ error }}</p>
-</div>
-{% endif %}
-{% if rows.is_empty() && error.is_none() %}
-<div id="connections-empty" class="text-center text-sm">
-  <p class="font-medium text-ink">No connections</p>
-  <p class="mt-1 text-ink-muted">Connect an app or agent through its sign-in flow.</p>
-</div>
-{% endif %}
-<div id="agent-connections">
-{% for row in rows %}
-{% call ui::card(id=row.dom_id, class="mb-2") %}
-{% call ui::section_heading(title=row.agent_id) %}{% endcall %}
-{% call ui::facts() %}
-{% call ui::fact(title="Ends") %}{% call time::datetime(instant=row.expiry) %}{% endcall %}{% endcall %}
-{% call ui::fact(title="Status") %}{{ row.status }}{% endcall %}
-{% if !row.seen.is_empty() %}
-{% call ui::fact(title="Also seen as") %}<span class="text-warning-ink">{{ row.seen }}</span>{% endcall %}
-{% endif %}
-{% endcall %}
-{% if !row.revoked %}
-{% call ui::button(id=row.revoke_id, button_type="button", event="revoke", name="id", value=row.id) %}Revoke{% endcall %}
-{% endif %}
-{% endcall %}
-{% endfor %}
-</div>
+{{ table }}
 {% if pending.is_some() %}
 {% call dialog::confirm_dialog(id="revoke-connection-dialog", consequence="Revoke connection?", detail="Access ends immediately. Connect again and approve a new connection to grant access again.", confirm="Revoke", working="Revoking…", confirm_event="confirm_revoke", cancel_event="cancel_revoke") %}{% endcall %}
 {% endif %}
 {% endcall %}
-</div>
