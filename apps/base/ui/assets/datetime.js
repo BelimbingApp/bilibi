@@ -139,7 +139,7 @@
     },
     report() {
       this.reportedRequest = this.el.dataset.timezoneRequest
-      this.emit("browser_timezone", {timezone: browserZone()})
+      this.emit("browser_timezone", {timezone: browserZone(), history: "replace"})
     },
   }
 
