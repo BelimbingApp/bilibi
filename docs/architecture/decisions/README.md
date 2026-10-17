@@ -20,7 +20,7 @@ The owner decides a status.
 
 Every record carries these header lines: Document Type, Status, Agents, Scope, Last Updated.
 
-`**Agents:**` lists who wrote and who reviewed the record. Each agent is written as `harness/model-version-effort`, in lower case. The value is what the agent reports about itself, best effort. It is not verified.
+`**Agents:**` lists who wrote and who reviewed the record. Each agent is written as `harness/model-version-effort`, in lower case. The value is self-reporting: what the agent reports about itself.
 
 - One agent: `claude-cloud/sonnet-5.5-default`
 - More than one: add the role in parentheses, comma separated: `claude-cloud/sonnet-5.5-default (author), amp/gpt-6-astra-low (review)`

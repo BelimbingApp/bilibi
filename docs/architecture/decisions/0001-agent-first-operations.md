@@ -6,6 +6,8 @@
 **Scope:** How a business action is defined once and reached from the GUI, a CLI, an HTTP API and MCP, with the same rules for a human and for an agent acting for a human
 **Last Updated:** 2026-10-17
 
+> The `Agents` value is self-reporting: what the agent reports about itself.
+>
 > Prior art: Bilimbi [ADR 0021](https://github.com/BelimbingApp/bilimbi/blob/main/docs/architecture/decisions/0021-agent-access-and-api-operations.md) (external agents act for a person through granted connections and self-registered API operations). This record keeps that model and widens it from "agent cards" to a contract every door calls.
 
 ## Context
@@ -71,8 +73,8 @@ A contract declares:
 
 - **Bilibi identifies an agent by its connection**: the person it acts for, the registered client, the grant and its expiry. Each request also gets a trace ID, which is the correlation ID of the recorded exchange and of any mutation it commits.
 - **The agent also reports itself**: harness, model, version and effort, in the same `harness/model-version-effort` form the ADR headers use (for example `amp/gpt-6-astra-high`).
-- That report is **best-effort, self-reported metadata, labelled unverified**. It is recorded for audit and support. It is **never used for authorization**.
-- Today the API records only the self-reported `X-Bilibi-Agent-Id` and `X-Bilibi-Run-Id` labels (`apps/web/README.md`). Recording the harness/model-version-effort form is a follow-up code change.
+- That report is labelled **self-reporting**: what the agent reports about itself. It is recorded beside the harness/model-version-effort value for audit and support. It is **never used for authorization**.
+- Today the API records only the self-reporting `X-Bilibi-Agent-Id` and `X-Bilibi-Run-Id` labels (`apps/web/README.md`). Recording the harness/model-version-effort form is a follow-up code change.
 
 ### 3. Plugins are thin adapters
 
