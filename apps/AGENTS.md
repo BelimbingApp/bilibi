@@ -14,6 +14,7 @@ Read this before editing a page, an event handler or a facade. The component tha
 - Render an instant through `bilibi_datetime` (`Rendered`) so the reader's saved clock and timezone apply. Pin a display only for a context of your own.
 - Reach agents through an `agent_api` contribution (`apps/base/agent_api/README.md`), a route through a `Route` contribution, a download through `DOWNLOADS`, a file through `Media`. Add no per-module endpoint and no host-router entry (`apps/web/README.md`).
 - A list keeps its page, search, filters, sort and page size in the URL through `ListState`; keep a module's existing query names and page sizes. A private `to_int` or `parse_page` is the copy `Params` and `ListState` replaced.
+- To ask the account holder for a fresh second-factor check before an operation, declare it with `bilibi_step_up::declare!` in your own module and call `StepUp::require` from your facade (`apps/base/step_up/README.md`). Never decide in code whether it applies, never import the authenticator, and never let the step-up or two-factor modules name your module.
 - Message kind follows the outcome: `Success` only for a completed write, `Info` informs, a refusal names its real cause. Kinds and timing: `DESIGN.md` "Honest feedback".
 
 ## Maintaining this file

@@ -41,13 +41,19 @@ holds as an impersonating operator.
 
 ## Step-up
 
-`sessions.stepped_up_at` (migration `003-step-up`) is when the session last
-passed an authenticator check. `step_up(sql, scope)` records it inside the
-verifying owner's transaction (Core User's two-factor), naming the session by
-the sealed scope's CSRF proof, never a token; `stepped_up_within(client,
-scope, seconds)` reads it for the host's `Access::StepUp` guard. It lives on
-the row, so sign-out, termination and expiry end it, and `switch` clears it:
-an impersonated session is never stepped up, and both calls refuse one.
+The web proof of Base Step-up (`apps/base/step_up/README.md`) lives on the session row (migration `003-step-up`), so sign-out, termination and expiry end it, and `switch` clears it.
+
+| Column | Meaning |
+|---|---|
+| `stepped_up_at` | The holder's last check here. The cap counts from it |
+| `step_up_used_at` | The last protected action the window covered. The sliding window counts from it |
+| `step_up_spent_at` | When an "ask every time" action used the last check |
+
+- `step_up(sql, scope)` records a check inside the verifying owner's transaction (Core User's authenticator). It names the session by the sealed scope's CSRF proof, never a token.
+- `step_up_window(client, scope, window, cap, extend)` reads, and with `extend` restarts, the window.
+- `spend_fresh_step_up(client, scope, seconds)` lets one recent check cover one "ask every time" action.
+- An impersonated session is never stepped up.
+- `end_user_sessions` also ends the holder's agent step-up windows (`bilibi_step_up::end_agent_windows`).
 
 ## Listing
 
