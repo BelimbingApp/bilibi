@@ -19,7 +19,7 @@ use bilibi_ui::{
         LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, MountFuture, Page, PageBody,
         PageFuture, PageRequest,
     },
-    CodeInput, FlashMap, StatusKind, NO_FLASH,
+    Button, CodeInput, FlashMap, Html, StatusKind, NO_FLASH,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -627,6 +627,8 @@ pub struct ConnectionRow {
 #[template(path = "connections.html")]
 struct ConnectionsView {
     flash: FlashMap<'static>,
+    /// Header action: the agent plugin setup page (`core/agent_plugins`).
+    plugin: Html,
     error: Option<&'static str>,
     rows: Vec<ConnectionRow>,
     pending: Option<i64>,
@@ -684,8 +686,16 @@ impl ConnectionsPage {
                 })
             })
             .collect::<Result<Vec<_>>>()?;
+        let plugin = Html::render(&Button {
+            id: "connections-chatgpt-plugin",
+            href: "/settings/chatgpt-plugin",
+            body: Html::text("Plugin for ChatGPT"),
+            ..Button::default()
+        })
+        .map_err(|_| Error::Internal)?;
         html(ConnectionsView {
             flash: flash_map(self.flash),
+            plugin,
             error,
             rows,
             pending: self.pending,

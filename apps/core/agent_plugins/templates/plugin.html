@@ -1,0 +1,67 @@
+{#- A harness's setup page (Bilimbi plugin_live.ex): install steps, this
+    installation's connection details, the registered-client choice, the
+    download, and the public and LAN/VPN steps. The harness supplies its name
+    and copy; nothing here grants access. -#}
+{%- import "components.html" as ui -%}
+{%- import "forms.html" as forms -%}
+{%- import "feedback.html" as feedback -%}
+{%- import "lists.html" as lists -%}
+<div data-shared-ui>
+{% call ui::page(id="plugin-page", variant=bilibi_ui::PageVariant::Detail) %}
+{{ header|safe }}
+{% if person_required %}
+{% call lists::empty_state(e=bilibi_ui::EmptyState::missing("Use your own account", "Use your own account to install the plugin. Impersonation and agents cannot set one up.").id("plugin-person-required")) %}{% endcall %}
+{% else %}
+<div id="plugin-setup" class="space-y-4">
+{% call ui::card(id="plugin-install", inner_class="p-5 sm:p-6", role="region", labelledby="plugin-install-heading") %}
+{% call ui::section_heading(id="plugin-install-heading", title="Install and sign in") %}{% endcall %}
+<ol class="space-y-2 text-sm text-ink">{% for step in copy.install %}<li class="flex gap-2"><span class="tabular-nums text-ink-subtle">{{ loop.index }}.</span><span>{{ step }}</span></li>{% endfor %}</ol>
+<p class="mt-4 text-sm text-ink-muted">Downloading the plugin does not install it in {{ harness_name }} or approve a connection. You can end access from Your connections.</p>
+{% endcall %}
+{% call ui::card(id="plugin-details", inner_class="p-5 sm:p-6", role="region", labelledby="plugin-details-heading") %}
+{% call ui::section_heading(id="plugin-details-heading", title="This installation") %}{% endcall %}
+{% if !no_clients.is_empty() %}<div class="mb-4">{{ no_clients|safe }}</div>{% endif %}
+{% if let Some(field) = client_field %}
+<form id="plugin-client-form" data-event="select_client" data-change novalidate>{% call forms::input(field=field) %}{% endcall %}</form>
+{% endif %}
+<div id="plugin-copy-values" data-hook="ClipboardCopy" data-copy-event="connection_copied">
+{% call ui::facts(id="plugin-connection-details") %}
+{% call ui::fact(title="Server URL", id="plugin-server-url") %}<div class="flex flex-wrap items-center gap-2"><code class="break-all">{{ server.text }}</code><span data-copy-text="{{ server.text }}">{% call ui::button(id=server.id, button_type="button") %}Copy{% endcall %}</span></div>{% endcall %}
+{% if let Some(client) = client %}
+{% call ui::fact(title="Client ID", id="plugin-client-id") %}<div class="flex flex-wrap items-center gap-2"><code class="break-all">{{ client.text }}</code><span data-copy-text="{{ client.text }}">{% call ui::button(id=client.id, button_type="button") %}Copy{% endcall %}</span></div>{% endcall %}
+{% endif %}
+{% call ui::fact(title="Authentication") %}OAuth with PKCE (S256); no client secret{% endcall %}
+{% call ui::fact(title="Scope") %}<code>{{ scope }}</code>{% endcall %}
+{% call ui::fact(title="Authorization URL", id="plugin-authorization-url") %}<code class="break-all">{{ authorization_url }}</code>{% endcall %}
+{% call ui::fact(title="Token URL", id="plugin-token-url") %}<code class="break-all">{{ token_url }}</code>{% endcall %}
+{% endcall %}
+</div>
+{% if let Some(copied) = copied %}
+{% if copied %}
+{% call feedback::alert(kind=bilibi_ui::StatusKind::Success, id="plugin-copy-success", class="mt-2") %}Copied to clipboard.{% endcall %}
+{% else %}
+{% call feedback::alert(kind=bilibi_ui::StatusKind::Error, id="plugin-copy-failed", class="mt-2") %}Your browser did not allow copying. Select the value and copy it manually.{% endcall %}
+{% endif %}
+{% endif %}
+{% if !https_required.is_empty() %}<div class="mt-4">{{ https_required|safe }}</div>{% endif %}
+{% if !client_required.is_empty() %}<div class="mt-4">{{ client_required|safe }}</div>{% endif %}
+{{ download|safe }}
+<p class="mt-3 text-sm text-ink-muted">{{ copy.download_note }}</p>
+{% endcall %}
+<div class="grid gap-4 lg:grid-cols-2">
+{% call ui::card(id="plugin-public", inner_class="p-5 sm:p-6", role="region", labelledby="plugin-public-heading") %}
+{% call ui::section_heading(id="plugin-public-heading", title="Public installation") %}{% endcall %}
+<ol class="space-y-2 text-sm text-ink">{% for step in copy.public %}<li class="flex gap-2"><span class="tabular-nums text-ink-subtle">{{ loop.index }}.</span><span>{{ step }}</span></li>{% endfor %}</ol>
+<div class="mt-4">{% call ui::action_link(id="plugin-public-guide", icon="external", title=copy.public_guide.label, href=copy.public_guide.href) %}{{ copy.public_guide.label }}{% endcall %}</div>
+{% endcall %}
+{% call ui::card(id="plugin-private", inner_class="p-5 sm:p-6", role="region", labelledby="plugin-private-heading") %}
+{% call ui::section_heading(id="plugin-private-heading", title="LAN / VPN installation") %}{% endcall %}
+<ol class="space-y-2 text-sm text-ink">{% for step in copy.private %}<li class="flex gap-2"><span class="tabular-nums text-ink-subtle">{{ loop.index }}.</span><span>{{ step }}</span></li>{% endfor %}</ol>
+<p class="mt-3 text-sm text-ink-muted">{{ copy.private_note }}</p>
+<div class="mt-4">{% call ui::action_link(id="plugin-private-guide", icon="external", title=copy.private_guide.label, href=copy.private_guide.href) %}{{ copy.private_guide.label }}{% endcall %}</div>
+{% endcall %}
+</div>
+</div>
+{% endif %}
+{% endcall %}
+</div>

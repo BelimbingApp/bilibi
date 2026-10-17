@@ -42,6 +42,11 @@ pub fn settings_entries() -> Vec<SettingsEntry> {
         ("password", "Password", "/settings/password"),
         ("appearance", "Appearance", "/settings/appearance"),
         (
+            "chatgpt-plugin",
+            "Plugin for ChatGPT",
+            "/settings/chatgpt-plugin",
+        ),
+        (
             "agent-connections",
             "Agent connections",
             "/settings/agent-connections",

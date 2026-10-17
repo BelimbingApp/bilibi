@@ -45,6 +45,52 @@ async fn main() -> Result<()> {
             let args: Vec<String> = std::env::args().skip(2).collect();
             bilibi_web::provision(&db, command, &args).await?;
         }
+        Some("plugin-export") => {
+            use bilibi_core::agent_plugins::{
+                AgentPlugins, ExportError, PluginError, SERVICE, USAGE,
+            };
+            let args: Vec<String> = std::env::args().skip(2).collect();
+            let Some([harness, client, output]) =
+                flags(&args, ["--harness", "--client", "--output"])
+            else {
+                eprintln!("{USAGE}");
+                return Err(Error::Invalid);
+            };
+            // The package names the configured public address, never a guess.
+            let origin = std::env::var("APP_ORIGIN").map_err(|_| {
+                eprintln!("Set APP_ORIGIN to this installation's public HTTPS address first");
+                Error::Invalid
+            })?;
+            let app = bilibi_web::App::new(db.clone(), &origin)?;
+            let plugins = app.services.get::<AgentPlugins>(SERVICE)?;
+            match plugins
+                .export(harness, client, std::path::Path::new(output))
+                .await
+            {
+                Ok(name) => println!(
+                    "Exported {output}. Connect {}/mcp in {name} using client {client} and OAuth without a client secret.",
+                    plugins.origin()
+                ),
+                Err(error) => {
+                    eprintln!(
+                        "{}",
+                        match error {
+                            ExportError::Plugin(PluginError::UnknownHarness) =>
+                                format!(
+                                    "Unknown harness; use one of: {}",
+                                    AgentPlugins::harness_keys().join(", ")
+                                ),
+                            ExportError::Plugin(PluginError::HttpsRequired) =>
+                                "Configure the host's public HTTPS URL (APP_ORIGIN) first".into(),
+                            ExportError::Plugin(PluginError::InvalidClient) =>
+                                "Register this public OAuth client in Settings first".into(),
+                            other => other.to_string(),
+                        }
+                    );
+                    return Err(Error::Invalid);
+                }
+            }
+        }
         Some("seed-production") => bilibi_web::seed::production(&db).await?,
         Some("seed") => {
             let at_startup = match std::env::args().nth(2).as_deref() {
@@ -127,4 +173,22 @@ fn listen_host(bind: &str) -> &str {
     host.strip_prefix('[')
         .and_then(|host| host.strip_suffix(']'))
         .unwrap_or(host)
+}
+
+/// Exactly the named `--flag value` pairs, each once, in any order.
+fn flags<'a, const N: usize>(args: &'a [String], names: [&str; N]) -> Option<[&'a str; N]> {
+    let mut values: [Option<&str>; N] = [None; N];
+    let mut rest = args.iter();
+    while let Some(flag) = rest.next() {
+        let index = names.iter().position(|name| name == flag)?;
+        let value = rest.next().filter(|value| !value.starts_with("--"))?;
+        if values[index].replace(value).is_some() {
+            return None;
+        }
+    }
+    let mut found = [""; N];
+    for (slot, value) in found.iter_mut().zip(values) {
+        *slot = value?;
+    }
+    Some(found)
 }

@@ -133,6 +133,29 @@ pub fn request(
         scope: OAUTH_SCOPE.into(),
     })
 }
+/// One operator-registered public client as a person chooses it: its ID and
+/// name, never its callbacks.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PublicClient {
+    pub id: String,
+    pub name: String,
+}
+/// The registered clients, sorted by name, then ID (Bilimbi `PluginPackage.clients`).
+pub fn public_clients(clients: &Value) -> Vec<PublicClient> {
+    let mut listed: Vec<PublicClient> = clients
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter_map(|(id, client)| {
+            Some(PublicClient {
+                id: id.clone(),
+                name: client.get("name")?.as_str()?.to_owned(),
+            })
+        })
+        .collect();
+    listed.sort_by(|a, b| (&a.name, &a.id).cmp(&(&b.name, &b.id)));
+    listed
+}
 /// S256 proof: the verifier's digest must equal the stored challenge.
 pub fn proof(verifier: &str, challenge: &str) -> bool {
     (43..=128).contains(&verifier.len())

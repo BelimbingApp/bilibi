@@ -13,7 +13,7 @@ mod secrets;
 mod throttle;
 pub mod web;
 pub use contributions::MANAGE;
-pub use oauth_client::{proof, valid_clients, AuthorizationRequest, AuthorizeParams};
+pub use oauth_client::{proof, valid_clients, AuthorizationRequest, AuthorizeParams, PublicClient};
 /// `code_challenge` is the S256 form a public client sends for its verifier.
 pub use secrets::{digest_base64 as code_challenge, normalize_user_code};
 pub use throttle::Throttle;
@@ -867,6 +867,23 @@ impl AgentAccess {
         .await?;
         tx.commit().await?;
         Ok(())
+    }
+    /// The operator-registered public clients: global, non-secret
+    /// configuration for an administrative exporter. Registering a client
+    /// is the only way onto this list; listing grants nothing.
+    pub async fn public_clients(&self) -> Result<Vec<PublicClient>> {
+        let client = self.db.get().await?;
+        let clients = self.settings.get_global(&**client, OAUTH_CLIENTS).await?;
+        Ok(oauth_client::public_clients(&clients))
+    }
+    /// The same list for a person setting up their own agent. Impersonation
+    /// and agent facets are refused, as for every self-service decision.
+    pub async fn clients_for(
+        &self,
+        scope: &Scope,
+    ) -> std::result::Result<Vec<PublicClient>, OAuthError> {
+        self_service(scope)?;
+        Ok(self.public_clients().await?)
     }
     /// The person's own connections, newest first, including ended ones.
     pub async fn list_connections(
