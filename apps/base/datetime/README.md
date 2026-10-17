@@ -50,6 +50,7 @@ definitions and the request-scoped display context presentation renders with.
   page's date filters, reports the `browser_timezone` event (`timezone`) on
   mount and on every mode change, so local-mode calendar days follow the
   browser zone without a reload. A page validates it through `Clock::resolve`.
+  A page whose hook can survive a server remount supplies a fresh `data-timezone-request` on each mounted state and clears it after receiving a report; the hook reports each new request once. Until that report arrives, local-mode bounds are provisional and must not clamp the bookmarked page against a UTC count. Schedule History uses this handshake for Back and reconnects.
 
 Run `BILIBI_DISPOSABLE_P4_DEMO=yes cargo run -p bilibi-web --example
 p4-locale-datetime` against a migrated disposable database (it appoints

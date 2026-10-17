@@ -174,12 +174,9 @@ inside the transaction; a refusal flashes "You do not have permission for that
 action." and redraws the controls without clearing the page. Enable, Pause and
 Disable confirm through the shared `ConfirmDialog`, which holds the task it
 describes; the confirmation acts on that held task, never on a key the client
-sends. History dates bound calendar days in the zone the Started column shows:
-the company zone in company display mode, UTC otherwise (there is no browser
-zone report yet, so local mode bounds UTC, the text the server renders).
+sends. History dates bound calendar days in the zone the Started column shows: company, browser-local or UTC according to the saved display mode. The shared `BrowserTimeZone` hook reports the local zone and display-mode changes; the display policy validates it and UTC is the fallback.
 
-The board's tables are the shared `Table`; Bilimbi's flex-table column notch
-and zoom arrive with U7's FlexTable.
+The board's tables use independent shared `ListColumns`/`FlexTable` arrangements: show/hide and reorder columns, row-height steps, Compact/Normal and Reset. History alone has pagination (25/50/100 rows); tasks remain unpaged as in Bilimbi.
 
 ## Retention and contributed housekeeping
 

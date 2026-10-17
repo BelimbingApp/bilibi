@@ -16,7 +16,8 @@
 // day a row is shown on, so a screen whose date filters bound displayed days
 // mounts it on the region holding them and recomputes its range without a
 // reload. The server validates the name and keeps bounding UTC when it cannot
-// honor it.
+// honor it. A host whose DOM can survive a server remount supplies a fresh
+// data-timezone-request per mount, then clears it after accepting a report.
 (() => {
   const SHELL = "#app-shell"
   const shell = () => document.querySelector(SHELL)
@@ -124,6 +125,10 @@
       watch(this)
       this.report()
     },
+    updated() {
+      const request = this.el.dataset.timezoneRequest
+      if (request && request !== this.reportedRequest) this.report()
+    },
     destroyed() {
       unwatch(this)
     },
@@ -133,6 +138,7 @@
       this.report()
     },
     report() {
+      this.reportedRequest = this.el.dataset.timezoneRequest
       this.emit("browser_timezone", {timezone: browserZone()})
     },
   }

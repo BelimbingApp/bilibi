@@ -13,8 +13,7 @@
 //! nothing held is a stale click and does nothing. Resume runs on click.
 //!
 //! History dates bound calendar days in the zone the Started column displays
-//! in: the company zone in company mode, otherwise UTC (the text the server
-//! renders itself; no browser-zone report exists yet), named under the controls.
+//! in: the company, browser-local or UTC zone, named under the controls.
 use crate::{
     board::{self, Availability, Diagnostics, DueWork, RunQuery, RunSort, TaskSort},
     Claimed, Refusal, ReviewState, Run, Schedule, Task, Trigger, EXECUTE, MANAGE,
@@ -265,6 +264,9 @@ struct Board {
     /// Whether the rows are read anew for this render: the columns then forget
     /// an unfinished add box, as Bilimbi's `ListColumns.load/3` does.
     rows_changed: bool,
+    browser_zone: Option<String>,
+    /// A fresh server mount must obtain a report even if its DOM hook survives.
+    timezone_request: String,
     pending: Option<(Command, Task)>,
     flash: Option<(StatusKind, String)>,
 }
@@ -279,6 +281,8 @@ impl Board {
             task_columns: columns("schedule-tasks", task_builtins())?,
             run_columns: columns("schedule-runs", run_builtins())?,
             rows_changed: true,
+            browser_zone: None,
+            timezone_request: uuid::Uuid::new_v4().to_string(),
             pending: None,
             flash: None,
         })
@@ -353,6 +357,14 @@ impl Board {
         let key = get("key").unwrap_or_default().to_owned();
         let schedule = self.core.schedule.clone();
         match get("type").ok_or(Error::Invalid)? {
+            "browser_timezone" => {
+                self.browser_zone = Some(
+                    get("timezone")
+                        .filter(|zone| zone.len() <= 64 && bilibi_datetime::valid_timezone(zone))
+                        .unwrap_or("Etc/UTC")
+                        .to_owned(),
+                );
+            }
             "filter_tasks" => {
                 let posted = params::form_values(value, "task");
                 let mut mapped = HashMap::new();
@@ -518,10 +530,7 @@ impl Board {
             .schedule
             .diagnostics(&**client, all_tasks.as_deref(), now)
             .await;
-        let zone_name = match display.mode {
-            Mode::Company => display.timezone.clone(),
-            Mode::Local | Mode::Utc => "UTC".to_owned(),
-        };
+        let zone_name = display.clock(self.browser_zone.as_deref(), now).timezone;
         let mut body = Html::default();
         match self.tab {
             "tasks" => body.push(&self.tasks_panel(
@@ -814,7 +823,11 @@ impl Board {
         // A page past the end (rows were pruned, or a stale URL) shows the last one.
         if let Some(found) = &page {
             let pages = found.total.div_ceil(self.runs.page_size);
-            if self.runs.clamp_to_last_page(pages, false) {
+            // Local-mode UTC bounds are provisional until the browser reports.
+            // Do not destroy a bookmarked page that exists in the local day.
+            if (display.mode != Mode::Local || self.browser_zone.is_some())
+                && self.runs.clamp_to_last_page(pages, false)
+            {
                 query.page = self.runs.page;
                 page = core.schedule.run_page(client, scope, &query).await.ok();
                 if page.is_none() {
@@ -967,6 +980,11 @@ impl Board {
             Html::default()
         };
         render(HistoryPanel {
+            timezone_request: if self.browser_zone.is_none() {
+                self.timezone_request.clone()
+            } else {
+                String::new()
+            },
             toolbar,
             alert,
             card,
@@ -1265,6 +1283,7 @@ struct TasksPanel {
 #[derive(Template)]
 #[template(path = "schedule_history.html")]
 struct HistoryPanel {
+    timezone_request: String,
     toolbar: Html,
     alert: Html,
     card: Html,
