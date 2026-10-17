@@ -143,13 +143,19 @@ page!("info", "/system/info", INFO_VIEW);
 page!("localization", "/system/localization", LOCALIZATION_MANAGE);
 page!("inspector", "/system/menu-inspector", MENU_VIEW);
 // The installation owner only: no capability or grant opens these pages.
-// Outside development each also needs a recent authenticator check (step-up,
-// Core User's two-factor), which the host asks for before the page renders.
+// Opening them is a Base Step-up operation on the installation floor: outside
+// development the host asks for a holding check before the page renders.
+pub const DATABASE_TABLES_STEP_UP: &str = "base.system.database_tables.view";
+bilibi_step_up::declare!(
+    "base/system",
+    bilibi_step_up::Operation::new(DATABASE_TABLES_STEP_UP, "Open the database tables pages")
+        .floor()
+);
 macro_rules! owner_page {
     ($operation:literal, $path:literal) => {
         inventory::submit! { Contribution::new(ROUTES, concat!("base/system.", $operation), provenance!(), &Route {
             method: Method::Get, path: $path, service: "base/system.pages", operation: $operation,
-            access: Access::StepUp(&Access::Owner), framed: true,
+            access: Access::StepUp { operation: DATABASE_TABLES_STEP_UP, inner: &Access::Owner }, framed: true,
         }) }
     };
 }
@@ -201,7 +207,7 @@ bilibi_menu::contribute!(
 );
 inventory::submit! {
     Module { id: "base/system", layer: bilibi_module_registry::Layer::Base,
-        dependencies: &["base/module_registry", "base/database", "base/authz", "base/locale", "base/menu", "base/perf", "base/tenancy", "base/ui", "base/audit"],
+        dependencies: &["base/module_registry", "base/database", "base/authz", "base/locale", "base/menu", "base/perf", "base/tenancy", "base/ui", "base/audit", "base/step_up"],
         migrations: &[], services: &[Service { id: "base/system.pages", factory: |services| {
             let modules = bilibi_module_registry::discover()?;
             let catalog = Catalog::discover(&modules)?;

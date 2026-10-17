@@ -11,6 +11,7 @@ bilibi-database.workspace = true
 bilibi-authz = { path = "../authz" }
 bilibi-tenancy = { path = "../tenancy" }
 bilibi-settings = { path = "../settings" }
+bilibi-step-up.workspace = true
 inventory.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -27,6 +27,7 @@ pub use bilibi_security as security;
 pub use bilibi_session as session;
 pub use bilibi_settings as settings;
 pub use bilibi_settings_editor as settings_editor;
+pub use bilibi_step_up as step_up;
 pub use bilibi_system as system;
 pub use bilibi_tenancy as tenancy;
 pub use bilibi_tiling as tiling;

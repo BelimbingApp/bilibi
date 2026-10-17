@@ -231,11 +231,20 @@ async fn invoke(
             let operations = operations(args.remove("operations").ok_or_else(mismatch)?)?;
             Ok(plans.preview(session.authority, &operations).await?)
         }
-        "commit" if args.len() == 2 => {
+        "commit" if (2..=3).contains(&args.len()) => {
             let code = string(&args, "plan_code").ok_or_else(mismatch)?;
             let operations = operations(args.remove("operations").ok_or_else(mismatch)?)?;
+            // The account holder's step-up code, when an operation asked for it.
+            let scope = match args.remove("step_up_code") {
+                None => session.scope.clone(),
+                Some(Value::String(step_up)) => session.scope.clone().presenting_step_up(&step_up),
+                Some(_) => return Err(mismatch()),
+            };
+            if args.len() != 1 {
+                return Err(mismatch());
+            }
             Ok(plans
-                .commit(session.scope, session.authority, &code, &operations)
+                .commit(&scope, session.authority, &code, &operations)
                 .await?)
         }
         _ if TOOLS.contains(&name) => Err(mismatch()),
@@ -265,6 +274,9 @@ fn failure(error: Error) -> Value {
             json!({"error": "forbidden", "reason": "missing_capability"})
         }
         Error::PlanRejected(results) => json!({"error": "plan_rejected", "results": results}),
+        Error::Backend(Backend::StepUpRequired { operation, reason }) => {
+            bilibi_step_up::refusal(operation, reason)
+        }
         Error::Backend(Backend::Conflict | Backend::Invalid) => json!({"error": "rejected"}),
         Error::Backend(_) => json!({"error": "not_found"}),
         other => json!({"error": other.to_string()}),
@@ -312,8 +324,8 @@ pub fn tools() -> Vec<Value> {
         ),
         tool(
             "commit",
-            "Commit the exact unchanged plan only after the person explicitly approves its displayed preview. Never retry automatically; verify uncertain outcomes with reads.",
-            json!({"plan_code": {"type": "string"}, "operations": operations}),
+            "Commit the exact unchanged plan only after the person explicitly approves its displayed preview. Never retry automatically; verify uncertain outcomes with reads. An operation may answer step_up_required: then ask the person for the current code from their authenticator app and commit again with it as step_up_code.",
+            json!({"plan_code": {"type": "string"}, "operations": operations, "step_up_code": {"type": "string", "description": "The account holder's current authenticator code, only when a commit answered step_up_required."}}),
             false,
         ),
     ]
@@ -323,7 +335,12 @@ fn tool(name: &str, description: &str, properties: Value, read: bool) -> Value {
     let schemes = json!([{"type": "oauth2", "scopes": ["bilibi"]}]);
     let mut required: Vec<&str> = properties
         .as_object()
-        .map(|p| p.keys().map(String::as_str).collect())
+        .map(|p| {
+            p.keys()
+                .map(String::as_str)
+                .filter(|key| *key != "step_up_code")
+                .collect()
+        })
         .unwrap_or_default();
     required.sort_unstable();
     json!({

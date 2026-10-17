@@ -63,6 +63,7 @@ bilibi-schedule = { path = "apps/base/schedule" }
 bilibi-session = { path = "apps/base/session" }
 bilibi-settings = { path = "apps/base/settings" }
 bilibi-settings-editor = { path = "apps/base/settings_editor" }
+bilibi-step-up = { path = "apps/base/step_up" }
 bilibi-system = { path = "apps/base/system" }
 bilibi-tenancy = { path = "apps/base/tenancy" }
 bilibi-tiling = { path = "apps/base/tiling" }

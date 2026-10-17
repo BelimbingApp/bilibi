@@ -603,6 +603,10 @@ fn api_error(error: bilibi_base::agent_api::Error) -> Refusal {
             StatusCode::UNPROCESSABLE_ENTITY,
             json!({"error":"plan_rejected","results":results}),
         ),
+        E::Backend(Error::StepUpRequired { operation, reason }) => refusal(
+            StatusCode::FORBIDDEN,
+            bilibi_base::step_up::refusal(operation, reason),
+        ),
         // The grant stopped proving live between the edge and the commit.
         E::Backend(Error::Unauthorized) => refused(),
         E::Backend(Error::Conflict | Error::Invalid) => {
@@ -789,6 +793,12 @@ async fn commit(State(app): State<App>, request: Request) -> Response {
             return Err(invalid_request());
         };
         let operations = operations(fields.remove("operations").ok_or_else(invalid_request)?)?;
+        // The account holder's step-up code, sent after a `step_up_required`.
+        let scope = match fields.remove("step_up_code") {
+            None => agent.scope.clone(),
+            Some(Value::String(step_up)) => agent.scope.clone().presenting_step_up(&step_up),
+            Some(_) => return Err(invalid_request()),
+        };
         let authority = Grant {
             access: &app.api.access,
             claims: &agent.claims,
@@ -796,7 +806,7 @@ async fn commit(State(app): State<App>, request: Request) -> Response {
         };
         app.api
             .plans
-            .commit(&agent.scope, &authority, &code, &operations)
+            .commit(&scope, &authority, &code, &operations)
             .await
             .map_err(api_error)
     }

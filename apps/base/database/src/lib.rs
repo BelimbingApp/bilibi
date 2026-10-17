@@ -45,6 +45,17 @@ pub enum Error {
     },
     #[error("Internal error")]
     Internal,
+    /// The operation needs a fresh check of the human account holder
+    /// (`base/step_up`): every channel maps it to its own answer (a browser
+    /// to the confirm prompt, an agent to `step_up_required`).
+    #[error("Confirm with your authenticator code to continue")]
+    StepUpRequired {
+        /// The declared operation key.
+        operation: &'static str,
+        /// `required`, `code_required`, `invalid_code`, `locked`,
+        /// `not_enrolled` or `impersonating`.
+        reason: &'static str,
+    },
 }
 
 /// A failure from below this crate and, in debug builds only, the stack where

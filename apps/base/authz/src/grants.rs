@@ -1,4 +1,5 @@
 //! Authenticated grant writes and explicit authoritative system-role reconciliation.
+use crate::step_up;
 use crate::{
     authorize_key,
     roles::{NewRole, RoleErrors},
@@ -23,6 +24,7 @@ pub struct Grants {
     vocabulary: Vocabulary,
     authentication: Arc<bilibi_tenancy::Authentication>,
     parties: Arc<PartyProofs>,
+    step_up: Arc<bilibi_step_up::StepUp>,
 }
 impl Grants {
     pub fn new(
@@ -31,6 +33,7 @@ impl Grants {
         vocabulary: Vocabulary,
         authentication: Arc<bilibi_tenancy::Authentication>,
         parties: Arc<PartyProofs>,
+        step_up: Arc<bilibi_step_up::StepUp>,
     ) -> Self {
         Self {
             db,
@@ -38,6 +41,7 @@ impl Grants {
             vocabulary,
             authentication,
             parties,
+            step_up,
         }
     }
     pub fn vocabulary(&self) -> &Vocabulary {
@@ -89,6 +93,28 @@ impl Grants {
         // owner establishes eligibility through Tenancy's bound verifier.
         self.verify_user(tx.sql(), actor, user).await?;
         let tenant = actor.tenant();
+        let (code, grant_all): (Option<String>, bool) = tx
+            .sql()
+            .query_opt(
+                "SELECT code,grant_all FROM roles WHERE tenant_id=$1 AND id=$2",
+                &[&tenant, &role],
+            )
+            .await?
+            .map(|row| (row.get(0), row.get(1)))
+            .ok_or(Error::Invalid)?;
+        let target = format!(
+            "user:{user} role:{} {}",
+            code.unwrap_or_else(|| role.to_string()),
+            if assigned { "assign" } else { "remove" }
+        );
+        self.step_up
+            .require(actor, step_up::PRINCIPAL_ROLE, &target)
+            .await?;
+        if assigned && grant_all {
+            self.step_up
+                .require(actor, step_up::GRANT_ALL_ROLE, &target)
+                .await?;
+        }
         tx.mutate(|sql|Box::pin(async move {
             let exists=sql.query_opt("SELECT id FROM roles WHERE tenant_id=$1 AND id=$2 FOR UPDATE",&[&tenant,&role]).await?.is_some();
             if !exists {return Err(Error::Invalid);}
@@ -120,6 +146,13 @@ impl Grants {
         self.verify_user(tx.sql(), actor, actor.user()).await?;
         authorize_key(tx.sql(), actor, "admin.authz.role.update").await?;
         self.verify_user(tx.sql(), actor, user).await?;
+        self.step_up
+            .require(
+                actor,
+                step_up::PRINCIPAL_CAPABILITY,
+                &format!("user:{user} capability:{key} {allowed:?}"),
+            )
+            .await?;
         let tenant = actor.tenant();
         let key = key.to_owned();
         tx.mutate(|sql|Box::pin(async move {
@@ -151,6 +184,16 @@ impl Grants {
             .await?;
         self.verify_user(tx.sql(), actor, actor.user()).await?;
         authorize_key(tx.sql(), actor, "admin.authz.role.update").await?;
+        self.step_up
+            .require(
+                actor,
+                step_up::ROLE_CAPABILITY,
+                &format!(
+                    "role:{role} capability:{key} {}",
+                    if granted { "grant" } else { "remove" }
+                ),
+            )
+            .await?;
         let tenant = actor.tenant();
         let key = key.to_owned();
         tx.mutate(|sql|Box::pin(async move {
@@ -260,6 +303,13 @@ impl Grants {
         };
         self.verify_user(tx.sql(), actor, actor.user()).await?;
         authorize_key(tx.sql(), actor, gate).await?;
+        self.step_up
+            .require(
+                actor,
+                step_up::SYSTEM_PRINCIPAL,
+                &format!("principal:{principal} capability:{key} {allowed:?}"),
+            )
+            .await?;
         let tenant = actor.tenant();
         let key = key.to_owned();
         let principal = principal.to_owned();

@@ -299,6 +299,7 @@ dependencies = [
  "bilibi-database",
  "bilibi-module-registry",
  "bilibi-settings",
+ "bilibi-step-up",
  "bilibi-tenancy",
  "bilibi-walkthrough-fixture",
  "bilibi-web",
@@ -395,6 +396,7 @@ dependencies = [
  "bilibi-module-registry",
  "bilibi-party-ids",
  "bilibi-settings",
+ "bilibi-step-up",
  "bilibi-tenancy",
  "bilibi-ui",
  "inventory",
@@ -436,6 +438,7 @@ dependencies = [
  "bilibi-session",
  "bilibi-settings",
  "bilibi-settings-editor",
+ "bilibi-step-up",
  "bilibi-system",
  "bilibi-tenancy",
  "bilibi-tiling",
@@ -816,6 +819,7 @@ dependencies = [
  "bilibi-party",
  "bilibi-party-ids",
  "bilibi-principal-directory",
+ "bilibi-step-up",
  "bilibi-tenancy",
  "bilibi-ui",
  "bilibi-walkthrough-fixture",
@@ -929,6 +933,7 @@ dependencies = [
  "bilibi-queue",
  "bilibi-schedule",
  "bilibi-settings",
+ "bilibi-step-up",
  "bilibi-tenancy",
  "bilibi-ui",
  "inventory",
@@ -977,6 +982,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "bilibi-step-up"
+version = "0.1.0"
+dependencies = [
+ "bilibi-audit",
+ "bilibi-database",
+ "bilibi-module-registry",
+ "bilibi-settings",
+ "bilibi-tenancy",
+ "inventory",
+ "serde_json",
+ "tokio-postgres",
+]
+
+[[package]]
 name = "bilibi-system"
 version = "0.1.0"
 dependencies = [
@@ -989,6 +1008,7 @@ dependencies = [
  "bilibi-module-registry",
  "bilibi-perf",
  "bilibi-queue",
+ "bilibi-step-up",
  "bilibi-tenancy",
  "bilibi-ui",
  "deadpool-postgres",
@@ -1073,6 +1093,7 @@ dependencies = [
  "bilibi-security",
  "bilibi-session",
  "bilibi-settings",
+ "bilibi-step-up",
  "bilibi-tenancy",
  "bilibi-ui",
  "bilibi-walkthrough-fixture",

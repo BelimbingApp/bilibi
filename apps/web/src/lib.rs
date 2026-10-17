@@ -37,8 +37,9 @@ pub struct App {
     moved: Arc<Vec<&'static bilibi_module_registry::contributions::Moved>>,
     pub db: Db,
     pub origin: Arc<str>,
-    /// `BILIBI_ENV`: development relaxes the step-up guard, nothing else.
+    /// `BILIBI_ENV`: development turns Base Step-up enforcement off, nothing else.
     pub environment: Environment,
+    pub step_up: Arc<bilibi_base::step_up::StepUp>,
     /// The host the server listens on, for the development status bar only;
     /// the serving command sets it from `BIND_ADDR`.
     pub listen_address: Option<Arc<str>>,
@@ -67,6 +68,9 @@ impl App {
         let company = services.get("core/company.companies")?;
         let user = services.get("core/user.accounts")?;
         let security = services.get("base/security.guard")?;
+        let step_up: Arc<bilibi_base::step_up::StepUp> =
+            services.get(bilibi_base::step_up::SERVICE)?;
+        step_up.set_enforced(environment.requires_step_up());
         let renderer = services.get("base/ui.renderer")?;
         let menu = bilibi_base::menu::Menu::from_catalog(services.catalog()?)?;
         let display = services.get("base/datetime.display")?;
@@ -87,6 +91,7 @@ impl App {
             db,
             origin: origin.into(),
             environment,
+            step_up,
             listen_address: None,
             company,
             user,
@@ -365,7 +370,12 @@ struct Failure(String);
 pub(crate) fn server_fault(error: &Error) -> bool {
     !matches!(
         error,
-        Error::Unauthorized | Error::Forbidden | Error::NotFound | Error::Invalid | Error::Conflict
+        Error::Unauthorized
+            | Error::Forbidden
+            | Error::NotFound
+            | Error::Invalid
+            | Error::Conflict
+            | Error::StepUpRequired { .. }
     )
 }
 impl From<Error> for HttpError {

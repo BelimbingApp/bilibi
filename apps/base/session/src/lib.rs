@@ -124,6 +124,19 @@ pub struct ListPage {
     pub entries: Vec<Summary>,
     pub total_entries: u64,
 }
+/// A session's step-up window as [`Sessions::step_up_window`] read it.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct StepUpWindow {
+    /// The session passed a check at some point.
+    pub checked: bool,
+    pub within_cap: bool,
+    pub within_window: bool,
+}
+impl StepUpWindow {
+    pub fn holds(self) -> bool {
+        self.checked && self.within_cap && self.within_window
+    }
+}
 /// Who a session acts as: the account, and the operator behind it while
 /// impersonating. A switch names the identity it expects to replace.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -345,6 +358,8 @@ impl Sessions {
         if tenant <= 0 || user <= 0 || except.is_some_and(str::is_empty) {
             return Err(Error::Invalid);
         }
+        // The holder's agents lose their step-up windows with the sessions.
+        bilibi_step_up::end_agent_windows(sql, tenant, user).await?;
         let rows = sql
             .query(
                 "DELETE FROM sessions WHERE tenant_id=$1 AND (user_id=$2 OR impersonator_id=$2) AND ($3::text IS NULL OR id<>$3) RETURNING id",
@@ -399,13 +414,13 @@ impl Sessions {
         let csrf = uuid::Uuid::new_v4().simple().to_string();
         let moved = sql
             .query_opt(
-                "UPDATE sessions SET user_id=$5,impersonator_id=$6,csrf=$7,last_activity=now(),stepped_up_at=NULL WHERE id=$1 AND tenant_id=$2 AND user_id=$3 AND impersonator_id IS NOT DISTINCT FROM $4 AND expires_at>now() AND last_activity>now()-make_interval(secs => $8::double precision) RETURNING id",
+                "UPDATE sessions SET user_id=$5,impersonator_id=$6,csrf=$7,last_activity=now(),stepped_up_at=NULL,step_up_used_at=NULL,step_up_spent_at=NULL WHERE id=$1 AND tenant_id=$2 AND user_id=$3 AND impersonator_id IS NOT DISTINCT FROM $4 AND expires_at>now() AND last_activity>now()-make_interval(secs => $8::double precision) RETURNING id",
                 &[&token, &tenant, &from.user, &from.impersonator, &to.user, &to.impersonator, &csrf, &(policy.idle_seconds as f64)],
             )
             .await?;
         moved.map(|_| csrf).ok_or(Error::Conflict)
     }
-    /// Records that the signed-in session just passed an authenticator check,
+    /// Records that the signed-in session just passed a step-up check,
     /// inside the caller's transaction (the verification that proved it).
     /// The session is named by the proof Tenancy sealed, never a token; an
     /// impersonated session is refused, since the check proves the person
@@ -416,7 +431,7 @@ impl Sessions {
         }
         let updated = sql
             .execute(
-                "UPDATE sessions SET stepped_up_at=now() WHERE tenant_id=$1 AND user_id=$2 AND csrf=$3 AND impersonator_id IS NULL AND expires_at>now()",
+                "UPDATE sessions SET stepped_up_at=now(),step_up_used_at=now(),step_up_spent_at=NULL WHERE tenant_id=$1 AND user_id=$2 AND csrf=$3 AND impersonator_id IS NULL AND expires_at>now()",
                 &[&scope.tenant(), &scope.user(), &scope.csrf],
             )
             .await?;
@@ -425,21 +440,57 @@ impl Sessions {
         }
         Ok(())
     }
-    /// Whether the signed-in session passed an authenticator check within the
-    /// last `window_seconds`. Reads only; never renews the window.
-    pub async fn stepped_up_within(
+    /// The signed-in session's step-up window: whether a check exists, is
+    /// within `cap_seconds` (absolute, from the check) and its last covered
+    /// action within `window_seconds` (sliding). With `extend`, a holding
+    /// window restarts from now, so continued use keeps it open to the cap.
+    pub async fn step_up_window(
         &self,
         client: &impl GenericClient,
         scope: &Scope,
         window_seconds: i64,
+        cap_seconds: i64,
+        extend: bool,
+    ) -> Result<StepUpWindow> {
+        if window_seconds <= 0 || cap_seconds <= 0 {
+            return Err(Error::Invalid);
+        }
+        let row = client
+            .query_opt(
+                "SELECT stepped_up_at IS NOT NULL, stepped_up_at>now()-make_interval(secs => $5::double precision), step_up_used_at>now()-make_interval(secs => $4::double precision) FROM sessions WHERE tenant_id=$1 AND user_id=$2 AND csrf=$3 AND impersonator_id IS NULL",
+                &[&scope.tenant(), &scope.user(), &scope.csrf, &(window_seconds as f64), &(cap_seconds as f64)],
+            )
+            .await?;
+        let window = row.map_or(StepUpWindow::default(), |row| StepUpWindow {
+            checked: row.get(0),
+            within_cap: row.get::<_, Option<bool>>(1).unwrap_or(false),
+            within_window: row.get::<_, Option<bool>>(2).unwrap_or(false),
+        });
+        if extend && window.holds() {
+            client
+                .execute(
+                    "UPDATE sessions SET step_up_used_at=now() WHERE tenant_id=$1 AND user_id=$2 AND csrf=$3 AND impersonator_id IS NULL",
+                    &[&scope.tenant(), &scope.user(), &scope.csrf],
+                )
+                .await?;
+        }
+        Ok(window)
+    }
+    /// For an "ask every time" action: spends a check made within the last
+    /// `fresh_seconds` that no such action used yet. One check, one action.
+    pub async fn spend_fresh_step_up(
+        &self,
+        client: &impl GenericClient,
+        scope: &Scope,
+        fresh_seconds: i64,
     ) -> Result<bool> {
-        if window_seconds <= 0 {
+        if fresh_seconds <= 0 {
             return Err(Error::Invalid);
         }
         Ok(client
             .query_opt(
-                "SELECT 1 FROM sessions WHERE tenant_id=$1 AND user_id=$2 AND csrf=$3 AND impersonator_id IS NULL AND stepped_up_at>now()-make_interval(secs => $4::double precision)",
-                &[&scope.tenant(), &scope.user(), &scope.csrf, &(window_seconds as f64)],
+                "UPDATE sessions SET step_up_spent_at=now(),step_up_used_at=now() WHERE tenant_id=$1 AND user_id=$2 AND csrf=$3 AND impersonator_id IS NULL AND stepped_up_at>now()-make_interval(secs => $4::double precision) AND (step_up_spent_at IS NULL OR step_up_spent_at<stepped_up_at) RETURNING 1",
+                &[&scope.tenant(), &scope.user(), &scope.csrf, &(fresh_seconds as f64)],
             )
             .await?
             .is_some())
@@ -509,7 +560,7 @@ fn like_escape(text: &str) -> String {
 inventory::submit! {
     bilibi_module_registry::Module {
         id: "base/session", layer: bilibi_module_registry::Layer::Base,
-        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/settings", "base/authz", "base/queue", "base/schedule", "base/ui", "base/menu", "base/dashboard", "base/principal_directory"],
+        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/settings", "base/authz", "base/step_up", "base/queue", "base/schedule", "base/ui", "base/menu", "base/dashboard", "base/principal_directory"],
         migrations: &[
             ("base-session-001-client", include_str!("../migrations/001-client.sql")),
             ("base-session-002-impersonation", include_str!("../migrations/002-impersonation.sql")),

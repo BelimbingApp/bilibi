@@ -218,7 +218,7 @@ impl Core {
         };
         // A step-up page still opens in a tile; the frame shows its prompt.
         let allowed = match route.access.base() {
-            Access::Public | Access::SignedIn | Access::StepUp(_) => true,
+            Access::Public | Access::SignedIn | Access::StepUp { .. } => true,
             Access::Capability(key) => standing.capabilities.contains(key),
             Access::Operator => standing.operator,
             Access::Owner => standing.owner,
