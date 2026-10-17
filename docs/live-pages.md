@@ -67,9 +67,9 @@ canonical query only adds values it left out, so a list opened at its bare path
 stays there (Bilimbi pushes a patch only on change); a page that drops or
 corrects a value the address carries replaces it with the canonical one. After
 that the URL is written only when the canonical address changes: user
-navigation/query changes push history, background refresh replaces it. Browser Back remounts the historical URL,
-except within a page that marks an element `data-history="params"` (the tiled
-workspace): there a Back or Forward to the same path is a `params` update of the
+navigation/query changes push history, background refresh and history corrections replace it. Browser Back remounts the historical URL,
+except within a page that owns panel query namespaces (same pathname only) or marks an element `data-history="params"` (the tiled
+workspace): there a Back or Forward is a `params` update of the
 mounted state, Bilimbi's `handle_params` on a live patch, so the DOM it keeps is
 reconciled rather than rebuilt. A page inside a workspace frame never adds a
 history entry: its address changes are replaced, a plain same-origin link click
@@ -228,6 +228,8 @@ it. Parent-route access and panel access are rechecked before panel events and
 background callbacks. A panel refusal removes its state and sensitive HTML while
 retaining an empty DOM anchor, leaving the parent and siblings usable. A restored
 permission can mount it again during a parent refresh.
+
+An embedded list can override `LiveState::query_prefix` with its `ListSpec.param_prefix` (a stable namespace ending in `_`) and return `ListState::to_params()` as `LiveBody.query`. Web replaces only that namespace, preserving the page and sibling panels' keys. Prefixes must not overlap, and a page cannot return panel-owned keys. Web sends `Params` before a new panel's first render and on history restoration; replace only `ListState`, retaining mounted columns and the subject from `PanelSpec.path`. Ordinary parent refreshes send `Refresh`. Shell panels cannot own query keys. Empty prefixes keep local-only state. Prefer `omit_defaults` for embedded lists so an untouched sibling adds no defaults to the address. This mirrors Bilimbi Company ShowLive's `users_` list state without making the parent depend on discovered owners.
 
 Return `Subscription`s from the mounted state's `subscriptions` method. Publish
 `Change` only after a business transaction commits, with its tenant and optional

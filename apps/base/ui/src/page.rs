@@ -114,6 +114,13 @@ pub struct Subscription {
 /// freshly guarded scope. Background refresh never records session activity.
 pub trait LiveState<Context, Error>: Send {
     fn update<'a>(&'a mut self, request: LiveRequest<'a, Context>) -> LiveFuture<'a, Error>;
+    /// A page panel may own a stable, non-overlapping query namespace ending
+    /// in `_`. Web restores it through Params and merges only its prefixed
+    /// LiveBody.query keys into the parent address. Empty keeps local state.
+    /// Shell panels never own the page's query.
+    fn query_prefix(&self) -> &str {
+        ""
+    }
     fn panels(&self) -> Vec<PanelSpec> {
         Vec::new()
     }

@@ -194,6 +194,8 @@ struct Session {
     sender: mpsc::Sender<Wake>,
     /// The address the page last answered with: path and canonical query.
     canonical: String,
+    /// Page-owned keys and the disjoint namespaces owned by live page panels.
+    query: HashMap<String, String>,
     /// The browser's own query on a mount or a Back step, which the next
     /// page reply keeps in place of the canonical one when that only adds
     /// values the address left out (Bilimbi patches the URL only on change).
@@ -259,6 +261,7 @@ impl Session {
         self.path = path;
         self.route = bound.route.path.to_owned();
         self.page_route = Some(bound.route);
+        self.query = query.clone();
         self.address = Some(query);
         self.sync_shell(app, token, &scope).await?;
         self.update(app, token, "page", LiveInput::Refresh).await
@@ -371,8 +374,11 @@ impl Session {
                     return Err(Error::Invalid);
                 }
             }
+            // Canonicalize child namespaces before the combined URL, but send
+            // the parent first so its anchors exist when fragments arrive.
+            let fragments = self.sync_panels(app, token, &scope).await?;
             let mut messages = vec![self.page_message(app, &scope, body).await?];
-            messages.extend(self.sync_panels(app, token, &scope).await?);
+            messages.extend(fragments);
             return Ok(messages);
         }
         let panel = match self.shell.get_mut(target) {
@@ -390,7 +396,12 @@ impl Session {
             })
             .await?;
         hold_flash(app, token, &mut body);
-        Ok(vec![fragment(target, body)])
+        let owns_query = self.merge_panel_query(target, &body.query)?;
+        let mut message = fragment(target, body);
+        if owns_query {
+            message["url"] = json!(self.url());
+        }
+        Ok(vec![message])
     }
     async fn page_message(&mut self, app: &App, scope: &Scope, body: LiveBody) -> Result<Value> {
         let topbar_actions =
@@ -406,7 +417,58 @@ impl Session {
         )
         .await?
         .html;
-        let canonical = params::address(&self.path, &body.query);
+        let prefixes: Vec<_> = self
+            .panels
+            .values()
+            .map(|p| p.mounted.state.query_prefix())
+            .filter(|prefix| !prefix.is_empty())
+            .collect();
+        if body
+            .query
+            .keys()
+            .any(|key| prefixes.iter().any(|prefix| key.starts_with(prefix)))
+        {
+            return Err(Error::Invalid);
+        }
+        self.query
+            .retain(|key, _| prefixes.iter().any(|prefix| key.starts_with(prefix)));
+        self.query.extend(body.query);
+        let panel_params = !prefixes.is_empty();
+        let url = self.url();
+        Ok(
+            json!({"type":"page", "target":"app", "html":html, "url":url, "panel_params":panel_params, "notice":body.notice, "rows":body.rows, "redirect":body.redirect, "events":events(&body.events)}),
+        )
+    }
+    /// Replace exactly one panel's namespace; never let a child overwrite its
+    /// parent or another panel. Shell state deliberately has no URL ownership.
+    fn merge_panel_query(&mut self, id: &str, query: &HashMap<String, String>) -> Result<bool> {
+        let Some(panel) = self.panels.get(id) else {
+            return Ok(false);
+        };
+        let prefix = panel.mounted.state.query_prefix();
+        if prefix.is_empty() {
+            return Ok(false);
+        }
+        if !prefix.ends_with('_')
+            || !prefix
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || c == b'_')
+            || query.keys().any(|key| !key.starts_with(prefix))
+            || self.panels.iter().any(|(other_id, other)| {
+                let other_prefix = other.mounted.state.query_prefix();
+                other_id != id
+                    && !other_prefix.is_empty()
+                    && (prefix.starts_with(other_prefix) || other_prefix.starts_with(prefix))
+            })
+        {
+            return Err(Error::Invalid);
+        }
+        self.query.retain(|key, _| !key.starts_with(prefix));
+        self.query.extend(query.clone());
+        Ok(true)
+    }
+    fn url(&mut self) -> Option<String> {
+        let canonical = params::address(&self.path, &self.query);
         // A list's first render keeps a clean address: the browser's own query
         // stands while every value it carries is the page's too, and only a
         // reply whose state moved writes the canonical query (Bilimbi's
@@ -416,7 +478,7 @@ impl Session {
             Some(address)
                 if address
                     .iter()
-                    .all(|(key, value)| body.query.get(key) == Some(value)) =>
+                    .all(|(key, value)| self.query.get(key) == Some(value)) =>
             {
                 Some(params::address(&self.path, &address))
             }
@@ -424,9 +486,7 @@ impl Session {
             None => (canonical != self.canonical).then(|| canonical.clone()),
         };
         self.canonical = canonical;
-        Ok(
-            json!({"type":"page", "target":"app", "html":html, "url":url, "notice":body.notice, "rows":body.rows, "redirect":body.redirect, "events":events(&body.events)}),
-        )
+        url
     }
     async fn sync_panels(&mut self, app: &App, token: &str, scope: &Scope) -> Result<Vec<Value>> {
         let specs = self.page.as_ref().ok_or(Error::Invalid)?.state.panels();
@@ -454,7 +514,8 @@ impl Session {
         for spec in specs {
             let id = spec.id.clone();
             let result = async {
-                if !self.panels.contains_key(&id) {
+                let newly_mounted = !self.panels.contains_key(&id);
+                if newly_mounted {
                     let embed = app
                         .services
                         .catalog()?
@@ -484,17 +545,28 @@ impl Session {
                 }
                 let panel = self.panels.get_mut(&id).ok_or(Error::Internal)?;
                 routes::check_access(app, panel.mounted.access, Some(token)).await?;
+                let input = if !panel.mounted.state.query_prefix().is_empty()
+                    && (newly_mounted || self.address.is_some())
+                {
+                    LiveInput::Params(&self.query)
+                } else {
+                    LiveInput::Refresh
+                };
                 panel
                     .mounted
                     .state
                     .update(LiveRequest {
                         scope,
                         credential: token,
-                        input: LiveInput::Refresh,
+                        input,
                     })
                     .await
             }
             .await;
+            let result = result.and_then(|body| {
+                self.merge_panel_query(&id, &body.query)?;
+                Ok(body)
+            });
             match result {
                 Ok(body) => messages.push(fragment(&id, body)),
                 Err(Error::Unauthorized) => return Err(Error::Unauthorized),
@@ -653,22 +725,36 @@ impl Session {
             // historical path stays this page's state (its route parameters
             // join the params, after the query so the path wins) or, when it
             // names another page, mounts that page.
-            Event::Params { params, path } => match path {
-                Some(path) => match self.relocate(app, token, &path).await? {
-                    Some(route_params) => {
-                        self.address = Some(params.clone());
-                        let mut params = params;
-                        params.extend(route_params);
+            Event::Params { params, path } => {
+                self.query = params.clone();
+                self.address = Some(params.clone());
+                match path {
+                    Some(path)
+                        if path != self.path
+                            && self
+                                .panels
+                                .values()
+                                .any(|panel| !panel.mounted.state.query_prefix().is_empty()) =>
+                    {
+                        // A child query belongs to this record, not another
+                        // record served by the same page service/operation.
+                        self.mount(app, token, path, params).await?
+                    }
+                    Some(path) => match self.relocate(app, token, &path).await? {
+                        Some(route_params) => {
+                            let mut params = params;
+                            params.extend(route_params);
+                            self.update(app, token, "page", LiveInput::Params(&params))
+                                .await?
+                        }
+                        None => self.mount(app, token, path, params).await?,
+                    },
+                    None => {
                         self.update(app, token, "page", LiveInput::Params(&params))
                             .await?
                     }
-                    None => self.mount(app, token, path, params).await?,
-                },
-                None => {
-                    self.update(app, token, "page", LiveInput::Params(&params))
-                        .await?
                 }
-            },
+            }
             Event::Action { target, payload } => {
                 self.update(app, token, &target, LiveInput::Event(&payload))
                     .await?
@@ -739,6 +825,7 @@ pub async fn run(app: App, token: String, identity: Identity, mut socket: WebSoc
         generation: 0,
         sender,
         canonical: String::new(),
+        query: HashMap::new(),
         address: None,
         uploads: 0,
     };
@@ -766,7 +853,7 @@ pub async fn run(app: App, token: String, identity: Identity, mut socket: WebSoc
                                 Event::Action {target: id, ..} | Event::Upload {target: id, ..} | Event::UploadCancel {target: id, ..} => target = id.clone(),
                                 _ => {}
                             }
-                            if matches!(event, Event::Navigate {..} | Event::Params {..} | Event::Action {..}) {history = "push";}
+                            if matches!(event, Event::Navigate {..} | Event::Params {path: None, ..} | Event::Action {..}) {history = "push";}
                             let identity = session.identity(&app, &event);
                             app.perf.observe(Kind::Event, identity.as_deref(), session.event(&app, &token, event), |result| {
                                 Finish::outcome(if result.is_ok() { Outcome::Ok } else { Outcome::Error })
@@ -844,7 +931,7 @@ pub async fn run(app: App, token: String, identity: Identity, mut socket: WebSoc
         };
         for message in &mut messages {
             message["request_id"] = json!(request_id);
-            if message["type"] == "page" {
+            if message["type"] == "page" || message["type"] == "fragment" {
                 message["history"] = json!(history);
             }
             if socket

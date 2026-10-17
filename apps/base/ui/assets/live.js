@@ -50,6 +50,7 @@
   let retryDelay = 500;
   let retryTimer = null;
   let lastHTML = null;
+  let panelPath = null; // Query-owning panels restore only within this record.
   // A page shown in a workspace tile shares the tab's history with the
   // workspace around it (see "Framed pages" below).
   const framed = window.parent !== window;
@@ -207,13 +208,7 @@
         patch(document.getElementById('app'), message.html, options);
         lastHTML = message.html;
       }
-      if (message.url && message.url !== location.pathname + location.search) {
-        // A framed page never adds an entry, and an intent that only records
-        // where something already is asks for the address to be replaced.
-        const push = message.history === 'push' && !framed && !(entry && entry.history === 'replace');
-        history[push ? 'pushState' : 'replaceState'](null, '', message.url);
-        window.dispatchEvent(new CustomEvent('bilibi:location'));
-      }
+      panelPath = message.panel_params ? new URL(message.url || location.href, location.href).pathname : null;
       if (message.notice) feedback.textContent = message.notice;
     } else if (message.type === 'fragment') {
       // A panel's action can open a local page (a notification's link).
@@ -244,6 +239,13 @@
           if (socket) socket.close();
         }
       }
+    }
+    if (['page', 'fragment'].includes(message.type) && message.url && message.url !== location.pathname + location.search) {
+      // Framed pages and background/history corrections replace; a person's
+      // action pushes unless the intent explicitly asks to replace.
+      const push = message.history === 'push' && !framed && !(entry && entry.history === 'replace');
+      history[push ? 'pushState' : 'replaceState'](null, '', message.url);
+      window.dispatchEvent(new CustomEvent('bilibi:location'));
     }
     // Owner pushes (LiveBody.events) reach hooks once the patch is in place.
     for (const push of message.events || []) {
@@ -604,7 +606,7 @@
   // that path is still this page's (a saved layout's address under the
   // workspace) and mounts the page it names otherwise.
   window.addEventListener('popstate', () => {
-    if (document.querySelector('#app [data-history="params"]')) {
+    if (panelPath === location.pathname || document.querySelector('#app [data-history="params"]')) {
       enqueue({type: 'params', path: location.pathname, params: params()}, {loading: true});
       return;
     }

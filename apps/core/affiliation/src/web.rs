@@ -3,6 +3,7 @@
 //! `person.affiliations` and `company.affiliations` embeds. The host resolves
 //! its own record and passes its ID; this panel reauthorizes every read and
 //! write through the owner and never guesses a company-to-person link.
+//! Mirrors Bilimbi's company/contact panels with Bilibi's Affiliation model.
 use crate::{
     contributions::{CREATE, LIST, UNLINK, UPDATE, VIEW},
     Affiliation, AffiliationId, AffiliationInput, AffiliationService, CalendarDate, EffectiveDates,
@@ -54,6 +55,8 @@ static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
             Filter::one_of(&["current", "all"], "current"),
         )]),
         omit_blank: vec!["search".into()],
+        param_prefix: "affiliations_".into(),
+        omit_defaults: true,
         ..ListSpec::default()
     }
     .shared()
@@ -828,6 +831,7 @@ impl Panel {
                 dialog,
             })?
             .to_string(),
+            query: self.list.to_params(),
             notice: std::mem::take(&mut self.notice),
             rows: counts.total_entries as usize,
             ..LiveBody::default()
@@ -1155,10 +1159,18 @@ impl Panel {
     }
 }
 impl LiveState<Scope, Error> for Panel {
+    fn query_prefix(&self) -> &str {
+        &self.list.spec().param_prefix
+    }
     fn update<'a>(&'a mut self, request: LiveRequest<'a, Scope>) -> LiveFuture<'a, Error> {
         Box::pin(async move {
-            if let LiveInput::Event(value) = request.input {
-                self.handle(request.scope, value).await?;
+            match request.input {
+                LiveInput::Refresh => {}
+                LiveInput::Params(values) => {
+                    self.list =
+                        ListState::parse(values, SPEC.clone()).map_err(|_| Error::Internal)?;
+                }
+                LiveInput::Event(value) => self.handle(request.scope, value).await?,
             }
             self.view(request.scope).await
         })
