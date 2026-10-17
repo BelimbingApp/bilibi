@@ -17,8 +17,8 @@ use bilibi_ui::{
     list_state::FILTERS_FORM,
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, PageBody, Subscription},
     params, BuiltinColumn, Button, EmptyState, Filter, FlashMap, FlexRow, FlexTable, Header, Html,
-    Icon, ListColumns, ListSpec, ListState, PageCounts, Pagination, SectionHeading, Tab,
-    TableEmpty, Tabs,
+    Icon, IconButton, ListColumns, ListSpec, ListState, PageCounts, Pagination, SectionHeading,
+    Tab, TableEmpty, Tabs,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -244,23 +244,21 @@ async fn render_inbox(
             );
             // The shared typed timestamp renderer owns the clock hook.
             if item.url.is_some() {
-                row.actions.push(&fragment(Html::render(&Button {
+                row.actions.push(&fragment(Html::render(&IconButton {
                     id: &format!("visit-{id}"),
                     event: "visit",
                     name: "id",
                     value: &id,
-                    body: Html::text("View details"),
-                    ..Button::default()
+                    ..IconButton::new("view", "View details")
                 }))?);
             }
             if !item.read {
-                row.actions.push(&fragment(Html::render(&Button {
+                row.actions.push(&fragment(Html::render(&IconButton {
                     id: &format!("mark-read-{id}"),
                     event: "mark_read",
                     name: "id",
                     value: &id,
-                    body: Html::text("Mark read"),
-                    ..Button::default()
+                    ..IconButton::new("success", "Mark read")
                 }))?);
             }
             row.dom_id = Some(format!("notifications-{id}"));

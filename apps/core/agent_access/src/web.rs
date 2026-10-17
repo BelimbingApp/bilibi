@@ -20,7 +20,7 @@ use bilibi_ui::{
         PageFuture, PageRequest,
     },
     params, Badge, BadgeKind, BuiltinColumn, Button, CodeInput, EmptyState, FlashMap, FlexRow,
-    FlexTable, Html, ListColumns, StatusKind, TableEmpty, NO_FLASH,
+    FlexTable, Html, IconButton, ListColumns, StatusKind, TableEmpty, NO_FLASH,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -735,13 +735,12 @@ impl ConnectionsPage {
                     );
                 rendered.dom_id = Some(row.dom_id);
                 if !row.revoked {
-                    rendered.actions = Html::render(&Button {
+                    rendered.actions = Html::render(&IconButton {
                         id: &row.revoke_id,
                         event: "revoke",
                         name: "id",
                         value: &row.id,
-                        body: Html::text("Revoke"),
-                        ..Button::default()
+                        ..IconButton::new("unlink", "Revoke connection")
                     })
                     .map_err(|_| Error::Internal)?;
                 }
