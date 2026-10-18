@@ -310,6 +310,93 @@ pub async fn queue(
     })
     .await
 }
+/// Jobs a worker finished whose outcome is not in the audit trail yet, as
+/// (tenant, job) pairs, oldest first. The worker wrote them outside the
+/// audited boundary; `settle` records each one.
+pub async fn unsettled(client: &impl GenericClient) -> Result<Vec<(i64, Job)>> {
+    let rows = client
+        .query(
+            &format!("SELECT tenant_id, {JOB_COLUMNS} FROM base_software_jobs WHERE worker IS NOT NULL AND finished_at IS NOT NULL AND settled_at IS NULL AND state IN ('done','failed','cancelled','interrupted') ORDER BY id LIMIT 20"),
+            &[],
+        )
+        .await?;
+    Ok(rows
+        .iter()
+        .map(|row| {
+            // JOB_COLUMNS start at index 1 here; Job::from_row reads from 0.
+            let tenant: i64 = row.get(0);
+            let job = Job {
+                id: row.get(1),
+                kind: row.get(2),
+                state: row.get(3),
+                request: row.get(4),
+                review: row.get(5),
+                result: row.get(6),
+                undo_of: row.get(7),
+                switch: row.get(8),
+                requested_by: row.get(9),
+                worker: row.get(10),
+                cancel_requested_by: row.get(11),
+                requested_at: row.get(12),
+                started_at: row.get(13),
+                finished_at: row.get(14),
+                cancel_requested_at: row.get(15),
+            };
+            (tenant, job)
+        })
+        .collect())
+}
+/// Records a worker's outcome as the audited change it is: from the job as
+/// queued to the job as finished. Done once per job (`settled_at`).
+pub async fn settle(tx: &mut MutationTransaction<'_>, tenant: i64, job: &Job) -> Result<bool> {
+    let job = job.clone();
+    tx.mutate(move |sql| {
+        Box::pin(async move {
+            let marked = sql
+                .execute(
+                    "UPDATE base_software_jobs SET settled_at=now() WHERE tenant_id=$1 AND id=$2 AND settled_at IS NULL",
+                    &[&tenant, &job.id],
+                )
+                .await?;
+            if marked == 0 {
+                return Ok((false, Vec::new()));
+            }
+            let mut queued = job.json();
+            queued["state"] = json!("queued");
+            queued["result"] = Value::Null;
+            queued["worker"] = Value::Null;
+            queued["started_at"] = Value::Null;
+            queued["finished_at"] = Value::Null;
+            let change = Change {
+                kind: RECORD.into(),
+                id: job.id,
+                old: queued,
+                new: job.json(),
+            };
+            Ok((true, vec![change]))
+        })
+    })
+    .await
+}
+/// What was entered after an instant, from the audit trail across every
+/// company on this server: what a restore of a backup taken then would
+/// lose. Server-wide on purpose: one database holds every company, so the
+/// loss is not one tenant's. Software jobs are left out, because they are
+/// what asked.
+pub async fn changes_since(client: &impl GenericClient, since: &str) -> Result<Value> {
+    let rows = client
+        .query(
+            "SELECT auditable_type, count(*) FROM base_audit_mutations WHERE occurred_at > $1::text::timestamptz AND auditable_type NOT LIKE 'base/software.%' GROUP BY 1 ORDER BY 2 DESC, 1",
+            &[&since],
+        )
+        .await?;
+    let by_kind: Vec<Value> = rows
+        .iter()
+        .map(|row| json!({"kind": row.get::<_, String>(0), "changes": row.get::<_, i64>(1)}))
+        .collect();
+    let total: i64 = rows.iter().map(|row| row.get::<_, i64>(1)).sum();
+    Ok(json!({"since": since, "changes": total, "by_kind": by_kind}))
+}
 /// Cancels a job: one still waiting is cancelled at once; one running is
 /// asked to stop, and the worker stops before the pause. The caller has
 /// checked the job can still be cancelled.

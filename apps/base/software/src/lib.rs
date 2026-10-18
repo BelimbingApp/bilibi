@@ -19,7 +19,7 @@ mod toolchain;
 mod worker;
 
 use bilibi_authz::{authorize_operator, CapabilityDefinition, VocabularyContribution, VOCABULARY};
-use bilibi_database::{Db, Error, MutationTransaction, Result};
+use bilibi_database::{Context, Db, Error, MutationBoundary, MutationTransaction, Result};
 use bilibi_module_registry::{Composition, Contribution, Provenance};
 use bilibi_notifications::{Notice, NotificationBoundary};
 use bilibi_settings::{
@@ -75,6 +75,10 @@ pub const ACTION_CHANGE: &str = "software.change";
 pub const ACTION_INSTALL: &str = "software.install";
 pub const ACTION_UNDO: &str = "software.undo";
 pub const ACTION_CANCEL: &str = "software.cancel";
+/// The action a worker's outcome is settled under (`Software::settle`).
+pub const ACTION_FINISHED: &str = "software.finished";
+/// How often the server records the outcomes workers wrote.
+const SETTLE_EVERY: std::time::Duration = std::time::Duration::from_secs(15);
 
 bilibi_step_up::declare!(
     "base/software",
@@ -90,6 +94,7 @@ bilibi_step_up::declare!(
 /// `PageContracts`).
 pub struct Software {
     db: Db,
+    mutations: Arc<MutationBoundary>,
     settings: Arc<Settings>,
     step_up: Arc<StepUp>,
     notifications: Arc<NotificationBoundary>,
@@ -150,6 +155,52 @@ impl Software {
             "jobs": recent.iter().map(|job| json!({"id": job.id, "kind": job.kind, "state": job.state,
                 "summary": job.review["summary"], "requested_at": job.requested_at, "finished_at": job.finished_at})).collect::<Vec<_>>(),
         }))
+    }
+
+    /// Puts the outcomes the builder and the installer wrote into the audit
+    /// trail: each finished job becomes one audited change, from the job as
+    /// queued to the job as the worker left it, attributed to that worker as
+    /// a system principal. Returns how many were settled.
+    pub async fn settle(&self) -> Result<usize> {
+        let mut client = self.db.get().await?;
+        let pending = jobs::unsettled(&**client).await?;
+        let mut settled = 0;
+        for (tenant, job) in pending {
+            let worker = job.worker.clone().unwrap_or_else(|| "worker".into());
+            let mut tx = self
+                .mutations
+                .begin(
+                    &mut client,
+                    Context::system(tenant, &worker, ACTION_FINISHED),
+                )
+                .await?;
+            if jobs::settle(&mut tx, tenant, &job).await? {
+                settled += 1;
+            }
+            tx.commit().await?;
+        }
+        Ok(settled)
+    }
+    /// Runs beside the server for as long as it serves (`bilibi-web run`
+    /// starts it like the queue executor): settles outcomes every few
+    /// seconds, so a job the installer finished while this program was
+    /// restarting is recorded as soon as the new program is up.
+    pub async fn run_settling(
+        self: Arc<Self>,
+        mut stop: tokio::sync::watch::Receiver<bool>,
+    ) -> Result<()> {
+        loop {
+            if *stop.borrow() {
+                return Ok(());
+            }
+            if let Err(error) = self.settle().await {
+                eprintln!("warning: software outcomes were not settled this round: {error:?}");
+            }
+            tokio::select! {
+                _ = stop.changed() => {}
+                _ = tokio::time::sleep(SETTLE_EVERY) => {}
+            }
+        }
     }
 
     /// The published catalogue, or why it could not be read.
@@ -375,11 +426,20 @@ impl Software {
             Some(id) => jobs::get(client, tenant, id).await?,
             None => None,
         };
+        // What a restore would lose, counted now so the owner reads a number.
+        let lost = match last.as_ref().map(review::undo_facts) {
+            Some(Ok(facts)) if facts.restores_backup => match &facts.backup_at {
+                Some(since) => Some(jobs::changes_since(client, since).await?),
+                None => None,
+            },
+            _ => None,
+        };
         review::undo(
             &instance,
             active.as_ref(),
             last.as_ref(),
             named.as_ref(),
+            lost.as_ref(),
             input,
         )
     }
@@ -453,10 +513,11 @@ inventory::submit! {
     bilibi_module_registry::Module {
         id: "base/software", layer: bilibi_module_registry::Layer::Base,
         dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/agent_api", "base/settings", "base/step_up", "base/system", "base/notifications", "base/integration", "base/audit"],
-        migrations: &[("base-software-001-jobs", include_str!("../migrations/001-jobs.sql"))],
+        migrations: &[("base-software-001-jobs", include_str!("../migrations/001-jobs.sql")), ("base-software-002-settled", include_str!("../migrations/002-settled.sql"))],
         services: &[bilibi_module_registry::Service { id: SERVICE, factory: |services| {
             let software = Arc::new(Software {
                 db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
+                mutations: services.get("base/database.mutations")?,
                 settings: services.get("base/settings.store")?,
                 step_up: services.get(bilibi_step_up::SERVICE)?,
                 notifications: services.get("base/notifications.sink")?,

@@ -15,7 +15,7 @@ commit                           → step_up_required (every_time)
 commit  + step_up_code "123456"  → job 1 queued, seven steps pending
 ```
 
-Notice what happened at the end: **the commit asked for the owner's authenticator code, on Dev, where 2FA is otherwise off**. A build changes the server itself, so this one check is never relaxed by the instance or by a policy. Notice also what did *not* happen: nothing was built. The job waits for the builder, and `status` shows its steps as the builder reports them.
+Notice what happened at the end: **the commit asked for the owner's authenticator code, on Dev, where 2FA is otherwise off**. A build changes the server itself, so this one check is never relaxed by the instance or by a policy. Notice also what did *not* happen: nothing was built. The job waits for the builder, and `status` shows its steps as the builder reports them. An `install` or an `undo` is picked up the same way by the installer service that runs beside every instance (`apps/installer/README.md`).
 
 You may already have questions: where do the facts come from, who may do this, what exactly is a job, and how does a builder or installer pick one up? We cover each below.
 
@@ -28,6 +28,7 @@ You may already have questions: where do the facts come from, who may do this, w
 | What can be chosen: Domains, releases, plug-ins, tested sets | The published `catalogue.json`, read over HTTPS through `base/integration` | The published copy holds the sets CI recorded (`docs/versions.md`) |
 | Plug-ins switched on | `base_software_plugins` | Plug-ins load at run time, so the program cannot tell |
 | Jobs and their steps | `base_software_jobs`, `base_software_steps` | The history, who asked, and what the worker reported |
+| What an Undo would lose | `base_audit_mutations` since the backup, counted across every company | One database holds every company, so the loss is server-wide |
 
 The catalogue address is a setting, **Software › Catalogue address**, for an adopter who publishes their own. A fetched copy is kept for five minutes.
 
@@ -54,7 +55,7 @@ All six go through Agent API (`apps/base/agent_api/README.md`): reads are called
 | `base.software.catalogue` | read | none | the catalogue, with the Platform versions each Domain release was tested on; or `available: false` and why |
 | `base.software.change` | write, Dev only | `domains` (the full wanted set; a mounted Domain left out is removed), optional `platform`, `plugins`, `switch` | the change list (add, update, downgrade, remove, keep; plug-ins switched on or off), whether every version was tested together on that Platform, warnings, a rough estimate, what happens, the steps |
 | `base.software.install` | write, Staging and Production | `release` (a number the source reports as tested), optional `switch` | the source, the checks the installer makes, the pause |
-| `base.software.undo` | write | optional `job` | which release it goes back to, and whether the backup is restored and later entries lost |
+| `base.software.undo` | write | optional `job` | which release it goes back to; whether the backup is restored, and then what is lost, counted: "so far 15 changes across every company on this server (12 to finance/ledger.entry, 3 to finance/payables.bill)" (`lost`, `loss`) |
 | `base.software.cancel` | write, no 2FA | optional `job` | removed from the queue, or asked to stop before the pause; refused once the pause started |
 
 Rules the reviews enforce, each as a field error that says what to do:
@@ -69,7 +70,7 @@ Rules the reviews enforce, each as a field error that says what to do:
 - A request that changes nothing is refused and says what already runs.
 - `undo` takes only the newest finished job, and only when the worker recorded its result (below); a finished undo cannot be undone again.
 
-`switch` is `auto` (switch as soon as the build is ready) or `ask` (build now, wait for the owner before the one-minute pause). The worker reads it; this module only records it.
+`switch` is `auto` (switch as soon as the build is ready) or `ask` (build now, wait for the owner before the one-minute pause). The worker reads it; this module only records it. **The signal to go ahead is the job's `switch` turning `auto`**: the worker polls the row while it waits with the instance running. The contract that flips it from the page is a later piece.
 
 ## What a job is
 
@@ -81,7 +82,9 @@ A job is one row in `base_software_jobs`, with its ordered steps in `base_softwa
 | `running` | A worker claimed it | the worker |
 | `done`, `failed` | Finished; `result` says how | the worker |
 | `cancelled` | Removed from the queue, or stopped before the pause | this module (queued), the worker (running) |
-| `interrupted` | The worker was lost mid-way (a restart); nothing changed | the worker, when it starts again |
+| `interrupted` | The worker was lost mid-way (a restart) and could not resume; nothing changed | the worker, when it starts again |
+
+A restart does not always interrupt: every step of an install or an undo can run again from where it was, so the installer resumes the job and marks the cut-off step's detail `resumed`. A build cannot, so the builder marks it `interrupted`.
 
 At most one job per server is `queued` or `running` (a unique index enforces it). The steps are created with the job as `pending`: for a change *check, fetch, build, backup, migrate, switch, verify*; for an install *fetch, backup, migrate, switch, verify*; for an undo *backup, restore (only when a backup is restored), switch, verify*. The `backup` step is marked `pauses`: from there the instance is stopped, and a cancel is no longer honoured.
 
@@ -89,7 +92,7 @@ Each commit writes one audited record (`base/software.job`), a `software.change`
 
 ## How a worker plugs in
 
-The builder (below, Dev) and the installer (plan piece 5, every instance) run under the `bilibi-build` user as the instance's worker service, `bilibi-worker@<instance>`, which is `bilibi-web software-worker` from the release in service (`docs/server-install.md`). They do not go through this module's facade; they read and write the two tables with their own connection and follow this contract:
+The builder (below, Dev) runs under the `bilibi-build` user as the instance's worker service, `bilibi-worker@<instance>`, which is `bilibi-web software-worker` from the release in service (`docs/server-install.md`). The installer (`apps/installer`, every instance) is a separate service, `bilibi-installer@<instance>`, under the same user. Neither goes through this module's facade; they read and write the two tables with their own connection and follow this contract:
 
 1. **Wake up.** `LISTEN bilibi_software_jobs`. Every queue and every cancel sends `NOTIFY bilibi_software_jobs, '<job id>'` inside the commit, so it arrives once the row is visible. Also poll on start-up: a notification sent while the worker was down is lost.
 2. **Claim.** `UPDATE base_software_jobs SET state='running', worker=$1, started_at=now() WHERE id=$2 AND state='queued'`. Zero rows means someone else has it, or it was cancelled.
@@ -102,12 +105,12 @@ The builder (below, Dev) and the installer (plan piece 5, every instance) run un
    | `release` | the release number put in service |
    | `previous_release` | the one it replaced, kept for Undo |
    | `migrated` | `true` when the database changed shape; Undo then restores the backup and says what is lost |
-   | `backup` | where the backup is, when one was taken |
+   | `backup`, `backup_at` | where the backup is and when (UTC, `YYYY-MM-DDTHH:MM:SSZ`) it was taken; the undo review counts what was entered since |
    | `message` | one plain sentence for the person |
 
-   A `change` job's result should also list the Domains and versions the new program holds, so `status` can show them before the program restarts.
+   A `change` job's result should also list the Domains and versions the new program holds, so `status` can show them before the program restarts. The installer's result also names the source and its checksum (`apps/installer/README.md`, "How it talks to the page").
 6. **Plug-ins.** When a job that switches plug-ins on or off finishes well, update `base_software_plugins` (`enabled`, `version`, `job_id`) in the same transaction as the final state.
-7. **Tell the person.** Record the outcome as a retained audited action by the worker's system principal (`software-builder`: `software.build.completed`, `.failed`, `.cancelled`, `.refused`, `.interrupted`) and a notification for `requested_by`. The builder does this in one `MutationBoundary` transaction with `Context::system`, recording the job's state change as a `base/software.job` mutation and re-proving the requester's account live through `Authentication::authenticate` for the notification's scope (`src/worker.rs`, `finish`); the installer should do the same.
+7. **Tell the person.** Record the outcome as a retained audited action by the worker's system principal (`software-builder`: `software.build.completed`, `.failed`, `.cancelled`, `.refused`, `.interrupted`) and a notification for `requested_by`. The builder does this in one `MutationBoundary` transaction with `Context::system`, recording the job's state change as a `base/software.job` mutation and re-proving the requester's account live through `Authentication::authenticate` for the notification's scope (`src/worker.rs`, `finish`). The installer has no host services, so it does not: it never inserts audit rows, and the server settles each finished job it ran as one audited change from the job as queued to the job as the worker left it, under the action `software.finished` with the worker's name as the system principal, every 15 seconds and right after it starts (`Software::settle`, run by `bilibi-web run`; a job the builder recorded itself is marked settled in that transaction).
 8. **Hand a built change to the installer.** A change job is two halves. The builder owns *check, fetch, build*; when `build` is `done` its `detail` holds the release number and folder (`{"release": 3, "path": "/opt/bilibi/dev/releases/3", …}`), the builder sends one more `NOTIFY` and leaves the job `running`. The installer takes a running change job whose `build` step is `done` from its first `pending` step (`backup`) and finishes it as rule 5 says. A cancel asked in between is honoured by whichever side sees it first, under the row lock of rule 4, so the two cannot cross.
 
 The job's `request` holds exactly what the owner reviewed: `platform`, `platform_commit` and `platform_repository` (the catalogue release's commit, or the running program's own when it is between releases), `domains` with a `version`, `commit` and `repository` (catalogue) or `repository` and `ref` (outside it), `plugins`, `switch` (change); `release` and `source` (install); `job` (undo). The worker trusts it as reviewed data and still checks the server (disk, memory, toolchain) itself, because those facts change between the review and the build.
@@ -137,8 +140,7 @@ What one change job does on Dev, step by step:
 
 ## Caveats
 
-- **A built release is not installed yet.** The builder leaves a change job `running` at its `backup` step with the release in `releases/<n>`; until the installer ships, cancel is the way out of that state, and `scripts/install-server.sh switch <instance> <n>` puts the release in service by hand.
-- **An install or undo job waits.** Only the builder exists today; a queued `install` or `undo` job stays `queued` until the installer ships, and cancel is the way out.
+- **A built release is not installed yet.** The installer carries out install and undo jobs; it does not yet take a built change job over from the builder (rule 8), so cancel is the way out of that state, and `scripts/install-server.sh switch <instance> <n>` puts the release in service by hand.
 - **An unpinned program shows no Domain versions.** A developer build without `scripts/discover-modules.py --pin` reports `pin: unpinned`; the review warns that the running versions are not known exactly.
 - **The catalogue is read as the person asking.** The fetch is recorded in the exchange log under them, and a server that cannot reach the address gets `available: false` with the reason.
 

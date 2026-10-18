@@ -615,6 +615,8 @@ pub struct UndoFacts {
     pub previous_release: i64,
     pub restores_backup: bool,
     pub backup: Option<String>,
+    /// When the backup was taken (UTC), so what would be lost can be counted.
+    pub backup_at: Option<String>,
 }
 /// Undo needs the facts the worker wrote at the end: which release it put
 /// in service, which one it replaced, and whether the database was changed
@@ -654,14 +656,18 @@ pub fn undo_facts(job: &Job) -> std::result::Result<UndoFacts, String> {
         previous_release,
         restores_backup: migrated,
         backup: result["backup"].as_str().map(str::to_owned),
+        backup_at: result["backup_at"].as_str().map(str::to_owned),
     })
 }
-/// Taking back the newest finished change or install.
+/// Taking back the newest finished change or install. `lost` is what the
+/// audit trail counts since the backup (`jobs::changes_since`), when a
+/// backup would be restored.
 pub fn undo(
     instance: &Instance,
     active: Option<&Job>,
     last: Option<&Job>,
     named: Option<&Job>,
+    lost: Option<&Value>,
     input: &Value,
 ) -> Result<Review> {
     busy(active)?;
@@ -693,7 +699,15 @@ pub fn undo(
     }
     let facts = undo_facts(last).map_err(|why| SoftwareError::field("job", &why))?;
     let loss = if facts.restores_backup {
-        format!("This also restores the backup taken before job {}. Anything entered since then is lost.", last.id)
+        let since = facts.backup_at.as_deref().unwrap_or("before the change");
+        match lost {
+            Some(lost) => format!(
+                "This also restores the backup taken at {since} (UTC) before job {}. {}",
+                last.id,
+                loss_sentence(lost)
+            ),
+            None => format!("This also restores the backup taken at {since} (UTC) before job {}. Anything entered since then is lost.", last.id),
+        }
     } else {
         "Your data stays as it is.".into()
     };
@@ -711,6 +725,8 @@ pub fn undo(
         "previous_release": facts.previous_release,
         "restores_backup": facts.restores_backup,
         "backup": facts.backup,
+        "backup_at": facts.backup_at,
+        "lost": lost,
         "loss": loss,
         "pause_minutes": PAUSE_MINUTES,
         "what_happens": format!("{} pauses for about {PAUSE_MINUTES} minute, switches back to release {} and checks that it works. {loss}", instance.label, facts.previous_release),
@@ -741,6 +757,34 @@ pub fn cancel(job: &Job, past_pause: bool) -> Result<Review> {
         facts,
         switch: "auto".into(),
     })
+}
+
+/// What a restore loses, counted: "so far 15 changes (12 to finance/ledger.entry, 3 to finance/payables.bill)".
+pub fn loss_sentence(lost: &Value) -> String {
+    let total = lost["changes"].as_i64().unwrap_or(0);
+    if total == 0 {
+        return "So far nothing has been entered since, so nothing would be lost.".into();
+    }
+    let kinds: Vec<String> = lost["by_kind"]
+        .as_array()
+        .map(|list| {
+            list.iter()
+                .take(5)
+                .filter_map(|item| {
+                    Some(format!(
+                        "{} to {}",
+                        item["changes"].as_i64()?,
+                        item["kind"].as_str()?
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    format!(
+        "Everything entered since then is lost: so far {total} change{} across every company on this server ({}).",
+        if total == 1 { "" } else { "s" },
+        kinds.join(", ")
+    )
 }
 
 fn join<T: std::fmt::Display>(items: &[T]) -> String {

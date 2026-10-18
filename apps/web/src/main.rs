@@ -1,4 +1,5 @@
 use bilibi_database::{pool, Error, Result};
+use std::sync::Arc;
 #[tokio::main]
 async fn main() -> Result<()> {
     bilibi_web::verify_composition()?;
@@ -166,7 +167,12 @@ async fn main() -> Result<()> {
                 &app.services,
                 bilibi_base::schedule::scheduler::Config::default(),
             )?;
+            // The outcomes the installer and builder write land in the audit
+            // trail through the owning module, not through the workers.
+            let software: Arc<bilibi_base::software::Software> =
+                app.services.get(bilibi_base::software::SERVICE)?;
             let (stop, stopped) = tokio::sync::watch::channel(false);
+            let settling = tokio::spawn(software.run_settling(stopped.clone()));
             let history = tokio::spawn(app.perf.clone().run(stopped.clone()));
             let worker = tokio::spawn(executor.run(stopped.clone()));
             let ticker = tokio::spawn(scheduler.run(stopped));
@@ -184,6 +190,7 @@ async fn main() -> Result<()> {
             .await
             .map_err(|_| Error::Internal);
             let _ = stop.send(true);
+            settling.await.map_err(|_| Error::Internal)??;
             worker.await.map_err(|_| Error::Internal)??;
             history.await.map_err(|_| Error::Internal)??;
             ticker.await.map_err(|_| Error::Internal)??;

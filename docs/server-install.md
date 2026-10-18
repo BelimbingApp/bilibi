@@ -13,9 +13,10 @@ sudo scripts/install-server.sh release production /path/to/bilibi-web
 
 ```sh
 sudo scripts/install-server.sh create-owner production
+sudo scripts/install-server.sh installer /path/to/bilibi-installer
 ```
 
-The first command installs PostgreSQL 18 and Caddy, creates the users and folders, writes the service and the proxy site, and prints what to do next. The second copies the program into `releases/1`, updates the database, points `current` at it and starts the service. The third asks you for your organisation's name, your email and a password, and creates the first account: the server owner. Open `https://erp.example.com`, sign in with that email, and Caddy serves the app, with a certificate it fetched itself.
+The first command installs PostgreSQL 18 and Caddy, creates the users and folders, writes the service and the proxy site, and prints what to do next. The second copies the program into `releases/1`, updates the database, points `current` at it and starts the service. The third asks you for your organisation's name, your email and a password, and creates the first account: the server owner. The fourth starts the installer, the service that puts later releases into service when the owner asks on the Software page. Open `https://erp.example.com`, sign in with that email, and Caddy serves the app, with a certificate it fetched itself.
 
 Want a Dev instance on the same machine to try changes first? Add one:
 
@@ -38,12 +39,13 @@ Each instance lives in one folder:
     env               the instance's settings for the service: role, address, database, keys (root:bilibi, 0640)
     releases/1/       bilibi-web, SHA256SUMS, and the build's manifest.txt and Cargo.lock when it has them
     releases/2/
-    current -> releases/2        the release in service
-    backups/          database backups taken before a switch (by the installer, a later piece)
+    releases/current -> 2        the release in service; the installer moves this link
+    current -> releases/current  fixed, so the service always starts current/bilibi-web
+    backups/job-<n>/  the database backup the installer took before job <n> changed anything
     data/             the only folder the running program may write: media/ uploads, mailbox/ outgoing mail
     site/waiting.html the page Caddy shows while the service is stopped
   dev/                the same, for Dev
-  build/              home of bilibi-build: on Dev the Rust toolchain (.cargo, .rustup), the Platform
+  build/              home of bilibi-build: bin/bilibi-installer; on Dev the Rust toolchain (.cargo, .rustup), the Platform
                       checkout (src/), the build cache (target/), logs/ and history.json
 ```
 
@@ -52,9 +54,9 @@ Two system users share the work, so the program that serves pages can never rewr
 | User | Runs | Owns |
 | --- | --- | --- |
 | `bilibi` | the service `bilibi@<instance>` | `data/` only; it can read `releases/` and `env` |
-| `bilibi-build` | the worker `bilibi-worker@<instance>`: builds (Dev) and puts releases into service | `releases/`, `backups/`, `/opt/bilibi/build`; it may start, stop and restart `bilibi@*`, restart `bilibi-worker@*` and reload Caddy through sudo, nothing else |
+| `bilibi-build` | the worker `bilibi-worker@<instance>` (builds on Dev) and the installer `bilibi-installer@<instance>`: put releases into service | `releases/`, `backups/`, `/opt/bilibi/build`; it may start, stop and restart `bilibi@*`, restart `bilibi-worker@*` and reload Caddy through sudo, nothing else |
 
-Two systemd unit templates serve every instance: `bilibi@production`, `bilibi@dev` read `env`, run `current/bilibi-web run` as `bilibi`, restart it after a crash, and stop it with Ctrl-C's signal so running jobs finish; the program may write only under `data/`. `bilibi-worker@production`, `bilibi-worker@dev` run `current/bilibi-web software-worker` as `bilibi-build` beside each instance: the software worker that carries out the jobs the Software page queues. `release` and `switch` restart it, so it always runs the release in service. On Dev it builds; on Staging and Production the same program refuses to build, because the role below says so (`apps/base/software/README.md`, "The builder").
+Three systemd unit templates serve every instance: `bilibi@production`, `bilibi@dev` read `env`, run `current/bilibi-web run` as `bilibi`, restart it after a crash, and stop it with Ctrl-C's signal so running jobs finish; the program may write only under `data/`. `bilibi-worker@production`, `bilibi-worker@dev` run `current/bilibi-web software-worker` as `bilibi-build` beside each instance: the software worker that builds the changes the Software page queues. `release` and `switch` restart it, so it always runs the release in service. On Dev it builds; on Staging and Production the same program refuses to build, because the role below says so (`apps/base/software/README.md`, "The builder"). `bilibi-installer@production` runs `/opt/bilibi/build/bin/bilibi-installer` as `bilibi-build` and carries out the install and undo jobs the Software page queues ([`apps/installer/README.md`](../apps/installer/README.md)).
 
 Each instance has its own PostgreSQL role and database (`bilibi_production`, `bilibi_dev`) on the server's PostgreSQL 18 cluster, with a generated password kept only in `env`. Dev cannot read Production's data.
 
@@ -93,7 +95,9 @@ Staging is optional. Set Production to install from Staging when you have one, o
 
 ## Putting a release into service
 
-`release` takes a `bilibi-web` program, or a folder holding it next to the build's `manifest.txt` and `Cargo.lock`:
+**After the first release, the owner does this from the Software page**, and the installer service does the work: copy and check, pause, back up, update the database, switch, check, and switch back by itself when the check fails. The page also offers Undo. What each step does, and what Undo loses, is in [`apps/installer/README.md`](../apps/installer/README.md).
+
+The first release has no program to ask through, so `release` puts it in service from the terminal. It takes a `bilibi-web` program, or a folder holding it next to the build's `manifest.txt` and `Cargo.lock`:
 
 ```sh
 sudo scripts/install-server.sh release production /home/me/bilibi-0.2.1/
@@ -104,7 +108,7 @@ Step by step, we:
 1. Copy the program into the next numbered folder, `releases/<n>`, and write its SHA-256 checksum.
 2. Stop the service. From here Caddy shows the waiting page.
 3. Update the database with the new program's `migrate` and apply its production seeds. Nothing migrates on boot, so this must happen before the new program serves. If it fails, the previous release is started again and nothing has changed.
-4. Point `current` at `releases/<n>` and start the service.
+4. Point `releases/current` at `<n>` and start the service. The instance's `current` is a fixed link to `releases/current`, so the link that moves lives in the folder `bilibi-build` owns, and the installer can move it too; an instance created before this shape is converted the next time you run `create`.
 5. Check that the backend answers within 60 seconds. If it does not, point `current` back at the previous release and start that.
 
 `switch` goes to any kept release the same way, after checking its checksum:
@@ -114,9 +118,20 @@ sudo scripts/install-server.sh switch production 1
 ```
 
 > [!WARNING]
-> Migrations are forward-only. Switching back to an older release after a newer one changed tables leaves those changes in place; the older program may not expect them. That case is the Software page's Undo, which restores the backup it took first and says what would be lost. Use `switch` for releases that share the same database shape.
+> Migrations are forward-only. Switching back to an older release after a newer one changed tables leaves those changes in place; the older program may not expect them. That case is the Software page's Undo, which restores the backup the installer took first and says what would be lost, with a count. Use `switch` only for releases that share the same database shape.
 
-`status` lists every instance, its role, address, service state and releases.
+`status` lists every instance, its role, address, service and installer states, and releases.
+
+## The installer service
+
+```sh
+cargo build --release -p bilibi-installer
+sudo scripts/install-server.sh installer target/release/bilibi-installer
+```
+
+This copies the program to `/opt/bilibi/build/bin/bilibi-installer`, owned by root so neither Bilibi user can change it, and starts `bilibi-installer@<instance>` for every instance on the machine. A `create` after that starts one for the new instance too. Run `installer` again with a newer program to update it: the services restart, and a job one of them was in the middle of resumes from the step it was in.
+
+The installer reads the instance's `env` for its database and port, and copies releases only from another instance's folder on this machine (the one named in "Install releases tested on"). Downloading a release from another machine is a later piece.
 
 ## The first account
 
@@ -183,14 +198,14 @@ sudo -u bilibi-build env $(sudo cat /opt/bilibi/dev/env | grep -v '^#' | xargs) 
 Progress, the time estimate, cancel and failures are reported on the job's steps, which the Software page and `base.software.status` show. The build log of a job is `/opt/bilibi/build/logs/job-<id>.log`, and `journalctl -u bilibi-worker@dev` has the worker's own lines. The steps, the files and the cache are described in [`apps/base/software/README.md`](../apps/base/software/README.md), "The builder".
 
 > [!NOTE]
-> A built release is not put into service by the builder. That is the installer's half of the job (the next piece); until it ships, a change job rests at its `backup` step with the release in `releases/<n>`, and `switch` above puts it in service by hand.
+> A built release is not put into service by the builder. The installer does not yet take a built change over; until it does, a change job rests at its `backup` step with the release in `releases/<n>`, and `switch` above puts it in service by hand.
 
 ## What is not here yet
 
 This script is the server layout and the builder. These are separate pieces of the Software plan:
 
-- **Installing** a built release as part of a job: **backups** before a switch, the health check that undoes a bad release, and **Undo**. The Software page that drives it all.
-- **Release transport** between machines (download from the source instance, or upload a file).
+- **Installing** a built change as part of a job: the installer carries out install and undo jobs ([`apps/installer/README.md`](../apps/installer/README.md)) but does not yet take a built change over from the builder. The Software page that drives it all.
+- **Release transport** between machines (download from the source instance, or upload a file). Today a release is copied between instance folders on one machine.
 
 ## Reference
 
@@ -201,6 +216,7 @@ Script commands:
 | `create <instance> --role dev\|staging\|production --site <host> [--port <n>] [--tls internal]` | Packages, users, folders, database, `env`, service, Caddy site. Rerun to change the site; the role and port are fixed |
 | `release <instance> <bilibi-web or folder>` | Copy into `releases/<n>`, migrate, switch, check |
 | `create-owner <instance> [--email <address>] [--name <name>] [--password-stdin] [--company-name <name> --company-code <code>]` | The first account, the server owner; asks for anything not given, refuses once an owner exists (it then only finishes an unfinished company link) |
+| `installer <bilibi-installer>` | Copy the installer program to `/opt/bilibi/build/bin` and start `bilibi-installer@<instance>` for every instance; rerun to update it |
 | `switch <instance> <n>` | Put a kept release in service |
 | `status [<instance>]` | Roles, addresses, service and worker states, releases |
 
@@ -216,7 +232,7 @@ Keys in `env` (the service's environment; `README.md` explains each):
 | `BILIBI_MAIL_DIR` | `data/mailbox`, until an SMTP relay is set |
 | `BILIBI_INSTANCE_DIR`, `BILIBI_BUILD_DIR` | the instance folder and `/opt/bilibi/build`: where the worker puts releases, and where the Dev builder keeps its checkout and cache |
 
-Files outside `/opt/bilibi`: `/etc/systemd/system/bilibi@.service`, `/etc/systemd/system/bilibi-worker@.service`, `/etc/sudoers.d/bilibi-build`, `/etc/caddy/sites/bilibi-<instance>.caddy`, and one `import` line in `/etc/caddy/Caddyfile`.
+Files outside `/opt/bilibi`: `/etc/systemd/system/bilibi@.service`, `/etc/systemd/system/bilibi-worker@.service`, `/etc/systemd/system/bilibi-installer@.service`, `/etc/sudoers.d/bilibi-build`, `/etc/caddy/sites/bilibi-<instance>.caddy`, and one `import` line in `/etc/caddy/Caddyfile`.
 
 ## Where to go next
 

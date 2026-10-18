@@ -1,0 +1,16 @@
+# The installer service that runs beside every Bilibi instance and puts the
+# releases a server owner asks for into service. Not a module: it runs outside
+# the program it installs, under its own system user, so it depends on the
+# database driver only. Contract: apps/base/software/README.md, "How a worker
+# plugs in"; what it does: apps/installer/README.md.
+[package]
+name = "bilibi-installer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+serde_json.workspace = true
+tokio.workspace = true
+tokio-postgres.workspace = true

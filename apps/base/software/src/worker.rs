@@ -851,7 +851,7 @@ impl Worker {
         let row = tx
             .sql()
             .query_one(
-                &format!("UPDATE base_software_jobs SET state=$3, finished_at=now(), result=$4 WHERE tenant_id=$1 AND id=$2 RETURNING {JOB_COLUMNS}"),
+                &format!("UPDATE base_software_jobs SET state=$3, finished_at=now(), settled_at=now(), result=$4 WHERE tenant_id=$1 AND id=$2 RETURNING {JOB_COLUMNS}"),
                 &[&tenant, &id, &state, result],
             )
             .await?;

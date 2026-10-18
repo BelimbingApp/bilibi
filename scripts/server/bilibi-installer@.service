@@ -1,0 +1,30 @@
+# The installer for one Bilibi instance: bilibi-installer@production,
+# bilibi-installer@dev. It puts the releases a server owner asks for on the
+# Software page into service, and takes them back. Installed by
+# scripts/install-server.sh installer; what it does is in apps/installer/README.md.
+[Unit]
+Description=Bilibi installer for instance %i
+Documentation=https://github.com/BelimbingApp/bilibi/blob/main/apps/installer/README.md
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+# bilibi-build owns releases/ and backups/ and may start and stop bilibi@* through sudo.
+User=bilibi-build
+Group=bilibi-build
+# DATABASE_URL (the instance's own database) and BIND_ADDR (where its program answers).
+EnvironmentFile=/opt/bilibi/%i/env
+WorkingDirectory=/opt/bilibi/build
+ExecStart=/opt/bilibi/build/bin/bilibi-installer /opt/bilibi/%i
+# A job cut off here resumes from the step it was in when the service is back.
+Restart=always
+RestartSec=3
+PrivateTmp=yes
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

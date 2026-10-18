@@ -35,7 +35,7 @@ CONTAINER_FILE = 'bilibi.container.toml'
 RESERVED_IDS = {'base', 'core', 'web', 'src'}
 SNAKE = re.compile(r'[a-z][a-z0-9]*(_[a-z0-9]+)*')
 # Path packages the Platform itself owns besides discovered Base and Core modules.
-PLATFORM_MANIFESTS = ('apps/web/Cargo.toml', 'fixtures/*/Cargo.toml')
+PLATFORM_MANIFESTS = ('apps/web/Cargo.toml', 'apps/installer/Cargo.toml', 'fixtures/*/Cargo.toml')
 PIN_DIR = Path('.local/composition')
 PIN_FILES = ('Cargo.lock', 'manifest.txt')
 # A release is a Git tag `vX.Y.Z` (docs/versions.md); the version is what follows the `v`.

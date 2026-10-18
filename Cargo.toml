@@ -1,5 +1,5 @@
 [workspace]
-members = ["apps/base", "apps/core", "apps/domains", "apps/extensions", "apps/web", "fixtures/walkthrough"]
+members = ["apps/base", "apps/core", "apps/domains", "apps/extensions", "apps/installer", "apps/web", "fixtures/walkthrough"]
 resolver = "2"
 
 [workspace.package]

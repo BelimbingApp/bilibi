@@ -7,14 +7,16 @@
 #   install-server.sh create <instance> --role dev|staging|production --site <host> [--port <n>] [--tls internal]
 #   install-server.sh release <instance> <bilibi-web binary, or a folder holding it>
 #   install-server.sh create-owner <instance> [bilibi-web create-owner flags]
+#   install-server.sh installer <bilibi-installer binary>
 #   install-server.sh switch <instance> <release number>
 #   install-server.sh status [<instance>]
 #
-# Only the layout and the release switch live here. Building a release is the
-# software worker's job (bilibi-worker@<instance>, started by `release`; it
-# builds on Dev only, apps/base/software/README.md). Backing up before a
-# switch, checking the new release and undoing a bad one belong to the
-# installer, the Software page's other half.
+# Only the layout, the first release and the installer service live here.
+# Building a release is the software worker's job (bilibi-worker@<instance>,
+# started by `release`; it builds on Dev only, apps/base/software/README.md).
+# Backing up before a switch, checking the new release, switching back and Undo
+# are the installer's work once a server owner asks on the Software page
+# (apps/installer/README.md).
 set -euo pipefail
 shopt -s inherit_errexit
 
@@ -24,6 +26,8 @@ source "$here/lib/versions.sh"
 root=/opt/bilibi
 unit_name='bilibi@'
 worker_name='bilibi-worker@'
+installer_unit='bilibi-installer@'
+installer_bin=$root/build/bin/bilibi-installer
 pg=$POSTGRESQL_MAJOR
 log=/var/log/bilibi-install-server.log
 export DEBIAN_FRONTEND=noninteractive
@@ -51,8 +55,24 @@ role_of() {
 # command substitution never trips errexit on an empty server.
 instances() { [[ -d $root ]] || return 0; find "$root" -mindepth 2 -maxdepth 2 -name env -printf '%h\n' | xargs -rn1 basename | sort; }
 release_numbers() { { find "$(instance_dir "$1")/releases" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null || true; } | { grep -E '^[0-9]+$' || true; } | sort -n; }
-current_release() { local link; link=$(readlink "$(instance_dir "$1")/current" 2>/dev/null || true); if [[ -n $link ]]; then basename "$link"; fi; }
+# `current` is a fixed root-owned link to `releases/current`; that inner link,
+# owned by bilibi-build like the rest of `releases/`, names the release in
+# service, so the installer can move it without owning the instance folder.
+current_release() { local target; target=$(readlink -f "$(instance_dir "$1")/current" 2>/dev/null || true); if [[ -n $target && -d $target ]]; then basename "$target"; fi; }
+point_current() { # <instance> <n>
+    local dir; dir=$(instance_dir "$1")
+    ln -sfn "$2" "$dir/releases/current.new" && chown -h bilibi-build:bilibi "$dir/releases/current.new" && mv -T "$dir/releases/current.new" "$dir/releases/current"
+}
+# ensure_current_link <instance>: the two-link shape above; an instance made
+# before it (`current -> releases/<n>`) is converted without a pause.
+ensure_current_link() {
+    local dir link; dir=$(instance_dir "$1"); link=$(readlink "$dir/current" 2>/dev/null || true)
+    [[ $link == releases/current ]] && return 0
+    if [[ $link =~ ^releases/([0-9]+)$ ]]; then point_current "$1" "${BASH_REMATCH[1]}"; fi
+    ln -sfn releases/current "$dir/current.new" && mv -T "$dir/current.new" "$dir/current"
+}
 service_state() { systemctl is-active "$unit_name$1" 2>/dev/null || true; }
+installer_state() { systemctl is-active "$installer_unit$1" 2>/dev/null || true; }
 
 # ---------------------------------------------------------------- packages
 apt_installed() { dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q '^install ok installed$'; }
@@ -210,7 +230,7 @@ write_caddy_site() { # <instance> <site> <port> <tls>
 }
 install_unit() {
     local name reload=
-    for name in "$unit_name" "$worker_name"; do
+    for name in "$unit_name" "$worker_name" "$installer_unit"; do
         if ! cmp -s "$here/server/$name.service" "/etc/systemd/system/$name.service"; then
             install -m 0644 "$here/server/$name.service" "/etc/systemd/system/$name.service"
             reload=1
@@ -223,6 +243,12 @@ install_unit() {
 restart_worker() {
     systemctl enable "$worker_name$1" >/dev/null 2>&1
     systemctl restart "$worker_name$1"
+}
+# start_installer <instance>: the installer service for an instance, once the
+# program is in place (`installer` puts it there).
+start_installer() {
+    [[ -x $installer_bin ]] || return 0
+    systemctl enable --now "$installer_unit$1" >/dev/null 2>&1 || say "Warning: could not start $installer_unit$1; see: systemctl status $installer_unit$1"
 }
 same_machine_warning() { # <instance> <role>
     local other
@@ -266,6 +292,7 @@ create() {
     install -d -m 0755 "$root" "$dir" "$dir/site"
     install -d -m 0755 -o bilibi-build -g bilibi "$dir/releases"
     install -d -m 0750 -o bilibi-build -g bilibi-build "$dir/backups"
+    ensure_current_link "$instance"
     install -d -m 0700 -o bilibi -g bilibi "$dir/data" "$dir/data/media" "$dir/data/mailbox"
 
     local pg_port password database
@@ -319,12 +346,38 @@ EOF
     chmod 0644 "$dir/site/waiting.html"
     write_caddy_site "$instance" "$site" "$port" "$tls"
     systemctl enable "$unit_name$instance" >/dev/null 2>&1
+    start_installer "$instance"
 
     say "$instance: $([[ -n $created ]] && echo created || echo updated) as $role at https://$site (backend 127.0.0.1:$port), files under $dir"
     same_machine_warning "$instance" "$role"
     if [[ -z $(current_release "$instance") ]]; then
         say "Next: put a release into service with: $0 release $instance <path to bilibi-web>"
     fi
+    if [[ ! -x $installer_bin ]]; then
+        say "Then let the Software page install releases here with: $0 installer <path to bilibi-installer>"
+    fi
+}
+
+# ================================================================ installer
+# The installer program, shared by every instance on this machine, and one
+# service per instance. Rerun with a newer program to update it: the services
+# restart, and a job one of them was running resumes where it was.
+installer() {
+    local source=${1:-}
+    [[ -n $source ]] || usage
+    need_root installer "$@"
+    [[ -f $source && -x $source ]] || fail "$source is not an executable bilibi-installer" "build it with: cargo build --release -p bilibi-installer"
+    [[ -d $root/build ]] || fail "no instance exists yet" "create one first: $0 create <instance> --role ... --site ..."
+    install_unit
+    install -d -m 0755 -o root -g root "$root/build/bin"
+    install -m 0755 -o root -g root "$source" "$installer_bin.new" && mv -T "$installer_bin.new" "$installer_bin"
+    say "installer: $installer_bin updated"
+    local instance
+    for instance in $(instances); do
+        systemctl enable "$installer_unit$instance" >/dev/null 2>&1
+        systemctl restart "$installer_unit$instance" || say "Warning: $installer_unit$instance did not start; see: systemctl status $installer_unit$instance"
+        say "$instance: $installer_unit$instance $(installer_state "$instance")"
+    done
 }
 
 # ================================================================ release
@@ -353,7 +406,7 @@ put_in_service() {
     local instance=$1 n=$2 previous=$3 dir
     dir=$(instance_dir "$instance")
     systemctl stop "$unit_name$instance"
-    ln -sfn "releases/$n" "$dir/current.new" && mv -T "$dir/current.new" "$dir/current"
+    point_current "$instance" "$n"
     systemctl start "$unit_name$instance"
     if wait_healthy "$instance"; then
         say "$instance: release $n is in service ($(env_value "$instance" APP_ORIGIN))"
@@ -362,7 +415,7 @@ put_in_service() {
     say "$instance: release $n did not answer within 60 s; see: journalctl -u $unit_name$instance" >&2
     if [[ -n $previous ]]; then
         systemctl stop "$unit_name$instance"
-        ln -sfn "releases/$previous" "$dir/current.new" && mv -T "$dir/current.new" "$dir/current"
+        point_current "$instance" "$previous"
         systemctl start "$unit_name$instance"
         if wait_healthy "$instance"; then
             say "$instance: switched back to release $previous, which answers" >&2
@@ -441,9 +494,9 @@ status() {
     for instance in $list; do
         instance_exists "$instance" || fail "no instance named $instance"
         local dir; dir=$(instance_dir "$instance")
-        printf '%s: role %s, %s, service %s, worker %s, current release %s\n' "$instance" "$(role_of "$instance")" \
+        printf '%s: role %s, %s, service %s, worker %s, installer %s, current release %s\n' "$instance" "$(role_of "$instance")" \
             "$(env_value "$instance" APP_ORIGIN)" "$(service_state "$instance")" \
-            "$(systemctl is-active "$worker_name$instance" 2>/dev/null || true)" "$(current_release "$instance")"
+            "$(systemctl is-active "$worker_name$instance" 2>/dev/null || true)" "$(installer_state "$instance")" "$(current_release "$instance")"
         local r
         for r in $(release_numbers "$instance"); do
             printf '  release %s  %s\n' "$r" "$(cut -c1-12 "$dir/releases/$r/SHA256SUMS" 2>/dev/null)"
@@ -455,6 +508,7 @@ case ${1:-} in
     create) shift; create "$@" ;;
     release) shift; release "$@" ;;
     create-owner) shift; create_owner "$@" ;;
+    installer) shift; installer "$@" ;;
     switch) shift; switch "$@" ;;
     status) shift; status "$@" ;;
     *) usage ;;
