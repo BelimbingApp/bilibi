@@ -10,21 +10,21 @@
 {% call ui::page(id="address-create-page", variant=bilibi_ui::PageVariant::Form) %}
 {{ header|safe }}
 {% call feedback::error_summary(summary=summary) %}{% endcall %}
-<form id="address-form" data-event="validate" data-change data-submit-event="create" class="space-y-5" novalidate>
-<section class="rounded-xl border border-line bg-surface px-6 py-5" aria-labelledby="address-contact-heading"><h2 id="address-contact-heading" class="mb-4 text-sm font-semibold text-ink">Address details</h2>
+<form id="address-form" data-event="validate" data-change data-submit-event="create" class="space-y-4" novalidate>
+{% call forms::section(labelledby="address-contact-heading", heading="Address details") %}
 <div class="grid gap-x-4 sm:grid-cols-2">{% for field in contact %}{% call forms::input(field=field) %}{% endcall %}{% endfor %}{% for field in restricted %}{% call forms::restricted_field(field=field) %}{% endcall %}{% endfor %}</div>
 {% for field in lines %}{% call forms::input(field=field) %}{% endcall %}{% endfor %}
 {% if let Some(add) = add_line %}{% call forms::add_more(control=add) %}{% endcall %}{% endif %}
-</section>
-<section class="rounded-xl border border-line bg-surface px-6 py-5" aria-labelledby="address-location-heading"><h2 id="address-location-heading" class="mb-4 text-sm font-semibold text-ink">Location</h2>
+{% endcall %}
+{% call forms::section(labelledby="address-location-heading", heading="Location") %}
 {{ location|safe }}
-</section>
-<section class="rounded-xl border border-line bg-surface px-6 py-5" aria-labelledby="address-provenance-title">
+{% endcall %}
+{% call forms::section(labelledby="address-provenance-title") %}
 {% call ui::fold(id="address-provenance", title="Provenance", summary=provenance_summary, open=provenance_open) %}
 <div class="grid gap-x-4 sm:grid-cols-2">{% for field in provenance %}{% call forms::input(field=field) %}{% endcall %}{% endfor %}</div>
 {% call forms::input(field=raw_input) %}{% endcall %}
 {% endcall %}
-</section>
+{% endcall %}
 <div class="flex items-center gap-4">{{ submit|safe }}<a id="address-cancel" href="/addresses" class="text-sm font-medium text-ink-muted hover:text-ink">Cancel</a></div>
 </form>
 {% endcall %}

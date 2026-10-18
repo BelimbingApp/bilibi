@@ -11,4 +11,8 @@
 {% call ui::fold(id="specimen-fold", title="Provenance", summary="Source: manual · Unverified") %}{% call form::input(field=controls.folded) %}{% endcall %}{% endcall %}
 {% call form::add_more(control=controls.add_more) %}{% endcall %}
 </div>
+<div id="specimen-form-section" class="space-y-2 rounded-xl border border-line bg-surface p-4 shadow-xs">
+<p class="text-xs text-ink-muted">Each bordered part of a form is a section with one compact padding and heading, so no page sets its own.</p>
+{% call form::section(labelledby="specimen-form-section-heading", heading="Address details") %}<p class="text-sm text-ink-muted">The part's fields sit here, 12 px apart.</p>{% endcall %}
+</div>
 </div>

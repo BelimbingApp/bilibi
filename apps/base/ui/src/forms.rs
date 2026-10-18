@@ -86,16 +86,18 @@ pub fn field_class(class: &str, errors: &[String], extra: &str, readonly: bool) 
     parts.join(" ")
 }
 
-/// The control class of a field whose label sits inside the box: room above
-/// the value for the small label, and a placeholder that only shows once the
-/// person is in the field, so it is never mistaken for a value. `peer` lets
+/// The control class of a field whose label sits inside the box: a compact
+/// 40 px box with the `text-sm` value of every other control (Bilibi keeps
+/// forms as dense as its menus), room above the value for the small label,
+/// and a placeholder that only shows once the person is in the field, so it
+/// is never mistaken for a value. `peer` lets
 /// the label after the control follow its focus, emptiness and autofill in
 /// CSS alone, so browser autofill moves the label without any script. A
 /// `prompt` (a combobox's "Choose a country") always shows: its label is
 /// pinned, so there is nothing for it to collide with.
 pub fn field_inset_class(readonly: bool, textarea: bool, prompt: bool) -> String {
     format!(
-        "peer block w-full rounded-md border px-3 text-[0.9375rem] leading-[1.375rem] text-ink \
+        "peer block w-full rounded-md border px-3 text-sm leading-5 text-ink \
          shadow-xs transition max-sm:text-base {} focus:border-brand-strong focus:outline-none \
          focus:ring-2 focus:ring-brand-strong/30 disabled:cursor-not-allowed \
          disabled:bg-surface-sunken disabled:text-ink-subtle {} {}",
@@ -105,9 +107,9 @@ pub fn field_inset_class(readonly: bool, textarea: bool, prompt: bool) -> String
             "placeholder:text-transparent focus:placeholder:text-ink-faint"
         },
         if textarea {
-            "min-h-28 pt-6 pb-2"
+            "min-h-24 pt-5 pb-1.5"
         } else {
-            "h-13 pt-5 pb-1.5"
+            "h-10 pt-3.5 pb-0.5"
         },
         if readonly {
             "bg-surface-sunken"
@@ -122,25 +124,30 @@ pub fn field_inset_class(readonly: bool, textarea: bool, prompt: bool) -> String
 /// Focus and autofill come after `placeholder-shown` in Tailwind's variant
 /// order, so either one floats the label even over an empty box. The muted
 /// ink keeps the small label at about 7:1 against the box.
-pub const FLOATING_LABEL_CLASS: &str = "pointer-events-none absolute left-3 top-1.5 \
-     max-w-[calc(100%-1.5rem)] origin-left truncate text-xs font-medium leading-4 text-ink-muted \
-     transition-all motion-reduce:transition-none peer-placeholder-shown:top-3.5 \
-     peer-placeholder-shown:text-[0.9375rem] peer-placeholder-shown:font-normal \
-     peer-placeholder-shown:leading-[1.375rem] peer-autofill:top-1.5 peer-autofill:text-xs \
-     peer-autofill:font-medium peer-autofill:leading-4 peer-focus:top-1.5 peer-focus:text-xs \
-     peer-focus:font-medium peer-focus:leading-4";
+pub const FLOATING_LABEL_CLASS: &str = "pointer-events-none absolute left-3 top-1 \
+     max-w-[calc(100%-1.5rem)] origin-left truncate text-[0.6875rem] font-medium leading-3 \
+     text-ink-muted transition-all motion-reduce:transition-none peer-placeholder-shown:top-2.5 \
+     peer-placeholder-shown:text-sm peer-placeholder-shown:font-normal \
+     peer-placeholder-shown:leading-5 peer-autofill:top-1 peer-autofill:text-[0.6875rem] \
+     peer-autofill:font-medium peer-autofill:leading-3 peer-focus:top-1 \
+     peer-focus:text-[0.6875rem] peer-focus:font-medium peer-focus:leading-3";
 
 /// The label of a select, date-like input, combobox or restricted field: it
 /// stays small at the top, because the control always shows something (a
 /// prompt, a date mask, a selection) that a resting label would cover.
-pub const PINNED_LABEL_CLASS: &str = "pointer-events-none absolute left-3 top-1.5 \
-     max-w-[calc(100%-2.5rem)] truncate text-xs font-medium leading-4 text-ink-muted";
+pub const PINNED_LABEL_CLASS: &str = "pointer-events-none absolute left-3 top-1 \
+     max-w-[calc(100%-2.5rem)] truncate text-[0.6875rem] font-medium leading-3 text-ink-muted";
 
 /// A textarea's pinned label carries the box's own background, so text that
 /// scrolls up under it stays readable.
 pub const TEXTAREA_LABEL_CLASS: &str = "pointer-events-none absolute inset-x-px top-px truncate \
-     rounded-t-md bg-surface px-3 pb-1 pt-1.5 text-xs font-medium leading-4 text-ink-muted \
+     rounded-t-md bg-surface px-3 pb-1 pt-1 text-[0.6875rem] font-medium leading-3 text-ink-muted \
      peer-disabled:bg-surface-sunken peer-read-only:bg-surface-sunken";
+
+/// The space under a field whose label sits inside its box. It is tighter
+/// than the label-above field's `mb-4`, which also has its label line to
+/// clear, so stacked compact boxes read as one group.
+const INSET_FIELD_GAP: &str = "mb-3";
 
 /// Where a field's label sits. A field takes the inset look only when the
 /// shared field draws it whole: a field with no visible label (a toolbar
@@ -599,7 +606,11 @@ impl Field {
 
     pub fn wrapper(&self) -> &str {
         if self.wrapper_class.is_empty() {
-            "mb-4"
+            if self.inset() {
+                INSET_FIELD_GAP
+            } else {
+                "mb-4"
+            }
         } else {
             &self.wrapper_class
         }
@@ -1085,7 +1096,11 @@ impl Combobox {
 
     pub fn wrapper(&self) -> &str {
         if self.wrapper_class.is_empty() {
-            "mb-4"
+            if self.inset() {
+                INSET_FIELD_GAP
+            } else {
+                "mb-4"
+            }
         } else {
             &self.wrapper_class
         }
@@ -1532,7 +1547,7 @@ impl RestrictedField {
 
     pub fn wrapper(&self) -> &str {
         if self.wrapper_class.is_empty() {
-            "mb-4"
+            INSET_FIELD_GAP
         } else {
             &self.wrapper_class
         }

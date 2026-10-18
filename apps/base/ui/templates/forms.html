@@ -112,7 +112,7 @@
 
 {#- A form row for a field the viewer may not see (Bilimbi `restricted_field`); field is a bilibi_ui::RestrictedField. -#}
 {% macro restricted_field(field) %}
-<div id="{{ field.id }}" class="{{ field.wrapper() }}" data-restricted-field><div id="{{ field.id }}-value" role="group" aria-labelledby="{{ field.id }}-label" aria-readonly="true" aria-description="{{ field.tooltip() }}" title="{{ field.tooltip() }}" class="relative flex h-13 w-full items-end rounded-md border border-line bg-surface-sunken px-3 pb-1.5 text-sm text-ink-muted"><span id="{{ field.id }}-label" class="{{ field.label_classes() }}">{{ field.label }}</span>{% call restricted(marker=field.marker()) %}{% endcall %}</div></div>
+<div id="{{ field.id }}" class="{{ field.wrapper() }}" data-restricted-field><div id="{{ field.id }}-value" role="group" aria-labelledby="{{ field.id }}-label" aria-readonly="true" aria-description="{{ field.tooltip() }}" title="{{ field.tooltip() }}" class="relative flex h-10 w-full items-end rounded-md border border-line bg-surface-sunken px-3 pb-0.5 text-sm text-ink-muted"><span id="{{ field.id }}-label" class="{{ field.label_classes() }}">{{ field.label }}</span>{% call restricted(marker=field.marker()) %}{% endcall %}</div></div>
 {% endmacro %}
 
 {#- A live file input with its entry list (Bilimbi `live_file_input` and the
@@ -132,4 +132,12 @@
     and type="button" keeps it from submitting the form around it. -#}
 {% macro add_more(control) %}
 <button type="button" id="{{ control.id }}" data-event="{{ control.event }}" class="-mt-1.5 mb-1 rounded-sm text-sm font-medium text-ink-muted transition hover:text-ink hover:underline hover:underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-strong/30">+ {{ control.label }}</button>
+{% endmacro %}
+
+{#- One bordered part of a form (no Bilimbi counterpart; its pages draw the
+    box by hand), so every form section shares one compact padding and
+    heading. labelledby names the region: with a heading it is the heading's
+    id; without one (a Fold carries its own title) it points at that title. -#}
+{% macro section(labelledby, heading="") %}
+<section class="rounded-xl border border-line bg-surface p-4" aria-labelledby="{{ labelledby }}">{% if !heading.is_empty() %}<h2 id="{{ labelledby }}" class="mb-3 text-sm font-semibold text-ink">{{ heading }}</h2>{% endif %}{{ caller() }}</section>
 {% endmacro %}
