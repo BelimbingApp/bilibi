@@ -40,7 +40,7 @@ You may already have questions: how do modules find each other, what stops one f
 
 ## Layers
 
-Bilibi's code sits in four layers inside one Cargo workspace, plus the web host that runs them. **Dependencies point downward only,** toward the foundation: a layer may use the layers listed before it in this table, never the ones after it.
+Bilibi's code sits in four layers inside one Cargo workspace, plus the web host that runs them and the installer beside it. **Dependencies point downward only,** toward the foundation: a layer may use the layers listed before it in this table, never the ones after it.
 
 | Layer | Path | Role | Mounted from |
 | --- | --- | --- | --- |
@@ -49,6 +49,7 @@ Bilibi's code sits in four layers inside one Cargo workspace, plus the web host 
 | Domains | `apps/domains/<name>/<module>` | Optional business capabilities | one repository per Domain |
 | Extensions | `apps/extensions/<name>/<module>` | Operator-chosen adaptations | one repository per Extension |
 | Web | `apps/web` | Executable host: routes, sockets, seed command | this repository |
+| Installer | `apps/installer` | Separate service that puts releases into service and takes them back (`apps/installer/README.md`) | this repository |
 
 Think of it as a building. Base is the plumbing and wiring. Core is the rooms every company needs, such as companies, people and addresses. Domains are optional wings, such as Finance or Factory. Extensions are fittings one customer chose, such as a connector to their old system.
 
