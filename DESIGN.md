@@ -60,7 +60,7 @@ Reuse the shared macros and typed models. Do not hand-write markup or copy class
 | Inline edit | `templates/inline.html` and `src/inline.rs` | `apps/base/ui` |
 | List and table | `templates/lists.html`, `flex_table.html` | `apps/base/ui` |
 
-- Name variants through the enums (`ButtonVariant`, `ButtonSize`, `BadgeKind`, `PageVariant`), not class strings.
+- Name variants through the enums (`ButtonVariant`, `BadgeKind`, `PageVariant`), not class strings.
 - Icons come from `src/icons.rs` action names or `hero-*`. Use the Belimbing equivalent for a familiar action.
 - Icon-only actions need an accessible label and a title. Inline controls are 24 px; table and toolbar controls are 28 px. Touch screens expand their targets to 40 px.
 - Links navigate; buttons act.
@@ -78,9 +78,9 @@ Shared UI sizes follow the sidebar's 12 px text and tight row rhythm; pages do n
 | Hints, badges and table headings | 11 / 14 px (`text-xs`) |
 | Field values and record facts | 14 / 20 px; input values stay 16 px on phones to prevent zoom |
 | Page title | 16 / 24 px; card and empty-state headings 12 / 16 px; dialog title 14 / 20 px |
-| Default controls | 40 px minimum, including buttons and floating fields |
-| Small controls | 28 px (`ButtonSize::Small`); table, toolbar and empty-state actions use this step automatically |
-| Touch targets | `Button`, utility `IconButton`, tabs, pagination and choice labels: 40 px minimum |
+| Floating fields | 40 px minimum |
+| Buttons | 32 px minimum, never taller than the old 34 px; table, toolbar and empty-state buttons are 28 px automatically (`.ui-compact-controls`) |
+| Touch targets | `Button` at phone width (under 40 rem); utility `IconButton`, tabs, pagination and choice labels on coarse pointers: 40 px minimum |
 | Card | 12 px body padding; header 8 px vertically and 12 px horizontally; table frames stay at zero |
 | Feedback | 8 px vertically and 12 px horizontally; panel notices use 6 px vertically |
 | Spacing | 4 px steps: 4 within a group, 8 between controls, 12 within surfaces, 16 between groups |

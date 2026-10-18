@@ -74,6 +74,7 @@
   --text-2xl: 1.25rem;
   --text-2xl--line-height: 1.4;
   --spacing-control: 2.5rem;
+  --spacing-button: 2rem;
   --spacing-control-sm: 1.75rem;
   --spacing-panel: 0.75rem;
   --spacing-feedback: 0.5rem;
@@ -307,19 +308,15 @@ body {
   min-width: 20rem;
 }
 
-/* The shared button has the same box as a floating field. Table, toolbar
+/* The shared button is 32 px, shorter than a floating field. Table, toolbar
  * and empty-state actions use the smaller step without page-owned sizing. */
 @utility ui-button {
-  min-height: var(--ui-control-height, var(--spacing-control));
+  min-height: var(--ui-button-height, var(--spacing-button));
   max-width: 100%;
 }
 
-@utility compact-control {
-  --ui-control-height: var(--spacing-control-sm);
-}
-
 .ui-compact-controls {
-  --ui-control-height: var(--spacing-control-sm);
+  --ui-button-height: var(--spacing-control-sm);
 }
 
 .ui-compact-controls .ui-field {
@@ -333,7 +330,6 @@ body {
  * Growing real boxes (rather than overlapping invisible hit areas) keeps
  * neighbouring actions and table cells independently reachable. */
 @media (pointer: coarse) {
-  .ui-button,
   .ui-touch-target,
   .ui-icon-button,
   [data-tab],
@@ -361,6 +357,10 @@ body {
 }
 
 @media (width < 40rem) {
+  .ui-button {
+    min-height: var(--spacing-control);
+  }
+
   [data-shared-ui] :is(input, select, textarea) {
     font-size: 1rem;
   }

@@ -42,9 +42,9 @@ pub use auth::{
 };
 pub use components::{card_body_class, card_flat, stat_strip_columns};
 pub use components::{
-    ActionLink, BackLink, Badge, BadgeKind, Button, ButtonSize, ButtonVariant, Card, Chrome,
-    CreateButton, Fact, Facts, Fold, Header, Icon, IconButton, IconContext, IconKind, Page,
-    PageVariant, SectionHeading, StatItem, StatKind, StatStrip, DEMOTED_ACTION_CLASS, NO_COUNT,
+    ActionLink, BackLink, Badge, BadgeKind, Button, ButtonVariant, Card, Chrome, CreateButton,
+    Fact, Facts, Fold, Header, Icon, IconButton, IconContext, IconKind, Page, PageVariant,
+    SectionHeading, StatItem, StatKind, StatStrip, DEMOTED_ACTION_CLASS, NO_COUNT,
 };
 pub use error_page::{
     copy_for, debug_document, error_document, DebugFrame, DebugReport, ErrorCopy,

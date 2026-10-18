@@ -21,24 +21,6 @@ pub enum ButtonVariant {
     Danger,
 }
 
-/// The standard control aligns with a floating field; small actions follow
-/// table and toolbar rhythm. Touch screens expand both to the standard box.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum ButtonSize {
-    #[default]
-    Standard,
-    Small,
-}
-
-impl ButtonSize {
-    pub fn class(self) -> &'static str {
-        match self {
-            Self::Standard => "",
-            Self::Small => "compact-control",
-        }
-    }
-}
-
 impl ButtonVariant {
     pub fn class(&self) -> &'static str {
         match self {
@@ -313,12 +295,11 @@ impl Badge<'_> {
 /// shows while the click's round trip is in flight.
 #[derive(Template, Debug, Default)]
 #[template(
-    source = r#"{% import "components.html" as ui %}{% call ui::button(variant=variant, size=size, class=class, href=href, id=id, button_type=button_type, name=name, value=value, disabled=disabled, busy=busy, aria_busy=aria_busy, event=event, working=working, download=download) %}{{ body|safe }}{% endcall %}"#,
+    source = r#"{% import "components.html" as ui %}{% call ui::button(variant=variant, class=class, href=href, id=id, button_type=button_type, name=name, value=value, disabled=disabled, busy=busy, aria_busy=aria_busy, event=event, working=working, download=download) %}{{ body|safe }}{% endcall %}"#,
     ext = "html"
 )]
 pub struct Button<'a> {
     pub variant: ButtonVariant,
-    pub size: ButtonSize,
     pub class: &'a str,
     pub href: &'a str,
     pub id: &'a str,
