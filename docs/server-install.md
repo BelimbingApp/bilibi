@@ -11,7 +11,11 @@ sudo scripts/install-server.sh create production --role production --site erp.ex
 sudo scripts/install-server.sh release production /path/to/bilibi-web
 ```
 
-The first command installs PostgreSQL 18 and Caddy, creates the users and folders, writes the service and the proxy site, and prints what to do next. The second copies the program into `releases/1`, updates the database, points `current` at it and starts the service. Open `https://erp.example.com` and Caddy serves the app, with a certificate it fetched itself.
+```sh
+sudo scripts/install-server.sh create-owner production
+```
+
+The first command installs PostgreSQL 18 and Caddy, creates the users and folders, writes the service and the proxy site, and prints what to do next. The second copies the program into `releases/1`, updates the database, points `current` at it and starts the service. The third asks you for your organisation's name, your email and a password, and creates the first account: the server owner. Open `https://erp.example.com`, sign in with that email, and Caddy serves the app, with a certificate it fetched itself.
 
 Want a Dev instance on the same machine to try changes first? Add one:
 
@@ -20,7 +24,7 @@ sudo scripts/install-server.sh create dev --role dev --site dev.erp.example.com
 sudo scripts/install-server.sh release dev /path/to/bilibi-web
 ```
 
-Notice what you did **not** do: pick ports, write passwords, write a unit file or a proxy config. The script generated them, and it tells you when something you asked for conflicts with what exists.
+Notice what you did **not** do: pick ports, write database passwords, write a unit file or a proxy config, or edit the database to get a first login. The script generated them, and it tells you when something you asked for conflicts with what exists.
 
 You may already have questions: where do the files go, how does a page know it is on Production, what happens to people using the app during a switch, and what about building? We cover each below.
 
@@ -113,6 +117,54 @@ sudo scripts/install-server.sh switch production 1
 
 `status` lists every instance, its role, address, service state and releases.
 
+## The first account
+
+A fresh database has no accounts, so nobody can sign in. `create-owner` creates the first one: the server owner, a Core Administrator of the organisation that runs this server (the platform operator). Run it once, after the first release is in service:
+
+```sh
+sudo scripts/install-server.sh create-owner production
+```
+
+It asks at the terminal, and what you type for the password is not shown:
+
+```
+Operator company name (your organisation): Example Operations
+Operator company code [example_operations]:
+Owner email: owner@example.com
+Owner name [owner]: Ng Kiat Siong
+Password:
+Confirm password:
+Platform operator ready: tenant 1 “Example Operations”, company 1 “Example Operations”.
+Owner created: owner@example.com (account 1), Core Administrator of the platform operator.
+The owner signs in under the platform operator's company.
+Sign in at https://erp.example.com/login as owner@example.com.
+```
+
+Notice that the company questions come first only on a database that has no operator company yet. If you ran `bilibi-web platform-provision` before, the command finds that company and asks only about the account. The password must be at least 8 characters; a shorter one is refused and asked for again.
+
+**Run it a second time and it refuses**, because the server already has an owner:
+
+```
+Not created: this install already has an owner. The platform operator holds 1 account(s); the first is owner@example.com.
+Sign in as one of them at https://erp.example.com/login. To add people, use Users > New user there.
+If nobody can sign in any more, that is account recovery, which this command does not do.
+```
+
+The command is the same `bilibi-web create-owner` the script runs for you, in the instance's environment. From a script with no terminal, give every answer as a flag and the password on standard input:
+
+```sh
+printf '%s\n' "$PASSWORD" | sudo scripts/install-server.sh create-owner production \
+    --company-name "Example Operations" --company-code example_operations \
+    --email owner@example.com --name "Ng Kiat Siong" --password-stdin
+```
+
+> [!WARNING]
+> There is no `--password` flag, on purpose: an argument lands in your shell history and in the process list. Type it, or pipe it in with `--password-stdin`.
+
+Everything the command creates is written the way the app writes it, so it shows in the audit log under Administration → Audit Log → Actions as **System · create-owner**: the retained `user.bootstrap.completed` action with the account, email and role, and the data changes for the account, its Core Administrator role and the bootstrap receipt that marks the account as the server owner. The command works with any `BILIBI_ENV`; on Dev, the development seed's `ai@agent.my` already exists and the command refuses, which is the point.
+
+Behind the scenes this is the development seed's bootstrap with your details instead of the seed's, through the same owners: Company provisions the operator company, User creates the account and the receipt, Authz grants the role ([`apps/core/user/README.md`](../apps/core/user/README.md), Bootstrap administrator).
+
 ## The waiting page
 
 While the service is stopped, Caddy answers every request with status 503 and the waiting page, marked with the header `X-Bilibi-Waiting`. The page says which instance is pausing (**PRODUCTION erp.example.com**, "Production is updating", in the role's colour), polls the same address every second or two, and reloads itself once an answer arrives without that header. People land back on what they asked for. A pause that runs long shows how the server owner can check the service.
@@ -126,7 +178,6 @@ This script is the server layout only. These are separate pieces of the Software
 - **Building** a release on Dev from chosen Domains, and the Software page that drives it.
 - **Backups** before a switch, the health check that undoes a bad release, and **Undo**.
 - **Release transport** between machines (download from the source instance, or upload a file).
-- **The first account.** `release` migrates and seeds, and `platform-provision` creates the operator company (`apps/core/company/README.md`), but no command creates the first operator account on a production database yet. The development seed does it only on a developer machine.
 
 ## Reference
 
@@ -136,6 +187,7 @@ Script commands:
 | --- | --- |
 | `create <instance> --role dev\|staging\|production --site <host> [--port <n>] [--tls internal]` | Packages, users, folders, database, `env`, service, Caddy site. Rerun to change the site; the role and port are fixed |
 | `release <instance> <bilibi-web or folder>` | Copy into `releases/<n>`, migrate, switch, check |
+| `create-owner <instance> [--email <address>] [--name <name>] [--password-stdin] [--company-name <name> --company-code <code>]` | The first account, the server owner; asks for anything not given, refuses once an owner exists |
 | `switch <instance> <n>` | Put a kept release in service |
 | `status [<instance>]` | Roles, addresses, service states, releases |
 

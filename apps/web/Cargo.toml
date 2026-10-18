@@ -18,6 +18,7 @@ serde_json.workspace = true
 uuid.workspace = true
 askama.workspace = true
 tokio-postgres.workspace = true
+libc.workspace = true
 
 bilibi-base.workspace = true
 bilibi-core.workspace = true

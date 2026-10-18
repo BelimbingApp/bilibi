@@ -2,6 +2,7 @@
 //! page per socket.
 mod api;
 mod auth;
+mod create_owner;
 mod environment;
 mod errors;
 mod impersonation;
@@ -28,6 +29,7 @@ use bilibi_ui::Document;
 use serde::Deserialize;
 use std::{collections::HashMap, sync::Arc};
 
+pub use create_owner::create_owner;
 pub use environment::Environment;
 
 #[derive(Clone)]

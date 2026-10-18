@@ -41,6 +41,10 @@ async fn main() -> Result<()> {
                 }
             }
         }
+        Some("create-owner") => {
+            let args: Vec<String> = std::env::args().skip(2).collect();
+            bilibi_web::create_owner(&db, &args).await?;
+        }
         Some(command @ ("tenant-provision" | "platform-provision")) => {
             let args: Vec<String> = std::env::args().skip(2).collect();
             bilibi_web::provision(&db, command, &args).await?;

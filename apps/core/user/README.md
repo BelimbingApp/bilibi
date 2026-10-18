@@ -318,6 +318,25 @@ A refusal (the administrator lost the capability, the company is archived)
 leaves it unsettled and the seed says why. Linking ends the account's open
 sessions, as any company change does.
 
+`create_first_administrator(grants, operator, input)` is the production
+counterpart of the seed's bootstrap (Bilimbi `AdminBootstrap.run/1` with the
+operator's own name, email and password), behind `bilibi-web create-owner`
+(`apps/web/src/create_owner.rs`, documented for operators in
+`docs/server-install.md`). On one `MutationBoundary` transaction as the
+`create-owner` system principal (`Context::system`, since no account exists
+yet to act as) it locks `users` as Bilimbi does, proves the given tenant and
+company are the marked platform operator and its primary company, refuses
+with `FirstAdministratorError::AccountsExist` while that tenant holds any
+undeleted account (so it never promotes or replaces one), validates with the
+administrator form's rules, inserts the account, takes the grant-all role
+through Authz's `Grants::grant_first_administrator_in`, and writes the
+receipt (replacing one whose account was deleted, the only way one can
+remain). The transaction's changes are `user`, `authz.principal_role` and
+`user.bootstrap`; it also records the retained `user.bootstrap.completed`
+action with the account, email and role, as the seed does. The host then
+calls `settle_bootstrap_affiliation` for the company link. Use this, not an
+`INSERT INTO users`, for any setup path that needs a first account.
+
 ## Two-factor authentication (the step-up provider)
 
 Authenticator-app codes (TOTP, RFC 6238: HMAC-SHA-1, 6 digits, 30 s) for the signed-in account. It is the second factor behind Base Step-up (`apps/base/step_up/README.md`). Bilimbi has no counterpart yet.

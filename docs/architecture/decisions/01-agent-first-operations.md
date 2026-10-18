@@ -108,7 +108,7 @@ Verified against the code on 2026-10-18.
 | GUI | Built. Core Person, Core Affiliation, Core Company's relationship screens and Base Events' replay page call their contracts for every write (`PageContracts`). Other pages still write through facades, each on a listed allowance the page-write check enforces | `apps/base/agent_api/README.md` (Pages as callers, Page writes declaration and check) |
 | API `/api/v1` | Built. Search, describe, guide, call, plans, commit. OAuth device grant, per-person grants, live proof on every request | `apps/web/src/api.rs`, `apps/web/README.md` |
 | MCP `/mcp` | Built. Stateless Streamable HTTP. Six tools: `search`, `describe`, `guide`, `read`, `plan`, `commit` | `apps/web/src/mcp.rs`, `apps/base/agent_api/src/mcp.rs` |
-| CLI | **Client not built.** `bilibi-web` has only operator commands (`migrate`, `seed`, `seed-production`, `authz-reconcile`, `geonames-import`, `media-cleanup`, `plugin-export`), none of which calls an operation contract | `apps/web/src/main.rs` |
+| CLI | **Client not built.** `bilibi-web` has only operator commands (`migrate`, `seed`, `seed-production`, `create-owner`, `tenant-provision`, `platform-provision`, `authz-reconcile`, `geonames-import`, `media-cleanup`, `plugin-export`), none of which calls an operation contract | `apps/web/src/main.rs` |
 | Harness plugins | **Built for ChatGPT.** `core/agent_plugins` generates the downloadable package: a thin adapter over `/mcp`, with skills generated from the registry, including the agent self-report instruction. Other harnesses are added when needed | `apps/core/agent_plugins/README.md` |
 
 The registry is `base/agent_api` (`apps/base/agent_api/README.md`):

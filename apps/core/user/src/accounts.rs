@@ -28,14 +28,14 @@ pub const LANDING_KEY: &str = "ui.landing_menu_id";
 pub const NAME_MAX: usize = 255;
 const BLANK: &str = "can't be blank";
 const EMAIL_FORMAT: &str = "must be an email address";
-const EMAIL_TAKEN: &str = "has already been taken";
+pub(crate) const EMAIL_TAKEN: &str = "has already been taken";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FieldError {
     pub field: &'static str,
     pub message: String,
 }
-fn field_error(field: &'static str, message: impl Into<String>) -> FieldError {
+pub(crate) fn field_error(field: &'static str, message: impl Into<String>) -> FieldError {
     FieldError {
         field,
         message: message.into(),
@@ -116,7 +116,7 @@ impl AccountField {
 }
 
 /// Bilimbi's `Schema.validate`: a bounded name and a shaped, normalized email.
-fn validate_name(name: &str) -> Option<FieldError> {
+pub(crate) fn validate_name(name: &str) -> Option<FieldError> {
     let name = name.trim();
     if name.is_empty() {
         Some(field_error("name", BLANK))
@@ -129,7 +129,7 @@ fn validate_name(name: &str) -> Option<FieldError> {
         None
     }
 }
-fn validate_email(email: &str) -> std::result::Result<String, FieldError> {
+pub(crate) fn validate_email(email: &str) -> std::result::Result<String, FieldError> {
     if email.trim().is_empty() {
         return Err(field_error("email", BLANK));
     }
@@ -143,7 +143,7 @@ fn validate_email(email: &str) -> std::result::Result<String, FieldError> {
         Err(field_error("email", EMAIL_FORMAT))
     }
 }
-fn validate_password(password: &str) -> Option<FieldError> {
+pub(crate) fn validate_password(password: &str) -> Option<FieldError> {
     if password.is_empty() {
         Some(field_error("password", BLANK))
     } else {
@@ -165,7 +165,7 @@ pub fn validate_input(input: &AccountInput) -> Vec<FieldError> {
 
 /// The login email is unique platform-wide (`users_login_email_global_idx`);
 /// the check runs inside the transaction so the index refusal is the backstop.
-async fn email_taken(
+pub(crate) async fn email_taken(
     client: &impl GenericClient,
     email: &str,
     except: Option<i64>,
