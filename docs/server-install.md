@@ -65,7 +65,7 @@ The role comes from one place: **`BILIBI_ENV` in the instance's `env` file**, wr
 
 | Role | `BILIBI_ENV` | Builds software | Installs from | 2FA step-up |
 | --- | --- | --- | --- | --- |
-| Dev | `development` | Yes | itself | Off |
+| Dev | `development` | Yes | itself | Off, except a software change, which always asks |
 | Staging | `staging` | No | Dev | On |
 | Production | `production` | No | Staging, or Dev directly | On |
 
@@ -175,7 +175,7 @@ The page is rendered once per instance from `scripts/waiting-page.html` into `si
 
 This script is the server layout only. These are separate pieces of the Software plan:
 
-- **Building** a release on Dev from chosen Domains, and the Software page that drives it.
+- **Building** a release on Dev from chosen Domains, and the Software page that drives it. The request side exists: `base/software` records a reviewed, 2FA-checked job and shows its progress (`apps/base/software/README.md`); the builder and installer that pick jobs up are the next pieces.
 - **Backups** before a switch, the health check that undoes a bad release, and **Undo**.
 - **Release transport** between machines (download from the source instance, or upload a file).
 

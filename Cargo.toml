@@ -66,6 +66,7 @@ bilibi-session = { path = "apps/base/session" }
 bilibi-settings = { path = "apps/base/settings" }
 bilibi-settings-editor = { path = "apps/base/settings_editor" }
 bilibi-step-up = { path = "apps/base/step_up" }
+bilibi-software = { path = "apps/base/software" }
 bilibi-authz-agent = { path = "apps/base/authz_agent" }
 bilibi-system = { path = "apps/base/system" }
 bilibi-tenancy = { path = "apps/base/tenancy" }

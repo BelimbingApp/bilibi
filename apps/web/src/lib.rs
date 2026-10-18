@@ -73,6 +73,8 @@ impl App {
         let modules = modules()?;
         let mut services = bilibi_module_registry::Services::default();
         services.provide("bootstrap.database", Arc::new(db))?;
+        // What this program is made of, for Base Software's status and reviews.
+        services.provide("bootstrap.composition", Arc::new(composition()))?;
         services.install(&modules)?;
         let db = services.get::<Db>("base/database.pool")?.as_ref().clone();
         let company = services.get("core/company.companies")?;

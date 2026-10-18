@@ -474,6 +474,7 @@ dependencies = [
  "bilibi-session",
  "bilibi-settings",
  "bilibi-settings-editor",
+ "bilibi-software",
  "bilibi-step-up",
  "bilibi-system",
  "bilibi-tenancy",
@@ -1025,6 +1026,27 @@ dependencies = [
  "bilibi-ui",
  "inventory",
  "serde_json",
+ "tokio-postgres",
+]
+
+[[package]]
+name = "bilibi-software"
+version = "0.1.1"
+dependencies = [
+ "bilibi-agent-api",
+ "bilibi-authz",
+ "bilibi-database",
+ "bilibi-integration",
+ "bilibi-module-registry",
+ "bilibi-notifications",
+ "bilibi-settings",
+ "bilibi-step-up",
+ "bilibi-system",
+ "bilibi-tenancy",
+ "inventory",
+ "serde",
+ "serde_json",
+ "tokio",
  "tokio-postgres",
 ]
 

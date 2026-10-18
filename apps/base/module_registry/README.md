@@ -54,7 +54,8 @@ Consumers own semantic checks and cross-entry rules beyond generic duplicates.
 
 Service factories may resolve only their own module and declared direct
 module dependencies. `bootstrap.*` values are explicit host-supplied
-infrastructure (currently the database pool). Base cannot depend upward on Core.
+infrastructure: the database pool (`bootstrap.database`) and the program's
+`Composition` (`bootstrap.composition`, for Base Software). Base cannot depend upward on Core.
 Base-owned provider boundaries can use `Ready` to reject unbound adapters after
 all factories finish; `apps/base/notifications/src/lib.rs` demonstrates this.
 Company records through that sink inside the company transaction. User binds

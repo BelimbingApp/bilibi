@@ -21,7 +21,7 @@ Two lines in the owning module, nothing anywhere else.
 
    - Key: lower case, prefixed by the owning module id with `/` as `.`; unique.
    - Label: what administrators read on the policy page (1–120 characters).
-   - `.off_by_default()`: tenants turn it on. `.floor()`: on, and tenants cannot turn it off.
+   - `.off_by_default()`: tenants turn it on. `.floor()`: on, and tenants cannot turn it off. `.always()`: a fresh code on every action, on every server, development included; no policy and no floor change can relax it. For an action that changes the server itself (Base Software's `base.software.change`), nothing else.
 
 2. Call it in the facade, after authorizing and before writing:
 
@@ -51,7 +51,7 @@ Tenants decide per operation on **Administration › Authorization › Step-up 2
 
 - Changing any of these is itself a step-up operation (`base.step_up.policy.update`, on the floor). Settings audits it.
 - The installation owner sees the floor and the maxima on the same page.
-- `BILIBI_ENV=development` turns enforcement off (the host calls `set_enforced`). Anything else enforces.
+- `BILIBI_ENV=development` turns enforcement off (the host calls `set_enforced`). Anything else enforces. An operation declared `.always()` is enforced everywhere, as "ask every time", and the policy page shows it as fixed.
 
 ## Proofs per channel
 

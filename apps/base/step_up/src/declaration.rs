@@ -19,6 +19,10 @@ pub struct Operation {
     /// Part of the installation floor by default: tenants cannot turn it off
     /// (the installation owner can change the floor).
     pub floor: bool,
+    /// A fresh check on every action, on every deployment: not a tenant
+    /// choice, not on the floor's terms, and not turned off in development.
+    /// For an action that changes the server itself (its software).
+    pub always: bool,
 }
 impl Operation {
     /// On by default, not part of the floor.
@@ -28,6 +32,7 @@ impl Operation {
             label,
             default_on: true,
             floor: false,
+            always: false,
         }
     }
     pub const fn off_by_default(self) -> Self {
@@ -40,6 +45,16 @@ impl Operation {
         Self {
             floor: true,
             default_on: true,
+            ..self
+        }
+    }
+    /// Asked for a code every time, everywhere, including a development
+    /// deployment where step-up is otherwise off. No policy can relax it.
+    pub const fn always(self) -> Self {
+        Self {
+            floor: true,
+            default_on: true,
+            always: true,
             ..self
         }
     }

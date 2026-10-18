@@ -191,18 +191,27 @@ impl StepUp {
 
     /// The step-up check of one operation on one target. `Ok` when the
     /// tenant's policy leaves it off, enforcement is off (development), or a
-    /// proof for this channel holds; otherwise `Error::StepUpRequired`. Every
+    /// proof for this channel holds; otherwise `Error::StepUpRequired`. An
+    /// operation declared `always` skips the first two: it needs a fresh
+    /// check on every action, on every deployment. Every
     /// check that applies is audited (`step_up.passed`, `.refused`, `.failed`)
     /// with the operation, target, channel and actor, never a code.
     pub async fn require(&self, scope: &Scope, key: &str, target: &str) -> Result<()> {
         let declared = self.declared(key).ok_or(Error::Internal)?;
-        if !self.enforced() {
-            return Ok(());
-        }
-        let mode = self.mode(scope, declared).await?;
-        if mode == Mode::Off {
-            return Ok(());
-        }
+        let mode = if declared.operation.always {
+            // Declared `always`: a fresh code on every action, even where
+            // enforcement is off (development) and whatever the tenant chose.
+            Mode::EveryTime
+        } else {
+            if !self.enforced() {
+                return Ok(());
+            }
+            let mode = self.mode(scope, declared).await?;
+            if mode == Mode::Off {
+                return Ok(());
+            }
+            mode
+        };
         let outcome = self.check(scope, declared, target, mode, true).await?;
         self.audit(scope, declared, target, mode, &outcome).await?;
         match outcome {
@@ -218,11 +227,16 @@ impl StepUp {
     /// or recording anything: for a page that rechecks while open.
     pub async fn holds(&self, scope: &Scope, key: &str) -> Result<bool> {
         let declared = self.declared(key).ok_or(Error::Internal)?;
-        if !self.enforced() || self.mode(scope, declared).await? == Mode::Off {
-            return Ok(true);
-        }
+        let mode = if declared.operation.always {
+            Mode::EveryTime
+        } else {
+            if !self.enforced() || self.mode(scope, declared).await? == Mode::Off {
+                return Ok(true);
+            }
+            Mode::On
+        };
         Ok(matches!(
-            self.check(scope, declared, "", Mode::On, false).await?,
+            self.check(scope, declared, "", mode, false).await?,
             Outcome::Passed(_)
         ))
     }
@@ -517,7 +531,7 @@ impl StepUp {
         let declared = self.declared(key).ok_or(Error::NotFound)?;
         let (mut choices, floors) = self.stored(scope).await?;
         let (floor, _) = effective(declared, &choices, &floors);
-        if floor && mode == Some(Mode::Off) {
+        if declared.operation.always || (floor && mode == Some(Mode::Off)) {
             return Err(Error::Conflict);
         }
         match mode {
@@ -545,7 +559,9 @@ impl StepUp {
         key: &str,
         floor: Option<bool>,
     ) -> Result<()> {
-        self.declared(key).ok_or(Error::NotFound)?;
+        if self.declared(key).ok_or(Error::NotFound)?.operation.always {
+            return Err(Error::Conflict);
+        }
         let (_, mut floors) = self.stored(scope).await?;
         match floor {
             Some(floor) => floors.insert(key.to_owned(), json!(floor)),
@@ -655,6 +671,9 @@ fn effective(
     floors: &Map<String, Value>,
 ) -> (bool, Mode) {
     let key = declared.operation.key;
+    if declared.operation.always {
+        return (true, Mode::EveryTime);
+    }
     let floor = floors
         .get(key)
         .and_then(Value::as_bool)

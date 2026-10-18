@@ -395,6 +395,15 @@ impl StepUpPolicy {
         let key = rule.declared.operation.key;
         let id = dom(key);
         let mut html = Html::default();
+        if rule.declared.operation.always {
+            // Declared `always`: a code every time on every server, so there
+            // is nothing a tenant or the owner may change here.
+            html.push(&render(TextCell {
+                class: "text-xs text-ink-muted",
+                text: "Cannot be changed",
+            })?);
+            return Ok(html);
+        }
         for (mode, label) in [
             (Mode::Off, "Off"),
             (Mode::On, "On"),
@@ -448,7 +457,9 @@ impl StepUpPolicy {
 
     fn row(&self, rule: &Rule<'_>, owner: bool) -> Result<FlexRow> {
         let operation = rule.declared.operation;
-        let default = if operation.default_on {
+        let default = if operation.always {
+            Mode::EveryTime
+        } else if operation.default_on {
             Mode::On
         } else {
             Mode::Off
@@ -479,7 +490,9 @@ impl StepUpPolicy {
             .slot("tenant", tenant)
             .slot(
                 "floor",
-                if rule.floor {
+                if rule.declared.operation.always {
+                    badge(BadgeKind::Warning, "Always")?
+                } else if rule.floor {
                     badge(BadgeKind::Warning, "Locked on")?
                 } else {
                     render(TextCell {
