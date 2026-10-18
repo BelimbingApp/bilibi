@@ -294,20 +294,52 @@ const HISTORY_TABLES: [&str; 3] = [
     "base_software_steps",
     "base_software_plugins",
 ];
-pub async fn history(client: &impl GenericClient) -> Result<Value, tokio_postgres::Error> {
+/// The audit rows of the software changes themselves, written after a
+/// backup: the 2FA check and the queue record of the job doing a restore, and
+/// the recorded outcomes of the jobs carried with it. A restore would drop
+/// them with everything else entered since, so they are carried like the
+/// history: (table, which rows).
+const AUDIT_TABLES: [(&str, &str); 2] = [
+    (
+        "base_audit_actions",
+        "starts_with(event, 'software.') OR starts_with(event, 'step_up.')",
+    ),
+    (
+        "base_audit_mutations",
+        "auditable_type = 'base/software.job'",
+    ),
+];
+/// Takes the history aside: for each table its columns (so a history table
+/// can be made again) and its rows. The audit rows are those after `since`
+/// (the instant of the backup); an empty `since` takes none.
+pub async fn history(
+    client: &impl GenericClient,
+    since: &str,
+) -> Result<Value, tokio_postgres::Error> {
     let mut tables = serde_json::Map::new();
-    for table in HISTORY_TABLES {
-        let order = if table == "base_software_plugins" {
-            "tenant_id, plugin_id"
-        } else {
-            "id"
-        };
-        let rows = client
-            .query(
-                &format!("SELECT row_to_json(t)::jsonb FROM {table} t ORDER BY {order}"),
-                &[],
+    let wanted = HISTORY_TABLES
+        .iter()
+        .map(|table| {
+            let order = if *table == "base_software_plugins" {
+                "tenant_id, plugin_id"
+            } else {
+                "id"
+            };
+            (*table, format!("SELECT row_to_json(t)::jsonb FROM {table} t ORDER BY {order}"), false)
+        })
+        .chain(AUDIT_TABLES.iter().map(|(table, which)| {
+            (
+                *table,
+                format!("SELECT row_to_json(t)::jsonb FROM {table} t WHERE occurred_at > $1::text::timestamptz AND ({which}) ORDER BY id"),
+                true,
             )
-            .await?;
+        }));
+    for (table, sql, after) in wanted {
+        let rows = match (after, since.is_empty()) {
+            (true, true) => Vec::new(),
+            (true, false) => client.query(&sql, &[&since]).await?,
+            (false, _) => client.query(&sql, &[]).await?,
+        };
         let columns = client
             .query(
                 "SELECT a.attname::text, format_type(a.atttypid, a.atttypmod), a.attnotnull FROM pg_attribute a WHERE a.attrelid = to_regclass($1) AND a.attnum > 0 AND NOT a.attisdropped ORDER BY a.attnum",
@@ -386,7 +418,12 @@ pub async fn restore_history(
     let mut carried = 0;
     let mut problems = Vec::new();
     let mut present = Vec::new();
-    for table in HISTORY_TABLES {
+    let all: Vec<&str> = HISTORY_TABLES
+        .iter()
+        .copied()
+        .chain(AUDIT_TABLES.iter().map(|(table, _)| *table))
+        .collect();
+    for table in all.iter().copied() {
         let exists: bool = client
             .query_one("SELECT to_regclass($1) IS NOT NULL", &[&table])
             .await?
@@ -401,10 +438,15 @@ pub async fn restore_history(
         }
     }
     // Plug-ins and steps point at jobs, so they are emptied first and refilled last.
-    for table in present.iter().rev() {
+    // The audit rows are only added to: that ledger is never emptied.
+    for table in present
+        .iter()
+        .rev()
+        .filter(|table| HISTORY_TABLES.contains(table))
+    {
         client.execute(&format!("DELETE FROM {table}"), &[]).await?;
     }
-    for table in HISTORY_TABLES {
+    for table in all.iter().copied() {
         if !present.contains(&table) {
             continue;
         }
@@ -452,6 +494,17 @@ pub async fn restore_history(
         }
     }
     Ok((carried, problems))
+}
+/// Lets the app record again the outcome of a carried job whose recorded
+/// outcome is not in the restored audit trail. A column or table the
+/// restored release lacks leaves the jobs as they are.
+pub async fn unsettle_unrecorded(client: &impl GenericClient) {
+    let _ = client
+        .execute(
+            "UPDATE base_software_jobs SET settled_at = NULL WHERE settled_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM base_audit_mutations m WHERE m.auditable_type = 'base/software.job' AND m.auditable_id = base_software_jobs.id::text AND m.new_values->>'state' IN ('done','failed','cancelled','interrupted'))",
+            &[],
+        )
+        .await;
 }
 /// Whether the database says a table does not exist.
 pub fn table_missing(error: &tokio_postgres::Error) -> bool {

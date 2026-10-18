@@ -53,7 +53,7 @@ Undo takes back the newest finished install. The steps:
 | Step | What we do |
 | --- | --- |
 | **Back up the database** (the pause starts) | Stop the service and dump the database as it is now, so even a failed Undo can be put back. |
-| **Restore the backup taken before the change** (only when that change updated the database) | Count what was entered since that backup, from the audit trail, and keep the counts in the step. Then save the job history (`base_software_*`) to a file beside the safety backup, clear the database and restore the backup with `pg_restore`, and put the history back, so Undo does not erase its own record. |
+| **Restore the backup taken before the change** (only when that change updated the database) | Count what was entered since that backup, from the audit trail, and keep the counts in the step. Then save the job history (`base_software_*`) to a file beside the safety backup, clear the database and restore the backup with `pg_restore`, and put the history back, so Undo does not erase its own record. The audit rows of the software changes written since the backup (the 2FA check and the queue record of this Undo, the recorded outcomes of the jobs carried back) are carried too. |
 | **Switch back to the previous program** | Point `current` at the previous release and start it. |
 | **Check that it works** | As for an install. If the previous release does not answer, a **Switch back to release N** step returns to the release that was running, with the safety backup when the database was restored. |
 
@@ -101,11 +101,10 @@ The result carries what Undo and the page need:
 | `backup`, `backup_at` | where the backup is and when (UTC) it was taken |
 | `source`, `source_release`, `sha256`, `program` | where the release came from, its number there, its checksum and its first `status` line |
 | `switched_back`, `restored`, `previous_healthy` | on a failure: what the installer did to put things back |
-
-An `interrupted` job's result has `migrated: false` and the release in service.
-
 | `lost` | on an Undo that restored: the counts `{"since", "changes", "by_kind"}`, never a sentence |
 | `message` | one or two plain sentences for the person |
+
+An `interrupted` job's result has `migrated: false` and the release in service.
 
 The audit trail is the app's job, not the installer's: `base/software` records each finished job as one audited change the next time the server looks (every 15 seconds, and right after it starts), attributed to the worker as a system principal.
 
@@ -133,6 +132,7 @@ It needs `DATABASE_URL` and `BIND_ADDR` from that file, the sudo rule from `scri
 
 - **The first release is not its job.** A fresh instance has no program to queue a job in; `install-server.sh release` puts the first release in service.
 - **The database tools must match the cluster.** `pg_dump` and `pg_restore` come with `postgresql-client-18`, which `install-server.sh create` installs.
+- **A restore keeps the software's own audit trail, and nothing else entered since.** The history file carries the `software.*` and `step_up.*` actions and the `base/software.job` changes written after the backup, so the owner's 2FA check and the Undo's own queue record survive. A carried job whose recorded outcome is not in the restored audit trail is marked unsettled, and the app records it again. Every other row written after the backup is the loss the Undo counts and states before the owner confirms.
 - **A restore puts back the `public` schema only.** Bilibi keeps everything there. The job history is carried across into whatever shape the restored release gives those tables; a column the older release lacks is dropped from the carried rows. The installer reads only the job columns that exist from the first `base/software` migration on, so an older dump does not break its queries.
 - **The instance folder stays root's.** The installer owns `releases/` and `backups/` only, so the link it moves is `releases/current`; an instance whose `current` still points straight at a release number refuses to switch and says to rerun `install-server.sh create`.
 - **Old releases and backups are pruned** after each finished job: the current and previous releases and the three newest numbers stay; the three newest jobs' backups stay.

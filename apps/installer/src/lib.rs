@@ -62,7 +62,7 @@ impl Installer {
         );
         let mut reported = String::new();
         loop {
-            let (mut client, mut wake) = match self.connect().await {
+            let (mut client, _listener, mut wake) = match self.connect().await {
                 Ok(connected) => connected,
                 Err(error) => {
                     eprintln!(
@@ -102,10 +102,12 @@ impl Installer {
             }
         }
     }
-    /// Two connections: one that listens for wake-ups, one that works.
+    /// Two connections: one that listens for wake-ups, one that works. The
+    /// listening client must be kept for the connection to deliver; dropping
+    /// it ends that connection.
     async fn connect(
         &self,
-    ) -> Result<(Client, mpsc::UnboundedReceiver<String>), tokio_postgres::Error> {
+    ) -> Result<(Client, Client, mpsc::UnboundedReceiver<String>), tokio_postgres::Error> {
         let (listener, mut connection) = tokio_postgres::connect(&self.database_url, NoTls).await?;
         let (send, receive) = mpsc::unbounded_channel();
         tokio::spawn(async move {
@@ -124,15 +126,13 @@ impl Installer {
         listener
             .batch_execute(&format!("LISTEN {}", jobs::CHANNEL))
             .await?;
-        // The listening client must stay alive for the connection to deliver.
-        std::mem::forget(listener);
         let (client, connection) = tokio_postgres::connect(&self.database_url, NoTls).await?;
         tokio::spawn(async move {
             if let Err(error) = connection.await {
                 eprintln!("bilibi-installer: connection closed: {error}");
             }
         });
-        Ok((client, receive))
+        Ok((client, listener, receive))
     }
     /// One job, if there is one for this worker: first the one it was running
     /// when last stopped, then the oldest waiting. True when it did some work.
@@ -201,7 +201,7 @@ impl Installer {
                 dump.display()
             );
             let _ = self.service.stop();
-            if let Err(why) = backup::restore(client, &self.pg, &dump, &history).await {
+            if let Err(why) = backup::restore(client, &self.pg, &dump, "", &history).await {
                 eprintln!("bilibi-installer: job {id}: the cut-off restore failed: {why}");
                 backup::set_aside(&history);
             }

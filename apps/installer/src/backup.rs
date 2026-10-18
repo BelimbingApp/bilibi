@@ -80,10 +80,11 @@ pub struct Restored {
     pub carried: i64,
     pub problems: Vec<String>,
 }
-/// Replaces the database's contents with a dump: the software history is
-/// saved to `history_file` first, the `public` schema is dropped and made
+/// Replaces the database's contents with a dump: the software history, and
+/// the audit rows of the software changes made after `since` (the instant
+/// the dump was taken), are saved to `history_file` first, the `public` schema is dropped and made
 /// again, the dump is restored into it, and the history is put back so the
-/// job doing this does not erase itself. The service must be stopped first.
+/// job doing this does not erase itself or the record of who confirmed it. The service must be stopped first.
 ///
 /// The file is what makes this safe to run again after a restart: when it
 /// exists it is read instead of the database, which a cut-off restore left
@@ -96,9 +97,10 @@ pub async fn restore(
     client: &impl GenericClient,
     pg: &PgEnv,
     dump: &Path,
+    since: &str,
     history_file: &Path,
 ) -> Result<Restored, String> {
-    let outcome = replace(client, pg, dump, history_file).await;
+    let outcome = replace(client, pg, dump, since, history_file).await;
     let Err(why) = &outcome else {
         return outcome;
     };
@@ -117,6 +119,7 @@ async fn replace(
     client: &impl GenericClient,
     pg: &PgEnv,
     dump: &Path,
+    since: &str,
     history_file: &Path,
 ) -> Result<Restored, String> {
     if restored(history_file) {
@@ -131,7 +134,7 @@ async fn replace(
     let saved = match read_saved(history_file) {
         Some((_, saved)) => saved,
         None => {
-            let saved = jobs::history(client).await.map_err(|error| {
+            let saved = jobs::history(client, since).await.map_err(|error| {
                 format!(
                     "could not read the software history: {}",
                     jobs::short(&error)
@@ -173,6 +176,7 @@ async fn replace(
                 jobs::short(&error)
             )
         })?;
+    jobs::unsettle_unrecorded(client).await;
     let _ = fs::rename(history_file, restored_name(history_file));
     Ok(Restored { carried, problems })
 }

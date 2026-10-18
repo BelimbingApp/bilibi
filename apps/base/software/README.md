@@ -147,6 +147,7 @@ What one change job does on Dev, step by step:
 ## Caveats
 
 - **A built release is not installed yet.** The installer carries out install and undo jobs; it does not yet take a built change job over from the builder (rule 8), so cancel is the way out of that state, and `scripts/install-server.sh switch <instance> <n>` puts the release in service by hand.
+- **An Undo that restores a backup keeps the software's audit trail.** The installer carries the `software.*` and `step_up.*` actions and the `base/software.job` changes written after the backup across the restore, and marks a carried job whose outcome is not in the restored audit trail as unsettled, so `settle` records it again. Every other row written after the backup is lost, and the undo review counts it.
 - **An unpinned program shows no Domain versions.** A developer build without `scripts/discover-modules.py --pin` reports `pin: unpinned`; the review warns that the running versions are not known exactly.
 - **The catalogue is read as the person asking.** The fetch is recorded in the exchange log under them, and a server that cannot reach the address gets `available: false` with the reason.
 

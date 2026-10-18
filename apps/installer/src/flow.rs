@@ -261,8 +261,14 @@ impl<'a> Run<'a> {
         }
         if self.update_committed().await? {
             if self.is_done("switch") {
-                if let Err(reason) = self.service.start() {
-                    self.log(&reason);
+                let answered = match self.service.start() {
+                    Ok(()) => self.service.wait_healthy(HEALTH_LIMIT).await.map(|_| ()),
+                    Err(why) => Err(why),
+                };
+                if let Err(reason) = answered {
+                    self.fail("verify", &reason).await?;
+                    self.after_failure().await?;
+                    return Ok(true);
                 }
             }
             return Ok(false);
@@ -654,12 +660,20 @@ impl<'a> Run<'a> {
     /// step of the job like the others, so a restart in it ends the same way.
     async fn switch_back(&mut self) -> Db<()> {
         if matches!(self.state("switch_back"), "done" | "failed") {
+            let mut result = self.detail("switch_back");
             if self.is_done("switch_back") {
-                if let Err(reason) = self.service.start() {
-                    self.log(&reason);
+                let answered = match self.service.start() {
+                    Ok(()) => self.service.wait_healthy(HEALTH_LIMIT).await.map(|_| ()),
+                    Err(why) => Err(why),
+                };
+                if let Err(why) = answered {
+                    result["previous_healthy"] = json!(false);
+                    result["message"] = json!(format!(
+                        "{} After the installer restarted, the release does not answer: {why}. Check the service.",
+                        result["message"].as_str().unwrap_or("")
+                    ));
                 }
             }
-            let result = self.detail("switch_back");
             return self.finish("failed", result).await;
         }
         let reason = self.failure_reason();
@@ -692,6 +706,7 @@ impl<'a> Run<'a> {
                 &*self.client,
                 self.pg,
                 file,
+                back.base["backup_at"].as_str().unwrap_or(""),
                 &self.history_file("switch_back"),
             )
             .await
@@ -862,8 +877,14 @@ impl<'a> Run<'a> {
             .await?;
             let _ = self.service.stop();
             let file = undone.original.clone().unwrap_or_default();
-            match backup::restore(&*self.client, self.pg, &file, &self.history_file("restore"))
-                .await
+            match backup::restore(
+                &*self.client,
+                self.pg,
+                &file,
+                &undone.since,
+                &self.history_file("restore"),
+            )
+            .await
             {
                 Ok(done) => {
                     self.done("restore", json!({"message": format!("Restored the backup from {}. {}", undone.since, done.problems.join(" ")), "lost": lost, "carried": done.carried, "problems": done.problems}))
