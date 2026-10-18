@@ -96,6 +96,14 @@ grid shrink-0 place-items-center transition focus-visible:outline-none focus-vis
 <div{% if !id.is_empty() %} id="{{ id }}"{% endif %} data-card class="{% if !bilibi_ui::card_flat(inner_class) %}rounded-xl {% endif %}border border-line bg-surface shadow-xs{% if !class.is_empty() %} {{ class }}{% endif %}"{% if !role.is_empty() %} role="{{ role }}"{% endif %}{% if !labelledby.is_empty() %} aria-labelledby="{{ labelledby }}"{% endif %}>{% if !title.is_empty() %}<div class="border-b border-line px-4 py-3"><h3 class="text-base font-semibold text-ink">{{ title }}</h3></div>{% endif %}<div class="{% if bilibi_ui::card_pads(inner_class) %}p-2{% if !inner_class.is_empty() %} {% endif %}{% endif %}{{ inner_class }}">{{ caller() }}</div></div>
 {% endmacro %}
 
+{#- A rarely needed part of a form folded under its title and a one-line
+    summary of what it holds (bilibi_ui::Fold). data-open follows the server,
+    and the Fold hook opens the details when it appears; the patcher never
+    rewrites a details' own open. -#}
+{% macro fold(id, title, summary="", open=false) %}
+<details id="{{ id }}" data-hook="Fold"{% if open %} open data-open{% endif %} class="group"><summary class="flex cursor-pointer list-none flex-wrap items-baseline gap-x-2.5 gap-y-0.5 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-strong/30 [&::-webkit-details-marker]:hidden"><span id="{{ id }}-title" class="inline-flex items-center gap-1 text-sm font-semibold text-ink">{% call icon(name="expand", class="size-3.5 text-ink-subtle transition-transform group-open:rotate-90 motion-reduce:transition-none") %}{% endcall %}{{ title }}</span>{% if !summary.is_empty() %}<span id="{{ id }}-summary" class="text-xs text-ink-subtle">{{ summary }}</span>{% endif %}</summary><div class="pt-4">{{ caller() }}</div></details>
+{% endmacro %}
+
 {#- The facts of one record as a definition list of fact rows (Bilimbi `list`). -#}
 {% macro facts(id="") %}
 <dl{% if !id.is_empty() %} id="{{ id }}"{% endif %} class="divide-y divide-low-contrast-line text-sm">{{ caller() }}</dl>

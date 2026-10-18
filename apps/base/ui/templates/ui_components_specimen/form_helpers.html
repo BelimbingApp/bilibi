@@ -1,0 +1,14 @@
+{%- import "components.html" as ui -%}
+{%- import "forms.html" as form -%}
+{%- import "feedback.html" as feedback -%}
+<div class="grid gap-3 lg:grid-cols-2">
+<div id="specimen-form-summary" class="space-y-2 rounded-xl border border-line bg-surface p-4 shadow-xs">
+<p class="text-xs text-ink-muted">After a refused save, the problems sit above the form, each a sentence that names its field and links to it. The field keeps its own error line too.</p>
+{% call feedback::error_summary(summary=controls.summary) %}{% endcall %}
+</div>
+<div id="specimen-form-fold" class="space-y-3 rounded-xl border border-line bg-surface p-4 shadow-xs">
+<p class="text-xs text-ink-muted">A part most people never need is folded under one line that still says what it holds. An error inside opens it. "+ Add …" reveals one more optional field.</p>
+{% call ui::fold(id="specimen-fold", title="Provenance", summary="Source: manual · Unverified") %}{% call form::input(field=controls.folded) %}{% endcall %}{% endcall %}
+{% call form::add_more(control=controls.add_more) %}{% endcall %}
+</div>
+</div>

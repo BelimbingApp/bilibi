@@ -4,7 +4,7 @@
 //! only holds a form's location draft and draws its four controls.
 use super::*;
 use crate::{Auto, FieldError, Location, Options};
-use bilibi_ui::{Choice, Combobox, Field, InputKind};
+use bilibi_ui::{error_sentence, Choice, Combobox, Field, InputKind};
 
 /// DOM ids: `country` and `admin1` as each caller names them (they differ in
 /// the source), the rest derived from `prefix`.
@@ -37,7 +37,6 @@ struct View<'a> {
     locality: Field,
     postcodes: &'a [String],
     localities: &'a [String],
-    auto: Auto,
 }
 
 pub(super) struct LocationDraft {
@@ -83,20 +82,26 @@ impl LocationDraft {
         countries: &[Choice],
         errors: &[FieldError],
     ) -> Result<Html> {
-        let errors_for = |key: &str| -> Vec<String> {
+        // Each error reads as a sentence that names its field.
+        let errors_for = |key: &str, label: &str| -> Vec<String> {
             errors
                 .iter()
                 .filter(|e| e.field == key)
-                .map(|e| e.message.clone())
+                .map(|e| error_sentence(label, &e.message))
                 .collect()
         };
         let country_blank = self.location.country_iso.trim().is_empty();
         let mut country = Combobox::new(ids.country, format!("{form}[country_iso]"))
             .label("Country")
             .value(&self.location.country_iso)
-            .options(countries.to_vec());
+            .options(countries.to_vec())
+            .errors(errors_for("country_iso", "Country"));
         country.placeholder = "Choose a country".into();
-        country.errors = errors_for("country_iso");
+        // One line says why the three fields after the country are off,
+        // instead of three grey boxes that do not.
+        if country_blank {
+            country = country.hint("Postcode, state and locality open once you pick a country.");
+        }
         let admin1_options: Vec<Choice> = self
             .options
             .admin1
@@ -109,9 +114,14 @@ impl LocationDraft {
             .label(labels.admin1)
             .prompt(labels.admin1_prompt)
             .value(&self.location.admin1_code)
-            .errors(errors_for("admin1_code"));
+            .errors(errors_for("admin1_code", labels.admin1));
         if admin1_options.is_empty() {
             admin1 = admin1.disabled();
+            if !country_blank {
+                admin1 = admin1.hint("This country has no states or provinces.");
+            }
+        } else if self.auto.admin1_code {
+            admin1 = admin1.hint("Suggested from postcode");
         }
         admin1 = admin1.options(admin1_options);
         let text = |key: &str, id: String, label: &str, value: &str, list: String| {
@@ -121,7 +131,7 @@ impl LocationDraft {
                 .value(value)
                 .attr("list", &list)
                 .attr("data-debounce", "300")
-                .errors(errors_for(key));
+                .errors(errors_for(key, label));
             field.attrs.maxlength = Some("255".into());
             if country_blank {
                 field = field.disabled();
@@ -139,16 +149,22 @@ impl LocationDraft {
                 &self.location.postcode,
                 format!("{}-postcode-options", ids.prefix),
             ),
-            locality: text(
-                "locality",
-                format!("{}-locality", ids.prefix),
-                labels.locality,
-                &self.location.locality,
-                format!("{}-locality-options", ids.prefix),
-            ),
+            locality: {
+                let locality = text(
+                    "locality",
+                    format!("{}-locality", ids.prefix),
+                    labels.locality,
+                    &self.location.locality,
+                    format!("{}-locality-options", ids.prefix),
+                );
+                if self.auto.locality {
+                    locality.hint("Suggested from postcode")
+                } else {
+                    locality
+                }
+            },
             postcodes: &self.options.postcodes,
             localities: &self.options.localities,
-            auto: self.auto,
         })
     }
 }

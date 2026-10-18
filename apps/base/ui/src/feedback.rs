@@ -233,6 +233,55 @@ pub struct Alert<'a> {
     pub body: Html,
 }
 
+/// The problems that stopped a save, listed above the form once the person
+/// presses its submit button (no Bilimbi counterpart; the pattern is
+/// GOV.UK's error summary). Each item links to its field and repeats the
+/// field's own error sentence; the inline errors stay. An empty summary
+/// renders nothing, so the owner can always render it.
+#[derive(Template, Clone, Debug, Default)]
+#[template(
+    source = r#"{% import "feedback.html" as ui %}{% call ui::error_summary(summary=self) %}{% endcall %}"#,
+    ext = "html"
+)]
+pub struct ErrorSummary {
+    pub id: String,
+    pub items: Vec<SummaryItem>,
+}
+
+/// One problem: the id of the field it is about and its error sentence.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SummaryItem {
+    pub target: String,
+    pub message: String,
+}
+
+impl ErrorSummary {
+    pub fn new(id: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            items: Vec::new(),
+        }
+    }
+
+    pub fn push(&mut self, target: impl Into<String>, message: impl Into<String>) {
+        self.items.push(SummaryItem {
+            target: target.into(),
+            message: message.into(),
+        });
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+
+    pub fn heading(&self) -> String {
+        match self.items.len() {
+            1 => "1 thing to fix before saving".to_owned(),
+            count => format!("{count} things to fix before saving"),
+        }
+    }
+}
+
 /// What the last action on a panel did; `dismiss_event` is the browser event
 /// the Dismiss control raises.
 #[derive(Template, Debug, Default)]

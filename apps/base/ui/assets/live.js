@@ -627,6 +627,22 @@
     enqueue({type: 'params', params: values || {}}, {loading: true});
   });
 
+  // A link to an element of this page (an error summary's link to its field)
+  // moves focus there instead of navigating: the fragment would push a
+  // history entry, and the popstate above remounts the page, dropping what
+  // the person typed. A closed details around the target opens first.
+  document.addEventListener('click', (event) => {
+    if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    const link = event.target instanceof Element && event.target.closest('a[href^="#"]');
+    if (!link || link.getAttribute('href').length < 2) return;
+    const target = document.getElementById(decodeURIComponent(link.getAttribute('href').slice(1)));
+    if (!target) return;
+    event.preventDefault();
+    for (let fold = target.closest('details:not([open])'); fold; fold = fold.parentElement && fold.parentElement.closest('details:not([open])')) fold.open = true;
+    target.scrollIntoView({block: 'center'});
+    target.focus({preventScroll: true});
+  });
+
   // A link marked `data-patch` (a tab of the page's own views, Bilimbi's
   // `patch=`) is that patch on a plain click; a modified click opens it as
   // the link it is.

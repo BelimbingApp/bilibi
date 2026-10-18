@@ -2,13 +2,19 @@
 //! lines, the shared location fields with their cascade, and provenance. It
 //! validates as values change and creates through `AddressService::create`,
 //! which is the authority on every refusal.
+//!
+//! Beyond Bilimbi, the page keeps rarely used parts out of the way: street
+//! lines 2 and 3 appear on "+ Add address line", provenance is folded under a
+//! one-line summary that opens itself on an error, and once Create is pressed
+//! the problems are listed above the form, each naming its field.
 use super::{
     location::{Ids, LocationDraft, LABELS},
     *,
 };
 use crate::{contributions::CREATE, model, AddressInput, FieldError, Location};
 use bilibi_ui::{
-    BackLink, Button, ButtonVariant, Choice, Field, Header, InputKind, RestrictedField,
+    error_sentence, AddMore, BackLink, Button, ButtonVariant, Choice, ErrorSummary, Field, Header,
+    InputKind, RestrictedField,
 };
 
 const IDS: Ids = Ids {
@@ -17,16 +23,61 @@ const IDS: Ids = Ids {
     admin1: "address-admin1",
 };
 
+/// Every field in form order: its error key, its DOM id and its label, so an
+/// error names its field and the summary links to it in reading order.
+const FIELDS: &[(&str, &str, &str)] = &[
+    ("label", "address-label", "Label"),
+    ("phone", "address-phone", "Phone"),
+    ("line1", "address-line1", "Address line 1"),
+    ("line2", "address-line2", "Address line 2"),
+    ("line3", "address-line3", "Address line 3"),
+    ("country_iso", "address-country", "Country"),
+    ("postcode", "address-postcode", "Postcode"),
+    ("admin1_code", "address-admin1", "State or province"),
+    ("locality", "address-locality", "Locality"),
+    ("source", "address-source", "Source"),
+    ("source_ref", "address-source-ref", "Source reference"),
+    ("parser_version", "address-parser-version", "Parser version"),
+    (
+        "parse_confidence",
+        "address-parse-confidence",
+        "Parse confidence",
+    ),
+    (
+        "verification_status",
+        "address-verification-status",
+        "Verification status",
+    ),
+    ("raw_input", "address-raw-input", "Raw input"),
+];
+const PROVENANCE: [&str; 6] = [
+    "source",
+    "source_ref",
+    "parser_version",
+    "parse_confidence",
+    "verification_status",
+    "raw_input",
+];
+const VERIFICATION: [(&str, &str); 3] = [
+    ("Unverified", "unverified"),
+    ("Suggested", "suggested"),
+    ("Verified", "verified"),
+];
+
 #[derive(Template)]
 #[template(path = "address_create.html")]
 struct View<'a> {
     flash: FlashMap<'a>,
     header: Html,
+    summary: ErrorSummary,
     contact: Vec<Field>,
     restricted: Vec<RestrictedField>,
     lines: Vec<Field>,
+    add_line: Option<AddMore>,
     location: Html,
     provenance: Vec<Field>,
+    provenance_summary: String,
+    provenance_open: bool,
     raw_input: Field,
     submit: Html,
 }
@@ -39,6 +90,10 @@ pub(super) struct Create {
     errors: Vec<FieldError>,
     flash: Flash,
     created: bool,
+    /// Street lines the person asked to see; a line holding a value always shows.
+    lines: usize,
+    /// Create was pressed, so the problems are listed above the form.
+    attempted: bool,
 }
 impl Create {
     pub async fn new(pages: Pages) -> Result<Self> {
@@ -55,6 +110,8 @@ impl Create {
             errors: Vec::new(),
             flash: Flash::default(),
             created: false,
+            lines: 1,
+            attempted: false,
         })
     }
     async fn take(&mut self, value: &Value) -> Result<()> {
@@ -81,6 +138,18 @@ impl Create {
         // The pure shape checks; Geonames membership is checked on save.
         self.errors = model::normalize(&self.input).err().unwrap_or_default();
         Ok(())
+    }
+    /// The street lines on screen: the ones asked for, and any holding a value.
+    fn shown_lines(&self) -> usize {
+        let filled = |v: &Option<String>| v.as_deref().is_some_and(|v| !v.trim().is_empty());
+        let held = if filled(&self.input.line3) {
+            3
+        } else if filled(&self.input.line2) {
+            2
+        } else {
+            1
+        };
+        self.lines.max(held)
     }
     async fn save(&mut self, scope: &Scope) -> Result<()> {
         if !self.errors.is_empty() {
@@ -112,13 +181,27 @@ impl Create {
         let masked = bilibi_authz::restrictions_for(&**client, scope, "addresses").await?;
         drop(client);
         let can_create = self.pages.allowed(scope, CREATE).await?;
+        let label_of = |key: &str| {
+            FIELDS
+                .iter()
+                .find(|(field, _, _)| *field == key)
+                .map_or("", |(_, _, label)| *label)
+        };
         let errors = |key: &str| -> Vec<String> {
             self.errors
                 .iter()
                 .filter(|e| e.field == key)
-                .map(|e| e.message.clone())
+                .map(|e| error_sentence(label_of(key), &e.message))
                 .collect()
         };
+        let mut summary = ErrorSummary::new("address-problems");
+        if self.attempted {
+            for (key, id, label) in FIELDS {
+                for error in self.errors.iter().filter(|e| e.field == *key) {
+                    summary.push(*id, error_sentence(label, &error.message));
+                }
+            }
+        }
         let value = |v: &Option<String>| v.clone().unwrap_or_default();
         let field = |key: &str, label: &str, v: &Option<String>| {
             Field::in_form("address", key)
@@ -143,11 +226,22 @@ impl Create {
                 field("phone", "Phone", &i.phone).kind(InputKind::Tel),
             ));
         }
-        let lines = vec![
+        let shown = self.shown_lines();
+        let lines: Vec<Field> = [
             field("line1", "Address line 1", &i.line1),
             field("line2", "Address line 2", &i.line2),
             field("line3", "Address line 3", &i.line3),
-        ];
+        ]
+        .into_iter()
+        .take(shown)
+        .collect();
+        let add_line = (shown < 3).then(|| {
+            AddMore::new(
+                "address-add-line",
+                format!("Add address line {}", shown + 1),
+                "add_line",
+            )
+        });
         let mut confidence = field("parse_confidence", "Parse confidence", &i.parse_confidence)
             .kind(InputKind::Number);
         confidence.attrs.min = Some("0".into());
@@ -164,13 +258,32 @@ impl Create {
                 &i.verification_status,
             )
             .kind(InputKind::Select)
-            .options(bilibi_ui::choices(&[
-                ("Unverified", "unverified"),
-                ("Suggested", "suggested"),
-                ("Verified", "verified"),
-            ]))
+            .options(bilibi_ui::choices(&VERIFICATION))
             .required(),
         ];
+        // The folded provenance still reads true: what it holds now, and
+        // whether something in it needs fixing (which also opens it).
+        let provenance_open = self.errors.iter().any(|e| PROVENANCE.contains(&e.field));
+        let status = i.verification_status.as_deref().unwrap_or_default();
+        let provenance_summary = [
+            match i.source.as_deref().map(str::trim) {
+                Some(source) if !source.is_empty() => format!("Source: {source}"),
+                _ => "No source".to_owned(),
+            },
+            VERIFICATION
+                .iter()
+                .find(|(_, value)| *value == status)
+                .map_or_else(String::new, |(label, _)| (*label).to_owned()),
+            if provenance_open {
+                "has a problem".to_owned()
+            } else {
+                String::new()
+            },
+        ]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" · ");
         let header = render(Header {
             title: Html::text("Create Address"),
             subtitle: "Add a tenant-owned address",
@@ -185,9 +298,11 @@ impl Create {
         let html = View {
             flash: self.flash.map(),
             header,
+            summary,
             contact,
             restricted,
             lines,
+            add_line,
             location: self.location.render(
                 "address",
                 &IDS,
@@ -196,6 +311,8 @@ impl Create {
                 &self.errors,
             )?,
             provenance,
+            provenance_summary,
+            provenance_open,
             raw_input: field("raw_input", "Raw input", &i.raw_input).kind(InputKind::Textarea),
             submit: render(Button {
                 id: "address-save",
@@ -223,9 +340,11 @@ impl LiveState<Scope, Error> for Create {
                     "validate" => self.take(value).await?,
                     "create" if !self.created => {
                         self.flash.clear();
+                        self.attempted = true;
                         self.take(value).await?;
                         self.save(request.scope).await?;
                     }
+                    "add_line" => self.lines = (self.shown_lines() + 1).min(3),
                     "create" => {}
                     "clear-flash" => self.flash.dismiss(value.get("key").and_then(Value::as_str)),
                     _ => return Err(Error::Invalid),

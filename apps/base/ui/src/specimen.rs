@@ -6,10 +6,10 @@
 use crate::inline_specimen::InlineSamples;
 use crate::section::sections;
 use crate::{
-    choices, ActionLink, BadgeKind, Button, ButtonVariant, Card, Chrome, ClientEntry, CodeInput,
-    Combobox, Field, FileInput, Html, IconButton, IconContext, IconKind, InputKind, MultiSelect,
-    PageVariant, RadioGroup, Restricted, RestrictedField, SecretInput, StatItem, UploadSpec,
-    Uploads,
+    choices, error_sentence, ActionLink, AddMore, BadgeKind, Button, ButtonVariant, Card, Chrome,
+    ClientEntry, CodeInput, Combobox, ErrorSummary, Field, FileInput, Html, IconButton,
+    IconContext, IconKind, InputKind, MultiSelect, PageVariant, RadioGroup, Restricted,
+    RestrictedField, SecretInput, StatItem, UploadSpec, Uploads,
 };
 use askama::Template;
 
@@ -58,6 +58,7 @@ sections! {
         combobox: "ui_components_specimen/combobox.html",
         file_input: "ui_components_specimen/file_input.html",
         restricted: "ui_components_specimen/restricted.html",
+        form_helpers: "ui_components_specimen/form_helpers.html",
         inline_facts: "ui_components_specimen/inline_facts.html",
         flex_tables: "ui_components_specimen/flex_tables.html",
     }
@@ -104,6 +105,12 @@ pub struct FormControls {
     pub restricted_reason: Restricted,
     pub restricted_field: RestrictedField,
     pub restricted_field_reason: RestrictedField,
+    /// The form helpers around the fields: the problems listed after a
+    /// refused save, a folded rarely-used part, and "+ Add …" for one more
+    /// optional field.
+    pub summary: ErrorSummary,
+    pub add_more: AddMore,
+    pub folded: Field,
 }
 
 const ROLES: [(&str, &str); 3] = [
@@ -308,6 +315,23 @@ impl FormControls {
                 "Bonus",
             )
             .reason("Bonuses are shown to payroll only."),
+            summary: {
+                let mut summary = ErrorSummary::new("specimen-error-summary");
+                summary.push(
+                    "sample_text_field",
+                    error_sentence("Text", "can't be blank"),
+                );
+                summary.push(
+                    "sample_number_field",
+                    error_sentence("Number", "must be at most 100"),
+                );
+                summary
+            },
+            add_more: AddMore::new("specimen-add-more", "Add address line 2", "add_line"),
+            folded: Field::in_form("sample", "source")
+                .id("specimen-folded-source")
+                .label("Source")
+                .value("manual"),
         }
     }
 }

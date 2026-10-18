@@ -11,6 +11,13 @@
 //! `restricted_field`, `field_base_class` and `translate_error`. Bilimbi's
 //! `type="multi_select"` alias of `input` is the [`MultiSelect`] model here.
 //!
+//! A labelled text field draws its label inside the box: it rests at full
+//! size while the box is empty and moves up, small, on focus or once filled
+//! (a floating label). Selects, textareas, date-like inputs and the combobox
+//! keep it small at the top. This departs from Bilimbi's label-above DOM on
+//! purpose; `DESIGN.md` (Forms) holds the rule and [`LabelPlacement`] decides
+//! it per field, so no page styles its own label.
+//!
 //! Browser behaviour hangs off `data-hook` (`assets/hooks.js`, registered with
 //! the shared runtime in `assets/ui.js`) where Bilimbi used `phx-hook`; a
 //! control that reports to the server carries `data-event` where Bilimbi used
@@ -77,6 +84,99 @@ pub fn field_class(class: &str, errors: &[String], extra: &str, readonly: bool) 
     }
     parts.push(field_state_class(errors, "border-high-contrast-line").to_owned());
     parts.join(" ")
+}
+
+/// The control class of a field whose label sits inside the box: room above
+/// the value for the small label, and a placeholder that only shows once the
+/// person is in the field, so it is never mistaken for a value. `peer` lets
+/// the label after the control follow its focus, emptiness and autofill in
+/// CSS alone, so browser autofill moves the label without any script. A
+/// `prompt` (a combobox's "Choose a country") always shows: its label is
+/// pinned, so there is nothing for it to collide with.
+pub fn field_inset_class(readonly: bool, textarea: bool, prompt: bool) -> String {
+    format!(
+        "peer block w-full rounded-md border px-3 text-[0.9375rem] leading-[1.375rem] text-ink \
+         shadow-xs transition max-sm:text-base {} focus:border-brand-strong focus:outline-none \
+         focus:ring-2 focus:ring-brand-strong/30 disabled:cursor-not-allowed \
+         disabled:bg-surface-sunken disabled:text-ink-subtle {} {}",
+        if prompt {
+            "placeholder:text-ink-faint"
+        } else {
+            "placeholder:text-transparent focus:placeholder:text-ink-faint"
+        },
+        if textarea {
+            "min-h-28 pt-6 pb-2"
+        } else {
+            "h-13 pt-5 pb-1.5"
+        },
+        if readonly {
+            "bg-surface-sunken"
+        } else {
+            "bg-surface"
+        }
+    )
+}
+
+/// The label of a text field, inside its box: small at the top by default,
+/// full size where the value would be while the box is empty and unfocused.
+/// Focus and autofill come after `placeholder-shown` in Tailwind's variant
+/// order, so either one floats the label even over an empty box. The muted
+/// ink keeps the small label at about 7:1 against the box.
+pub const FLOATING_LABEL_CLASS: &str = "pointer-events-none absolute left-3 top-1.5 \
+     max-w-[calc(100%-1.5rem)] origin-left truncate text-xs font-medium leading-4 text-ink-muted \
+     transition-all motion-reduce:transition-none peer-placeholder-shown:top-3.5 \
+     peer-placeholder-shown:text-[0.9375rem] peer-placeholder-shown:font-normal \
+     peer-placeholder-shown:leading-[1.375rem] peer-autofill:top-1.5 peer-autofill:text-xs \
+     peer-autofill:font-medium peer-autofill:leading-4 peer-focus:top-1.5 peer-focus:text-xs \
+     peer-focus:font-medium peer-focus:leading-4";
+
+/// The label of a select, date-like input, combobox or restricted field: it
+/// stays small at the top, because the control always shows something (a
+/// prompt, a date mask, a selection) that a resting label would cover.
+pub const PINNED_LABEL_CLASS: &str = "pointer-events-none absolute left-3 top-1.5 \
+     max-w-[calc(100%-2.5rem)] truncate text-xs font-medium leading-4 text-ink-muted";
+
+/// A textarea's pinned label carries the box's own background, so text that
+/// scrolls up under it stays readable.
+pub const TEXTAREA_LABEL_CLASS: &str = "pointer-events-none absolute inset-x-px top-px truncate \
+     rounded-t-md bg-surface px-3 pb-1 pt-1.5 text-xs font-medium leading-4 text-ink-muted \
+     peer-disabled:bg-surface-sunken peer-read-only:bg-surface-sunken";
+
+/// Where a field's label sits. A field takes the inset look only when the
+/// shared field draws it whole: a field with no visible label (a toolbar
+/// box, an `sr-only` label) or with its own `class` or `label_class` keeps
+/// the label above, as does a checkbox, a multi-row select and a colour or
+/// file input.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LabelPlacement {
+    Above,
+    Floating,
+    Pinned,
+}
+
+/// A field error as one sentence: the rule's message ("must be at most 255
+/// characters") after the field's label, capitalised, with a full stop. A
+/// message that is already a sentence keeps its own words.
+pub fn error_sentence(label: &str, message: &str) -> String {
+    let message = message.trim();
+    let mut sentence = if message.starts_with(char::is_uppercase) || label.is_empty() {
+        message.to_owned()
+    } else {
+        format!("{} {message}", label.trim())
+    };
+    if sentence.starts_with(char::is_lowercase) {
+        let mut chars = sentence.chars();
+        sentence = chars
+            .next()
+            .into_iter()
+            .flat_map(char::to_uppercase)
+            .chain(chars)
+            .collect();
+    }
+    if !sentence.ends_with(['.', '!', '?']) {
+        sentence.push('.');
+    }
+    sentence
 }
 
 /// The space-separated id list for `aria-describedby`: the hint, then each
@@ -547,10 +647,59 @@ impl Field {
         }
     }
 
+    /// Where this field's label sits; see [`LabelPlacement`].
+    pub fn placement(&self) -> LabelPlacement {
+        if self.label.is_empty() || !self.class.is_empty() || !self.label_class.is_empty() {
+            return LabelPlacement::Above;
+        }
+        match self.kind {
+            InputKind::Checkbox | InputKind::Hidden | InputKind::Color | InputKind::File => {
+                LabelPlacement::Above
+            }
+            InputKind::Select if self.multiple => LabelPlacement::Above,
+            InputKind::Select
+            | InputKind::Textarea
+            | InputKind::Date
+            | InputKind::Time
+            | InputKind::DatetimeLocal
+            | InputKind::Month
+            | InputKind::Week => LabelPlacement::Pinned,
+            _ => LabelPlacement::Floating,
+        }
+    }
+
+    /// Whether the label is drawn inside the box (floating or pinned).
+    pub fn inset(&self) -> bool {
+        self.placement() != LabelPlacement::Above
+    }
+
+    /// The placeholder an inset text field renders. `:placeholder-shown` is
+    /// how CSS knows the box is empty, so a field without its own example
+    /// text gets a single space, which shows nothing.
+    pub fn blank_placeholder(&self) -> bool {
+        self.placement() == LabelPlacement::Floating && self.attrs.placeholder.is_none()
+    }
+
     /// The control class of this kind: the field family, or the checkbox's
     /// own, with the invalid state the caller cannot replace.
     pub fn control_class(&self) -> String {
         let readonly = self.attrs.readonly;
+        if self.inset() {
+            let class = format!(
+                "{} {}",
+                field_inset_class(readonly, self.kind.is_textarea(), false),
+                field_state_class(&self.errors, "border-high-contrast-line")
+            );
+            // Chrome pads a select's text by a few pixels more than an
+            // input's, so the select gives them back to line up with its label.
+            return if self.kind.is_select() {
+                format!("{class} pr-9 !pl-2")
+            } else if self.revealed() {
+                format!("{class} pr-10")
+            } else {
+                class
+            };
+        }
         if self.kind.is_checkbox() {
             if self.class.is_empty() {
                 format!(
@@ -585,10 +734,15 @@ impl Field {
     }
 
     pub fn label_classes(&self) -> String {
-        join_classes(
-            "mb-1.5 block text-sm font-medium text-ink",
-            &self.label_class,
-        )
+        match self.placement() {
+            LabelPlacement::Floating => FLOATING_LABEL_CLASS.to_owned(),
+            LabelPlacement::Pinned if self.kind.is_textarea() => TEXTAREA_LABEL_CLASS.to_owned(),
+            LabelPlacement::Pinned => PINNED_LABEL_CLASS.to_owned(),
+            LabelPlacement::Above => join_classes(
+                "mb-1.5 block text-sm font-medium text-ink",
+                &self.label_class,
+            ),
+        }
     }
 
     pub fn checkbox_label_classes(&self) -> String {
@@ -858,6 +1012,8 @@ pub struct Combobox {
     pub options: Vec<Choice>,
     pub placeholder: String,
     pub errors: Vec<String>,
+    /// One line under the box, such as why the fields that depend on it are off.
+    pub hint: String,
     pub cancel_event: String,
     pub wrapper_class: String,
     pub attrs: Attrs,
@@ -907,6 +1063,11 @@ impl Combobox {
         self
     }
 
+    pub fn hint(mut self, hint: impl Into<String>) -> Self {
+        self.hint = hint.into();
+        self
+    }
+
     pub fn wrapper_class(mut self, class: impl Into<String>) -> Self {
         self.wrapper_class = class.into();
         self
@@ -935,7 +1096,20 @@ impl Combobox {
     }
 
     pub fn described_by(&self) -> String {
-        described_by(&self.id, false, self.errors.len())
+        described_by(&self.id, !self.hint.is_empty(), self.errors.len())
+    }
+
+    /// A labelled combobox pins its label inside the box, as a select does.
+    pub fn inset(&self) -> bool {
+        !self.label.is_empty()
+    }
+
+    pub fn label_classes(&self) -> &'static str {
+        if self.inset() {
+            PINNED_LABEL_CLASS
+        } else {
+            "mb-1.5 block text-sm font-medium text-ink"
+        }
     }
 
     pub fn selected_label(&self) -> &str {
@@ -947,7 +1121,15 @@ impl Combobox {
     }
 
     pub fn control_class(&self) -> String {
-        format!("{} pr-9", field_class("", &self.errors, "", false))
+        if self.inset() {
+            format!(
+                "{} {} pr-9",
+                field_inset_class(false, false, true),
+                field_state_class(&self.errors, "border-high-contrast-line")
+            )
+        } else {
+            format!("{} pr-9", field_class("", &self.errors, "", false))
+        }
     }
 
     pub fn clear_label(&self) -> String {
@@ -1364,11 +1546,42 @@ impl RestrictedField {
         }
     }
 
+    /// The label sits inside the greyed box, pinned like a select's, so the
+    /// row lines up with the inset fields beside it.
+    pub fn label_classes(&self) -> &'static str {
+        PINNED_LABEL_CLASS
+    }
+
     pub fn marker(&self) -> Restricted {
         Restricted {
             id: format!("{}-restricted", self.id),
             reason: self.reason.clone(),
             class: String::new(),
+        }
+    }
+}
+
+/// A quiet "+ Add …" control under a group of optional fields, such as an
+/// address's second and third lines: the owner shows the first field only and
+/// raises `event` to reveal the next one. Links navigate and buttons act, so
+/// this is a button; it sends no form values, the owner already holds them.
+#[derive(Template, Clone, Debug, Default)]
+#[template(
+    source = r#"{% import "forms.html" as forms %}{% call forms::add_more(control=self) %}{% endcall %}"#,
+    ext = "html"
+)]
+pub struct AddMore {
+    pub id: String,
+    pub label: String,
+    pub event: String,
+}
+
+impl AddMore {
+    pub fn new(id: impl Into<String>, label: impl Into<String>, event: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            label: label.into(),
+            event: event.into(),
         }
     }
 }

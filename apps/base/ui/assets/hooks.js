@@ -1,6 +1,6 @@
 // Browser behaviour for the shared form controls in templates/forms.html:
 // CodeInput, Combobox, SecretReveal, SecretClear, SecretStored and
-// DisclosureDismiss (plus the dashboard's DashboardSort), adapted from Bilimbi's Phoenix hooks (apps/web/assets/js
+// DisclosureDismiss (plus the dashboard's DashboardSort and the form Fold), adapted from Bilimbi's Phoenix hooks (apps/web/assets/js
 // at the pinned source) with the LiveView JS commands folded into the hooks.
 // Each registers with the shared `data-hook` runtime in ui.js
 // (BilibiUI.registerHook), which mounts a control when it enters the
@@ -599,9 +599,25 @@
     },
   }
 
+  // A Fold (components.html `fold`) is a native details whose open state the
+  // person owns; the patcher leaves it alone. The server marks data-open when
+  // the fold must show (an error inside it), and this opens it on that change
+  // only, so closing it again by hand sticks until the next new reason.
+  const Fold = {
+    mounted() {
+      this.forced = this.el.hasAttribute("data-open")
+    },
+
+    updated() {
+      const forced = this.el.hasAttribute("data-open")
+      if (forced && !this.forced && !this.el.open) this.el.open = true
+      this.forced = forced
+    },
+  }
+
   const registry = window.BilibiUI
   if (!registry) throw new Error("hooks.js needs ui.js loaded first")
-  for (const [name, hook] of Object.entries({CodeInput, Combobox, SecretReveal, SecretClear, SecretStored, DisclosureDismiss, DashboardSort})) {
+  for (const [name, hook] of Object.entries({CodeInput, Combobox, SecretReveal, SecretClear, SecretStored, DisclosureDismiss, DashboardSort, Fold})) {
     registry.registerHook(name, hook)
   }
 })()

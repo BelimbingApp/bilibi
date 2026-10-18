@@ -471,6 +471,26 @@ pub struct Card<'a> {
     pub body: Html,
 }
 
+/// A part of a form most people never need, folded under one line (no
+/// Bilimbi counterpart): `title` names it and `summary` says what it holds
+/// now ("Source: manual · Unverified"), so a closed fold still reads true.
+/// It is a native `<details>`; the live patcher keeps the open state the
+/// person gave it, so `open` only decides the first render, and the `Fold`
+/// hook (`assets/hooks.js`) opens it whenever `open` turns true later, which
+/// is how an error inside it is never hidden.
+#[derive(Template, Debug, Default)]
+#[template(
+    source = r#"{% import "components.html" as ui %}{% call ui::fold(id=id, title=title, summary=summary, open=open) %}{{ body|safe }}{% endcall %}"#,
+    ext = "html"
+)]
+pub struct Fold<'a> {
+    pub id: &'a str,
+    pub title: &'a str,
+    pub summary: &'a str,
+    pub open: bool,
+    pub body: Html,
+}
+
 /// One row of a record's facts; `id` names the value cell.
 #[derive(Clone, Debug, Default)]
 pub struct Fact<'a> {

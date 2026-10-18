@@ -82,6 +82,20 @@ Width is a shared decision. Every page uses `PageVariant`.
 - Compact does not mean cramped. Keep related controls close and the primary action clear.
 - Layouts are responsive. There is no separate mobile product.
 
+## Forms
+
+*One field, one box.* The label sits inside the field, so each field is one element and the value is what the eye lands on. *built* (`apps/base/ui/src/forms.rs`, `LabelPlacement`)
+
+- **Text fields float the label.** Empty, it rests where the value goes. On focus, once filled, or when the browser autofills, it moves up small in muted ink. It never leaves the box.
+- **Selects, textareas, date-like inputs and the combobox pin it small at the top.** They always show something (a prompt, a mask, a selection) that a resting label would cover.
+- **Classic label above** stays for a field with no visible label (toolbars, `sr-only`), a field with its own `class` or `label_class`, checkboxes, radio groups and multi-selects.
+- Placeholder text shows only once the person is in the field, as an example, never as the label.
+- Help and error lines sit under the box. An error is a sentence that names its field (`error_sentence`): "Parse confidence must be a number from 0 to 1…".
+- After a refused save, `ErrorSummary` lists the problems above the form, each linking to its field. Inline errors stay.
+- Keep rarely used parts out of the way: `Fold` folds a part under a one-line summary of what it holds and opens itself on an error; `AddMore` ("+ Add address line 2") reveals one more optional field.
+- A greyed field says why, in one line near the field that unlocks it.
+- This departs from Bilimbi's label-above DOM on purpose; the shared macros own it, so no page styles its own label.
+
 ## Lists
 
 *Every list is a `FlexTable`.* Never the plain `Table`.

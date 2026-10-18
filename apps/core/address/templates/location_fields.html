@@ -3,8 +3,10 @@
     controls; the cascade itself is `AddressService::suggest`. -#}
 {%- import "forms.html" as forms -%}
 <div class="grid gap-x-4 sm:grid-cols-2">
+{#- Country first, then the postcode, then the two fields the postcode can
+    fill in, so a suggestion lands below where the person typed. -#}
 {% call forms::combobox(combo=country) %}{% endcall %}
-<div>{% call forms::input(field=admin1) %}{% endcall %}{% if auto.admin1_code %}<p id="{{ prefix }}-admin1-auto" class="-mt-2 mb-4 text-xs text-ink-subtle">Suggested from postcode</p>{% endif %}</div>
 <div>{% call forms::input(field=postcode) %}{% endcall %}<datalist id="{{ prefix }}-postcode-options">{% for value in postcodes %}<option value="{{ value }}"></option>{% endfor %}</datalist></div>
-<div>{% call forms::input(field=locality) %}{% endcall %}<datalist id="{{ prefix }}-locality-options">{% for value in localities %}<option value="{{ value }}"></option>{% endfor %}</datalist>{% if auto.locality %}<p id="{{ prefix }}-locality-auto" class="-mt-2 mb-4 text-xs text-ink-subtle">Suggested from postcode</p>{% endif %}</div>
+{% call forms::input(field=admin1) %}{% endcall %}
+<div>{% call forms::input(field=locality) %}{% endcall %}<datalist id="{{ prefix }}-locality-options">{% for value in localities %}<option value="{{ value }}"></option>{% endfor %}</datalist></div>
 </div>

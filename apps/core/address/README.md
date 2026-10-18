@@ -96,7 +96,11 @@ proof; the shell does so on the first operator page that finds these facts
   `ListColumns` on the shared FlexTable, and delete confirmed on the listed
   record and its version. An attached address is refused (`InUse`).
 - `/addresses/create`: the shared location fields (`src/web/location.rs`,
-  which only draws what `suggest`/`options` decide) and provenance.
+  which only draws what `suggest`/`options` decide) and provenance. Country
+  comes first and postcode second, so the state and locality it suggests land
+  below it. Street lines 2 and 3 wait behind "+ Add address line", provenance
+  is folded under its one-line summary and opens on an error, and after
+  Create the problems are listed above the form.
 - `/addresses/{id}`: read first; text facts and the verification status
   commit in place, the four location facts commit together through Apply
   with the version the edit began from. Linked Entities sorts in the URL

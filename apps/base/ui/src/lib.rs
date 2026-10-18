@@ -43,15 +43,16 @@ pub use auth::{
 pub use components::{card_flat, card_pads, stat_strip_columns};
 pub use components::{
     ActionLink, BackLink, Badge, BadgeKind, Button, ButtonVariant, Card, Chrome, CreateButton,
-    Fact, Facts, Header, Icon, IconButton, IconContext, IconKind, Page, PageVariant,
+    Fact, Facts, Fold, Header, Icon, IconButton, IconContext, IconKind, Page, PageVariant,
     SectionHeading, StatItem, StatKind, StatStrip, DEMOTED_ACTION_CLASS, NO_COUNT,
 };
 pub use error_page::{
     copy_for, debug_document, error_document, DebugFrame, DebugReport, ErrorCopy,
 };
 pub use feedback::{
-    Alert, ConfirmDialog, ConnectionBanners, Flash, FlashGroup, FlashMap, Modal, ModalWidth,
-    NoticeKind, PanelNotice, Revealed, StatusKind, Tab, Tabs, AUTO_DISMISS_MS, NO_FLASH,
+    Alert, ConfirmDialog, ConnectionBanners, ErrorSummary, Flash, FlashGroup, FlashMap, Modal,
+    ModalWidth, NoticeKind, PanelNotice, Revealed, StatusKind, SummaryItem, Tab, Tabs,
+    AUTO_DISMISS_MS, NO_FLASH,
 };
 pub use feedback_specimen::FeedbackSpecimen;
 pub use flex_table::{
@@ -59,9 +60,10 @@ pub use flex_table::{
     RowMode, Scale, Typed,
 };
 pub use forms::{
-    choices, described_by, field_base_class, field_class, field_state_class, translate_error,
-    Attrs, Choice, CodeInput, Combobox, Field, InputKind, MultiSelect, RadioGroup, Restricted,
-    RestrictedField, Reveal, SecretInput, StoredReveal, RESTRICTED_REASON, SECRET_MASK,
+    choices, described_by, error_sentence, field_base_class, field_class, field_inset_class,
+    field_state_class, translate_error, AddMore, Attrs, Choice, CodeInput, Combobox, Field,
+    InputKind, LabelPlacement, MultiSelect, RadioGroup, Restricted, RestrictedField, Reveal,
+    SecretInput, StoredReveal, RESTRICTED_REASON, SECRET_MASK,
 };
 pub use html::Html;
 pub use inline::{
