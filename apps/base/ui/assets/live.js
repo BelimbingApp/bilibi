@@ -56,6 +56,8 @@
   const framed = window.parent !== window;
 
   const params = () => Object.fromEntries(new URLSearchParams(location.search));
+  const address = () => location.pathname + location.search;
+  let shown = address(); // The path and query the page on screen was mounted for.
   const mountIntent = () => ({type: 'mount', path: location.pathname, params: params()});
 
   function connect() {
@@ -240,11 +242,12 @@
         }
       }
     }
-    if (['page', 'fragment'].includes(message.type) && message.url && message.url !== location.pathname + location.search) {
+    if (['page', 'fragment'].includes(message.type) && message.url && message.url !== address()) {
       // Framed pages and background/history corrections replace; a person's
       // action pushes unless the intent explicitly asks to replace.
       const push = message.history === 'push' && !framed && !(entry && entry.history === 'replace');
       history[push ? 'pushState' : 'replaceState'](null, '', message.url);
+      shown = address();
       window.dispatchEvent(new CustomEvent('bilibi:location'));
     }
     // Owner pushes (LiveBody.events) reach hooks once the patch is in place.
@@ -605,7 +608,11 @@
   // The step names the historical path too: the server keeps the state when
   // that path is still this page's (a saved layout's address under the
   // workspace) and mounts the page it names otherwise.
+  // A step that only changes the fragment (an in-page link followed or undone)
+  // leaves the page as it is: remounting it would drop what was typed.
   window.addEventListener('popstate', () => {
+    if (address() === shown) return;
+    shown = address();
     if (panelPath === location.pathname || document.querySelector('#app [data-history="params"]')) {
       enqueue({type: 'params', path: location.pathname, params: params()}, {loading: true});
       return;
@@ -627,15 +634,13 @@
     enqueue({type: 'params', params: values || {}}, {loading: true});
   });
 
-  // A link to an element of this page (an error summary's link to its field)
-  // moves focus there instead of navigating: the fragment would push a
-  // history entry, and the popstate above remounts the page, dropping what
-  // the person typed. A closed details around the target opens first.
+  // A link marked `data-focus-link` (an error summary's link to its field)
+  // takes focus to its target: a closed details around it opens first, and no
+  // history entry is added.
   document.addEventListener('click', (event) => {
     if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-    const link = event.target instanceof Element && event.target.closest('a[href^="#"]');
-    if (!link || link.getAttribute('href').length < 2) return;
-    const target = document.getElementById(decodeURIComponent(link.getAttribute('href').slice(1)));
+    const link = event.target instanceof Element && event.target.closest('a[data-focus-link][href^="#"]');
+    const target = link && document.getElementById(link.getAttribute('href').slice(1));
     if (!target) return;
     event.preventDefault();
     for (let fold = target.closest('details:not([open])'); fold; fold = fold.parentElement && fold.parentElement.closest('details:not([open])')) fold.open = true;

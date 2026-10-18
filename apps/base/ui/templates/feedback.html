@@ -59,6 +59,6 @@
 {% macro error_summary(summary) %}
 {%- if !summary.is_empty() -%}
 {%- let kind = bilibi_ui::StatusKind::Error -%}
-<div id="{{ summary.id }}" role="{{ kind.role() }}" aria-labelledby="{{ summary.id }}-heading" class="mb-5 flex items-start gap-2.5 rounded-lg border px-3 py-2.5 text-sm {{ kind.surface_class() }}">{% call c::icon(name=kind.icon(), class="mt-0.5 size-4 shrink-0") %}{% endcall %}<div class="min-w-0"><p id="{{ summary.id }}-heading" class="font-semibold">{{ summary.heading() }}</p><ul class="mt-1 list-disc space-y-0.5 pl-4">{% for item in summary.items %}<li><a href="#{{ item.target }}" class="underline underline-offset-2 hover:no-underline">{{ item.message }}</a></li>{% endfor %}</ul></div></div>
+<div id="{{ summary.id }}" role="{{ kind.role() }}" aria-labelledby="{{ summary.id }}-heading" class="mb-5 flex items-start gap-2.5 rounded-lg border px-3 py-2.5 text-sm {{ kind.surface_class() }}">{% call c::icon(name=kind.icon(), class="mt-0.5 size-4 shrink-0") %}{% endcall %}<div class="min-w-0"><p id="{{ summary.id }}-heading" class="font-semibold">{{ summary.heading() }}</p><ul class="mt-1 list-disc space-y-0.5 pl-4">{% for item in summary.items %}<li><a href="#{{ item.target }}" data-focus-link class="underline underline-offset-2 hover:no-underline">{{ item.message }}</a></li>{% endfor %}</ul></div></div>
 {%- endif -%}
 {% endmacro %}
