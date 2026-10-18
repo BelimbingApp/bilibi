@@ -7,7 +7,7 @@
 {% call feedback::flash_group(messages=flash) %}{% endcall %}
 {% call ui::page(id="events-index") %}
 {{ header|safe }}
-{% if replay_note %}{% call feedback::alert(id="events-replay-forbidden") %}A subscriber has a gap. Replaying it needs the admin.events.replay capability.{% endcall %}{% endif %}
+{% if replay_note %}{% call feedback::alert(id="events-replay-forbidden") %}A subscriber has missed events; ask an administrator to replay them.{% endcall %}{% endif %}
 {{ toolbar|safe }}
 {{ card|safe }}
 {{ dialog|safe }}

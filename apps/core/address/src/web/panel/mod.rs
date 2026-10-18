@@ -36,7 +36,6 @@ struct Profile {
     empty_manage: &'static str,
     empty_read: &'static str,
     empty_read_only: &'static str,
-    attach_description: &'static str,
 }
 fn profile(owner: PartyId) -> Profile {
     match owner {
@@ -48,10 +47,9 @@ fn profile(owner: PartyId) -> Profile {
             query: "company",
             forbidden: "You do not have permission to edit companies.",
             empty_manage: "Attach an existing address, or create one and attach it.",
-            empty_read: "An operator who can edit companies can attach one.",
+            empty_read: "Ask someone who can edit companies to attach one.",
             empty_read_only:
                 "This company is archived and read-only, so no address can be attached.",
-            attach_description: "Select an address to attach to this company.",
         },
         PartyId::Person(_) => Profile {
             capability: "admin.person.update",
@@ -61,9 +59,8 @@ fn profile(owner: PartyId) -> Profile {
             query: "person",
             forbidden: "You do not have permission to edit people.",
             empty_manage: "Attach an existing address, or create one and attach it.",
-            empty_read: "An operator who can edit people can attach one.",
+            empty_read: "Ask someone who can edit people to attach one.",
             empty_read_only: "This person is retired and read-only, so no address can be attached.",
-            attach_description: "Select an address to attach to this person.",
         },
     }
 }

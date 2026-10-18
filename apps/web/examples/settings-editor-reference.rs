@@ -64,7 +64,7 @@ inventory::submit! { Contribution::new(DEFINITIONS, "reference.settings.enabled"
 inventory::submit! { Contribution::new(DEFINITIONS, "reference.settings.restricted_limit", provenance!(), &Setting::Definition(Definition {
     value_type: ValueType::Integer, scopes: &[ScopeKind::Global], default: || json!(10), nullable: false, encrypted: false,
     minimum: Some(1.0), maximum: Some(100.0), validator: None,
-    editor: editor!("Reference restricted limit", "Shown only to accounts holding reference.settings.manage.", Some(MANAGE)),
+    editor: editor!("Reference restricted limit", "Only people who manage reference settings see this.", Some(MANAGE)),
 })) }
 
 #[tokio::main]

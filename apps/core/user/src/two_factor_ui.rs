@@ -208,7 +208,7 @@ impl TwoFactorPage {
                     Ok(codes) => {
                         self.status = self.users.two_factor_status(scope).await?;
                         self.stage = Stage::Codes(codes);
-                        self.success = "Two-factor authentication is on.";
+                        self.success = "2FA is on.";
                     }
                     Err(TwoFactorError::NoPendingEnrollment) => {
                         self.reload(scope).await?;
@@ -244,7 +244,7 @@ impl TwoFactorPage {
                 match self.users.disable_two_factor(scope, &code).await {
                     Ok(()) => {
                         self.reload(scope).await?;
-                        self.success = "Two-factor authentication is off.";
+                        self.success = "2FA is off.";
                     }
                     Err(error) => self.errors.push(field_error(error)?),
                 }
@@ -310,13 +310,13 @@ impl TwoFactorPage {
             }))?,
             header: fragment(Html::render(&Header {
                 title: Html::text("Settings"),
-                subtitle: "Manage your profile and account settings",
+                subtitle: "",
                 title_actions: Html::EMPTY,
                 actions: Html::EMPTY,
             }))?,
             entries: settings_entries(),
             current: "two-factor".into(),
-            heading: "Two-factor authentication",
+            heading: "2FA",
             subheading: "Confirm protected actions with a code from an authenticator app.",
             stage,
             notice: &self.notice,
@@ -467,7 +467,7 @@ impl ConfirmPage {
         ConfirmView {
             header: fragment(Html::render(&Header {
                 title: Html::text("Confirm access"),
-                subtitle: "This action asks for your authenticator before it goes ahead.",
+                subtitle: "Enter your 2FA code to continue.",
                 title_actions: Html::EMPTY,
                 actions: Html::EMPTY,
             }))?,

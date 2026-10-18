@@ -709,7 +709,7 @@ impl Postcodes {
                 },
                 cancel_event: "close-postcode-modal",
                 width: ModalWidth::Wide,
-                description: "Local corrections survive future GeoNames country refreshes.",
+                description: "Your changes are kept when postcodes are next updated from GeoNames.",
                 role: "",
                 flash: Some(self.flash.map()),
                 body: self.form(draft, &shown.countries)?,

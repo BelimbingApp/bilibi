@@ -1,8 +1,8 @@
 {%- import "forms.html" as forms -%}
-<p class="text-sm text-ink-muted">How long completed schedule runs stay in the History tab before the pruner deletes old rows. Set 0 to keep all recorded runs.</p>
+<p class="text-sm text-ink-muted">Days to keep finished runs in the History tab; set 0 to keep them all.</p>
 <p id="schedule-retention-current" class="mt-2 text-sm font-medium text-ink">Current: {{ current }}</p>
 {% if can_manage %}<form id="schedule-retention-form" data-event="save_retention" class="mt-4 flex items-end gap-3">
 <div>{% call forms::input(field=field) %}{% endcall %}</div>
 {{ save|safe }}
 </form>
-{% else %}<p id="schedule-retention-read-only" class="mt-4 text-xs text-ink-muted">Read-only. The schedule manage capability is required to change retention.</p>{% endif %}
+{% else %}<p id="schedule-retention-read-only" class="mt-4 text-xs text-ink-muted">You do not have permission to change this.</p>{% endif %}

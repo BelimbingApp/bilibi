@@ -488,15 +488,11 @@ page_route!(
 );
 bilibi_menu::contribute!(
     "base/authz",
-    bilibi_menu::MenuItem::page(
-        "admin.authz.step-up",
-        "Two-factor Requirements",
-        "/authz/step-up"
-    )
-    .icon("lock-closed")
-    .under("admin.authz")
-    .requires(bilibi_menu::Requirement::Capability(step_up_web::MANAGE))
-    .order(70)
+    bilibi_menu::MenuItem::page("admin.authz.step-up", "2FA Requirements", "/authz/step-up")
+        .icon("lock-closed")
+        .under("admin.authz")
+        .requires(bilibi_menu::Requirement::Capability(step_up_web::MANAGE))
+        .order(70)
 );
 bilibi_menu::contribute!(
     "base/authz",

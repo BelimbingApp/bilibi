@@ -579,7 +579,9 @@ impl Panel {
                 .value(value(key))
                 .errors(errors(key));
             if key == "effective_from" {
-                field = field.hint(format!("Inclusive. Today is {today}."));
+                field = field.hint(format!(
+                    "The affiliation starts on this day. Today is {today}."
+                ));
             }
             controls.push(render(field)?);
         }
@@ -785,7 +787,7 @@ impl Panel {
             render(ConfirmDialog {
                 id: &self.dom("unlink-confirm"),
                 consequence: &format!("The affiliation with {} will be unlinked.", pending.label),
-                detail: "The dated record, its work contacts and history are kept. It becomes read-only and can no longer prove an account or employment link.",
+                detail: "The record and its history are kept, but it can no longer be edited and no longer counts as a current link.",
                 confirm: "Unlink",
                 working: "Unlinking…",
                 confirm_event: "unlink",
@@ -797,7 +799,7 @@ impl Panel {
                 .label("Last day")
                 .kind(InputKind::Date)
                 .value(&pending.date)
-                .hint("Inclusive. The affiliation stays in the dated history.")
+                .hint("The affiliation ends after this day; its history is kept.")
                 .required()
                 .errors(if pending.error.is_empty() {
                     vec![]
@@ -827,8 +829,6 @@ impl Panel {
             render(Modal {
                 id: &self.dom("end-modal"),
                 title: &format!("End the affiliation with {}", pending.label),
-                description:
-                    "Sets the inclusive last day. Identity, contacts and history are kept.",
                 cancel_event: "cancel_end",
                 body,
                 ..Modal::default()

@@ -216,7 +216,7 @@ impl Page<Scope, Error> for Exports {
             }
             let mut body = Html::render(&Header {
                 title: Html::text("Exports"),
-                subtitle: "Returns you may download or print; each click proves your grant again.",
+                subtitle: "Download or print a return.",
                 ..Header::default()
             })
             .map_err(|_| Error::Internal)?;

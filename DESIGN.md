@@ -186,6 +186,13 @@ Width is a shared decision. Every page uses `PageVariant`.
 - **Consistency.** Same thing, same look, same place.
 - **Calm.** No urgency, no badge spam, no dark patterns.
 - **Plain language.** Write for the person doing the work. Show the idea, not its internal code.
+- **Help text** (subtitles, section descriptions, field hints, empty states) is one short sentence a business user would say, telling them what they can do here. Leave it out when the title already says it or no short plain sentence helps; no text beats text that leaves the reader wondering. No internal terms (actor, tenant, scope, principal, capability, operation, contributed, registered). Keep a rule the reader needs, such as "This cannot be undone." Say "2FA", not "two-factor" or "MFA".
+
+| Before | After |
+| --- | --- |
+| Which operations ask for the account holder's authenticator code before they go ahead | Set the actions that require 2FA. |
+| Every live company in this tenant | *(removed: the title says it)* |
+| Lowercase letters, digits and underscores. Unique within this tenant. | Lowercase letters, digits and underscores; must be unique. |
 
 ## Accessibility and resilience
 

@@ -243,14 +243,14 @@ impl FormControls {
                 .label("API key")
                 .autocomplete("off")
                 .wrapper_class("mb-0")
-                .hint("The eye shows a newly entered value for confirmation."),
+                .hint("Use the eye to check what you typed."),
             stored_key: SecretInput::new("specimen-stored-key", "stored_key", "API key")
                 .label("Stored API key")
                 .stored()
                 .stored_reveal("reveal-stored", "stored_key")
                 .value("never-render-this-plaintext")
                 .autocomplete("off")
-                .hint("Leave the mask to keep the saved value, or clear it explicitly."),
+                .hint("Leave the dots to keep the saved value, or press Clear to remove it."),
             no_eye: SecretInput::new("specimen-no-eye", "sample[password_field]", "password")
                 .value("secret-value")
                 .aria_label("Password without reveal")

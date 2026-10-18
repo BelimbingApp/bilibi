@@ -163,7 +163,7 @@ impl ReferenceState {
         };
         let mut html = render(Header {
             title: Html::text("Flexible tables"),
-            subtitle: "FlexTable presentation over deterministic in-memory data.",
+            subtitle: "",
             ..Header::default()
         })?;
         html.push(&self.clock_switch());
@@ -173,7 +173,7 @@ impl ReferenceState {
             &instant,
         ))?);
         html.push(&Html::raw(
-            r#"<p class="mt-6 mb-3 text-xs text-ink-muted">The plainest shape, unframed inside a padless card that is its one frame; the notch rises from the card's top edge.</p>"#,
+            r#"<p class="mt-6 mb-3 text-xs text-ink-muted">The plainest table, inside a card.</p>"#,
         ));
         html.push(&render(Card {
             id: "sample-flex-plain-card",
@@ -185,7 +185,7 @@ impl ReferenceState {
             ..Card::default()
         })?);
         html.push(&Html::raw(
-            r#"<p class="mt-6 mb-3 text-xs text-ink-muted">Built-in columns without a Grid catalog (ListColumns): reorder, remove, add back and change the row height; sorting goes through the list's own URL state.</p>"#,
+            r#"<p class="mt-6 mb-3 text-xs text-ink-muted">A list with its own columns: reorder, remove or add back a column, and change the row height.</p>"#,
         ));
         html.push(&render(Card {
             id: "vendors-card",

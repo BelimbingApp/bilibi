@@ -128,7 +128,7 @@ impl View<'_> {
                 .input(state::SAMPLE_UPLOAD, "design-library-file")
                 .label("Files to keep")
                 .hint(format!(
-                    "Up to two files of {} KiB each; a larger one is refused before a byte is sent.",
+                    "Up to two files, {} KiB each.",
                     state::SAMPLE_UPLOAD_BYTES / 1024
                 )),
         )
@@ -156,9 +156,9 @@ impl View<'_> {
             "components" => {
                 "Choose a component family, then review its current behaviour and states."
             }
-            "graphic" => "The Bilimbi mark and icons now used across the product.",
-            "theme" => "The visual foundations now used throughout Bilimbi.",
-            _ => "The design choices accepted for Bilimbi.",
+            "graphic" => "Find an icon and copy its name.",
+            "theme" => "The colours, type and spacing every page uses.",
+            _ => "The design decisions every page follows.",
         }
     }
     fn stage(&self) -> askama::Result<Html> {
@@ -294,7 +294,8 @@ impl View<'_> {
         if id == "design-library-empty-table" {
             let mut table = Table::new(id, vec![Column::new("Company"), Column::new("Status")]);
             table.caption = "Example empty table";
-            let mut empty=EmptyState::missing("No suspended companies","No company in this tenant has this status. Show all statuses to see every company.");
+            let mut empty =
+                EmptyState::missing("No suspended companies", "No company has this status.");
             empty.action = render(bilibi_ui::Button {
                 body: Html::text("Show all statuses"),
                 event: "test_click",
@@ -567,12 +568,9 @@ impl View<'_> {
             "design-library-empty-forbidden" => EmptyState::forbidden("view companies"),
             "design-library-empty-filtered" => EmptyState::missing(
                 "No companies match “acme”",
-                "Check the spelling, or clear the search to see every company in this tenant.",
+                "Check the spelling, or clear the search.",
             ),
-            _ => EmptyState::missing(
-                "No companies yet",
-                "Companies created in this tenant appear here.",
-            ),
+            _ => EmptyState::missing("No companies yet", "Companies you add appear here."),
         }
         .id(id);
         if id != "design-library-empty-forbidden" {
@@ -680,7 +678,7 @@ impl View<'_> {
         if shown == 0 {
             let mut empty = EmptyState::missing(
                 format!("No icons match “{}”", self.state.icon_search.trim()),
-                "Clear the filter to see every registered icon.",
+                "Clear the filter to see every icon.",
             )
             .id("icon-catalog-empty");
             empty.class = "py-6".into();

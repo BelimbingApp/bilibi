@@ -111,7 +111,7 @@ impl Setup {
         let masked = bilibi_authz::restrictions(&**client, scope).await?;
         let header = render(&Header {
             title: Html::text("Set Up Platform Operator"),
-            subtitle: "Designate the primary company of the tenant operating this deployment",
+            subtitle: "Choose or create the company that runs this platform.",
             actions: render(&BackLink {
                 id: "platform-operator-back",
                 href: "/companies",

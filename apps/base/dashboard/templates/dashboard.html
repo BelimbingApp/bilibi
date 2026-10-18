@@ -45,10 +45,10 @@
 <div id="dashboard-widgets-empty" class="mt-5 text-center text-sm"><p class="font-medium text-ink">No widgets configured.</p><p class="mt-1 text-ink-muted">Add widgets from the catalogue.</p><div class="mt-3 flex flex-wrap items-center justify-center gap-2">{{ empty_action|safe }}</div></div>
 {% endif %}
 {% if all_withheld %}
-<div id="dashboard-widgets-withheld" class="mt-5 text-center text-sm"><p class="font-medium text-ink">You do not have permission to {{ withheld }}.</p><p class="mt-1 text-ink-muted">Ask an operator to review your role.</p></div>
+<div id="dashboard-widgets-withheld" class="mt-5 text-center text-sm"><p class="font-medium text-ink">You do not have permission to {{ withheld }}.</p><p class="mt-1 text-ink-muted">Ask an administrator to review your role.</p></div>
 {% endif %}
 {% if catalogue_empty %}
-<div id="dashboard-widgets-none" class="mt-5 text-center text-sm"><p class="font-medium text-ink">No installed module contributes dashboard widgets.</p></div>
+<div id="dashboard-widgets-none" class="mt-5 text-center text-sm"><p class="font-medium text-ink">No dashboard widgets are available.</p></div>
 {% endif %}
 
 {% for section in sections %}

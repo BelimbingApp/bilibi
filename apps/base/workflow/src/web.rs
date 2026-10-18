@@ -372,7 +372,7 @@ impl State {
         table.caption = "Pending work";
         table.empty = Some(TableEmpty::State(EmptyState::missing(
             "No pending work",
-            "Due review work appears here.",
+            "",
         )));
         render(table)
     }
@@ -408,10 +408,7 @@ impl State {
         table.suggestions = self.history_columns.flex_suggestions();
         table.add_query = &self.history_columns.add_query;
         table.caption = "Status history";
-        table.empty = Some(TableEmpty::State(EmptyState::missing(
-            "No history yet",
-            "Completed status changes and actions appear here.",
-        )));
+        table.empty = Some(TableEmpty::State(EmptyState::missing("No history yet", "")));
         render(table)
     }
 }

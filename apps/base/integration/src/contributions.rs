@@ -41,7 +41,7 @@ inventory::submit! { Contribution::new(DEFINITIONS, RETENTION_DAYS, provenance!(
     value_type: ValueType::Integer, scopes: &[ScopeKind::Global], default: || json!(RETENTION_DEFAULT), nullable: false, encrypted: false,
     minimum: Some(1.0), maximum: Some(RETENTION_MAX as f64), validator: None,
     editor: Some(Editor { group: "Integration", label: "API exchange payload retention",
-        help: "Days to retain redacted payload previews. Exchange metadata remains available.", capability: Some(DELETE), reveal_duration_ms: 5_000 }),
+        help: "Days to keep the saved content of API calls; the call summary stays.", capability: Some(DELETE), reveal_duration_ms: 5_000 }),
 })) }
 // Deleting an exchange is audited with metadata only; these names never carry
 // a second copy of a payload or a raw endpoint into the audit ledger.
@@ -91,9 +91,15 @@ webhook_setting!(
     120,
     1_000_000.0,
     "Webhook delivery limit",
-    "Maximum verified deliveries per registered handler per window, on each host node."
+    "Most webhooks each receiver accepts per rate window, on each server."
 );
-webhook_setting!(WEBHOOK_SETTINGS.sender_rate_limit, 120, 1_000_000.0, "Webhook sender limit", "Maximum attempts per sender address per registered handler per window, on each host node, before verification.");
+webhook_setting!(
+    WEBHOOK_SETTINGS.sender_rate_limit,
+    120,
+    1_000_000.0,
+    "Webhook sender limit",
+    "Most webhook attempts one sender can make to each receiver per rate window, on each server."
+);
 webhook_setting!(
     WEBHOOK_SETTINGS.window_ms,
     60_000,
@@ -106,5 +112,5 @@ webhook_setting!(
     15_000,
     120_000.0,
     "Webhook read timeout",
-    "Maximum wait in milliseconds for each body read."
+    "Longest wait, in milliseconds, to receive a webhook's content."
 );

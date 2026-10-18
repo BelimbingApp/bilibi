@@ -205,7 +205,7 @@ impl State {
     fn body(&self) -> Result<String> {
         let mut html = render(Header {
             title: Html::text("Reference items"),
-            subtitle: "A list page hosting walked columns: the page's own search, filter, sort and pages, plus the catalog's columns through PageColumns.",
+            subtitle: "Search, filter and sort items, and add columns from linked records.",
             ..Header::default()
         })?;
         html.push(&self.controls()?);

@@ -196,7 +196,7 @@ pub(super) async fn index(
         flash: flash(success, error)?,
         header: fragment(&Header {
             title: Html::text("Database Queries"),
-            subtitle: "User-defined SQL queries rendered as browsable pages",
+            subtitle: "Save SQL queries and browse their results.",
             actions: create,
             title_actions: Html::EMPTY,
         })?,
@@ -382,7 +382,7 @@ pub(super) fn detail(state: &detail::Detail, editor: bool) -> Result<String> {
             fragment(&Button { id: "btn-run-query", event: "run_query", class: "px-3 py-1 text-xs", variant: ButtonVariant::Primary, body, ..Default::default() })?
         },
         prompt: fragment(&prompt)?, sql: fragment(&sql)?, parameters,
-        caution: fragment(&Alert { id: "database-query-reach-caution", kind: StatusKind::Warning, class: "mt-2", body: Html::text("Not filtered to one company: SQL run here reads across every company and tenant in the database.") })?,
+        caution: fragment(&Alert { id: "database-query-reach-caution", kind: StatusKind::Warning, class: "mt-2", body: Html::text("Not limited to your company: SQL here can read every company's data in the database.") })?,
         error: if state.error.is_empty() { Html::EMPTY } else { fragment(&Alert { id: "query-execution-error", kind: StatusKind::Error, class: "", body: Html::text(&state.error) })? },
         results: match &state.result { Some(result) => results(state, result)?, None => Html::EMPTY },
         confirm: confirm(state.pending, &state.draft.name)?,
@@ -441,7 +441,7 @@ fn results(state: &detail::Detail, result: &ConsoleResult) -> Result<Html> {
     table.framed = false;
     table.empty = Some(TableEmpty::State(EmptyState::missing(
         "No rows returned",
-        "The query ran and matched nothing.",
+        "",
     )));
     if let Some(columns) = &state.columns {
         table.zoom = columns.zoom;

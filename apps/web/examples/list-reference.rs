@@ -180,7 +180,7 @@ fn body(state: &mut ListState, columns: &ListColumns) -> Result<String> {
     let page = state.paginate(&rows);
     let header = render(Header {
         title: Html::text("Vendors"),
-        subtitle: "A deterministic in-memory list for the shared list surface.",
+        subtitle: "",
         ..Header::default()
     })?;
     let form = state.filters_form();

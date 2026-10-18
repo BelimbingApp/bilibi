@@ -146,7 +146,7 @@ pub(super) async fn list(
     let header = render(&Header {
         title_actions: render(&pin)?,
         title: Html::text("Companies"),
-        subtitle: "Every live company in this tenant",
+        subtitle: "",
         actions: render(&Actions {
             class: "flex flex-wrap items-center gap-2 sm:gap-3",
             body: actions,
@@ -287,9 +287,9 @@ pub(super) async fn list(
         EmptyState::missing(
             &title,
             if filtered {
-                "Clear the search and status filter to see every company in this tenant."
+                "Clear the search and filter to see every company."
             } else {
-                "Create the first company in this tenant."
+                "Create your first company."
             },
         )
         .action(recovery),
@@ -499,7 +499,7 @@ pub(super) async fn detail(
         (
             primary,
             StatusKind::Info,
-            "This is the primary company representing its tenant.",
+            "This is your organisation's primary company.",
         ),
         (
             company.archived(),
@@ -1067,7 +1067,7 @@ pub(super) async fn create(
     .collect::<Result<Vec<_>>>()?;
     let header = render(&Header {
         title: Html::text("Create Company"),
-        subtitle: "Add a company record and business context",
+        subtitle: "",
         actions: back("company-create-back")?,
         ..Header::default()
     })?;

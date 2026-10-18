@@ -234,14 +234,14 @@ impl Command {
         let print = &task.fingerprint[..12];
         match self {
             Self::Enable if task.suppressed => format!(
-                "Its definition is approved at fingerprint {print}, the one under review, but the task stays paused and runs nothing until it is resumed. A later change to the definition needs review again."
+                "This version ({print}) is approved, but the task stays paused until you resume it. Any later change to the task needs approval again."
             ),
             Self::Enable => format!(
-                "It begins running automatically on its schedule ({}, {}) at definition fingerprint {print}, the one under review. A later change to the definition stops it until that change is reviewed.",
+                "It will run on its schedule ({}, {}) using this version ({print}). Any later change to the task stops it until approved.",
                 task.expression, task.timezone
             ),
-            Self::Pause => "Work already queued for it is cancelled before it starts. The task keeps its definition and can be resumed.".into(),
-            Self::Disable => "Work already queued for it is cancelled before it starts, and the scheduler stops queuing it until this definition is reviewed and enabled again.".into(),
+            Self::Pause => "Runs already queued are cancelled. You can resume the task later.".into(),
+            Self::Disable => "Runs already queued are cancelled, and it will not run again until it is reviewed and enabled.".into(),
         }
     }
 }

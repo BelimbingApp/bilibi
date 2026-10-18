@@ -194,7 +194,7 @@ impl Admin1 {
         let can_update = shown.reader.can_update;
         let header = render(Header {
             title: Html::text("Admin1 Divisions"),
-            subtitle: "States, provinces, and top-level administrative divisions",
+            subtitle: "Edit the names of states and provinces.",
             title_actions: render(IconButton {
                 context: IconContext::Inline,
                 id: "admin1-pin",

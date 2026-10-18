@@ -3,7 +3,7 @@
     saving with no role left is not offered. -#}
 {%- import "components.html" as ui -%}
 {%- import "dialog.html" as dialog -%}
-{% call dialog::modal(id="field-restrictions-dialog", title=title, cancel_event="close_dialog", description="Change the roles the field is restricted for, or remove the restriction so every role sees the value again.", owns_flash=true, messages=flash) %}
+{% call dialog::modal(id="field-restrictions-dialog", title=title, cancel_event="close_dialog", description="Change which roles cannot see this field, or remove the restriction.", owns_flash=true, messages=flash) %}
 <form id="field-restrictions-form" data-event="validate" data-change class="mt-4 space-y-4">
 {{ roles }}
 <p id="field-restrictions-outcome" class="rounded-md bg-surface-sunken px-3 py-2 text-sm text-ink">{{ outcome }}</p>

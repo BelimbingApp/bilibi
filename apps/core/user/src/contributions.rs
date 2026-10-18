@@ -154,8 +154,8 @@ inventory::submit! {
         value_type: bilibi_settings::ValueType::String, scopes: &[ScopeKind::Global], default: || serde_json::json!("Bilibi"),
         nullable: false, encrypted: false, minimum: None, maximum: None,
         validator: Some(Validator { accepts: issuer_accepts, message: "must be 1 to 64 characters without a colon" }),
-        editor: Some(bilibi_settings::Editor { group: "Two-factor authentication", label: "Authenticator issuer",
-            help: "The name authenticator apps show for this installation's accounts, such as the company or deployment name. Applies to new setups.",
+        editor: Some(bilibi_settings::Editor { group: "2FA", label: "Authenticator issuer",
+            help: "The name authenticator apps show for accounts here, such as your company name. Applies to new setups.",
             capability: Some(bilibi_session::MANAGE), reveal_duration_ms: 5_000 }),
     }))
 }

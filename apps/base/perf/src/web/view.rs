@@ -196,7 +196,7 @@ pub(super) fn page(
 ) -> Result<String> {
     let mut body = render(Header {
         title: Html::text("Performance"),
-        subtitle: "Redacted route and background-job diagnostics",
+        subtitle: "See which pages and background jobs are slow.",
         title_actions: render(IconButton {
             id: "performance-pin",
             context: IconContext::Inline,
@@ -209,9 +209,7 @@ pub(super) fn page(
     if !data.diagnostics.recording && data.diagnostics.store == Store::Available {
         body.push(&render(bilibi_ui::PanelNotice {
             id: "performance-disabled",
-            body: Html::text(
-                "Performance history recording is disabled. Retained history remains available.",
-            ),
+            body: Html::text("Recording is off; earlier history is still shown."),
             ..bilibi_ui::PanelNotice::default()
         })?);
     }
@@ -226,7 +224,7 @@ pub(super) fn page(
         "regressions_grid",
         "Recent regressions",
         if data.regressions.is_ok() {
-            "No regressions met the current sample and latency thresholds."
+            "Nothing has slowed down recently."
         } else {
             "Regression diagnostics are unavailable."
         },

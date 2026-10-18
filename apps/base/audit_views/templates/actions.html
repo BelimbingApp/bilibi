@@ -6,9 +6,9 @@
 <div data-shared-ui>
 {% call feedback::flash_group(messages=flash) %}{% endcall %}
 {% call ui::page() %}
-{% call ui::header(subtitle="Operational action log, newest first") %}Audit Actions{% endcall %}
+{% call ui::header(subtitle="See what people and systems did, newest first.") %}Audit Actions{% endcall %}
 {{ toolbar|safe }}
-{% if hide_diagnostics %}<p class="mt-2 text-xs text-ink-muted">Successful Livewire updates, AI event streams, and media streams are hidden. Failures still appear; switch to Show Diagnostics to inspect transport noise.</p>{% endif %}
+{% if hide_diagnostics %}<p class="mt-2 text-xs text-ink-muted">Routine background traffic is hidden, but failures still show; choose Show Diagnostics to see everything.</p>{% endif %}
 <div class="mt-4">
 {{ table|safe }}
 {{ pagination|safe }}

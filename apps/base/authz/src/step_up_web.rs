@@ -174,7 +174,7 @@ impl StepUpPolicy {
         match written {
             Ok(()) => {
                 tx.commit().await?;
-                self.flash = Some((StatusKind::Success, "Two-factor requirement saved.".into()));
+                self.flash = Some((StatusKind::Success, "2FA requirement saved.".into()));
             }
             Err(Error::Conflict) => {
                 self.flash = Some((
@@ -458,10 +458,10 @@ impl StepUpPolicy {
         table.add_query = &self.columns.add_query;
         table.framed = false;
         table.actions = true;
-        table.caption = "Two-factor requirements";
+        table.caption = "2FA requirements";
         if page.counts.total_entries == 0 {
             table.empty = Some(TableEmpty::Content(Html::text(if search.is_empty() {
-                "No mounted module declares a step-up operation."
+                "No actions can require 2FA yet."
             } else {
                 "No operation matches this search."
             })));
@@ -483,8 +483,8 @@ impl StepUpPolicy {
             flash,
         })?;
         html.push(&render(Header {
-            title: Html::text("Two-factor requirements"),
-            subtitle: "Which operations ask for the account holder's authenticator code before they go ahead",
+            title: Html::text("2FA requirements"),
+            subtitle: "Set the actions that require 2FA.",
             ..Header::default()
         })?);
         html.push(&render(Card {
@@ -530,7 +530,7 @@ impl StepUpPolicy {
             let (consequence, confirm) = match pending {
                 Pending::Mode { key, mode } => (
                     format!(
-                        "{key} will be {} for this tenant.",
+                        "{key} will be {} for your organisation.",
                         match mode {
                             None => "back to its default",
                             Some(Mode::Off) => "allowed without a code",
@@ -542,11 +542,11 @@ impl StepUpPolicy {
                 ),
                 Pending::Floor { key, floor } => (
                     format!(
-                        "{key} will {} for every tenant.",
+                        "{key} will {} for every organisation.",
                         if *floor == Some(true) {
-                            "stay on whatever a tenant chooses"
+                            "stay on whatever an organisation chooses"
                         } else {
-                            "follow each tenant's choice"
+                            "follow each organisation's choice"
                         }
                     ),
                     "Save floor",
@@ -555,7 +555,7 @@ impl StepUpPolicy {
             html.push(&render(ConfirmDialog {
                 id: "step-up-confirm",
                 consequence: &consequence,
-                detail: "Changing two-factor requirements asks for your own authenticator code first, and is recorded in the audit log.",
+                detail: "You will be asked for your own 2FA code, and the change is recorded in the audit log.",
                 confirm,
                 working: "Saving…",
                 confirm_event: "confirm",

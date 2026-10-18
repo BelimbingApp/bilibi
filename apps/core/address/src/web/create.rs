@@ -286,7 +286,6 @@ impl Create {
         .join(" · ");
         let header = render(Header {
             title: Html::text("Create Address"),
-            subtitle: "Add a tenant-owned address",
             actions: render(BackLink {
                 href: "/addresses",
                 id: "address-back",

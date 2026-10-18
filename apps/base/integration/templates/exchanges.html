@@ -4,13 +4,13 @@
     BrowserTimeZone hook so local-mode calendar days follow the browser zone. -#}
 {%- import "components.html" as ui -%}
 {% call ui::page(id="api-exchanges-index") %}
-{% call ui::header(subtitle="Incoming and outgoing calls; bodies are omitted by default") %}API Exchanges{% endcall %}
+{% call ui::header(subtitle="Review calls to and from other systems.") %}API Exchanges{% endcall %}
 {{ tabs|safe }}
 <div id="exchange-filter-region" data-hook="BrowserTimeZone" class="mb-2 flex flex-wrap items-start gap-3">
 {{ toolbar|safe }}
 {{ period|safe }}
 </div>
 {% if let Some(error) = range_error %}<p id="exchange-range-error" role="alert" class="mb-2 text-sm text-danger-ink">{{ error }}</p>{% endif %}
-{% if operator %}<p class="mb-2 text-xs text-warning-ink">{% call ui::icon(name="warning", class="size-3.5") %}{% endcall %} Includes all tenants and exchanges with unknown ownership.</p>{% endif %}
+{% if operator %}<p class="mb-2 text-xs text-warning-ink">{% call ui::icon(name="warning", class="size-3.5") %}{% endcall %} Includes every organisation, and calls with no known owner.</p>{% endif %}
 {% call ui::card(id="exchanges-card", inner_class="p-0") %}{{ table|safe }}{{ pagination|safe }}{% endcall %}
 {% endcall %}

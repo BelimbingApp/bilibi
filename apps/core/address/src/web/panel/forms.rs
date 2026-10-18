@@ -142,7 +142,7 @@ impl Panel {
             .kind(InputKind::Number)
             .label("Priority")
             .value("0")
-            .hint("Lower number = higher priority. Used to order addresses of the same kind (0 = top).");
+            .hint("Lower numbers come first; 0 is the top.");
         priority.attrs.min = Some("0".into());
         let body = render(AttachForm {
             notice: self.notice_html()?,
@@ -172,7 +172,6 @@ impl Panel {
             id: "attach-address-modal",
             title: "Attach Address",
             cancel_event: "close_attach_modal",
-            description: self.profile.attach_description,
             body,
             ..Modal::default()
         })

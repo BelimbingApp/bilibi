@@ -96,7 +96,7 @@ impl Create {
                                 .unwrap_or_default(),
                         )
                         .options(options)
-                        .hint("The Core identity this account signs in as. Leave it unset for an account with no person."),
+                        .hint("The person who uses this account; leave it empty if there is none."),
                 )?
             }
             None => render(
@@ -104,7 +104,7 @@ impl Create {
                     .kind(InputKind::Select)
                     .prompt("No person")
                     .disabled()
-                    .hint("Listing people needs admin.person.list; the account can be linked later by someone who holds it."),
+                    .hint("You cannot see the list of people; someone who can may link a person later."),
             )?,
         };
         let affiliation = match (self.input.person, affiliations) {
@@ -114,7 +114,7 @@ impl Create {
                     .kind(InputKind::Select)
                     .prompt("No company")
                     .disabled()
-                    .hint("This person has no current affiliation, so the account signs in with no company."),
+                    .hint("This person works for no company yet, so the account signs in without one."),
             )?,
             (Some(_), Some(choices)) => {
                 let mut options = Vec::with_capacity(choices.len());
@@ -132,7 +132,7 @@ impl Create {
                                 .unwrap_or_default(),
                         )
                         .options(options)
-                        .hint("One of this person's affiliations names the company the account signs in under."),
+                        .hint("Pick which of this person's companies the account signs in under."),
                 )?
             }
             (Some(_), None) => render(
@@ -140,7 +140,7 @@ impl Create {
                     .kind(InputKind::Select)
                     .prompt("No company")
                     .disabled()
-                    .hint("Listing affiliations needs admin.affiliation.list."),
+                    .hint("You cannot see this person's companies."),
             )?,
         };
         let name = render(
@@ -174,7 +174,7 @@ impl Create {
         let password = render(&password)?;
         let mut body = render(&Header {
             title: Html::text("Create User"),
-            subtitle: "Add a new user to the system",
+            subtitle: "",
             actions: render(&BackLink {
                 href: "/users",
                 id: "user-back",

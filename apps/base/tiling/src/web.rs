@@ -1174,13 +1174,12 @@ impl Workspace {
                     reach,
                     refusal: match reach {
                         Reach::Open => None,
-                        Reach::Forbidden => Some(EmptyState::forbidden(format!("open {}", leaf.path))),
+                        Reach::Forbidden => {
+                            Some(EmptyState::forbidden(format!("open {}", leaf.path)))
+                        }
                         Reach::Unserved => Some(EmptyState::missing(
                             "This page is not available",
-                            format!(
-                                "Nothing in this deployment serves {}. Close the tile or add another page.",
-                                leaf.path
-                            ),
+                            "Close the tile or add another page.",
                         )),
                     },
                 }
@@ -1224,7 +1223,7 @@ impl Workspace {
         let empty = if tiles.is_empty() {
             let mut state = EmptyState::missing(
                 "No pages open",
-                "Add a page to start tiling. Each new page takes half of the focused tile, and every tile stays a page with its own address.",
+                "Add a page to start; each new page splits the selected tile in half.",
             );
             state.id = "workspace-empty-state".into();
             state.action = Html::render(&Button {
@@ -1247,7 +1246,7 @@ impl Workspace {
         let picker_empty = {
             let mut state = EmptyState::missing(
                 "No pages to add",
-                "No destinations are available for this account. Ask an operator to assign a role.",
+                "Ask an administrator to give you a role.",
             );
             state.id = "workspace-picker-empty".into();
             state
@@ -1273,9 +1272,9 @@ impl Workspace {
             empty,
             picker_open: self.picker_open,
             picker_description: if self.master {
-                "The page joins the master layout's stack. Every tile is a live page, so many tiles cost as much as many tabs."
+                "The page joins the stack beside the main tile."
             } else {
-                "The page opens in a new tile beside the focused one. Every tile is a live page, so many tiles cost as much as many tabs."
+                "The page opens in a new tile beside the selected one."
             },
             pages,
             picker_empty,
@@ -1408,7 +1407,7 @@ impl Workspace {
         if self.saved.entries.is_empty() {
             saved.empty = Some(TableEmpty::State(EmptyState::missing(
                 "No saved layouts",
-                "Save the current tiles under a name to open them again from the sidebar or by address.",
+                "Save the current tiles under a name to open them again later.",
             )));
         }
         let saved = Html::render(&saved).map_err(internal)?;
@@ -1451,7 +1450,7 @@ impl Workspace {
         if self.shared.is_empty() {
             shared.empty = Some(TableEmpty::State(EmptyState::missing(
                 "No shared workspaces",
-                "Workspaces shared with your company or roles appear here.",
+                "",
             )));
         }
         let shared = Html::render(&shared).map_err(internal)?;

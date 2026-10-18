@@ -267,7 +267,6 @@ pub(super) async fn page(pages: &Pages, scope: &Scope) -> Result<String> {
     ];
     let mut body = render(Header {
         title: Html::text("System Info"),
-        subtitle: "Server and application configuration",
         ..Header::default()
     })?;
     body.push(&render(Grid { cards })?);

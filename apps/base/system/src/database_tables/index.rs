@@ -78,7 +78,7 @@ impl Index {
     pub(super) async fn body(&mut self, scope: &Scope) -> Result<Html> {
         let header = Header {
             title: Html::text("Database Tables"),
-            subtitle: "Browse and inspect the tables of the application schema. Read-only.",
+            subtitle: "Browse the database tables; nothing can be changed here.",
             ..Header::default()
         };
         let view = json!({
@@ -207,7 +207,7 @@ impl Index {
         table.add_query = &self.columns.add_query;
         table.empty = Some(TableEmpty::Content(Html::text(
             if self.list.search.is_empty() {
-                "No tables are in the application schema."
+                "No tables found."
             } else {
                 "No tables match your search."
             },

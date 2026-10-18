@@ -707,12 +707,10 @@ impl Detail {
                 "Roles can't be changed",
                 "This user's company is archived, so no role can be assigned or removed.",
             ))?,
-            "forbidden" => render(&EmptyState::forbidden(format!(
-                "assign roles to this user, which needs {UPDATE}"
-            )))?,
+            "forbidden" => render(&EmptyState::forbidden("assign roles to this user"))?,
             "grant_all" => render(&EmptyState::missing(
                 "A role would add nothing",
-                format!("{grant_all_subject} already grants every capability, so this user holds everything a role could add."),
+                format!("{grant_all_subject} already gives this user every permission."),
             ))?,
             "no_roles" => {
                 let mut state = EmptyState::missing(
@@ -720,7 +718,7 @@ impl Detail {
                     if can_create_roles {
                         "Create one on the Roles page, then assign it here."
                     } else {
-                        "Roles are created on the Roles page, which needs admin.authz.role.create; your account does not hold it."
+                        "Ask someone who can create roles to add one."
                     },
                 );
                 if can_create_roles {
@@ -746,11 +744,11 @@ impl Detail {
             }
             "all_assigned" => render(&EmptyState::missing(
                 "No roles left to assign",
-                "This user already holds every role that exists in this workspace.",
+                "This user already has every role.",
             ))?,
             "none_grantable" => render(&EmptyState::missing(
                 "No roles your account can assign",
-                "Assigning a role needs every capability it grants, and each remaining role grants one your account does not hold. Ask an operator to review your role.",
+                "You can only assign roles whose permissions you have yourself.",
             ))?,
             _ => Html::EMPTY,
         };
@@ -835,16 +833,14 @@ impl Detail {
                 "Capabilities can't be changed",
                 "This user's company is archived, so no capability can be added, denied or removed.",
             ))?,
-            "forbidden" => render(&EmptyState::forbidden(format!(
-                "add capabilities to this user, which needs {UPDATE}"
-            )))?,
+            "forbidden" => render(&EmptyState::forbidden("add capabilities to this user"))?,
             "all_in_effect" => render(&EmptyState::missing(
                 "No capabilities left to add",
-                "Every installed capability is already in effect or denied for this user.",
+                "This user already has, or is denied, every capability.",
             ))?,
             "none_grantable" => render(&EmptyState::missing(
                 "No capabilities your account can add",
-                "You can only add capabilities you hold, and every remaining capability is one your account does not. Ask an operator to review your role.",
+                "You can only add capabilities you have yourself.",
             ))?,
             _ => Html::EMPTY,
         };
@@ -862,7 +858,8 @@ impl Detail {
             id: "user-roles-heading",
             title: "Roles & Permissions",
             count: Some(assigned.len()),
-            description: "Roles determine what this user can do. Each role grants a set of capabilities. Effective permissions show the combined result of all assigned roles.",
+            description:
+                "Roles set what this user can do; effective permissions show the combined result.",
             ..SectionHeading::default()
         })?;
         let body = render(&AccessView {
@@ -959,7 +956,8 @@ impl Detail {
             id: "user-affiliations-heading",
             title: "Affiliations",
             count: Some(count),
-            description: "The linked person's affiliations. The account signs in under one of them; a person may be affiliated with several companies (contractors, for example), and not every person needs an account.",
+            description:
+                "The companies the linked person works for; the account signs in under one of them.",
             ..SectionHeading::default()
         })?;
         let table = match &loaded.affiliations {

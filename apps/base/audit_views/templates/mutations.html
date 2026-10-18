@@ -4,7 +4,7 @@
 {%- import "components.html" as ui -%}
 <div data-shared-ui>
 {% call ui::page() %}
-{% call ui::header(subtitle="Audit trail for all data changes, newest first") %}Data Mutations{% endcall %}
+{% call ui::header(subtitle="See every change made to your data, newest first.") %}Data Mutations{% endcall %}
 {{ toolbar|safe }}
 <div class="mt-4">
 {{ table|safe }}

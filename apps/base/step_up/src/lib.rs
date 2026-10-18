@@ -45,7 +45,7 @@ pub const POLICY_UPDATE: &str = "base.step_up.policy.update";
 
 declare!(
     "base/step_up",
-    Operation::new(POLICY_UPDATE, "Change two-factor requirements").floor()
+    Operation::new(POLICY_UPDATE, "Change 2FA requirements").floor()
 );
 
 inventory::submit! {

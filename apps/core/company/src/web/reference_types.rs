@@ -42,8 +42,6 @@ pub(super) struct Spec {
     empty: &'static str,
     new_title: &'static str,
     edit_title: &'static str,
-    new_description: &'static str,
-    edit_description: &'static str,
     code_placeholder: &'static str,
     name_placeholder: &'static str,
     description_placeholder: &'static str,
@@ -76,14 +74,12 @@ pub(super) static DEPARTMENT_TYPES: Spec = Spec {
     kind: Kind::DepartmentType,
     form_as: "department_type",
     page_title: "Department Types",
-    subtitle: "Manage standard department categories and organizational functions",
+    subtitle: "Set the department types a company can choose from.",
     add_label: "Department Type",
     caption: "Department Types",
     empty: "No department types found.",
     new_title: "New Department Type",
     edit_title: "Edit Department Type",
-    new_description: "Create a new department type definition.",
-    edit_description: "Update department type details.",
     code_placeholder: "e.g. ENG, HR, FIN",
     name_placeholder: "e.g. Engineering",
     description_placeholder: "Optional description of this department type",
@@ -111,14 +107,12 @@ pub(super) static LEGAL_ENTITY_TYPES: Spec = Spec {
     kind: Kind::LegalEntityType,
     form_as: "legal_entity_type",
     page_title: "Legal Entity Types",
-    subtitle: "Manage corporate and legal forms recognized in this platform",
+    subtitle: "Set the legal entity types a company can choose from.",
     add_label: "Legal Entity Type",
     caption: "Legal Entity Types",
     empty: "No legal entity types defined yet.",
     new_title: "New Legal Entity Type",
     edit_title: "Edit Legal Entity Type",
-    new_description: "Create a new legal structure type for companies.",
-    edit_description: "Update legal entity type details.",
     code_placeholder: "e.g. LLC, CORP, PT",
     name_placeholder: "e.g. Limited Liability Company",
     description_placeholder: "Optional description of this legal entity type",
@@ -812,11 +806,6 @@ impl ReferenceTypes {
                         spec.new_title
                     },
                     cancel_event: "close_modal",
-                    description: if editing {
-                        spec.edit_description
-                    } else {
-                        spec.new_description
-                    },
                     flash: Some(self.flash.map()),
                     body: self.form(draft)?,
                     ..Modal::default()

@@ -305,7 +305,7 @@ fn render_page(
 ) -> Result<String> {
     let mut html = render(Header {
         title: Html::text("Decision Logs"),
-        subtitle: "Every authorization decision this tenant has recorded, newest first",
+        subtitle: "See who was allowed or refused access, newest first.",
         title_actions: render(IconButton {
             context: IconContext::Inline,
             id: "decision-logs-pin",
@@ -355,7 +355,7 @@ fn render_page(
     if total == 0 {
         table.empty = Some(TableEmpty::Content(Html::text(
             if state.search.is_empty() && state.filters["result"].is_empty() {
-                "No authorization decisions have been recorded in this tenant."
+                "No decisions recorded yet."
             } else {
                 "No decisions match these filters."
             },
@@ -402,7 +402,7 @@ impl Page<Scope, Error> for Pages {
             "roles" => "Roles",
             "role-create" => "Create Role",
             restrictions_web::OPERATION => "Field Restrictions",
-            crate::step_up_web::OPERATION => "Two-factor requirements",
+            crate::step_up_web::OPERATION => "2FA requirements",
             // A role page is titled by the role's name (PageBody.title).
             _ => return None,
         })

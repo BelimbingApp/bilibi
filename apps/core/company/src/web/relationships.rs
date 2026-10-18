@@ -670,7 +670,7 @@ impl RolesPage {
         }
         html.push(&render(&Header {
             title: Html::text("Relationship Roles"),
-            subtitle: "How a company in this tenant relates to an organisation or a person. A role describes the business relationship only; it grants no access.",
+            subtitle: "Set how a company can relate to other companies and people, such as vendor or customer.",
             actions: render(&Wrap {
                 class: "flex flex-wrap items-center gap-2 sm:gap-3",
                 body: actions,
@@ -796,11 +796,11 @@ impl RolesPage {
         let (title, description) = match &modal.editing {
             Some(_) => (
                 "Edit Relationship Type",
-                "Rename the role. Its code and every relationship that uses it stay as they are.",
+                "Renaming keeps the code and existing relationships.",
             ),
             None => (
                 "New Relationship Type",
-                "Define how a company relates to an organisation or a person. The role grants no access.",
+                "Add a way a company can relate to another company or a person.",
             ),
         };
         render(&Modal {
@@ -1412,7 +1412,7 @@ impl LinksPage {
                 if !modal.options.persons_readable {
                     field = field.hint("You do not have permission to list persons.");
                 } else if modal.options.persons.is_empty() {
-                    field = field.hint("No person is recorded in this tenant yet.");
+                    field = field.hint("No people have been added yet.");
                 }
                 save_disabled = modal.options.persons.is_empty();
                 fields.push(render(&field)?);
@@ -1437,9 +1437,7 @@ impl LinksPage {
                     .kind(InputKind::Select)
                     .label("Relationship Role")
                     .prompt("Select relationship role")
-                    .hint(
-                        "Read from this company's side: the related party is this to the company.",
-                    )
+                    .hint("What the related party is to this company.")
                     .options(modal.options.roles.clone())
                     .value(value("role_id"))
                     .errors(errors_for(&modal.errors, "role_id"))
@@ -1474,19 +1472,19 @@ impl LinksPage {
         let (title, description) = match &modal.editing {
             Some(entry) if modal.ending => (
                 "End Relationship".to_owned(),
-                format!("End the relationship with {} on the selected date (inclusive). Its start date and history are kept.", entry.other_name),
+                format!("The relationship with {} ends on the chosen date, inclusive; its history is kept.", entry.other_name),
             ),
             Some(entry) => (
                 "Edit Relationship Dates".to_owned(),
                 format!(
-                    "Update effective date range for relationship with {}.",
+                    "Change the dates of the relationship with {}.",
                     entry.other_name
                 ),
             ),
             None => (
                 "Add Relationship".to_owned(),
                 format!(
-                    "Establish a business relationship between {company} and another company or a person."
+                    "Link {company} to another company or a person."
                 ),
             ),
         };

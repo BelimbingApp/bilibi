@@ -96,7 +96,7 @@ impl Profile {
                 .label("Email")
                 .value(&self.email)
                 .autocomplete("email")
-                .hint("Changing this address means it needs verifying again before it is trusted.")
+                .hint("If you change it, you will need to verify it again.")
                 .errors(self.errors_for("email"))
                 .attr("data-debounce", "300"),
         )?;
@@ -113,7 +113,7 @@ impl Profile {
                         .map(|page| Choice::new(page.label, page.id))
                         .collect(),
                 )
-                .hint("Only pages you can open are listed. Leave it unset to keep the default.")
+                .hint("The page you see after signing in.")
                 .errors(self.errors_for("landing_menu_id")),
         )?;
         let view = View {
@@ -123,7 +123,7 @@ impl Profile {
             })?,
             header: render(&Header {
                 title: Html::text("Settings"),
-                subtitle: "Manage your profile and account settings",
+                subtitle: "",
                 ..Header::default()
             })?,
             entries: settings_entries(),

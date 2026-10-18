@@ -62,7 +62,7 @@ impl Editor {
                 .value(resolved.locale)
                 .options(options)
                 .wrapper_class("mb-0")
-                .hint("Sets regional formatting and the default translation language."),
+                .hint("Sets how dates and numbers look, and the default language."),
             save: render(Button {
                 id: "localization-save",
                 button_type: "submit",
@@ -93,7 +93,7 @@ impl Editor {
         Ok(render(LocalePage {
             header: render(Header {
                 title: Html::text("Language & Region"),
-                subtitle: "Set the installation locale and review where it came from.",
+                subtitle: "Set the language and regional formats for the whole system.",
                 ..Header::default()
             })?,
             cards,
@@ -165,7 +165,7 @@ struct LocalePage<'a> {
 }
 #[derive(Template)]
 #[template(
-    source = r#"{{ facts|safe }}<p class="pb-2 pt-2 text-xs text-ink-subtle">Regional support does not imply that translated product copy is installed.</p>"#,
+    source = r#"{{ facts|safe }}<p class="pb-2 pt-2 text-xs text-ink-subtle">Choosing a region does not mean the screens are translated.</p>"#,
     ext = "html"
 )]
 struct Provenance {

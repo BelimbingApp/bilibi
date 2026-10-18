@@ -349,7 +349,7 @@ impl Index {
 
         let header = render(Header {
             title: Html::text("Sessions"),
-            subtitle: "View and manage active sessions",
+            subtitle: "See who is signed in and sign them out.",
             title_actions: render(IconButton {
                 context: IconContext::Inline,
                 id: "sessions-pin",

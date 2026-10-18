@@ -218,7 +218,7 @@ impl PluginPage {
             !https,
             "plugin-https-required",
             "HTTPS setup needed",
-            "Ask your administrator to configure this installation's canonical HTTPS address before downloading the plugin.",
+            "Ask your administrator to set up this site's HTTPS address before you download the plugin.",
         )?;
         let client_required = empty(
             https && !clients.is_empty() && selected.is_none(),

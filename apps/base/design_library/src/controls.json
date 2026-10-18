@@ -375,7 +375,7 @@
     "subject": "API key",
     "autocomplete": "off",
     "wrapper_class": "mb-0",
-    "hint": "The eye shows a newly entered value for confirmation."
+    "hint": "Use the eye to check what you typed."
   },
   "design-library-stored-key": {
     "kind": "secret_input",
@@ -388,7 +388,7 @@
     "stored?": true,
     "value": "never-render-this-plaintext",
     "autocomplete": "off",
-    "hint": "Leave the mask to keep the saved value, or clear it explicitly."
+    "hint": "Leave the dots to keep the saved value, or press Clear to remove it."
   },
   "design-library-no-eye": {
     "kind": "secret_input",

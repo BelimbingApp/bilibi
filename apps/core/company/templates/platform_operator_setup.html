@@ -7,10 +7,8 @@
 {% call feedback::flash_group(messages=flash) %}{% endcall %}
 {% call ui::page(id="platform-operator-setup", variant=bilibi_ui::PageVariant::Form) %}
 {{ header|safe }}
-<p id="platform-operator-notice" class="rounded-lg border border-line bg-surface-sunken px-4 py-3 text-sm text-ink-muted">The platform operator is the party running this deployment. Its company is recorded as the operator tenant’s primary company; numeric tenant and company IDs have no special meaning.</p>
 {% if select_mode && has_companies %}<section id="platform-operator-select" class="rounded-xl border border-line bg-surface px-6 py-5">
 <h2 class="text-[11px] font-semibold uppercase tracking-wider text-ink-muted">Select Existing Company</h2>
-<p class="mt-2 text-xs text-ink-muted">Only companies already belonging to the platform-operator tenant can be selected.</p>
 <form id="platform-operator-designate-form" data-event="designate" class="mt-4 max-w-md space-y-4">{{ company|safe }}{{ designate|safe }}</form>
 <p class="mt-4 text-xs text-ink-muted">Or <button id="platform-operator-switch-create" type="button" data-event="set_mode" data-value-mode="create" class="text-action hover:underline">create a new company</button></p>
 </section>{% endif %}

@@ -284,7 +284,7 @@ async fn render_inbox(
     };
     let header = fragment(Html::render(&Header {
         title: Html::text("Notifications"),
-        subtitle: "Updates, system events, and account activity",
+        subtitle: "",
         title_actions: Html::EMPTY,
         actions,
     }))?;

@@ -35,7 +35,7 @@ setting!(
     None,
     None,
     "Private document directory",
-    "Existing absolute directory with permissions 0700, outside public/static/assets directories."
+    "A full folder path with permission 0700, outside any public web folder."
 );
 setting!(
     "artifacts.retention_days",
@@ -45,7 +45,7 @@ setting!(
     Some(1.0),
     Some(36500.0),
     "Document retention days",
-    "Required before storing documents. Applies to new documents; expiry is fixed when stored."
+    "Must be set before documents can be stored; a change applies only to new documents."
 );
 setting!(
     "artifacts.max_bytes",
@@ -65,7 +65,7 @@ setting!(
     Some(1.0),
     Some(1000.0),
     "Document purge batch size",
-    "Maximum documents considered by each owner-scoped retention call."
+    "Most expired documents removed in one cleanup pass."
 );
 setting!(
     "artifacts.purge_retry_minutes",
@@ -75,7 +75,7 @@ setting!(
     Some(1.0),
     Some(525_600.0),
     "Document purge retry interval (minutes)",
-    "Minimum wait before retention retries a document whose purge failed or was refused."
+    "Minutes to wait before retrying a document that could not be removed."
 );
 setting!(
     "artifacts.purge_max_attempts",
@@ -85,7 +85,7 @@ setting!(
     Some(1.0),
     Some(1000.0),
     "Document purge attempts before hold",
-    "Failed or refused purges after which a document is held for an operator to retry or resolve."
+    "Failed removals after which a document is held for an administrator to resolve."
 );
 setting!(
     "pdf.chromium.binary",
@@ -101,7 +101,7 @@ setting!(
         message: "must be an executable name on PATH or an absolute path"
     }),
     "PDF Chromium executable",
-    "Sandboxed Chromium executable for HTML printing."
+    "The Chromium program used to create PDFs."
 );
 setting!(
     "pdf.qpdf.binary",
@@ -117,7 +117,7 @@ setting!(
         message: "must be an executable name on PATH or an absolute path"
     }),
     "PDF qpdf executable",
-    "qpdf 10.6 or newer for AES-256 protection."
+    "The qpdf program, version 10.6 or newer, used to password-protect PDFs."
 );
 setting!(
     "pdf.qpdf.timeout_seconds",

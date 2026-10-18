@@ -508,7 +508,7 @@ impl Detail {
             id: "address-location-heading",
             title: "Geographic Location",
             title_actions: edit,
-            description: "Linked to GeoNames reference database for standardization and lookup. Country, division, postcode and locality depend on one another, so they are applied together.",
+            description: "Country, state, postcode and locality are edited together.",
             ..SectionHeading::default()
         })?;
         body.push(&render(CommitOutcome {
@@ -623,7 +623,7 @@ impl Detail {
         let mut body = render(SectionHeading {
             id: "address-provenance-heading",
             title: "Provenance",
-            description: "Tracks where this address came from and how it was processed — useful for auditing data quality and imports.",
+            description: "See where this address came from and how it was entered.",
             ..SectionHeading::default()
         })?;
         body.push(&render(Facts {
@@ -700,7 +700,7 @@ impl Detail {
             render(SectionHeading {
                 id: "address-linked-entities-heading",
                 title: "Linked Entities",
-                description: "Companies, people, or other records that use this address. One address can be shared by multiple entities with different roles (e.g., billing, shipping).",
+                description: "See which companies and people use this address.",
                 ..SectionHeading::default()
             })?
         ));

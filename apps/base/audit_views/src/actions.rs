@@ -367,7 +367,7 @@ impl Actions {
             table.empty = Some(TableEmpty::Content(Html::text(if narrowed {
                 "No action logs match the current filters."
             } else {
-                "No action logs match the current filters. Try Show Diagnostics if you are looking for Livewire or stream traffic."
+                "No action logs match the current filters. Choose Show Diagnostics to include background traffic."
             })));
         }
         let pagination = render(Pagination::new(

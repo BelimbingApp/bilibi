@@ -192,11 +192,8 @@ impl LiveState<Scope, Error> for CurrentCompany {
                 .await?;
             let body = match &read.company {
                 None => render(
-                    &EmptyState::missing(
-                        "No company yet.",
-                        "This workspace has no live company to show.",
-                    )
-                    .id("dashboard-current-company-none"),
+                    &EmptyState::missing("No company yet.", "")
+                        .id("dashboard-current-company-none"),
                 )?,
                 Some(company) => {
                     let href = format!("/companies/{}", company.id);

@@ -441,17 +441,11 @@ impl Editor {
             .collect::<Result<Vec<_>>>()?;
         let empty = if fields.is_empty() {
             let state = if plan.withheld.is_empty() && company {
-                EmptyState::missing(
-                    "No installed module contributes editable company settings.",
-                    "",
-                )
-                .id("company-settings-empty")
+                EmptyState::missing("There are no company settings to change.", "")
+                    .id("company-settings-empty")
             } else if plan.withheld.is_empty() {
-                EmptyState::missing(
-                    "No installed module contributes settings to this group.",
-                    "",
-                )
-                .id("settings-group-operator-empty")
+                EmptyState::missing("There are no settings to change here.", "")
+                    .id("settings-group-operator-empty")
             } else {
                 EmptyState::forbidden(withheld_wording(&plan.withheld))
                     .id("settings-group-operator-withheld")
@@ -462,7 +456,7 @@ impl Editor {
         };
         let header = render(Header {
             title: Html::text(TITLE),
-            subtitle: "Settings contributed by installed modules.",
+            subtitle: "",
             title_actions: render(IconButton {
                 context: IconContext::Inline,
                 id: "settings-pin",
@@ -503,7 +497,7 @@ impl Editor {
                     Some(
                         EmptyState::missing(
                             "No companies are available to manage.",
-                            "Ask an operator to review your company access.",
+                            "Ask an administrator for access to a company.",
                         )
                         .id("company-settings-no-targets"),
                     )
@@ -651,9 +645,9 @@ fn card(field: &Field, can_reveal: bool, keyed: bool, company: bool) -> Result<F
         encrypted: if !field.encrypted() {
             ""
         } else if keyed {
-            "Stored encrypted; leave the mask to keep the current value"
+            "Stored encrypted; leave it unchanged to keep the current value."
         } else {
-            "Stored encrypted; read-only until the settings encryption key is configured"
+            "Stored encrypted; read-only until an encryption key is set up."
         },
     })
 }

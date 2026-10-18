@@ -604,7 +604,7 @@ impl Show {
         let mut body = section(
             "database-table-columns-card",
             "Columns",
-            "Live column metadata from the PostgreSQL catalog.",
+            "",
             small_table(
                 &self.schema,
                 "schema_grid",
@@ -647,7 +647,7 @@ impl Show {
         body.push(&section(
             "database-table-indexes-card",
             "Indexes",
-            "Primary, unique and secondary indexes on this table.",
+            "",
             small_table(
                 &self.indexes,
                 "index_grid",
@@ -674,7 +674,7 @@ impl Show {
         body.push(&section(
             "database-table-constraints-card",
             "Constraints",
-            "Keys, checks and not-null constraints as PostgreSQL defines them.",
+            "",
             small_table(
                 &self.constraints,
                 "constraint_grid",
@@ -820,7 +820,11 @@ fn small_table(
 }
 
 fn section(id: &str, title: &str, description: &str, table: Html) -> Result<Html> {
-    let mut body = text(description, "block px-4 pt-3 pb-2 text-sm text-ink-muted")?;
+    let mut body = if description.is_empty() {
+        Html::default()
+    } else {
+        text(description, "block px-4 pt-3 pb-2 text-sm text-ink-muted")?
+    };
     body.push(&table);
     render(Card {
         id,

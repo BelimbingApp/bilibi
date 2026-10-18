@@ -713,7 +713,7 @@ Provenance { module: "base/schedule", source: file!(), line: line!() },
     default: || json!(board::KEEP_DAYS_DEFAULT), nullable: false, encrypted: false,
     minimum: Some(board::KEEP_DAYS_MIN as f64), maximum: Some(board::KEEP_DAYS_MAX as f64), validator: None,
     editor: Some(bilibi_settings::Editor { group: "Schedule", label: "Schedule history retention",
-        help: "Days of operational schedule history to retain; zero disables pruning.", capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
+        help: "Days to keep finished schedule runs; 0 keeps them all.", capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
 })) }
 inventory::submit! { Contribution::new(bilibi_module_registry::contributions::ROUTES, "schedule.board",
 Provenance { module: "base/schedule", source: file!(), line: line!() },

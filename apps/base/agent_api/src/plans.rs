@@ -372,7 +372,7 @@ plan_setting!(
     60.0,
     3600.0,
     "Agent plan lifetime",
-    "Seconds to review and commit an agent write plan."
+    "Seconds a person has to review and approve an agent's planned changes."
 );
 plan_setting!(
     "agent_api.plan_max_operations",
@@ -380,7 +380,7 @@ plan_setting!(
     1.0,
     100.0,
     "Operations per agent plan",
-    "Maximum number of writes in one reviewed plan."
+    "Most changes an agent can propose in one plan."
 );
 
 // Explicitly sort at every depth, even if another crate enables preserve_order.

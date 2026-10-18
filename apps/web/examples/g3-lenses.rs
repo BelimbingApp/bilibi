@@ -166,8 +166,7 @@ impl LensState {
         table.caption = "Reference items through Grid lenses";
         let mut html = render(Header {
             title: Html::text("Grid lenses"),
-            subtitle:
-                "Reference items projected through value, bar, band, trend and change-since lenses.",
+            subtitle: "Show each column as a value, bar, band, trend or change since a date.",
             ..Header::default()
         })?;
         html.push(&self.clock_switch());

@@ -16,7 +16,7 @@ const COPY: PageCopy = PageCopy {
         "Sign in on this Bilibi installation, review the connection and its end date. ChatGPT never needs your Bilibi password in a message.",
         "Start a new chat, select Bilibi with @, and ask it to find a record you can access.",
     ],
-    download_note: "The ZIP contains Bilibi's skills and this server's public connection configuration. Give it to your workspace administrator for a company marketplace, or install it through a supported local marketplace. For a private connection, configure Tunnel separately in ChatGPT; the ZIP does not create a tunnel.",
+    download_note: "The ZIP holds Bilibi's skills and connection settings; give it to your ChatGPT administrator. It does not set up a private tunnel.",
     public: &[
         "Your administrator makes this server's HTTPS address reachable from ChatGPT and registers its OAuth callback in Bilibi.",
         "In Add custom MCP server, enter the Server URL above. Choose OAuth and the registered Client ID, with no client secret.",
@@ -31,7 +31,7 @@ const COPY: PageCopy = PageCopy {
         "In Add custom MCP server, choose Tunnel and select the company tunnel or enter the tunnel ID your administrator provides. Configure the registered OAuth client.",
         "Use the LAN or VPN for Bilibi sign-in. Your administrator must verify login and token exchange as well as MCP; the tunnel does not automatically expose every OAuth endpoint.",
     ],
-    private_note: "Your computer's VPN alone does not give hosted ChatGPT access. The administrator-configured tunnel uses outbound HTTPS. This page does not create or test a tunnel.",
+    private_note: "A VPN on your computer does not let ChatGPT reach Bilibi; your administrator must set up a tunnel, which this page does not do.",
     private_guide: GuideLink {
         label: "OpenAI private connection guide",
         href: "https://developers.openai.com/api/docs/guides/secure-mcp-tunnels",

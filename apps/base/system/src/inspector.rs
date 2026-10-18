@@ -165,8 +165,13 @@ impl Inspector {
         }
         let mut body = render(Header {
             title: Html::text("Menu Inspector"),
-            subtitle: "Every registered menu item with its source, parent, capability, route, and whether this actor may use it",
-            title_actions: render(IconButton { id: "menu-inspector-pin", context: IconContext::Inline, nav_pin: "nav-admin-system-menu-inspector", ..IconButton::new("bilimbi-pin", "Pin Menu Inspector to sidebar") })?,
+            subtitle: "See every menu item and whether you can use it.",
+            title_actions: render(IconButton {
+                id: "menu-inspector-pin",
+                context: IconContext::Inline,
+                nav_pin: "nav-admin-system-menu-inspector",
+                ..IconButton::new("bilimbi-pin", "Pin Menu Inspector to sidebar")
+            })?,
             ..Header::default()
         })?;
         let mut options = vec![Choice::new("All sources", "")];

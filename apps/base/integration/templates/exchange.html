@@ -13,7 +13,7 @@
 {{ facts|safe }}
 {% endcall %}
 {% call ui::card(id="exchange-payload-card", inner_class="p-5 sm:p-6", role="region", labelledby="exchange-payload-heading") %}
-{% call ui::section_heading(title="Retained payload", id="exchange-payload-heading", description="Bodies and headers are omitted by default. Retained structured previews are redacted and expire after the configured retention period.") %}{% endcall %}
+{% call ui::section_heading(title="Retained payload", id="exchange-payload-heading", description="A preview with sensitive values hidden is kept for a limited time.") %}{% endcall %}
 {% if can_payload %}{% call ui::button(id="exchange-view-payload", button_type="button", event="payload") %}Inspect retained payload{% endcall %}{% else %}{% call lists::empty_state(e=payload_restricted) %}{% endcall %}{% endif %}
 {% if let Some(payload) = payload %}<pre id="exchange-payload" class="overflow-x-auto bg-surface-sunken p-2 text-xs">{{ payload }}</pre>{% endif %}
 {% endcall %}

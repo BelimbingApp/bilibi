@@ -14,7 +14,7 @@
                   </div>
                 </form>
                 {% if self.state.kept.is_empty() %}
-                <p id="design-library-file-kept-empty" class="mt-4 text-sm text-ink-muted">Nothing has been kept yet. The facts below name each delivered file, its size and the SHA-256 of the bytes the page received; the bytes themselves stay in this page's memory until it closes.</p>
+                <p id="design-library-file-kept-empty" class="mt-4 text-sm text-ink-muted">No files kept yet.</p>
                 {% else %}
                 <ul id="design-library-file-kept" class="mt-4 divide-y divide-line text-sm">
                   {% for file in self.state.kept %}

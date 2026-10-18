@@ -97,14 +97,14 @@ pub fn render(stored: &Stored, flash: FlashMap<'_>) -> Result<String, Error> {
         }))?,
         header: fragment(Html::render(&Header {
             title: Html::text("Settings"),
-            subtitle: "Manage your profile and account settings",
+            subtitle: "",
             title_actions: Html::EMPTY,
             actions: Html::EMPTY,
         }))?,
         entries: settings_entries(),
         current: "appearance".into(),
         heading: "Appearance Settings",
-        subheading: "Choose how Bilibi looks and formats content for your account.",
+        subheading: "Choose your theme, language and time zone.",
         themes: THEME_CHOICES
             .map(|(value, label, detail)| ThemeChoice {
                 value,
@@ -128,8 +128,7 @@ pub fn render(stored: &Stored, flash: FlashMap<'_>) -> Result<String, Error> {
                         .into_iter()
                         .map(|(label, code)| Choice::new(label, code))
                         .collect(),
-                )
-                .hint("Sets your preferred language and region for this account."),
+                ),
         ))?,
         timezone: fragment(Html::render(
             &Field::named("appearance[timezone_mode]")
@@ -142,7 +141,7 @@ pub fn render(stored: &Stored, flash: FlashMap<'_>) -> Result<String, Error> {
                         .map(|(value, label)| Choice::new(label, value))
                         .into(),
                 )
-                .hint("How dates and times render for this account: your company's time zone, this device's local time zone, or stored UTC.")
+                .hint("Show dates and times in your company's time zone, this device's time zone, or UTC.")
                 .wrapper_class("mb-0"),
         ))?,
     };

@@ -157,7 +157,7 @@ struct ScopeCell {
 
 #[derive(Template)]
 #[template(
-    source = r#"<span class="tabular-nums text-ink-muted">{% if grant_all %}<span title="A grant-all role carries every capability, present and future">All</span>{% else %}{{ count }}{% endif %}</span>"#,
+    source = r#"<span class="tabular-nums text-ink-muted">{% if grant_all %}<span title="This role can do everything, including anything added later.">All</span>{% else %}{{ count }}{% endif %}</span>"#,
     ext = "html"
 )]
 struct CapabilityCountCell {
@@ -237,7 +237,7 @@ impl Pages {
         };
         let mut html = render(Header {
             title: Html::text("Roles"),
-            subtitle: "System roles ship with the platform; custom roles belong to this tenant",
+            subtitle: "System roles come built in; custom roles are your own.",
             title_actions: render(IconButton {
                 context: IconContext::Inline,
                 id: "roles-pin",
@@ -276,7 +276,7 @@ impl Pages {
         if page.total_entries == 0 {
             table.empty = Some(TableEmpty::Content(Html::text(
                 &if state.search.is_empty() {
-                    "No roles are visible in this tenant.".to_owned()
+                    "No roles to show.".to_owned()
                 } else {
                     format!("No roles match {}.", state.search)
                 },
@@ -341,7 +341,7 @@ impl Pages {
 
 #[derive(Template)]
 #[template(
-    source = r#"{% if grant_all %}<p id="role-grant-all" class="mt-1 text-xs text-ink-subtle">This role grants every capability, including ones added by modules installed later. Individual grants below are therefore not the whole story.</p>{% endif %}{% if !capabilities.is_empty() %}<ul id="role-capabilities" class="mt-2 flex flex-wrap gap-1.5">{% for capability in capabilities %}<li class="rounded-md bg-surface-sunken px-2 py-1 font-mono text-xs text-ink-muted">{{ capability }}</li>{% endfor %}</ul>{% elif !grant_all %}<p class="mt-2 rounded-xl border border-line bg-surface px-4 py-6 text-center text-sm text-ink-muted">This role grants no capabilities.</p>{% endif %}"#,
+    source = r#"{% if grant_all %}<p id="role-grant-all" class="mt-1 text-xs text-ink-subtle">This role can do everything, including anything added later.</p>{% endif %}{% if !capabilities.is_empty() %}<ul id="role-capabilities" class="mt-2 flex flex-wrap gap-1.5">{% for capability in capabilities %}<li class="rounded-md bg-surface-sunken px-2 py-1 font-mono text-xs text-ink-muted">{{ capability }}</li>{% endfor %}</ul>{% elif !grant_all %}<p class="mt-2 rounded-xl border border-line bg-surface px-4 py-6 text-center text-sm text-ink-muted">This role grants no permissions.</p>{% endif %}"#,
     ext = "html"
 )]
 struct CapabilityList<'a> {
@@ -469,9 +469,7 @@ fn render_role(
     principals.add_query = &columns.add_query;
     principals.caption = "Principals";
     if details.principals.is_empty() {
-        principals.empty = Some(TableEmpty::Content(Html::text(
-            "Nobody in this tenant holds this role.",
-        )));
+        principals.empty = Some(TableEmpty::Content(Html::text("Nobody has this role yet.")));
     }
     html.push(&section(
         "role-principals-heading",
@@ -524,7 +522,6 @@ fn render_create(
         .prompt("Select a company")
         .options(choices(&options))
         .value(role.company_id.map(|id| id.to_string()).unwrap_or_default())
-        .hint("The owning company keeps this custom role inside the current tenant.")
         .errors(errors.company_id.clone());
     let mut html = render(FlashGroup {
         id: "flash-group",
@@ -535,7 +532,7 @@ fn render_create(
     })?;
     html.push(&render(Header {
         title: Html::text("Create Role"),
-        subtitle: "A custom role owned by a company in your tenant",
+        subtitle: "Create a role for one of your companies.",
         actions: render(BackLink {
             href: "/authz/roles",
             id: "role-back",
@@ -550,7 +547,7 @@ fn render_create(
         code: render(
             field("code", "Code", &role.code, &errors.code)
                 .placeholder("billing_manager")
-                .hint("Lowercase letters, digits and underscores. Unique within this tenant."),
+                .hint("Lowercase letters, digits and underscores; must be unique."),
         )?,
         description: render(
             field(

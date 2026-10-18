@@ -504,8 +504,7 @@ impl Departments {
                     .collect(),
             );
         if options.is_empty() {
-            head =
-                head.hint("No one is affiliated with this company yet, so no head can be chosen.");
+            head = head.hint("Add people to this company before choosing a head.");
         }
         render(&HeadFormView { head })
     }
@@ -704,10 +703,7 @@ impl Departments {
                 errors,
                 types,
             }) => {
-                let description = format!(
-                    "Select an available department type to establish in {}.",
-                    shown.name
-                );
+                let description = format!("Choose a department type to add to {}.", shown.name);
                 render(&Modal {
                     id: "department-modal",
                     title: "Add Department",

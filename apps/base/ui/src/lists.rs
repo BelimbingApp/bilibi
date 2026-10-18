@@ -428,7 +428,7 @@ impl EmptyState {
         match &self.mode {
             EmptyMode::Missing { reason, .. } if reason.is_empty() => vec![],
             EmptyMode::Missing { reason, .. } => vec![reason],
-            EmptyMode::Forbidden(_) => vec!["Ask an operator to review your role."],
+            EmptyMode::Forbidden(_) => vec!["Ask your administrator if you need access."],
         }
     }
 }

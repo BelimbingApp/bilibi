@@ -10,6 +10,6 @@
 <div id="design-library-long-modal-text" class="mt-4 space-y-3 text-sm text-ink">{% for n in long_paragraphs %}<p>Clause {{ n }}. The parties agree that this paragraph exists to make the dialog body taller than the viewport, so the body scrolls inside the rounded surface while the title stays attached to the top of the content.</p>{% endfor %}</div>
 <div class="mt-5 flex justify-end gap-2">{% call ui::button(button_type="button", variant=bilibi_ui::ButtonVariant::Primary, event="close-modal") %}Close{% endcall %}</div>
 {% endcall %}</template>
-<template id="tpl-flash-modal">{% call d::modal(id="design-library-flash-modal", title="Dialog that owns the flash", cancel_event="close-modal", description="The page behind is inert, so the flash renders in here.", owns_flash=true, messages=flash_in_dialog) %}
+<template id="tpl-flash-modal">{% call d::modal(id="design-library-flash-modal", title="Dialog that owns the flash", cancel_event="close-modal", description="Messages for this dialog appear inside it.", owns_flash=true, messages=flash_in_dialog) %}
 <div class="mt-5 flex justify-end gap-2">{% call ui::button(button_type="button", variant=bilibi_ui::ButtonVariant::Primary, event="close-modal") %}Close{% endcall %}</div>
 {% endcall %}</template>

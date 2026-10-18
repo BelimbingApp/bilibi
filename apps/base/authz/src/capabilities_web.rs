@@ -98,7 +98,7 @@ pub(crate) fn view(state: &mut ListState, columns: &ListColumns) -> Result<Strin
     let page = state.paginate(&all);
     let mut html = render(Header {
         title: bilibi_ui::Html::text("Capabilities"),
-        subtitle: "All registered capability keys and their source modules",
+        subtitle: "",
         title_actions: render(IconButton {
             context: IconContext::Inline,
             id: "capabilities-pin",

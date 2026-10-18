@@ -556,8 +556,8 @@ impl Screen {
         table.caption = "Field Restrictions";
         if self.restrictions.is_empty() {
             table.empty = Some(TableEmpty::State(EmptyState::missing(
-                "No field is restricted in this tenant",
-                "Every role sees every field. Use Restrict fields to hide some from the roles that should not see them.",
+                "No fields are restricted",
+                "Use Restrict fields to hide fields from some roles.",
             )));
         }
         let flash = self.flash_map();

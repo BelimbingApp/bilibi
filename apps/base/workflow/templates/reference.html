@@ -10,7 +10,7 @@
 <div data-shared-ui>
 {% call feedback::flash_group(messages=flash) %}{% endcall %}
 {% call ui::page(id="workflow-reference-page", variant=bilibi_ui::PageVariant::Detail) %}
-{% call ui::header(subtitle="A generic review subject exercises status, durable work, human actions and history.") %}Workflow reference{% endcall %}
+{% call ui::header(subtitle="Try a sample review: act on it and watch its status and history change.") %}Workflow reference{% endcall %}
 <section id="workflow-reference-actions" class="mt-6">
 {% call ui::section_heading(id="workflow-reference-actions-heading", title="Available actions") %}{% endcall %}
 {% if let Some(failure) = failure %}{% call feedback::panel_notice(id="workflow-reference-failure", kind=bilibi_ui::NoticeKind::Error, dismiss_event="clear_failure", class="mb-4") %}{{ failure }}{% endcall %}{% endif %}

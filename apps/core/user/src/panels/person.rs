@@ -254,7 +254,7 @@ impl PersonAccounts {
             id: &self.dom("heading"),
             title: "Accounts",
             count: Some(arranged.len()),
-            description: "The accounts that sign in as this person. An account signs in under one of the person's affiliations; not every person needs an account.",
+            description: "The accounts this person signs in with.",
             ..SectionHeading::default()
         })?;
         let card = render(&Card {

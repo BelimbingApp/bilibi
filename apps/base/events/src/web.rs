@@ -293,8 +293,7 @@ impl Index {
         }
         let header = render(Header {
             title: Html::text("Events"),
-            subtitle:
-                "Subscribers in this tenant, the last event each was handed and what it missed",
+            subtitle: "Check that each part of the system has received its events.",
             title_actions: render(IconButton {
                 context: IconContext::Inline,
                 id: "events-pin",
@@ -405,7 +404,7 @@ impl Index {
         table.actions = can_replay;
         if counts.total_entries == 0 {
             table.empty = Some(TableEmpty::Content(Html::text(if search.is_empty() {
-                "No subscriber is mounted and no deliveries are recorded in this tenant."
+                "No event deliveries yet."
             } else {
                 "No subscribers match this search."
             })));
@@ -429,7 +428,7 @@ impl Index {
                     request.subscriber, request.from
                 );
                 let detail = format!(
-                    "{} events it never received get a delivery and {} pending deliveries are queued again. Events already delivered to it are skipped, so repeating this is safe. The subscriber acts on each event as if it had just been recorded.",
+                    "{} missed events will be sent and {} waiting deliveries retried. Events it already has are skipped, so this is safe to repeat. It will act on each event as if it just happened.",
                     request.missed, request.pending
                 );
                 render(ConfirmDialog {

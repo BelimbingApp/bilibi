@@ -28,7 +28,7 @@
 {% call ui::fact(title="Returns to") %}{{ request.redirect_uri }}{% endcall %}
 {% endcall %}
 <p class="text-sm text-muted">
-  This app acts as you in your current company. It can read records and request supported changes within your permissions. Review and approve each write in the app before it commits. You can revoke this connection in Your connections.
+  This app works as you in your current company: it can read what you can read and suggest changes you approve one by one. You can revoke it in Your connections.
 </p>
 <p id="oauth-connection-end" class="text-sm text-muted">
   Connection ends {% if let Some(end) = expiry %}{% call time::datetime(instant=end) %}{% endcall %}{% endif %}.

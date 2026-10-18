@@ -29,20 +29,20 @@ inventory::submit! { Contribution::new(VOCABULARY, "core/agent_access", provenan
 
 inventory::submit! { Contribution::new(DEFINITIONS, crate::CONNECTION_DAYS, provenance!(), &Setting::Definition(Definition {
     value_type: ValueType::Integer, scopes: GLOBAL, default: || json!(90), nullable: false, encrypted: false, minimum: Some(1.0), maximum: Some(365.0), validator: None,
-    editor: Some(Editor { group: "Agent access", label: "Agent connection length (days)", help: "Length of new device and OAuth connections. Existing connections keep their end dates.", capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
+    editor: Some(Editor { group: "Agent access", label: "Agent connection length (days)", help: "How long new agent connections last; existing ones keep their end dates.", capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
 })) }
 inventory::submit! { Contribution::new(DEFINITIONS, crate::OAUTH_CLIENTS, provenance!(), &Setting::Definition(Definition {
     value_type: ValueType::Array, scopes: GLOBAL, default: || json!({}), nullable: false, encrypted: false, minimum: None, maximum: None,
     validator: Some(Validator { accepts: crate::valid_clients, message: "Use client IDs mapped to a name and non-empty HTTPS redirect_uris list." }),
-    editor: Some(Editor { group: "Agent access", label: "OAuth public clients", help: "Client IDs mapped to name and exact HTTPS redirect_uris. Register ChatGPT's callback here before connecting MCP.", capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
+    editor: Some(Editor { group: "Agent access", label: "OAuth public clients", help: "Each client ID with its name and exact HTTPS callback addresses; add ChatGPT's here before connecting it.", capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
 })) }
 inventory::submit! { Contribution::new(DEFINITIONS, crate::AUTHORIZATION_CODE_SECONDS, provenance!(), &Setting::Definition(Definition {
     value_type: ValueType::Integer, scopes: GLOBAL, default: || json!(120), nullable: false, encrypted: false, minimum: Some(30.0), maximum: Some(600.0), validator: None,
-    editor: Some(Editor { group: "Agent access", label: "OAuth authorization code lifetime", help: "Seconds for a public client to redeem a consented authorization code with PKCE.", capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
+    editor: Some(Editor { group: "Agent access", label: "OAuth authorization code lifetime", help: "Seconds an app has to use its sign-in code after you approve it.", capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
 })) }
 inventory::submit! { Contribution::new(DEFINITIONS, crate::OAUTH_REQUESTS_PER_MINUTE, provenance!(), &Setting::Definition(Definition {
     value_type: ValueType::Integer, scopes: GLOBAL, default: || json!(60), nullable: false, encrypted: false, minimum: Some(1.0), maximum: Some(10_000.0), validator: None,
-    editor: Some(Editor { group: "Agent access", label: "OAuth requests per minute", help: "Maximum device or token requests per sender address per minute on each host node.", capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
+    editor: Some(Editor { group: "Agent access", label: "OAuth requests per minute", help: "Most connection requests one address can make per minute, on each server.", capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
 })) }
 
 // Audit never receives a digest from this module, and the policy also masks the

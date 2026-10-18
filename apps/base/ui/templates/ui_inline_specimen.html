@@ -3,8 +3,8 @@
 {#- Built from shared components only, so the legacy compatibility sheet stops here. -#}
 <div data-shared-ui>
 {% call ui::page(id="inline-reference", variant=bilibi_ui::PageVariant::Detail, class="p-6") %}
-{% call ui::header(subtitle="Read-first text, choice and long-text facts") %}Inline editing specimen{% endcall %}
-<p class="mb-4 text-sm text-ink-muted">This manual specimen stores changes in memory for this tenant until the process stops. Open it in two tabs for conflicting edits. Name requires at least three characters. Unavailable is rejected. Enter server-error in any text fact to demonstrate a failed write.</p>
+{% call ui::header(subtitle="Click a value to edit it.") %}Inline editing specimen{% endcall %}
+<p class="mb-4 text-sm text-ink-muted">Changes are kept until the server restarts. Open this page in two tabs to see two people editing at once. Name needs at least three characters, Unavailable is refused, and server-error in any text field shows a failed save.</p>
 {% call ui::card(inner_class="p-4") %}
 {% call ui::facts() %}
 {% call ui::fact(title="Name") %}{% call inline::inline_edit(field=name.field) %}{% endcall %}{% endcall %}

@@ -62,7 +62,7 @@ macro_rules! setting {
 inventory::submit! { Contribution::new(DEFINITIONS, ENABLED, provenance!(), &Setting::Definition(Definition {
     value_type: ValueType::Boolean, scopes: &[ScopeKind::Global], default: || json!(true), nullable: false, encrypted: false,
     minimum: None, maximum: None, validator: None,
-    editor: Some(Editor { group: "Performance", label: "Performance history", help: "Record redacted performance history.", capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
+    editor: Some(Editor { group: "Performance", label: "Performance history", help: "Keep a history of how fast pages and jobs run.", capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
 })) }
 setting!(
     MINIMUM_DURATION_MS,
@@ -71,7 +71,7 @@ setting!(
     0.0,
     60_000.0,
     "Minimum duration",
-    "Ignore faster observations."
+    "Do not record anything faster than this, in milliseconds."
 );
 setting!(
     SAMPLE_RATE,
@@ -80,7 +80,7 @@ setting!(
     0.0,
     1.0,
     "Sample rate",
-    "Fraction of eligible observations to retain."
+    "Share of requests to record, from 0 to 1."
 );
 setting!(
     SLOW_THRESHOLD_MS,
@@ -89,7 +89,7 @@ setting!(
     1.0,
     3_600_000.0,
     "Slow threshold",
-    "Threshold used by regression diagnostics."
+    "Anything slower than this, in milliseconds, counts as slow."
 );
 setting!(
     KEEP_DAYS,
@@ -98,7 +98,7 @@ setting!(
     1.0,
     3650.0,
     "History retention",
-    "Maximum history age in days."
+    "Days to keep history."
 );
 setting!(
     MAX_ROWS,
@@ -107,7 +107,7 @@ setting!(
     1_000.0,
     1_000_000.0,
     "History row limit",
-    "Maximum retained observations."
+    "Most records to keep."
 );
 
 inventory::submit! {
