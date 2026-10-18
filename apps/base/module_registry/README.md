@@ -16,8 +16,9 @@ and version. `build.rs` compiles those facts in from
 writes; without a pin only the Platform commit is known. It checks the pin
 against the checkouts it compiles, and a pin that names another set of
 containers, another Platform version, or other commits than the Platform and
-Domain checkouts are at is reported stale rather than shown. The host passes the same `MODULES` lists it gives
-`verify_composition`. The scheme is `docs/versions.md`.
+Domain checkouts are at is reported stale rather than shown. The host passes
+the same `MODULES` lists it gives `verify_composition`. The scheme is
+`docs/versions.md`.
 
 Deep modules register `Module` descriptors and `Contribution::new` entries with
 `inventory`. Use these contracts rather than adding host-owned module lists or
