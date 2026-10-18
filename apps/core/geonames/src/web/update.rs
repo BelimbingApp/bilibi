@@ -14,9 +14,7 @@ use bilibi_ui::{
 use std::sync::Mutex;
 use tokio::sync::broadcast;
 
-/// The import's reports, and whether a dataset that names countries landed
-/// with no country imported yet.
-type Outcome = std::result::Result<(Vec<DatasetReport>, bool), ImportError>;
+type Outcome = std::result::Result<Vec<DatasetReport>, ImportError>;
 
 /// What one screen's Update refreshes and how it names it.
 pub(crate) struct Spec {
@@ -69,11 +67,8 @@ impl Update {
         };
         self.updating = false;
         match outcome {
-            Ok((reports, no_countries)) => {
-                let (kind, mut message) = self.message(&reports);
-                if no_countries {
-                    message.push_str(" Countries are not imported yet, so each division shows its country code only; update Countries to add country names and the country filter.");
-                }
+            Ok(reports) => {
+                let (kind, message) = self.message(&reports);
                 flash.put(kind, message);
                 true
             }
@@ -107,7 +102,6 @@ impl Update {
         drop(client);
         self.updating = true;
         let importer = pages.importer.clone();
-        let geonames = pages.geonames.clone();
         let dataset = self.spec.dataset;
         let scope = scope.clone();
         let tenant = scope.tenant();
@@ -118,18 +112,7 @@ impl Update {
                 datasets: vec![dataset],
                 ..ImportOptions::default()
             };
-            let report = match importer.run_as(&scope, &options).await {
-                Ok(reports) => {
-                    // Only a hint: a failed count leaves the message plain.
-                    let no_countries = dataset != Dataset::Countries
-                        && geonames
-                            .page_countries(&crate::IndexQuery::default())
-                            .await
-                            .is_ok_and(|page| page.total_entries == 0);
-                    Ok((reports, no_countries))
-                }
-                Err(error) => Err(error),
-            };
+            let report = importer.run_as(&scope, &options).await;
             *outcome
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(report);

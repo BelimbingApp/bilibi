@@ -152,8 +152,6 @@ flash, never a page-clearing error.
   (operators; Belimbing's Admin1 `update`, absent from Bilimbi) runs the same
   background import for the Admin1 dataset: GeoNames' whole
   `admin1CodesASCII.txt`, every country's divisions, with the same report.
-  It does not import countries; when none are imported the message says so,
-  since the rows then show only their country code and the filter is empty.
 - **Postcodes**: the per-country totals card with its own sort, the index
   with a `Local` badge on operator rows, an inline place-name correction
   that carries the row's revision in the fact's id (`{id}|{revision}`), the
