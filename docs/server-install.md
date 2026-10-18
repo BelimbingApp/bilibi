@@ -133,6 +133,8 @@ This copies the program to `/opt/bilibi/build/bin/bilibi-installer`, owned by ro
 
 The installer reads the instance's `env` for its database and port, and copies releases only from another instance's folder on this machine (the one named in "Install releases tested on"). Downloading a release from another machine is a later piece.
 
+The installer unit is skipped quietly while `/opt/bilibi/build/bin/bilibi-installer` does not exist, so starting `bilibi@<instance>` before you have run `installer` does not make it fail and retry.
+
 ## The first account
 
 A fresh database has no accounts, so nobody can sign in. `create-owner` creates the first one: the server owner, a Core Administrator of the organisation that runs this server (the platform operator). Run it once, after the first release is in service:

@@ -7,6 +7,8 @@ Description=Bilibi installer for instance %i
 Documentation=https://github.com/BelimbingApp/bilibi/blob/main/apps/installer/README.md
 After=network-online.target postgresql.service
 Wants=network-online.target
+# bilibi@ pulls this unit in: skip it quietly until the installer program is in place.
+ConditionFileIsExecutable=/opt/bilibi/build/bin/bilibi-installer
 # After a reboot in the middle of a job this starts first, so it can stop the
 # instance again before the old program takes any entry.
 Before=bilibi@%i.service
