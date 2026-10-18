@@ -228,40 +228,37 @@ pub async fn past_pause(client: &impl GenericClient, tenant: i64, job: i64) -> R
         .await?
         .get(0))
 }
-/// When the backup that Undo would restore was taken, and how many audited
-/// changes were entered after it (those would be lost). The job's result
-/// names the time (`backup_at`); otherwise the backup step's start is it.
-/// `None` when no time is known, so no honest count exists.
-pub struct Lost {
-    pub since: String,
-    pub count: i64,
-}
-pub async fn lost_since_backup(
+/// When the backup that Undo would restore was taken: the job's result
+/// names it (`backup_at`); otherwise the backup step's start is it. `None`
+/// when no time is known.
+pub async fn backup_time(
     client: &impl GenericClient,
     tenant: i64,
     job: &Job,
-) -> Result<Option<Lost>> {
-    let since = match job.result.as_ref().and_then(|r| r["backup_at"].as_str()) {
-        Some(at) => Some(at.to_owned()),
-        None => client
-            .query_opt(
-                &format!("SELECT to_char(started_at AT TIME ZONE 'UTC', {TIME}) FROM base_software_steps WHERE tenant_id=$1 AND job_id=$2 AND key='backup' AND started_at IS NOT NULL"),
-                &[&tenant, &job.id],
-            )
-            .await?
-            .map(|row| row.get::<_, String>(0)),
-    };
-    let Some(since) = since else {
-        return Ok(None);
-    };
-    let count: i64 = client
+) -> Result<Option<String>> {
+    if let Some(at) = job.result.as_ref().and_then(|r| r["backup_at"].as_str()) {
+        return Ok(Some(at.to_owned()));
+    }
+    Ok(client
+        .query_opt(
+            &format!("SELECT to_char(started_at AT TIME ZONE 'UTC', {TIME}) FROM base_software_steps WHERE tenant_id=$1 AND job_id=$2 AND key='backup' AND started_at IS NOT NULL"),
+            &[&tenant, &job.id],
+        )
+        .await?
+        .map(|row| row.get::<_, String>(0)))
+}
+/// How many audited changes were entered after `since`, which a restore of
+/// the backup taken then would lose. The software jobs' own records do not
+/// count. Counted when asked; it changes as people work, so it is shown and
+/// recorded but never part of what a confirmation is bound to.
+pub async fn changes_since(client: &impl GenericClient, tenant: i64, since: &str) -> Result<i64> {
+    Ok(client
         .query_one(
             "SELECT count(*) FROM base_audit_mutations WHERE tenant_id=$1 AND occurred_at > $2::text::timestamptz AND auditable_type NOT LIKE 'base/software.%'",
             &[&tenant, &since],
         )
         .await?
-        .get(0);
-    Ok(Some(Lost { since, count }))
+        .get(0))
 }
 /// The plug-ins switched on, as the status answer shows them.
 pub async fn plugins_json(client: &impl GenericClient, tenant: i64) -> Result<Vec<Value>> {

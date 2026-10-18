@@ -659,15 +659,17 @@ pub fn undo_facts(job: &Job) -> std::result::Result<UndoFacts, String> {
         backup_at: result["backup_at"].as_str().map(str::to_owned),
     })
 }
-/// Taking back the newest finished change or install. `lost` is what the
-/// audit trail counts since the backup (`jobs::changes_since`), when a
-/// backup would be restored.
+/// A stored UTC time as plain words, like `2026-10-19 08:30:00 UTC`.
+pub fn utc_text(at: &str) -> String {
+    at.replace('T', " ").replace('Z', " UTC")
+}
+/// Taking back the newest finished change or install.
 pub fn undo(
     instance: &Instance,
     active: Option<&Job>,
     last: Option<&Job>,
     named: Option<&Job>,
-    lost: Option<&Value>,
+    backup_at: Option<&str>,
     input: &Value,
 ) -> Result<Review> {
     busy(active)?;
@@ -698,18 +700,16 @@ pub fn undo(
         }
     }
     let facts = undo_facts(last).map_err(|why| SoftwareError::field("job", &why))?;
-    let loss = if facts.restores_backup {
-        let since = facts.backup_at.as_deref().unwrap_or("before the change");
-        match lost {
-            Some(lost) => format!(
-                "This also restores the backup taken at {since} (UTC) before job {}. {}",
-                last.id,
-                loss_sentence(lost)
-            ),
-            None => format!("This also restores the backup taken at {since} (UTC) before job {}. Anything entered since then is lost.", last.id),
-        }
-    } else {
-        "Your data stays as it is.".into()
+    let loss = match (facts.restores_backup, backup_at) {
+        (false, _) => "Your data stays as it is.".to_owned(),
+        (true, Some(at)) => format!(
+            "Bilibi restores the backup from {}; anything entered since then is lost.",
+            utc_text(at)
+        ),
+        (true, None) => format!(
+            "Bilibi restores the backup taken before job {}; anything entered since then is lost.",
+            last.id
+        ),
     };
     let summary = format!(
         "{}: undo job {} (back to release {} from {})",
@@ -728,7 +728,7 @@ pub fn undo(
         "backup_at": facts.backup_at,
         "lost": lost,
         "loss": loss,
-        "loss_count": lost.filter(|_| facts.restores_backup).map(|l| l.count),
+        "backup_at": backup_at.filter(|_| facts.restores_backup),
         "pause_minutes": PAUSE_MINUTES,
         "what_happens": format!("{} pauses for about {PAUSE_MINUTES} minute, switches back to release {} and checks that it works.", instance.label, facts.previous_release),
         "steps": jobs::undo_steps(facts.restores_backup).iter().map(|s| json!({"seq": s.seq, "key": s.key, "label": s.label, "pauses": s.pauses})).collect::<Vec<_>>(),

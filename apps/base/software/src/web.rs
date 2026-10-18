@@ -779,7 +779,7 @@ impl View {
         };
         let history_card = self.history_card(display, status)?;
         let dialog = match &self.dialog {
-            Some(Dialog::Review(review)) => self.review_dialog(instance, review)?,
+            Some(Dialog::Review(review)) => self.review_dialog(instance, status, review)?,
             Some(Dialog::Cancel { job, running }) => {
                 let consequence = if *running {
                     format!("Stop job {job}?")
@@ -1484,7 +1484,7 @@ impl View {
 
     /// The review the person confirms: the instance first, then what changes,
     /// the warnings, what will happen, and the code field.
-    fn review_dialog(&self, instance: &Instance, review: &Review) -> Result<Html> {
+    fn review_dialog(&self, instance: &Instance, status: &Value, review: &Review) -> Result<Html> {
         let facts = &review.facts;
         let label = instance.label.as_str();
         let banner = instance
@@ -1639,6 +1639,33 @@ impl View {
             .flatten()
             .map(|w| (StatusKind::Warning, text(w).to_owned()))
             .collect();
+        if review.kind == Kind::Undo {
+            if let (Some(count), Some(at)) = (
+                status["undo"]["loss_count"].as_u64(),
+                facts["backup_at"].as_str(),
+            ) {
+                let (changes, verb) = if count == 1 {
+                    ("1 change entered", "is")
+                } else {
+                    ("changes entered", "are")
+                };
+                let counted = if count == 1 {
+                    changes.to_owned()
+                } else {
+                    format!("{count} {changes}")
+                };
+                warnings.insert(
+                    0,
+                    (
+                        StatusKind::Warning,
+                        format!(
+                            "About {counted} since {} {verb} lost (counted just now).",
+                            crate::review::utc_text(at)
+                        ),
+                    ),
+                );
+            }
+        }
         if review.kind == Kind::Install && instance.role == bilibi_system::Role::Production {
             // The review's own Production warning is the first; it is drawn as an error so it reads as the alert it is.
             if let Some(first) = warnings.first_mut() {

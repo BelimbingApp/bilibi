@@ -55,7 +55,7 @@ All six go through Agent API (`apps/base/agent_api/README.md`): reads are called
 | `base.software.catalogue` | read | none | the catalogue, with the Platform versions each Domain release was tested on; or `available: false` and why |
 | `base.software.change` | write, Dev only | `domains` (the full wanted set; a mounted Domain left out is removed), optional `platform`, `plugins`, `switch` | the change list (add, update, downgrade, remove, keep; plug-ins switched on or off), whether every version was tested together on that Platform, warnings, a rough estimate, what happens, the steps |
 | `base.software.install` | write, Staging and Production | `release` (a number the source reports as tested), optional `switch` | the source, the checks the installer makes, the pause |
-| `base.software.undo` | write | optional `job` | which release it goes back to; whether the backup is restored, and then what is lost, counted: "so far 15 changes across every company on this server (12 to finance/ledger.entry, 3 to finance/payables.bill)" (`lost`, `loss`) |
+| `base.software.undo` | write | optional `job` | which release it goes back to, and whether the backup is restored and later entries lost (`loss` names the backup's `backup_at`: the job result's, or the `backup` step's start; no count, since a count changes with every write and a confirmation is bound to the review. `status.undo.loss_count` is the audited changes since `backup_at`, counted at each read; the committed job's review records `lost_at_commit`) |
 | `base.software.cancel` | write, no 2FA | optional `job` | removed from the queue, or asked to stop before the pause; refused once the pause started |
 
 Rules the reviews enforce, each as a field error that says what to do:

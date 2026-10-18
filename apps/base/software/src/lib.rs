@@ -146,14 +146,17 @@ impl Software {
         let undo = match jobs::last_done(&**client, tenant).await? {
             Some(done) if active.is_none() => match review::undo_facts(&done) {
                 Ok(facts) => {
-                    let lost = if facts.restores_backup {
-                        jobs::lost_since_backup(&**client, tenant, &done).await?
+                    let loss_count = if facts.restores_backup {
+                        match jobs::backup_time(&**client, tenant, &done).await? {
+                            Some(at) => Some(jobs::changes_since(&**client, tenant, &at).await?),
+                            None => None,
+                        }
                     } else {
                         None
                     };
                     json!({"available": true, "job": done.id, "restores_backup": facts.restores_backup,
                                     "release": facts.release, "previous_release": facts.previous_release,
-                                    "loss_count": lost.map(|l| l.count)})
+                                    "loss_count": loss_count})
                 }
                 Err(reason) => json!({"available": false, "job": done.id, "reason": reason}),
             },
@@ -371,10 +374,15 @@ impl Software {
         let review = self.undo_review(tx.sql(), scope, input).await?;
         self.step_up.require(scope, STEP_UP, &review.target).await?;
         let restores_backup = review.facts["restores_backup"].as_bool().unwrap_or(false);
+        let mut recorded = review.facts.clone();
+        if let Some(at) = review.facts["backup_at"].as_str() {
+            recorded["lost_at_commit"] =
+                json!(jobs::changes_since(tx.sql(), scope.tenant(), at).await?);
+        }
         let new = jobs::NewJob {
             kind: "undo",
             request: review.request.clone(),
-            review: review.facts.clone(),
+            review: recorded,
             undo_of: review.facts["job"].as_i64(),
             switch: "auto".into(),
             steps: jobs::undo_steps(restores_backup),
@@ -508,12 +516,10 @@ impl Software {
             Some(id) => jobs::get(client, tenant, id).await?,
             None => None,
         };
-        // What a restore would lose, counted now so the owner reads a number.
-        let lost = match last.as_ref().map(review::undo_facts) {
-            Some(Ok(facts)) if facts.restores_backup => match &facts.backup_at {
-                Some(since) => Some(jobs::changes_since(client, since).await?),
-                None => None,
-            },
+        let backup_at = match last.as_ref().map(|job| (job, review::undo_facts(job))) {
+            Some((job, Ok(facts))) if facts.restores_backup => {
+                jobs::backup_time(client, tenant, job).await?
+            }
             _ => None,
         };
         review::undo(
@@ -521,7 +527,7 @@ impl Software {
             active.as_ref(),
             last.as_ref(),
             named.as_ref(),
-            lost.as_ref(),
+            backup_at.as_deref(),
             input,
         )
     }
