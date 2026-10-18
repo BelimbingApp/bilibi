@@ -87,8 +87,11 @@ pub struct Restored {
 ///
 /// The file is what makes this safe to run again after a restart: when it
 /// exists it is read instead of the database, which a cut-off restore left
-/// empty. When the restore fails and the job tables are gone, they are made
-/// again from the file, so the failure can still be recorded.
+/// empty. Once the dump is restored and the history carried back, the file
+/// is marked restored, and a run that finds it so does nothing: the
+/// database is not restored a second time over what was entered since. When
+/// the restore fails and the job tables are gone, they are made again from
+/// the file, so the failure can still be recorded.
 pub async fn restore(
     client: &impl GenericClient,
     pg: &PgEnv,
@@ -116,6 +119,12 @@ async fn replace(
     dump: &Path,
     history_file: &Path,
 ) -> Result<Restored, String> {
+    if restored(history_file) {
+        return Ok(Restored {
+            carried: 0,
+            problems: Vec::new(),
+        });
+    }
     if !dump.is_file() {
         return Err(format!("the backup {} is missing", dump.display()));
     }
@@ -164,6 +173,7 @@ async fn replace(
                 jobs::short(&error)
             )
         })?;
+    let _ = fs::rename(history_file, restored_name(history_file));
     Ok(Restored { carried, problems })
 }
 async fn clear(client: &impl GenericClient) -> Result<(), String> {
@@ -190,20 +200,20 @@ async fn rebuild(client: &impl GenericClient, saved: &Value, wipe: bool) -> Resu
     Ok(())
 }
 
-/// A restore the installer was cut off in, found by its saved history: the
-/// file and the dump it was restoring. Only a file of a job that has not
-/// finished survives (`flow::Run::finish` removes them).
-pub fn unfinished_restore(backups: &Path) -> Option<(PathBuf, PathBuf)> {
-    let mut found: Vec<(u64, PathBuf, PathBuf)> = Vec::new();
-    for dir in fs::read_dir(backups).ok()?.flatten() {
+/// The restores a restart cut off, found by their saved history: the job,
+/// the file and the dump being restored, newest job first. A file marked
+/// restored is not among them.
+pub fn unfinished_restores(backups: &Path) -> Vec<(i64, PathBuf, PathBuf)> {
+    let mut found = Vec::new();
+    for dir in fs::read_dir(backups).into_iter().flatten().flatten() {
         let Some(id) = dir
             .file_name()
             .to_str()
-            .and_then(|name| name.strip_prefix("job-")?.parse::<u64>().ok())
+            .and_then(|name| name.strip_prefix("job-")?.parse::<i64>().ok())
         else {
             continue;
         };
-        for file in fs::read_dir(dir.path()).ok()?.flatten() {
+        for file in fs::read_dir(dir.path()).into_iter().flatten().flatten() {
             let path = file.path();
             let is_saved = path.extension().is_some_and(|ext| ext == "json")
                 && file
@@ -216,7 +226,13 @@ pub fn unfinished_restore(backups: &Path) -> Option<(PathBuf, PathBuf)> {
         }
     }
     found.sort_by_key(|(id, _, _)| std::cmp::Reverse(*id));
-    found.into_iter().next().map(|(_, file, dump)| (file, dump))
+    found
+}
+fn restored_name(history_file: &Path) -> PathBuf {
+    history_file.with_extension("restored")
+}
+fn restored(history_file: &Path) -> bool {
+    restored_name(history_file).is_file()
 }
 /// Sets a saved history aside after a restore that cannot be finished, so
 /// the next start does not try it again.

@@ -159,13 +159,13 @@ impl<'a> Run<'a> {
         self.set(key, "failed", detail).await
     }
     async fn finish(&mut self, state: &str, result: Value) -> Db<()> {
+        self.forget_history();
         jobs::skip_pending(&*self.client, &self.job).await?;
         jobs::finish(&*self.client, &self.job, state, &result).await?;
         self.log(&format!(
             "{state}: {}",
             result["message"].as_str().unwrap_or("")
         ));
-        self.forget_history();
         Ok(())
     }
     /// The saved history of a restore in this job; see `backup::restore`.
@@ -175,7 +175,8 @@ impl<'a> Run<'a> {
     fn job_backups(&self) -> PathBuf {
         self.layout.backups().join(format!("job-{}", self.job.id))
     }
-    /// Once the job's outcome is recorded no restore of it is waiting.
+    /// Removed before the outcome is recorded, so a job that has finished
+    /// never has a saved history that could be restored again.
     fn forget_history(&self) {
         for entry in fs::read_dir(self.job_backups())
             .into_iter()
@@ -259,6 +260,11 @@ impl<'a> Run<'a> {
             return Ok(true);
         }
         if self.update_committed().await? {
+            if self.is_done("switch") {
+                if let Err(reason) = self.service.start() {
+                    self.log(&reason);
+                }
+            }
             return Ok(false);
         }
         let back = match self.service.start() {
@@ -648,6 +654,11 @@ impl<'a> Run<'a> {
     /// step of the job like the others, so a restart in it ends the same way.
     async fn switch_back(&mut self) -> Db<()> {
         if matches!(self.state("switch_back"), "done" | "failed") {
+            if self.is_done("switch_back") {
+                if let Err(reason) = self.service.start() {
+                    self.log(&reason);
+                }
+            }
             let result = self.detail("switch_back");
             return self.finish("failed", result).await;
         }

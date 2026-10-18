@@ -70,17 +70,19 @@ When the installer starts and finds a job it was running, it does not carry on b
 | --- | --- | --- |
 | Before the pause (copy, or waiting for the owner to say go) | The half-copied folder is removed. The remaining steps are skipped. | `interrupted`: "The installer was interrupted before the pause. Nothing changed. Start again." |
 | In the pause, the database update had not committed (the dump was cut off, or the migration ledger did not grow) | The service is stopped first, then the previous release is started and checked. | `interrupted`: the previous release is back and nothing changed. |
-| In the pause, the database update had committed | The service is stopped first. The seeds run again (they are safe to repeat), then the switch and the check carry on from the first step not done. | `done`, or `failed` with the switch back |
-| In a switch back, or in an Undo's restore | The service is stopped first. The step runs again from its saved state: the history file beside the backup is read instead of the database, and a restore already finished is not repeated. | `failed` (after a switch back) or `done` (after an Undo), with the right release in service |
+| In the pause, the database update had committed | The service is stopped first. The seeds run again (they are safe to repeat), the service is started again if the switch was already done, then the switch and the check carry on from the first step not done. | `done`, or `failed` with the switch back |
+| In a switch back, or in an Undo's restore | The service is stopped first. The step runs again from its saved state: the history file beside the backup is read instead of the database, and a restore already finished is not repeated. A finished switch back starts the release it went back to again. | `failed` (after a switch back) or `done` (after an Undo), with the right release in service |
 
 An Undo follows the same rules: its restore (or, when it restores nothing, its switch) is the change that cannot be taken back.
 
 What makes a restore safe to repeat:
 
-- **The history file.** Before clearing the database, the installer saves the job history and the shape of its tables to `backups/job-<n>/history-<step>.json`. A run that finds the file reads it instead of the database, which a cut-off restore left empty.
-- **A cut-off restore.** If the installer starts and the job tables do not exist, it looks for such a file, finishes the restore from the dump named in it, and then finds the job and settles it as above.
-- **A failed restore.** If `pg_restore` fails, the job tables are made again from the file, so the job can record that it failed. The service stays stopped.
-- **Cleaning up.** The files are removed when the job's outcome is recorded.
+- **The history file.** Before clearing the database, the installer saves the job history and the shape of its tables to `backups/job-<n>/history-<step>.json`, with the dump it is restoring. A run that finds the file reads it instead of the database, which a cut-off restore left empty.
+- **Marked restored.** When the dump is restored and the history carried back, the file is renamed `history-<step>.restored`. A run that finds that does nothing, so the database is never restored a second time over what was entered since.
+- **A cut-off restore.** On every scan, before it looks for a job, the installer looks for `history-*.json` files under `backups/job-*/`, which exist only for a restore begun and not finished. For each one whose job is not recorded as finished in the job tables (the tables may be gone, empty, or hold only the backup's rows), it stops the service and finishes the restore from the dump named in the file. It then finds the job and settles it as above. If that restore fails, the file is set aside (`.failed`) so it is not tried again on every scan.
+- **A stale file.** A file whose job is recorded as finished is deleted, not restored. The installer also deletes a job's files just before it records the job's outcome, so a crash between the two leaves no file to restore from.
+- **A failed restore.** If `pg_restore` fails, the job tables are made again from the file, so the job can record that it failed. The service stays stopped, and the message names the dump to restore by hand.
+- **One report.** The same database error is written to the journal once, not every five seconds.
 
 After a reboot, systemd starts `bilibi-installer@<instance>` before `bilibi@<instance>` (`Before=` in the installer's unit, `After=` and `Wants=` in the instance's). The installer stops the instance again as its first act, but the old program may have answered for a moment before that. So a message after a restart does not claim that nothing entered is lost.
 
@@ -131,7 +133,7 @@ It needs `DATABASE_URL` and `BIND_ADDR` from that file, the sudo rule from `scri
 
 - **The first release is not its job.** A fresh instance has no program to queue a job in; `install-server.sh release` puts the first release in service.
 - **The database tools must match the cluster.** `pg_dump` and `pg_restore` come with `postgresql-client-18`, which `install-server.sh create` installs.
-- **A restore puts back the `public` schema only.** Bilibi keeps everything there. The job history is carried across into whatever shape the restored release gives those tables; a column the older release lacks is dropped from the carried rows.
+- **A restore puts back the `public` schema only.** Bilibi keeps everything there. The job history is carried across into whatever shape the restored release gives those tables; a column the older release lacks is dropped from the carried rows. The installer reads only the job columns that exist from the first `base/software` migration on, so an older dump does not break its queries.
 - **The instance folder stays root's.** The installer owns `releases/` and `backups/` only, so the link it moves is `releases/current`; an instance whose `current` still points straight at a release number refuses to switch and says to rerun `install-server.sh create`.
 - **Old releases and backups are pruned** after each finished job: the current and previous releases and the three newest numbers stay; the three newest jobs' backups stay.
 

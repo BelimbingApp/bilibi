@@ -60,6 +60,7 @@ impl Installer {
             self.layout.dir.display(),
             self.worker
         );
+        let mut reported = String::new();
         loop {
             let (mut client, mut wake) = match self.connect().await {
                 Ok(connected) => connected,
@@ -74,13 +75,17 @@ impl Installer {
             };
             loop {
                 match self.scan(&mut client).await {
-                    Ok(true) => continue,
-                    Ok(false) => {}
+                    Ok(true) => {
+                        reported.clear();
+                        continue;
+                    }
+                    Ok(false) => reported.clear(),
                     Err(error) => {
-                        eprintln!(
-                            "bilibi-installer: database error: {}; reconnecting",
-                            jobs::short(&error)
-                        );
+                        let text = jobs::short(&error);
+                        if text != reported {
+                            eprintln!("bilibi-installer: database error: {text}; reconnecting");
+                            reported = text;
+                        }
                         tokio::time::sleep(RETRY_AFTER).await;
                         break;
                     }
@@ -132,16 +137,10 @@ impl Installer {
     /// One job, if there is one for this worker: first the one it was running
     /// when last stopped, then the oldest waiting. True when it did some work.
     async fn scan(&self, client: &mut Client) -> Result<bool, tokio_postgres::Error> {
-        let running = match jobs::mine_running(&*client, &self.worker).await {
-            Ok(running) => running,
-            Err(error) if jobs::table_missing(&error) => {
-                if self.finish_cut_off_restore(&*client).await {
-                    return Ok(true);
-                }
-                return Err(error);
-            }
-            Err(error) => return Err(error),
-        };
+        if self.finish_cut_off_restores(&*client).await? {
+            return Ok(true);
+        }
+        let running = jobs::mine_running(&*client, &self.worker).await?;
         let (job, resumed) = match running {
             Some(job) => {
                 println!(
@@ -179,26 +178,35 @@ impl Installer {
         }
         Ok(true)
     }
-    /// A restore cut off by a restart leaves no job tables to read, so the
-    /// job cannot be found. The history saved beside its backup can finish
-    /// the restore, and then the job is found again and settled like any
-    /// other. True when the job tables are back.
-    async fn finish_cut_off_restore(&self, client: &Client) -> bool {
-        let Some((history, dump)) = backup::unfinished_restore(&self.layout.backups()) else {
-            return false;
-        };
-        println!(
-            "a restore was cut off by a restart; finishing it from {}",
-            dump.display()
-        );
-        let _ = self.service.stop();
-        if let Err(why) = backup::restore(client, &self.pg, &dump, &history).await {
-            eprintln!("bilibi-installer: the cut-off restore failed: {why}");
+    /// A restore cut off by a restart may have left the job tables empty,
+    /// holding only the backup's rows, or gone, so the job cannot be found
+    /// by looking for it. The history saved beside its backup says a restore
+    /// was begun and not finished: for each such file whose job is not
+    /// recorded as finished, the service is stopped and the restore is
+    /// finished from the dump. The job is then found again and settled like
+    /// any other. A file whose job is recorded as finished is stale and is
+    /// removed. True when a restore was finished.
+    async fn finish_cut_off_restores(
+        &self,
+        client: &Client,
+    ) -> Result<bool, tokio_postgres::Error> {
+        let mut finished = false;
+        for (id, history, dump) in backup::unfinished_restores(&self.layout.backups()) {
+            if jobs::is_finished(client, id).await? {
+                let _ = std::fs::remove_file(&history);
+                continue;
+            }
+            println!(
+                "job {id}: a restore was cut off by a restart; finishing it from {}",
+                dump.display()
+            );
+            let _ = self.service.stop();
+            if let Err(why) = backup::restore(client, &self.pg, &dump, &history).await {
+                eprintln!("bilibi-installer: job {id}: the cut-off restore failed: {why}");
+                backup::set_aside(&history);
+            }
+            finished = true;
         }
-        if jobs::history_tables_exist(client).await.unwrap_or(false) {
-            return true;
-        }
-        backup::set_aside(&history);
-        false
+        Ok(finished)
     }
 }

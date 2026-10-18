@@ -91,6 +91,22 @@ pub async fn claim(
         .await?;
     Ok(changed == 1)
 }
+/// Whether a job's outcome is recorded. Job tables that do not exist, or
+/// that lack the job, say no.
+pub async fn is_finished(
+    client: &impl GenericClient,
+    id: i64,
+) -> Result<bool, tokio_postgres::Error> {
+    match client
+        .query_opt("SELECT state FROM base_software_jobs WHERE id=$1", &[&id])
+        .await
+    {
+        Ok(row) => Ok(row
+            .is_some_and(|row| !matches!(row.get::<_, String>(0).as_str(), "queued" | "running"))),
+        Err(error) if table_missing(&error) => Ok(false),
+        Err(error) => Err(error),
+    }
+}
 pub async fn steps(
     client: &impl GenericClient,
     job: &Job,
