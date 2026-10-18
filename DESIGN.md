@@ -79,7 +79,7 @@ Shared UI sizes follow the sidebar's 12 px text and tight row rhythm; pages do n
 | Field values and record facts | 14 / 20 px; input values stay 16 px on phones to prevent zoom |
 | Page title | 16 / 24 px; card and empty-state headings 12 / 16 px; dialog title 14 / 20 px |
 | Floating fields | 40 px minimum |
-| Buttons | 32 px minimum, never taller than the old 34 px; table, toolbar and empty-state buttons are 28 px automatically (`.ui-compact-controls`) |
+| Buttons | 32 px minimum; table, toolbar and empty-state buttons are 28 px automatically (`.ui-compact-controls`) |
 | Touch targets | `Button` at phone width (under 40 rem); utility `IconButton`, tabs, pagination and choice labels on coarse pointers: 40 px minimum |
 | Card | 12 px body padding; header 8 px vertically and 12 px horizontally; table frames stay at zero |
 | Feedback | 8 px vertically and 12 px horizontally; panel notices use 6 px vertically |
