@@ -62,14 +62,21 @@ fn container(line: &str) -> Option<Value> {
 }
 
 /// What differs from one release to another: a Platform change as
-/// `{"from", "to"}`, and each added, removed, updated or downgraded
-/// container. Null when either release's composition is not known.
+/// `{"from", "to"}`, and each added, removed, updated, downgraded or moved
+/// (same version, new commit) container. Null when either release's composition is not known.
 pub fn diff(from: &Value, to: &Value) -> Value {
     if from["platform"].is_null() || to["platform"].is_null() {
         return Value::Null;
     }
-    let platform = (from["platform"] != to["platform"])
-        .then(|| json!({"from": label(&from["platform"]), "to": label(&to["platform"])}));
+    let platform = (from["platform"] != to["platform"]).then(|| {
+        let (was, now) = (label(&from["platform"]), label(&to["platform"]));
+        if was == now {
+            json!({"from": with_commit(&from["platform"], &was),
+                "to": with_commit(&to["platform"], &now)})
+        } else {
+            json!({"from": was, "to": now})
+        }
+    });
     let mut containers = Vec::new();
     for layer in ["domains", "extensions"] {
         let before = from[layer].as_array().map_or(&[][..], Vec::as_slice);
@@ -79,11 +86,13 @@ pub fn diff(from: &Value, to: &Value) -> Value {
             let change = match was {
                 None => "added",
                 Some(old) if old == now => continue,
+                Some(old) if old["version"] == now["version"] => "moved",
                 Some(old) if older(&now["version"], &old["version"]) => "downgraded",
                 Some(_) => "updated",
             };
             containers.push(json!({"layer": layer, "id": now["id"], "change": change,
-                "from": was.map(|old| old["version"].clone()), "to": now["version"]}));
+                "from": was.map(|old| old["version"].clone()), "to": now["version"],
+                "from_commit": was.map(|old| short(&old["commit"])), "to_commit": short(&now["commit"])}));
         }
         for old in before {
             if !after.iter().any(|now| now["id"] == old["id"]) {
@@ -111,7 +120,20 @@ pub fn describe(changes: &Value) -> String {
     for item in changes["containers"].as_array().into_iter().flatten() {
         let id = item["id"].as_str().unwrap_or("?");
         let at = |key: &str| item[key].as_str().unwrap_or("unreleased");
+        let commit = |key: &str| item[key].as_str().unwrap_or("unknown");
         parts.push(match item["change"].as_str() {
+            Some("moved") => match item["to"].as_str() {
+                Some(version) => format!(
+                    "{id} stays at {version}, new commit {} (was {})",
+                    commit("to_commit"),
+                    commit("from_commit")
+                ),
+                None => format!(
+                    "{id} (unreleased) moved from commit {} to {}",
+                    commit("from_commit"),
+                    commit("to_commit")
+                ),
+            },
             Some("added") => format!("added {id} {}", at("to")),
             Some("removed") => format!("removed {id}"),
             Some("downgraded") => format!("moved {id} back from {} to {}", at("from"), at("to")),
@@ -129,14 +151,20 @@ pub fn describe(changes: &Value) -> String {
 fn label(platform: &Value) -> String {
     match platform["release"].as_str() {
         Some(tag) => tag.to_owned(),
-        None => format!(
-            "{} (commit {})",
-            platform["version"].as_str().unwrap_or("?"),
-            platform["commit"]
-                .as_str()
-                .map_or("unknown", |sha| &sha[..sha.len().min(7)])
-        ),
+        None => with_commit(platform, platform["version"].as_str().unwrap_or("?")),
     }
+}
+
+fn with_commit(platform: &Value, label: &str) -> String {
+    format!("{label} (commit {})", short(&platform["commit"]))
+}
+
+/// The first seven characters of a commit, or `unknown`.
+fn short(commit: &Value) -> String {
+    commit
+        .as_str()
+        .map_or("unknown", |sha| &sha[..sha.len().min(7)])
+        .to_owned()
 }
 
 /// Whether `a` is a lower version than `b`, comparing their numbers; a

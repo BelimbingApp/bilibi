@@ -102,7 +102,7 @@ The result carries what Undo and the page need:
 | `source`, `source_release`, `sha256`, `program` | where the release came from, its number there, its checksum and its first `status` line |
 | `switched_back`, `restored`, `previous_healthy` | on a failure: what the installer did to put things back |
 | `platform`, `domains`, `extensions` | what the release in service is made of, read from its own `bilibi-web status`: the Platform `{"version", "release", "commit"}` and each Domain or Extension `{"id", "version", "commit"}`; null when the program could not say |
-| `changes` | what differs from the release it replaced (an install) or the release it left (an Undo): `{"platform": {"from", "to"} or null, "containers": [{"layer", "id", "change", "from", "to"}]}`, where `change` is `added`, `removed`, `updated` or `downgraded`; null when either release could not say |
+| `changes` | what differs from the release it replaced (an install) or the release it left (an Undo): `{"platform": {"from", "to"} or null, "containers": [{"layer", "id", "change", "from", "to", "from_commit", "to_commit"}]}`, where `change` is `added`, `removed`, `updated`, `downgraded` or `moved` (same version or none, new commit; the commits are short); null when either release could not say |
 | `pause_seconds` | how long the instance was paused, from the moment the backup step stopped the service to the moment the release in service answered; null when the job never paused |
 | `lost` | on an Undo that restored: the counts `{"since", "changes", "by_kind"}`, never a sentence |
 | `message` | one or two plain sentences for the person; they name what changed and how long the pause lasted |
