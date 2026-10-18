@@ -106,7 +106,7 @@ The result carries what Undo and the page need:
 
 An `interrupted` job's result has `migrated: false` and the release in service.
 
-The audit trail is the app's job, not the installer's: `base/software` records each finished job as one audited change the next time the server looks (every 15 seconds, and right after it starts), attributed to the worker as a system principal.
+The audit trail is the app's job, not the installer's: `base/software` records each finished job as one audited change the next time the server looks (every 15 seconds, and right after it starts), attributed to the worker as a system principal. The same step sends the person who asked a notification with the result's `message`, so the outcome reaches them even if they closed the page.
 
 ## Running it
 

@@ -27,7 +27,7 @@ use bilibi_settings::{
 };
 use bilibi_step_up::StepUp;
 use bilibi_system::Instance;
-use bilibi_tenancy::Scope;
+use bilibi_tenancy::{Authentication, Scope};
 use serde_json::{json, Value};
 use std::sync::{Arc, OnceLock};
 
@@ -98,6 +98,7 @@ pub struct Software {
     settings: Arc<Settings>,
     step_up: Arc<StepUp>,
     notifications: Arc<NotificationBoundary>,
+    authentication: Arc<Authentication>,
     composition: Arc<Composition>,
     catalogue: catalogue::Reader,
 }
@@ -176,11 +177,62 @@ impl Software {
                 )
                 .await?;
             if jobs::settle(&mut tx, tenant, &job).await? {
+                self.announce(&mut tx, tenant, &job).await?;
                 settled += 1;
             }
             tx.commit().await?;
         }
         Ok(settled)
+    }
+    /// Tells the person who asked how their job ended, as the builder does
+    /// for its own. Their account is re-proved live for the notification's
+    /// scope; an account that is gone gets none, and the outcome is still
+    /// recorded.
+    async fn announce(
+        &self,
+        tx: &mut MutationTransaction<'_>,
+        tenant: i64,
+        job: &jobs::Job,
+    ) -> Result<()> {
+        let title = match job.state.as_str() {
+            "done" => format!("Software job {} finished", job.id),
+            "failed" => format!("Software job {} failed", job.id),
+            "interrupted" => format!("Software job {} was interrupted", job.id),
+            _ => format!("Software job {} stopped", job.id),
+        };
+        let body = job
+            .result
+            .as_ref()
+            .and_then(|result| result["message"].as_str())
+            .unwrap_or_default();
+        let user = job.requested_by;
+        match self
+            .authentication
+            .authenticate(
+                tx.sql(),
+                tenant,
+                user,
+                format!("software-settle-{tenant}-{user}"),
+            )
+            .await
+        {
+            Ok(scope) => {
+                self.notifications
+                    .notify(
+                        tx,
+                        &scope,
+                        &[user],
+                        &Notice::new(title).kind("software.job").body(body),
+                    )
+                    .await
+            }
+            Err(_) => {
+                eprintln!(
+                    "software: account {user} of tenant {tenant} cannot be notified (not active)"
+                );
+                Ok(())
+            }
+        }
     }
     /// Runs beside the server for as long as it serves (`bilibi-web run`
     /// starts it like the queue executor): settles outcomes every few
@@ -522,6 +574,7 @@ inventory::submit! {
                 settings: services.get("base/settings.store")?,
                 step_up: services.get(bilibi_step_up::SERVICE)?,
                 notifications: services.get("base/notifications.sink")?,
+                authentication: services.get("base/tenancy.authentication")?,
                 // What this program is made of, as the host compiled it in.
                 composition: services.get::<Composition>("bootstrap.composition")?,
                 catalogue: catalogue::Reader::new(services.get("base/integration.exchanges")?),

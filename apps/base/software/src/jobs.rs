@@ -332,28 +332,7 @@ pub async fn unsettled(client: &impl GenericClient) -> Result<Vec<(i64, Job)>> {
         .await?;
     Ok(rows
         .iter()
-        .map(|row| {
-            // JOB_COLUMNS start at index 1 here; Job::from_row reads from 0.
-            let tenant: i64 = row.get(0);
-            let job = Job {
-                id: row.get(1),
-                kind: row.get(2),
-                state: row.get(3),
-                request: row.get(4),
-                review: row.get(5),
-                result: row.get(6),
-                undo_of: row.get(7),
-                switch: row.get(8),
-                requested_by: row.get(9),
-                worker: row.get(10),
-                cancel_requested_by: row.get(11),
-                requested_at: row.get(12),
-                started_at: row.get(13),
-                finished_at: row.get(14),
-                cancel_requested_at: row.get(15),
-            };
-            (tenant, job)
-        })
+        .map(|row| (row.get(0), Job::from_row_offset(row, 1)))
         .collect())
 }
 /// Records a worker's outcome as the audited change it is: from the job as
