@@ -64,7 +64,8 @@ discovered page contract; `src/web.rs` mirrors Bilimbi's `device_live.ex`,
 shared Base UI macros in place (`askama.toml` adds `base/ui/templates` to the
 template path). Both consent pages open with the instance banner
 (`bilibi_system::Instance::banner`, `apps/base/system/README.md`), so the
-person sees which Bilibi they connect the agent to. Opening `/oauth/device?user_code=…` only fills the code; the
+person sees which Bilibi they connect the agent to. Opening
+`/oauth/device?user_code=…` only fills the code; the
 person checks it, reviews the stated agent and the server-computed end time,
 then approves or refuses. `/oauth/authorize` validates the registered client
 and exact callback before consent renders, and an approve or refuse answers
