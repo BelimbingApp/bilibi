@@ -8,7 +8,7 @@
 {% for row in rows %}
 <div id="software-row-{{ row.id }}" class="grid gap-2 border-b border-line pb-3 last:border-b-0 sm:grid-cols-[1fr_auto] sm:items-start">
 <div class="min-w-0">
-<div class="flex flex-wrap items-center gap-2">{% call form::input(field=row.tick) %}{% endcall %}{% if let Some(installed) = row.installed %}{% call ui::badge(kind=bilibi_ui::BadgeKind::Neutral, dot=false) %}{{ installed }}{% endcall %}{% endif %}{% if let Some(action) = row.action %}{% call ui::badge(kind=action.kind) %}{{ action.body|safe }}{% endcall %}{% endif %}</div>
+<div class="flex flex-wrap items-center gap-2">{% call form::input(field=row.tick) %}{% endcall %}{% call ui::badge(kind=bilibi_ui::BadgeKind::Neutral, dot=false) %}{{ row.installed }}{% endcall %}{% if let Some(action) = row.action %}{% call ui::badge(kind=action.kind) %}{{ action.body|safe }}{% endcall %}{% endif %}</div>
 <p class="mt-1 text-sm text-ink-muted">{{ row.description }}</p>
 {% if !row.modules.is_empty() %}<p class="text-xs text-ink-subtle">Modules: {{ row.modules }}</p>{% endif %}
 {% if let Some(note) = row.remove_note %}<p class="mt-1 text-xs text-warning-ink">{{ note }}</p>{% endif %}

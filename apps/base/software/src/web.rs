@@ -946,7 +946,23 @@ impl View {
             .iter()
             .find(|s| s["key"] == "build" && s["state"] == "done")
             .and_then(|s| s["detail"]["release"].as_i64());
-        let handed_over = kind == "change" && state == "running" && built.is_some();
+        let installer_started = steps_json
+            .iter()
+            .skip_while(|s| s["key"] != "build")
+            .skip(1)
+            .any(|s| s["state"] != "pending");
+        let building_done = kind == "change" && state == "running" && built.is_some();
+        let handed_over = building_done && !installer_started;
+        let label = job["review"]["instance"]["label"]
+            .as_str()
+            .unwrap_or(&instance.label);
+        let nothing_changed =
+            job["result"]["migrated"] != true && job["result"]["release"].is_null();
+        let unchanged = if nothing_changed {
+            ". Nothing changed"
+        } else {
+            ""
+        };
         let doing = match kind {
             "change" => "Building",
             "install" => "Installing",
@@ -965,17 +981,16 @@ impl View {
                 "Release {} is built and waiting to be installed",
                 built.unwrap_or_default()
             ),
-            // The job's own review names the instance it was asked on.
-            "running" => format!(
-                "{doing} on {}…",
-                job["review"]["instance"]["label"]
-                    .as_str()
-                    .unwrap_or(&instance.label)
+            "running" if building_done => format!(
+                "Installing release {} on {label}…",
+                built.unwrap_or_default()
             ),
+            // The job's own review names the instance it was asked on.
+            "running" => format!("{doing} on {label}…"),
             "done" => format!("Job {id} finished"),
-            "failed" => format!("Job {id} failed. Nothing changed"),
+            "failed" => format!("Job {id} failed{unchanged}"),
             "cancelled" => format!("Job {id} was stopped. Nothing changed"),
-            "interrupted" => format!("Job {id} was interrupted. Nothing changed"),
+            "interrupted" => format!("Job {id} was interrupted{unchanged}"),
             other => format!("Job {id} is {other}"),
         };
         let summary = text(&job["review"]["summary"]).to_owned();
@@ -1042,8 +1057,26 @@ impl View {
                 instance.label
             ));
         }
-        if state == "done" && instance.role.builds() {
-            notes.push("Next: try it here, then install it on Staging.".to_owned());
+        let undo = &status["undo"];
+        let undo_offered =
+            can_manage && undo["available"] == true && undo["job"].as_i64() == Some(id);
+        if state == "done" {
+            match kind {
+                "change" if instance.role.builds() => {
+                    notes.push("Next: try it here, then install it on Staging.".to_owned());
+                }
+                "install" => {
+                    if instance.role == bilibi_system::Role::Staging {
+                        notes.push("Next: try it here.".to_owned());
+                    }
+                    if undo_offered {
+                        notes.push(
+                            "Done. Undo is available below if something is wrong.".to_owned(),
+                        );
+                    }
+                }
+                _ => {}
+            }
         }
         match text(&job["cancel"]) {
             "requested" => notes.push("Asked to stop: the worker stops before the pause.".to_owned()),
@@ -1070,8 +1103,7 @@ impl View {
                 ..Button::default()
             })?);
         }
-        let undo = &status["undo"];
-        if can_manage && undo["available"] == true && undo["job"].as_i64() == Some(id) {
+        if undo_offered {
             actions.push(&render(Button {
                 id: "software-undo",
                 button_type: "button",
@@ -1239,7 +1271,7 @@ impl View {
                 tick,
                 description: text(&domain["description"]).to_owned(),
                 modules: modules.join(", "),
-                installed: was.map(|v| format!("Installed {v}")),
+                installed: was.map_or_else(|| "Not installed".to_owned(), |v| format!("Installed {v}")),
                 action: action.map(|(kind, label)| Badge::status(kind, label)),
                 version,
                 remove_note: (was.is_some() && !ticked).then(|| {
@@ -1596,21 +1628,17 @@ impl View {
                 )
             }
         };
+        let title = if review.kind == Kind::Undo {
+            text(&facts["loss"]).to_owned()
+        } else {
+            title
+        };
         let mut warnings: Vec<(StatusKind, String)> = facts["warnings"]
             .as_array()
             .into_iter()
             .flatten()
             .map(|w| (StatusKind::Warning, text(w).to_owned()))
             .collect();
-        if review.kind == Kind::Undo {
-            let loss = text(&facts["loss"]).to_owned();
-            let kind = if facts["restores_backup"] == true {
-                StatusKind::Warning
-            } else {
-                StatusKind::Info
-            };
-            warnings.insert(0, (kind, loss));
-        }
         if review.kind == Kind::Install && instance.role == bilibi_system::Role::Production {
             // The review's own Production warning is the first; it is drawn as an error so it reads as the alert it is.
             if let Some(first) = warnings.first_mut() {
@@ -1774,7 +1802,7 @@ struct DomainRow {
     tick: Field,
     description: String,
     modules: String,
-    installed: Option<String>,
+    installed: String,
     action: Option<Badge<'static>>,
     version: Field,
     remove_note: Option<String>,

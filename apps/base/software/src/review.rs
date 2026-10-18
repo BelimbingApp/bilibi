@@ -728,8 +728,9 @@ pub fn undo(
         "backup_at": facts.backup_at,
         "lost": lost,
         "loss": loss,
+        "loss_count": lost.filter(|_| facts.restores_backup).map(|l| l.count),
         "pause_minutes": PAUSE_MINUTES,
-        "what_happens": format!("{} pauses for about {PAUSE_MINUTES} minute, switches back to release {} and checks that it works. {loss}", instance.label, facts.previous_release),
+        "what_happens": format!("{} pauses for about {PAUSE_MINUTES} minute, switches back to release {} and checks that it works.", instance.label, facts.previous_release),
         "steps": jobs::undo_steps(facts.restores_backup).iter().map(|s| json!({"seq": s.seq, "key": s.key, "label": s.label, "pauses": s.pauses})).collect::<Vec<_>>(),
         "step_up": [STEP_UP],
     });

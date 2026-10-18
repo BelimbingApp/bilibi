@@ -39,7 +39,6 @@ use std::sync::{Arc, OnceLock};
 pub use catalogue::{Catalogue, Version, DEFAULT_URL as DEFAULT_CATALOGUE_URL};
 pub use jobs::{CHANNEL, RECORD};
 pub use review::Review;
-pub use web::PATH as PAGE_PATH;
 pub use worker::{Worker, PRINCIPAL as WORKER_PRINCIPAL, USAGE as WORKER_USAGE};
 
 /// A refusal that names the field and says what to do, or a backend error.
@@ -147,8 +146,14 @@ impl Software {
         let undo = match jobs::last_done(&**client, tenant).await? {
             Some(done) if active.is_none() => match review::undo_facts(&done) {
                 Ok(facts) => {
+                    let lost = if facts.restores_backup {
+                        jobs::lost_since_backup(&**client, tenant, &done).await?
+                    } else {
+                        None
+                    };
                     json!({"available": true, "job": done.id, "restores_backup": facts.restores_backup,
-                                    "release": facts.release, "previous_release": facts.previous_release})
+                                    "release": facts.release, "previous_release": facts.previous_release,
+                                    "loss_count": lost.map(|l| l.count)})
                 }
                 Err(reason) => json!({"available": false, "job": done.id, "reason": reason}),
             },
