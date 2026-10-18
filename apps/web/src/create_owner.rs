@@ -81,10 +81,6 @@ struct NewOperator {
 pub async fn create_owner(db: &Db, args: &[String]) -> Result<()> {
     let options = parse(args).ok_or_else(usage)?;
     let interactive = unsafe { libc::isatty(libc::STDIN_FILENO) == 1 };
-    if !interactive && !options.password_stdin {
-        eprintln!("No terminal to ask for the password: pass --password-stdin and write it on the first line of standard input.");
-        return Err(usage());
-    }
     let origin = std::env::var("APP_ORIGIN").unwrap_or_else(|_| "http://localhost:3000".into());
     let app = crate::App::new(db.clone(), &origin)?;
     let grants = app.services.get::<Grants>("base/authz.grants")?;
@@ -97,6 +93,13 @@ pub async fn create_owner(db: &Db, args: &[String]) -> Result<()> {
         if let Some(accounts) = app.user.operator_accounts(operator.tenant).await? {
             return finish_existing_owner(&app, &origin, accounts).await;
         }
+    }
+    // Only now is a password going to be asked for, so only now does the
+    // absence of a terminal matter: a scripted rerun that merely finishes
+    // the owner's company link needs no flag.
+    if !interactive && !options.password_stdin {
+        eprintln!("No terminal to ask for the password: pass --password-stdin and write it on the first line of standard input.");
+        return Err(usage());
     }
     let new_operator = match existing {
         Some(_) => {
