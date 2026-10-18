@@ -13,7 +13,7 @@ use askama::Template;
 use bilibi_database::{Db, Error, Result};
 use bilibi_datetime::{DisplayContext, DisplayPolicy, Format, Precision};
 use bilibi_locale::Locales;
-use bilibi_tenancy::Scope;
+use bilibi_tenancy::{Scope, SelfReport};
 use bilibi_ui::{
     page::{
         LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, MountFuture, Page, PageBody,
@@ -627,6 +627,9 @@ pub struct ConnectionRow {
     pub status: &'static str,
     /// Other stated IDs, sorted, comma-separated; empty when none.
     pub seen: String,
+    /// Self-reported `harness/model-version-effort` values, newest first,
+    /// comma-separated; empty when none.
+    pub self_report: String,
     pub revoked: bool,
 }
 #[derive(Template)]
@@ -650,6 +653,7 @@ impl ConnectionsPage {
                     BuiltinColumn::new("expiry", "Ends"),
                     BuiltinColumn::new("status", "Status"),
                     BuiltinColumn::new("seen", "Also seen as"),
+                    BuiltinColumn::new("self_report", SelfReport::LABEL),
                 ],
             )
             .map_err(|_| Error::Internal)?,
@@ -696,6 +700,15 @@ impl ConnectionsPage {
                         .cloned()
                         .collect::<Vec<_>>()
                         .join(", "),
+                    self_report: {
+                        let mut reports: Vec<_> = row.self_reported_agents.into_iter().collect();
+                        reports.sort_by(|a, b| (&b.1, &b.0).cmp(&(&a.1, &a.0)));
+                        reports
+                            .into_iter()
+                            .map(|(report, _)| report)
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    },
                     revoked: row.revoked_at.is_some(),
                     agent_id: row.agent_id,
                 })
@@ -732,7 +745,8 @@ impl ConnectionsPage {
                             Html::render(&Badge::status(BadgeKind::Warning, &row.seen))
                                 .map_err(|_| Error::Internal)?
                         },
-                    );
+                    )
+                    .slot("self_report", Html::text(&row.self_report));
                 rendered.dom_id = Some(row.dom_id);
                 if !row.revoked {
                     rendered.actions = Html::render(&IconButton {

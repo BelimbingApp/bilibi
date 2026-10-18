@@ -55,7 +55,11 @@ integration.record_incoming_system(&Incoming { method: Some("POST".into()),
 Call once after dispatch, including refused and failed requests. The tenant and
 user come only from the sealed scope; a system row asserts neither, and only the
 platform operator can see it. Connection, agent and run ids are observations,
-never authority. An omitted method or duration stays unknown; no status and no
+never authority. `agent_self_report` is the agent's shape-checked
+`harness/model-version-effort` (`bilibi_tenancy::SelfReport`), and
+`agent_self_report_malformed` records that the caller sent one that failed the
+check and was dropped; never set both. The exchange list and detail show it as
+"Self-reported agent" (or "Malformed, dropped"). An omitted method or duration stays unknown; no status and no
 error class records `unknown`; an operation key stands in for the endpoint when
 there is no HTTP path. Out-of-range status, negative duration or over-long
 fields refuse with `Error::Invalid`.

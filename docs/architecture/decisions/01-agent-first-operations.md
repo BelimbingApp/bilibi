@@ -4,7 +4,7 @@
 **Status:** Accepted for the direction. The implementation is a follow-up Platform slice.
 **Agents:** claude-cloud/sonnet-5.5-default (author), amp/gpt-6-luna-default (review), oracle amp/gpt-6-astra
 **Scope:** How a business action is defined once and reached from the GUI, a CLI, an HTTP API and MCP, with the same rules for a human and for an agent acting for a human
-**Last Updated:** 2026-10-17
+**Last Updated:** 2026-10-18
 
 > The `Agents` value is self-reporting: what the agent reports about itself.
 >
@@ -77,9 +77,9 @@ A contract declares:
 - **The agent also reports itself**: harness, model, version and effort, in the same `harness/model-version-effort` form the ADR headers use (for example `amp/gpt-6-astra-high`).
 - Report known values only. When the agent does not know a value of harness, model, version or effort, it **asks the user who is using the harness and reports what that user says**. That is the person who chose the model in the harness, normally the account the agent acts for. It never asks the installation owner or a Bilibi administrator. It still never guesses, and omits a part that user cannot give.
 - The value stays labelled self-reporting. A request is never rejected for missing metadata, and ordinary machine callers need not send it.
-- Follow-up code change: the harness plugins (the skills `core/agent_plugins` generates) must instruct the agent to ask the user of the harness for unknown values.
+- The harness plugins (the skills `core/agent_plugins` generates) instruct the agent to send the value and to ask the user of the harness for unknown parts.
 - That report is labelled **self-reporting**: what the agent reports about itself. It is recorded beside the harness/model-version-effort value for audit and support. It is **never used for authorization**.
-- Today the API records only the self-reporting `X-Bilibi-Agent-Id` and `X-Bilibi-Run-Id` labels (`apps/web/README.md`). Recording the harness/model-version-effort form is a follow-up code change.
+- The agent edge accepts it as `X-Bilibi-Agent-Self-Report` (or MCP `_meta` `bilibi/agent-self-report`), checks only its shape and records it on the exchange, on the audit of any write the request commits and on the connection, shown as "Self-reported agent" (`apps/web/README.md`). The self-reporting `X-Bilibi-Agent-Id` and `X-Bilibi-Run-Id` labels are recorded beside it.
 
 ### 3. Plugins are thin adapters
 
@@ -109,7 +109,7 @@ Verified against the code on 2026-10-17.
 | API `/api/v1` | Built. Search, describe, guide, call, plans, commit. OAuth device grant, per-person grants, live proof on every request | `apps/web/src/api.rs`, `apps/web/README.md` |
 | MCP `/mcp` | Built. Stateless Streamable HTTP. Six tools: `search`, `describe`, `guide`, `read`, `plan`, `commit` | `apps/web/src/mcp.rs`, `apps/base/agent_api/src/mcp.rs` |
 | CLI | **Client not built.** `bilibi-web` has only operator commands (`migrate`, `seed`, `seed-production`, `authz-reconcile`, `geonames-import`, `media-cleanup`, `plugin-export`), none of which calls an operation contract | `apps/web/src/main.rs` |
-| Harness plugins | **Built for ChatGPT.** `core/agent_plugins` generates the downloadable package: a thin adapter over `/mcp`, with skills generated from the registry. Other harnesses are added when needed | `apps/core/agent_plugins/README.md` |
+| Harness plugins | **Built for ChatGPT.** `core/agent_plugins` generates the downloadable package: a thin adapter over `/mcp`, with skills generated from the registry, including the agent self-report instruction. Other harnesses are added when needed | `apps/core/agent_plugins/README.md` |
 
 The registry is `base/agent_api` (`apps/base/agent_api/README.md`). It is the partial form of this decision:
 

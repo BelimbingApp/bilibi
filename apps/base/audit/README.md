@@ -42,6 +42,11 @@ non-zero id becomes `system/0` plus `system_principal`. Any other kind, or a
 non-numeric user/agent id, is refused. `Attribution::from_scope` is the sealed
 session identity, operator included under impersonation (K14); Q2 supplies job
 rehydration contexts.
+`agent_self_report` (migration `base-audit-007-agent-self-report`, on mutations
+and actions) is the agent's self-reported `harness/model-version-effort`,
+taken from `Context::agent_self_report` or the scope's agent facet. It is
+recorded beside the actor, never replaces it, and is shown as "Self-reported
+agent" on the Actions and Data Mutations lists and in record history.
 The committed action row carries `event = Context::action`, so name actions as
 `owner.operation` (`company.update`), the way Bilimbi names explicit actions.
 

@@ -33,6 +33,9 @@ pub struct Context {
     pub impersonator: Option<Principal>,
     pub action: String,
     pub trace_id: String,
+    /// The agent's self-reported `harness/model-version-effort`, already
+    /// shape-checked by the agent edge. Evidence only, never authority.
+    pub agent_self_report: Option<String>,
 }
 impl Context {
     pub fn user(tenant: i64, user: i64, action: impl Into<String>) -> Self {
@@ -42,6 +45,7 @@ impl Context {
             impersonator: None,
             action: action.into(),
             trace_id: uuid::Uuid::new_v4().to_string(),
+            agent_self_report: None,
         }
     }
     fn validate(&self) -> Result<()> {

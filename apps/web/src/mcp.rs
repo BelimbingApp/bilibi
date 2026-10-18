@@ -6,9 +6,11 @@
 //! same bearer edge as `/api/v1` (`api::authenticate`) with the MCP resource as
 //! audience, and plans reprove the grant with the same `Grant` authority. The
 //! protocol itself is `bilibi_base::agent_api::mcp`; this file adds nothing a
-//! domain or permission decision depends on.
+//! domain or permission decision depends on. The agent's self-report may come
+//! in `params._meta` under `SelfReport::MCP_META` as well as in the header; the
+//! body's value wins, and both are evidence only.
 use crate::{
-    api::{self, Exchange, Grant},
+    api::{self, Exchange, Grant, Reported},
     App,
 };
 use axum::{
@@ -20,7 +22,7 @@ use axum::{
 };
 use bilibi_base::agent_api::mcp::{self as protocol, Outcome, Session};
 use bilibi_database::Error;
-use bilibi_tenancy::Scope;
+use bilibi_tenancy::{Scope, SelfReport};
 use serde_json::{json, Value};
 
 pub fn router() -> Router<App> {
@@ -77,7 +79,7 @@ async fn handle(State(app): State<App>, request: Request) -> Response {
         }
         Err(error) => return api::unavailable(&error).into_response(),
     }
-    let trace = api::trace(&request);
+    let mut trace = api::trace(&request);
     let Ok(bytes) = axum::body::to_bytes(request.into_body(), api::API_BODY_LIMIT).await else {
         return api::error(StatusCode::PAYLOAD_TOO_LARGE, "request_too_large").into_response();
     };
@@ -89,14 +91,23 @@ async fn handle(State(app): State<App>, request: Request) -> Response {
         response.extensions_mut().insert(Exchange {
             scope: None,
             operation: Some("mcp.invalid_request".into()),
+            reported: None,
         });
         return response;
     };
+    let meta = message
+        .get("params")
+        .and_then(|params| params.get("_meta"))
+        .and_then(|meta| meta.get(SelfReport::MCP_META));
+    match Reported::from_meta(meta) {
+        Reported::Absent => {}
+        reported => trace.reported = reported,
+    }
     let operation = protocol::operation(&message);
     let edge = &app.api;
     if protocol::public(&message) {
         let outcome = protocol::dispatch(&edge.registry, &edge.plans, None, &message).await;
-        return answer(&app, outcome, None, operation);
+        return answer(&app, outcome, None, operation, &trace.reported);
     }
     let agent =
         match api::authenticate(&app, &headers, &trace, Some(&api::mcp_resource(&app))).await {
@@ -109,6 +120,7 @@ async fn handle(State(app): State<App>, request: Request) -> Response {
                 response.extensions_mut().insert(Exchange {
                     scope: None,
                     operation: Some(operation),
+                    reported: Some(trace.reported),
                 });
                 return response;
             }
@@ -135,7 +147,7 @@ async fn handle(State(app): State<App>, request: Request) -> Response {
         }
         Err(error) => Outcome::Unavailable(error.into()),
     };
-    answer(&app, outcome, Some(scope), operation)
+    answer(&app, outcome, Some(scope), operation, &trace.reported)
 }
 
 async fn allowed(app: &App, sender: &str) -> Result<bool, Error> {
@@ -165,7 +177,13 @@ fn challenge(app: &App, mut response: Response) -> Response {
     response
 }
 
-fn answer(app: &App, outcome: Outcome, scope: Option<Scope>, operation: String) -> Response {
+fn answer(
+    app: &App,
+    outcome: Outcome,
+    scope: Option<Scope>,
+    operation: String,
+    reported: &Reported,
+) -> Response {
     let mut response = match outcome {
         Outcome::Accepted => StatusCode::ACCEPTED.into_response(),
         Outcome::Reply(reply) => api::reply(StatusCode::OK, record_urls(app, reply)),
@@ -175,6 +193,7 @@ fn answer(app: &App, outcome: Outcome, scope: Option<Scope>, operation: String) 
     response.extensions_mut().insert(Exchange {
         scope,
         operation: Some(operation),
+        reported: Some(reported.clone()),
     });
     response
 }

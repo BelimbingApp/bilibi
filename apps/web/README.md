@@ -119,9 +119,24 @@ credential check anywhere in the host.
 
 The `record` middleware writes one incoming Integration exchange per request,
 refusals included. It records method, path, the operation key (or
-`agent_api.plan`/`agent_api.commit`), status, duration, connection id and the
-self-reported `X-Bilibi-Agent-Id`/`X-Bilibi-Run-Id` labels; bodies, queries,
-headers and tokens are never recorded. Sealed requests record a tenant row;
+`agent_api.plan`/`agent_api.commit`), status, duration, connection id, the
+self-reported `X-Bilibi-Agent-Id`/`X-Bilibi-Run-Id` labels and the agent's
+self-report; bodies, queries, headers and tokens are never recorded.
+
+The agent's self-report (ADR 01, "Agent identity at runtime") is
+`X-Bilibi-Agent-Self-Report: harness/model-version-effort`, for example
+`amp/gpt-6-astra-high`; at `/mcp` it may instead come in `params._meta`
+under `bilibi/agent-self-report`, which then replaces the header's value.
+`bilibi_tenancy::SelfReport::parse` checks the shape only: one `/`, either
+side may be empty but not both, ASCII letters, digits, `.`, `_`, `-`, at most
+120 characters. A missing or malformed value never refuses a request: a
+malformed one is dropped and the exchange records that it was malformed. A
+valid one rides on the sealed scope's agent facet (and on the `Grant`'s
+reproved scope), so it lands on the exchange row, on every audit mutation and
+action of a write it commits (`agent_self_report`), and in the connection's
+bounded list of distinct reports (`AgentAccess::observe`). It is labelled
+"Self-reported agent" wherever it is shown and is never used for
+authorization. Sealed requests record a tenant row;
 everything else records a system row. The trace in the `x-bilibi-trace-id`
 response header is the exchange's correlation ID and the audit trace of any
 mutation that request committed.

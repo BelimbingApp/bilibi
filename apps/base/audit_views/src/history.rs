@@ -27,7 +27,7 @@ use bilibi_audit::MutationEntry;
 use bilibi_database::{Db, Error, Result};
 use bilibi_datetime::DisplayPolicy;
 use bilibi_locale::Locales;
-use bilibi_tenancy::Scope;
+use bilibi_tenancy::{Scope, SelfReport};
 use bilibi_ui::{
     page::{
         LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, MountFuture, Page, PageFuture,
@@ -172,11 +172,14 @@ impl Panel {
         for entry in &trail {
             let prefix = format!("{}-entry-{}", self.id, entry.id);
             let (badge, event) = event_badge(&entry.event);
-            let actor = format!(
+            let mut actor = format!(
                 "{}{}",
                 present::actor_label(&entry.into()),
                 present::impersonated_suffix(&entry.into())
             );
+            if let Some(report) = &entry.agent_self_report {
+                actor.push_str(&format!(" · {}: {report}", SelfReport::LABEL));
+            }
             entries.push(Entry {
                 id: entry.id,
                 badge,

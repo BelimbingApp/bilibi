@@ -346,7 +346,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         println!(
             "observe {:?}: {}",
             stated.unwrap_or("<none>"),
-            outcome(&grants.observe(&claims, stated).await)
+            outcome(&grants.observe(&claims, stated, None).await)
         );
     }
     let listed = grants.list_connections(&actor).await?;
@@ -358,7 +358,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     );
     for index in 0..25 {
         grants
-            .observe(&claims, Some(&format!("rotating-id-{index:02}")))
+            .observe(&claims, Some(&format!("rotating-id-{index:02}")), None)
             .await?;
     }
     let seen = &grants.list_connections(&actor).await?[0].seen_agent_ids;
@@ -417,7 +417,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     );
     println!(
         "observe on revoked grant: {}",
-        outcome(&grants.observe(&claims, Some("late")).await)
+        outcome(&grants.observe(&claims, Some("late"), None).await)
     );
 
     println!("\n== refusal ==");

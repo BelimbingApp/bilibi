@@ -25,7 +25,7 @@ use bilibi_datetime::{
 };
 use bilibi_grid::{Outcome as GridOutcome, PageColumns, PageViews};
 use bilibi_locale::Locales;
-use bilibi_tenancy::Scope;
+use bilibi_tenancy::{Scope, SelfReport};
 use bilibi_ui::{
     choices,
     list_state::FILTERS_FORM,
@@ -87,6 +87,7 @@ fn builtins() -> Vec<BuiltinColumn> {
         typed("status", "Status", ColumnType::Integer),
         typed("duration_ms", "Duration (ms)", ColumnType::Integer),
         BuiltinColumn::new("actor", "Person / agent"),
+        BuiltinColumn::new("self_report", SelfReport::LABEL),
     ]
 }
 
@@ -151,6 +152,13 @@ fn instant(display: &DisplayContext, at: SystemTime) -> Result<Instant> {
     ))
 }
 
+/// The agent's own claim, or that the claim it sent was malformed and dropped.
+fn self_report(exchange: &Summary) -> Html {
+    if exchange.agent_self_report_malformed {
+        return Html::text("Malformed, dropped");
+    }
+    dash(exchange.agent_self_report.as_deref())
+}
 fn dash(value: Option<&str>) -> Html {
     Html::text(value.unwrap_or("—"))
 }
@@ -345,6 +353,8 @@ impl Index {
                     .unwrap_or("System"),
             ),
         );
+        row.slots
+            .insert("self_report".into(), self_report(exchange));
         Ok(row)
     }
 
@@ -662,6 +672,11 @@ impl Show {
             Fact {
                 title: "Run",
                 value: dash(exchange.run_id.as_deref()),
+                ..Fact::default()
+            },
+            Fact {
+                title: SelfReport::LABEL,
+                value: self_report(exchange),
                 ..Fact::default()
             },
             Fact {

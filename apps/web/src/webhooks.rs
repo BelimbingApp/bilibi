@@ -300,6 +300,7 @@ fn guest() -> Attribution {
         impersonator_id: None,
         system_principal: None,
         trace_id: None,
+        agent_self_report: None,
     }
 }
 

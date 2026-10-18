@@ -27,7 +27,11 @@ are the base layer and stay where they are.
 - Refuses an origin that is not bare `https://host[:port]` and a client ID that
   is not in `agent_access.oauth_clients`.
 - `Skill`s are generated, not hand-written per harness:
-  - `bilibi`: the MCP workflow over the six generic tools.
+  - `bilibi`: the MCP workflow over the six generic tools, and the
+    self-report rule (ADR 01): send `harness/model-version-effort` in the
+    `SelfReport::HEADER` header or MCP `_meta` (`SelfReport::MCP_META`), ask
+    the person using the harness for an unknown part, never the installation
+    owner, and never guess.
   - `bilibi-setup`: connection check and OAuth linking.
   - one skill per guide in the `base/agent_api` registry: its key, title,
     summary and keywords, telling the agent to read the guide through the

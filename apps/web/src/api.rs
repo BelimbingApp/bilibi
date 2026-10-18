@@ -25,7 +25,7 @@ use bilibi_base::{
     },
     integration::{Incoming, Integration},
     settings::Settings,
-    tenancy::{ProofFuture, Scope},
+    tenancy::{ProofFuture, Scope, SelfReport},
 };
 use bilibi_core::agent_access::{
     AgentAccess, AgentClaims, CodeExchange, OAuthError, Throttle, CLIENT_ID, DEVICE_GRANT,
@@ -108,15 +108,59 @@ pub fn router(app: App) -> Router<App> {
         .layer(middleware::from_fn_with_state(app, record))
 }
 
-/// One request's correlation ID, set before dispatch.
-#[derive(Clone)]
-pub(crate) struct Trace(String);
+/// One request's correlation ID and what it said about its agent, set before
+/// dispatch.
+#[derive(Clone, Default)]
+pub(crate) struct Trace {
+    pub(crate) id: String,
+    pub(crate) reported: Reported,
+}
+/// The self-report a request carried (ADR 01, "Agent identity at runtime").
+/// A malformed value is dropped and only the fact is recorded; neither case
+/// refuses the request, and nothing here is ever authority.
+#[derive(Clone, Default)]
+pub(crate) enum Reported {
+    #[default]
+    Absent,
+    Valid(SelfReport),
+    Malformed,
+}
+impl Reported {
+    /// One header value; a repeated or non-text header is malformed.
+    fn from_headers(headers: &HeaderMap) -> Self {
+        let mut values = headers.get_all(SelfReport::HEADER).iter();
+        match (values.next(), values.next()) {
+            (None, _) => Self::Absent,
+            (Some(value), None) => value.to_str().map_or(Self::Malformed, Self::parse),
+            _ => Self::Malformed,
+        }
+    }
+    /// An MCP request's `params._meta` entry; absent when not sent.
+    pub(crate) fn from_meta(value: Option<&Value>) -> Self {
+        match value {
+            None => Self::Absent,
+            Some(Value::String(value)) => Self::parse(value),
+            Some(_) => Self::Malformed,
+        }
+    }
+    fn parse(value: &str) -> Self {
+        SelfReport::parse(value).map_or(Self::Malformed, Self::Valid)
+    }
+    pub(crate) fn report(&self) -> Option<&SelfReport> {
+        match self {
+            Self::Valid(report) => Some(report),
+            Self::Absent | Self::Malformed => None,
+        }
+    }
+}
 /// What dispatch learned for the exchange row. The scope is the sealed bearer
 /// scope; without one the row is a system row the operator alone can see.
+/// `reported` replaces the header's self-report when the body carried one.
 #[derive(Clone, Default)]
 pub(crate) struct Exchange {
     pub(crate) scope: Option<Scope>,
     pub(crate) operation: Option<String>,
+    pub(crate) reported: Option<Reported>,
 }
 
 async fn record(State(app): State<App>, mut request: Request, next: Next) -> Response {
@@ -126,12 +170,17 @@ async fn record(State(app): State<App>, mut request: Request, next: Next) -> Res
     let endpoint = request.uri().path().to_owned();
     let agent_id = label(request.headers(), AGENT_ID_HEADER);
     let run_id = label(request.headers(), RUN_ID_HEADER);
-    request.extensions_mut().insert(Trace(trace.clone()));
+    let reported = Reported::from_headers(request.headers());
+    request.extensions_mut().insert(Trace {
+        id: trace.clone(),
+        reported: reported.clone(),
+    });
     let mut response = next.run(request).await;
     let exchange = response
         .extensions_mut()
         .remove::<Exchange>()
         .unwrap_or_default();
+    let reported = exchange.reported.unwrap_or(reported);
     let incoming = Incoming {
         method: Some(method),
         operation: Some(
@@ -152,6 +201,8 @@ async fn record(State(app): State<App>, mut request: Request, next: Next) -> Res
             .map(|agent| agent.connection().to_string()),
         agent_id,
         run_id,
+        agent_self_report: reported.report().map(|report| report.as_str().to_owned()),
+        agent_self_report_malformed: matches!(reported, Reported::Malformed),
         correlation_id: Some(trace.clone()),
         ..Incoming::default()
     };
@@ -481,7 +532,7 @@ fn oauth_code(code: &str) -> Response {
 pub(crate) struct Agent {
     pub(crate) scope: Scope,
     pub(crate) claims: AgentClaims,
-    pub(crate) trace: String,
+    pub(crate) trace: Trace,
 }
 
 /// HTTP authentication scheme names are case-insensitive; token bytes are not.
@@ -509,7 +560,7 @@ pub(crate) fn refused() -> Refusal {
 pub(crate) async fn authenticate(
     app: &App,
     headers: &HeaderMap,
-    trace: &str,
+    trace: &Trace,
     resource: Option<&str>,
 ) -> Result<Agent, Refusal> {
     let access = &app.api.access;
@@ -519,15 +570,19 @@ pub(crate) async fn authenticate(
     };
     let token = bearer(headers).ok_or_else(refused)?;
     let claims = access.authenticate(token, resource).await.map_err(fail)?;
-    let scope = access.seal(&claims, trace).await.map_err(fail)?;
+    let report = trace.reported.report();
+    let scope = access
+        .seal(&claims, &trace.id, report)
+        .await
+        .map_err(fail)?;
     access
-        .observe(&claims, label(headers, AGENT_ID_HEADER).as_deref())
+        .observe(&claims, label(headers, AGENT_ID_HEADER).as_deref(), report)
         .await
         .map_err(fail)?;
     Ok(Agent {
         scope,
         claims,
-        trace: trace.to_owned(),
+        trace: trace.clone(),
     })
 }
 
@@ -541,6 +596,7 @@ impl Agent {
         response.extensions_mut().insert(Exchange {
             scope: Some(self.scope),
             operation,
+            reported: None,
         });
         response
     }
@@ -552,14 +608,20 @@ impl Agent {
 pub(crate) struct Grant<'a> {
     pub(crate) access: &'a AgentAccess,
     pub(crate) claims: &'a AgentClaims,
-    pub(crate) trace: &'a str,
+    pub(crate) trace: &'a Trace,
 }
 impl PlanAuthority for Grant<'_> {
     fn verify<'a>(&'a self, tx: &'a Transaction<'_>) -> ProofFuture<'a, PlanIdentity> {
         Box::pin(async move {
             let scope = self
                 .access
-                .prove(tx, self.claims, true, self.trace)
+                .prove(
+                    tx,
+                    self.claims,
+                    true,
+                    &self.trace.id,
+                    self.trace.reported.report(),
+                )
                 .await
                 .map_err(|error| match error {
                     OAuthError::Other(error) => error,
@@ -679,11 +741,11 @@ async fn search(State(app): State<App>, uri: Uri, request: Request) -> Response 
     agent.answer(None, result)
 }
 
-pub(crate) fn trace(request: &Request) -> String {
+pub(crate) fn trace(request: &Request) -> Trace {
     request
         .extensions()
         .get::<Trace>()
-        .map(|trace| trace.0.clone())
+        .cloned()
         .unwrap_or_default()
 }
 

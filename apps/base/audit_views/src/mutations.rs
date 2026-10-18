@@ -22,7 +22,7 @@ use bilibi_audit::{MutationEntry, MutationPage, MutationQuery, MutationSort, MAX
 use bilibi_database::{Db, Error, Result};
 use bilibi_datetime::{DisplayContext, DisplayPolicy};
 use bilibi_locale::Locales;
-use bilibi_tenancy::Scope;
+use bilibi_tenancy::{Scope, SelfReport};
 use bilibi_ui::{
     choices,
     list_state::FILTERS_FORM,
@@ -84,6 +84,7 @@ fn builtins() -> Vec<BuiltinColumn> {
         ),
         BuiltinColumn::new("details", "Details"),
         sortable(BuiltinColumn::new("trace_id", "Trace"), "trace_id"),
+        BuiltinColumn::new("agent_self_report", SelfReport::LABEL),
     ]
 }
 
@@ -479,6 +480,11 @@ fn row(display: &DisplayContext, open: bool, mutation: &MutationEntry) -> Result
             cell(Cell::Trace(
                 mutation.trace_id.clone().filter(|trace| !trace.is_empty()),
             ))?,
+        ),
+        // The same muted mono text as the trace: a recorded label, not a link.
+        (
+            "agent_self_report",
+            cell(Cell::Trace(mutation.agent_self_report.clone()))?,
         ),
     ] {
         flex.slots.insert(column.into(), html);

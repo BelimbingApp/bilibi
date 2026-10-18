@@ -14,6 +14,8 @@ Named system principals and delegated job rehydration require the corresponding 
 
 Impersonation (K14): `authenticate_session` takes the operator the durable session row names (`sessions.impersonator_id`) and re-proves that account live in the same tenant beside the actor; `Scope::impersonator()` then carries it, and `mutation_context` and Audit's `Attribution::from_scope` record the actor/impersonator pair. To refresh a scope an edge already sealed, call `Authentication::reprove(client, scope)`, not `authenticate(tenant, user, csrf)`: the latter drops the operator (and the agent facet), so the owner's writes would lose half the audit pair. Self-service writes of the account's own preferences, pins, credentials re-proof and agent connections refuse a scope with an impersonator.
 
+Agent self-report (ADR 01): `SelfReport` is an agent's `harness/model-version-effort`, shape-checked by `SelfReport::parse` and sealed on the agent facet by `Scope::for_agent`. `mutation_context` copies it to `Context::agent_self_report` and Audit's `Attribution::from_scope` records it. It is evidence shown under `SelfReport::LABEL`, never authority.
+
 ## Tenant administration and `/tenancy/tenants`
 
 `admin::Tenants` (`base/tenancy.tenants`, `src/admin.rs`) is the tenant

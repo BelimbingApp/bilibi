@@ -23,7 +23,7 @@ use bilibi_database::{
 };
 use bilibi_party_ids::{OrganisationId, PersonId};
 use bilibi_settings::Settings;
-use bilibi_tenancy::{Authentication, PartyProofs, ProofClient, Scope};
+use bilibi_tenancy::{Authentication, PartyProofs, ProofClient, Scope, SelfReport};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, sync::Arc, time::SystemTime};
@@ -47,6 +47,10 @@ pub const OAUTH_REQUESTS_PER_MINUTE: &str = "agent_access.oauth_requests_per_min
 pub const MIGRATION: (&str, &str) = (
     "core-agent-access-001",
     include_str!("../migrations/001-agent-access.sql"),
+);
+pub const SELF_REPORT_MIGRATION: (&str, &str) = (
+    "core-agent-access-002-self-reported-agent",
+    include_str!("../migrations/002-self-reported-agent.sql"),
 );
 
 /// OAuth error codes (RFC 6749, RFC 8628, RFC 6750) plus the consent-page
@@ -153,6 +157,10 @@ pub struct ConnectionSummary {
     pub agent_id: String,
     /// Other IDs this connection stated, with the UTC time each was first seen.
     pub seen_agent_ids: BTreeMap<String, String>,
+    /// Distinct self-reported `harness/model-version-effort` values, with the
+    /// UTC time each was first seen: what the agent says it is. Shown labelled
+    /// self-reporting; never authority.
+    pub self_reported_agents: BTreeMap<String, String>,
     pub expires_at: SystemTime,
     pub revoked_at: Option<SystemTime>,
 }
@@ -188,10 +196,11 @@ struct Connection {
     resource: Option<String>,
     oauth_scope: Option<String>,
     seen: Value,
+    reports: Value,
     expires_at: SystemTime,
     live: bool,
 }
-const CONNECTION_COLUMNS: &str = "id,tenant_id,user_id,organisation_id,person_id,agent_id,client_id,resource,oauth_scope,seen_agent_ids,expires_at,revoked_at IS NULL AND expires_at>clock_timestamp() AS live";
+const CONNECTION_COLUMNS: &str = "id,tenant_id,user_id,organisation_id,person_id,agent_id,client_id,resource,oauth_scope,seen_agent_ids,self_reported_agents,expires_at,revoked_at IS NULL AND expires_at>clock_timestamp() AS live";
 impl Connection {
     fn from_row(row: &Row) -> Self {
         Self {
@@ -205,6 +214,7 @@ impl Connection {
             resource: row.get("resource"),
             oauth_scope: row.get("oauth_scope"),
             seen: row.get("seen_agent_ids"),
+            reports: row.get("self_reported_agents"),
             expires_at: row.get("expires_at"),
             live: row.get("live"),
         }
@@ -220,14 +230,34 @@ impl Connection {
             impersonator: None,
             action: action.into(),
             trace_id: uuid::Uuid::new_v4().to_string(),
+            agent_self_report: None,
         }
-    }
-    fn seen_map(&self) -> BTreeMap<String, String> {
-        serde_json::from_value(self.seen.clone()).unwrap_or_default()
     }
     fn knows(&self, label: &str) -> bool {
         label == self.agent_id || self.seen.get(label).is_some()
     }
+    /// A report not seen before; no report changes nothing.
+    fn reports_anew(&self, report: Option<&SelfReport>) -> bool {
+        report.is_some_and(|report| self.reports.get(report.as_str()).is_none())
+    }
+}
+/// `entries` (name to first-seen UTC time) plus `name`, keeping the newest
+/// `SEEN_LIMIT`, so a connection's recorded identities stay bounded.
+fn newest(entries: &Value, name: String, now: &str) -> Value {
+    let mut entries: Vec<(String, String)> =
+        serde_json::from_value::<BTreeMap<String, String>>(entries.clone())
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
+    entries.sort_by(|a, b| (&b.1, &b.0).cmp(&(&a.1, &a.0)));
+    entries.truncate(SEEN_LIMIT - 1);
+    entries.push((name, now.to_owned()));
+    Value::Object(
+        entries
+            .into_iter()
+            .map(|(name, at)| (name, Value::String(at)))
+            .collect(),
+    )
 }
 fn change(kind: &str, id: i64, old: Value, new: Value) -> Change {
     Change {
@@ -787,6 +817,7 @@ impl AgentAccess {
         claims: &AgentClaims,
         lock: bool,
         trace: &str,
+        self_report: Option<&SelfReport>,
     ) -> std::result::Result<Scope, OAuthError> {
         let unproven = |error| match error {
             OAuthError::InvalidGrant => OAuthError::InvalidToken,
@@ -797,7 +828,7 @@ impl AgentAccess {
             .await
             .map_err(unproven)?;
         let scope = self.live(tx, &connection).await.map_err(unproven)?;
-        Ok(scope.for_agent(connection.id, trace.to_owned()))
+        Ok(scope.for_agent(connection.id, trace.to_owned(), self_report.cloned()))
     }
     /// `prove` in its own read transaction, for a request with no other work
     /// to share it with.
@@ -805,21 +836,24 @@ impl AgentAccess {
         &self,
         claims: &AgentClaims,
         trace: &str,
+        self_report: Option<&SelfReport>,
     ) -> std::result::Result<Scope, OAuthError> {
         let mut client = self.db.get().await?;
         let tx = client.transaction().await?;
-        let scope = self.prove(&tx, claims, false, trace).await?;
+        let scope = self.prove(&tx, claims, false, trace, self_report).await?;
         tx.commit().await?;
         Ok(scope)
     }
     /// Records the identity an authenticated agent request stated for its
     /// claims. A request that stated none is recorded as `(not stated)`. A
     /// changed identity is flagged, never refused; only the newest
-    /// `SEEN_LIMIT` distinct ones are kept.
+    /// `SEEN_LIMIT` distinct ones are kept. Self-reports are kept the same
+    /// way; a request without one, or with a known one, writes nothing.
     pub async fn observe(
         &self,
         claims: &AgentClaims,
         stated: Option<&str>,
+        self_report: Option<&SelfReport>,
     ) -> std::result::Result<(), OAuthError> {
         let label = match stated {
             Some(value) if valid_label(value) => value.to_owned(),
@@ -828,25 +862,22 @@ impl AgentAccess {
         };
         let mut client = self.db.get().await?;
         let connection = self.own_connection(&**client, claims, false).await?;
-        if connection.knows(&label) {
+        if connection.knows(&label) && !connection.reports_anew(self_report) {
             return Ok(());
         }
-        let mut tx = self
-            .mutations
-            .begin(
-                &mut client,
-                connection.agent_context("agent_access.connection.observe"),
-            )
-            .await?;
+        let mut context = connection.agent_context("agent_access.connection.observe");
+        context.agent_self_report = self_report.map(|report| report.as_str().to_owned());
+        let mut tx = self.mutations.begin(&mut client, context).await?;
         let connection = self.own_connection(tx.sql(), claims, true).await?;
-        if connection.knows(&label) {
+        let seen_anew = !connection.knows(&label);
+        let report = self_report
+            .filter(|_| connection.reports_anew(self_report))
+            .map(|report| report.as_str().to_owned());
+        if !seen_anew && report.is_none() {
             tx.rollback().await?;
             return Ok(());
         }
-        let old = connection.seen.clone();
-        let mut entries: Vec<(String, String)> = connection.seen_map().into_iter().collect();
-        entries.sort_by(|a, b| (&b.1, &b.0).cmp(&(&a.1, &a.0)));
-        entries.truncate(SEEN_LIMIT - 1);
+        let (old_seen, old_reports) = (connection.seen.clone(), connection.reports.clone());
         let id = connection.id;
         tx.mutate(move |sql| {
             Box::pin(async move {
@@ -854,14 +885,22 @@ impl AgentAccess {
                     .query_one("SELECT to_char(now() AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')", &[])
                     .await?
                     .get(0);
-                entries.push((label, now));
-                let seen = Value::Object(entries.into_iter().map(|(name, at)| (name, Value::String(at))).collect());
+                let seen = if seen_anew { newest(&old_seen, label, &now) } else { old_seen.clone() };
+                let reports = match report {
+                    Some(report) => newest(&old_reports, report, &now),
+                    None => old_reports.clone(),
+                };
                 sql.execute(
-                    "UPDATE core_agent_connections SET seen_agent_ids=$2,updated_at=now() WHERE id=$1",
-                    &[&id, &seen],
+                    "UPDATE core_agent_connections SET seen_agent_ids=$2,self_reported_agents=$3,updated_at=now() WHERE id=$1",
+                    &[&id, &seen, &reports],
                 )
                 .await?;
-                Ok(((), vec![change("agent_connection", id, json!({"seen_agent_ids":old}), json!({"seen_agent_ids":seen}))]))
+                Ok(((), vec![change(
+                    "agent_connection",
+                    id,
+                    json!({"seen_agent_ids":old_seen,"self_reported_agents":old_reports}),
+                    json!({"seen_agent_ids":seen,"self_reported_agents":reports}),
+                )]))
             })
         })
         .await?;
@@ -894,7 +933,7 @@ impl AgentAccess {
         let client = self.db.get().await?;
         let rows = client
             .query(
-                "SELECT id,agent_id,seen_agent_ids,expires_at,revoked_at FROM core_agent_connections WHERE tenant_id=$1 AND user_id=$2 ORDER BY id DESC",
+                "SELECT id,agent_id,seen_agent_ids,expires_at,revoked_at,self_reported_agents FROM core_agent_connections WHERE tenant_id=$1 AND user_id=$2 ORDER BY id DESC",
                 &[&scope.tenant(), &scope.user()],
             )
             .await?;
@@ -906,6 +945,7 @@ impl AgentAccess {
                 seen_agent_ids: serde_json::from_value(row.get(2)).unwrap_or_default(),
                 expires_at: row.get(3),
                 revoked_at: row.get(4),
+                self_reported_agents: serde_json::from_value(row.get(5)).unwrap_or_default(),
             })
             .collect())
     }
@@ -1091,7 +1131,7 @@ inventory::submit! {
     bilibi_module_registry::Module {
         id: "core/agent_access", layer: bilibi_module_registry::Layer::Core,
         dependencies: &["base/database", "base/settings", "base/tenancy", "base/audit", "base/authz", "base/party_ids", "base/ui", "base/datetime", "base/locale", "core/user", "core/company"],
-        migrations: &[MIGRATION],
+        migrations: &[MIGRATION, SELF_REPORT_MIGRATION],
         services: &[bilibi_module_registry::Service { id: "core/agent_access.grants", factory: |services| Ok(Arc::new(AgentAccess {
             db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
             mutations: services.get("base/database.mutations")?,

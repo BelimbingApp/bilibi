@@ -64,6 +64,9 @@ pub struct Attribution {
     pub impersonator_id: Option<i64>,
     pub system_principal: Option<String>,
     pub trace_id: Option<String>,
+    /// The agent's self-reported `harness/model-version-effort`, recorded
+    /// labelled self-reporting; never an identity or a capability.
+    pub agent_self_report: Option<String>,
 }
 impl Attribution {
     /// Sealed session identity: the account acted as and, under
@@ -77,6 +80,10 @@ impl Attribution {
             impersonator_id: scope.impersonator().map(|operator| operator.user()),
             system_principal: None,
             trace_id: None,
+            agent_self_report: scope
+                .agent()
+                .and_then(|agent| agent.self_report())
+                .map(|report| report.as_str().to_owned()),
         }
     }
     /// Seeds, tasks and maintenance: anonymous system, or a named principal.
@@ -98,6 +105,7 @@ impl Attribution {
             impersonator_id: None,
             system_principal: principal,
             trace_id: None,
+            agent_self_report: None,
         })
     }
     /// F2 mutation context. An unrecognised principal kind is refused, so a
@@ -132,6 +140,10 @@ impl Attribution {
             impersonator_id,
             system_principal,
             trace_id: Some(context.trace_id.clone()),
+            agent_self_report: context
+                .agent_self_report
+                .clone()
+                .filter(|report| report.len() <= bilibi_tenancy::SelfReport::MAX_LEN),
         })
     }
     fn trace(&self) -> String {
@@ -299,7 +311,7 @@ impl AuditCapture {
         if kinds.is_empty() {
             return Ok(());
         }
-        tx.execute("INSERT INTO base_audit_mutations(tenant_id,actor_type,actor_id,impersonator_id,system_principal,auditable_type,auditable_id,source,event,old_values,new_values,trace_id) SELECT $1,$2,$3,$4,$5,t.kind,t.id,'boundary',t.event,t.old,t.new,$6 FROM unnest($7::text[],$8::text[],$9::text[],$10::jsonb[],$11::jsonb[]) AS t(kind,id,event,old,new)", &[&who.tenant,&who.actor_type,&who.actor_id,&who.impersonator_id,&who.system_principal,&who.trace(),&kinds,&ids,&events,&old,&new]).await?;
+        tx.execute("INSERT INTO base_audit_mutations(tenant_id,actor_type,actor_id,impersonator_id,system_principal,auditable_type,auditable_id,source,event,old_values,new_values,trace_id,agent_self_report) SELECT $1,$2,$3,$4,$5,t.kind,t.id,'boundary',t.event,t.old,t.new,$6,$12 FROM unnest($7::text[],$8::text[],$9::text[],$10::jsonb[],$11::jsonb[]) AS t(kind,id,event,old,new)", &[&who.tenant,&who.actor_type,&who.actor_id,&who.impersonator_id,&who.system_principal,&who.trace(),&kinds,&ids,&events,&old,&new,&who.agent_self_report]).await?;
         Ok(())
     }
     /// Durable diagnostics on another connection, since the refused business
@@ -312,6 +324,7 @@ impl AuditCapture {
             impersonator_id: None,
             system_principal: None,
             trace_id: Some(context.trace_id.clone()),
+            agent_self_report: context.agent_self_report.clone(),
         });
         let error_type = match error {
             Error::Database(_) => "database",
@@ -400,7 +413,7 @@ async fn insert_action(
         .map(|agent| agent.chars().take(80).collect::<String>());
     let url = request.and_then(|r| r.url.as_deref()).map(bounded_text);
     let ip = request.and_then(|r| r.ip);
-    let row = client.query_one("INSERT INTO base_audit_actions(tenant_id,actor_type,actor_id,impersonator_id,system_principal,ip_address,url,user_agent,event,payload,trace_id,is_retained) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id", &[&who.tenant,&who.actor_type,&who.actor_id,&who.impersonator_id,&who.system_principal,&ip,&url,&agent,&event,&sanitize(payload),&who.trace(),&retained]).await?;
+    let row = client.query_one("INSERT INTO base_audit_actions(tenant_id,actor_type,actor_id,impersonator_id,system_principal,ip_address,url,user_agent,event,payload,trace_id,is_retained,agent_self_report) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id", &[&who.tenant,&who.actor_type,&who.actor_id,&who.impersonator_id,&who.system_principal,&ip,&url,&agent,&event,&sanitize(payload),&who.trace(),&retained,&who.agent_self_report]).await?;
     Ok(row.get(0))
 }
 
@@ -511,7 +524,8 @@ inventory::submit! {
     bilibi_module_registry::Module {
         id: "base/audit", layer: bilibi_module_registry::Layer::Base,
         dependencies: &["base/module_registry", "base/database", "base/tenancy"],
-        migrations: &[("006-audit-evidence", include_str!("../migrations/006-evidence.sql"))],
+        migrations: &[("006-audit-evidence", include_str!("../migrations/006-evidence.sql")),
+            ("base-audit-007-agent-self-report", include_str!("../migrations/007-agent-self-report.sql"))],
         services: &[bilibi_module_registry::Service { id: "base/audit.capture", factory: |services| {
             let db = services.get::<Db>("base/database.pool")?.as_ref().clone();
             let capture = Arc::new(AuditCapture::new(RedactionPolicy::from_inventory(), db));

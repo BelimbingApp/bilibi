@@ -41,7 +41,9 @@ compare a credential yourself.
   with the tenancy agent facet. A failed proof is `invalid_token`.
   `observe` records the ID an authenticated request stated (or `(not stated)`),
   keeps the newest 20 distinct IDs and never refuses a changed ID. An ID is
-  self-reported and grants no authority.
+  self-reported and grants no authority. It keeps the request's
+  `SelfReport` (ADR 01) the same way in `self_reported_agents`; `seal` and
+  `prove` put it on the agent facet, so audit records it with every write.
 - `list_connections` and `revoke` are the person's own connections only.
   Bilimbi refuses impersonated sessions and agent facets there. The one gate
   `self_service` refuses a scope carrying the agent facet or an impersonating
@@ -68,7 +70,8 @@ through the live page's `redirect` with `code` or `error=access_denied`, the
 client's `state` and `iss` (the configured `APP_ORIGIN`, never the Host
 header). Both consent forms submit no fields: an approve carrying any field is
 refused as a changed end time. `/settings/agent-connections` lists the
-person's grants newest first with status and "Also seen as", and revokes one
+person's grants newest first with status, "Also seen as" and "Self-reported
+agent", and revokes one
 only through the shared confirm dialog. Audit sees each decision as the
 signed-in `user`.
 

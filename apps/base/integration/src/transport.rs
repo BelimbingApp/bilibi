@@ -348,6 +348,8 @@ impl Integration {
                 connection_id: None,
                 agent_id: None,
                 run_id: None,
+                agent_self_report: None,
+                agent_self_report_malformed: false,
                 retain_payload: call.retain_payload,
                 request_headers: Some(&request_headers),
                 request_body: outgoing.json.as_ref(),

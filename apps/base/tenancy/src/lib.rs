@@ -147,6 +147,7 @@ pub struct AgentFacet {
     connection: i64,
     trace: String,
     channel: Channel,
+    self_report: Option<SelfReport>,
 }
 impl AgentFacet {
     pub fn connection(&self) -> i64 {
@@ -155,6 +156,45 @@ impl AgentFacet {
     /// One request's correlation ID: audit trace and exchange log share it.
     pub fn trace(&self) -> &str {
         &self.trace
+    }
+    /// What the agent said about itself on this request. Evidence only.
+    pub fn self_report(&self) -> Option<&SelfReport> {
+        self.self_report.as_ref()
+    }
+}
+/// An agent's self-reported `harness/model-version-effort` (ADR 01, "Agent
+/// identity at runtime"). It is what the agent says about itself: recorded
+/// and shown labelled "Self-reported agent", never used for authorization.
+/// Only the shape is checked: one `/` between the harness and the
+/// `model-version-effort` part, either side may be empty but not both, and
+/// each side holds only ASCII letters, digits, `.`, `_` and `-`, so the
+/// value is safe to show anywhere. Hyphens inside a model name make the
+/// parts after the `/` ambiguous; they are kept as the agent sent them.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SelfReport(String);
+impl SelfReport {
+    pub const MAX_LEN: usize = 120;
+    /// The one label every surface shows the value under.
+    pub const LABEL: &'static str = "Self-reported agent";
+    /// The request header the agent edge (`/api/v1`, `/mcp`) reads it from.
+    pub const HEADER: &'static str = "x-bilibi-agent-self-report";
+    /// The MCP `params._meta` key, for clients that cannot set headers.
+    pub const MCP_META: &'static str = "bilibi/agent-self-report";
+    /// `None` for a malformed value; the caller drops it and says so.
+    pub fn parse(value: &str) -> Option<Self> {
+        let (harness, rest) = value.split_once('/')?;
+        let part = |part: &str| {
+            part.bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
+        };
+        (value.len() <= Self::MAX_LEN
+            && !(harness.is_empty() && rest.is_empty())
+            && part(harness)
+            && part(rest))
+        .then(|| Self(value.to_owned()))
+    }
+    pub fn as_str(&self) -> &str {
+        &self.0
     }
 }
 /// The operator behind an impersonated session (Bilimbi `impersonator_id`),
@@ -216,12 +256,18 @@ impl Scope {
     /// Seals the grant onto a scope its owner just proved live for that grant's
     /// tenant and account. Only adds a restriction, so no new authority follows;
     /// the browser CSRF value is replaced so no form check can match.
-    pub fn for_agent(self, connection: i64, trace: String) -> Self {
+    pub fn for_agent(
+        self,
+        connection: i64,
+        trace: String,
+        self_report: Option<SelfReport>,
+    ) -> Self {
         Self {
             agent: Some(AgentFacet {
                 connection,
                 trace,
                 channel: Channel::Api,
+                self_report,
             }),
             csrf: uuid::Uuid::new_v4().simple().to_string(),
             ..self
@@ -265,6 +311,7 @@ impl Scope {
             .map(|impersonator| bilibi_database::Principal::user(impersonator.user));
         if let Some(agent) = &self.agent {
             context.trace_id.clone_from(&agent.trace);
+            context.agent_self_report = agent.self_report.as_ref().map(|report| report.0.clone());
         }
         context
     }
