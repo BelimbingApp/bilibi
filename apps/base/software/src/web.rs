@@ -187,7 +187,11 @@ struct Review {
 }
 enum Dialog {
     Review(Review),
-    Cancel { job: i64, running: bool },
+    Cancel {
+        job: i64,
+        running: bool,
+        change: bool,
+    },
 }
 
 /// What the person has ticked and chosen on Dev.
@@ -419,6 +423,7 @@ impl View {
                         self.dialog = Some(Dialog::Cancel {
                             job: id,
                             running: job["state"] == "running",
+                            change: job["kind"] == "change",
                         });
                     }
                 }
@@ -790,14 +795,20 @@ impl View {
         let history_card = self.history_card(display, status)?;
         let dialog = match &self.dialog {
             Some(Dialog::Review(review)) => self.review_dialog(instance, lost, review)?,
-            Some(Dialog::Cancel { job, running }) => {
+            Some(Dialog::Cancel {
+                job,
+                running,
+                change,
+            }) => {
                 let consequence = if *running {
                     format!("Stop job {job}?")
                 } else {
                     format!("Cancel job {job} before it starts?")
                 };
-                let detail = if *running {
+                let detail = if *running && *change {
                     format!("Nothing has changed yet, so stopping is safe: {label} keeps running as it is. Parts already compiled are kept, so the next build is quicker.")
+                } else if *running {
+                    format!("Nothing has changed yet, so stopping is safe: {label} keeps running as it is.")
                 } else {
                     "It is removed from the queue. Nothing has changed.".to_owned()
                 };
@@ -1301,6 +1312,20 @@ impl View {
             .map(|(id, version)| format!("{id} {version}"))
             .collect();
         changes += outside.len();
+        let enabled: BTreeSet<&str> = status["plugins"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|p| p["enabled"] == true)
+            .map(|p| text(&p["id"]))
+            .collect();
+        changes += catalogue["plugins"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|p| text(&p["id"]))
+            .filter(|id| safe_id(id) && self.picks.plugins.contains(*id) != enabled.contains(id))
+            .count();
         let switch = RadioGroup::new(
             "software-switch",
             "switch",
@@ -1319,7 +1344,7 @@ impl View {
         let summary = if busy {
             "A job is waiting or running. Wait for it to finish, or stop it, before choosing a new change.".to_owned()
         } else if changes == 0 {
-            "Tick or untick a Domain, or pick another version, to change what is installed."
+            "Tick or untick a Domain or plug-in, or pick another version, to change what is installed."
                 .to_owned()
         } else if changes == 1 {
             "1 change. Review it before anything is built.".to_owned()
