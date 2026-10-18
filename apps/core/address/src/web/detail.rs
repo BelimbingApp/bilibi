@@ -463,12 +463,14 @@ impl Detail {
                 editor,
             })?,
         });
+        // The street lines start their own row, as on Create Address.
+        let mut lines = Vec::new();
         for (name, label, id) in [
             ("line1", "Address Line 1", "address-view-line1"),
             ("line2", "Address Line 2", "address-view-line2"),
             ("line3", "Address Line 3", "address-view-line3"),
         ] {
-            items.push(Fact {
+            lines.push(Fact {
                 title: label,
                 id,
                 value: self.text_fact(record, name, label, editable)?,
@@ -482,6 +484,10 @@ impl Detail {
         body.push(&render(Facts {
             id: "address-details-facts",
             items,
+        })?);
+        body.push(&render(Facts {
+            id: "address-lines-facts",
+            items: lines,
         })?);
         render(Card {
             id: "address-details-card",

@@ -104,7 +104,7 @@ struct AffiliationWarning<'a> {
 }
 #[derive(Template)]
 #[template(
-    source = r#"<form id="user-{{ field }}-form" class="inline-block">{{ select }}</form>{{ note }}"#,
+    source = r#"<form id="user-{{ field }}-form">{{ select }}</form>{{ note }}"#,
     ext = "html"
 )]
 struct ChoiceEditor {

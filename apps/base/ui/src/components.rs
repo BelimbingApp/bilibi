@@ -143,10 +143,13 @@ impl PageVariant {
         }
     }
 
+    /// Every variant shares the list's column, so title, subtitle and Back
+    /// sit in the same place on every page; a form keeps its header that
+    /// wide and stops the form below it at about two fields side by side.
     pub fn width(&self) -> &'static str {
         match self {
             Self::List | Self::Detail => "max-w-7xl",
-            Self::Form => "max-w-2xl",
+            Self::Form => "max-w-7xl [&>:not([data-page-header])]:max-w-2xl",
         }
     }
 }

@@ -60,6 +60,8 @@ never treated as stored.
 4. For a choice, render the editor with the shared `Field` select or
    `Combobox` (no `data-event` of its own) and pass its committed label as
    `display`. The choice vocabulary and its validation stay with the owner.
+   Give the editor no width of its own: inside a fact it fills the fact's
+   floating-field box (`[data-fact]` in `assets/css/app.css`).
 
 ## Draft recovery
 

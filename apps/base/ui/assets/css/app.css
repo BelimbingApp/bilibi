@@ -437,6 +437,107 @@ body:has(dialog:modal) #flash-group > #connection-server-error {
   padding-block: 0;
 }
 
+/* A record fact (`fact` in components.html, marked `data-fact`) is a
+ * filled-in floating field without its box: its value cell has the box's
+ * size, and its label sits where the field floats its label. An inline
+ * editor that is a fact's whole value (templates/inline.html) opens as that
+ * field in the same place and size, so nothing moves between reading and
+ * editing:
+ *
+ * - the whole fact is the read trigger, and hovering it shades the box;
+ * - the text input lies over the value cell with the floating field's
+ *   geometry (`control_class` in src/forms.rs: `h-10 pt-3.5 pb-0.5 px-3`),
+ *   and the fact's label stays on top of it, where the floated label is;
+ * - a long text's textarea and a choice's editor fill the value cell from
+ *   its border, and the choice's select or combobox takes the field's height;
+ * - Saving…, Saved and a refusal sit under the box, like a field's hint.
+ *
+ * An editor nested deeper in a fact's value (a list with an "Add" line) and
+ * every editor outside a fact (a table cell, a panel line) keep their own
+ * look. Do not size an editor to fit a fact from the page. */
+[data-fact]:has(> dd > [data-hook^="Inline"]) {
+  & > dd > [data-hook^="Inline"] {
+    position: static;
+
+    & [data-role="trigger"] {
+      min-height: 0;
+      margin: 0;
+      padding: 0;
+      border-radius: 0;
+      background: none;
+      box-shadow: none;
+
+      &::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        border-radius: var(--radius-md);
+      }
+    }
+
+    & :is([data-role="saving"], [data-role="connection"], [data-role="outcome"]) {
+      margin-top: calc(var(--spacing) * 2);
+    }
+  }
+
+  &:has([data-role="trigger"]:hover) {
+    @media (hover: hover) {
+      background-color: var(--color-surface-muted);
+    }
+  }
+
+  &:has([data-role="trigger"]:focus-visible) {
+    box-shadow: 0 0 0 1px var(--color-brand-strong);
+  }
+
+  & > dd > [data-hook="InlineEdit"] [data-role="input"] {
+    inset: 0 0 auto;
+    width: 100%;
+    height: calc(var(--spacing) * 10);
+    margin: 0;
+    padding: calc(var(--spacing) * 3.5) calc(var(--spacing) * 3) calc(var(--spacing) * 0.5);
+    border-radius: var(--radius-md);
+    line-height: calc(var(--spacing) * 5);
+  }
+
+  & > dd > [data-hook="InlineLongText"] [data-role="input"],
+  & > dd > [data-hook="InlineChoice"] > [data-role="editor"] {
+    display: block;
+    width: calc(100% + 1.625rem);
+    margin: -1rem -0.8125rem -0.25rem;
+  }
+
+  & > dd > [data-hook="InlineLongText"] [data-role="input"] {
+    padding: 0.9375rem calc(var(--spacing) * 3) calc(var(--spacing) * 1.5);
+    border-radius: var(--radius-md);
+    line-height: calc(var(--spacing) * 5);
+  }
+
+  & > dd > [data-hook="InlineChoice"] > [data-role="editor"] {
+    &.hidden {
+      display: none;
+    }
+
+    & div {
+      margin-bottom: 0;
+    }
+
+    & :is(select, input[role="combobox"]) {
+      width: 100%;
+      height: calc(var(--spacing) * 10);
+      padding-top: calc(var(--spacing) * 3.5);
+      padding-bottom: calc(var(--spacing) * 0.5);
+      line-height: calc(var(--spacing) * 5);
+    }
+  }
+
+  @media (width < 40rem) {
+    & > dd > [data-hook] :is([data-role="input"], [data-role="editor"] select, [data-role="editor"] input[role="combobox"]) {
+      font-size: var(--text-base);
+    }
+  }
+}
+
 /* The top right corner of a tile belongs to its floating controls
  * (`tile_controls/1`), so a framed page header keeps its actions clear of
  * them. */

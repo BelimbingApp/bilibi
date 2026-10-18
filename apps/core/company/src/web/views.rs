@@ -379,7 +379,7 @@ fn choice(
                 .options(options.clone())
                 .placeholder("None")
                 .aria_label("Jurisdiction")
-                .wrapper_class("mb-0 inline-block min-w-56"),
+                .wrapper_class("mb-0"),
         )?
     } else {
         render(

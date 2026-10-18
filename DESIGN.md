@@ -70,12 +70,12 @@ Reuse the shared macros and typed models. Do not hand-write markup or copy class
 
 ## Page layout
 
-Width is a shared decision. Every page uses `PageVariant`.
+Width is a shared decision. Every page uses `PageVariant`. All three share one column, so the title, subtitle and Back link sit in the same place on every page: next to the menu, and centred only once the screen is wider than a list.
 
 | Variant | Use |
 | --- | --- |
 | `List` | Operational index pages |
-| `Form` | Single-column create or edit forms |
+| `Form` | Create or edit forms. The header is as wide as a list; the form below it stops at about two fields side by side |
 | `Detail` | Record pages and the dashboard. Same width as a list |
 
 - Never set a page's own max width.
@@ -125,7 +125,8 @@ Width is a shared decision. Every page uses `PageVariant`.
 
 - A detail page is the header plus a stack of sections.
 - A section is a card with a heading, optional count, description and actions, then its facts or table.
-- Facts are one list: label column, left-aligned value.
+- Facts read like the filled-in form without its boxes: a small muted label (the floated label's size and ink) over the value, no dividers. They flow on a grid that follows the card's width: one column on a phone, two on a normal screen, three on a wide one. A long text or `pre` value takes the whole row. Split a card's facts into several `Facts` to start a new row, as Address Details does for its street lines.
+- An inline editor opens as the floating field in the fact's place and size, so nothing moves between reading and editing (`[data-fact]` in `assets/css/app.css`).
 - **Text facts:** `InlineEdit`. Enter or leaving commits. Escape cancels.
 - **Long text:** `InlineLongText`. Saves on blur.
 - **Choices:** `InlineChoice`. The read state is the trigger.
