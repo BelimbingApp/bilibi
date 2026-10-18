@@ -137,7 +137,7 @@ pub async fn create_owner(db: &Db, args: &[String]) -> Result<()> {
         if interactive {
             hidden("Password: ")?
         } else {
-            read_line()?
+            read_raw_line()?
         }
     } else {
         ask_password()?
@@ -302,7 +302,7 @@ fn ask(prompt: &str, interactive: bool) -> Result<String> {
     }
     print!("{prompt}");
     std::io::stdout().flush().map_err(|_| Error::Internal)?;
-    read_line()
+    Ok(read_raw_line()?.trim().to_owned())
 }
 
 /// A value with a default: shown in the prompt and taken on an empty answer,
@@ -315,13 +315,15 @@ fn ask_or_default(prompt: &str, default: String, interactive: bool) -> Result<St
     Ok(if answer.is_empty() { default } else { answer })
 }
 
-fn read_line() -> Result<String> {
+/// One line exactly as entered, minus its line terminator: a password is
+/// taken as sign-in takes it, with no whitespace trimmed.
+fn read_raw_line() -> Result<String> {
     let mut line = String::new();
     std::io::stdin()
         .lock()
         .read_line(&mut line)
         .map_err(|_| Error::Internal)?;
-    Ok(line.trim_end_matches(['\n', '\r']).trim().to_owned())
+    Ok(line.trim_end_matches(['\n', '\r']).to_owned())
 }
 
 /// The password typed twice with echo off; the policy is checked here so the
@@ -361,7 +363,7 @@ fn hidden(prompt: &str) -> Result<String> {
         }
         original
     };
-    let line = read_line();
+    let line = read_raw_line();
     // SAFETY: restores the settings read above on the same descriptor.
     unsafe { libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &original) };
     println!();
