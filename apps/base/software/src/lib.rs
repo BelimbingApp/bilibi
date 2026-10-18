@@ -304,7 +304,7 @@ impl Software {
             None
         };
         let count = match &backup_at {
-            Some(at) => Some(jobs::changes_since(&**client, tenant, at).await?),
+            Some(at) => jobs::changes_since(&**client, at).await?["changes"].as_i64(),
             None => None,
         };
         Ok(json!({"job": job.id, "backup_at": backup_at, "count": count}))
@@ -398,8 +398,7 @@ impl Software {
         let restores_backup = review.facts["restores_backup"].as_bool().unwrap_or(false);
         let mut recorded = review.facts.clone();
         if let Some(at) = review.facts["backup_at"].as_str() {
-            recorded["lost_at_commit"] =
-                json!(jobs::changes_since(tx.sql(), scope.tenant(), at).await?);
+            recorded["lost_at_commit"] = json!(jobs::changes_since(tx.sql(), at).await?);
         }
         let new = jobs::NewJob {
             kind: "undo",

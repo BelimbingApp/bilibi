@@ -615,8 +615,6 @@ pub struct UndoFacts {
     pub previous_release: i64,
     pub restores_backup: bool,
     pub backup: Option<String>,
-    /// When the backup was taken (UTC), so what would be lost can be counted.
-    pub backup_at: Option<String>,
 }
 /// Undo needs the facts the worker wrote at the end: which release it put
 /// in service, which one it replaced, and whether the database was changed
@@ -656,7 +654,6 @@ pub fn undo_facts(job: &Job) -> std::result::Result<UndoFacts, String> {
         previous_release,
         restores_backup: migrated,
         backup: result["backup"].as_str().map(str::to_owned),
-        backup_at: result["backup_at"].as_str().map(str::to_owned),
     })
 }
 /// A stored UTC time as plain words, like `2026-10-19 08:30:00 UTC`.
@@ -725,8 +722,6 @@ pub fn undo(
         "previous_release": facts.previous_release,
         "restores_backup": facts.restores_backup,
         "backup": facts.backup,
-        "backup_at": facts.backup_at,
-        "lost": lost,
         "loss": loss,
         "backup_at": backup_at.filter(|_| facts.restores_backup),
         "pause_minutes": PAUSE_MINUTES,

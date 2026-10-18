@@ -247,19 +247,6 @@ pub async fn backup_time(
         .await?
         .map(|row| row.get::<_, String>(0)))
 }
-/// How many audited changes were entered after `since`, which a restore of
-/// the backup taken then would lose. The software jobs' own records do not
-/// count. Counted when asked; it changes as people work, so it is shown and
-/// recorded but never part of what a confirmation is bound to.
-pub async fn changes_since(client: &impl GenericClient, tenant: i64, since: &str) -> Result<i64> {
-    Ok(client
-        .query_one(
-            "SELECT count(*) FROM base_audit_mutations WHERE tenant_id=$1 AND occurred_at > $2::text::timestamptz AND auditable_type NOT LIKE 'base/software.%'",
-            &[&tenant, &since],
-        )
-        .await?
-        .get(0))
-}
 /// The plug-ins switched on, as the status answer shows them.
 pub async fn plugins_json(client: &impl GenericClient, tenant: i64) -> Result<Vec<Value>> {
     let rows = client
