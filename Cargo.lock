@@ -1034,6 +1034,7 @@ name = "bilibi-software"
 version = "0.1.1"
 dependencies = [
  "bilibi-agent-api",
+ "bilibi-audit",
  "bilibi-authz",
  "bilibi-database",
  "bilibi-integration",
@@ -1044,6 +1045,7 @@ dependencies = [
  "bilibi-system",
  "bilibi-tenancy",
  "inventory",
+ "libc",
  "serde",
  "serde_json",
  "tokio",

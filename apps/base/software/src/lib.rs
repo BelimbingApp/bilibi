@@ -11,9 +11,12 @@
 //! this is, the published catalogue for what can be chosen, and the job
 //! tables here for history and plug-ins.
 mod agent;
+mod builder;
 mod catalogue;
 mod jobs;
 mod review;
+mod toolchain;
+mod worker;
 
 use bilibi_authz::{authorize_operator, CapabilityDefinition, VocabularyContribution, VOCABULARY};
 use bilibi_database::{Db, Error, MutationTransaction, Result};
@@ -31,6 +34,7 @@ use std::sync::{Arc, OnceLock};
 pub use catalogue::{Catalogue, Version, DEFAULT_URL as DEFAULT_CATALOGUE_URL};
 pub use jobs::{CHANNEL, RECORD};
 pub use review::Review;
+pub use worker::{Worker, PRINCIPAL as WORKER_PRINCIPAL, USAGE as WORKER_USAGE};
 
 /// A refusal that names the field and says what to do, or a backend error.
 #[derive(Debug)]
@@ -64,6 +68,8 @@ pub const MANAGE: &str = "admin.system.software.manage";
 pub const STEP_UP: &str = "base.software.change";
 /// Where the published catalogue is read from.
 pub const CATALOGUE_URL_KEY: &str = "software.catalogue_url";
+/// How many compiler processes a build may run at once; 0 lets Cargo decide.
+pub const BUILD_JOBS_KEY: &str = "software.build_jobs";
 /// The action names the audit trail shows.
 pub const ACTION_CHANGE: &str = "software.change";
 pub const ACTION_INSTALL: &str = "software.install";
@@ -436,10 +442,17 @@ inventory::submit! { Contribution::new(DEFINITIONS, CATALOGUE_URL_KEY, provenanc
         help: "The published catalogue.json that lists the Platform and Domain releases and which were tested together. Change it only to read a catalogue you publish yourself (server owner only).",
         capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
 })) }
+inventory::submit! { Contribution::new(DEFINITIONS, BUILD_JOBS_KEY, provenance!(), &Setting::Definition(Definition {
+    value_type: ValueType::Integer, scopes: &[ScopeKind::Global], default: || json!(0), nullable: false, encrypted: false,
+    minimum: Some(0.0), maximum: Some(64.0), validator: None,
+    editor: Some(Editor { group: "Software", label: "Compilers at a time: how many parts a build compiles at once",
+        help: "0 lets the build use every processor. Lower it, to 1 or 2, when Dev shares its machine with Production or has little memory: the build takes longer but leaves more for the running instance. Builds already run at the lowest CPU priority (server owner only).",
+        capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
+})) }
 inventory::submit! {
     bilibi_module_registry::Module {
         id: "base/software", layer: bilibi_module_registry::Layer::Base,
-        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/agent_api", "base/settings", "base/step_up", "base/system", "base/notifications", "base/integration"],
+        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/agent_api", "base/settings", "base/step_up", "base/system", "base/notifications", "base/integration", "base/audit"],
         migrations: &[("base-software-001-jobs", include_str!("../migrations/001-jobs.sql"))],
         services: &[bilibi_module_registry::Service { id: SERVICE, factory: |services| {
             let software = Arc::new(Software {

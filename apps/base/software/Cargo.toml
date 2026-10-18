@@ -7,6 +7,7 @@ license.workspace = true
 
 [dependencies]
 bilibi-agent-api.workspace = true
+bilibi-audit.workspace = true
 bilibi-authz.workspace = true
 bilibi-database.workspace = true
 bilibi-integration.workspace = true
@@ -17,6 +18,7 @@ bilibi-step-up.workspace = true
 bilibi-system.workspace = true
 bilibi-tenancy = { path = "../tenancy" }
 inventory.workspace = true
+libc.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

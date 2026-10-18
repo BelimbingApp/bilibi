@@ -262,8 +262,12 @@ def pin(root, modules, files):
             manifest += f'version = "{versions[name]}"\n'
     target = root / PIN_DIR
     target.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(lock, target / 'Cargo.lock')
-    (target / 'manifest.txt').write_text(manifest)
+    # Written only when changed: the module registry's build script watches
+    # this folder, so an untouched pin keeps the compiled crates fresh.
+    if not (target / 'Cargo.lock').is_file() or (target / 'Cargo.lock').read_bytes() != lock.read_bytes():
+        shutil.copyfile(lock, target / 'Cargo.lock')
+    if not (target / 'manifest.txt').is_file() or (target / 'manifest.txt').read_text() != manifest:
+        (target / 'manifest.txt').write_text(manifest)
     described = ', '.join(f'{name} {"v" + versions[name] if versions[name] else head[:12] + " (untagged)"}'
                           for name, head in heads.items())
     platform_label = f'v{tagged}' if tagged else f'{platform[:12]} (unreleased {platform_version})'

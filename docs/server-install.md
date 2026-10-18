@@ -43,7 +43,8 @@ Each instance lives in one folder:
     data/             the only folder the running program may write: media/ uploads, mailbox/ outgoing mail
     site/waiting.html the page Caddy shows while the service is stopped
   dev/                the same, for Dev
-  build/              home of bilibi-build; on Dev, the build tools and cache land here
+  build/              home of bilibi-build: on Dev the Rust toolchain (.cargo, .rustup), the Platform
+                      checkout (src/), the build cache (target/), logs/ and history.json
 ```
 
 Two system users share the work, so the program that serves pages can never rewrite itself:
@@ -51,9 +52,9 @@ Two system users share the work, so the program that serves pages can never rewr
 | User | Runs | Owns |
 | --- | --- | --- |
 | `bilibi` | the service `bilibi@<instance>` | `data/` only; it can read `releases/` and `env` |
-| `bilibi-build` | builds (Dev) and puts releases into service | `releases/`, `backups/`, `/opt/bilibi/build`; it may start, stop and restart `bilibi@*` and reload Caddy through sudo, nothing else |
+| `bilibi-build` | the worker `bilibi-worker@<instance>`: builds (Dev) and puts releases into service | `releases/`, `backups/`, `/opt/bilibi/build`; it may start, stop and restart `bilibi@*`, restart `bilibi-worker@*` and reload Caddy through sudo, nothing else |
 
-One systemd unit template serves every instance: `bilibi@production`, `bilibi@dev`. It reads `env`, runs `current/bilibi-web run` as `bilibi`, restarts it after a crash, and stops it with Ctrl-C's signal so running jobs finish. The program may write only under `data/`.
+Two systemd unit templates serve every instance: `bilibi@production`, `bilibi@dev` read `env`, run `current/bilibi-web run` as `bilibi`, restart it after a crash, and stop it with Ctrl-C's signal so running jobs finish; the program may write only under `data/`. `bilibi-worker@production`, `bilibi-worker@dev` run `current/bilibi-web software-worker` as `bilibi-build` beside each instance: the software worker that carries out the jobs the Software page queues. `release` and `switch` restart it, so it always runs the release in service. On Dev it builds; on Staging and Production the same program refuses to build, because the role below says so (`apps/base/software/README.md`, "The builder").
 
 Each instance has its own PostgreSQL role and database (`bilibi_production`, `bilibi_dev`) on the server's PostgreSQL 18 cluster, with a generated password kept only in `env`. Dev cannot read Production's data.
 
@@ -65,7 +66,7 @@ The role comes from one place: **`BILIBI_ENV` in the instance's `env` file**, wr
 
 | Role | `BILIBI_ENV` | Builds software | Installs from | 2FA step-up |
 | --- | --- | --- | --- | --- |
-| Dev | `development` | Yes | itself | Off, except a software change, which always asks |
+| Dev | `development` | Yes: `create --role dev` also installs the C linker, Git and Python the worker needs | itself | Off, except a software change, which always asks |
 | Staging | `staging` | No | Dev | On |
 | Production | `production` | No | Staging, or Dev directly | On |
 
@@ -171,12 +172,24 @@ While the service is stopped, Caddy answers every request with status 503 and th
 
 The page is rendered once per instance from `scripts/waiting-page.html` into `site/waiting.html`, so the development launcher and the server share one page.
 
+## Building on Dev
+
+The worker on a Dev instance builds the releases the Software page asks for: it checks the server, fetches the Platform and the chosen Domains at their reviewed commits, pins, compiles at the lowest CPU priority into a kept cache under `/opt/bilibi/build`, and copies the result into the next `releases/<n>` beside the running program, which keeps serving the whole time. The Rust toolchain is installed into `bilibi-build`'s home on the first build (about 1.5 GB, from rustup); to do that ahead of time:
+
+```sh
+sudo -u bilibi-build env $(sudo cat /opt/bilibi/dev/env | grep -v '^#' | xargs) /opt/bilibi/dev/current/bilibi-web software-worker --prepare
+```
+
+Progress, the time estimate, cancel and failures are reported on the job's steps, which the Software page and `base.software.status` show. The build log of a job is `/opt/bilibi/build/logs/job-<id>.log`, and `journalctl -u bilibi-worker@dev` has the worker's own lines. The steps, the files and the cache are described in [`apps/base/software/README.md`](../apps/base/software/README.md), "The builder".
+
+> [!NOTE]
+> A built release is not put into service by the builder. That is the installer's half of the job (the next piece); until it ships, a change job rests at its `backup` step with the release in `releases/<n>`, and `switch` above puts it in service by hand.
+
 ## What is not here yet
 
-This script is the server layout only. These are separate pieces of the Software plan:
+This script is the server layout and the builder. These are separate pieces of the Software plan:
 
-- **Building** a release on Dev from chosen Domains, and the Software page that drives it. The request side exists: `base/software` records a reviewed, 2FA-checked job and shows its progress (`apps/base/software/README.md`); the builder and installer that pick jobs up are the next pieces.
-- **Backups** before a switch, the health check that undoes a bad release, and **Undo**.
+- **Installing** a built release as part of a job: **backups** before a switch, the health check that undoes a bad release, and **Undo**. The Software page that drives it all.
 - **Release transport** between machines (download from the source instance, or upload a file).
 
 ## Reference
@@ -189,7 +202,7 @@ Script commands:
 | `release <instance> <bilibi-web or folder>` | Copy into `releases/<n>`, migrate, switch, check |
 | `create-owner <instance> [--email <address>] [--name <name>] [--password-stdin] [--company-name <name> --company-code <code>]` | The first account, the server owner; asks for anything not given, refuses once an owner exists (it then only finishes an unfinished company link) |
 | `switch <instance> <n>` | Put a kept release in service |
-| `status [<instance>]` | Roles, addresses, service states, releases |
+| `status [<instance>]` | Roles, addresses, service and worker states, releases |
 
 Keys in `env` (the service's environment; `README.md` explains each):
 
@@ -201,8 +214,9 @@ Keys in `env` (the service's environment; `README.md` explains each):
 | `DATABASE_URL` | the instance's own database and role on the local cluster |
 | `BILIBI_SETTINGS_KEY`, `BILIBI_USER_SIGNING_KEY`, `BILIBI_MEDIA_SIGNING_KEY` | generated 64-hex-character keys; keep them, losing `BILIBI_SETTINGS_KEY` loses every secret setting and authenticator key |
 | `BILIBI_MAIL_DIR` | `data/mailbox`, until an SMTP relay is set |
+| `BILIBI_INSTANCE_DIR`, `BILIBI_BUILD_DIR` | the instance folder and `/opt/bilibi/build`: where the worker puts releases, and where the Dev builder keeps its checkout and cache |
 
-Files outside `/opt/bilibi`: `/etc/systemd/system/bilibi@.service`, `/etc/sudoers.d/bilibi-build`, `/etc/caddy/sites/bilibi-<instance>.caddy`, and one `import` line in `/etc/caddy/Caddyfile`.
+Files outside `/opt/bilibi`: `/etc/systemd/system/bilibi@.service`, `/etc/systemd/system/bilibi-worker@.service`, `/etc/sudoers.d/bilibi-build`, `/etc/caddy/sites/bilibi-<instance>.caddy`, and one `import` line in `/etc/caddy/Caddyfile`.
 
 ## Where to go next
 

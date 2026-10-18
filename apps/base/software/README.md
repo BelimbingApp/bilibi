@@ -88,7 +88,7 @@ Each commit writes one audited record (`base/software.job`), a `software.change`
 
 ## How a worker plugs in
 
-The builder (plan piece 6, Dev) and the installer (piece 5, every instance) are separate services under the `bilibi-build` user (`docs/server-install.md`). They do not go through this module's facade; they read and write the two tables with their own connection and follow this contract:
+The builder (below, Dev) and the installer (plan piece 5, every instance) run under the `bilibi-build` user as the instance's worker service, `bilibi-worker@<instance>`, which is `bilibi-web software-worker` from the release in service (`docs/server-install.md`). They do not go through this module's facade; they read and write the two tables with their own connection and follow this contract:
 
 1. **Wake up.** `LISTEN bilibi_software_jobs`. Every queue and every cancel sends `NOTIFY bilibi_software_jobs, '<job id>'` inside the commit, so it arrives once the row is visible. Also poll on start-up: a notification sent while the worker was down is lost.
 2. **Claim.** `UPDATE base_software_jobs SET state='running', worker=$1, started_at=now() WHERE id=$2 AND state='queued'`. Zero rows means someone else has it, or it was cancelled.
@@ -106,19 +106,45 @@ The builder (plan piece 6, Dev) and the installer (piece 5, every instance) are 
 
    A `change` job's result should also list the Domains and versions the new program holds, so `status` can show them before the program restarts.
 6. **Plug-ins.** When a job that switches plug-ins on or off finishes well, update `base_software_plugins` (`enabled`, `version`, `job_id`) in the same transaction as the final state.
-7. **Tell the person.** Record the outcome as an audited action and a notification for `requested_by` (`bilibi_notifications`), as the builder piece decides.
+7. **Tell the person.** Record the outcome as a retained audited action by the worker's system principal (`software-builder`: `software.build.completed`, `.failed`, `.cancelled`, `.refused`, `.interrupted`) and a notification for `requested_by`. The builder does this in one `MutationBoundary` transaction with `Context::system`, recording the job's state change as a `base/software.job` mutation and re-proving the requester's account live through `Authentication::authenticate` for the notification's scope (`src/worker.rs`, `finish`); the installer should do the same.
+8. **Hand a built change to the installer.** A change job is two halves. The builder owns *check, fetch, build*; when `build` is `done` its `detail` holds the release number and folder (`{"release": 3, "path": "/opt/bilibi/dev/releases/3", …}`), the builder sends one more `NOTIFY` and leaves the job `running`. The installer takes a running change job whose `build` step is `done` from its first `pending` step (`backup`) and finishes it as rule 5 says. A cancel asked in between is honoured by whichever side sees it first, under the row lock of rule 4, so the two cannot cross.
 
-The job's `request` holds exactly what the owner reviewed: `platform` (and `platform_commit` when the running Platform is not a catalogue release), `domains` with a `version` (catalogue) or `repository` and `ref` (outside it), `plugins`, `switch` (change); `release` and `source` (install); `job` (undo). The worker trusts it as reviewed data and still checks the server (disk, memory, toolchain) itself, because those facts change between the review and the build.
+The job's `request` holds exactly what the owner reviewed: `platform`, `platform_commit` and `platform_repository` (the catalogue release's commit, or the running program's own when it is between releases), `domains` with a `version`, `commit` and `repository` (catalogue) or `repository` and `ref` (outside it), `plugins`, `switch` (change); `release` and `source` (install); `job` (undo). The worker trusts it as reviewed data and still checks the server (disk, memory, toolchain) itself, because those facts change between the review and the build.
+
+## The builder (Dev)
+
+The builder is the worker's building half: `bilibi-web software-worker`, run by `bilibi-worker@<instance>` as `bilibi-build`. **It builds only on Dev.** The role is `bilibi_system::Instance` (that is `BILIBI_ENV`): on Staging or Production the same program refuses a change job with the reason ("This instance is Production … only a Dev instance builds") and fails it before anything is claimed or touched. Nothing on an installing instance can turn this on.
+
+What one change job does on Dev, step by step:
+
+| Step | What happens | What the row says |
+| --- | --- | --- |
+| `check` | The Rust toolchain is present (installed into `bilibi-build`'s home on the first build, about 1.5 GB; or ahead of time with `--prepare`), `git`, `python3` and a C linker exist, 8 GB are free where the cache lives, 1 GB where releases go, and the machine has 4 GB of memory (swap counts) | "Disk 42 GB free, memory 8 GB, Rust 1.99.0, …" |
+| `fetch` | One kept checkout of the Platform (`BILIBI_BUILD_DIR/src`) is updated and set to the reviewed commit; each wanted Domain is cloned or updated into `apps/domains/<id>` at its commit; Domains not wanted are removed; the Platform's `rust-version` is checked, and the toolchain updated when it is older | "Fetched Bilibi v0.1.0 (e3fe31709a93) and finance v0.1.0 (24938fb69a4d)" |
+| `build` | `scripts/discover-modules.py`, `cargo metadata`, `discover-modules.py --pin`, then `cargo build --release --locked -p bilibi-web` into the kept cache, at the lowest CPU priority; the program, `manifest.txt`, `Cargo.lock`, `SHA256SUMS` and a `release.json` are copied into the next `releases/<n>`, and the new program's own `status` is run to prove it starts | "Compiled 214 of about 488 parts, about 7 minutes left", then "Built release 3 in 9 min 12 s" |
+
+- **Progress with a time estimate.** While `cargo` compiles, the `build` step's `detail` is rewritten every two seconds with `compiled`, `total`, `fresh` (parts taken from the cache), `seconds_left` and a plain `message`. The estimate uses the pace of the build so far once a fifth of the parts are done, before that the pace of the last build here (`BILIBI_BUILD_DIR/history.json`), and before any build a default of about a second and a half per part.
+- **The cache makes later builds faster.** The Platform checkout, the Domain checkouts and Cargo's target folder are kept under `BILIBI_BUILD_DIR`, so a second build of the same set compiles only what changed and reports most parts as `fresh`.
+- **Cancel.** The builder looks for `cancel_requested_at` every two seconds; a cancel stops the running command and its compilers (the whole process group), marks the current step `skipped`, the rest `skipped` and the job `cancelled`, and says "Stopped before anything changed. Dev still runs …". Nothing in the running instance was touched, because the builder never touches it.
+- **Failure.** A step that fails names the cause in plain words (a Domain commit that is not in its repository, a compile error, a compiler killed for memory with exit 137, a missing package with the `apt-get` line to run) and keeps the tail of the tool's output in `detail.details`; the full output is in `BILIBI_BUILD_DIR/logs/job-<id>.log`. The job's `result.message` starts with "Nothing changed."
+- **Stop and restart.** `systemctl stop bilibi-worker@dev` (Ctrl-C) during a build stops the compilers and marks the job `interrupted` at once ("Nothing changed. Start the change again; the parts already compiled are kept"); a crash leaves the same mark when the worker starts again. A job already handed to the installer is left alone.
+- **Settings.** *Software › Compilers at a time* (`software.build_jobs`, 0 = let Cargo decide) caps the compiler processes of a build, for a Dev that shares its machine with Production.
+- **Paths.** `BILIBI_INSTANCE_DIR` (the instance folder, whose `releases/` receives the result) and `BILIBI_BUILD_DIR` (the builder's folder; default `/opt/bilibi/build`) come from the instance's `env` file; the toolchain lives in the worker user's `$HOME` (`~/.cargo`, `~/.rustup`), so an operator's own Cargo configuration there applies.
+
+`bilibi-web software-worker --once` handles the job waiting now and exits; `--prepare` installs the toolchain now (Dev only) and exits.
 
 ## Caveats
 
-- **Nothing is built yet.** This module records and shows; until the builder and installer ship, a queued job stays `queued`, and cancel is the only way out.
+- **A built release is not installed yet.** The builder leaves a change job `running` at its `backup` step with the release in `releases/<n>`; until the installer ships, cancel is the way out of that state, and `scripts/install-server.sh switch <instance> <n>` puts the release in service by hand.
+- **An install or undo job waits.** Only the builder exists today; a queued `install` or `undo` job stays `queued` until the installer ships, and cancel is the way out.
 - **An unpinned program shows no Domain versions.** A developer build without `scripts/discover-modules.py --pin` reports `pin: unpinned`; the review warns that the running versions are not known exactly.
 - **The catalogue is read as the person asking.** The fetch is recorded in the exchange log under them, and a server that cannot reach the address gets `available: false` with the reason.
 
 ## Try it
 
 On a migrated disposable database with the walkthrough fixture, `BILIBI_ENV=development` and `BILIBI_SETTINGS_KEY` set: sign in as `ai@agent.my`, enrol the authenticator at `/settings/two-factor`, get a bearer through the device flow, then drive the calls above through `/api/v1` or `/mcp`. A commit without `step_up_code` answers `step_up_required` with `reason: every_time`; with the current code it queues the job. `SELECT * FROM base_software_jobs` and the Actions audit log show the rest.
+
+To watch the job being built, run the worker beside the app with the same `DATABASE_URL` and `BILIBI_ENV=development`, plus `BILIBI_INSTANCE_DIR=<a scratch folder with releases/>` and `BILIBI_BUILD_DIR=<a scratch folder on a disk with 8 GB free>`: `bilibi-web software-worker --once`. `base.software.status` then shows the steps filling in, and `releases/1` appears when the build is done.
 
 ## Where to go next
 

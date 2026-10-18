@@ -1,0 +1,33 @@
+# The software worker of one Bilibi instance: bilibi-worker@dev, bilibi-worker@production.
+# It runs `bilibi-web software-worker` from the release in service, as the
+# bilibi-build user, beside bilibi@<instance>. On Dev it builds the releases the
+# Software page asks for (apps/base/software/README.md); the role is the
+# instance's BILIBI_ENV, so the same unit never builds on Staging or Production.
+# Installed by scripts/install-server.sh; the layout is in docs/server-install.md.
+[Unit]
+Description=Bilibi software worker for instance %i
+Documentation=https://github.com/BelimbingApp/bilibi/blob/main/docs/server-install.md
+After=network-online.target postgresql.service bilibi@%i.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bilibi-build
+Group=bilibi-build
+# BILIBI_ENV (the role), DATABASE_URL, BILIBI_INSTANCE_DIR and BILIBI_BUILD_DIR.
+EnvironmentFile=/opt/bilibi/%i/env
+# The builder's own folder: the Platform checkout, the build cache, the logs.
+WorkingDirectory=/opt/bilibi/build
+ExecStart=/opt/bilibi/%i/current/bilibi-web software-worker
+# A build in flight is stopped cleanly; the job is marked interrupted when the
+# worker starts again, and the cache keeps the parts already compiled.
+KillSignal=SIGINT
+TimeoutStopSec=60
+Restart=always
+RestartSec=5
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+
+[Install]
+WantedBy=multi-user.target

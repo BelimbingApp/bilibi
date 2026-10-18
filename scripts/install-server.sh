@@ -10,9 +10,11 @@
 #   install-server.sh switch <instance> <release number>
 #   install-server.sh status [<instance>]
 #
-# Only the layout and the release switch live here. Building a release (Dev),
-# backing up before a switch, checking the new release and undoing a bad one
-# belong to the Software page and its builder and installer.
+# Only the layout and the release switch live here. Building a release is the
+# software worker's job (bilibi-worker@<instance>, started by `release`; it
+# builds on Dev only, apps/base/software/README.md). Backing up before a
+# switch, checking the new release and undoing a bad one belong to the
+# installer, the Software page's other half.
 set -euo pipefail
 shopt -s inherit_errexit
 
@@ -21,6 +23,7 @@ here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 source "$here/lib/versions.sh"
 root=/opt/bilibi
 unit_name='bilibi@'
+worker_name='bilibi-worker@'
 pg=$POSTGRESQL_MAJOR
 log=/var/log/bilibi-install-server.log
 export DEBIAN_FRONTEND=noninteractive
@@ -89,6 +92,13 @@ install_packages() {
             'deb [signed-by=@KEYRING@] https://dl.cloudsmith.io/public/caddy/stable/deb/debian any-version main'
     fi
     apt_install caddy
+}
+# What the software worker needs to build on Dev: a C linker, Git and Python
+# for scripts/discover-modules.py. The Rust toolchain itself is installed by
+# the worker into bilibi-build's home, on the first build or on request
+# (`bilibi-web software-worker --prepare`). Never on Staging or Production.
+install_build_packages() {
+    apt_install build-essential pkg-config git python3
 }
 
 # ---------------------------------------------------------------- users
@@ -199,11 +209,20 @@ write_caddy_site() { # <instance> <site> <port> <tls>
     systemctl reload caddy
 }
 install_unit() {
-    local unit=/etc/systemd/system/$unit_name.service
-    if ! cmp -s "$here/server/bilibi@.service" "$unit"; then
-        install -m 0644 "$here/server/bilibi@.service" "$unit"
-        systemctl daemon-reload
-    fi
+    local name reload=
+    for name in "$unit_name" "$worker_name"; do
+        if ! cmp -s "$here/server/$name.service" "/etc/systemd/system/$name.service"; then
+            install -m 0644 "$here/server/$name.service" "/etc/systemd/system/$name.service"
+            reload=1
+        fi
+    done
+    [[ -z $reload ]] || systemctl daemon-reload
+}
+# The worker runs the release in service, so it is (re)started after every
+# switch; enabling it here makes a reboot start it with the instance.
+restart_worker() {
+    systemctl enable "$worker_name$1" >/dev/null 2>&1
+    systemctl restart "$worker_name$1"
 }
 same_machine_warning() { # <instance> <role>
     local other
@@ -239,6 +258,7 @@ create() {
     [[ -f $here/waiting-page.html && -f $here/server/site.caddy ]] || fail "run this from a Bilibi checkout: $here/server is missing"
 
     install_packages
+    [[ $role != dev ]] || install_build_packages
     ensure_users
     install_unit
     local dir env created=
@@ -277,6 +297,10 @@ BILIBI_SETTINGS_KEY=$(openssl rand -hex 32)
 BILIBI_USER_SIGNING_KEY=$(openssl rand -hex 32)
 BILIBI_MEDIA_SIGNING_KEY=$(openssl rand -hex 32)
 BILIBI_MAIL_DIR=$dir/data/mailbox
+# Read by the software worker (bilibi-worker@$instance): where releases land,
+# and where the Platform checkout and the build cache live (Dev only).
+BILIBI_INSTANCE_DIR=$dir
+BILIBI_BUILD_DIR=$root/build
 EOF
         umask 022
     else
@@ -285,6 +309,9 @@ EOF
         [[ -z $port || $(env_value "$instance" BIND_ADDR) == "127.0.0.1:$port" ]] || fail "$instance already listens on $(env_value "$instance" BIND_ADDR); the port is fixed at creation"
         port=${port:-$(env_value "$instance" BIND_ADDR | sed 's/.*://')}
         sed -i "s|^APP_ORIGIN=.*|APP_ORIGIN=https://$site|" "$env"
+        # An env written before the worker existed gains its two keys.
+        grep -q '^BILIBI_INSTANCE_DIR=' "$env" || printf 'BILIBI_INSTANCE_DIR=%s\n' "$dir" >>"$env"
+        grep -q '^BILIBI_BUILD_DIR=' "$env" || printf 'BILIBI_BUILD_DIR=%s\n' "$root/build" >>"$env"
     fi
     chown root:bilibi "$env"; chmod 0640 "$env"
 
@@ -374,6 +401,7 @@ release() {
         fail "release $n could not update the database" "see the output above; the previous release is back in service"
     fi
     put_in_service "$instance" "$n" "$previous"
+    restart_worker "$instance"
     if [[ -z $previous ]]; then
         say "Next: create the first account with: $0 create-owner $instance"
     fi
@@ -404,6 +432,7 @@ switch() {
     # keeps them (migrations are forward-only). Going back is the Software page's
     # Undo, which also restores a backup when tables changed.
     put_in_service "$instance" "$n" "$(current_release "$instance")"
+    restart_worker "$instance"
 }
 status() {
     local instance list
@@ -412,8 +441,9 @@ status() {
     for instance in $list; do
         instance_exists "$instance" || fail "no instance named $instance"
         local dir; dir=$(instance_dir "$instance")
-        printf '%s: role %s, %s, service %s, current release %s\n' "$instance" "$(role_of "$instance")" \
-            "$(env_value "$instance" APP_ORIGIN)" "$(service_state "$instance")" "$(current_release "$instance")"
+        printf '%s: role %s, %s, service %s, worker %s, current release %s\n' "$instance" "$(role_of "$instance")" \
+            "$(env_value "$instance" APP_ORIGIN)" "$(service_state "$instance")" \
+            "$(systemctl is-active "$worker_name$instance" 2>/dev/null || true)" "$(current_release "$instance")"
         local r
         for r in $(release_numbers "$instance"); do
             printf '  release %s  %s\n' "$r" "$(cut -c1-12 "$dir/releases/$r/SHA256SUMS" 2>/dev/null)"

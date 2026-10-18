@@ -12,7 +12,7 @@ pub const CHANNEL: &str = "bilibi_software_jobs";
 pub const RECORD: &str = "base/software.job";
 
 const TIME: &str = "'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'";
-const JOB_COLUMNS: &str = "id, kind, state, request, review, result, undo_of, switch, requested_by, worker, cancel_requested_by,\
+pub(crate) const JOB_COLUMNS: &str = "id, kind, state, request, review, result, undo_of, switch, requested_by, worker, cancel_requested_by,\
  to_char(requested_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),\
  to_char(started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),\
  to_char(finished_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),\
@@ -39,22 +39,27 @@ pub struct Job {
 }
 impl Job {
     fn from_row(row: &tokio_postgres::Row) -> Self {
+        Self::from_row_offset(row, 0)
+    }
+    /// `JOB_COLUMNS` starting at column `at` (a worker query may select the
+    /// tenant first).
+    pub(crate) fn from_row_offset(row: &tokio_postgres::Row, at: usize) -> Self {
         Self {
-            id: row.get(0),
-            kind: row.get(1),
-            state: row.get(2),
-            request: row.get(3),
-            review: row.get(4),
-            result: row.get(5),
-            undo_of: row.get(6),
-            switch: row.get(7),
-            requested_by: row.get(8),
-            worker: row.get(9),
-            cancel_requested_by: row.get(10),
-            requested_at: row.get(11),
-            started_at: row.get(12),
-            finished_at: row.get(13),
-            cancel_requested_at: row.get(14),
+            id: row.get(at),
+            kind: row.get(at + 1),
+            state: row.get(at + 2),
+            request: row.get(at + 3),
+            review: row.get(at + 4),
+            result: row.get(at + 5),
+            undo_of: row.get(at + 6),
+            switch: row.get(at + 7),
+            requested_by: row.get(at + 8),
+            worker: row.get(at + 9),
+            cancel_requested_by: row.get(at + 10),
+            requested_at: row.get(at + 11),
+            started_at: row.get(at + 12),
+            finished_at: row.get(at + 13),
+            cancel_requested_at: row.get(at + 14),
         }
     }
     pub fn active(&self) -> bool {

@@ -97,6 +97,10 @@ struct Wanted {
     version: String,
     name: String,
     source: String,
+    /// The Git address the builder clones; the catalogue's for its Domains.
+    repository: String,
+    /// The commit the catalogue names for a release; none outside it.
+    commit: Option<String>,
     tested: bool,
     external: bool,
 }
@@ -199,11 +203,14 @@ pub fn change(
                         )
                     })?,
             };
+            let commit = domain.versions[&version].commit.clone();
             wanted.push(Wanted {
                 id: id.into(),
                 version,
                 name: domain.name.clone(),
                 source: "catalogue".into(),
+                repository: domain.repository.clone(),
+                commit: Some(commit),
                 tested: false,
                 external: false,
             });
@@ -243,6 +250,8 @@ pub fn change(
                 version: reference.to_owned(),
                 name: id.to_owned(),
                 source: repository.to_owned(),
+                repository: repository.to_owned(),
+                commit: None,
                 tested: false,
                 external: true,
             });
@@ -496,13 +505,17 @@ pub fn change(
     let summary = format!("{}: {}", instance.label, join(&summary_parts));
     let mut request = json!({
         "platform": platform_text,
-        "domains": wanted.iter().map(|w| if w.external { json!({"id": w.id, "repository": w.source, "ref": w.version}) } else { json!({"id": w.id, "version": w.version}) }).collect::<Vec<_>>(),
+        "domains": wanted.iter().map(|w| if w.external { json!({"id": w.id, "repository": w.repository, "ref": w.version}) } else { json!({"id": w.id, "version": w.version, "commit": w.commit, "repository": w.repository}) }).collect::<Vec<_>>(),
         "plugins": plugins.iter().map(|p| json!({"id": p["id"], "enabled": p["enabled"]})).collect::<Vec<_>>(),
         "switch": switch,
     });
-    if !platform_changes && !platform_versions.contains(&platform) {
-        request["platform_commit"] = json!(made.commit);
-    }
+    // The builder clones exactly what was reviewed: the release's commit from
+    // the catalogue, or the running program's own when it is between releases.
+    request["platform_repository"] = json!(catalogue.platform.repository);
+    request["platform_commit"] = match catalogue.platform.versions.get(&platform_text) {
+        Some(release) => json!(release.commit),
+        None => json!(made.commit),
+    };
     let facts = json!({
         "summary": summary,
         "instance": instance_json(instance),
