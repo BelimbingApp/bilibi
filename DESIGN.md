@@ -63,6 +63,7 @@ Reuse the shared macros and typed models. Do not hand-write markup or copy class
 - Name variants through the enums (`ButtonVariant`, `BadgeKind`, `PageVariant`), not class strings.
 - Icons come from `src/icons.rs` action names or `hero-*`. Use the Belimbing equivalent for a familiar action.
 - Icon-only actions need an accessible label and a title. Inline controls are `size-6`. Table and toolbar controls are `size-7`.
+- Links navigate; buttons act.
 - Destructive actions use calm danger text, never a solid red button.
 - Secrets use `SecretInput`. It starts masked. A stored value shows a keep-current mask, never plaintext.
 - Specimens: the Design Library (`/assets/ui-components.html`, `/assets/ui-feedback.html`) is the screenshot baseline. Extend it with each new primitive.

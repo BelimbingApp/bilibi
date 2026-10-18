@@ -42,6 +42,14 @@ Case and interaction step:
   Difference or follow-up slice:
 ```
 
+## Common parity misses
+
+- Validation rules run in Bilimbi's order and report only the first failing rule.
+- Refusal and error texts are Bilimbi's exact words ("The file's type could not be recognised."), not an error's `Display` text.
+- A refused confirm keeps the dialog open next to the flash.
+- A save uses the record the page showed, so a stale record gets the owner's refusal.
+- After a recorded change the page reads its data again (Bilimbi `load/1`).
+
 ## Required checks for each implementation slice
 
 Run the repository checks without invoking any unit-test runner:
