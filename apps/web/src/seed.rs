@@ -37,9 +37,13 @@ pub const ADMIN_EMAIL: &str = "ai@agent.my";
 pub const DEVELOPMENT_PASSWORD: &str = "bilibi-dev";
 
 enum Bootstrap {
-    Created { modules: usize },
+    Created {
+        modules: usize,
+    },
     Adopted,
-    AlreadyCompleted,
+    /// The receipt's administrator: `ai@agent.my`, or the owner
+    /// `create-owner` made on this database.
+    AlreadyCompleted(String),
     Refused(&'static str),
 }
 
@@ -68,10 +72,10 @@ pub async fn seed(db: &Db, at_startup: bool) -> Result<()> {
         Bootstrap::Adopted => println!(
             "Development seed ready: administrator bootstrap recorded for the existing user {ADMIN_EMAIL} (password preserved)."
         ),
-        Bootstrap::AlreadyCompleted if !at_startup => println!(
-            "Development seed ready: administrator already completed, user {ADMIN_EMAIL} (existing; password preserved)."
+        Bootstrap::AlreadyCompleted(email) if !at_startup => println!(
+            "Development seed ready: administrator already completed, user {email} (existing; password preserved)."
         ),
-        Bootstrap::AlreadyCompleted => {}
+        Bootstrap::AlreadyCompleted(_) => {}
         Bootstrap::Refused(subject) => {
             let message = format!(
                 "this database already has {subject} without the development administrator, so no account was promoted (reference data is seeded). Sign in with an existing administrator, or use a fresh development database for {ADMIN_EMAIL}."
@@ -133,12 +137,11 @@ async fn bootstrap(db: &Db, app: &crate::App) -> Result<Bootstrap> {
         .await?;
     // The receipt makes the bootstrap one-time: nothing below runs again, so
     // a role, password or sample the operator changed stays changed.
-    if tx
-        .query_opt("SELECT 1 FROM user_bootstrap", &[])
+    if let Some(receipt) = tx
+        .query_opt("SELECT admin_email FROM user_bootstrap", &[])
         .await?
-        .is_some()
     {
-        return Ok(Bootstrap::AlreadyCompleted);
+        return Ok(Bootstrap::AlreadyCompleted(receipt.get(0)));
     }
     let operator: Option<i64> = tx
         .query_opt(

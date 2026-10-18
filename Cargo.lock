@@ -1219,6 +1219,7 @@ dependencies = [
  "http-body-util",
  "inventory",
  "jiff",
+ "libc",
  "serde",
  "serde_json",
  "tokio",

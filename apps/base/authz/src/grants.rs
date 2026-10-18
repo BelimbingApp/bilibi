@@ -425,6 +425,54 @@ impl Grants {
         }
         Ok(())
     }
+    /// The installation's first administrator (Bilimbi `AdminBootstrap`'s
+    /// role assignment): reconciles the tenant's system roles, then gives
+    /// `user` the grant-all `core_admin` role as one audited change, and
+    /// returns the role id. No account exists yet to authorize it, so it runs
+    /// only on a system-attributed bootstrap transaction of that tenant whose
+    /// owner (`bilibi_user::bootstrap`) has proved the tenant holds no live
+    /// account; a user- or agent-attributed transaction is refused. It never
+    /// replaces `assign_role`, which proves the actor and asks for step-up.
+    pub async fn grant_first_administrator_in(
+        &self,
+        tx: &mut MutationTransaction<'_>,
+        tenant: i64,
+        user: i64,
+    ) -> Result<i64> {
+        if tx.context().actor.kind != "system" || tx.context().tenant != tenant {
+            return Err(Error::Forbidden);
+        }
+        self.reconcile_tenant_in(tx.sql(), tenant).await?;
+        let role: i64 = tx
+            .sql()
+            .query_opt(
+                "SELECT id FROM roles WHERE tenant_id=$1 AND code='core_admin' AND is_system AND grant_all",
+                &[&tenant],
+            )
+            .await?
+            .map(|row| row.get(0))
+            .ok_or(Error::Internal)?;
+        tx.mutate(move |sql| {
+            Box::pin(async move {
+                sql.execute(
+                    "INSERT INTO principal_roles(tenant_id,user_id,role_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING",
+                    &[&tenant, &user, &role],
+                )
+                .await?;
+                Ok((
+                    (),
+                    vec![Change {
+                        kind: "authz.principal_role".into(),
+                        id: role,
+                        old: json!({"user":user,"assigned":false}),
+                        new: json!({"user":user,"assigned":true}),
+                    }],
+                ))
+            })
+        })
+        .await?;
+        Ok(role)
+    }
 }
 
 async fn lock_roles(tx: &Transaction<'_>) -> Result<()> {

@@ -48,6 +48,22 @@ impl Context {
             agent_self_report: None,
         }
     }
+    /// A deployment command acting in one tenant as a named system principal
+    /// (`create-owner`), where no account exists yet to act as. Audit records
+    /// the principal's name; it is never an identity or a capability.
+    pub fn system(tenant: i64, principal: &str, action: impl Into<String>) -> Self {
+        Self {
+            tenant,
+            actor: Principal {
+                kind: "system".into(),
+                id: principal.into(),
+            },
+            impersonator: None,
+            action: action.into(),
+            trace_id: uuid::Uuid::new_v4().to_string(),
+            agent_self_report: None,
+        }
+    }
     fn validate(&self) -> Result<()> {
         if self.tenant <= 0
             || self.actor.kind.is_empty()

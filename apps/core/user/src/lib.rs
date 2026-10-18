@@ -21,9 +21,15 @@ mod two_factor_ui;
 mod verification;
 pub mod web;
 
-pub use accounts::{AccountError, AccountField, AccountInput, LandingPage, ProfileOutcome};
+pub use accounts::{
+    AccountError, AccountField, AccountInput, FieldError, LandingPage, ProfileOutcome,
+};
 use bilibi_database::{Db, Error, MutationBoundary, Result};
 use bilibi_security::{guard, Sessions};
+pub use bootstrap::{
+    validate_first_administrator, BootstrapAffiliation, FirstAdministrator,
+    FirstAdministratorCreated, FirstAdministratorError, OperatorCompany,
+};
 pub use identity::{Account, AccountLinks, AccountVerifier, Freeze, LinkError, Standing};
 pub use notifications::{unread, Notifications};
 pub use password::PolicyViolation;

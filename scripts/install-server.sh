@@ -6,6 +6,7 @@
 #
 #   install-server.sh create <instance> --role dev|staging|production --site <host> [--port <n>] [--tls internal]
 #   install-server.sh release <instance> <bilibi-web binary, or a folder holding it>
+#   install-server.sh create-owner <instance> [bilibi-web create-owner flags]
 #   install-server.sh switch <instance> <release number>
 #   install-server.sh status [<instance>]
 #
@@ -373,6 +374,23 @@ release() {
         fail "release $n could not update the database" "see the output above; the previous release is back in service"
     fi
     put_in_service "$instance" "$n" "$previous"
+    if [[ -z $previous ]]; then
+        say "Next: create the first account with: $0 create-owner $instance"
+    fi
+}
+# ================================================================ create-owner
+# The first account of a fresh instance: `bilibi-web create-owner` in the
+# instance's environment, with the terminal attached so it can ask for the
+# password. It refuses on its own once the instance has an owner.
+create_owner() {
+    local instance=${1:-}
+    [[ -n $instance ]] || usage
+    need_root create-owner "$@"
+    shift
+    instance_exists "$instance" || fail "no instance named $instance"
+    local dir; dir=$(instance_dir "$instance")
+    [[ -x $dir/current/bilibi-web ]] || fail "$instance has no release in service" "put one in service first: $0 release $instance <path to bilibi-web>"
+    with_env "$instance" bilibi-build "$dir/current/bilibi-web" create-owner "$@"
 }
 switch() {
     local instance=${1:-} n=${2:-}
@@ -406,6 +424,7 @@ status() {
 case ${1:-} in
     create) shift; create "$@" ;;
     release) shift; release "$@" ;;
+    create-owner) shift; create_owner "$@" ;;
     switch) shift; switch "$@" ;;
     status) shift; status "$@" ;;
     *) usage ;;
