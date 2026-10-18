@@ -148,6 +148,45 @@
       },
       "tested_at": "2026-10-18T17:25:02Z",
       "run": "https://github.com/BelimbingApp/bilibi/actions/runs/39148416585"
+    },
+    {
+      "platform": {
+        "version": null,
+        "commit": "ed79f3eec5d95aabacfb78926e92957b8f645685"
+      },
+      "domain": {
+        "id": "factory",
+        "version": "0.1.0",
+        "commit": "32b6f8787173ba6cd83a59a58fe856dab1d015f6"
+      },
+      "tested_at": "2026-10-18T17:31:58Z",
+      "run": "https://github.com/BelimbingApp/bilibi/actions/runs/39149418560"
+    },
+    {
+      "platform": {
+        "version": null,
+        "commit": "ed79f3eec5d95aabacfb78926e92957b8f645685"
+      },
+      "domain": {
+        "id": "supply_chain",
+        "version": "0.1.0",
+        "commit": "8bf2be20a6e3b87b7a27a051dd28326e5c494e62"
+      },
+      "tested_at": "2026-10-18T17:32:50Z",
+      "run": "https://github.com/BelimbingApp/bilibi/actions/runs/39149418560"
+    },
+    {
+      "platform": {
+        "version": null,
+        "commit": "ed79f3eec5d95aabacfb78926e92957b8f645685"
+      },
+      "domain": {
+        "id": "finance",
+        "version": "0.1.0",
+        "commit": "24938fb69a4da94275ae74085ec03671a8efd51e"
+      },
+      "tested_at": "2026-10-18T17:40:23Z",
+      "run": "https://github.com/BelimbingApp/bilibi/actions/runs/39149418560"
     }
   ]
 }
