@@ -54,7 +54,7 @@ On Ubuntu, Debian or WSL2:
 
 `setup.sh` installs everything once (Rust, PostgreSQL 18, Caddy, mkcert, Node.js) and is safe to rerun.
 
-Open <https://bilibi.localhost> and sign in as `ai@agent.my` / `bilibi-dev` (development seed only). The launcher starts a private database, builds, migrates, seeds, serves local HTTPS and rebuilds on change. Restart it after changing an environment variable.
+Open <https://bilibi.localhost> and sign in as `ai@agent.my` / `bilibi-dev` (development seed only). The launcher starts a private database, builds, migrates, seeds, serves local HTTPS and rebuilds on change. If a rebuild fails or the app stops, the terminal says why and how to start it again. Restart it after changing an environment variable.
 
 ## Configuration
 

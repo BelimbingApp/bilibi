@@ -76,8 +76,13 @@ if [[ -n $(ss -H -ltn "sport = :${instance[1]}") ]]; then
     exit 1
 fi
 echo "Open $APP_ORIGIN — sign in as ai@agent.my / bilibi-dev (the platform operator's administrator)."
+# dev-run.sh explains each restart from the state the previous run left here.
+rm -f "$root/.local/dev-run.state"
 echo 'Cargo output stays visible. Edit Rust/templates/assets to rebuild; Ctrl-C stops this app, leaving shared Caddy running.'
-# The asset build rewrites app.css (and npm may touch node_modules) under apps/;
-# watching them would make every rebuild trigger the next one.
+# The asset build rewrites app.css, writes a scratch css/.mounted-<pid>.css (and
+# npm may touch node_modules) under apps/; watching them would make every rebuild
+# trigger the next one. cargo-watch reads .gitignore only when .git is a
+# directory, so in a git worktree these ignores are the only ones it applies.
 exec cargo watch --watch apps --watch Cargo.toml --watch Cargo.lock --watch scripts \
-    --ignore 'apps/base/ui/assets/app.css' --ignore '**/node_modules/**' --shell './scripts/dev-run.sh'
+    --ignore 'apps/base/ui/assets/app.css' --ignore 'apps/base/ui/assets/css/.mounted-*.css' \
+    --ignore '**/node_modules/**' --shell './scripts/dev-run.sh'
