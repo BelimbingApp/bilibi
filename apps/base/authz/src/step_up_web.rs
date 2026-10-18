@@ -143,11 +143,18 @@ impl Setting {
             Self::HoursLimit => window.cap_limit_hours,
         }
     }
-    /// The pair to write with `value` in place of this setting.
+    /// The pair to write with `value` in place of this setting. An
+    /// organisation's other setting is written at the value in force, its
+    /// stored value capped at the server's longest.
     fn pair(self, window: &Window, value: i64) -> (i64, i64) {
         match self {
-            Self::Minutes => (value, window.tenant_cap_hours),
-            Self::Hours => (window.tenant_window_minutes, value),
+            Self::Minutes => (value, window.cap_hours),
+            Self::Hours => (
+                window
+                    .tenant_window_minutes
+                    .min(window.window_limit_minutes),
+                value,
+            ),
             Self::MinutesLimit => (value, window.cap_limit_hours),
             Self::HoursLimit => (window.window_limit_minutes, value),
         }
@@ -164,25 +171,16 @@ impl Setting {
             return Some(format!("must be from {low} to {high}"));
         }
         let (minutes, hours) = self.pair(window, value);
-        // The organisation's pair stays within the server's longest; a stored
-        // value the server owner has since lowered the longest under is named,
-        // so the reader knows which one to lower first.
         if !self.limit() {
-            let longest = |setting: Setting, stored: i64, limit: i64| {
-                if setting == self {
-                    format!("cannot be more than {limit}, the longest this server allows")
-                } else {
-                    format!(
-                        "cannot be saved while {} is {stored}, more than the {limit} this server allows; lower that first",
-                        setting.label().to_lowercase()
-                    )
-                }
+            let limit = if self.minutes() {
+                window.window_limit_minutes
+            } else {
+                window.cap_limit_hours
             };
-            if minutes > window.window_limit_minutes {
-                return Some(longest(Self::Minutes, minutes, window.window_limit_minutes));
-            }
-            if hours > window.cap_limit_hours {
-                return Some(longest(Self::Hours, hours, window.cap_limit_hours));
+            if value > limit {
+                return Some(format!(
+                    "cannot be more than {limit}, the longest this server allows"
+                ));
             }
         }
         (hours * 60 < minutes).then(|| {
