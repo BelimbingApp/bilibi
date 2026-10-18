@@ -187,7 +187,7 @@ Script commands:
 | --- | --- |
 | `create <instance> --role dev\|staging\|production --site <host> [--port <n>] [--tls internal]` | Packages, users, folders, database, `env`, service, Caddy site. Rerun to change the site; the role and port are fixed |
 | `release <instance> <bilibi-web or folder>` | Copy into `releases/<n>`, migrate, switch, check |
-| `create-owner <instance> [--email <address>] [--name <name>] [--password-stdin] [--company-name <name> --company-code <code>]` | The first account, the server owner; asks for anything not given, refuses once an owner exists |
+| `create-owner <instance> [--email <address>] [--name <name>] [--password-stdin] [--company-name <name> --company-code <code>]` | The first account, the server owner; asks for anything not given, refuses once an owner exists (it then only finishes an unfinished company link) |
 | `switch <instance> <n>` | Put a kept release in service |
 | `status [<instance>]` | Roles, addresses, service states, releases |
 
