@@ -1,11 +1,13 @@
 //! `/geonames/admin1` (Bilimbi `Admin1Live`): the Admin1 index with its
 //! country filter (form field `countryIso`, URL key `filterCountryIso`) and
-//! an inline local-name correction per row.
-use super::*;
-use crate::{Admin1Index, NameWriteError};
+//! an inline local-name correction per row and the operator's Update
+//! (Belimbing `Geonames\Livewire\Admin1\Index::update`; Bilimbi has none),
+//! which refreshes the Admin1 dataset from GeoNames in the background.
+use super::{update::Update, *};
+use crate::{Admin1Index, Dataset, NameWriteError};
 use bilibi_ui::{
     list_state::FILTERS_FORM,
-    page::{LiveBody, LiveFuture, LiveInput, LiveRequest},
+    page::{LiveBody, LiveFuture, LiveInput, LiveRequest, Subscription},
     params, Card, Choice, ColumnsOutcome, CommitStates, CommitStatus, FilterToolbar, FlexRow,
     FlexTable, Header, IconButton, IconContext, InlineEdit, InlineField, ListColumns, PageCounts,
     Pagination, TableEmpty, ToolbarControl,
@@ -76,6 +78,7 @@ pub(super) struct Admin1 {
     flash: Flash,
     statuses: CommitStates,
     shown: Option<Shown>,
+    update: Update,
 }
 
 impl Admin1 {
@@ -87,6 +90,13 @@ impl Admin1 {
             flash: Flash::default(),
             statuses: CommitStates::default(),
             shown: None,
+            update: Update::new(update::Spec {
+                dataset: Dataset::Admin1,
+                noun: "Admin1 divisions",
+                button_id: "admin1-update",
+                event: "update-admin1",
+                denied: DENIED,
+            }),
         })
     }
 
@@ -191,7 +201,11 @@ impl Admin1 {
                 nav_pin: "nav-admin-geonames-admin1-division",
                 ..IconButton::new("bilimbi-pin", "Pin Admin1 Divisions to sidebar")
             })?,
-            ..Header::default()
+            actions: if can_update {
+                self.update.button()?
+            } else {
+                Html::EMPTY
+            },
         })?;
         let form = self.list.filters_form();
         let toolbar = render(FilterToolbar::new(
@@ -299,6 +313,8 @@ impl Admin1 {
 impl LiveState<Scope, Error> for Admin1 {
     fn update<'a>(&'a mut self, request: LiveRequest<'a, Scope>) -> LiveFuture<'a, Error> {
         Box::pin(async move {
+            // A finished Update has already changed the rows: this pass reads them.
+            let settled = self.update.settle(&mut self.flash);
             let mut requery = true;
             match request.input {
                 LiveInput::Refresh => {}
@@ -323,6 +339,12 @@ impl LiveState<Scope, Error> for Admin1 {
                             ColumnsOutcome::Update | ColumnsOutcome::Noop => requery = false,
                         },
                         Some("page") => self.list.put_page(get("page")),
+                        Some("update-admin1") => {
+                            self.update
+                                .start(&self.pages, request.scope, &mut self.flash)
+                                .await?;
+                            requery = false;
+                        }
                         Some("save-admin1-name") => {
                             let value = get("value").ok_or(Error::Invalid)?;
                             if get("field") != Some("name") || value.len() > 4096 {
@@ -339,12 +361,15 @@ impl LiveState<Scope, Error> for Admin1 {
                     }
                 }
             }
-            let html = self.view(request.scope, requery).await?;
+            let html = self.view(request.scope, requery || settled).await?;
             Ok(LiveBody {
                 html,
                 query: admin1_query(&self.list),
                 ..LiveBody::default()
             })
         })
+    }
+    fn subscriptions(&mut self) -> Vec<Subscription> {
+        vec![self.update.subscription()]
     }
 }

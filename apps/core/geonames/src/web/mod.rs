@@ -1,13 +1,15 @@
 //! The three index screens (Bilimbi `Core.Geonames.Web.{CountriesLive,
 //! Admin1Live, PostcodesLive}`): bounded search, sort and page state kept in
 //! the URL under Bilimbi's camelCase names (`CamelList`), built-in columns
-//! through `ListColumns`/`FlexTable`, inline local-name corrections and the
-//! operator postcode form. `admin.geonames.list` is the route's gate; every
-//! write asks `admin.geonames.update` again inside the API it calls, and a
-//! refusal is a flash, never a page-clearing error.
+//! through `ListColumns`/`FlexTable`, inline local-name corrections, the
+//! operator postcode form, and the Countries and Admin1 Update (`update`).
+//! `admin.geonames.list` is the route's gate; every write asks
+//! `admin.geonames.update` again inside the API it calls, and a refusal is a
+//! flash, never a page-clearing error.
 mod admin1;
 mod countries;
 mod postcodes;
+mod update;
 
 use crate::{Geonames, ReferenceImport, UPDATE};
 use askama::Template;

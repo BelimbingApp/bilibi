@@ -2,20 +2,16 @@
 //! Countries index with its built-in columns, an inline local-name
 //! correction per row and the operator's Update, which refreshes the
 //! countries dataset from GeoNames in the background and reports what it did.
-use super::*;
-use crate::{
-    CountryIndex, Dataset, DatasetReport, DownloadFailure, DownloadStatus, FallbackCause,
-    ImportError, ImportOptions, NameWriteError, Target,
-};
+use super::{update::Update, *};
+use crate::{CountryIndex, Dataset, NameWriteError};
 use bilibi_ui::{
     list_state::FILTERS_FORM,
-    page::{Change, LiveBody, LiveFuture, LiveInput, LiveRequest, Subscription},
-    params, Button, ButtonVariant, Card, ColumnsOutcome, CommitStates, CommitStatus, FilterToolbar,
-    FlexRow, FlexTable, Header, Icon, IconButton, IconContext, InlineEdit, InlineField,
-    ListColumns, PageCounts, Pagination, TableEmpty, ToolbarControl,
+    page::{LiveBody, LiveFuture, LiveInput, LiveRequest, Subscription},
+    params, Card, ColumnsOutcome, CommitStates, CommitStatus, FilterToolbar, FlexRow, FlexTable,
+    Header, IconButton, IconContext, InlineEdit, InlineField, ListColumns, PageCounts, Pagination,
+    TableEmpty, ToolbarControl,
 };
-use std::sync::{LazyLock, Mutex};
-use tokio::sync::broadcast;
+use std::sync::LazyLock;
 
 const DENIED: &str = "You do not have permission to update countries.";
 const NOT_SAVED: &str = "Failed to save country name.";
@@ -47,8 +43,6 @@ fn builtins() -> Vec<BuiltinColumn> {
     ]
 }
 
-type Outcome = std::result::Result<Vec<DatasetReport>, ImportError>;
-
 #[derive(Template)]
 #[template(path = "geonames_countries.html")]
 struct View<'a> {
@@ -70,87 +64,11 @@ pub(super) struct Countries {
     flash: Flash,
     statuses: CommitStates,
     shown: Option<Shown>,
-    /// An Update is running (Bilimbi `updating_countries?`): the control is
-    /// disabled and a second press is ignored until it reports.
-    updating: bool,
-    /// Where the background import leaves its report; `wake` then asks the
-    /// host for a refresh, which reads it.
-    outcome: Arc<Mutex<Option<Outcome>>>,
-    wake: broadcast::Sender<Change>,
-}
-
-/// A fallback is NOT an update: the download failed and the existing local
-/// file was reused, so the operator must not read "updated" (Bilimbi #273).
-fn update_message(reports: &[DatasetReport]) -> (StatusKind, String) {
-    let Some(report) = reports
-        .iter()
-        .find(|report| report.target == Target::Dataset(Dataset::Countries))
-    else {
-        return (
-            StatusKind::Success,
-            "Countries updated from GeoNames.".into(),
-        );
-    };
-    match &report.download {
-        DownloadStatus::Fallback(cause) => (
-            StatusKind::Warning,
-            format!(
-                "Countries were not updated: {}{}. Kept the existing local data ({} imported, {} skipped). Try Update again later.",
-                fallback_cause(cause),
-                as_of(report.cached_at),
-                report.imported,
-                report.skipped
-            ),
-        ),
-        _ => (
-            StatusKind::Success,
-            format!(
-                "Countries updated from {}: {} imported, {} skipped.",
-                if report.cached() {
-                    "the current local GeoNames download"
-                } else {
-                    "a fresh GeoNames download"
-                },
-                report.imported,
-                report.skipped
-            ),
-        ),
-    }
-}
-/// A 503 is not the same as an unplugged cable: telling an operator to check
-/// their firewall when GeoNames is simply down wastes their afternoon.
-fn fallback_cause(cause: &FallbackCause) -> String {
-    match cause {
-        FallbackCause::Unreachable(_) => "GeoNames could not be reached".into(),
-        FallbackCause::HttpStatus(status) => {
-            format!("GeoNames returned an error (HTTP {status})")
-        }
-    }
-}
-fn as_of(cached_at: Option<SystemTime>) -> String {
-    cached_at
-        .and_then(|at| jiff::Timestamp::try_from(at).ok())
-        .map(|at| format!(", so this data is from {}", at.strftime("%d %b %Y")))
-        .unwrap_or_default()
-}
-fn update_error_message(error: &ImportError) -> String {
-    match error {
-        ImportError::Download(_, DownloadFailure::Request(_)) => {
-            "Countries were not changed. Bilibi could not connect to download.geonames.org. Check internet, proxy, or firewall access, then try Update again. If it persists, contact your administrator.".into()
-        }
-        ImportError::Download(_, DownloadFailure::HttpStatus(status)) => format!(
-            "Countries were not changed. GeoNames responded with HTTP {status}. Try Update again later; if it persists, contact your administrator."
-        ),
-        ImportError::Import(..) | ImportError::Extract(..) => {
-            "Countries were not changed. GeoNames data was downloaded but could not be imported, and the existing data was kept. Try Update again; if it persists, contact your administrator.".into()
-        }
-        _ => "Countries were not changed because the GeoNames update did not finish. Try Update again; if it persists, contact your administrator.".into(),
-    }
+    update: Update,
 }
 
 impl Countries {
     pub fn new(pages: Pages, query: &HashMap<String, String>) -> Result<Self> {
-        let (wake, _) = broadcast::channel(4);
         Ok(Self {
             pages,
             list: parse(query, &SPEC)?,
@@ -159,9 +77,13 @@ impl Countries {
             flash: Flash::default(),
             statuses: CommitStates::default(),
             shown: None,
-            updating: false,
-            outcome: Arc::new(Mutex::new(None)),
-            wake,
+            update: Update::new(update::Spec {
+                dataset: Dataset::Countries,
+                noun: "Countries",
+                button_id: "countries-update",
+                event: "update-countries",
+                denied: DENIED,
+            }),
         })
     }
 
@@ -183,72 +105,6 @@ impl Countries {
         self.columns
             .load(&page.entries, |country| country.id.to_string());
         self.shown = Some(Shown { page, reader });
-        Ok(())
-    }
-
-    /// Reads the background import's report, once it has one.
-    fn settle(&mut self) -> bool {
-        let outcome = self
-            .outcome
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .take();
-        let Some(outcome) = outcome else {
-            return false;
-        };
-        self.updating = false;
-        match outcome {
-            Ok(reports) => {
-                let (kind, message) = update_message(&reports);
-                self.flash.put(kind, message);
-                true
-            }
-            Err(ImportError::Access(Error::Forbidden)) => {
-                self.flash.put(StatusKind::Error, DENIED);
-                false
-            }
-            Err(error) => {
-                self.flash
-                    .put(StatusKind::Error, update_error_message(&error));
-                false
-            }
-        }
-    }
-
-    /// `can_update` only shows the control. This asks again, and the import
-    /// asks with the sealed scope, so a grant revoked after mount does not
-    /// refresh anything.
-    async fn start_update(&mut self, scope: &Scope) -> Result<()> {
-        if self.updating {
-            return Ok(());
-        }
-        let client = self.pages.db.get().await?;
-        match bilibi_authz::authorize_key(&**client, scope, UPDATE).await {
-            Ok(()) => {}
-            Err(Error::Forbidden) => {
-                self.flash.put(StatusKind::Error, DENIED);
-                return Ok(());
-            }
-            Err(error) => return Err(error),
-        }
-        drop(client);
-        self.updating = true;
-        let importer = self.pages.importer.clone();
-        let scope = scope.clone();
-        let tenant = scope.tenant();
-        let outcome = self.outcome.clone();
-        let wake = self.wake.clone();
-        tokio::spawn(async move {
-            let options = ImportOptions {
-                datasets: vec![Dataset::Countries],
-                ..ImportOptions::default()
-            };
-            let report = importer.run_as(&scope, &options).await;
-            *outcome
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(report);
-            let _ = wake.send(Change { tenant, user: None });
-        });
         Ok(())
     }
 
@@ -309,29 +165,7 @@ impl Countries {
         let can_update = shown.reader.can_update;
 
         let actions = if can_update {
-            let label = if self.updating {
-                "Updating…"
-            } else {
-                "Update"
-            };
-            let icon = render(Icon {
-                name: "refresh",
-                class: if self.updating {
-                    "size-4 animate-spin"
-                } else {
-                    "size-4"
-                },
-            })?;
-            render(Button {
-                variant: ButtonVariant::Primary,
-                id: "countries-update",
-                button_type: "button",
-                event: "update-countries",
-                disabled: self.updating,
-                class: "px-3 py-1.5",
-                body: Html::raw(format!("{icon}<span>{label}</span>")),
-                ..Button::default()
-            })?
+            self.update.button()?
         } else {
             Html::EMPTY
         };
@@ -443,7 +277,7 @@ impl Countries {
 impl LiveState<Scope, Error> for Countries {
     fn update<'a>(&'a mut self, request: LiveRequest<'a, Scope>) -> LiveFuture<'a, Error> {
         Box::pin(async move {
-            let mut requery = self.settle();
+            let mut requery = self.update.settle(&mut self.flash);
             match request.input {
                 LiveInput::Refresh => requery = true,
                 LiveInput::Params(values) => {
@@ -479,7 +313,11 @@ impl LiveState<Scope, Error> for Countries {
                             self.list.put_page(get("page"));
                             requery = true;
                         }
-                        Some("update-countries") => self.start_update(request.scope).await?,
+                        Some("update-countries") => {
+                            self.update
+                                .start(&self.pages, request.scope, &mut self.flash)
+                                .await?
+                        }
                         Some("save-country-name") => {
                             let value = get("value").ok_or(Error::Invalid)?;
                             if get("field") != Some("country") || value.len() > 4096 {
@@ -501,8 +339,6 @@ impl LiveState<Scope, Error> for Countries {
         })
     }
     fn subscriptions(&mut self) -> Vec<Subscription> {
-        vec![Subscription {
-            receiver: self.wake.subscribe(),
-        }]
+        vec![self.update.subscription()]
     }
 }
