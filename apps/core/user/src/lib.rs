@@ -28,7 +28,7 @@ use bilibi_database::{Db, Error, MutationBoundary, Result};
 use bilibi_security::{guard, Sessions};
 pub use bootstrap::{
     validate_first_administrator, BootstrapAffiliation, FirstAdministrator,
-    FirstAdministratorCreated, FirstAdministratorError, OperatorCompany,
+    FirstAdministratorCreated, FirstAdministratorError, OperatorAccounts, OperatorCompany,
 };
 pub use identity::{Account, AccountLinks, AccountVerifier, Freeze, LinkError, Standing};
 pub use notifications::{unread, Notifications};
