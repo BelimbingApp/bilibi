@@ -8,6 +8,7 @@
 //! program it installs, because it has to stop and start that program.
 //! `README.md` beside this file says what each step does and why.
 mod backup;
+mod composition;
 mod flow;
 mod jobs;
 mod layout;

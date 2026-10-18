@@ -111,6 +111,8 @@ The builder (below, Dev) runs under the `bilibi-build` user as the instance's wo
    | `previous_release` | the one it replaced, kept for Undo |
    | `migrated` | `true` when the database changed shape; Undo then restores the backup and says what is lost |
    | `backup`, `backup_at` | where the backup is and when (UTC, `YYYY-MM-DDTHH:MM:SSZ`) it was taken; the undo review counts what was entered since |
+   | `platform`, `domains`, `extensions`, `changes` | what the release in service is made of and what differs from the release it replaced; the installer reads them from the release's own `status`, so Done can list what changed (`apps/installer/README.md`, "How it talks to the page") |
+   | `pause_seconds` | how long the instance was paused; the message for the person names it |
    | `lost` | an undo that restored a backup writes the counts only (`since`, `changes`, `by_kind`). `status` adds the sentence as `loss`, from the same definition the undo review uses |
    | `message` | one plain sentence for the person |
 

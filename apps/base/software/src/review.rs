@@ -592,7 +592,7 @@ pub fn install(
         "release": release,
         "source": source_json(source),
         "running": {"platform": made.version, "release": made.tag, "domains": made.containers.iter().filter(|c| c.layer == Layer::Domains).map(|c| json!({"id": c.id, "version": c.version})).collect::<Vec<_>>()},
-        "changes": "Known once the installer reads the release's manifest; the status shows them then.",
+        "changes": "Known once the installer reads the copied release's own status; the job's result lists them then.",
         "checks": ["The checksum matches", "The release was built for this kind of server", "The source still reports it healthy", "Enough disk for the program and a backup"],
         "warnings": warnings,
         "pause_minutes": PAUSE_MINUTES,

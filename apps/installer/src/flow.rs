@@ -11,6 +11,7 @@
 //! backup, so a restart in it ends with the right release in service.
 use crate::{
     backup::{self, PgEnv},
+    composition,
     jobs::{self, Job, Step},
     layout::{self, human, Layout},
     service::Service,
@@ -211,11 +212,13 @@ impl<'a> Run<'a> {
         }
         let current = self.layout.current();
         let backup = self.detail("backup");
+        let seconds = self.pause_seconds().await?;
         self.finish(
             "failed",
             json!({
                 "release": current, "previous_release": current, "migrated": false,
-                "backup": backup["backup"], "backup_at": backup["backup_at"], "message": message,
+                "backup": backup["backup"], "backup_at": backup["backup_at"],
+                "pause_seconds": seconds, "message": with_pause(&message, seconds),
             }),
         )
         .await
@@ -223,11 +226,22 @@ impl<'a> Run<'a> {
     /// The job ended without changing anything: the owner can start again.
     async fn interrupted(&mut self, message: &str) -> Db<()> {
         let current = self.layout.current();
+        let seconds = self.pause_seconds().await?;
+        let message = with_pause(message, seconds);
         self.finish(
             "interrupted",
-            json!({"release": current, "previous_release": current, "migrated": false, "message": message}),
+            json!({"release": current, "previous_release": current, "migrated": false,
+                "pause_seconds": seconds, "message": message}),
         )
         .await
+    }
+    /// How long the instance has been paused: from the moment the backup
+    /// step stopped the service. None before the pause.
+    async fn pause_seconds(&self) -> Db<Option<i64>> {
+        match self.detail("backup")["paused_epoch"].as_i64() {
+            Some(start) => Ok(Some((jobs::epoch(&*self.client).await? - start).max(0))),
+            None => Ok(None),
+        }
     }
 
     // ------------------------------------------------------------- resume
@@ -446,6 +460,13 @@ impl<'a> Run<'a> {
         } else {
             " The database kept its shape."
         };
+        let seconds = self.pause_seconds().await?;
+        let message = format!(
+            "Release {release} is in service, installed from {} release {}.{database} {}",
+            fetched["source"].as_str().unwrap_or("the source"),
+            fetched["source_release"],
+            composition::describe(&fetched["changes"]),
+        );
         self.finish(
             "done",
             json!({
@@ -453,8 +474,9 @@ impl<'a> Run<'a> {
                 "backup": backup["backup"], "backup_at": backup["backup_at"],
                 "source": fetched["source"], "source_release": fetched["source_release"],
                 "sha256": fetched["sha256"], "program": fetched["program"],
-                "message": format!("Release {release} is in service, installed from {} release {}.{database}",
-                    fetched["source"].as_str().unwrap_or("the source"), fetched["source_release"]),
+                "platform": fetched["platform"], "domains": fetched["domains"],
+                "extensions": fetched["extensions"], "changes": fetched["changes"],
+                "pause_seconds": seconds, "message": with_pause(message.trim_end(), seconds),
             }),
         )
         .await?;
@@ -575,13 +597,24 @@ impl<'a> Run<'a> {
                 dst.display()
             ));
         }
-        let program = program_status(&dst).inspect_err(|_| {
+        let status = program_status(&dst).inspect_err(|_| {
             let _ = fs::remove_dir_all(&dst);
         })?;
+        let program: String = status
+            .lines()
+            .next()
+            .unwrap_or("Bilibi")
+            .chars()
+            .take(200)
+            .collect();
+        let now = composition::parse(&status);
+        let changes = composition::diff(&composition_of(&self.layout.release(current)), &now);
         Ok(json!({
             "message": format!("Copied {source_name} release {wanted} as release {n} here: {program}"),
             "release": n, "previous": current, "source_release": wanted, "source": source_name,
             "sha256": sha, "bytes": bytes, "program": program,
+            "platform": now["platform"], "domains": now["domains"], "extensions": now["extensions"],
+            "changes": changes,
         }))
     }
     /// With `switch: ask`, the instance keeps running until the owner says
@@ -613,6 +646,9 @@ impl<'a> Run<'a> {
     /// The pause begins: stop the service, then dump the database.
     async fn backup(&mut self) -> Result<Value, String> {
         self.service.stop()?;
+        let paused_epoch = jobs::epoch(&*self.client)
+            .await
+            .map_err(|error| jobs::short(&error))?;
         let at = jobs::now(&*self.client)
             .await
             .map_err(|error| jobs::short(&error))?;
@@ -620,7 +656,7 @@ impl<'a> Run<'a> {
         let bytes = backup::dump(self.pg, &file)?;
         Ok(json!({
             "message": format!("{} is paused. Backed up the database ({}).", self.layout.name, human(bytes)),
-            "backup": file.display().to_string(), "backup_at": at, "bytes": bytes,
+            "backup": file.display().to_string(), "backup_at": at, "paused_epoch": paused_epoch, "bytes": bytes,
         }))
     }
     fn backup_file(&self) -> PathBuf {
@@ -759,7 +795,12 @@ impl<'a> Run<'a> {
             );
         }
         notes.extend(problems);
+        let seconds = self.pause_seconds().await?;
+        if let Some(seconds) = seconds {
+            notes.push(pause_sentence(seconds));
+        }
         let mut result = back.base;
+        result["pause_seconds"] = json!(seconds);
         result["switched_back"] = json!(true);
         result["restored"] = json!(restored);
         result["previous_healthy"] = json!(answered.is_ok());
@@ -940,13 +981,23 @@ impl<'a> Run<'a> {
         } else {
             "Your data stayed as it was.".to_owned()
         };
+        let now = composition_of(&self.layout.release(previous));
+        let changes =
+            composition::diff(&composition_of(&self.layout.release(undone.release)), &now);
+        let seconds = self.pause_seconds().await?;
+        let message = format!(
+            "Back on release {previous}. {data} {}",
+            composition::describe(&changes)
+        );
         self.finish(
             "done",
             json!({
                 "release": previous, "previous_release": undone.release, "migrated": restores && undone.migrated,
                 "backup": safety["backup"], "backup_at": safety["backup_at"], "restored": restores,
                 "lost": self.detail("restore")["lost"],
-                "message": format!("Back on release {previous}. {data}"),
+                "platform": now["platform"], "domains": now["domains"], "extensions": now["extensions"],
+                "changes": changes,
+                "pause_seconds": seconds, "message": with_pause(message.trim_end(), seconds),
             }),
         )
         .await?;
@@ -1022,8 +1073,8 @@ impl<'a> Run<'a> {
     }
 }
 
-/// `bilibi-web status` on a copied release: it proves the program runs on
-/// this machine, and its first line names what the release holds.
+/// `bilibi-web status` on a release folder: it proves the program runs on
+/// this machine, and its text names what the release holds.
 fn program_status(dir: &std::path::Path) -> Result<String, String> {
     let out = Command::new("timeout")
         .arg("30")
@@ -1037,13 +1088,24 @@ fn program_status(dir: &std::path::Path) -> Result<String, String> {
             backup::tail(&out.stderr)
         ));
     }
-    Ok(String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .next()
-        .unwrap_or("Bilibi")
-        .chars()
-        .take(200)
-        .collect())
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+/// What a release folder's program says it is made of; null when it does not
+/// run.
+fn composition_of(dir: &std::path::Path) -> Value {
+    program_status(dir).map_or(Value::Null, |status| composition::parse(&status))
+}
+fn pause_sentence(seconds: i64) -> String {
+    format!(
+        "The pause lasted {seconds} second{}.",
+        if seconds == 1 { "" } else { "s" }
+    )
+}
+fn with_pause(message: &str, seconds: Option<i64>) -> String {
+    match seconds {
+        Some(seconds) => format!("{message} {}", pause_sentence(seconds)),
+        None => message.to_owned(),
+    }
 }
 /// Runs one command of a release's program with the instance's environment
 /// (this process has it from the env file), cut off after `limit` seconds.

@@ -275,6 +275,13 @@ pub async fn changes_since(
     let total: i64 = rows.iter().map(|row| row.get::<_, i64>(1)).sum();
     Ok(json!({"since": since, "changes": total, "by_kind": by_kind}))
 }
+/// Now, in seconds since 1970 on the database's clock, to time the pause.
+pub async fn epoch(client: &impl GenericClient) -> Result<i64, tokio_postgres::Error> {
+    let row = client
+        .query_one("SELECT extract(epoch from now())::bigint", &[])
+        .await?;
+    Ok(row.get(0))
+}
 /// Now, as the UTC instant the job rows and results carry.
 pub async fn now(client: &impl GenericClient) -> Result<String, tokio_postgres::Error> {
     let row = client
