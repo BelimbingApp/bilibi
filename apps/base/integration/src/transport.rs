@@ -12,9 +12,16 @@ use tokio::io::{AsyncWrite, AsyncWriteExt};
 pub const DEFAULT_MAX_BODY_BYTES: u64 = 10 * 1024 * 1024;
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// The public roots, plus the server's own trust store (`/etc/ssl/certs`,
+/// where `update-ca-certificates` puts a private authority), so an instance
+/// on a private name with a certificate from its own authority can be
+/// called. A store that cannot be read adds nothing.
 pub(crate) fn client() -> Result<reqwest::Client> {
     let mut roots = rustls::RootCertStore::empty();
     roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    for certificate in rustls_native_certs::load_native_certs().certs {
+        let _ = roots.add(certificate);
+    }
     let tls = rustls::ClientConfig::builder_with_provider(Arc::new(
         rustls::crypto::ring::default_provider(),
     ))

@@ -1,0 +1,27 @@
+{#- The release file upload and the files waiting (src/web.rs UploadBody). -#}
+{%- import "components.html" as ui -%}
+{% if manages %}
+<form id="release-files-upload-form" data-event="upload_release" class="space-y-3">
+<p class="text-sm text-ink-muted">For a source {{ label }} cannot reach: download the release file there, then choose it here. It is unpacked and checked, and waits until you install it.</p>
+{{ input|safe }}
+<div class="flex flex-wrap items-center gap-2">{{ submit|safe }}</div>
+</form>
+{% else %}
+<p class="text-sm text-ink-muted">A server owner can upload a release file here.</p>
+{% endif %}
+{% if waiting.is_empty() %}
+<p id="release-files-waiting-empty" class="mt-4 text-sm text-ink-muted">No release file is waiting here.</p>
+{% else %}
+<ul id="release-files-waiting" class="mt-4 divide-y divide-line text-sm">
+{% for file in waiting %}
+<li id="{{ file.id }}" class="flex flex-wrap items-start justify-between gap-2 py-2">
+<div class="min-w-0">
+<p class="font-medium text-ink">{{ file.heading }}</p>
+<p class="text-ink-muted">{{ file.detail }}</p>
+<p class="text-xs text-ink-subtle">Install it from the Software page or through an assistant: base.software.install with bundle {{ file.bundle }}.</p>
+</div>
+{% if manages %}{% call ui::button(id="{}-remove"|format(file.id), button_type="button", event="discard_upload", name="value", value=file.bundle, working="Removing…") %}Remove{% endcall %}{% endif %}
+</li>
+{% endfor %}
+</ul>
+{% endif %}

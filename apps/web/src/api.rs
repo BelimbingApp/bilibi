@@ -54,6 +54,7 @@ pub fn reserved(path: &str) -> bool {
         || path.starts_with("/.well-known/")
         || path == "/webhooks"
         || path.starts_with("/webhooks/")
+        || crate::transport::reserved(path)
         || ["/oauth/device_authorization", "/oauth/token", "/mcp"].contains(&path)
 }
 

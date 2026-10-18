@@ -14,13 +14,23 @@ mod agent;
 mod builder;
 mod catalogue;
 mod jobs;
+mod pairing;
 mod review;
 mod toolchain;
+mod transfer;
+mod transport;
+mod web;
 mod worker;
 
 use bilibi_authz::{authorize_operator, CapabilityDefinition, VocabularyContribution, VOCABULARY};
 use bilibi_database::{Context, Db, Error, MutationBoundary, MutationTransaction, Result};
-use bilibi_module_registry::{Composition, Contribution, Provenance};
+use bilibi_integration::Integration;
+use bilibi_module_registry::{
+    contributions::{
+        Access, Download, Method, PageWrites, Pending, Route, DOWNLOADS, PAGE_WRITES, ROUTES,
+    },
+    Composition, Contribution, Provenance,
+};
 use bilibi_notifications::{Notice, NotificationBoundary};
 use bilibi_settings::{
     Definition, Editor, ScopeKind, Setting, Settings, Validator, ValueType, DEFINITIONS,
@@ -34,6 +44,10 @@ use std::sync::{Arc, OnceLock};
 pub use catalogue::{Catalogue, Version, DEFAULT_URL as DEFAULT_CATALOGUE_URL};
 pub use jobs::{CHANNEL, RECORD};
 pub use review::Review;
+pub use transfer::TransportRefusal;
+pub use transport::{
+    bundle_filename, Paths as InstancePaths, BUNDLE_TYPE, LISTING_PATH, PAIRING_HEADER,
+};
 pub use worker::{Worker, PRINCIPAL as WORKER_PRINCIPAL, USAGE as WORKER_USAGE};
 
 /// A refusal that names the field and says what to do, or a backend error.
@@ -75,6 +89,7 @@ pub const ACTION_CHANGE: &str = "software.change";
 pub const ACTION_INSTALL: &str = "software.install";
 pub const ACTION_UNDO: &str = "software.undo";
 pub const ACTION_CANCEL: &str = "software.cancel";
+pub const ACTION_PAIR: &str = "software.pair";
 /// The action a worker's outcome is settled under (`Software::settle`).
 pub const ACTION_FINISHED: &str = "software.finished";
 /// The action a notification of a settled outcome is sent under.
@@ -106,6 +121,12 @@ pub struct Software {
     authentication: Arc<Authentication>,
     composition: Arc<Composition>,
     catalogue: catalogue::Reader,
+    integration: Arc<Integration>,
+    /// The instance folder (`BILIBI_INSTANCE_DIR`), when this program runs
+    /// in one: where releases are kept and received (`transport.rs`).
+    paths: Option<transport::Paths>,
+    /// `APP_ORIGIN`: what a release file made here says it came from.
+    origin: String,
 }
 static BOUND: OnceLock<Arc<Software>> = OnceLock::new();
 /// The installed facade, for the agent contracts of this module.
@@ -157,6 +178,7 @@ impl Software {
             "instance": review::instance_json(&instance),
             "installed": review::installed_json(&self.composition),
             "plugins": jobs::plugins_json(&**client, tenant).await?,
+            "pairing": pairing::state(&**client, tenant).await?.json(),
             "job": job,
             "undo": undo,
             "jobs": recent.iter().map(|job| json!({"id": job.id, "kind": job.kind, "state": job.state,
@@ -333,13 +355,14 @@ impl Software {
         authorize_operator(tx.sql(), scope, MANAGE).await?;
         let review = self.install_review(tx.sql(), scope, input).await?;
         self.step_up.require(scope, STEP_UP, &review.target).await?;
+        let downloads = review.request["source"]["kind"].as_str() == Some("https");
         let new = jobs::NewJob {
             kind: "install",
             request: review.request.clone(),
             review: review.facts.clone(),
             undo_of: None,
             switch: review.switch.clone(),
-            steps: jobs::install_steps(),
+            steps: jobs::install_steps(downloads),
         };
         self.queue(tx, scope, new, &review).await
     }
@@ -481,7 +504,27 @@ impl Software {
     ) -> SoftwareResult<Review> {
         let instance = Instance::resolve(&self.settings, client).await?;
         let active = jobs::active(client, scope.tenant()).await?;
-        review::install(&instance, &self.composition, active.as_ref(), input)
+        // The source is asked only for a release of its own; an uploaded
+        // file needs no source.
+        let source = match (&instance.installs_from, input["bundle"].as_str()) {
+            (Some(from), None) if !instance.role.builds() => Some(review::SourceFacts {
+                listing: self.source_listing(scope, scope.tenant(), from).await?,
+            }),
+            _ => None,
+        };
+        let uploads = self
+            .paths
+            .as_ref()
+            .map(transport::Paths::uploads)
+            .unwrap_or_default();
+        review::install(
+            &instance,
+            &self.composition,
+            active.as_ref(),
+            input,
+            source.as_ref(),
+            &uploads,
+        )
     }
     async fn undo_review(
         &self,
@@ -592,11 +635,39 @@ inventory::submit! { Contribution::new(DEFINITIONS, BUILD_JOBS_KEY, provenance!(
         help: "How many parts the build compiles at the same time. 2 keeps a Dev that shares its machine with Production responsive and takes about 10 to 15 minutes for a first build. Use 1 on a small server, or a higher number on a machine of its own. 0 means use every processor, which is fastest but slows everything else on the server. Builds always run at the lowest CPU priority (server owner only).",
         capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
 })) }
+// The Release files page (`web.rs`): the releases kept here with their
+// download links, the pairing key, and the upload of a release file. Seeing
+// it needs the platform `view` capability; the facade rechecks `manage` on
+// every write. The full Software page is a separate piece.
+inventory::submit! { Contribution::new(ROUTES, "base/software.releases", provenance!(), &Route {
+    method: Method::Get, path: web::PATH, service: web::PAGES, operation: "releases",
+    access: Access::OperatorCapability(VIEW), framed: true,
+}) }
+inventory::submit! { Contribution::new(DOWNLOADS, "base/software.release_file", provenance!(), &Download {
+    path: web::DOWNLOAD_PATH, service: web::FILES, operation: "release_file",
+    access: Access::OperatorCapability(MANAGE),
+}) }
+bilibi_menu::contribute!(
+    "base/software",
+    bilibi_menu::MenuItem::page("admin.system.release_files", "Release files", web::PATH)
+        .under("admin.system")
+        .icon("hero-archive-box-arrow-down")
+        .requires(bilibi_menu::Requirement::Capability(VIEW))
+        .order(41)
+);
+// The page's only business write is the pairing key, through its contract
+// (ADR 01). Receiving an uploaded file writes the instance folder, not the
+// database.
+inventory::submit! { Contribution::new(PAGE_WRITES, web::PAGES, provenance!(), &PageWrites {
+    service: web::PAGES,
+    contracts: &[("pair", "base.software.pair")],
+    pending: Pending::None,
+}) }
 inventory::submit! {
     bilibi_module_registry::Module {
         id: "base/software", layer: bilibi_module_registry::Layer::Base,
-        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/agent_api", "base/settings", "base/step_up", "base/system", "base/notifications", "base/integration", "base/audit"],
-        migrations: &[("base-software-001-jobs", include_str!("../migrations/001-jobs.sql")), ("base-software-002-settled", include_str!("../migrations/002-settled.sql"))],
+        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/agent_api", "base/settings", "base/step_up", "base/system", "base/notifications", "base/integration", "base/audit", "base/ui", "base/menu"],
+        migrations: &[("base-software-001-jobs", include_str!("../migrations/001-jobs.sql")), ("base-software-002-settled", include_str!("../migrations/002-settled.sql")), ("base-software-003-pairing", include_str!("../migrations/003-pairing.sql"))],
         services: &[bilibi_module_registry::Service { id: SERVICE, factory: |services| {
             let software = Arc::new(Software {
                 db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
@@ -608,9 +679,23 @@ inventory::submit! {
                 // What this program is made of, as the host compiled it in.
                 composition: services.get::<Composition>("bootstrap.composition")?,
                 catalogue: catalogue::Reader::new(services.get("base/integration.exchanges")?),
+                integration: services.get("base/integration.exchanges")?,
+                paths: transport::Paths::from_env(),
+                origin: std::env::var("APP_ORIGIN").unwrap_or_else(|_| "http://localhost:3000".into()).trim_end_matches('/').to_owned(),
             });
             BOUND.set(software.clone()).map_err(|_| bilibi_module_registry::RegistryError::Service("duplicate software binding".into()))?;
             Ok(software)
+        } }, bilibi_module_registry::Service { id: web::PAGES, factory: |services| {
+            let software: Arc<Software> = services.get(SERVICE)?;
+            Ok(Arc::new(bilibi_ui::page::PageService::<Scope, Error>(Arc::new(web::Pages {
+                db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
+                settings: services.get("base/settings.store")?,
+                contracts: services.get(bilibi_agent_api::page::SERVICE)?,
+                software,
+            }))))
+        } }, bilibi_module_registry::Service { id: web::FILES, factory: |services| {
+            let software: Arc<Software> = services.get(SERVICE)?;
+            Ok(Arc::new(bilibi_ui::download::DownloadService::<Scope, Error>(Arc::new(web::Files { software }))))
         } }],
     }
 }

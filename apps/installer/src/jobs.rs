@@ -65,13 +65,15 @@ pub async fn mine_running(
     Ok(row.as_ref().map(Job::from_row))
 }
 /// The oldest job waiting that an installer carries out: an install or an
-/// undo. A change (a build) waits for the builder.
+/// undo. A change (a build) waits for the builder, and an install whose
+/// release is still being downloaded by the program (its `download` step is
+/// not done) waits for that.
 pub async fn next_waiting(
     client: &impl GenericClient,
 ) -> Result<Option<Job>, tokio_postgres::Error> {
     let row = client
         .query_opt(
-            &format!("SELECT {JOB_COLUMNS} FROM base_software_jobs WHERE state='queued' AND kind IN ('install','undo') ORDER BY id LIMIT 1"),
+            &format!("SELECT {JOB_COLUMNS} FROM base_software_jobs WHERE state='queued' AND kind IN ('install','undo') AND NOT EXISTS (SELECT 1 FROM base_software_steps s WHERE s.tenant_id=base_software_jobs.tenant_id AND s.job_id=base_software_jobs.id AND s.key='download' AND s.state<>'done') ORDER BY id LIMIT 1"),
             &[],
         )
         .await?;

@@ -1,0 +1,3 @@
+{#- What the source instance offers (src/web.rs SourceBody). -#}
+<p class="px-4 pt-3 text-sm text-ink-muted">{{ label }} installs releases tested on <span class="font-medium text-ink">{{ name }}</span>.{% if healthy %}{% if let Some(n) = current %} It runs release {{ n }} now{% if answers %} and answers{% else %}, but its program does not answer{% endif %}.{% else %} It has no release in service.{% endif %} Install one from the Software page or through an assistant (base.software.install).{% endif %}</p>
+<div class="mt-2">{{ table|safe }}</div>

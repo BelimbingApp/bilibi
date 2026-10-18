@@ -52,6 +52,16 @@ struct Undone {
     original: Option<PathBuf>,
     since: String,
 }
+/// Where the release the owner asked for was found, and how to name it.
+struct Found {
+    from: PathBuf,
+    /// The source as the result names it: an instance, an address, a file.
+    name: String,
+    /// "dev release 3", "https://dev.example.com release 3", "the uploaded file upload-2 (…)".
+    text: String,
+    /// The folder under `incoming/` it came in, removed once copied.
+    incoming: Option<PathBuf>,
+}
 /// Where a failed install or undo goes back to, and what it says about it.
 struct Back {
     to: u64,
@@ -267,6 +277,14 @@ impl<'a> Run<'a> {
                     let _ = fs::remove_dir_all(self.layout.release(stale));
                 }
             }
+            // A release downloaded for this job is downloaded again when the
+            // owner starts again; an uploaded file stays for it.
+            if let Some(dir) = self.detail("download")["folder"]
+                .as_str()
+                .and_then(|folder| self.layout.incoming(folder))
+            {
+                let _ = fs::remove_dir_all(dir);
+            }
             self.interrupted(
                 "The installer was interrupted before the pause. Nothing changed. Start again.",
             )
@@ -461,10 +479,16 @@ impl<'a> Run<'a> {
             " The database kept its shape."
         };
         let seconds = self.pause_seconds().await?;
+        let from = match fetched["source_text"].as_str() {
+            Some(text) => text.to_owned(),
+            None => format!(
+                "{} release {}",
+                fetched["source"].as_str().unwrap_or("the source"),
+                fetched["source_release"]
+            ),
+        };
         let message = format!(
-            "Release {release} is in service, installed from {} release {}.{database} {}",
-            fetched["source"].as_str().unwrap_or("the source"),
-            fetched["source_release"],
+            "Release {release} is in service, installed from {from}.{database} {}",
             composition::describe(&fetched["changes"]),
         );
         self.finish(
@@ -484,68 +508,140 @@ impl<'a> Run<'a> {
         Ok(())
     }
 
-    /// The release the owner asked for, copied from the sibling instance's
-    /// folder into the next number here, checked and tried.
+    /// The release the owner asked for, copied into the next number here,
+    /// checked and tried. It comes from a sibling instance's folder, from
+    /// the folder the program downloaded it into (`incoming/job-<id>/`),
+    /// or from an uploaded file (`incoming/upload-<n>/`); the checks are
+    /// the same whichever way it came.
     async fn fetch(&mut self) -> Result<Value, String> {
         if !self.layout.converted() {
             return Err(self.layout.conversion_advice());
         }
         let request = self.job.request.clone();
-        let wanted = request["release"]
-            .as_u64()
-            .ok_or("the request names no release")?;
-        let source_name = match request["source"]["kind"].as_str() {
-            Some("same_machine") => request["source"]["instance"]
-                .as_str()
-                .ok_or("the request names no source instance")?
-                .to_owned(),
+        let wanted = request["release"].as_u64();
+        let source = match request["source"]["kind"].as_str() {
+            Some("same_machine") => {
+                let name = request["source"]["instance"]
+                    .as_str()
+                    .ok_or("the request names no source instance")?
+                    .to_owned();
+                let wanted = wanted.ok_or("the request names no release")?;
+                let sibling = self.layout.sibling(&name).map_err(|reason| {
+                    format!("{name} is not an instance on this machine: {reason}")
+                })?;
+                let from = sibling.release(wanted);
+                if !from.join("bilibi-web").is_file() {
+                    let have = sibling.release_numbers();
+                    return Err(format!(
+                        "{name} has no release {wanted}. It has: {}.",
+                        if have.is_empty() {
+                            "none".to_owned()
+                        } else {
+                            have.iter()
+                                .map(u64::to_string)
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        }
+                    ));
+                }
+                match sibling.current() {
+                    Some(n) if n == wanted => {}
+                    Some(n) => {
+                        return Err(format!(
+                            "{name} runs release {n} now, not {wanted}. Install the release it runs."
+                        ))
+                    }
+                    None => {
+                        return Err(format!(
+                            "{name} has no release in service, so it cannot vouch for release {wanted}."
+                        ))
+                    }
+                }
+                let source_service = Service::of(&sibling)?;
+                if !source_service.answers().await {
+                    return Err(format!(
+                        "{name} is not answering (its service is {}), so it cannot vouch for release {wanted}.",
+                        source_service.state()
+                    ));
+                }
+                Found {
+                    from,
+                    name: name.clone(),
+                    text: format!("{name} release {wanted}"),
+                    incoming: None,
+                }
+            }
             Some("https") => {
-                return Err(format!(
-                    "Downloading a release from {} is not possible yet: a release reaches this machine only as a copy between instance folders. Set \"Install releases tested on\" to an instance on this machine, or copy the release folder here.",
-                    request["source"]["address"].as_str().unwrap_or("another machine")
-                ))
+                let address = request["source"]["address"]
+                    .as_str()
+                    .unwrap_or("the source")
+                    .to_owned();
+                let download = self.detail("download");
+                let folder = download["folder"]
+                    .as_str()
+                    .ok_or("the download step recorded no folder, so the downloaded release cannot be found")?;
+                let from = self
+                    .layout
+                    .incoming(folder)
+                    .filter(|dir| dir.join("bilibi-web").is_file())
+                    .ok_or_else(|| format!("the downloaded release is missing from incoming/{folder}; ask again so it is downloaded again"))?;
+                let wanted = wanted.ok_or("the request names no release")?;
+                Found {
+                    from: from.clone(),
+                    name: address.clone(),
+                    text: format!("{address} release {wanted}"),
+                    incoming: Some(from),
+                }
+            }
+            Some("upload") => {
+                let bundle = request["source"]["bundle"]
+                    .as_str()
+                    .ok_or("the request names no uploaded file")?
+                    .to_owned();
+                let from = self
+                    .layout
+                    .incoming(&bundle)
+                    .filter(|dir| dir.join("bilibi-web").is_file())
+                    .ok_or_else(|| {
+                        format!("The uploaded file {bundle} is no longer here. Upload it again.")
+                    })?;
+                let origin = request["source"]["from"]["label"]
+                    .as_str()
+                    .map_or(String::new(), |label| format!(" from {label}"));
+                let detail = match wanted {
+                    Some(n) => format!(" (release {n}{origin})"),
+                    None if origin.is_empty() => String::new(),
+                    None => format!(" ({})", origin.trim_start()),
+                };
+                Found {
+                    from: from.clone(),
+                    name: bundle.clone(),
+                    text: format!("the uploaded file {bundle}{detail}"),
+                    incoming: Some(from),
+                }
             }
             _ => return Err("the request names no source".into()),
         };
-        let source = self.layout.sibling(&source_name).map_err(|reason| {
-            format!("{source_name} is not an instance on this machine: {reason}")
-        })?;
-        let from = source.release(wanted);
-        if !from.join("bilibi-web").is_file() {
-            let have = source.release_numbers();
-            return Err(format!(
-                "{source_name} has no release {wanted}. It has: {}.",
-                if have.is_empty() {
-                    "none".to_owned()
-                } else {
-                    have.iter()
-                        .map(u64::to_string)
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                }
-            ));
-        }
-        let sha = layout::verify_checksum(&from)?;
-        match source.current() {
-            Some(n) if n == wanted => {}
-            Some(n) => {
-                return Err(format!(
-                    "{source_name} runs release {n} now, not {wanted}. Install the release it runs."
-                ))
-            }
-            None => {
-                return Err(format!(
-                "{source_name} has no release in service, so it cannot vouch for release {wanted}."
-            ))
+        let checked = self.copy_checked(&source, wanted).await;
+        if let Some(dir) = &source.incoming {
+            // A release that failed its checks, or that is now copied into
+            // place, has no reason to wait in incoming/ any longer.
+            if checked.is_ok()
+                || matches!(&checked, Err(reason) if reason.contains("checksum") || reason.contains("built for") || reason.contains("does not run"))
+            {
+                let _ = fs::remove_dir_all(dir);
             }
         }
-        let source_service = Service::of(&source)?;
-        if !source_service.answers().await {
-            return Err(format!(
-                "{source_name} is not answering (its service is {}), so it cannot vouch for release {wanted}.",
-                source_service.state()
-            ));
-        }
+        checked
+    }
+    /// The checks every way in shares, then the copy: the checksum, built
+    /// for this kind of server, not already in service, disk for the
+    /// program and a backup; then the copy into the next number, checked
+    /// again and run once to prove it starts here.
+    async fn copy_checked(&mut self, source: &Found, wanted: Option<u64>) -> Result<Value, String> {
+        let from = &source.from;
+        let sha = layout::verify_checksum(from)?;
+        layout::built_for_this_server(from)?;
         let current = self
             .layout
             .current()
@@ -556,7 +652,8 @@ impl<'a> Run<'a> {
             == Some(sha.as_str())
         {
             return Err(format!(
-                "This instance already runs the same program as {source_name} release {wanted} (release {current} here). There is nothing to install."
+                "This instance already runs the same program as {} (release {current} here). There is nothing to install.",
+                source.text
             ));
         }
         let program_bytes = fs::metadata(from.join("bilibi-web"))
@@ -586,7 +683,7 @@ impl<'a> Run<'a> {
         )
         .await
         .map_err(|error| jobs::short(&error))?;
-        let bytes = layout::copy_release(&from, &dst).map_err(|error| {
+        let bytes = layout::copy_release(from, &dst).map_err(|error| {
             let _ = fs::remove_dir_all(&dst);
             format!("could not copy into {}: {error}", dst.display())
         })?;
@@ -610,8 +707,8 @@ impl<'a> Run<'a> {
         let now = composition::parse(&status);
         let changes = composition::diff(&composition_of(&self.layout.release(current)), &now);
         Ok(json!({
-            "message": format!("Copied {source_name} release {wanted} as release {n} here: {program}"),
-            "release": n, "previous": current, "source_release": wanted, "source": source_name,
+            "message": format!("Copied {} as release {n} here: {program}", source.text),
+            "release": n, "previous": current, "source_release": wanted, "source": source.name, "source_text": source.text,
             "sha256": sha, "bytes": bytes, "program": program,
             "platform": now["platform"], "domains": now["domains"], "extensions": now["extensions"],
             "changes": changes,

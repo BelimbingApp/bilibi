@@ -545,70 +545,374 @@ pub fn change(
     })
 }
 
-/// An install on Staging or Production of a release the source instance tested.
+/// What the review learnt about the source before an install: its listing
+/// (what `transport::listing` answers, or a sibling folder's), or why it
+/// could not be read, in a plain sentence.
+pub struct SourceFacts {
+    pub listing: std::result::Result<Value, String>,
+}
+
+/// The release the owner means: one the source reports, or a file uploaded
+/// here. The request records which, so the installer knows where to look.
+enum Chosen {
+    FromSource { release: i64, facts: Value },
+    Uploaded { bundle: String, facts: Value },
+}
+
+/// An install on Staging or Production of a release the source instance
+/// tested (`release`), or of a release file uploaded here (`bundle`).
 pub fn install(
     instance: &Instance,
     made: &Composition,
     active: Option<&Job>,
     input: &Value,
+    source: Option<&SourceFacts>,
+    uploads: &[(String, Value)],
 ) -> Result<Review> {
     if instance.role.builds() {
         return Err(SoftwareError::field("instance", &format!("{} builds its own software; use base.software.change here. Installing a tested release is for Staging and Production.", instance.label)));
     }
-    let Some(source) = &instance.installs_from else {
-        return Err(SoftwareError::field("instance", &format!("{} has no source to install from. A server owner sets \"Install releases tested on\" under Instance in the settings first.", instance.label)));
-    };
     busy(active)?;
     let switch = switch_of(input)?;
-    let release = input["release"]
-        .as_i64()
-        .filter(|n| *n >= 1)
-        .ok_or_else(|| {
-            SoftwareError::field(
+    let chosen = match (input["bundle"].as_str(), input["release"].as_i64()) {
+        (Some(bundle), _) => {
+            let facts = uploads
+                .iter()
+                .find(|(name, _)| name == bundle)
+                .map(|(_, facts)| facts.clone())
+                .ok_or_else(|| {
+                    SoftwareError::field(
+                        "bundle",
+                        &format!(
+                            "No uploaded release file is called {bundle}. base.software.releases lists the files waiting here{}.",
+                            if uploads.is_empty() { ": none at the moment" } else { "" }
+                        ),
+                    )
+                })?;
+            Chosen::Uploaded {
+                bundle: bundle.to_owned(),
+                facts,
+            }
+        }
+        (None, Some(release)) if release >= 1 => {
+            let Some(installs_from) = &instance.installs_from else {
+                return Err(SoftwareError::field("instance", &format!("{} has no source to install from. A server owner sets \"Install releases tested on\" under Instance in the settings first, or uploads a release file here.", instance.label)));
+            };
+            let listing = match source.map(|facts| &facts.listing) {
+                Some(Ok(listing)) => listing,
+                Some(Err(why)) => {
+                    return Err(SoftwareError::field(
+                        "release",
+                        &format!("{} could not be asked about its releases: {why}", source_name(installs_from)),
+                    ))
+                }
+                None => {
+                    return Err(SoftwareError::field(
+                        "release",
+                        "The source was not asked about its releases, so the request cannot be checked.",
+                    ))
+                }
+            };
+            let facts = listing["releases"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|r| r["release"].as_i64() == Some(release))
+                .cloned()
+                .ok_or_else(|| {
+                    let have: Vec<String> = listing["releases"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|r| r["release"].as_i64())
+                        .map(|n| n.to_string())
+                        .collect();
+                    SoftwareError::field("release", &format!(
+                        "{} has no release {release}. It has: {}.",
+                        source_name(installs_from),
+                        if have.is_empty() { "none".to_owned() } else { have.join(", ") }
+                    ))
+                })?;
+            match listing["current"].as_i64() {
+                Some(n) if n == release => {}
+                Some(n) => {
+                    return Err(SoftwareError::field("release", &format!(
+                        "{} runs release {n} now, not {release}. Install the release it runs, so you install what was tested.",
+                        source_name(installs_from)
+                    )))
+                }
+                None => {
+                    return Err(SoftwareError::field("release", &format!(
+                        "{} has no release in service, so it cannot vouch for release {release}.",
+                        source_name(installs_from)
+                    )))
+                }
+            }
+            if listing["healthy"].as_bool() != Some(true) {
+                return Err(SoftwareError::field("release", &format!(
+                    "{} is not answering, so it cannot vouch for release {release}. Check it first.",
+                    source_name(installs_from)
+                )));
+            }
+            Chosen::FromSource { release, facts }
+        }
+        _ => {
+            return Err(SoftwareError::field(
                 "release",
-                "Give the release number the source instance reports as tested, like 42.",
-            )
-        })?;
-    let source_text = match source {
-        Source::SameMachine(name) => format!("instance {name} on this machine"),
-        Source::Https(address) => address.clone(),
+                "Give the release number the source reports as tested, like 42, or the name of a release file uploaded here, like upload-3 (base.software.releases lists both).",
+            ))
+        }
     };
-    let summary = format!(
-        "{}: install release {release} from {source_text}",
-        instance.label
-    );
-    let warnings: Vec<String> = if instance.role == bilibi_system::Role::Production {
-        vec![
+    let (source_json_value, source_text, release, facts) = match &chosen {
+        Chosen::FromSource { release, facts } => {
+            let installs_from = instance
+                .installs_from
+                .as_ref()
+                .ok_or(bilibi_database::Error::Internal)?;
+            (
+                source_json(installs_from),
+                source_name(installs_from),
+                Some(*release),
+                facts.clone(),
+            )
+        }
+        Chosen::Uploaded { bundle, facts } => {
+            let from = facts["from"]["label"]
+                .as_str()
+                .map_or("another instance".to_owned(), str::to_owned);
+            let text = format!("the release file {bundle} uploaded here (from {from})");
+            (
+                json!({"kind": "upload", "bundle": bundle, "from": facts["from"]}),
+                text,
+                facts["release"].as_i64(),
+                facts.clone(),
+            )
+        }
+    };
+    let downloads = matches!(instance.installs_from, Some(Source::Https(_)))
+        && matches!(chosen, Chosen::FromSource { .. });
+    let summary = match release {
+        Some(release) => format!(
+            "{}: install release {release} from {source_text}",
+            instance.label
+        ),
+        None => format!("{}: install the release in {source_text}", instance.label),
+    };
+    let mut warnings: Vec<String> = Vec::new();
+    if instance.role == bilibi_system::Role::Production {
+        warnings.push(
             "This changes Production. Pick a quiet time: the instance pauses for about a minute."
                 .into(),
+        );
+    }
+    let changes = changes_between(made, &facts);
+    if changes.is_null() {
+        warnings.push("What this release holds is not recorded, so the change list is known only once the installer reads it.".into());
+    }
+    if let Some(sha) = facts["sha256"].as_str() {
+        if made_checksum_matches(made, &facts) {
+            return Err(SoftwareError::field(
+                "release",
+                &format!(
+                    "{} already runs this program (checksum {}…). There is nothing to install.",
+                    instance.label,
+                    &sha[..12.min(sha.len())]
+                ),
+            ));
+        }
+    }
+    let mut request = json!({"release": release, "source": source_json_value, "switch": switch});
+    if let Chosen::Uploaded { bundle, .. } = &chosen {
+        request["bundle"] = json!(bundle);
+    }
+    let checks = if downloads {
+        vec![
+            "The source still runs and reports this release healthy",
+            "The download's checksum matches",
+            "The release was built for this kind of server",
+            "Enough disk for the program and a backup",
         ]
     } else {
-        Vec::new()
+        vec![
+            "The checksum matches",
+            "The release was built for this kind of server",
+            "The source still reports it healthy",
+            "Enough disk for the program and a backup",
+        ]
     };
-    let request = json!({"release": release, "source": source_json(source), "switch": switch});
-    let facts = json!({
+    let facts_json = json!({
         "summary": summary,
         "instance": instance_json(instance),
         "release": release,
-        "source": source_json(source),
+        "source": request["source"],
+        "release_facts": {"sha256": facts["sha256"], "bytes": facts["bytes"], "platform": facts["platform"], "domains": facts["domains"], "built_for": facts["built_for"], "from": facts["from"]},
         "running": {"platform": made.version, "release": made.tag, "domains": made.containers.iter().filter(|c| c.layer == Layer::Domains).map(|c| json!({"id": c.id, "version": c.version})).collect::<Vec<_>>()},
-        "changes": "Known once the installer reads the copied release's own status; the job's result lists them then.",
-        "checks": ["The checksum matches", "The release was built for this kind of server", "The source still reports it healthy", "Enough disk for the program and a backup"],
+        "changes": changes,
+        "change_list": describe_changes(&changes),
+        "checks": checks,
         "warnings": warnings,
         "pause_minutes": PAUSE_MINUTES,
         "switch": switch,
-        "what_happens": format!("The release is copied and checked. Then {} pauses for about {PAUSE_MINUTES} minute to back up the database, update it, switch and check. If the check fails it switches back by itself.", instance.label),
-        "steps": jobs::install_steps().iter().map(|s| json!({"seq": s.seq, "key": s.key, "label": s.label, "pauses": s.pauses})).collect::<Vec<_>>(),
+        "what_happens": format!("{}Then {} pauses for about {PAUSE_MINUTES} minute to back up the database, update it, switch and check. If the check fails it switches back by itself.",
+            if downloads { "The release is downloaded from the source, checked and copied into place. " } else { "The release is copied and checked. " },
+            instance.label),
+        "steps": jobs::install_steps(downloads).iter().map(|s| json!({"seq": s.seq, "key": s.key, "label": s.label, "pauses": s.pauses})).collect::<Vec<_>>(),
         "step_up": [STEP_UP],
     });
     Ok(Review {
         target: format!("install: {summary}"),
         request,
-        facts,
+        facts: facts_json,
         switch,
     })
 }
+/// How the owner reads the source in a sentence.
+pub fn source_name(source: &Source) -> String {
+    match source {
+        Source::SameMachine(name) => format!("instance {name} on this machine"),
+        Source::Https(address) => address.clone(),
+    }
+}
+/// Whether the running program is the very one a release's facts describe.
+fn made_checksum_matches(made: &Composition, facts: &Value) -> bool {
+    // The running program's own checksum is not compiled in; the installer
+    // compares files. Here the commits decide: same Platform commit and the
+    // same Domains at the same commits mean the same program.
+    let Some(commit) = made.commit else {
+        return false;
+    };
+    if facts["platform"]["commit"].as_str() != Some(commit) {
+        return false;
+    }
+    let Some(domains) = facts["domains"].as_array() else {
+        return false;
+    };
+    let running: BTreeSet<(String, String)> = made
+        .containers
+        .iter()
+        .filter(|c| c.layer == Layer::Domains)
+        .map(|c| (c.id.to_string(), c.commit.unwrap_or("").to_string()))
+        .collect();
+    let theirs: BTreeSet<(String, String)> = domains
+        .iter()
+        .filter_map(|d| {
+            Some((
+                d["id"].as_str()?.to_owned(),
+                d["commit"].as_str().unwrap_or("").to_owned(),
+            ))
+        })
+        .collect();
+    !running.is_empty() && running == theirs || (running.is_empty() && theirs.is_empty())
+}
+/// What differs between the running program and a release's recorded
+/// make-up: `{"platform": {"from","to"} | null, "domains": [{"id","change","from","to"}]}`,
+/// or null when the release's make-up is not recorded.
+pub fn changes_between(made: &Composition, facts: &Value) -> Value {
+    let (Some(platform), Some(domains)) =
+        (facts["platform"].as_object(), facts["domains"].as_array())
+    else {
+        return Value::Null;
+    };
+    let to_version = platform
+        .get("version")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let platform_change = if to_version == made.version || to_version.is_empty() {
+        Value::Null
+    } else {
+        json!({"from": made.version, "to": to_version, "change": movement(Some(made.version), to_version)})
+    };
+    let mut list = Vec::new();
+    let running: Vec<(&str, &str)> = made
+        .containers
+        .iter()
+        .filter(|c| c.layer == Layer::Domains)
+        .map(|c| (c.id, c.version.unwrap_or("?")))
+        .collect();
+    for d in domains {
+        let (Some(id), Some(version)) = (d["id"].as_str(), d["version"].as_str()) else {
+            continue;
+        };
+        match running.iter().find(|(have, _)| *have == id) {
+            Some((_, have)) if *have == version => list.push(json!({"id": id, "change": "keep", "from": have, "to": version})),
+            Some((_, have)) => list.push(json!({"id": id, "change": movement(Some(have), version), "from": have, "to": version})),
+            None => list.push(json!({"id": id, "change": "add", "from": null, "to": version})),
+        }
+    }
+    for (id, have) in &running {
+        if !domains.iter().any(|d| d["id"].as_str() == Some(id)) {
+            list.push(json!({"id": id, "change": "remove", "from": have, "to": null}));
+        }
+    }
+    json!({"platform": platform_change, "domains": list})
+}
+/// The change list in words: "Bilibi 0.1.1 → 0.2.0; add finance 0.1.0; keep factory 0.1.0".
+pub fn describe_changes(changes: &Value) -> Option<String> {
+    let mut parts = Vec::new();
+    if let Some(platform) = changes["platform"].as_object() {
+        parts.push(format!(
+            "{} Bilibi {} → {}",
+            platform
+                .get("change")
+                .and_then(Value::as_str)
+                .unwrap_or("update"),
+            platform.get("from").and_then(Value::as_str).unwrap_or("?"),
+            platform.get("to").and_then(Value::as_str).unwrap_or("?")
+        ));
+    }
+    for d in changes["domains"].as_array()? {
+        let id = d["id"].as_str().unwrap_or("?");
+        parts.push(match d["change"].as_str().unwrap_or("keep") {
+            "add" => format!("add {id} {}", d["to"].as_str().unwrap_or("?")),
+            "remove" => format!("remove {id} {}", d["from"].as_str().unwrap_or("?")),
+            "keep" => format!("keep {id} {}", d["to"].as_str().unwrap_or("?")),
+            change => format!(
+                "{change} {id} {} → {}",
+                d["from"].as_str().unwrap_or("?"),
+                d["to"].as_str().unwrap_or("?")
+            ),
+        });
+    }
+    Some(if parts.is_empty() {
+        "No Domain changes; the same versions as now.".to_owned()
+    } else {
+        parts.join("; ")
+    })
+}
 
+/// Setting or clearing the pairing key (`pairing.rs`).
+pub fn pair(input: &Value) -> Result<Review> {
+    let clear = input["clear"].as_bool() == Some(true);
+    let key = input["key"]
+        .as_str()
+        .map(str::trim)
+        .filter(|key| !key.is_empty());
+    let (request, summary) = match (clear, key) {
+        (true, _) => (json!({"clear": true}), "Clear the pairing key: other instances can no longer download releases from this one, and this one can no longer download from its source.".to_owned()),
+        (false, Some(key)) => {
+            crate::pairing::check(key).map_err(|why| SoftwareError::field("key", &why))?;
+            // The key itself is never recorded; the review carries only its length.
+            (json!({"key_chars": key.chars().count()}), "Set the pairing key. Paste the same key on the instance this one shares releases with.".to_owned())
+        }
+        (false, None) => {
+            return Err(SoftwareError::field(
+                "key",
+                "Give the pairing key to set, or clear: true to remove it. Make a key with: openssl rand -hex 24",
+            ))
+        }
+    };
+    Ok(Review {
+        target: format!("pair: {summary}"),
+        request,
+        facts: json!({"summary": summary, "clear": clear, "step_up": []}),
+        switch: "auto".into(),
+    })
+}
+
+/// A stored UTC time as plain words, like `2026-10-19 08:30:00 UTC`.
+pub fn utc_text(at: &str) -> String {
+    at.replace('T', " ").replace('Z', " UTC")
+}
 /// What the installer recorded about a finished job, read for Undo.
 pub struct UndoFacts {
     pub release: i64,

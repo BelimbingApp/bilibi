@@ -64,6 +64,10 @@ point_current() { # <instance> <n>
     ln -sfn "$2" "$dir/releases/current.new" && chown -h bilibi-build:bilibi "$dir/releases/current.new" && mv -T "$dir/releases/current.new" "$dir/releases/current"
 }
 # ensure_current_link <instance>: the two-link shape above; an instance made
+# `incoming/` is where the program (bilibi) puts a release that arrives from
+# another machine or as an uploaded file, and where the installer
+# (bilibi-build) takes it from: both write, nobody else reads.
+ensure_incoming() { install -d -m 2770 -o bilibi -g bilibi-build "$(instance_dir "$1")/incoming"; }
 # before it (`current -> releases/<n>`) is converted without a pause.
 ensure_current_link() {
     local dir link; dir=$(instance_dir "$1"); link=$(readlink "$dir/current" 2>/dev/null || true)
@@ -292,6 +296,7 @@ create() {
     install -d -m 0755 "$root" "$dir" "$dir/site"
     install -d -m 0755 -o bilibi-build -g bilibi "$dir/releases"
     install -d -m 0750 -o bilibi-build -g bilibi-build "$dir/backups"
+    ensure_incoming "$instance"
     ensure_current_link "$instance"
     install -d -m 0700 -o bilibi -g bilibi "$dir/data" "$dir/data/media" "$dir/data/mailbox"
 
@@ -376,6 +381,7 @@ installer() {
     local instance
     for instance in $(instances); do
         ensure_current_link "$instance"
+        ensure_incoming "$instance"
         systemctl enable "$installer_unit$instance" >/dev/null 2>&1
         systemctl restart "$installer_unit$instance" || say "Warning: $installer_unit$instance did not start; see: systemctl status $installer_unit$instance"
         say "$instance: $installer_unit$instance $(installer_state "$instance")"

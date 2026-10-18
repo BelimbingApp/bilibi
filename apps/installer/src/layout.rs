@@ -8,8 +8,18 @@ use std::{
     process::Command,
 };
 
-/// The files the installer copies with a release, when the build wrote them.
-const RELEASE_FILES: [&str; 4] = ["bilibi-web", "SHA256SUMS", "manifest.txt", "Cargo.lock"];
+/// The files the installer copies with a release, when the build wrote them
+/// (`release.json`) or the release came as a file (`bundle.json`). Plug-ins
+/// that travel with the release are the `plugins/` folder beside them.
+const RELEASE_FILES: [&str; 6] = [
+    "bilibi-web",
+    "SHA256SUMS",
+    "manifest.txt",
+    "Cargo.lock",
+    "release.json",
+    "bundle.json",
+];
+const PLUGINS_DIR: &str = "plugins";
 
 #[derive(Clone, Debug)]
 pub struct Layout {
@@ -65,6 +75,19 @@ impl Layout {
     }
     pub fn backups(&self) -> PathBuf {
         self.dir.join("backups")
+    }
+    /// Where the program puts a release that came from another machine or
+    /// from an uploaded file, for this installer to take (`base/software`,
+    /// `transport.rs`): `incoming/job-<id>/` or `incoming/upload-<n>/`.
+    pub fn incoming(&self, name: &str) -> Option<PathBuf> {
+        let digits = |rest: &str| {
+            !rest.is_empty() && rest.len() <= 12 && rest.bytes().all(|b| b.is_ascii_digit())
+        };
+        let valid = name
+            .strip_prefix("job-")
+            .or_else(|| name.strip_prefix("upload-"))
+            .is_some_and(digits);
+        valid.then(|| self.dir.join("incoming").join(name))
     }
     /// The kept release numbers, lowest first.
     pub fn release_numbers(&self) -> Vec<u64> {
@@ -181,7 +204,8 @@ pub fn verify_checksum(dir: &Path) -> Result<String, String> {
     Ok(sha)
 }
 
-/// Copies a release folder's files into `dst` and returns the program's size.
+/// Copies a release folder's files, and its plug-ins, into `dst` and
+/// returns the program's size.
 pub fn copy_release(src: &Path, dst: &Path) -> io::Result<u64> {
     fs::create_dir_all(dst)?;
     fs::set_permissions(dst, fs::Permissions::from_mode(0o755))?;
@@ -199,7 +223,104 @@ pub fn copy_release(src: &Path, dst: &Path) -> io::Result<u64> {
             bytes = copied;
         }
     }
+    let plugins = src.join(PLUGINS_DIR);
+    if plugins.is_dir() {
+        copy_plain_files(&plugins, &dst.join(PLUGINS_DIR))?;
+    }
     Ok(bytes)
+}
+/// Copies the plain files under `src` (and its folders) into `dst`; links
+/// and anything else are left out.
+fn copy_plain_files(src: &Path, dst: &Path) -> io::Result<()> {
+    fs::create_dir_all(dst)?;
+    fs::set_permissions(dst, fs::Permissions::from_mode(0o755))?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let kind = entry.file_type()?;
+        let to = dst.join(entry.file_name());
+        if kind.is_dir() {
+            copy_plain_files(&entry.path(), &to)?;
+        } else if kind.is_file() {
+            fs::copy(entry.path(), &to)?;
+            fs::set_permissions(&to, fs::Permissions::from_mode(0o644))?;
+        }
+    }
+    Ok(())
+}
+
+/// Whether the program in `dir` was built for this kind of server: a Linux
+/// program for this processor (read from the program itself) that needs a
+/// system library this server has (`release.json`, when the builder
+/// recorded it). Each refusal says what to do. The same check the program
+/// makes when it receives a release (`base/software`, `transport.rs`).
+pub fn built_for_this_server(dir: &Path) -> Result<(), String> {
+    use std::io::Read;
+    let mut head = [0u8; 20];
+    let read = fs::File::open(dir.join("bilibi-web"))
+        .and_then(|mut file| file.read(&mut head))
+        .map_err(|error| format!("The program could not be read: {error}."))?;
+    if read < 20 || head[..4] != [0x7f, b'E', b'L', b'F'] {
+        return Err("The file called bilibi-web is not a program. Make the release file again on the source.".into());
+    }
+    let machine = u16::from_le_bytes([head[18], head[19]]);
+    let built_arch = match (head[4], head[5], machine) {
+        (2, 1, 0x3E) => "x86_64",
+        (2, 1, 0xB7) => "aarch64",
+        (1, 1, 0x03) => "x86",
+        (1, 1, 0x28) => "arm",
+        _ => "another kind of processor",
+    };
+    let here = std::env::consts::ARCH;
+    if built_arch != here {
+        return Err(format!(
+            "This release was built for {} computers, and this server is {}. Build it on a Dev of the same kind as this server.",
+            describe_arch(built_arch),
+            describe_arch(here)
+        ));
+    }
+    if !matches!(head[7], 0 | 3) || std::env::consts::OS != "linux" {
+        return Err(
+            "This release was built for another operating system. Build it on a Linux Dev.".into(),
+        );
+    }
+    let recipe: serde_json::Value = fs::read_to_string(dir.join("release.json"))
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or(serde_json::Value::Null);
+    if let Some(needed) = recipe["built_for"]["system_library"].as_str() {
+        if let (Some(need), Some(have_text)) = (library_version(needed), system_library()) {
+            if let Some(have) = library_version(&have_text) {
+                if have < need {
+                    return Err(format!(
+                        "This release needs the system library {needed}, and this server has {have_text}. Update this server, or build on a Dev whose system library is not newer than this server's."
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+fn describe_arch(arch: &str) -> &str {
+    match arch {
+        "x86_64" => "Linux x86-64",
+        "aarch64" => "Linux ARM 64-bit",
+        other => other,
+    }
+}
+/// `glibc 2.39`, from `getconf GNU_LIBC_VERSION`; None when unknown.
+fn system_library() -> Option<String> {
+    let out = Command::new("getconf")
+        .arg("GNU_LIBC_VERSION")
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+    (out.status.success() && !text.is_empty()).then_some(text)
+}
+fn library_version(text: &str) -> Option<(u64, u64)> {
+    let version = text.split_whitespace().last()?;
+    let (major, minor) = version.split_once('.')?;
+    let minor: String = minor.chars().take_while(char::is_ascii_digit).collect();
+    Some((major.parse().ok()?, minor.parse().ok()?))
 }
 /// Free space on the file system holding `path`, in bytes.
 pub fn free_bytes(path: &Path) -> Option<u64> {

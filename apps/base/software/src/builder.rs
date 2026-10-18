@@ -867,6 +867,9 @@ impl Build<'_> {
             "platform": {"version": self.plan.platform_version, "commit": self.plan.platform_commit},
             "domains": self.plan.domains.iter().map(|d| json!({"id": d.id, "version": d.version, "reference": d.reference, "repository": d.repository})).collect::<Vec<_>>(),
             "status": status,
+            // What kind of server this program runs on, so an instance it is
+            // carried to can refuse it before anything changes.
+            "built_for": crate::transport::this_server(),
         });
         std::fs::write(
             dir.join("release.json"),

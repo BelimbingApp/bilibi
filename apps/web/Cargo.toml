@@ -28,6 +28,7 @@ bilibi-module-registry.workspace = true
 bilibi-authz = { path = "../base/authz" }
 bilibi-tenancy = { path = "../base/tenancy" }
 http-body-util = "0.1.5"
+futures-core.workspace = true
 
 [dev-dependencies]
 bilibi-walkthrough-fixture = { path = "../../fixtures/walkthrough" }

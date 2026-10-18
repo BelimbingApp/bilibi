@@ -105,10 +105,16 @@ pub fn change_steps() -> Vec<Step> {
         ("verify", "Check that it works", false),
     ])
 }
-/// The steps an install of a tested release goes through.
-pub fn install_steps() -> Vec<Step> {
-    steps(&[
-        ("fetch", "Copy the release and check it", false),
+/// The steps an install of a tested release goes through. A release that
+/// comes from another machine is downloaded by this program first
+/// (`transfer.rs`); the installer takes the rest from `fetch`.
+pub fn install_steps(downloads: bool) -> Vec<Step> {
+    let mut list: Vec<(&'static str, &'static str, bool)> = Vec::new();
+    if downloads {
+        list.push(("download", "Download the release from the source", false));
+    }
+    list.extend([
+        ("fetch", "Check the release and copy it into place", false),
         (
             "backup",
             "Back up the database (the instance pauses from here)",
@@ -117,7 +123,8 @@ pub fn install_steps() -> Vec<Step> {
         ("migrate", "Update the database", false),
         ("switch", "Switch to the new program", false),
         ("verify", "Check that it works", false),
-    ])
+    ]);
+    steps(&list)
 }
 /// The steps an undo goes through; the restore only when a backup is restored.
 pub fn undo_steps(restores_backup: bool) -> Vec<Step> {
@@ -445,4 +452,93 @@ pub async fn cancel(
         })
     })
     .await
+}
+
+/// Install jobs waiting for this program to download their release: queued,
+/// with a `download` step still pending, as (tenant, job) pairs, oldest
+/// first. The installer leaves such a job alone until the step is done.
+pub async fn awaiting_download(client: &impl GenericClient) -> Result<Vec<(i64, Job)>> {
+    let rows = client
+        .query(
+            &format!("SELECT tenant_id, {JOB_COLUMNS} FROM base_software_jobs WHERE state='queued' AND kind='install' AND EXISTS (SELECT 1 FROM base_software_steps s WHERE s.tenant_id=base_software_jobs.tenant_id AND s.job_id=base_software_jobs.id AND s.key='download' AND s.state IN ('pending','running')) ORDER BY id LIMIT 5"),
+            &[],
+        )
+        .await?;
+    Ok(rows
+        .iter()
+        .map(|row| (row.get(0), Job::from_row_offset(row, 1)))
+        .collect())
+}
+/// Reports progress on the `download` step: the program is the worker of
+/// that one step, as the installer is of the others.
+pub async fn download_step(
+    client: &impl GenericClient,
+    tenant: i64,
+    job: i64,
+    state: &str,
+    detail: &Value,
+) -> Result<()> {
+    let sql = match state {
+        "running" => "UPDATE base_software_steps SET state='running', started_at=coalesce(started_at, now()), detail=$3 WHERE tenant_id=$1 AND job_id=$2 AND key='download'",
+        _ => "UPDATE base_software_steps SET state=$4, finished_at=now(), detail=$3 WHERE tenant_id=$1 AND job_id=$2 AND key='download'",
+    };
+    if state == "running" {
+        client.execute(sql, &[&tenant, &job, detail]).await?;
+    } else {
+        client
+            .execute(sql, &[&tenant, &job, detail, &state])
+            .await?;
+    }
+    Ok(())
+}
+/// Marks the download done and wakes the installer, unless the job was
+/// cancelled meanwhile: then nothing is marked and the caller discards
+/// what it downloaded. Under the job's row lock, so a cancel lands before
+/// or after, never between.
+pub async fn download_done(
+    client: &mut tokio_postgres::Client,
+    tenant: i64,
+    job: i64,
+    detail: &Value,
+) -> Result<bool> {
+    let tx = client.transaction().await?;
+    let queued: bool = tx
+        .query_one(
+            "SELECT state = 'queued' FROM base_software_jobs WHERE tenant_id=$1 AND id=$2 FOR UPDATE",
+            &[&tenant, &job],
+        )
+        .await?
+        .get(0);
+    if queued {
+        download_step(&tx, tenant, job, "done", detail).await?;
+        tx.execute("SELECT pg_notify($1, $2)", &[&CHANNEL, &job.to_string()])
+            .await?;
+    }
+    tx.commit().await?;
+    Ok(queued)
+}
+/// Ends a job this program could not get the release for: it never left the
+/// queue, so nothing changed on the instance. Recorded like a worker's
+/// outcome, so `settle` puts it in the audit trail and tells the person.
+pub async fn fail_queued(
+    client: &impl GenericClient,
+    tenant: i64,
+    job: i64,
+    worker: &str,
+    message: &str,
+) -> Result<()> {
+    let result = json!({"migrated": false, "message": message});
+    client
+        .execute(
+            "UPDATE base_software_steps SET state='skipped' WHERE tenant_id=$1 AND job_id=$2 AND state IN ('pending','running')",
+            &[&tenant, &job],
+        )
+        .await?;
+    client
+        .execute(
+            "UPDATE base_software_jobs SET state='failed', worker=$3, started_at=coalesce(started_at, now()), finished_at=now(), result=$4 WHERE tenant_id=$1 AND id=$2 AND state='queued'",
+            &[&tenant, &job, &worker, &result],
+        )
+        .await?;
+    Ok(())
 }

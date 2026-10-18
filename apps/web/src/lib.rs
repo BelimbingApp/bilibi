@@ -14,6 +14,7 @@ mod pdf;
 mod perf;
 mod routes;
 mod shell;
+mod transport;
 mod webhooks;
 use askama::Template;
 use axum::{
@@ -59,6 +60,7 @@ pub struct App {
     pub landing: Arc<landing::Landing>,
     api: Arc<api::Edge>,
     webhooks: Arc<webhooks::Boundary>,
+    transport: Arc<transport::Boundary>,
 }
 impl App {
     /// Which instance this is, with the operator's label and colour
@@ -97,6 +99,7 @@ impl App {
         let moved = Arc::new(routes::bind_moved(&services, &routes, &downloads)?);
         let api = Arc::new(api::Edge::new(&services)?);
         let webhooks = Arc::new(webhooks::Boundary::bind(&services)?);
+        let transport = Arc::new(transport::Boundary::bind(&services)?);
         Ok(Self {
             routes,
             downloads,
@@ -118,6 +121,7 @@ impl App {
             landing: Arc::default(),
             api,
             webhooks,
+            transport,
             services: Arc::new(services),
         })
     }
@@ -289,6 +293,7 @@ pub fn router(app: App) -> Router {
     routes::install_moved(pages, &app.moved)
         .merge(api::router(app.clone()))
         .merge(webhooks::router())
+        .merge(transport::router())
         .route("/", get(auth::home).post(auth::login))
         .route("/login", get(auth::home).post(auth::login))
         .route(

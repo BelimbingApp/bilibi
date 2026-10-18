@@ -20,12 +20,14 @@ KillSignal=SIGINT
 TimeoutStopSec=30
 Restart=on-failure
 RestartSec=3
-# The program may write only under its data folder: uploads, the mailbox.
+# The program may write only under its data folder (uploads, the mailbox)
+# and incoming/, where it puts a release that arrives from another machine
+# or as an uploaded file for the installer to take.
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=yes
-ReadWritePaths=/opt/bilibi/%i/data
+ReadWritePaths=/opt/bilibi/%i/data /opt/bilibi/%i/incoming
 ProtectKernelTunables=yes
 ProtectControlGroups=yes
 RestrictSUIDSGID=yes
