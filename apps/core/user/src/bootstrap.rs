@@ -234,6 +234,32 @@ impl From<tokio_postgres::Error> for FirstAdministratorError {
     }
 }
 
+/// The accounts a platform-operator tenant already holds (deleted ones
+/// excepted): how many, and the earliest one's email.
+#[derive(Clone, Debug)]
+pub struct OperatorAccounts {
+    pub count: i64,
+    pub first: String,
+}
+
+async fn operator_accounts(
+    client: &impl GenericClient,
+    tenant: i64,
+) -> Result<Option<OperatorAccounts>> {
+    let row = client
+        .query_one(
+            "SELECT count(*), (SELECT email FROM users WHERE tenant_id=$1 AND deleted_at IS NULL ORDER BY id LIMIT 1) \
+             FROM users WHERE tenant_id=$1 AND deleted_at IS NULL",
+            &[&tenant],
+        )
+        .await?;
+    let count: i64 = row.get(0);
+    Ok((count > 0).then(|| OperatorAccounts {
+        count,
+        first: row.get::<_, Option<String>>(1).unwrap_or_default(),
+    }))
+}
+
 /// What [`UserService::create_first_administrator`] wrote.
 #[derive(Clone, Debug)]
 pub struct FirstAdministratorCreated {
@@ -257,6 +283,13 @@ pub fn validate_first_administrator(input: &FirstAdministrator) -> Vec<FieldErro
 }
 
 impl UserService {
+    /// The accounts the operator tenant already holds, `None` while it is
+    /// empty: whether an owner exists, decided before any question is asked.
+    pub async fn operator_accounts(&self, tenant: i64) -> Result<Option<OperatorAccounts>> {
+        let client = self.db.get().await?;
+        operator_accounts(&**client, tenant).await
+    }
+
     /// Creates the install's first administrator: the account in the
     /// platform-operator tenant, the grant-all role through Authz's bootstrap
     /// seam, and the one-time bootstrap receipt that makes it the
@@ -304,20 +337,10 @@ impl UserService {
         else {
             return Err(FirstAdministratorError::NotOperator);
         };
-        let existing = tx
-            .sql()
-            .query_one(
-                "SELECT count(*), (SELECT email FROM users WHERE tenant_id=$1 AND deleted_at IS NULL ORDER BY id LIMIT 1) \
-                 FROM users WHERE tenant_id=$1 AND deleted_at IS NULL",
-                &[&operator.tenant],
-            )
-            .await?;
-        let count: i64 = existing.get(0);
-        if count > 0 {
-            return Err(FirstAdministratorError::AccountsExist {
-                count,
-                first: existing.get::<_, Option<String>>(1).unwrap_or_default(),
-            });
+        if let Some(OperatorAccounts { count, first }) =
+            operator_accounts(tx.sql(), operator.tenant).await?
+        {
+            return Err(FirstAdministratorError::AccountsExist { count, first });
         }
         if email_taken(tx.sql(), &email, None).await? {
             return Err(FirstAdministratorError::Validation(vec![field_error(

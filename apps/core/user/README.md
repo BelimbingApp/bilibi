@@ -334,7 +334,7 @@ receipt (replacing one whose account was deleted, the only way one can
 remain). The transaction's changes are `user`, `authz.principal_role` and
 `user.bootstrap`; it also records the retained `user.bootstrap.completed`
 action with the account, email and role, as the seed does. The host then
-calls `settle_bootstrap_affiliation` for the company link. Use this, not an
+calls `settle_bootstrap_affiliation` for the company link. `operator_accounts(tenant)` reads the same account count and first email without writing, so the host decides whether an owner exists before it asks any question; where one does, `create-owner` only settles an unfinished link and names that owner. Use this, not an
 `INSERT INTO users`, for any setup path that needs a first account.
 
 ## Two-factor authentication (the step-up provider)

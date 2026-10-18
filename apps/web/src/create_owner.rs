@@ -15,7 +15,7 @@ use bilibi_core::company::{primary, NewCompany, ProvisionOutcome};
 use bilibi_database::{Db, Error, Result};
 use bilibi_user::{
     validate_first_administrator, BootstrapAffiliation, FieldError, FirstAdministrator,
-    FirstAdministratorError, OperatorCompany,
+    FirstAdministratorError, OperatorAccounts, OperatorCompany,
 };
 use std::io::{BufRead, Write};
 
@@ -89,9 +89,15 @@ pub async fn create_owner(db: &Db, args: &[String]) -> Result<()> {
     let app = crate::App::new(db.clone(), &origin)?;
     let grants = app.services.get::<Grants>("base/authz.grants")?;
 
-    // Every question first, then the validation, so nothing is provisioned
-    // for an answer that is refused.
+    // Whether an owner exists is settled before any question. Then every
+    // question first, then the validation, so nothing is provisioned for an
+    // answer that is refused.
     let existing = existing_operator(db).await?;
+    if let Some(operator) = &existing {
+        if let Some(accounts) = app.user.operator_accounts(operator.tenant).await? {
+            return finish_existing_owner(&app, &origin, accounts).await;
+        }
+    }
     let new_operator = match existing {
         Some(_) => {
             if options.company_name.is_some() || options.company_code.is_some() {
@@ -146,7 +152,7 @@ pub async fn create_owner(db: &Db, args: &[String]) -> Result<()> {
         (None, Some(new)) => provision_operator(db, &new).await?,
         (None, None) => return Err(Error::Internal),
     };
-    let existing_owner = match app
+    match app
         .user
         .create_first_administrator(&grants, operator, &input)
         .await
@@ -162,57 +168,65 @@ pub async fn create_owner(db: &Db, args: &[String]) -> Result<()> {
                     ""
                 }
             );
-            None
         }
-        Err(FirstAdministratorError::AccountsExist { count, first }) => Some((count, first)),
+        Err(FirstAdministratorError::AccountsExist { count, first }) => {
+            return finish_existing_owner(&app, &origin, OperatorAccounts { count, first }).await;
+        }
         Err(FirstAdministratorError::Validation(errors)) => return Err(report(&errors)),
         Err(FirstAdministratorError::NotOperator) => {
             eprintln!("The provisioned tenant is not the platform operator; run `bilibi-web platform-provision` and try again.");
             return Err(Error::Invalid);
         }
         Err(FirstAdministratorError::Access(error)) => return Err(error),
-    };
-    let settled = app.user.settle_bootstrap_affiliation().await;
-    match (existing_owner, settled) {
-        (None, Ok(BootstrapAffiliation::Deferred(reason))) => {
+    }
+    match app.user.settle_bootstrap_affiliation().await {
+        Ok(BootstrapAffiliation::Linked { .. }) => {
+            println!("The owner signs in under the platform operator's company.");
+        }
+        Ok(BootstrapAffiliation::Deferred(reason)) => {
             println!(
                 "The owner was not given a company yet: {reason}. Run this command again to finish it."
             );
         }
-        (None, Ok(BootstrapAffiliation::Linked { .. })) => {
-            println!("The owner signs in under the platform operator's company.");
-        }
-        (None, Ok(_)) => {}
-        (None, Err(error)) => {
+        Ok(_) => {}
+        Err(error) => {
             eprintln!("The owner was created but could not be given a company yet. Run this command again to finish it.");
             return Err(error);
-        }
-        (
-            Some(_),
-            Ok(BootstrapAffiliation::Linked { .. } | BootstrapAffiliation::AlreadyLinked),
-        ) => {
-            println!("This install already had an owner whose company link was unfinished; it is finished now, and no second owner was created.");
-        }
-        (Some((count, first)), settled) => {
-            eprintln!(
-                "Not created: this install already has an owner. The platform operator holds {count} account(s); the first is {first}.\n\
-                 Sign in as one of them at {origin}/login. To add people, use Users > New user there.\n\
-                 If nobody can sign in any more, that is account recovery, which this command does not do."
-            );
-            match settled {
-                Ok(BootstrapAffiliation::Deferred(reason)) => eprintln!(
-                    "The owner's company link is still unfinished: {reason}. Fix that, then run this command again."
-                ),
-                Err(error) => {
-                    eprintln!("The owner's company link could not be checked: {error}.");
-                }
-                Ok(_) => {}
-            }
-            return Err(Error::Invalid);
         }
     }
     println!("Sign in at {origin}/login as {}.", input.email);
     Ok(())
+}
+
+/// An owner exists, so none is created: finish the owner's company link when
+/// it is unfinished, and name the real owner, never an address typed here.
+async fn finish_existing_owner(
+    app: &crate::App,
+    origin: &str,
+    accounts: OperatorAccounts,
+) -> Result<()> {
+    let OperatorAccounts { count, first } = accounts;
+    let settled = app.user.settle_bootstrap_affiliation().await;
+    if let Ok(BootstrapAffiliation::Linked { .. } | BootstrapAffiliation::AlreadyLinked) = settled {
+        println!(
+            "This install already has an owner, {first}, whose company link was unfinished; it is finished now, and no second owner was created.\n\
+             Sign in at {origin}/login as {first}."
+        );
+        return Ok(());
+    }
+    eprintln!(
+        "Not created: this install already has an owner. The platform operator holds {count} account(s); the first is {first}.\n\
+         Sign in as one of them at {origin}/login. To add people, use Users > New user there.\n\
+         If nobody can sign in any more, that is account recovery, which this command does not do."
+    );
+    match settled {
+        Ok(BootstrapAffiliation::Deferred(reason)) => eprintln!(
+            "The owner's company link is still unfinished: {reason}. Fix that, then run this command again."
+        ),
+        Err(error) => eprintln!("The owner's company link could not be checked: {error}."),
+        Ok(_) => {}
+    }
+    Err(Error::Invalid)
 }
 
 /// The marked operator tenant with its primary company, when both exist.
