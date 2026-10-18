@@ -660,18 +660,8 @@ inventory::submit! {
         id: "base/software", layer: bilibi_module_registry::Layer::Base,
         dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/agent_api", "base/settings", "base/step_up", "base/system", "base/notifications", "base/integration", "base/audit", "base/ui", "base/menu", "base/datetime", "base/locale"],
         migrations: &[("base-software-001-jobs", include_str!("../migrations/001-jobs.sql")), ("base-software-002-settled", include_str!("../migrations/002-settled.sql"))],
-        services: &[bilibi_module_registry::Service { id: web::PAGES, factory: |services| {
-            let db = services.get::<Db>("base/database.pool")?.as_ref().clone();
-            Ok(Arc::new(bilibi_ui::page::PageService::<Scope, Error>(Arc::new(web::Pages {
-                follow: Arc::new(follow::Follow::new(db.clone())),
-                db,
-                settings: services.get("base/settings.store")?,
-                contracts: services.get(bilibi_agent_api::page::SERVICE)?,
-                display: services.get("base/datetime.display")?,
-                locales: services.get("base/locale.locales")?,
-                software: services.get(SERVICE)?,
-            }))))
-        } }, bilibi_module_registry::Service { id: SERVICE, factory: |services| {
+        // Declaration order is build order: the page service reads this one.
+        services: &[bilibi_module_registry::Service { id: SERVICE, factory: |services| {
             let software = Arc::new(Software {
                 db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
                 mutations: services.get("base/database.mutations")?,
@@ -685,6 +675,17 @@ inventory::submit! {
             });
             BOUND.set(software.clone()).map_err(|_| bilibi_module_registry::RegistryError::Service("duplicate software binding".into()))?;
             Ok(software)
+        } }, bilibi_module_registry::Service { id: web::PAGES, factory: |services| {
+            let db = services.get::<Db>("base/database.pool")?.as_ref().clone();
+            Ok(Arc::new(bilibi_ui::page::PageService::<Scope, Error>(Arc::new(web::Pages {
+                follow: Arc::new(follow::Follow::new(db.clone())),
+                db,
+                settings: services.get("base/settings.store")?,
+                contracts: services.get(bilibi_agent_api::page::SERVICE)?,
+                display: services.get("base/datetime.display")?,
+                locales: services.get("base/locale.locales")?,
+                software: services.get(SERVICE)?,
+            }))))
         } }],
     }
 }
