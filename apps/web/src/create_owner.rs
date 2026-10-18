@@ -24,7 +24,9 @@ const USAGE: &str =
                                [--company-name NAME --company-code CODE [--tenant-name NAME]]
 Creates the first owner account of this install (the platform operator's administrator).
 Asks at the terminal for anything not given. The password is typed with echo off, or is the
-first line of standard input with --password-stdin; it is never an argument.
+first line of standard input with --password-stdin (typed once, with echo off, at a terminal);
+it is never an argument. Once an owner exists it creates no other; it only finishes that
+owner's unfinished company link.
 The company flags are needed only while no platform-operator company exists yet.";
 
 #[derive(Default)]
@@ -126,7 +128,11 @@ pub async fn create_owner(db: &Db, args: &[String]) -> Result<()> {
         input.name = ask_or_default("Owner name", suggested, interactive)?;
     }
     input.password = if options.password_stdin {
-        read_line()?
+        if interactive {
+            hidden("Password: ")?
+        } else {
+            read_line()?
+        }
     } else {
         ask_password()?
     };
@@ -140,7 +146,7 @@ pub async fn create_owner(db: &Db, args: &[String]) -> Result<()> {
         (None, Some(new)) => provision_operator(db, &new).await?,
         (None, None) => return Err(Error::Internal),
     };
-    match app
+    let existing_owner = match app
         .user
         .create_first_administrator(&grants, operator, &input)
         .await
@@ -156,32 +162,54 @@ pub async fn create_owner(db: &Db, args: &[String]) -> Result<()> {
                     ""
                 }
             );
+            None
         }
-        Err(FirstAdministratorError::AccountsExist { count, first }) => {
-            eprintln!(
-                "Not created: this install already has an owner. The platform operator holds {count} account(s); the first is {first}.\n\
-                 Sign in as one of them at {origin}/login. To add people, use Users > New user there.\n\
-                 If nobody can sign in any more, that is account recovery, which this command does not do."
-            );
-            return Err(Error::Invalid);
-        }
+        Err(FirstAdministratorError::AccountsExist { count, first }) => Some((count, first)),
         Err(FirstAdministratorError::Validation(errors)) => return Err(report(&errors)),
         Err(FirstAdministratorError::NotOperator) => {
             eprintln!("The provisioned tenant is not the platform operator; run `bilibi-web platform-provision` and try again.");
             return Err(Error::Invalid);
         }
         Err(FirstAdministratorError::Access(error)) => return Err(error),
-    }
-    match app.user.settle_bootstrap_affiliation().await? {
-        BootstrapAffiliation::Linked { .. } => {
-            println!("The owner signs in under the platform operator's company.")
-        }
-        BootstrapAffiliation::Deferred(reason) => {
+    };
+    let settled = app.user.settle_bootstrap_affiliation().await;
+    match (existing_owner, settled) {
+        (None, Ok(BootstrapAffiliation::Deferred(reason))) => {
             println!(
-                "The owner was not given a company yet: {reason}. Run this command again to retry."
-            )
+                "The owner was not given a company yet: {reason}. Run this command again to finish it."
+            );
         }
-        _ => {}
+        (None, Ok(BootstrapAffiliation::Linked { .. })) => {
+            println!("The owner signs in under the platform operator's company.");
+        }
+        (None, Ok(_)) => {}
+        (None, Err(error)) => {
+            eprintln!("The owner was created but could not be given a company yet. Run this command again to finish it.");
+            return Err(error);
+        }
+        (
+            Some(_),
+            Ok(BootstrapAffiliation::Linked { .. } | BootstrapAffiliation::AlreadyLinked),
+        ) => {
+            println!("This install already had an owner whose company link was unfinished; it is finished now, and no second owner was created.");
+        }
+        (Some((count, first)), settled) => {
+            eprintln!(
+                "Not created: this install already has an owner. The platform operator holds {count} account(s); the first is {first}.\n\
+                 Sign in as one of them at {origin}/login. To add people, use Users > New user there.\n\
+                 If nobody can sign in any more, that is account recovery, which this command does not do."
+            );
+            match settled {
+                Ok(BootstrapAffiliation::Deferred(reason)) => eprintln!(
+                    "The owner's company link is still unfinished: {reason}. Fix that, then run this command again."
+                ),
+                Err(error) => {
+                    eprintln!("The owner's company link could not be checked: {error}.");
+                }
+                Ok(_) => {}
+            }
+            return Err(Error::Invalid);
+        }
     }
     println!("Sign in at {origin}/login as {}.", input.email);
     Ok(())
