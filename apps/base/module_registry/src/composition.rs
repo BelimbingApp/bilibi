@@ -23,8 +23,9 @@ pub struct Pin {
     pub platform_tag: Option<&'static str>,
     pub containers: &'static [PinnedContainer],
 }
-/// `PIN`, and `BUILT_FROM` (the commit Git reported at build time, set only
-/// for an unpinned build), as `build.rs` generated them.
+/// `PIN`, `PIN_STALE` (why the pin was left out because the checkouts moved
+/// since it was made) and `BUILT_FROM` (the commit Git reported at build time,
+/// set only for an unpinned build), as `build.rs` generated them.
 mod generated {
     #![allow(dead_code, unused_imports)]
     use super::{Pin, PinnedContainer};
@@ -38,7 +39,7 @@ pub enum PinState {
     Pinned,
     /// Built without `--pin`: a development build; only the Platform commit is known.
     Unpinned,
-    /// A pin was present but describes another composition; its facts are not trusted.
+    /// A pin was present but describes another composition or other checkouts; its facts are not trusted.
     Stale(String),
 }
 
@@ -88,8 +89,8 @@ fn short(commit: &'static str) -> &'static str {
 /// The program's composition from the compiled-in pin and the mounted module
 /// lists the host passes to `verify_composition` (`bilibi_domains::MODULES`,
 /// `bilibi_extensions::MODULES`). A pin that names other containers than the
-/// ones mounted, or another Platform version than `Cargo.toml`, is stale, and
-/// its commits are left out rather than shown as if they were true.
+/// ones mounted, another Platform version than `Cargo.toml`, or other commits than
+/// the checkouts `build.rs` compiled, is stale, and its commits are left out rather than shown as if they were true.
 pub fn composition(
     domains: &[(&'static str, &'static str)],
     extensions: &[(&'static str, &'static str)],
@@ -116,6 +117,17 @@ pub fn composition(
         }
     }
     let Some(pin) = generated::PIN else {
+        if let Some(reason) = generated::PIN_STALE {
+            return Composition {
+                version,
+                commit: None,
+                tag: None,
+                pin: PinState::Stale(format!(
+                    "{reason}; run scripts/discover-modules.py --pin and build again"
+                )),
+                containers,
+            };
+        }
         return Composition {
             version,
             commit: generated::BUILT_FROM,

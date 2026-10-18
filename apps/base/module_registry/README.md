@@ -13,9 +13,10 @@ that link their own reference Extension descriptors skip that check.
 commit and release tag, and each mounted Domain or Extension with its commit
 and version. `build.rs` compiles those facts in from
 `.local/composition/manifest.txt`, the pin `scripts/discover-modules.py --pin`
-writes; without a pin only the Platform commit is known, and a pin that names
-another set of containers or another Platform version is reported stale rather
-than shown. The host passes the same `MODULES` lists it gives
+writes; without a pin only the Platform commit is known. It checks the pin
+against the checkouts it compiles, and a pin that names another set of
+containers, another Platform version, or other commits than the Platform and
+Domain checkouts are at is reported stale rather than shown. The host passes the same `MODULES` lists it gives
 `verify_composition`. The scheme is `docs/versions.md`.
 
 Deep modules register `Module` descriptors and `Contribution::new` entries with

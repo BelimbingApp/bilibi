@@ -2,6 +2,9 @@
 //! --pin` writes `.local/composition/manifest.txt` (the Platform commit, its
 //! version and release tag, and each mounted Domain or Extension's commit and
 //! version); this script turns it into `composition.rs` for `src/composition.rs`.
+//! The pin is checked against the checkouts being compiled: when Git is
+//! available and the Platform or a pinned container is at another commit than
+//! the pin recorded, the pin is left out and the reason compiled in instead.
 //! Without a pin the program only knows the Platform commit, read from Git at
 //! build time, and says so.
 use std::{env, fs, path::Path, path::PathBuf, process::Command};
@@ -23,7 +26,7 @@ fn main() {
         println!("cargo:rerun-if-changed={}", path.display());
     }
     let generated = match fs::read_to_string(&manifest) {
-        Ok(text) => pinned(&text),
+        Ok(text) => pinned(&text, &root),
         Err(_) => unpinned(&root),
     };
     let out = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR")).join("composition.rs");
@@ -32,7 +35,7 @@ fn main() {
 
 /// `key = "value"` lines and `[containers."<layer>/<id>"]` headings, as
 /// `--pin` writes them; unknown keys are ignored so the pin may grow.
-fn pinned(text: &str) -> String {
+fn pinned(text: &str, root: &Path) -> String {
     let mut platform_commit = None;
     let mut platform_version = None;
     let mut platform_tag = None;
@@ -61,45 +64,102 @@ fn pinned(text: &str) -> String {
     let (Some(commit), Some(version)) = (platform_commit, platform_version) else {
         panic!(".local/composition/manifest.txt lacks platform or platform_version; run scripts/discover-modules.py --pin again");
     };
+    let containers: Vec<_> = containers
+        .into_iter()
+        .map(|(name, head, version)| {
+            let head =
+                head.unwrap_or_else(|| panic!("{name} in the pin has no head; run --pin again"));
+            (name, head, version)
+        })
+        .collect();
+    if let Some(reason) = drift(root, &commit, &containers) {
+        return format!(
+            "pub const PIN: Option<Pin> = None;\npub const PIN_STALE: Option<&str> = Some({reason:?});\npub const BUILT_FROM: Option<&str> = None;\n"
+        );
+    }
     let mut code = format!(
         "pub const PIN: Option<Pin> = Some(Pin {{ platform_commit: {commit:?}, platform_version: {version:?}, platform_tag: {platform_tag:?}, containers: &[\n"
     );
     for (name, head, version) in containers {
-        let head = head.unwrap_or_else(|| panic!("{name} in the pin has no head; run --pin again"));
         code.push_str(&format!(
             "    PinnedContainer {{ name: {name:?}, commit: {head:?}, version: {version:?} }},\n"
         ));
     }
-    code.push_str("] });\npub const BUILT_FROM: Option<&str> = None;\n");
+    code.push_str("] });\npub const PIN_STALE: Option<&str> = None;\npub const BUILT_FROM: Option<&str> = None;\n");
     code
 }
 
-fn unpinned(root: &Path) -> String {
-    let git = |args: &[&str]| {
-        Command::new("git")
-            .arg("-C")
-            .arg(root)
-            .args(args)
-            .output()
-            .ok()
-            .filter(|output| output.status.success())
-            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
-    };
-    // Rerun when HEAD moves: the HEAD file and the branch file it points at
-    // (absent when the branch is packed; a missing path would rerun every build).
-    for path in git(&["rev-parse", "--git-path", "HEAD"])
+/// What differs between the pin and the checkouts being compiled, if Git can
+/// tell. Without Git (or outside a Git checkout of the Platform) the pin is trusted.
+fn drift(
+    root: &Path,
+    platform_commit: &str,
+    containers: &[(String, String, Option<String>)],
+) -> Option<String> {
+    watch_head(root);
+    let head = git(root, &["rev-parse", "HEAD"])?;
+    if head != platform_commit {
+        return Some(format!(
+            "the Platform is at {} but the pin was made at {}",
+            short(&head),
+            short(platform_commit)
+        ));
+    }
+    for (name, pinned, _) in containers {
+        let folder = root.join("apps").join(name);
+        watch_head(&folder);
+        let own = git(&folder, &["rev-parse", "--show-toplevel"])
+            .is_some_and(|top| fs::canonicalize(&folder).is_ok_and(|path| Path::new(&top) == path));
+        if !own {
+            return Some(format!("apps/{name} is not its own Git checkout"));
+        }
+        let head = git(&folder, &["rev-parse", "HEAD"])?;
+        if &head != pinned {
+            return Some(format!(
+                "apps/{name} is at {} but the pin was made at {}",
+                short(&head),
+                short(pinned)
+            ));
+        }
+    }
+    None
+}
+
+fn short(commit: &str) -> &str {
+    commit.get(..12).unwrap_or(commit)
+}
+
+fn git(dir: &Path, args: &[&str]) -> Option<String> {
+    Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+}
+
+/// Rerun when HEAD moves: the HEAD file and the branch file it points at
+/// (absent when the branch is packed; a missing path would rerun every build).
+fn watch_head(dir: &Path) {
+    for path in git(dir, &["rev-parse", "--git-path", "HEAD"])
         .into_iter()
         .chain(
-            git(&["symbolic-ref", "-q", "HEAD"])
-                .and_then(|reference| git(&["rev-parse", "--git-path", &reference])),
+            git(dir, &["symbolic-ref", "-q", "HEAD"])
+                .and_then(|reference| git(dir, &["rev-parse", "--git-path", &reference])),
         )
-        .map(|path| root.join(path))
+        .map(|path| dir.join(path))
         .filter(|path| path.is_file())
     {
         println!("cargo:rerun-if-changed={}", path.display());
     }
-    let commit = git(&["rev-parse", "HEAD"]);
+}
+
+fn unpinned(root: &Path) -> String {
+    watch_head(root);
+    let commit = git(root, &["rev-parse", "HEAD"]);
     format!(
-        "pub const PIN: Option<Pin> = None;\npub const BUILT_FROM: Option<&str> = {commit:?};\n"
+        "pub const PIN: Option<Pin> = None;\npub const PIN_STALE: Option<&str> = None;\npub const BUILT_FROM: Option<&str> = {commit:?};\n"
     )
 }

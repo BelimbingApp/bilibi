@@ -71,7 +71,7 @@ Then add the version to `catalogue.json` under that Domain, with the Platform ve
 https://raw.githubusercontent.com/BelimbingApp/bilibi/catalogue/catalogue.json
 ```
 
-Read the published copy, never `main`'s: `main` carries no tested sets. CI rebuilds the published copy from `main`'s file plus every set recorded so far, so a hand edit on `main` reaches the published copy at the next recorded run.
+Read the published copy, never `main`'s: `main`'s `tested` list may hold sets recorded by hand, each with the run that proved it, but only the published copy has the sets CI recorded. CI rebuilds the published copy from `main`'s file plus every set recorded so far, so a hand edit on `main` reaches the published copy at the next recorded run.
 
 The file has five parts:
 
@@ -81,7 +81,7 @@ The file has five parts:
 | `platform` | name, repository, and each released version with its date and commit | a person, when a Platform release is tagged |
 | `domains` | per Domain ID (the folder it mounts at): name, one-line description, repository, module folders, and each released version with its date, commit and the Platform versions it needs (`">=0.1.0, <0.2.0"`) | a person, when a Domain release is tagged |
 | `plugins` | per plug-in ID: name, publisher, repository, the Domain it belongs to (`null` for a Platform plug-in) and its versions, in the same shape | a person; empty until the plug-in runtime ships |
-| `tested` | one entry per Platform commit and Domain commit that passed the gates together, with both versions, the time and the CI run | CI, through the `catalogue` branch |
+| `tested` | one entry per Platform commit and Domain commit that passed the gates together, with both versions, the time and the CI run | CI, through the `catalogue` branch; a person may also record a set by hand on `main` with the run that proved it, and CI merges those with its own |
 
 A `platform` requirement is comparators joined by commas: `>=0.1.0, <0.2.0`. The operators are `>=`, `<=`, `>`, `<` and `=`. `python3 scripts/catalogue.py --check` refuses a catalogue that is not well formed, and CI runs it on every change, so a typo never reaches the published copy.
 
@@ -120,7 +120,7 @@ cargo build --release --locked -p bilibi-web
 ./target/release/bilibi-web status
 ```
 
-The pin is read at build time, so **pin before you build**: a program built from an older pin shows the older pin.
+The pin is read at build time, so **pin before you build**. The build also checks the pin against the checkouts it compiles: when Git is available and the Platform or a Domain is at another commit than the pin recorded, the pin is reported stale instead of shown.
 
 What you see in each state:
 
@@ -129,7 +129,7 @@ What you see in each state:
 | Pinned at a release | `Bilibi 0.1.0, release v0.1.0, commit …` and `finance 0.1.0, commit …` | `v0.1.0` `finance 0.1.0` |
 | Pinned between releases | `unreleased, commit …`; a Domain at no tag reads `untagged, commit …` | `v0.1.1` `finance 24938fb69a4d` |
 | No pin (a developer build) | `built from commit …` and `Pin: none`; Domains read `unpinned` | `v0.1.1` `finance unpinned` |
-| Stale pin (mounted set or `Cargo.toml` changed after the pin) | `Pin: stale, …` with what differs; no commits are shown, because they would be wrong | `finance unpinned`, the reason in the tooltip |
+| Stale pin (mounted set, `Cargo.toml` or a checkout's commit changed after the pin) | `Pin: stale, …` with what differs; no commits are shown, because they would be wrong | `finance unpinned`, the reason in the tooltip |
 
 Hover a badge in the status bar for the commit and the module list.
 
