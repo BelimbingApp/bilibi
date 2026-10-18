@@ -13,8 +13,10 @@ so `--check` also refuses a staged or committed mounted composition or
 `Cargo.lock`.
 
 A company build mounts Domain and Extension containers at chosen revisions.
-`--pin` records the Platform and container HEADs plus the resolved `Cargo.lock`
-under `.local/composition/`, and `--restore` rebuilds exactly that composition
+`--pin` records the Platform and container HEADs, the version each is at (its
+`vX.Y.Z` tag, see docs/versions.md) and the resolved `Cargo.lock` under
+`.local/composition/`; `apps/base/module_registry/build.rs` compiles that
+manifest into the program. `--restore` rebuilds exactly that composition
 (containers at the pinned HEADs, the pinned `Cargo.lock`) so that
 `cargo build --release --locked` is reproducible.
 """
@@ -36,6 +38,8 @@ SNAKE = re.compile(r'[a-z][a-z0-9]*(_[a-z0-9]+)*')
 PLATFORM_MANIFESTS = ('apps/web/Cargo.toml', 'fixtures/*/Cargo.toml')
 PIN_DIR = Path('.local/composition')
 PIN_FILES = ('Cargo.lock', 'manifest.txt')
+# A release is a Git tag `vX.Y.Z` (docs/versions.md); the version is what follows the `v`.
+VERSION_TAG = re.compile(r'v(\d+\.\d+\.\d+)')
 
 
 class Refused(Exception):
@@ -206,6 +210,19 @@ def checkout_head(label, folder):
     return git(folder, 'rev-parse', 'HEAD').strip()
 
 
+def version_at_head(label, folder):
+    """The version a `vX.Y.Z` tag at HEAD names, or None when HEAD carries no version tag."""
+    tags = git(folder, 'tag', '--points-at', 'HEAD').split()
+    versions = sorted({match.group(1) for tag in tags if (match := VERSION_TAG.fullmatch(tag))})
+    if len(versions) > 1:
+        raise Refused(f'{label} carries several version tags at HEAD ({", ".join("v" + v for v in versions)}); keep one')
+    return versions[0] if versions else None
+
+
+def workspace_version(root):
+    return tomllib.loads((root / 'Cargo.toml').read_text())['workspace']['package']['version']
+
+
 def require_resolved_lock(root):
     resolved = subprocess.run(['cargo', 'metadata', '--locked', '--format-version', '1'],
                               cwd=root, capture_output=True, text=True)
@@ -225,18 +242,32 @@ def pin(root, modules, files):
     if not mounted:
         raise Refused('Nothing is mounted under apps/domains or apps/extensions; there is nothing to pin')
     heads = {name: checkout_head(f'apps/{name}', folder) for name, folder in sorted(mounted.items())}
+    versions = {name: version_at_head(f'apps/{name}', folder) for name, folder in sorted(mounted.items())}
     require_resolved_lock(root)
     lock = root / 'Cargo.lock'
     platform = git(root, 'rev-parse', 'HEAD').strip()
-    manifest = ('# Written by scripts/discover-modules.py --pin; read by --restore.\n'
+    platform_version = workspace_version(root)
+    tagged = version_at_head('The Platform', root)
+    if tagged is not None and tagged != platform_version:
+        raise Refused(f'The Platform is tagged v{tagged} but Cargo.toml says version {platform_version}; '
+                      'a release tag names the Cargo.toml version (docs/versions.md)')
+    manifest = ('# Written by scripts/discover-modules.py --pin; read by --restore and apps/base/module_registry/build.rs.\n'
                 f'platform = "{platform}"\n'
-                f'cargo_lock_sha256 = "{sha256(lock)}"\n')
-    manifest += ''.join(f'\n[containers."{name}"]\nhead = "{head}"\n' for name, head in heads.items())
+                f'platform_version = "{platform_version}"\n'
+                + (f'platform_tag = "v{tagged}"\n' if tagged else '')
+                + f'cargo_lock_sha256 = "{sha256(lock)}"\n')
+    for name, head in heads.items():
+        manifest += f'\n[containers."{name}"]\nhead = "{head}"\n'
+        if versions[name]:
+            manifest += f'version = "{versions[name]}"\n'
     target = root / PIN_DIR
     target.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(lock, target / 'Cargo.lock')
     (target / 'manifest.txt').write_text(manifest)
-    print(f'pinned {len(heads)} container(s) at Platform {platform[:12]} in {PIN_DIR}')
+    described = ', '.join(f'{name} {"v" + versions[name] if versions[name] else head[:12] + " (untagged)"}'
+                          for name, head in heads.items())
+    platform_label = f'v{tagged}' if tagged else f'{platform[:12]} (unreleased {platform_version})'
+    print(f'pinned {len(heads)} container(s) at Platform {platform_label} in {PIN_DIR}: {described}')
 
 
 def restore(root, modules, files):

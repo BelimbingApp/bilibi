@@ -185,7 +185,7 @@ async fn context<'a>(
         } else {
             None
         },
-        version: env!("CARGO_PKG_VERSION"),
+        versions: bilibi_ui::version_badges(&crate::composition()),
         topbar_actions,
     })
 }

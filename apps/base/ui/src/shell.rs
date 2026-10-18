@@ -130,7 +130,9 @@ pub struct ShellContext<'a> {
     /// The host the development server listens on, shown after "dev" in the
     /// status bar as Bilimbi's `listen_address`; `None` outside development.
     pub listen_address: Option<&'a str>,
-    pub version: &'a str,
+    /// The Platform version first, then each mounted Domain or Extension, from
+    /// `version_badges`.
+    pub versions: Vec<VersionBadge>,
     /// The open page's controls in the top bar, left of the bell (Bilimbi's
     /// `topbar_actions` slot), from `Page::topbar_actions`.
     pub topbar_actions: Html,
@@ -144,6 +146,81 @@ impl ShellContext<'_> {
             .collect::<String>()
             .to_uppercase()
     }
+}
+
+/// One entry of the status bar's version list (`#app-version` for the
+/// Platform, `#app-version-<container>` for a mounted Domain or Extension).
+/// `text` is the short form shown; `title` says the commit and the modules.
+pub struct VersionBadge {
+    pub id: String,
+    pub text: String,
+    pub title: String,
+}
+
+/// The status bar's version badges for the program's composition (docs/versions.md):
+/// `v0.1.0` for the Platform, then `finance 0.1.0` for each mounted container,
+/// or its commit when it is at no release, or `unpinned` when the build has no pin.
+pub fn version_badges(made: &bilibi_module_registry::Composition) -> Vec<VersionBadge> {
+    use bilibi_module_registry::PinState;
+    let mut title = format!("Bilibi {}", made.version);
+    match (&made.pin, made.tag, made.short_commit()) {
+        (PinState::Stale(reason), _, _) => {
+            title.push_str(&format!(" · the pin is stale: {reason}"))
+        }
+        (PinState::Unpinned, _, commit) => {
+            if let Some(commit) = commit {
+                title.push_str(&format!(" · commit {commit}"));
+            }
+            title.push_str(" · built without a pin");
+        }
+        (PinState::Pinned, Some(tag), commit) => {
+            title.push_str(&format!(" · release {tag}"));
+            if let Some(commit) = commit {
+                title.push_str(&format!(" · commit {commit}"));
+            }
+        }
+        (PinState::Pinned, None, commit) => {
+            title.push_str(" · unreleased");
+            if let Some(commit) = commit {
+                title.push_str(&format!(" · commit {commit}"));
+            }
+        }
+    }
+    let mut badges = vec![VersionBadge {
+        id: "app-version".into(),
+        text: format!("v{}", made.version),
+        title,
+    }];
+    for container in &made.containers {
+        let layer = match container.layer {
+            bilibi_module_registry::Layer::Extensions => "Extension",
+            _ => "Domain",
+        };
+        let (text, state) = match (container.version, container.short_commit()) {
+            (Some(version), Some(commit)) => (
+                format!("{} {version}", container.id),
+                format!("version {version} · commit {commit}"),
+            ),
+            (None, Some(commit)) => (
+                format!("{} {commit}", container.id),
+                format!("at no release · commit {commit}"),
+            ),
+            (_, None) => (
+                format!("{} unpinned", container.id),
+                "mounted without a pin, so its version is unknown".to_owned(),
+            ),
+        };
+        badges.push(VersionBadge {
+            id: format!("app-version-{}", container.id),
+            text,
+            title: format!(
+                "{layer} {} · {state} · modules: {}",
+                container.id,
+                container.modules.join(", ")
+            ),
+        });
+    }
+    badges
 }
 
 #[derive(Template)]

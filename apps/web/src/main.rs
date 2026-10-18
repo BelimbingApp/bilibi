@@ -1,9 +1,14 @@
 use bilibi_database::{pool, Error, Result};
 #[tokio::main]
 async fn main() -> Result<()> {
+    bilibi_web::verify_composition()?;
+    // What this program is made of needs no database (docs/versions.md).
+    if std::env::args().nth(1).as_deref() == Some("status") {
+        print!("{}", bilibi_web::status());
+        return Ok(());
+    }
     let url = std::env::var("DATABASE_URL").map_err(|_| Error::Invalid)?;
     let db = pool(&url)?;
-    bilibi_web::verify_composition()?;
     match std::env::args().nth(1).as_deref() {
         Some("migrate") => {
             let migrated = bilibi_web::migrate(&db).await?;

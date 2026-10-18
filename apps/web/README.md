@@ -170,6 +170,15 @@ as at `/api/v1`; storage failure is `503`. Commit results whose items carry a
 `path` get an absolute `url` from `APP_ORIGIN`. Each request is one exchange
 row with operation `mcp.<tool>` or `mcp.<method>`.
 
+# Versions (`bilibi-web status`)
+
+`bilibi-web status` prints what the program is made of: the Platform version,
+its commit and release tag, and each mounted Domain or Extension with its
+version and commit, as `scripts/discover-modules.py --pin` recorded them at
+build time. It needs no database. The status bar shows the same facts through
+`bilibi_ui::version_badges`. The scheme, the catalogue and the states a build
+can be in are in `docs/versions.md`.
+
 # Agent plugins
 
 The downloadable plugin package for an agent harness (Plugin for ChatGPT at

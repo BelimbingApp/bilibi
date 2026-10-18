@@ -111,6 +111,7 @@ cargo build --workspace --release --locked
 - [`AGENTS.md`](AGENTS.md): how agents build and change this repository.
 - [`DESIGN.md`](DESIGN.md): the UI design rules.
 - [`docs/architecture/`](docs/architecture/README.md): layers, modules, data, audit, security, and the decision records.
+- [`docs/versions.md`](docs/versions.md): versions and release tags, the software catalogue, and how the running program shows what it is made of.
 
 ## License
 

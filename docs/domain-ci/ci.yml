@@ -53,10 +53,12 @@ jobs:
         working-directory: bilibi
 
     steps:
+      # Tags are fetched so the pin names the release this repository is at.
       - name: Check out this repository
         uses: actions/checkout@v7
         with:
           path: container
+          fetch-tags: true
 
       - name: Read the pinned Platform revision
         id: pin
@@ -69,6 +71,7 @@ jobs:
           repository: BelimbingApp/bilibi
           ref: ${{ steps.pin.outputs.revision }}
           path: bilibi
+          fetch-tags: true
 
       # The mount folder is the container ID. Moving the checkout keeps its
       # .git, so the container stays an independent nested repository that the

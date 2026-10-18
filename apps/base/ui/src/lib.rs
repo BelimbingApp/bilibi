@@ -32,7 +32,8 @@ mod specimen;
 pub mod upload;
 pub mod workspace;
 pub use shell::{
-    navigation, navigation_unpinned, AppShell, DisplayPreferences, Framed, NavNode, ShellContext,
+    navigation, navigation_unpinned, version_badges, AppShell, DisplayPreferences, Framed, NavNode,
+    ShellContext, VersionBadge,
 };
 
 pub use auth::{

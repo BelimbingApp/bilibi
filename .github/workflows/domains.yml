@@ -1,8 +1,13 @@
-# Mounts each Bilibi Domain at its default-branch HEAD into this change and
-# runs the same gates as the Domain's own CI (docs/domain-ci/ci.yml), so a
-# Platform change that breaks a Domain shows red before it merges. A Domain's
-# own CI pins an older Platform commit and would not notice. A red entry here
-# means fix the Domain in the same effort (docs/domain-ci/README.md).
+# Mounts each Bilibi Domain into this change and runs the same gates as the
+# Domain's own CI (docs/domain-ci/ci.yml), so a Platform change that breaks a
+# Domain shows red before it merges. A Domain's own CI pins an older Platform
+# commit and would not notice. A red entry here means fix the Domain in the
+# same effort (docs/domain-ci/README.md).
+#
+# On a pull request or a push to main each Domain is taken at its main HEAD.
+# On a release tag (v0.1.0) each Domain is taken at its latest release, and
+# every pair that passes is recorded as a tested set in the published
+# catalogue (docs/versions.md). Run it by hand to record a set for other refs.
 name: Domains on this change
 
 on:
@@ -10,7 +15,17 @@ on:
   push:
     branches:
       - main
+    tags:
+      - 'v*'
   workflow_dispatch:
+    inputs:
+      domains_at:
+        description: Take each Domain at its latest release tag, or at its main HEAD
+        type: choice
+        options:
+          - latest-release
+          - main
+        default: latest-release
 
 permissions:
   contents: read
@@ -59,16 +74,30 @@ jobs:
         working-directory: bilibi
 
     steps:
+      # Tags are fetched so the pin can name the release each side is at.
       - name: Check out this change
         uses: actions/checkout@v7
         with:
           path: bilibi
+          fetch-tags: true
 
-      - name: Check out the Domain at its default-branch HEAD
+      - name: Check out the Domain
         uses: actions/checkout@v7
         with:
           repository: ${{ matrix.repository }}
           path: container
+          fetch-tags: true
+
+      - name: Move the Domain to its latest release
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.domains_at == 'latest-release')
+        working-directory: container
+        run: |
+          latest=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' | sort -V | tail -1)
+          if [ -z "$latest" ]; then
+            echo "::error::${{ matrix.repository }} has no release tag yet (docs/versions.md); tag one or run this with domains_at=main"
+            exit 1
+          fi
+          git checkout --quiet "$latest"
 
       # Same mount as docs/domain-ci/ci.yml: a real nested checkout at
       # apps/domains/<id>, which the Platform's .gitignore ignores.
@@ -76,7 +105,7 @@ jobs:
         working-directory: .
         run: |
           mv container "bilibi/apps/domains/${{ matrix.domain }}"
-          echo "Mounted ${{ matrix.repository }} at $(git -C "bilibi/apps/domains/${{ matrix.domain }}" rev-parse HEAD)" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "Mounted ${{ matrix.repository }} at $(git -C "bilibi/apps/domains/${{ matrix.domain }}" describe --tags --always)" | tee -a "$GITHUB_STEP_SUMMARY"
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -100,3 +129,66 @@ jobs:
 
       - name: Verify the gates left the Domain clean
         run: git -C "apps/domains/${{ matrix.domain }}" diff --exit-code
+
+      # The pin the gates made names both commits and their releases; the
+      # record job below turns the green pairs into tested sets.
+      - name: Describe the tested set
+        run: python3 scripts/catalogue.py tested --run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" | tee "$RUNNER_TEMP/tested-set.json"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: tested-${{ matrix.domain }}
+          path: ${{ runner.temp }}/tested-set.json
+
+  # Publishes catalogue.json from this change plus every tested set so far to
+  # the `catalogue` branch (docs/versions.md). Only release tags and hand runs
+  # record; a pull request or a push to main never writes anything.
+  record:
+    name: Record the tested sets
+    needs: domain
+    if: always() && (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    concurrency:
+      group: catalogue
+    steps:
+      - name: Check out this change
+        uses: actions/checkout@v7
+        with:
+          path: bilibi
+      - name: Collect the sets that passed
+        uses: actions/download-artifact@v7
+        with:
+          pattern: tested-*
+          path: sets
+      - name: Publish the catalogue with the tested sets
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          remote="https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          records=$(find sets -name tested-set.json | sort)
+          if [ -z "$records" ]; then
+            echo "::warning::No Domain passed, so nothing was recorded"
+          fi
+          for attempt in 1 2 3; do
+            rm -rf published
+            if git clone --quiet --branch catalogue --single-branch --depth 1 "$remote" published 2>/dev/null; then
+              :
+            else
+              git init --quiet --initial-branch catalogue published
+            fi
+            # shellcheck disable=SC2086
+            python3 bilibi/scripts/catalogue.py publish --from bilibi/catalogue.json --into published/catalogue.json --record $records
+            git -C published add catalogue.json
+            git -C published -c user.name=github-actions -c user.email=github-actions@github.com \
+              commit --quiet --allow-empty -m "Record tested sets from $GITHUB_WORKFLOW run $GITHUB_RUN_ID ($GITHUB_REF_NAME)"
+            if git -C published push --quiet "$remote" HEAD:refs/heads/catalogue; then
+              echo "Published https://raw.githubusercontent.com/$GITHUB_REPOSITORY/catalogue/catalogue.json" | tee -a "$GITHUB_STEP_SUMMARY"
+              python3 -c "import json;[print('  tested:', s['domain']['id'], s['domain']['version'] or s['domain']['commit'][:12], 'with Bilibi', s['platform']['version'] or s['platform']['commit'][:12]) for s in json.load(open('published/catalogue.json'))['tested']]" | tee -a "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            echo "Push rejected on attempt $attempt; another run wrote first, retrying"
+          done
+          exit 1

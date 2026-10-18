@@ -9,3 +9,4 @@ Every Domain or Extension repository runs the Platform's gates with itself mount
 
 - Both run `scripts/domain-ci.sh`: discovery, committed CSS, Cargo.lock pinning, fmt, clippy, locked release build, migrate, seed-production, and `GET /`.
 - A Bilibi change that turns "Domains on this change" red must fix the Domain in the same effort: open the Domain fix alongside the Platform change, never mark the entry allowed-to-fail.
+- On a Platform release tag (`v0.1.0`), or a run started by hand, "Domains on this change" takes each Domain at its latest release and records every green pair as a tested set in the published catalogue. Versions, tags and the catalogue: [`docs/versions.md`](../versions.md).

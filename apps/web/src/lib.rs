@@ -128,6 +128,69 @@ pub fn verify_composition() -> Result<()> {
     )?)
 }
 
+/// What this program is made of (docs/versions.md): the Platform version, its
+/// commit and release tag, and each mounted Domain or Extension with its
+/// version, as `scripts/discover-modules.py --pin` recorded them at build time.
+pub fn composition() -> bilibi_module_registry::Composition {
+    bilibi_module_registry::composition(bilibi_domains::MODULES, bilibi_extensions::MODULES)
+}
+
+/// `bilibi-web status`: the composition as plain text, one line per part.
+pub fn status() -> String {
+    use bilibi_module_registry::{Layer, PinState};
+    let made = composition();
+    let mut text = format!("Bilibi {}", made.version);
+    match (&made.pin, made.tag, made.commit) {
+        (PinState::Pinned, Some(tag), Some(commit)) => {
+            text.push_str(&format!(", release {tag}, commit {commit}"))
+        }
+        (PinState::Pinned, None, Some(commit)) => {
+            text.push_str(&format!(", unreleased, commit {commit}"))
+        }
+        (_, _, Some(commit)) => text.push_str(&format!(", built from commit {commit}")),
+        (_, _, None) => {}
+    }
+    text.push('\n');
+    text.push_str(match &made.pin {
+        PinState::Pinned => "Pin: .local/composition, compiled in at build time\n",
+        PinState::Unpinned => {
+            "Pin: none; built without scripts/discover-modules.py --pin, so Domain versions are unknown\n"
+        }
+        PinState::Stale(_) => "",
+    });
+    if let PinState::Stale(reason) = &made.pin {
+        text.push_str(&format!("Pin: stale, {reason}\n"));
+    }
+    for (layer, heading) in [
+        (Layer::Domains, "Domains"),
+        (Layer::Extensions, "Extensions"),
+    ] {
+        let mounted: Vec<_> = made
+            .containers
+            .iter()
+            .filter(|container| container.layer == layer)
+            .collect();
+        if mounted.is_empty() {
+            text.push_str(&format!("{heading}: none mounted\n"));
+            continue;
+        }
+        text.push_str(&format!("{heading}:\n"));
+        for container in mounted {
+            let at = match (container.version, container.commit) {
+                (Some(version), Some(commit)) => format!("{version}, commit {commit}"),
+                (None, Some(commit)) => format!("untagged, commit {commit}"),
+                (_, None) => "unpinned".to_owned(),
+            };
+            text.push_str(&format!(
+                "  {} {at}, modules: {}\n",
+                container.id,
+                container.modules.join(", ")
+            ));
+        }
+    }
+    text
+}
+
 pub async fn migrate(db: &Db) -> Result<bilibi_database::Migrated> {
     bilibi_database::migrate(db, &modules()?).await
 }
