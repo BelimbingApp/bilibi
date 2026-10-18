@@ -360,12 +360,8 @@ contribute!(
         .under("admin.system")
         .order(30)
 );
-contribute!(
-    "base/menu",
-    MenuItem::container("admin.system.software", "Software")
-        .under("admin.system")
-        .order(40)
-);
+// Bilimbi's "admin.system.software" is an empty container; Bilibi's Software
+// page (`apps/base/software`) contributes the item under that id itself.
 contribute!(
     "base/menu",
     MenuItem::container("production", "Production").order(200)

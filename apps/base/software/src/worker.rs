@@ -353,6 +353,7 @@ impl Worker {
                                 &[&tenant, &id, &seq, &detail],
                             )
                             .await;
+                        let _ = announce(&**client, id).await;
                     }
                 }
             })
@@ -473,12 +474,16 @@ impl Worker {
     }
 
     async fn claim(&self, client: &impl GenericClient, tenant: i64, id: i64) -> Result<u64> {
-        Ok(client
+        let claimed = client
             .execute(
                 "UPDATE base_software_jobs SET state='running', worker=$3, started_at=now() WHERE tenant_id=$1 AND id=$2 AND state='queued'",
                 &[&tenant, &id, &self.name],
             )
-            .await?)
+            .await?;
+        if claimed == 1 {
+            announce(client, id).await?;
+        }
+        Ok(claimed)
     }
     async fn start_step(&self, tenant: i64, job: i64, key: &str) -> Result<i32> {
         let client = self.db.get().await?;
@@ -488,6 +493,7 @@ impl Worker {
                 &[&tenant, &job, &key],
             )
             .await?;
+        announce(&**client, job).await?;
         Ok(row.get(0))
     }
     async fn end_step(
@@ -505,7 +511,7 @@ impl Worker {
                 &[&tenant, &job, &key, &state, detail],
             )
             .await?;
-        Ok(())
+        announce(&**client, job).await
     }
     async fn skip_rest(&self, client: &impl GenericClient, tenant: i64, job: i64) -> Result<()> {
         client
@@ -514,7 +520,7 @@ impl Worker {
                 &[&tenant, &job],
             )
             .await?;
-        Ok(())
+        announce(client, job).await
     }
     fn running_text(&self) -> String {
         let domains: Vec<String> = self
@@ -831,6 +837,7 @@ impl Worker {
         record_action(tx.sql(), &who, None, action, payload, true).await?;
         self.notify(&mut tx, tenant, job.requested_by, notice)
             .await?;
+        announce(tx.sql(), job.id).await?;
         tx.commit().await
     }
     async fn set_state(
@@ -926,4 +933,13 @@ fn duration(seconds: u64) -> String {
         0..=59 => format!("{seconds} s"),
         _ => format!("{} min {} s", seconds / 60, seconds % 60),
     }
+}
+
+/// Tells every listener (the Software page, an installer) that `job` changed:
+/// the same channel and payload a queue or cancel sends (`jobs::CHANNEL`).
+async fn announce(client: &impl GenericClient, job: i64) -> Result<()> {
+    client
+        .execute("SELECT pg_notify($1, $2)", &[&CHANNEL, &job.to_string()])
+        .await?;
+    Ok(())
 }

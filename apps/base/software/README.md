@@ -47,7 +47,7 @@ An administrator of another organisation is refused with `denied_platform_scope`
 
 ## The contracts
 
-All six go through Agent API (`apps/base/agent_api/README.md`): reads are called, writes are planned, reviewed by the person, then committed. The page (a later piece) calls the same contracts through `PageContracts`.
+All six go through Agent API (`apps/base/agent_api/README.md`): reads are called, writes are planned, reviewed by the person, then committed. The Software page calls the same contracts through `PageContracts` (below).
 
 | Contract | Kind | Input | What the review or answer says |
 | --- | --- | --- | --- |
@@ -71,6 +71,23 @@ Rules the reviews enforce, each as a field error that says what to do:
 - `undo` takes only the newest finished job, and only when the worker recorded its result (below); a finished undo cannot be undone again.
 
 `switch` is `auto` (switch as soon as the build is ready) or `ask` (build now, wait for the owner before the one-minute pause). The worker reads it; this module only records it. **The signal to go ahead is the job's `switch` turning `auto`**: the worker polls the row while it waits with the instance running. The contract that flips it from the page is a later piece.
+
+## The Software page
+
+**Administration › System › Software** (`/system/software`, `src/web.rs`) is the same six contracts with a face: it reads `status` and `catalogue`, and every write is a plan the person reviews and then commits with their authenticator code typed into the review. Server owners see and change; a person with only `admin.system.software.view` sees what runs and the history, with no controls.
+
+| Part | What it shows | Where it comes from |
+| --- | --- | --- |
+| Instance banner | Which Bilibi this is, in words and colour, on the page and again at the top of every review | `bilibi_system::Instance::banner`, the shared `base/ui` component the agent consent pages also use |
+| What runs here | Bilibi version, release and commit; the Domains and their versions; plug-ins on; whether the pin is exact | `status.installed`, `status.plugins` |
+| Now / Last job | The job waiting, running or last finished: its steps as the worker reports them, the running step's progress bar and time left, the result, Stop or Cancel while the contract allows it, Undo when `status.undo` says so | `status.job`, `status.undo`; the page is woken by every job write (`src/follow.rs`) |
+| Domains (Dev only) | One row per catalogue Domain: tick to add or remove, pick a release (marked when tested with the running Bilibi), plug-ins under it, when to switch; then **Review changes** | `catalogue`; the review is `change`'s plan preview |
+| Install a tested release (Staging, Production) | The source this instance installs from, the release number to install, **Review the install**. There is no Build here: only Dev builds | `status.instance.installs_from`; the review is `install`'s plan preview |
+| History | The recent jobs with outcome and times | `status.jobs` |
+
+- **The review is the plan.** `PageContracts::preview` stores the owner's review under a plan code bound to this browser session; **Build on Dev**, **Install on …** or **Undo on …** commits that exact plan with the typed code presented on the request (`Scope::presenting_step_up`), so the owner's facade spends it the way it spends an agent's `step_up_code`. A wrong code is an error inside the review, not a trip through the browser prompt; a person not yet enrolled is sent to enrol and comes back.
+- **Nothing is chosen for the person.** `?propose=finance,factory` (an assistant's link) ticks those Domains when the page opens; the review and the code are still theirs.
+- **Live progress.** Every step write by a worker announces the job on `NOTIFY bilibi_software_jobs`; one connection per web process listens (`src/follow.rs`) and refreshes each mounted page, so a build's "Compiled 214 of about 488 parts" line moves every two seconds. Without that connection the page still follows on the host's 15-second refresh.
 
 ## What a job is
 
@@ -101,7 +118,7 @@ The builder (below, Dev) runs under the `bilibi-build` user as the instance's wo
 
 1. **Wake up.** `LISTEN bilibi_software_jobs`. Every queue and every cancel sends `NOTIFY bilibi_software_jobs, '<job id>'` inside the commit, so it arrives once the row is visible. Also poll on start-up: a notification sent while the worker was down is lost.
 2. **Claim.** `UPDATE base_software_jobs SET state='running', worker=$1, started_at=now() WHERE id=$2 AND state='queued'`. Zero rows means someone else has it, or it was cancelled.
-3. **Report each step.** Set `state='running', started_at=now()` when it starts, then `done` or `failed` with `finished_at` and a plain `detail` (`{"message": "Compiled 214 of 412 parts"}`), never a secret. Skip the rest after a failure (`skipped`). A worker may append a step the job was not made with when it goes back after a failure (the installer's `switch_back`), with the next `seq`.
+3. **Report each step.** Set `state='running', started_at=now()` when it starts, then `done` or `failed` with `finished_at` and a plain `detail` (`{"message": "Compiled 214 of 412 parts"}`), never a secret. Skip the rest after a failure (`skipped`). A worker may append a step the job was not made with when it goes back after a failure (the installer's `switch_back`), with the next `seq`. After each of these writes, and after each rewrite of a running step's `detail`, send `NOTIFY bilibi_software_jobs, '<job id>'` so the Software page follows live (the builder's `announce`).
 4. **Honour a cancel before the pause.** Before starting a step that `pauses`, in one transaction lock the job (`SELECT cancel_requested_at FROM base_software_jobs WHERE id=$1 FOR UPDATE`). If it is set, mark the remaining steps `skipped` and the job `cancelled`. If not, mark the pausing step `running` in the same transaction, so a cancel either lands before the pause or is refused as too late.
 5. **Finish.** Set `state`, `finished_at` and `result`. Undo needs these keys in `result`:
 

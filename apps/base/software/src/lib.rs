@@ -13,14 +13,19 @@
 mod agent;
 mod builder;
 mod catalogue;
+mod follow;
 mod jobs;
 mod review;
 mod toolchain;
+mod web;
 mod worker;
 
 use bilibi_authz::{authorize_operator, CapabilityDefinition, VocabularyContribution, VOCABULARY};
 use bilibi_database::{Context, Db, Error, MutationBoundary, MutationTransaction, Result};
-use bilibi_module_registry::{Composition, Contribution, Provenance};
+use bilibi_module_registry::{
+    contributions::{Access, Method, PageWrites, Pending, Route, PAGE_WRITES, ROUTES},
+    Composition, Contribution, Provenance,
+};
 use bilibi_notifications::{Notice, NotificationBoundary};
 use bilibi_settings::{
     Definition, Editor, ScopeKind, Setting, Settings, Validator, ValueType, DEFINITIONS,
@@ -34,6 +39,7 @@ use std::sync::{Arc, OnceLock};
 pub use catalogue::{Catalogue, Version, DEFAULT_URL as DEFAULT_CATALOGUE_URL};
 pub use jobs::{CHANNEL, RECORD};
 pub use review::Review;
+pub use web::PATH as PAGE_PATH;
 pub use worker::{Worker, PRINCIPAL as WORKER_PRINCIPAL, USAGE as WORKER_USAGE};
 
 /// A refusal that names the field and says what to do, or a backend error.
@@ -592,12 +598,46 @@ inventory::submit! { Contribution::new(DEFINITIONS, BUILD_JOBS_KEY, provenance!(
         help: "How many parts the build compiles at the same time. 2 keeps a Dev that shares its machine with Production responsive and takes about 10 to 15 minutes for a first build. Use 1 on a small server, or a higher number on a machine of its own. 0 means use every processor, which is fastest but slows everything else on the server. Builds always run at the lowest CPU priority (server owner only).",
         capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
 })) }
+// The Software page: server owners' view of what runs and the way to change
+// it. Seeing it needs the platform `view` capability; the owner's facade
+// rechecks `manage` on every write.
+inventory::submit! { Contribution::new(ROUTES, "base/software.index", provenance!(), &Route {
+    method: Method::Get, path: web::PATH, service: web::PAGES, operation: "index",
+    access: Access::OperatorCapability(VIEW), framed: true,
+}) }
+// Bilimbi's menu has "admin.system.software" as an empty container; here it
+// is the page itself.
+bilibi_menu::contribute!(
+    "base/software",
+    bilibi_menu::MenuItem::page("admin.system.software", "Software", web::PATH)
+        .under("admin.system")
+        .icon("hero-cube")
+        .requires(bilibi_menu::Requirement::Capability(VIEW))
+        .order(40)
+);
+// The page's writes are this module's own contracts (ADR 01): a reviewed
+// plan for a change, install or undo, and a plain submit for cancel.
+inventory::submit! { Contribution::new(PAGE_WRITES, web::PAGES, provenance!(), &PageWrites {
+    service: web::PAGES,
+    contracts: &[("build", "base.software.change"), ("install", "base.software.install"), ("undo", "base.software.undo"), ("cancel_job", "base.software.cancel")],
+    pending: Pending::None,
+}) }
 inventory::submit! {
     bilibi_module_registry::Module {
         id: "base/software", layer: bilibi_module_registry::Layer::Base,
-        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/agent_api", "base/settings", "base/step_up", "base/system", "base/notifications", "base/integration", "base/audit"],
+        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/agent_api", "base/settings", "base/step_up", "base/system", "base/notifications", "base/integration", "base/audit", "base/ui", "base/menu", "base/datetime", "base/locale"],
         migrations: &[("base-software-001-jobs", include_str!("../migrations/001-jobs.sql")), ("base-software-002-settled", include_str!("../migrations/002-settled.sql"))],
-        services: &[bilibi_module_registry::Service { id: SERVICE, factory: |services| {
+        services: &[bilibi_module_registry::Service { id: web::PAGES, factory: |services| {
+            let db = services.get::<Db>("base/database.pool")?.as_ref().clone();
+            Ok(Arc::new(bilibi_ui::page::PageService::<Scope, Error>(Arc::new(web::Pages {
+                follow: Arc::new(follow::Follow::new(db.clone())),
+                db,
+                settings: services.get("base/settings.store")?,
+                contracts: services.get(bilibi_agent_api::page::SERVICE)?,
+                display: services.get("base/datetime.display")?,
+                locales: services.get("base/locale.locales")?,
+            }))))
+        } }, bilibi_module_registry::Service { id: SERVICE, factory: |services| {
             let software = Arc::new(Software {
                 db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
                 mutations: services.get("base/database.mutations")?,

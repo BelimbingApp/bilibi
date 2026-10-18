@@ -1,0 +1,26 @@
+{#- Dev: the catalogue's Domains to tick and version (src/web.rs
+    DomainsForm). The form reports every change, so the picks live in the
+    mounted state; Review asks the owner for the plan. -#}
+{%- import "components.html" as ui -%}
+{%- import "forms.html" as form -%}
+{{ error|safe }}
+<form id="software-picks" data-event="pick" data-change class="grid gap-3">
+{% for row in rows %}
+<div id="software-row-{{ row.id }}" class="grid gap-2 border-b border-line pb-3 last:border-b-0 sm:grid-cols-[1fr_auto] sm:items-start">
+<div class="min-w-0">
+<div class="flex flex-wrap items-center gap-2">{% call form::input(field=row.tick) %}{% endcall %}{% if let Some(installed) = row.installed %}{% call ui::badge(kind=bilibi_ui::BadgeKind::Neutral, dot=false) %}{{ installed }}{% endcall %}{% endif %}{% if let Some(action) = row.action %}{% call ui::badge(kind=action.kind) %}{{ action.body|safe }}{% endcall %}{% endif %}</div>
+<p class="mt-1 text-sm text-ink-muted">{{ row.description }}</p>
+{% if !row.modules.is_empty() %}<p class="text-xs text-ink-subtle">Modules: {{ row.modules }}</p>{% endif %}
+{% if let Some(note) = row.remove_note %}<p class="mt-1 text-xs text-warning-ink">{{ note }}</p>{% endif %}
+{% if !row.plugins.is_empty() %}<div class="mt-2 grid gap-1 pl-6"><p class="text-xs font-semibold text-ink-subtle">Plug-ins · switch on in seconds, no rebuild</p>{% for plugin in row.plugins %}{% call form::input(field=plugin) %}{% endcall %}{% endfor %}</div>{% endif %}
+</div>
+<div class="sm:pt-0.5">{% call form::input(field=row.version) %}{% endcall %}</div>
+</div>
+{% endfor %}
+{% if !outside.is_empty() %}<p id="software-outside" class="text-xs text-warning-ink">Installed from outside the catalogue: {{ outside.join(", ") }}. A build from the catalogue leaves it out; the review lists it as a removal.</p>{% endif %}
+{% call form::radio_group(group=switch) %}{% endcall %}
+<div class="flex flex-wrap items-center justify-between gap-3 border-t border-line pt-3">
+<p id="software-picks-summary" class="text-sm text-ink-muted">{{ summary }}</p>
+<div class="flex items-center gap-2">{{ reset|safe }}{{ review|safe }}</div>
+</div>
+</form>

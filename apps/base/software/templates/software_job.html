@@ -1,0 +1,28 @@
+{#- One job as the worker reports it: heading, the steps in order with the
+    running step's progress, the result and the actions (src/web.rs JobBody). -#}
+{%- import "components.html" as ui -%}
+{%- import "feedback.html" as feedback -%}
+{%- import "flex_table.html" as flex -%}
+<div class="flex flex-wrap items-start justify-between gap-3">
+<div class="min-w-0">
+<p id="software-job-heading" class="text-sm font-semibold text-ink">{{ heading }}</p>
+<p id="software-job-summary" class="text-sm text-ink-muted">{{ summary }}</p>
+<p class="text-xs text-ink-subtle">Job {{ id }}{% if let Some(at) = requested %} · asked {% call flex::instant(id="software-job-requested", i=at) %}{% endcall %}{% endif %}{% if let Some(at) = finished %} · finished {% call flex::instant(id="software-job-finished", i=at) %}{% endcall %}{% endif %}{% if let Some(worker) = worker %} · {{ worker }}{% endif %}</p>
+</div>
+{% if !actions.is_empty() %}<div class="flex shrink-0 items-center gap-2">{{ actions|safe }}</div>{% endif %}
+</div>
+<ol id="software-job-steps" class="mt-3 grid gap-1.5">
+{% for step in steps %}
+<li id="{{ step.id }}" data-step-state="{{ step.state }}" class="flex items-start gap-2 text-sm">
+{% call ui::icon(name=step.icon, class=step.icon_class()) %}{% endcall %}
+<div class="min-w-0 flex-1">
+<p class="{{ step.label_class() }}">{{ step.label }}{% if let Some(took) = step.took %} <span class="text-xs tabular-nums text-ink-subtle">· {{ took }}</span>{% endif %}</p>
+{% if !step.message.is_empty() %}<p class="text-xs text-ink-muted">{{ step.message }}</p>{% endif %}
+{% if let Some(percent) = step.percent %}<progress id="{{ step.id }}-progress" class="mt-1 block h-1.5 w-full max-w-md accent-action" value="{{ percent }}" max="100" aria-label="{{ percent }}% of the parts compiled"></progress>{% endif %}
+{% if let Some(developer) = step.developer %}{% call ui::fold(id="{}-details"|format(step.id), title="Developer details") %}<pre class="max-h-64 overflow-auto rounded-md bg-surface-sunken p-2 text-xs text-ink">{{ developer }}</pre>{% endcall %}{% endif %}
+</div>
+</li>
+{% endfor %}
+</ol>
+{% if let Some(kind) = result_kind %}{% if !result_message.is_empty() %}<div class="mt-3">{% call feedback::alert(kind=kind, id="software-job-result") %}{{ result_message }}{% endcall %}</div>{% endif %}{% endif %}
+{% for note in notes %}<p class="mt-2 text-xs text-ink-muted">{{ note }}</p>{% endfor %}
