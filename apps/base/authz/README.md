@@ -113,7 +113,7 @@ Authz is a Base Step-up consumer (`src/step_up.rs`, `apps/base/step_up/README.md
 
 - Each method calls `StepUp::require` after its capability check and before the write. The target names the user, role or capability.
 - For the full-access role, the doc suggests "ask every time".
-- `/authz/step-up` (Administration › Authorization › Two-factor Requirements, `src/step_up_web.rs`) is the policy page for every discovered operation. It needs `admin.authz.step-up.manage` (contributed to `tenant_owner`).
+- `/authz/step-up` (Administration › Authorization › 2FA Requirements, `src/step_up_web.rs`) is the policy page for every discovered operation. It needs `admin.authz.step-up.manage` (contributed to `tenant_owner`).
   - One FlexTable row per declared operation, with module, label, default, this tenant's state and the floor lock.
   - Confirmed changes: off, on, ask every time, back to default.
   - The tenant's window and cap.

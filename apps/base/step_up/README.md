@@ -39,7 +39,7 @@ Two lines in the owning module, nothing anywhere else.
 
 ## Policy
 
-Tenants decide per operation on **Administration › Authorization › Two-factor Requirements** (`/authz/step-up`, `admin.authz.step-up.manage`).
+Tenants decide per operation on **Administration › Authorization › 2FA Requirements** (`/authz/step-up`, `admin.authz.step-up.manage`).
 
 | Setting | Scope | Default | Bounds |
 |---|---|---|---|

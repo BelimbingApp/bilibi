@@ -51,15 +51,15 @@ pub enum TwoFactorError {
     InvalidCode,
     #[error("Too many failed attempts. Try again in {minutes} minute(s).")]
     Locked { minutes: i64 },
-    #[error("Two-factor authentication is not set up for this account.")]
+    #[error("2FA is not set up for this account.")]
     NotEnabled,
-    #[error("Two-factor authentication is already on for this account.")]
+    #[error("2FA is already on for this account.")]
     AlreadyEnabled,
     #[error("This setup has expired. Start again.")]
     NoPendingEnrollment,
     #[error("Leave impersonation first: only the account's own holder can do this.")]
     Impersonating,
-    #[error("Two-factor authentication needs BILIBI_SETTINGS_KEY, which this installation lacks.")]
+    #[error("2FA needs BILIBI_SETTINGS_KEY, which this installation lacks.")]
     Unavailable,
     #[error(transparent)]
     Other(#[from] Error),
