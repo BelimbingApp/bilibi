@@ -126,6 +126,12 @@ pub struct ShellContext<'a> {
     /// The account's pins as JSON (`[{id,label,url,icon,sort_order}]`), already
     /// limited to pages this deployment serves.
     pub pins: String,
+    /// Which installation this is (Base Instance): the top-bar badge for
+    /// development and staging, empty for production.
+    pub instance: Html,
+    /// The same in words for the account panel, production included
+    /// ("Staging · SBG Staging").
+    pub instance_title: String,
     pub development: bool,
     /// The host the development server listens on, shown after "dev" in the
     /// status bar as Bilimbi's `listen_address`; `None` outside development.

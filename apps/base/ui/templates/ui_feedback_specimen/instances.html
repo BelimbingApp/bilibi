@@ -1,0 +1,7 @@
+{%- import "components.html" as ui -%}
+{%- import "feedback.html" as fb -%}
+{% call ui::card(id="component-instance", title="Which Bilibi", inner_class="space-y-3 p-4") %}
+<p class="text-xs text-ink-muted">The top-bar badge shows on development and staging only. The banner opens every review or confirmation, production included.</p>
+<div class="flex flex-wrap items-center gap-2">{% for badge in instance_badges %}{% call fb::instance_badge(badge=badge) %}{% endcall %}{% endfor %}</div>
+<div class="grid gap-2">{% for banner in instance_banners %}{% call fb::instance_banner(banner=banner) %}{% endcall %}{% endfor %}</div>
+{% endcall %}

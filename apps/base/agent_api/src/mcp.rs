@@ -10,6 +10,7 @@ use crate::{
     plans::{PlanAuthority, PlannedOperation, Plans},
     Error, Registry, SearchOptions,
 };
+use bilibi_instance::Instance;
 use bilibi_tenancy::Scope;
 use serde_json::{json, Map, Value};
 use tokio_postgres::Client;
@@ -96,7 +97,7 @@ pub async fn dispatch(
         return error(Value::Null, -32_600, "Invalid request");
     }
     match method {
-        "initialize" => initialize(id, params),
+        "initialize" => initialize(id, params, plans.instance()),
         "ping" => result(id, json!({})),
         "tools/list" => {
             if params.contains_key("cursor") {
@@ -106,7 +107,7 @@ pub async fn dispatch(
             {
                 error(id, -32_602, "Invalid params")
             } else {
-                result(id, json!({"tools": tools()}))
+                result(id, json!({"tools": listed(plans.instance())}))
             }
         }
         "tools/call" => match params.get("name").and_then(Value::as_str) {
@@ -134,7 +135,7 @@ pub async fn dispatch(
     }
 }
 
-fn initialize(id: Value, params: &Map<String, Value>) -> Outcome {
+fn initialize(id: Value, params: &Map<String, Value>, instance: &Instance) -> Outcome {
     let (Some(version), Some(Value::Object(_)), Some(Value::Object(_))) = (
         params.get("protocolVersion").and_then(Value::as_str),
         params.get("capabilities"),
@@ -152,8 +153,8 @@ fn initialize(id: Value, params: &Map<String, Value>) -> Outcome {
         json!({
             "protocolVersion": negotiated,
             "capabilities": {"tools": {"listChanged": false}},
-            "serverInfo": {"name": "bilibi", "version": env!("CARGO_PKG_VERSION")},
-            "instructions": INSTRUCTIONS,
+            "serverInfo": {"name": "bilibi", "title": format!("Bilibi {}", instance.title()), "version": env!("CARGO_PKG_VERSION")},
+            "instructions": format!("{INSTRUCTIONS} {} Name this Bilibi at the top of every plan review and confirmation you show; plan and commit results carry it as `instance`.", instance.notice()),
         }),
     )
 }
@@ -288,6 +289,26 @@ fn failure(error: Error) -> Value {
     }
 }
 
+/// The six tools as this installation lists them: `plan` and `commit` name
+/// it, so a host's own confirmation of either says where the change lands.
+fn listed(instance: &Instance) -> Vec<Value> {
+    let mut tools = tools();
+    for tool in &mut tools {
+        if matches!(tool["name"].as_str(), Some("plan" | "commit")) {
+            let description = format!(
+                "{} This Bilibi is {}. {}",
+                tool["description"].as_str().unwrap_or_default(),
+                instance.title(),
+                instance.consequence()
+            );
+            tool["description"] = json!(description);
+        }
+    }
+    tools
+}
+
+/// The six generic tools, naming no installation (the plugin package lists
+/// these in its skill).
 pub fn tools() -> Vec<Value> {
     let operation = json!({
         "type": "object",
@@ -323,7 +344,7 @@ pub fn tools() -> Vec<Value> {
         ),
         tool(
             "plan",
-            "Validate writes without changing business records. Show all returned previews, defaults, errors and expiry; obtain explicit human approval before commit.",
+            "Validate writes without changing business records. Show the returned instance first, so the person sees which Bilibi the change lands on, then all returned previews, defaults, errors and expiry; obtain explicit human approval before commit.",
             json!({"operations": operations}),
             false,
         ),

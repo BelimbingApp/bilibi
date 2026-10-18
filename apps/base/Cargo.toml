@@ -19,6 +19,7 @@ bilibi-datetime = { path = "datetime" }
 bilibi-design-library = { path = "design_library" }
 bilibi-events = { path = "events" }
 bilibi-grid = { path = "grid" }
+bilibi-instance = { path = "instance" }
 bilibi-integration = { path = "integration" }
 bilibi-locale = { path = "locale" }
 bilibi-mail = { path = "mail" }

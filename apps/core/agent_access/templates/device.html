@@ -10,6 +10,7 @@
 {% call feedback::flash_group(messages=flash) %}{% endcall %}
 {% call ui::page(variant=bilibi_ui::PageVariant::Form) %}
 {% call ui::header() %}Connect an agent{% endcall %}
+{{ instance|safe }}
 {% if let Some(error) = error %}
 {% call feedback::panel_notice(id="device-error", kind=bilibi_ui::NoticeKind::Error, dismiss_event="dismiss") %}{{ error }}{% endcall %}
 {% endif %}

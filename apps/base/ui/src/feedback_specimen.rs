@@ -5,7 +5,7 @@
 //! fragments rendered by the same macros; `static/ui-feedback-driver.js` stands in
 //! for the server by inserting and removing them.
 use crate::section::sections;
-use crate::{FlashMap, Tab};
+use crate::{FlashMap, InstanceBadge, InstanceBanner, InstanceKind, Tab};
 use askama::Template;
 
 /// The page is cut into sections, each its own template; see `section`.
@@ -18,6 +18,8 @@ pub struct FeedbackSpecimen {
     tabs_single: Vec<Tab<'static>>,
     long_paragraphs: Vec<usize>,
     flash_in_dialog: FlashMap<'static>,
+    instance_badges: Vec<InstanceBadge<'static>>,
+    instance_banners: Vec<InstanceBanner<'static>>,
 }
 
 sections! {
@@ -25,6 +27,7 @@ sections! {
         flash_group: "ui_feedback_specimen/flash_group.html",
         flash: "ui_feedback_specimen/flash.html",
         alerts: "ui_feedback_specimen/alerts.html",
+        instances: "ui_feedback_specimen/instances.html",
         connection: "ui_feedback_specimen/connection.html",
         dialogs: "ui_feedback_specimen/dialogs.html",
         tab_strips: "ui_feedback_specimen/tab_strips.html",
@@ -68,6 +71,46 @@ impl FeedbackSpecimen {
                 info: "Nothing else changed.",
                 ..FlashMap::default()
             },
+            instance_badges: vec![
+                InstanceBadge {
+                    kind: InstanceKind::Development,
+                    label: "Development",
+                    name: None,
+                    title: "You are on Development. This is a development copy. Changes here do not affect production.",
+                },
+                InstanceBadge {
+                    kind: InstanceKind::Staging,
+                    label: "Staging",
+                    name: Some("SBG Staging"),
+                    title: "You are on Staging (SBG Staging). This is a test copy. Changes here do not affect production.",
+                },
+            ],
+            instance_banners: vec![
+                InstanceBanner {
+                    id: "design-library-instance-development",
+                    kind: InstanceKind::Development,
+                    label: "Development",
+                    name: None,
+                    message: "This is a development copy. Changes here do not affect production.",
+                    class: "",
+                },
+                InstanceBanner {
+                    id: "design-library-instance-staging",
+                    kind: InstanceKind::Staging,
+                    label: "Staging",
+                    name: Some("SBG Staging"),
+                    message: "This is a test copy. Changes here do not affect production.",
+                    class: "",
+                },
+                InstanceBanner {
+                    id: "design-library-instance-production",
+                    kind: InstanceKind::Production,
+                    label: "Production",
+                    name: Some("SBG"),
+                    message: "This is the live system. Changes here change real data.",
+                    class: "",
+                },
+            ],
         }
     }
 }

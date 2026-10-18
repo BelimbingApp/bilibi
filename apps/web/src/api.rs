@@ -324,6 +324,7 @@ async fn descriptor(State(app): State<App>) -> Response {
             "plan_endpoint": format!("{base}/api/v1/plans"),
             "commit_endpoint": format!("{base}/api/v1/plans/commit"),
             "server_name": host,
+            "instance": app.instance.agent_json(),
             "client_id": CLIENT_ID,
         }),
     )

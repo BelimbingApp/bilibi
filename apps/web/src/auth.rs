@@ -214,6 +214,7 @@ pub fn sign_in_redirect(app: &App, had_credential: bool) -> Response {
 }
 
 fn card<T: Template>(
+    app: &App,
     title: &str,
     card: T,
     flash: FlashMap<'_>,
@@ -221,6 +222,7 @@ fn card<T: Template>(
 ) -> std::result::Result<Response, HttpError> {
     let body = AuthLayout {
         body: Html::render(&card).map_err(|_| Error::Internal)?,
+        instance: app.instance.badge().map_err(|_| Error::Internal)?,
         flash,
     }
     .render()
@@ -312,6 +314,7 @@ async fn login_card(
 ) -> std::result::Result<Response, HttpError> {
     form.workspace = login_workspace(app).await;
     card(
+        app,
         "Sign in",
         LoginPage::new(&form).map_err(|_| Error::Internal)?,
         flash,
@@ -435,10 +438,15 @@ pub async fn forgot_page(
     if signed_in(&app, &headers).await {
         return Ok(Redirect::to(WORKSPACE).into_response());
     }
-    forgot_card(&ForgotForm::default(), StatusCode::OK)
+    forgot_card(&app, &ForgotForm::default(), StatusCode::OK)
 }
-fn forgot_card(form: &ForgotForm, status: StatusCode) -> std::result::Result<Response, HttpError> {
+fn forgot_card(
+    app: &App,
+    form: &ForgotForm,
+    status: StatusCode,
+) -> std::result::Result<Response, HttpError> {
     card(
+        app,
         "Forgot password",
         ForgotPasswordPage::new(form).map_err(|_| Error::Internal)?,
         FlashMap::default(),
@@ -462,13 +470,13 @@ pub async fn forgot(
     };
     form.email_errors = validate_email(&form.email);
     if !form.email_errors.is_empty() {
-        return forgot_card(&form, StatusCode::UNPROCESSABLE_ENTITY);
+        return forgot_card(&app, &form, StatusCode::UNPROCESSABLE_ENTITY);
     }
     match app.user.request_password_reset(&form.email).await {
         // The confirmation is the same whether or not the account exists.
         Ok(()) | Err(CredentialError::Other(Error::Invalid)) => {
             form.confirmation = RESET_REQUESTED.into();
-            forgot_card(&form, StatusCode::OK)
+            forgot_card(&app, &form, StatusCode::OK)
         }
         Err(CredentialError::Other(error)) => Err(error.into()),
         Err(_) => Err(Error::Internal.into()),
@@ -490,10 +498,15 @@ pub async fn reset_page(
         email: bounded(query.get("email").map(String::as_str).unwrap_or("")),
         ..ResetForm::default()
     };
-    reset_card(&form, StatusCode::OK)
+    reset_card(&app, &form, StatusCode::OK)
 }
-fn reset_card(form: &ResetForm, status: StatusCode) -> std::result::Result<Response, HttpError> {
+fn reset_card(
+    app: &App,
+    form: &ResetForm,
+    status: StatusCode,
+) -> std::result::Result<Response, HttpError> {
     card(
+        app,
         "Reset password",
         ResetPasswordPage::new(form).map_err(|_| Error::Internal)?,
         FlashMap::default(),
@@ -528,7 +541,7 @@ pub async fn reset(
         && form.password_errors.is_empty()
         && form.confirmation_errors.is_empty())
     {
-        return reset_card(&form, StatusCode::UNPROCESSABLE_ENTITY);
+        return reset_card(&app, &form, StatusCode::UNPROCESSABLE_ENTITY);
     }
     let outcome = app
         .user
@@ -542,11 +555,11 @@ pub async fn reset(
         }
         Err(CredentialError::InvalidOrExpiredToken) => {
             form.email_errors = vec![RESET_LINK_INVALID.into()];
-            reset_card(&form, StatusCode::UNPROCESSABLE_ENTITY)
+            reset_card(&app, &form, StatusCode::UNPROCESSABLE_ENTITY)
         }
         Err(CredentialError::Policy(violation)) => {
             form.password_errors = vec![violation.to_string()];
-            reset_card(&form, StatusCode::UNPROCESSABLE_ENTITY)
+            reset_card(&app, &form, StatusCode::UNPROCESSABLE_ENTITY)
         }
         Err(CredentialError::Other(error)) => Err(error.into()),
         Err(_) => Err(Error::Internal.into()),

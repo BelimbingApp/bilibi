@@ -123,6 +123,18 @@ back all writes, audit rows and code consumption. A competing submission waits
 for the row lock then sees the consumed code. Failed commits leave the code
 usable until expiry, subject to a fresh successful revalidation.
 
+### Which Bilibi a plan lands on
+
+Every preview and every successful commit carries `instance` (Base Instance, `apps/base/instance/README.md`), so the agent can tell its person "this will create the order on Staging":
+
+```json
+"instance": {"environment": "staging", "label": "Staging", "name": "SBG Staging", "title": "Staging (SBG Staging)", "production": false, "notice": "You are on Staging (SBG Staging). This is a test copy. Changes here do not affect production."}
+```
+
+- `name` is `null` when the operator set none. `environment` is `development`, `staging` or `production`.
+- MCP names it too: `initialize` (`serverInfo.title` and the instructions) and the `plan` and `commit` tool descriptions in `tools/list`. `GET /.well-known/bilibi` carries the same object.
+- The plugin skill (`core/agent_plugins`) tells the agent to open every review and confirmation with it, as a full-width banner in an HTML review. Bilibi draws no plan review page itself; the harness does.
+
 An owner's commit may answer `Error::StepUpRequired` (Base Step-up). The whole commit rolls back, and the plan code stays usable until it expires. The edges answer `step_up_required` with the operation and reason. The client asks its human for a current authenticator code and commits the same plan again with `step_up_code`. That code is used once, for that operation, and opens the agent connection's window (`apps/base/step_up/README.md`).
 
 Owners implement deterministic `WriteHandler::preview` without business writes,

@@ -2,7 +2,6 @@
 //! page per socket.
 mod api;
 mod auth;
-mod environment;
 mod errors;
 mod impersonation;
 mod landing;
@@ -28,7 +27,7 @@ use bilibi_ui::Document;
 use serde::Deserialize;
 use std::{collections::HashMap, sync::Arc};
 
-pub use environment::Environment;
+pub use bilibi_base::instance::{Environment, Instance};
 
 #[derive(Clone)]
 pub struct App {
@@ -37,8 +36,10 @@ pub struct App {
     moved: Arc<Vec<&'static bilibi_module_registry::contributions::Moved>>,
     pub db: Db,
     pub origin: Arc<str>,
-    /// `BILIBI_ENV`: development turns Base Step-up enforcement off, nothing else.
-    pub environment: Environment,
+    /// Which installation this is (Base Instance, from `BILIBI_ENV` and
+    /// `BILIBI_INSTANCE_NAME`). Development turns Base Step-up enforcement
+    /// off; every environment shows its name to people and agents.
+    pub instance: Arc<Instance>,
     pub step_up: Arc<bilibi_base::step_up::StepUp>,
     /// The host the server listens on, for the development status bar only;
     /// the serving command sets it from `BIND_ADDR`.
@@ -59,7 +60,6 @@ pub struct App {
 }
 impl App {
     pub fn new(db: Db, origin: &str) -> Result<Self> {
-        let environment = Environment::from_env()?;
         let modules = modules()?;
         let mut services = bilibi_module_registry::Services::default();
         services.provide("bootstrap.database", Arc::new(db))?;
@@ -70,7 +70,8 @@ impl App {
         let security = services.get("base/security.guard")?;
         let step_up: Arc<bilibi_base::step_up::StepUp> =
             services.get(bilibi_base::step_up::SERVICE)?;
-        step_up.set_enforced(environment.requires_step_up());
+        let instance: Arc<Instance> = services.get(bilibi_base::instance::SERVICE)?;
+        step_up.set_enforced(instance.environment().requires_step_up());
         let renderer = services.get("base/ui.renderer")?;
         let menu = bilibi_base::menu::Menu::from_catalog(services.catalog()?)?;
         let display = services.get("base/datetime.display")?;
@@ -90,7 +91,7 @@ impl App {
             moved,
             db,
             origin: origin.into(),
-            environment,
+            instance,
             step_up,
             listen_address: None,
             company,

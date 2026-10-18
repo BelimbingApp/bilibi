@@ -13,6 +13,7 @@ bilibi-tenancy = { path = "../tenancy" }
 bilibi-settings = { path = "../settings" }
 bilibi-session.workspace = true
 bilibi-step-up.workspace = true
+bilibi-instance.workspace = true
 inventory.workspace = true
 serde.workspace = true
 serde_json.workspace = true

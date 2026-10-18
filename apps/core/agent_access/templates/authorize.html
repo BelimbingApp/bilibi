@@ -8,6 +8,7 @@
 {% call feedback::flash_group() %}{% endcall %}
 {% call ui::page(variant=bilibi_ui::PageVariant::Form) %}
 {% call ui::header() %}Connect an app{% endcall %}
+{{ instance|safe }}
 {% if let Some(error) = error %}
 {% if let Some(_request) = request %}
 {% call feedback::panel_notice(id="oauth-consent-error", kind=bilibi_ui::NoticeKind::Error, dismiss_event="dismiss") %}{{ error }}{% endcall %}

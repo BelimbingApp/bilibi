@@ -113,6 +113,7 @@ pub fn error_document(status: u16) -> askama::Result<String> {
     let card = Html::render(&ErrorCard { copy })?;
     let body = Html::render(&AuthLayout {
         body: card,
+        instance: Html::default(),
         flash: NO_FLASH,
     })?;
     ErrorDocument {

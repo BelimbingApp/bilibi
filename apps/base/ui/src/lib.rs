@@ -22,6 +22,7 @@ mod html;
 pub mod icons;
 pub mod inline;
 mod inline_specimen;
+mod instance;
 pub mod list_columns;
 pub mod list_state;
 pub mod lists;
@@ -72,6 +73,7 @@ pub use inline::{
     InlineLongText,
 };
 pub use inline_specimen::{inline_specimen_values, InlineSpecimen};
+pub use instance::{InstanceBadge, InstanceBanner, InstanceKind};
 pub use list_columns::{BuiltinColumn, ColumnsOutcome, ListColumns};
 pub use list_state::{Filter, ListSpec, ListState, PageCounts, SortDir};
 pub use lists::{

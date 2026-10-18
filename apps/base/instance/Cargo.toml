@@ -1,0 +1,13 @@
+[package]
+name = "bilibi-instance"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+bilibi-module-registry.workspace = true
+askama.workspace = true
+bilibi-ui.workspace = true
+inventory.workspace = true
+serde_json.workspace = true
