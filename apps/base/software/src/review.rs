@@ -217,12 +217,13 @@ pub fn change(
                 .strip_prefix("https://")
                 .map(|rest| rest.split('/').next().unwrap_or_default());
             if host.is_none_or(|host| host.is_empty() || host.contains('@'))
+                || repository.contains(['?', '#'])
                 || repository.len() > 512
                 || repository.chars().any(char::is_whitespace)
             {
                 return Err(SoftwareError::field(
                     &format!("domains.{index}.repository"),
-                    "A repository is an https:// Git address without a user name or token in it.",
+                    "A repository is an https:// Git address with no user name, token, query or fragment in it.",
                 ));
             }
             let reference = entry["ref"].as_str().map(str::trim).filter(|r| {
@@ -313,6 +314,15 @@ pub fn change(
         }
     };
     let platform_text = platform.to_string();
+    if made.version == platform_text
+        && !platform_versions.contains(&platform)
+        && made.commit.is_none()
+    {
+        return Err(SoftwareError::field(
+            "platform",
+            &format!("The running program (Bilibi {platform_text}) was built without a pin, so it cannot be rebuilt. Pick a Bilibi release with \"platform\" (released: {}), or pin and rebuild first.", join(&platform_versions.iter().map(|v| v.to_string()).collect::<Vec<_>>())),
+        ));
+    }
     for w in &mut wanted {
         w.tested = !w.external && catalogue.tested(&w.id, &w.version, &platform_text);
     }
