@@ -47,10 +47,14 @@
 {% endmacro %}
 
 {#- A panel's outcome notice: what the last action on a panel did, above its
-    table or inside its open dialog. The Dismiss control raises dismiss_event. -#}
+    table or inside its open dialog. The Dismiss control raises dismiss_event
+    with the notice's id as `id`. Askama binds a called macro's arguments in
+    the callee's parameter order, so inside the icon_button call `id` is already
+    the control's own "-dismiss" id: the notice's id goes in through `notice`. -#}
 {% macro panel_notice(id, kind=bilibi_ui::NoticeKind::Info, dismiss_event="", class="") %}
 {%- let status = kind.status() -%}
-<div id="{{ id }}" role="{{ status.role() }}" aria-live="{{ status.live() }}" data-kind="{{ status.name() }}" class="flex items-start gap-2 rounded-lg border px-panel py-1.5 text-sm {{ status.surface_class() }}{% if !class.is_empty() %} {{ class }}{% endif %}">{% call c::icon(name=status.icon(), class="mt-0.5 size-4 shrink-0") %}{% endcall %}<span class="min-w-0 flex-1">{{ caller() }}</span>{% call c::icon_button(id="{}-dismiss"|format(id), icon="close", label="Dismiss notice", context=bilibi_ui::IconContext::Inline, class="-my-0.5", event=dismiss_event, name="id", value=id) %}{% endcall %}</div>
+{%- let notice = id -%}
+<div id="{{ id }}" role="{{ status.role() }}" aria-live="{{ status.live() }}" data-kind="{{ status.name() }}" class="flex items-start gap-2 rounded-lg border px-panel py-1.5 text-sm {{ status.surface_class() }}{% if !class.is_empty() %} {{ class }}{% endif %}">{% call c::icon(name=status.icon(), class="mt-0.5 size-4 shrink-0") %}{% endcall %}<span class="min-w-0 flex-1">{{ caller() }}</span>{% call c::icon_button(id="{}-dismiss"|format(id), icon="close", label="Dismiss notice", context=bilibi_ui::IconContext::Inline, class="-my-0.5", event=dismiss_event, name="id", value=notice) %}{% endcall %}</div>
 {% endmacro %}
 
 {#- The problems that stopped a save, above the form (summary is a
