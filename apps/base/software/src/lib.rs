@@ -77,6 +77,11 @@ pub const ACTION_UNDO: &str = "software.undo";
 pub const ACTION_CANCEL: &str = "software.cancel";
 /// The action a worker's outcome is settled under (`Software::settle`).
 pub const ACTION_FINISHED: &str = "software.finished";
+/// The action a notification of a settled outcome is sent under.
+const ACTION_NOTIFIED: &str = "software.notified";
+/// The most of a worker's message a notification carries; a tool's error can
+/// be far longer than a notice may be.
+const NOTICE_BODY_CHARS: usize = 900;
 /// How often the server records the outcomes workers wrote.
 const SETTLE_EVERY: std::time::Duration = std::time::Duration::from_secs(15);
 
@@ -176,35 +181,48 @@ impl Software {
                     Context::system(tenant, &worker, ACTION_FINISHED),
                 )
                 .await?;
-            if jobs::settle(&mut tx, tenant, &job).await? {
-                self.announce(&mut tx, tenant, &job).await?;
-                settled += 1;
-            }
+            let recorded = jobs::settle(&mut tx, tenant, &job).await?;
             tx.commit().await?;
+            if recorded {
+                settled += 1;
+                if let Err(error) = self.announce(&mut client, tenant, &job, &worker).await {
+                    eprintln!(
+                        "warning: software job {} was recorded but its notification was not sent: {error:?}",
+                        job.id
+                    );
+                }
+            }
         }
         Ok(settled)
     }
     /// Tells the person who asked how their job ended, as the builder does
-    /// for its own. Their account is re-proved live for the notification's
-    /// scope; an account that is gone gets none, and the outcome is still
-    /// recorded.
+    /// for its own, after the outcome is recorded, so a notification that
+    /// cannot be sent never keeps a job unsettled. Their account is
+    /// re-proved live for the notification's scope; an account that is gone
+    /// gets none.
     async fn announce(
         &self,
-        tx: &mut MutationTransaction<'_>,
+        client: &mut tokio_postgres::Client,
         tenant: i64,
         job: &jobs::Job,
+        worker: &str,
     ) -> Result<()> {
+        let mut tx = self
+            .mutations
+            .begin(client, Context::system(tenant, worker, ACTION_NOTIFIED))
+            .await?;
         let title = match job.state.as_str() {
             "done" => format!("Software job {} finished", job.id),
             "failed" => format!("Software job {} failed", job.id),
             "interrupted" => format!("Software job {} was interrupted", job.id),
             _ => format!("Software job {} stopped", job.id),
         };
-        let body = job
-            .result
-            .as_ref()
-            .and_then(|result| result["message"].as_str())
-            .unwrap_or_default();
+        let body = brief(
+            job.result
+                .as_ref()
+                .and_then(|result| result["message"].as_str())
+                .unwrap_or_default(),
+        );
         let user = job.requested_by;
         match self
             .authentication
@@ -219,20 +237,20 @@ impl Software {
             Ok(scope) => {
                 self.notifications
                     .notify(
-                        tx,
+                        &mut tx,
                         &scope,
                         &[user],
-                        &Notice::new(title).kind("software.job").body(body),
+                        &Notice::new(title).kind("software.job").body(&body),
                     )
-                    .await
+                    .await?;
             }
             Err(_) => {
                 eprintln!(
                     "software: account {user} of tenant {tenant} cannot be notified (not active)"
                 );
-                Ok(())
             }
         }
+        tx.commit().await
     }
     /// Runs beside the server for as long as it serves (`bilibi-web run`
     /// starts it like the queue executor): settles outcomes every few
@@ -514,6 +532,18 @@ impl Software {
         let past_pause = jobs::past_pause(client, tenant, job.id).await?;
         review::cancel(&job, past_pause)
     }
+}
+
+/// `text` cut at a word boundary to fit a notification, with an ellipsis.
+fn brief(text: &str) -> String {
+    if text.chars().count() <= NOTICE_BODY_CHARS {
+        return text.to_owned();
+    }
+    let cut: String = text.chars().take(NOTICE_BODY_CHARS - 1).collect();
+    let words = cut
+        .rsplit_once(char::is_whitespace)
+        .map_or(cut.as_str(), |(head, _)| head);
+    format!("{}…", words.trim_end())
 }
 
 /// `"available"`, `"requested"`, `"too_late"` or `"not_running"`.
