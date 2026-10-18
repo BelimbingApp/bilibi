@@ -375,6 +375,7 @@ installer() {
     say "installer: $installer_bin updated"
     local instance
     for instance in $(instances); do
+        ensure_current_link "$instance"
         systemctl enable "$installer_unit$instance" >/dev/null 2>&1
         systemctl restart "$installer_unit$instance" || say "Warning: $installer_unit$instance did not start; see: systemctl status $installer_unit$instance"
         say "$instance: $installer_unit$instance $(installer_state "$instance")"

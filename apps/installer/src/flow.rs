@@ -465,6 +465,9 @@ impl<'a> Run<'a> {
     /// The release the owner asked for, copied from the sibling instance's
     /// folder into the next number here, checked and tried.
     async fn fetch(&mut self) -> Result<Value, String> {
+        if !self.layout.converted() {
+            return Err(self.layout.conversion_advice());
+        }
         let request = self.job.request.clone();
         let wanted = request["release"]
             .as_u64()
@@ -572,7 +575,9 @@ impl<'a> Run<'a> {
                 dst.display()
             ));
         }
-        let program = program_status(&dst)?;
+        let program = program_status(&dst).inspect_err(|_| {
+            let _ = fs::remove_dir_all(&dst);
+        })?;
         Ok(json!({
             "message": format!("Copied {source_name} release {wanted} as release {n} here: {program}"),
             "release": n, "previous": current, "source_release": wanted, "source": source_name,
@@ -829,6 +834,10 @@ impl<'a> Run<'a> {
         };
         let restores = self.step("restore").is_some();
         if !self.resumed {
+            if !self.layout.converted() {
+                let advice = self.layout.conversion_advice();
+                return self.nothing_changed("backup", &advice).await;
+            }
             let current = self.layout.current();
             if current != Some(undone.release) {
                 return self

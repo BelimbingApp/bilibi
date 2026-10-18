@@ -95,8 +95,7 @@ impl Layout {
     /// its `current` link belong to root; `releases/` belongs to this user,
     /// which is why the moving link lives there.
     pub fn point_current(&self, n: u64) -> io::Result<()> {
-        let outer = fs::read_link(self.dir.join("current")).unwrap_or_default();
-        if outer != Path::new("releases/current") {
+        if !self.converted() {
             return Err(io::Error::other(format!(
                 "{} must be a link to releases/current (rerun scripts/install-server.sh create {} to convert it)",
                 self.dir.join("current").display(),
@@ -107,6 +106,20 @@ impl Layout {
         let _ = fs::remove_file(&fresh);
         std::os::unix::fs::symlink(n.to_string(), &fresh)?;
         fs::rename(&fresh, self.releases().join("current"))
+    }
+    /// Whether `current` is the fixed link to `releases/current`, the shape
+    /// the installer can move. An older instance is converted by
+    /// `scripts/install-server.sh installer` or `create`.
+    pub fn converted(&self) -> bool {
+        fs::read_link(self.dir.join("current"))
+            .is_ok_and(|link| link == Path::new("releases/current"))
+    }
+    /// What to tell the owner when `converted` is false.
+    pub fn conversion_advice(&self) -> String {
+        format!(
+            "{} still has the older folder layout, so a release cannot be switched here. Run `sudo scripts/install-server.sh installer <bilibi-installer>` (or `create {}`) on the server to convert it, then start again.",
+            self.name, self.name
+        )
     }
     /// One value from the instance's `env` file (`BIND_ADDR`, `APP_ORIGIN`).
     pub fn env_value(&self, key: &str) -> Option<String> {
