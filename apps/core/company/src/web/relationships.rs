@@ -16,26 +16,31 @@
 //!   The company detail page hosts it for the company; Person's detail page
 //!   (K8) hosts the same embed for a person.
 //!
-//! Every write asks K5 again with the sealed scope; the `can_update` flag only
-//! decides which controls render. A denial, an archived company and a stale
+//! Every write is a K5 contract (`core.company.relationship_role.*`,
+//! `core.company.relationship.*`, ADR 01), called with the sealed scope; the
+//! `can_update` flag only decides which controls render. A denial, an archived company and a stale
 //! version are flash messages in Bilimbi's words, never a fatal `Error`.
 use crate::{
-    organisation,
-    reference_types::Outcome,
-    relationship_roles::{RelationshipRole, RoleUpdate},
-    relationships::{Direction, Entry, RelationshipUpdate},
-    CompanyService, FieldError, WriteError, CREATE, LIST, UPDATE, VIEW,
+    organisation, relationship_roles::RelationshipRole, relationships::Direction,
+    relationships::Entry, CompanyService, FieldError, WriteError, CREATE, LIST, UPDATE, VIEW,
 };
 use askama::Template;
+use bilibi_agent_api::{
+    page::{Call, PageContracts},
+    Error as ContractError,
+};
 use bilibi_database::{Db, Error, Result};
 use bilibi_menu::{MenuItem, Requirement};
 use bilibi_module_registry::{
-    contributions::{Access, Embed, EmbedContext, Method, Moved, Route, EMBEDS, MOVED, ROUTES},
+    contributions::{
+        Access, Embed, EmbedContext, Method, Moved, PageWrites, Pending, Route, EMBEDS, MOVED,
+        PAGE_WRITES, ROUTES,
+    },
     Contribution, Provenance,
 };
 use bilibi_party::{
     CalendarDate, EffectiveDates, OrganisationId, PartyId, PersonId, RelationshipId,
-    RelationshipInput, RelationshipRoleId, RelationshipRoleInput,
+    RelationshipRoleId,
 };
 use bilibi_person::PersonService;
 use bilibi_tenancy::Scope;
@@ -49,7 +54,7 @@ use bilibi_ui::{
     Html, IconButton, IconKind, InputKind, ListColumns, Modal, Page, PageVariant, RadioGroup,
     RecordLink, RowMode, SectionHeading, StatusKind, TableEmpty,
 };
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc};
 use tokio_postgres::GenericClient;
 
@@ -69,6 +74,20 @@ macro_rules! provenance {
         }
     };
 }
+// Every write these screens make is a K5 contract (ADR 01).
+inventory::submit! { Contribution::new(PAGE_WRITES, SERVICE, provenance!(), &PageWrites {
+    service: SERVICE,
+    contracts: &[
+        ("save_role", "core.company.relationship_role.create"),
+        ("save_role", "core.company.relationship_role.update"),
+        ("retire", "core.company.relationship_role.retire"),
+        ("save_relationship", "core.company.relationship.assign"),
+        ("save_relationship", "core.company.relationship.update"),
+        ("save_relationship", "core.company.relationship.end"),
+        ("unlink", "core.company.relationship.unlink"),
+    ],
+    pending: Pending::None,
+}) }
 inventory::submit! {
     Contribution::new(ROUTES, "core/company.relationship-types", provenance!(), &Route {
         method: Method::Get, path: "/companies/relationship-types", service: SERVICE, operation: "roles", access: Access::Capability(LIST), framed: true,
@@ -119,11 +138,95 @@ pub struct RelationshipPages {
     pub db: Db,
     pub company: Arc<CompanyService>,
     pub persons: Arc<PersonService>,
+    pub contracts: Arc<PageContracts>,
 }
 struct Shared {
     db: Db,
     company: Arc<CompanyService>,
     persons: Arc<PersonService>,
+    contracts: Arc<PageContracts>,
+}
+impl Shared {
+    /// One write of these screens through the contract its event declared.
+    /// A session that must sign in again or step up is the host's to answer;
+    /// any other refusal comes back in the facade's shape for the flash.
+    async fn write(
+        &self,
+        scope: &Scope,
+        credential: &str,
+        event: &'static str,
+        contract: &'static str,
+        input: Value,
+    ) -> Result<std::result::Result<(), WriteError>> {
+        let call = Call {
+            scope,
+            credential,
+            service: SERVICE,
+            event,
+            contract,
+        };
+        match self.contracts.submit(&call, input).await {
+            Ok(_) => Ok(Ok(())),
+            Err(ContractError::Backend(
+                error @ (Error::Unauthorized | Error::StepUpRequired { .. }),
+            )) => Err(error),
+            Err(error) => Ok(Err(refusal(error))),
+        }
+    }
+}
+/// The K5 contracts word the owner's `WriteError` as fields
+/// (`relationship_operations`); this reads them back.
+fn refusal(error: ContractError) -> WriteError {
+    match error {
+        ContractError::NotFound | ContractError::Backend(Error::NotFound) => WriteError::NotFound,
+        ContractError::Forbidden => WriteError::Access(Error::Forbidden),
+        ContractError::InvalidInput(fields) => {
+            if fields.contains_key("version") {
+                WriteError::Stale
+            } else if fields.contains_key("source_organisation_id") {
+                WriteError::Archived
+            } else if fields.contains_key("id") {
+                WriteError::InUse
+            } else {
+                WriteError::Invalid(
+                    fields
+                        .iter()
+                        .flat_map(|(field, messages)| {
+                            let field = [
+                                "code",
+                                "name",
+                                "inverse_name",
+                                "role_id",
+                                "target",
+                                "target_kind",
+                                "target_id",
+                                "effective_from",
+                                "effective_to",
+                                "retired_on",
+                            ]
+                            .into_iter()
+                            .find(|known| known == field)
+                            .unwrap_or("base");
+                            messages
+                                .iter()
+                                .map(move |message| FieldError::new(field, message.clone()))
+                        })
+                        .collect(),
+                )
+            }
+        }
+        ContractError::Backend(error) => WriteError::Access(error),
+        _ => WriteError::Access(Error::Internal),
+    }
+}
+/// A form's optional calendar days, as the contracts take them.
+fn days(input: &mut Value, dates: &EffectiveDates) {
+    if let Some(from) = dates.from() {
+        input["effective_from"] = json!(from.as_str());
+    }
+    if let Some(to) = dates.to() {
+        input["effective_to"] = json!(to.as_str());
+    }
 }
 impl RelationshipPages {
     fn shared(&self) -> Arc<Shared> {
@@ -131,6 +234,7 @@ impl RelationshipPages {
             db: self.db.clone(),
             company: self.company.clone(),
             persons: self.persons.clone(),
+            contracts: self.contracts.clone(),
         })
     }
     async fn state(
@@ -709,7 +813,7 @@ impl RolesPage {
             ..Modal::default()
         })
     }
-    async fn event(&mut self, scope: &Scope, value: &Value) -> Result<()> {
+    async fn event(&mut self, scope: &Scope, credential: &str, value: &Value) -> Result<()> {
         let client = self.shared.db.get().await?;
         let kind = get(value, "type");
         if kind != "grid" {
@@ -760,22 +864,16 @@ impl RolesPage {
                 let text = |key: &str| modal.values.get(key).cloned().unwrap_or_default();
                 match &modal.editing {
                     Some(role) => {
-                        let update = RoleUpdate {
-                            name: text("name"),
-                            inverse_name: text("inverse_name"),
-                            version: role.version,
-                        };
+                        let input = json!({"role_id": role.id.get(), "version": role.version, "name": text("name"), "inverse_name": text("inverse_name")});
                         match self
                             .shared
-                            .company
-                            .update_relationship_role(scope, role.id, &update)
-                            .await
+                            .write(scope, credential, "save_role", "core.company.relationship_role.update", input)
+                            .await?
                         {
-                            Ok(Outcome::Saved(_)) => {
+                            Ok(()) => {
                                 self.modal = None;
                                 self.flash.success("Relationship role updated successfully.");
                             }
-                            Ok(Outcome::Refused(errors)) => modal.errors = errors,
                             Err(WriteError::Stale) => self.flash.error(
                                 "The role changed since it was opened. Close the dialog and try again.",
                             ),
@@ -789,24 +887,26 @@ impl RolesPage {
                         }
                     }
                     None => {
-                        let input = RelationshipRoleInput {
-                            code: text("code"),
-                            name: text("name"),
-                            inverse_name: text("inverse_name"),
-                        };
+                        let input = json!({"code": text("code"), "name": text("name"), "inverse_name": text("inverse_name")});
                         match self
                             .shared
-                            .company
-                            .create_relationship_role(scope, &input)
-                            .await
+                            .write(
+                                scope,
+                                credential,
+                                "save_role",
+                                "core.company.relationship_role.create",
+                                input,
+                            )
+                            .await?
                         {
-                            Ok(Outcome::Saved(_)) => {
+                            Ok(()) => {
                                 self.modal = None;
                                 self.flash
                                     .success("Relationship role created successfully.");
                             }
-                            Ok(Outcome::Refused(errors)) => modal.errors = errors,
-                            Err(e) => return access(e, &mut self.flash),
+                            Err(WriteError::Invalid(errors)) => modal.errors = errors,
+                            Err(WriteError::Access(e)) => return access(e, &mut self.flash),
+                            Err(_) => self.flash.error("Could not create the relationship role."),
                         }
                     }
                 }
@@ -834,13 +934,19 @@ impl RolesPage {
                 let Some(role) = self.pending_retire.take() else {
                     return Ok(());
                 };
+                let input = json!({"role_id": role.id.get(), "version": role.version});
                 match self
                     .shared
-                    .company
-                    .retire_relationship_role(scope, role.id, role.version, None)
-                    .await
+                    .write(
+                        scope,
+                        credential,
+                        "retire",
+                        "core.company.relationship_role.retire",
+                        input,
+                    )
+                    .await?
                 {
-                    Ok(_) => self.flash.success(
+                    Ok(()) => self.flash.success(
                         "Relationship role retired. Existing relationships keep it as history.",
                     ),
                     Err(WriteError::Stale) => self
@@ -871,7 +977,7 @@ impl LiveState<Scope, Error> for RolesPage {
     fn update<'a>(&'a mut self, request: LiveRequest<'a, Scope>) -> LiveFuture<'a, Error> {
         Box::pin(async move {
             if let LiveInput::Event(value) = request.input {
-                self.event(request.scope, value).await?;
+                self.event(request.scope, request.credential, value).await?;
             }
             self.draw(request.scope).await
         })
@@ -1420,7 +1526,7 @@ impl LinksPage {
             .into_iter()
             .find(|entry| entry.relationship.id == id && !entry.relationship.unlinked()))
     }
-    async fn event(&mut self, scope: &Scope, value: &Value) -> Result<()> {
+    async fn event(&mut self, scope: &Scope, credential: &str, value: &Value) -> Result<()> {
         let client = self.shared.db.get().await?;
         let kind = get(value, "type");
         if !matches!(kind, "grid" | "validate") {
@@ -1530,18 +1636,19 @@ impl LinksPage {
                             vec![FieldError::new("effective_to", "choose a valid end date")];
                         return Ok(());
                     };
+                    let input = json!({"relationship_id": entry.relationship.id.get(), "version": entry.relationship.version, "effective_to": date.as_str()});
                     match self
                         .shared
-                        .company
-                        .end_relationship(
+                        .write(
                             scope,
-                            entry.relationship.id,
-                            entry.relationship.version,
-                            &date,
+                            credential,
+                            "save_relationship",
+                            "core.company.relationship.end",
+                            input,
                         )
-                        .await
+                        .await?
                     {
-                        Ok(_) => {
+                        Ok(()) => {
                             self.modal = None;
                             self.flash
                                 .success("Relationship ended. Its history is kept.");
@@ -1558,17 +1665,20 @@ impl LinksPage {
                             modal.errors = errors;
                             return Ok(());
                         };
-                        let update = RelationshipUpdate {
-                            dates,
-                            version: entry.relationship.version,
-                        };
+                        let mut input = json!({"relationship_id": entry.relationship.id.get(), "version": entry.relationship.version});
+                        days(&mut input, &dates);
                         match self
                             .shared
-                            .company
-                            .update_relationship(scope, entry.relationship.id, &update)
-                            .await
+                            .write(
+                                scope,
+                                credential,
+                                "save_relationship",
+                                "core.company.relationship.update",
+                                input,
+                            )
+                            .await?
                         {
-                            Ok(_) => {
+                            Ok(()) => {
                                 self.modal = None;
                                 self.flash.success("Relationship updated successfully.");
                             }
@@ -1605,18 +1715,27 @@ impl LinksPage {
                             modal.errors = errors;
                             return Ok(());
                         };
-                        let input = RelationshipInput {
-                            source_organisation_id: self.company,
-                            target,
-                            role_id,
-                            dates,
+                        let (target_kind, target_id) = match target {
+                            PartyId::Organisation(id) => ("organisation", id.get()),
+                            PartyId::Person(id) => ("person", id.get()),
                         };
-                        match self.shared.company.assign_relationship(scope, &input).await {
-                            Ok(Outcome::Saved(_)) => {
+                        let mut input = json!({"source_organisation_id": self.company.get(), "target_kind": target_kind, "target_id": target_id, "role_id": role_id.get()});
+                        days(&mut input, &dates);
+                        match self
+                            .shared
+                            .write(
+                                scope,
+                                credential,
+                                "save_relationship",
+                                "core.company.relationship.assign",
+                                input,
+                            )
+                            .await?
+                        {
+                            Ok(()) => {
                                 self.modal = None;
                                 self.flash.success("Relationship established successfully.");
                             }
-                            Ok(Outcome::Refused(errors)) => modal.errors = errors,
                             Err(error) => self.write_error(error, false),
                         }
                     }
@@ -1639,13 +1758,19 @@ impl LinksPage {
                 if !self.guard(&**client, scope).await? {
                     return Ok(());
                 }
+                let input = json!({"relationship_id": entry.relationship.id.get(), "version": entry.relationship.version});
                 match self
                     .shared
-                    .company
-                    .unlink_relationship(scope, entry.relationship.id, entry.relationship.version)
-                    .await
+                    .write(
+                        scope,
+                        credential,
+                        "unlink",
+                        "core.company.relationship.unlink",
+                        input,
+                    )
+                    .await?
                 {
-                    Ok(_) => self
+                    Ok(()) => self
                         .flash
                         .success("Relationship unlinked. It stays in the history."),
                     Err(error) => self.write_error(error, true),
@@ -1721,7 +1846,7 @@ impl LiveState<Scope, Error> for LinksPage {
     fn update<'a>(&'a mut self, request: LiveRequest<'a, Scope>) -> LiveFuture<'a, Error> {
         Box::pin(async move {
             if let LiveInput::Event(value) = request.input {
-                self.event(request.scope, value).await?;
+                self.event(request.scope, request.credential, value).await?;
             }
             self.draw(request.scope, false).await
         })

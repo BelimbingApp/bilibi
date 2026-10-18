@@ -85,7 +85,8 @@ impl PageViews {
         }
         let mut tx = self
             .boundary
-            .begin(&mut client, scope.mutation_context("grid.page_columns"))
+            // A person's list columns are view state, not business data.
+            .begin_view_state(&mut client, scope.mutation_context("grid.page_columns"))
             .await?;
         self.settings
             .put(

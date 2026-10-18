@@ -123,6 +123,16 @@ impl MutationBoundary {
         client: &'a mut Client,
         context: Context,
     ) -> Result<MutationTransaction<'a>> {
+        crate::page_write::check(&context.action)?;
+        self.begin_view_state(client, context).await
+    }
+    /// A person's own view state (list columns, layouts), not business data:
+    /// a page may write it without an operation contract (`page_write`).
+    pub async fn begin_view_state<'a>(
+        &self,
+        client: &'a mut Client,
+        context: Context,
+    ) -> Result<MutationTransaction<'a>> {
         let capture = self.capture.get().cloned().ok_or(Error::Internal)?;
         MutationTransaction::begin_with(client, context, capture).await
     }

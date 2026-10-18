@@ -60,3 +60,11 @@ bilibi_module_registry::Provenance { module: "base/tiling", source: file!(), lin
 inventory::submit! { bilibi_module_registry::Contribution::new(ROUTES, "tiling.shared_layouts",
 bilibi_module_registry::Provenance { module: "base/tiling", source: file!(), line: line!() },
 &Route { method: Method::Get, path: "/workspace/shared-layouts", service: "base/tiling.pages", operation: "shared_layouts", access: Access::Capability(layouts::PUBLISH), framed: true }) }
+
+// ADR 01 gap, listed so it stays visible: these pages still write through
+// the facade rather than an operation contract (`base/agent_api` page).
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::PAGE_WRITES, "base/tiling.pages", bilibi_module_registry::Provenance { module: "base/tiling", source: file!(), line: line!() }, &bilibi_module_registry::contributions::PageWrites {
+    service: "base/tiling.pages",
+    contracts: &[],
+    pending: bilibi_module_registry::contributions::Pending::Every { reason: "Workspace and shared layouts write through the Tiling facade; no contract yet." },
+}) }

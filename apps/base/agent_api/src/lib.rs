@@ -1,7 +1,10 @@
-//! Module-owned agent discovery and read dispatch. Production host adapters use
-//! this service; they must authenticate a fresh sealed Scope at every request.
+//! Module-owned operation contracts (ADR 01): discovery, read dispatch and
+//! reviewed writes for every caller. `/api/v1` and `/mcp` call them for
+//! agents, pages call them through [`page`]. Callers authenticate a fresh
+//! sealed Scope at every request.
 pub mod json;
 pub mod mcp;
+pub mod page;
 pub mod plans;
 pub mod reach;
 mod reference;
@@ -9,7 +12,7 @@ pub mod schema;
 pub mod search;
 
 use bilibi_module_registry::{Catalog, Consumer, Contribution, Entry, Provenance, RegistryError};
-use bilibi_tenancy::{ProofClient, ProofFuture, Scope};
+use bilibi_tenancy::{Channel, ProofClient, ProofFuture, Scope};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, future::Future, pin::Pin, sync::Arc};
@@ -52,6 +55,9 @@ pub enum Error {
     Forbidden,
     #[error("writes_not_enabled")]
     WritesNotEnabled,
+    /// The operation declares the doors it can serve, and this is not one.
+    #[error("channel_not_allowed")]
+    ChannelNotAllowed,
     #[error("invalid_plan_code")]
     InvalidPlanCode,
     #[error("plan_mismatch")]
@@ -110,6 +116,34 @@ pub enum Handler {
     SafeWrite(&'static dyn WriteHandler),
     UnsupportedWrite,
 }
+/// The doors that may call an operation. A contract does not know its caller,
+/// so this is `Every` unless the action cannot work through some door (it
+/// needs a browser session, say), and `reason` says why. Never use it to keep a
+/// sensitive action from agents: that is the capability and step-up (ADR 01).
+#[derive(Clone, Copy, Debug)]
+pub enum Channels {
+    Every,
+    Only {
+        channels: &'static [Channel],
+        reason: &'static str,
+    },
+}
+impl Channels {
+    pub fn allows(&self, channel: Channel) -> bool {
+        match self {
+            Self::Every => true,
+            Self::Only { channels, .. } => channels.contains(&channel),
+        }
+    }
+    pub fn json(&self) -> Value {
+        match self {
+            Self::Every => json!("every"),
+            Self::Only { channels, reason } => {
+                json!({"only":channels.iter().map(|c| c.as_str()).collect::<Vec<_>>(),"reason":reason})
+            }
+        }
+    }
+}
 pub struct Operation {
     pub key: &'static str,
     pub title: &'static str,
@@ -120,6 +154,12 @@ pub struct Operation {
     pub input: fn() -> Value,
     pub output: fn() -> Value,
     pub handler: Handler,
+    pub channels: Channels,
+    /// The Base Step-up operations its commit may ask for (declared with
+    /// `bilibi_step_up::declare!`, checked at boot). The owner's write calls
+    /// `StepUp::require`; listing them here lets every caller know a code
+    /// may be needed. The tenant's policy decides whether one is.
+    pub step_up: &'static [&'static str],
 }
 impl Operation {
     pub fn kind(&self) -> Kind {
@@ -238,6 +278,23 @@ impl Registry {
                 if handler_owner != entry.provenance.module {
                     return Err(invalid(format!("foreign handler for {}", op.key)));
                 }
+                if let Channels::Only { channels, reason } = op.channels {
+                    let distinct: std::collections::BTreeSet<_> =
+                        channels.iter().map(|c| c.as_str()).collect();
+                    if channels.is_empty() || distinct.len() != channels.len() || !text(reason, 200)
+                    {
+                        return Err(invalid(format!(
+                            "{} must name its channels once each and why",
+                            op.key
+                        )));
+                    }
+                }
+                if !op.step_up.is_empty() && matches!(op.handler, Handler::Read(_)) {
+                    return Err(invalid(format!(
+                        "read operation {} cannot need step-up",
+                        op.key
+                    )));
+                }
                 let input = (op.input)();
                 schema::check(&input).map_err(|reason| invalid(format!("{}: {reason}", op.key)))?;
                 let output = (op.output)();
@@ -313,6 +370,20 @@ impl Registry {
                 return Err(invalid(format!("undeclared agent capability {key}")));
             }
         }
+        let step_up = catalog.entries::<bilibi_step_up::Operation>(bilibi_step_up::OPERATIONS)?;
+        for op in registry.operations.values() {
+            if let Some(key) = op
+                .definition
+                .step_up
+                .iter()
+                .find(|key| !step_up.iter().any(|entry| entry.id == **key))
+            {
+                return Err(invalid(format!(
+                    "{} names undeclared step-up operation {key}",
+                    op.definition.key
+                )));
+            }
+        }
         Ok(registry)
     }
     pub fn from_inventory() -> bilibi_module_registry::Result<Self> {
@@ -347,7 +418,14 @@ impl Registry {
         let mut ranked = Vec::new();
         for operation in self.operations.values() {
             let op = operation.definition;
-            let available = reach.contains(op.capability);
+            let reason = if !op.channels.allows(scope.channel()) {
+                Some("channel_not_allowed")
+            } else if !reach.contains(op.capability) {
+                Some("missing_capability")
+            } else {
+                None
+            };
+            let available = reason.is_none();
             if options.kind.is_some_and(|kind| kind != op.kind())
                 || (!available && !options.include_unavailable)
             {
@@ -355,7 +433,7 @@ impl Registry {
             }
             let score = search::score(&query, op.key, op.title, op.keywords, op.summary, None);
             if query.is_empty() || score > 0 {
-                ranked.push((score,op.key,json!({"type":"operation","key":op.key,"title":op.title,"summary":op.summary,"kind":op.kind(),"available":available,"disposition":if available {op.disposition()}else{Value::Null},"reason":if available {Value::Null}else{json!("missing_capability")}})));
+                ranked.push((score,op.key,json!({"type":"operation","key":op.key,"title":op.title,"summary":op.summary,"kind":op.kind(),"available":available,"disposition":if available {op.disposition()}else{Value::Null},"reason":reason})));
             }
         }
         if options.kind.is_none() {
@@ -393,6 +471,9 @@ impl Registry {
     ) -> Result<Value> {
         let registered = self.operations.get(key).ok_or(Error::UnknownOperation)?;
         let op = registered.definition;
+        if !op.channels.allows(scope.channel()) {
+            return Err(Error::ChannelNotAllowed);
+        }
         let reach = reach::capabilities(client, scope).await?;
         if !reach.contains(op.capability) {
             return Err(Error::Forbidden);
@@ -407,7 +488,7 @@ impl Registry {
             .map(|g| json!({"key":g.definition.key,"title":g.definition.title}))
             .collect();
         Ok(
-            json!({"key":op.key,"title":op.title,"summary":op.summary,"kind":op.kind(),"capability":op.capability,"safe_write":op.safe_write(),"disposition":op.disposition(),"input":registered.input,"output":registered.output,"guides":guides}),
+            json!({"key":op.key,"title":op.title,"summary":op.summary,"kind":op.kind(),"capability":op.capability,"safe_write":op.safe_write(),"disposition":op.disposition(),"channels":op.channels.json(),"step_up":op.step_up,"input":registered.input,"output":registered.output,"guides":guides}),
         )
     }
     pub async fn guide(
@@ -433,8 +514,11 @@ impl Registry {
         input: &Value,
     ) -> Result<Value> {
         let registered = self.operations.get(key).ok_or(Error::UnknownOperation)?;
-        schema::validate(&registered.input, input).map_err(Error::InvalidInput)?;
         let op = registered.definition;
+        if !op.channels.allows(scope.channel()) {
+            return Err(Error::ChannelNotAllowed);
+        }
+        schema::validate(&registered.input, input).map_err(Error::InvalidInput)?;
         bilibi_authz::authorize_key(client, scope, op.capability)
             .await
             .map_err(|error| match error {
@@ -450,7 +534,8 @@ impl Registry {
 inventory::submit! { Consumer::new::<Definitions>(DEFINITIONS,"base/agent_api",|entries|Registry::from_entries(entries).map(|_|())) }
 inventory::submit! { bilibi_module_registry::Module {
     id:"base/agent_api",layer:bilibi_module_registry::Layer::Base,
-    dependencies:&["base/module_registry","base/authz","base/database","base/settings","base/tenancy","base/step_up"], migrations:&[("agent-api-plans-v1",include_str!("../migrations/001-plans.sql"))],
+    dependencies:&["base/module_registry","base/authz","base/database","base/settings","base/tenancy","base/step_up","base/session"], migrations:&[("agent-api-plans-v1",include_str!("../migrations/001-plans.sql"))],
     services:&[bilibi_module_registry::Service {id:"base/agent_api.registry",factory:|_|Ok(Arc::new(Registry::from_inventory()?))},
-    bilibi_module_registry::Service {id:"base/agent_api.plans",factory:|services|Ok(Arc::new(plans::Plans::new(services.get::<bilibi_database::Db>("base/database.pool")?.as_ref().clone(),services.get("base/database.mutations")?,services.get("base/agent_api.registry")?,services.get("base/settings.store")?)))}],
+    bilibi_module_registry::Service {id:"base/agent_api.plans",factory:|services|Ok(Arc::new(plans::Plans::new(services.get::<bilibi_database::Db>("base/database.pool")?.as_ref().clone(),services.get("base/database.mutations")?,services.get("base/agent_api.registry")?,services.get("base/settings.store")?)))},
+    bilibi_module_registry::Service {id:page::SERVICE,factory:|services|Ok(Arc::new(page::PageContracts::new(services.get::<bilibi_database::Db>("base/database.pool")?.as_ref().clone(),services.get("base/agent_api.registry")?,services.get("base/agent_api.plans")?,services.get("base/session.sessions")?,&Catalog::discover(&bilibi_module_registry::discover()?)?)?))}],
 } }

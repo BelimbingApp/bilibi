@@ -36,7 +36,9 @@ impl LiveState<Scope, Error> for Contact {
                 {
                     return Err(Error::Invalid);
                 }
-                self.detail.handle(request.scope, value).await?;
+                self.detail
+                    .handle(request.scope, request.credential, value)
+                    .await?;
             }
             let person = self
                 .detail

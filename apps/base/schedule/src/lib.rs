@@ -727,3 +727,11 @@ bilibi_menu::contribute!(
         .requires(bilibi_menu::Requirement::Capability(VIEW))
         .order(15)
 );
+
+// ADR 01 gap, listed so it stays visible: these pages still write through
+// the facade rather than an operation contract (`base/agent_api` page).
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::PAGE_WRITES, "base/schedule.pages", bilibi_module_registry::Provenance { module: "base/schedule", source: file!(), line: line!() }, &bilibi_module_registry::contributions::PageWrites {
+    service: "base/schedule.pages",
+    contracts: &[],
+    pending: bilibi_module_registry::contributions::Pending::Every { reason: "The schedule board writes through the Schedule facade; no contract yet." },
+}) }

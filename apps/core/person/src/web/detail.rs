@@ -2,8 +2,9 @@ use super::*;
 use crate::{
     contributions::{RETIRE, UPDATE},
     model::kind_key,
-    Person, PersonInput, PersonKind, Update, WriteError,
+    Person, PersonInput, PersonKind,
 };
+use bilibi_agent_api::Error as ContractError;
 use bilibi_ui::{
     BackLink, Badge, BadgeKind, Button, ButtonVariant, Card, CommitStates, CommitStatus,
     ConfirmDialog, Fact, Facts, Field, Header, InlineChoice, InlineEdit, InlineField, InputKind,
@@ -31,7 +32,8 @@ pub(super) struct Detail {
     pub id: PersonId,
     active_panels: Vec<PanelSpec>,
     statuses: CommitStates,
-    pending_retire: Option<(String, i64)>,
+    /// The person's name, the reviewed input and its plan code.
+    pending_retire: Option<(String, Value, String)>,
     pub(super) notice: String,
 }
 impl Detail {
@@ -242,7 +244,7 @@ impl Detail {
             body: identity,
             ..Card::default()
         })?;
-        let dialog = if let Some((name, _)) = &self.pending_retire {
+        let dialog = if let Some((name, _, _)) = &self.pending_retire {
             render(ConfirmDialog {
             id: "person-retire-confirm", consequence: &format!("{name} will be retired."),
             detail: "The identity and history are kept. This contact will be read-only and unavailable for new links. This does not change an employment record.",
@@ -276,7 +278,7 @@ impl Detail {
             ..LiveBody::default()
         })
     }
-    pub async fn handle(&mut self, scope: &Scope, value: &Value) -> Result<()> {
+    pub async fn handle(&mut self, scope: &Scope, credential: &str, value: &Value) -> Result<()> {
         self.notice.clear();
         match event(value)? {
             "save_field" => {
@@ -289,7 +291,7 @@ impl Detail {
                 let submitted = value["value"].as_str().ok_or(Error::Invalid)?;
                 let version = value["version"]
                     .as_str()
-                    .and_then(|v| v.parse().ok())
+                    .and_then(|v| v.parse::<i64>().ok())
                     .ok_or(Error::Invalid)?;
                 let person = self.pages.persons.read(scope, self.id).await?;
                 // Never carry a restricted contact into a replacement input.
@@ -314,8 +316,11 @@ impl Detail {
                 }
                 let result = self
                     .pages
-                    .persons
-                    .update(scope, self.id, &Update { version, identity })
+                    .contracts
+                    .submit(
+                        &self.pages.call(scope, credential, "save_field", "core.person.update"),
+                        json!({"person_id": self.id.get(), "version": version, "identity": identity_json(&identity)}),
+                    )
                     .await;
                 // If visibility was revoked while this edit was in flight, the
                 // refusal must never echo the now-hidden submitted contact.
@@ -329,39 +334,75 @@ impl Detail {
                     .any(|r| r == field);
                 let status = match result {
                     Ok(_) => CommitStatus::Saved,
-                    Err(WriteError::Backend(Error::Unauthorized)) => {
-                        return Err(Error::Unauthorized)
+                    Err(ContractError::Backend(
+                        error @ (Error::Unauthorized | Error::StepUpRequired { .. }),
+                    )) => return Err(error),
+                    // The owner refuses a retired or protected identity as
+                    // forbidden too; the record says which.
+                    Err(ContractError::Forbidden | ContractError::Backend(Error::Forbidden)) => {
+                        let person = self.pages.persons.read(scope, self.id).await?;
+                        if person.retired_at.is_some() {
+                            CommitStatus::Error(
+                                "This identity is retired and cannot be edited.".into(),
+                            )
+                        } else if person.system_key.is_some() {
+                            CommitStatus::Error("The platform system identity is protected.".into())
+                        } else {
+                            self.notice = "You do not have permission to edit this contact.".into();
+                            self.statuses.clear_saved();
+                            CommitStatus::Error(self.notice.clone())
+                        }
                     }
-                    Err(WriteError::Backend(Error::Forbidden)) => {
-                        self.notice = "You do not have permission to edit this contact.".into();
-                        self.statuses.clear_saved();
-                        CommitStatus::Error(self.notice.clone())
+                    Err(ContractError::InvalidInput(errors)) => {
+                        let messages: Vec<&str> = errors
+                            .iter()
+                            .filter(|(path, _)| path.ends_with(field))
+                            .flat_map(|(_, messages)| messages.iter().map(String::as_str))
+                            .collect();
+                        CommitStatus::refusal(
+                            field,
+                            if masked { "" } else { submitted },
+                            if messages.is_empty() {
+                                &["is not valid"]
+                            } else {
+                                &messages
+                            },
+                        )
                     }
-                    Err(WriteError::Validation(errors)) => CommitStatus::refusal(
-                        field,
-                        if masked { "" } else { submitted },
-                        &errors.iter().map(|e| e.message).collect::<Vec<_>>(),
-                    ),
-                    Err(WriteError::Backend(Error::Conflict)) => CommitStatus::refusal(
+                    Err(ContractError::Backend(Error::Conflict)) => CommitStatus::refusal(
                         field,
                         if masked { "" } else { submitted },
                         &["has changed since this edit began; reload before trying again"],
                     ),
-                    Err(WriteError::Retired) => {
-                        CommitStatus::Error("This identity is retired and cannot be edited.".into())
-                    }
-                    Err(WriteError::SystemIdentity) => {
-                        CommitStatus::Error("The platform system identity is protected.".into())
-                    }
                     Err(_) => CommitStatus::failure(),
                 };
                 self.statuses.put(field, status);
             }
+            // Retiring is the contract's preview, then its commit with the
+            // plan code once the person confirms.
             "request_retire" => {
                 if self.pages.allowed(scope, RETIRE).await? {
                     let person = self.pages.persons.read(scope, self.id).await?;
                     if person.retired_at.is_none() && person.system_key.is_none() {
-                        self.pending_retire = Some((person.name, person.version));
+                        let input = json!({"person_id": self.id.get(), "version": person.version});
+                        let review = self
+                            .pages
+                            .contracts
+                            .preview(
+                                &self
+                                    .pages
+                                    .call(scope, credential, "retire", "core.person.retire"),
+                                input.clone(),
+                            )
+                            .await;
+                        match review {
+                            Ok(review) => match review["plan_code"].as_str() {
+                                Some(code) => self.pending_retire = Some((person.name, input, code.to_owned())),
+                                None => self.notice = "The contact cannot be retired. Reload and review it before trying again.".into(),
+                            },
+                            Err(ContractError::Backend(Error::Unauthorized)) => return Err(Error::Unauthorized),
+                            Err(_) => self.notice = "The contact was not retired. Review your permission and reload before trying again.".into(),
+                        }
                     }
                 } else {
                     self.notice = "You do not have permission to retire this contact.".into();
@@ -369,11 +410,23 @@ impl Detail {
             }
             "cancel_retire" => self.pending_retire = None,
             "retire" => {
-                if let Some((_, version)) = self.pending_retire.take() {
-                    self.notice = match self.pages.persons.retire(scope, self.id, version).await {
+                if let Some((_, input, code)) = self.pending_retire.take() {
+                    let result = self
+                        .pages
+                        .contracts
+                        .commit(
+                            &self
+                                .pages
+                                .call(scope, credential, "retire", "core.person.retire"),
+                            &code,
+                            input,
+                        )
+                        .await;
+                    self.notice = match result {
                     Ok(_) => "Contact retired; history preserved.".into(),
-                    Err(WriteError::Backend(Error::Unauthorized)) => return Err(Error::Unauthorized),
-                    Err(WriteError::Backend(Error::Conflict)) => "The contact changed while confirmation was open. Review it before trying again.".into(),
+                    Err(ContractError::Backend(error @ (Error::Unauthorized | Error::StepUpRequired { .. }))) => return Err(error),
+                    Err(ContractError::Backend(Error::Conflict) | ContractError::StalePlan | ContractError::PlanRejected(_)) => "The contact changed while confirmation was open. Review it before trying again.".into(),
+                    Err(ContractError::PlanExpired) => "The confirmation expired. Retire the contact again.".into(),
                     Err(_) => "The contact was not retired. Review your permission and reload before trying again.".into(),
                 };
                 }
@@ -387,7 +440,8 @@ impl LiveState<Scope, Error> for Detail {
     fn update<'a>(&'a mut self, request: LiveRequest<'a, Scope>) -> LiveFuture<'a, Error> {
         Box::pin(async move {
             if let LiveInput::Event(value) = request.input {
-                self.handle(request.scope, value).await?;
+                self.handle(request.scope, request.credential, value)
+                    .await?;
             }
             self.view(request.scope).await
         })
@@ -395,4 +449,16 @@ impl LiveState<Scope, Error> for Detail {
     fn panels(&self) -> Vec<PanelSpec> {
         self.active_panels.clone()
     }
+}
+
+/// The contract's identity input: a hidden contact is omitted, so the owner
+/// keeps it.
+fn identity_json(identity: &PersonInput) -> Value {
+    let mut value = json!({"name": identity.name, "kind": kind_key(identity.kind)});
+    for (key, contact) in [("email", &identity.email), ("phone", &identity.phone)] {
+        if let Some(contact) = contact {
+            value[key] = json!(contact);
+        }
+    }
+    value
 }

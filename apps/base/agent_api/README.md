@@ -1,4 +1,6 @@
-# Agent operation boundary
+# Operation contracts
+
+Every action that reads or changes business data is one operation contract here, and it does not know who calls it (ADR 01, `docs/architecture/decisions/01-agent-first-operations.md`). `/api/v1` and `/mcp` call contracts for agents; pages call them through [Pages as callers](#pages-as-callers). The module keeps its historical name.
 
 Use the `base/agent_api.registry` service for search, describe, guide and read
 dispatch. Definitions are discovered through the typed `Definitions` consumer
@@ -14,6 +16,13 @@ foreign handler ownership, unsupported schema keywords, undeclared capabilities,
 read operations on write capabilities, and impersonation capabilities (`*.impersonate`).
 Titles have a 120-character limit, summaries 500, guide bodies 8 KiB. Registry
 entries retain source provenance and materialized schemas.
+
+Two more contract properties, both checked at boot:
+
+| Field | Meaning |
+|---|---|
+| `channels` | `Channels::Every`, or `Channels::Only { channels, reason }` for an action that cannot work through some door (it needs a browser session, say). Never a way to keep a sensitive action from agents: that is the capability and step-up. A door the contract does not list sees it as unavailable (`channel_not_allowed`) and is refused on describe, call and plan |
+| `step_up` | The Base Step-up operations (`bilibi_step_up::declare!`) its commit may ask for. Each must be declared; a read cannot list one. The owner's write still calls `StepUp::require`; listing the keys here tells every caller a code may be needed. `describe` shows both |
 
 The host passes a fresh sealed `tenancy::Scope` authenticated through the live
 account/session or credential owner. E1 deliberately uses the existing proven
@@ -141,3 +150,58 @@ lengths. Clock/review drift and audit refusal fixtures alter only the explicitly
 disposable database. This is a manual app-service specimen with no test runner,
 mocked identities or assertions. Sessions and temporary grants are removed on
 successful completion; reference/audit evidence remains for inspection.
+
+## Pages as callers
+
+A page's write event calls the contract the agent doors call, through `base/agent_api.pages` ([src/page.rs](src/page.rs), `PageContracts`). Same validation, capability check, owner preview, audited transaction, version fence and step-up; the page keeps its rendering and live patching.
+
+| Call | Use for | Path |
+|---|---|---|
+| `submit(call, input)` | A form the person just reviewed (inline edit, create, a dialog that collects input) | `Plans::submit`: the owner's preview, then its commit, in one transaction; no code |
+| `preview(call, input)` then `commit(call, code, input)` | A confirmation dialog (Core Person's retire) | The plan service with a code bound to the browser session; keep the code in the mounted state |
+| `read(scope, key, input)` | A direct read | `Registry::call` |
+
+- `Call` names the live request's scope and credential (`LiveRequest::credential`), the page service, the event and the contract. The browser session is the plan's credential: proved and held (key-share lock) on the plan's own transaction, so a sign-out cannot race the write.
+- Owner refusals come back typed: `InvalidInput(fields)`, `Forbidden`, `NotFound`, `Backend(Conflict)`, … Return `Backend(Unauthorized)` and `Backend(StepUpRequired { .. })` from the page unchanged: the host signs the browser in again or sends it to confirm and back.
+- Core Person, Core Affiliation, Core Company's relationship screens and Base Events' replay page are the running examples.
+
+## Page writes declaration and check
+
+Each page or panel service declares its write events once, with Module Registry's `PageWrites` contribution (`PAGE_WRITES`, keyed by the service id):
+
+```rust
+inventory::submit! { Contribution::new(PAGE_WRITES, SERVICE, provenance!(), &PageWrites {
+    service: SERVICE,
+    contracts: &[("create", "core.person.create"), ("save_field", "core.person.update")],
+    pending: Pending::None,
+}) }
+```
+
+- **Boot.** Module Registry refuses a malformed declaration (a service of another module, an event named twice, an allowance without a reason). `PageContracts` refuses a contract that is not a registered write, and a service no route or embed serves.
+- **Every live event.** The host dispatches a page or panel event under the permit its declaration gives (`bilibi_database::page_write`). `MutationBoundary::begin` then refuses a business transaction the permit does not cover: only the event's contracts (marked by `PageContracts`), or anything for an event listed as pending. An undeclared service or event may write nothing. The refusal is `Error::Internal`, logged with the service, event and action.
+- **The call.** `PageContracts` refuses a contract the page did not declare for that event.
+- A person's own view state (list columns, dashboard arrangement, theme, pins) is not business data: its owner opens `MutationBoundary::begin_view_state`, which the check leaves alone.
+- Writes made outside a live page event (agents, jobs, seeds, HTTP form posts) are not affected.
+
+### Allowance: pages not yet migrated
+
+Each gap is a `Pending` declaration in the owning module, with its reason. Remove it when the event calls its contract. `grep -rn "Pending::Every\|Pending::Events" apps` lists them.
+
+| Service | Why it is pending |
+|---|---|
+| `base/audit_views.pages` | Action-log export writes through the Audit Views facade |
+| `base/authz.pages` | Roles, field restrictions and two-factor policy; `base/authz_agent`'s grant contracts serve agents only |
+| `base/integration.pages` | Exchange actions |
+| `base/schedule.pages` | The schedule board |
+| `base/session.pages` | Ending sessions |
+| `base/settings_editor.pages` | Saving and restoring settings |
+| `base/system.pages` | Localization changes |
+| `base/tenancy.pages` | Tenant administration |
+| `base/tiling.pages` | Workspace and shared layouts |
+| `base/workflow.pages` | The workflow reference page |
+| `core/address.pages` | Addresses (no `core.address` contract) |
+| `core/agent_access.pages` | Device approval and connection revocation |
+| `core/company.pages` | Company edits, lifecycle, activities, departments, reference types; the create form records activities `core.company.create` does not take |
+| `core/geonames.pages` | Postcode corrections |
+| `core/user.pages`, `core/user.query-pages` | Accounts, passwords, two-factor, notifications, saved queries |
+| `core/user_administration.pages` | Account administration |

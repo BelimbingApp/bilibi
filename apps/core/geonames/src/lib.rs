@@ -75,3 +75,11 @@ inventory::submit! {
         ],
     }
 }
+
+// ADR 01 gap, listed so it stays visible: these pages still write through
+// the facade rather than an operation contract (`base/agent_api` page).
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::PAGE_WRITES, "core/geonames.pages", bilibi_module_registry::Provenance { module: "core/geonames", source: file!(), line: line!() }, &bilibi_module_registry::contributions::PageWrites {
+    service: "core/geonames.pages",
+    contracts: &[],
+    pending: bilibi_module_registry::contributions::Pending::Every { reason: "Postcode corrections write through the Geonames facade; no contract yet." },
+}) }

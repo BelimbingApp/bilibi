@@ -695,6 +695,7 @@ inventory::submit! {
             })))) },
             bilibi_module_registry::Service { id: web::relationships::SERVICE, factory: |services| Ok(Arc::new(bilibi_ui::page::PageService(Arc::new(web::relationships::RelationshipPages {
                 db: services.get::<Db>("base/database.pool")?.as_ref().clone(), company: services.get(SERVICE)?, persons: services.get(bilibi_person::SERVICE)?,
+                contracts: services.get(bilibi_agent_api::page::SERVICE)?,
             })))) },
         ],
     }
@@ -882,3 +883,11 @@ impl CompanyService {
         Ok(saved)
     }
 }
+
+// ADR 01 gap, listed so it stays visible: these pages still write through
+// the facade rather than an operation contract (`base/agent_api` page).
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::PAGE_WRITES, "core/company.pages", bilibi_module_registry::Provenance { module: "core/company", source: file!(), line: line!() }, &bilibi_module_registry::contributions::PageWrites {
+    service: "core/company.pages",
+    contracts: &[],
+    pending: bilibi_module_registry::contributions::Pending::Every { reason: "Company edits, lifecycle, activities, departments and reference types have no contract yet; the create form also records activities core.company.create does not take." },
+}) }

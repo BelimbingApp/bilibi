@@ -292,7 +292,13 @@ bilibi_menu::contribute!(
         .requires(bilibi_menu::Requirement::Capability(VIEW))
         .order(20)
 );
-const PAGES: &str = "base/events.pages";
+pub(crate) const PAGES: &str = "base/events.pages";
+// The page's replay is the `base.events.replay` contract (ADR 01).
+inventory::submit! { Contribution::new(bilibi_module_registry::contributions::PAGE_WRITES, PAGES, provenance!(), &bilibi_module_registry::contributions::PageWrites {
+    service: PAGES,
+    contracts: &[("replay", "base.events.replay")],
+    pending: bilibi_module_registry::contributions::Pending::None,
+}) }
 
 inventory::submit! {
     Module {
@@ -314,6 +320,7 @@ inventory::submit! {
                 Ok(Arc::new(bilibi_ui::page::PageService::<bilibi_tenancy::Scope, Error>(Arc::new(web::Pages {
                     db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
                     events: services.get(SERVICE)?,
+                    contracts: services.get(bilibi_agent_api::page::SERVICE)?,
                     display: services.get("base/datetime.display")?,
                     locales: services.get("base/locale.locales")?,
                 }))))

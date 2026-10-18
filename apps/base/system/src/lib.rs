@@ -221,10 +221,17 @@ inventory::submit! {
                 modules: Arc::new({ let mut names: Vec<_> = modules.iter().map(|m| m.id).collect(); names.sort(); names }),
                 tables: database_tables::DatabaseTables::new(
                     services.get::<Db>("base/database.pool")?.as_ref().clone(),
-                    services.get("base/tenancy.authentication")?,
                     &modules,
                 ),
             }))))
         }}],
     }
 }
+
+// ADR 01 gap, listed so it stays visible: these pages still write through
+// the facade rather than an operation contract (`base/agent_api` page).
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::PAGE_WRITES, "base/system.pages", bilibi_module_registry::Provenance { module: "base/system", source: file!(), line: line!() }, &bilibi_module_registry::contributions::PageWrites {
+    service: "base/system.pages",
+    contracts: &[],
+    pending: bilibi_module_registry::contributions::Pending::Every { reason: "Localization changes write through the System facade; no contract yet." },
+}) }

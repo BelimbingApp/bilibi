@@ -153,6 +153,9 @@ impl Plans {
             .operations
             .get(op.key.as_str())
             .ok_or(Error::UnknownOperation)?;
+        if !registered.definition.channels.allows(scope.channel()) {
+            return Err(Error::ChannelNotAllowed);
+        }
         crate::schema::validate(&registered.input, &op.input).map_err(Error::InvalidInput)?;
         bilibi_authz::authorize_key(tx, scope, registered.definition.capability).await?;
         match registered.definition.handler {
@@ -280,6 +283,45 @@ impl Plans {
         tx.sql().execute("UPDATE base_agent_api_plans SET used_at=clock_timestamp() WHERE tenant_id=$1 AND code_hash=sha256(convert_to($2,'UTF8'))",&[&scope.tenant(),&code]).await.map_err(bilibi_database::Error::from)?;
         tx.commit().await?;
         Ok(json!({"results":committed,"meta":{"content_notice":CONTENT_NOTICE}}))
+    }
+    /// One write reviewed and committed in a single transaction, for a caller
+    /// whose person has just reviewed the input (a page's form). The owner's
+    /// preview runs first and its refusal comes back typed, then the same
+    /// checks as `commit` and the owner's commit. No code is issued: the
+    /// review and the write share the transaction, and the owner's version
+    /// fence recognises a repeat.
+    pub async fn submit(
+        &self,
+        scope: &Scope,
+        authority: &dyn PlanAuthority,
+        op: &PlannedOperation,
+    ) -> Result<Value> {
+        let mut client = self.db.get().await.map_err(bilibi_database::Error::from)?;
+        let mut tx = self
+            .boundary
+            .begin(&mut client, scope.mutation_context(op.key.clone()))
+            .await?;
+        let identity = authority.verify(tx.sql()).await?;
+        if scope_binding(scope) != scope_binding(&identity.scope) {
+            return Err(Error::PlanMismatch);
+        }
+        let binding = binding(&identity)?;
+        self.shape(tx.sql(), std::slice::from_ref(op)).await?;
+        self.preview_one(tx.sql(), scope, op).await?;
+        let registered = self
+            .registry
+            .operations
+            .get(op.key.as_str())
+            .ok_or(Error::UnknownOperation)?;
+        let Handler::SafeWrite(owner) = registered.definition.handler else {
+            return Err(Error::WritesNotEnabled);
+        };
+        let result = owner.commit(&mut tx, scope, &op.input).await?;
+        if binding != self::binding(&authority.verify(tx.sql()).await?)? {
+            return Err(Error::PlanMismatch);
+        }
+        tx.commit().await?;
+        Ok(result.envelope(&op.key))
     }
     async fn unexpired(&self, tx: &Transaction<'_>, scope: &Scope, code: &str) -> Result<()> {
         let row = tx.query_one("SELECT expires_at>clock_timestamp() FROM base_agent_api_plans WHERE tenant_id=$1 AND code_hash=sha256(convert_to($2,'UTF8'))",&[&scope.tenant(),&code]).await.map_err(bilibi_database::Error::from)?;

@@ -242,6 +242,7 @@ pub const EMBEDS: &str = "base/module_registry.embeds";
 pub const DOWNLOADS: &str = "base/module_registry.downloads";
 pub const SEEDS: &str = "base/module_registry.seeds";
 pub const MOVED: &str = "base/module_registry.moved";
+pub const PAGE_WRITES: &str = "base/module_registry.page_writes";
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub enum Method {
     Get,
@@ -453,3 +454,83 @@ fn parameters(path: &str) -> impl Iterator<Item = &str> {
 }
 inventory::submit! { Consumer::new::<Moved>(MOVED, "base/module_registry", validate_moved) }
 inventory::submit! { Consumer::new::<Seed>(SEEDS, "base/module_registry", |_| Ok(())) }
+
+/// The write events of one page or panel service (ADR 01), contributed by
+/// its owner under the service id with `Contribution::new(PAGE_WRITES, ..)`.
+/// A page's write is the operation contract its event names; Agent API
+/// checks each named contract exists and the host refuses, during a live
+/// event, a business write the declaration does not cover
+/// (`apps/base/agent_api/README.md`).
+#[derive(Debug)]
+pub struct PageWrites {
+    pub service: &'static str,
+    /// `(event, contract key)`: the event's write is that contract. An event
+    /// that may call one of several contracts lists each.
+    pub contracts: &'static [(&'static str, &'static str)],
+    pub pending: Pending,
+}
+
+/// Events that still write through the owner's facade. Each one is a listed
+/// gap in ADR 01; remove it when the event calls its contract.
+#[derive(Debug)]
+pub enum Pending {
+    None,
+    Events {
+        events: &'static [&'static str],
+        reason: &'static str,
+    },
+    /// Every event other than those in `contracts`: a page not yet migrated.
+    Every {
+        reason: &'static str,
+    },
+}
+
+fn validate_page_writes(entries: &[Entry]) -> Result<()> {
+    let reason_text = |reason: &str| !reason.trim().is_empty() && reason.chars().count() <= 200;
+    for entry in entries {
+        let writes = entry.get::<PageWrites>()?;
+        let at = format!(
+            "page writes {} at {}:{}",
+            entry.id, entry.provenance.source, entry.provenance.line
+        );
+        if entry.id != writes.service
+            || !writes
+                .service
+                .starts_with(&format!("{}.", entry.provenance.module))
+        {
+            return Err(invalid(format!(
+                "{at} must be keyed by a service of its own module"
+            )));
+        }
+        // One event may name several contracts (a form that creates or
+        // updates), each pair once.
+        let mut pairs = BTreeSet::new();
+        for pair in writes.contracts {
+            if pair.0.is_empty() || pair.1.is_empty() || !pairs.insert(*pair) {
+                return Err(invalid(format!("{at} names an event's contract twice")));
+            }
+        }
+        let mut events: BTreeSet<&str> = pairs.iter().map(|(event, _)| *event).collect();
+        match writes.pending {
+            Pending::None => {}
+            Pending::Every { reason } if reason_text(reason) => {}
+            Pending::Events {
+                events: pending,
+                reason,
+            } if !pending.is_empty() && reason_text(reason) => {
+                for event in pending {
+                    if event.is_empty() || !events.insert(event) {
+                        return Err(invalid(format!("{at} names an event twice")));
+                    }
+                }
+            }
+            _ => {
+                return Err(invalid(format!(
+                    "{at} needs its pending events and a reason of 1 to 200 characters"
+                )))
+            }
+        }
+    }
+    Ok(())
+}
+inventory::submit! { Consumer::new::<PageWrites>(PAGE_WRITES, "base/module_registry", validate_page_writes) }

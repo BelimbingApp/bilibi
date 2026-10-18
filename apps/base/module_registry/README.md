@@ -15,8 +15,11 @@ reading another module's private storage. `Services::install` sorts and validate
 the graph, validates contributions, builds services, checks adapter readiness,
 and publishes a read-only `Services::catalog()` only after successful boot.
 
-`src/contributions.rs` defines shared `Route`, `Embed`, `Moved` and `Seed`
-payloads and the `ROUTES`, `EMBEDS`, `MOVED`, `SEEDS` keys. Each entry
+`src/contributions.rs` defines shared `Route`, `Embed`, `Moved`, `Seed` and
+`PageWrites` payloads and the `ROUTES`, `EMBEDS`, `MOVED`, `SEEDS`,
+`PAGE_WRITES` keys. `PageWrites` declares a page service's write events and
+the operation contract each calls, or a listed allowance; its contract and
+check live in `apps/base/agent_api/README.md`. Each entry
 includes its stable contribution ID and
 `Provenance { module, source: file!(), line: line!() }`. Duplicate IDs within
 a consumer, unknown consumers/owners, incorrect payload types, invalid routes,

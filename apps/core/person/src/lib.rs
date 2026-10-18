@@ -171,7 +171,7 @@ inventory::submit! {
             Ok(Arc::new(bilibi_ui::page::PageService::<Scope, Error>(Arc::new(web::Pages {
                 db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
                 person_panels: web::person_panels()?,
-                persons: services.get(SERVICE)?, views: services.get(bilibi_grid::PAGE_VIEWS)?,
+                persons: services.get(SERVICE)?, contracts: services.get(bilibi_agent_api::page::SERVICE)?, views: services.get(bilibi_grid::PAGE_VIEWS)?,
                 display: services.get("base/datetime.display")?, locales: services.get("base/locale.locales")?,
             }))))
         }}],

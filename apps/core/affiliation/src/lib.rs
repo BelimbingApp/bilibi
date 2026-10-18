@@ -167,6 +167,7 @@ inventory::submit! {
             Ok(Arc::new(bilibi_ui::page::PageService::<Scope, Error>(Arc::new(web::Pages {
                 db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
                 affiliations: services.get(SERVICE)?,
+                contracts: services.get(bilibi_agent_api::page::SERVICE)?,
                 proofs: services.get("base/tenancy.parties")?,
                 directory: services.get("base/principal_directory.directory")?,
                 display: services.get("base/datetime.display")?,

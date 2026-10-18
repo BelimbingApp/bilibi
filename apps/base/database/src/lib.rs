@@ -1,4 +1,5 @@
 //! Shared PostgreSQL pool, errors, migration runner, and transactional mutation capture.
+pub mod page_write;
 pub mod seeds;
 pub mod timing;
 mod transaction;

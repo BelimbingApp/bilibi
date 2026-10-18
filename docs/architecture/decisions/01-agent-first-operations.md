@@ -1,7 +1,7 @@
 # ADR 01: Agent-first operations: one contract, four doors
 
 **Document Type:** Architecture Decision Record
-**Status:** Accepted for the direction. The implementation is a follow-up Platform slice.
+**Status:** Accepted. The first Platform slice is built (contracts for every caller, page callers, the page-write check, step-up on the contract); the rest is in "Status of each door today".
 **Agents:** claude-cloud/sonnet-5.5-default (author), amp/gpt-6-luna-default (review), oracle amp/gpt-6-astra
 **Scope:** How a business action is defined once and reached from the GUI, a CLI, an HTTP API and MCP, with the same rules for a human and for an agent acting for a human
 **Last Updated:** 2026-10-18
@@ -66,7 +66,7 @@ A contract declares:
 - **Impersonation is the one exception to agent/person parity.** An agent does not impersonate. The agent acts as its person, and an agent switching to another identity would break that in the audit trail: the actor would no longer be the person who granted the connection. This is a named exception. Every other action follows the parity rule and is guarded by authorization and step-up, not by channel restrictions.
 - **Reads and searches are first-class.** Search, describe, guide and read are contracts too. They are cheap, fresh and capability-filtered.
 - **Writes are preview, then a single-use commit.** The preview writes nothing and returns a review and a random code. The commit consumes the code once, rechecks everything, and rolls back all writes and audit rows together if any step fails. **The code proves the reviewed contract, not consent.**
-- **Operating rule: a human is present for every agent write and approves it in the harness.** The human enforces this rule. Bilibi does not technically verify the approval: the same agent credential can preview and commit (`apps/base/agent_api/src/plans.rs`). Bilibi's enforced controls are authorization (the capability check) and the tenant's step-up policy (2FA, section 4; not built yet).
+- **Operating rule: a human is present for every agent write and approves it in the harness.** The human enforces this rule. Bilibi does not technically verify the approval: the same agent credential can preview and commit (`apps/base/agent_api/src/plans.rs`). Bilibi's enforced controls are authorization (the capability check) and the tenant's step-up policy (2FA, section 4, `apps/base/step_up/README.md`).
 - **Accountability.** The person the agent acts for is accountable for each write it commits. The audit trail names that person as the actor.
 - **Audit evidence is append-only.** Every change leaves an audit record that cannot be altered. Each module defines its own correction behaviour. Financial and other evidentiary records (ledger entries, posted documents) are corrected by reversal: a new, dated, audited record that reverses or replaces the old one. Ordinary master data may be deleted, with the change audited. Today's code already deletes some master data and keeps the old value in a `Change` (for example department delete, `apps/core/company/src/departments.rs`).
 - **Tenant and actor come from the credential**, never from input.
@@ -101,29 +101,29 @@ Protection against hostile content in documents an agent reads is **deliberately
 
 ## Status of each door today
 
-Verified against the code on 2026-10-17.
+Verified against the code on 2026-10-18.
 
 | Door | State | Evidence |
 | --- | --- | --- |
-| GUI | Built. Pages call module facades and check capabilities themselves. They do not yet call contracts | `apps/web/README.md`, each module's `web.rs` |
+| GUI | Built. Core Person, Core Affiliation, Core Company's relationship screens and Base Events' replay page call their contracts for every write (`PageContracts`). Other pages still write through facades, each on a listed allowance the page-write check enforces | `apps/base/agent_api/README.md` (Pages as callers, Page writes declaration and check) |
 | API `/api/v1` | Built. Search, describe, guide, call, plans, commit. OAuth device grant, per-person grants, live proof on every request | `apps/web/src/api.rs`, `apps/web/README.md` |
 | MCP `/mcp` | Built. Stateless Streamable HTTP. Six tools: `search`, `describe`, `guide`, `read`, `plan`, `commit` | `apps/web/src/mcp.rs`, `apps/base/agent_api/src/mcp.rs` |
 | CLI | **Client not built.** `bilibi-web` has only operator commands (`migrate`, `seed`, `seed-production`, `authz-reconcile`, `geonames-import`, `media-cleanup`, `plugin-export`), none of which calls an operation contract | `apps/web/src/main.rs` |
 | Harness plugins | **Built for ChatGPT.** `core/agent_plugins` generates the downloadable package: a thin adapter over `/mcp`, with skills generated from the registry, including the agent self-report instruction. Other harnesses are added when needed | `apps/core/agent_plugins/README.md` |
 
-The registry is `base/agent_api` (`apps/base/agent_api/README.md`). It is the partial form of this decision:
+The registry is `base/agent_api` (`apps/base/agent_api/README.md`):
 
-- It is **agent-facing only**. Pages do not use it.
-- Contributors: three Core modules, `core/company` (companies, relationship roles and relationships), `core/person` and `core/affiliation`; and two Base modules, `base/authz_agent` (roles and grants) and `base/events` (domain event subscribers, deliveries and replay, `apps/base/events/README.md`).
-- No Domain or Extension contributes yet. None is mounted in this repository.
-- Discovery refuses authority-administration capabilities for agents (role, grant and field administration, impersonation, settings, agent-connection management). `apps/base/agent_api/src/reach.rs` and `apps/core/agent_access/src/lib.rs` hold these refusals. This contradicts the decision above, except for impersonation, which stays refused for agents.
+- **Every caller.** The agent doors and pages call the same contracts. A page uses `PageContracts`: `submit` (the owner's preview and commit in one transaction) for a reviewed form, `preview` then `commit` for a confirmation, `read` for a read. The browser session is the plan's credential.
+- **Page-write check.** Each page service declares its write events and the contract each calls (`PageWrites`, Module Registry). Boot refuses a declaration naming no registered write contract. During a live event the host refuses a business transaction the declaration does not cover, so a page not yet migrated is a listed `Pending` allowance with its reason (`apps/base/agent_api/README.md` lists them).
+- **Channels.** A contract may name the doors it can serve (`Channels::Only` with a reason), for technical reasons only. Every current contract serves every door.
+- **Step-up.** A contract lists the step-up operations its commit may ask for (`step_up`), checked at boot and shown by `describe`. The owner's write calls `StepUp::require`. The database tables pages and secret reveal use Base Step-up; their password prompts are gone.
+- **Agent reach** is the person's live capabilities, administration included. Impersonation stays refused (`apps/base/agent_api/src/reach.rs`).
+- Contracts exist for `core/company` (create, relationship roles and relationships), `core/person`, `core/affiliation`, `base/authz_agent` (role and capability grants) and `base/events` (domain event subscribers, deliveries and replay, `apps/base/events/README.md`). No Domain or Extension contributes yet. None is mounted in this repository.
 - Writes use the plan service: preview, then a single-use code. Idempotency today is that code plus version fencing in each owner. There is no caller-supplied idempotency key.
-- Step-up is not generic. Two password confirmations exist, each hard-wired: the database tables page (`apps/base/system/src/database_tables/gate.rs`) and secret reveal (`apps/base/settings_editor/src/reveal.rs`, which also checks permission, throttles attempts and audits each one before a value is returned). No 2FA exists and no operation can declare a policy.
-- There are no per-channel declarations. Every registered operation is reachable by agents.
 
 ## Consequences
 
-**Follow-up Platform slice** (this record sets the direction and does not change code):
+**Platform slices** (the record sets the direction; what is built is in "Status of each door today"):
 
 - The registry becomes channel-agnostic. A contract may declare the channels allowed to call it for technical reasons. There is no general human-only option. Sensitive actions are expressed through authorization and step-up. Impersonation is the one named exception to agent/person parity (section 2).
 - GUI write events invoke contracts. Pages keep rendering and live patching.

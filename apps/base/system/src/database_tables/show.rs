@@ -5,8 +5,7 @@
 //! sensitive columns are never read.
 use super::sensitive::Mask;
 use super::{
-    badges, catalog, layout, link, plural, table_path, text, titled, wrap, Confirmation,
-    DatabaseTables, INDEX,
+    badges, catalog, layout, link, plural, table_path, text, titled, wrap, DatabaseTables, INDEX,
 };
 use crate::render;
 use askama::Template;
@@ -45,7 +44,6 @@ pub(super) struct Show {
     constraints: ListColumns,
     outgoing: ListColumns,
     incoming: ListColumns,
-    confirmation: Confirmation,
     recorded: Option<Value>,
 }
 
@@ -187,7 +185,6 @@ impl Show {
                 ],
             )?,
             tables,
-            confirmation: Confirmation::default(),
             recorded: None,
         })
     }
@@ -207,18 +204,6 @@ impl Show {
             title: "All tables",
             class: "",
         })?;
-        if !self.confirmation.confirmed {
-            return layout(
-                "database-table-show",
-                Header {
-                    title: Html::text(&self.name),
-                    subtitle: "Database table",
-                    actions: back,
-                    ..Header::default()
-                },
-                self.confirmation.form()?,
-            );
-        }
         let mut client = self.tables.gate.db().get().await?;
         let table = catalog::table(&**client, &self.name).await?;
         let found = catalog::columns(&**client, &table).await?;
@@ -880,17 +865,6 @@ impl LiveState<Scope, Error> for Show {
                         ListState::parse(query, self.spec.clone()).map_err(|_| Error::Internal)?;
                 }
                 LiveInput::Event(value) => match value.get("type").and_then(Value::as_str) {
-                    Some("step_up") => {
-                        self.confirmation
-                            .attempt(
-                                &self.tables.gate,
-                                request.scope,
-                                value,
-                                json!({"view": "table", "table": self.name}),
-                            )
-                            .await?
-                    }
-                    Some(_) if !self.confirmation.confirmed => {}
                     Some("filter") => self
                         .list
                         .apply_filters(&params::form_values(value, "filters")),

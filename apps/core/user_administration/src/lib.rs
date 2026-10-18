@@ -147,3 +147,11 @@ inventory::submit! {
             access: bilibi_module_registry::contributions::Access::Capability(bilibi_user::contributions::LIST), framed: true,
         })
 }
+
+// ADR 01 gap, listed so it stays visible: these pages still write through
+// the facade rather than an operation contract (`base/agent_api` page).
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::PAGE_WRITES, "core/user_administration.pages", bilibi_module_registry::Provenance { module: "core/user_administration", source: file!(), line: line!() }, &bilibi_module_registry::contributions::PageWrites {
+    service: "core/user_administration.pages",
+    contracts: &[],
+    pending: bilibi_module_registry::contributions::Pending::Every { reason: "Account administration writes through the User facade; no contract yet." },
+}) }

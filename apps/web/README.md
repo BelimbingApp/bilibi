@@ -37,6 +37,8 @@ Step-up (`apps/base/step_up/README.md`) is the same on every surface:
 - `/api/v1` commit and the MCP `commit` tool take an optional `step_up_code` and answer `step_up_required` (`bilibi_step_up::refusal`): 403 on the API, an `isError` result on MCP.
 - `BILIBI_ENV=development` turns enforcement off at boot (`StepUp::set_enforced`).
 
+A live page or panel event runs under the page-write permit its service declared (`PageWrites`, `base/agent_api.pages`): the host wraps the owner's `update` in `bilibi_database::page_write::during`, so a business transaction the declaration does not cover is refused before it writes. Refresh and params carry no permit. Contract: `apps/base/agent_api/README.md` (Page writes declaration and check).
+
 Other methods also require the configured Origin and, for an authenticated
 scope, `X-CSRF-Token`. The secret rotates when the session switches identity
 (impersonation), so a request from a page rendered before the switch is refused;

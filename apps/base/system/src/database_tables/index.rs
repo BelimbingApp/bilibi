@@ -1,7 +1,7 @@
 //! The tables of the application schema with their owning module (Belimbing
 //! `DatabaseTables\Index`): search with `*`/`?` wildcards, sort and paging
 //! through `ListState`, rows on the shared FlexTable.
-use super::{catalog, layout, table_path, text, Confirmation, DatabaseTables};
+use super::{catalog, layout, table_path, text, DatabaseTables};
 use crate::render;
 use bilibi_database::{Error, Result};
 use bilibi_tenancy::Scope;
@@ -37,7 +37,6 @@ pub(super) struct Index {
     list: ListState,
     columns: ListColumns,
     framed: bool,
-    confirmation: Confirmation,
     /// The last view recorded, so a redraw of the same view is not repeated.
     recorded: Option<Value>,
 }
@@ -72,7 +71,6 @@ impl Index {
             )
             .map_err(|_| Error::Internal)?,
             framed: request.framed,
-            confirmation: Confirmation::default(),
             recorded: None,
         })
     }
@@ -83,9 +81,6 @@ impl Index {
             subtitle: "Browse and inspect the tables of the application schema. Read-only.",
             ..Header::default()
         };
-        if !self.confirmation.confirmed {
-            return layout("database-tables-index", header, self.confirmation.form()?);
-        }
         let view = json!({
             "view": "index",
             "page": self.list.page,
@@ -246,17 +241,6 @@ impl LiveState<Scope, Error> for Index {
                         ListState::parse(query, SPEC.clone()).map_err(|_| Error::Internal)?
                 }
                 LiveInput::Event(value) => match value.get("type").and_then(Value::as_str) {
-                    Some("step_up") => {
-                        self.confirmation
-                            .attempt(
-                                &self.tables.gate,
-                                request.scope,
-                                value,
-                                json!({"view": "index"}),
-                            )
-                            .await?
-                    }
-                    Some(_) if !self.confirmation.confirmed => {}
                     Some("filter") => self
                         .list
                         .apply_filters(&params::form_values(value, "filters")),

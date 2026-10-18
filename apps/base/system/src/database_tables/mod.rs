@@ -13,11 +13,10 @@ use crate::render;
 use askama::Template;
 use bilibi_database::{Db, Error, Result};
 use bilibi_module_registry::Module;
-use bilibi_tenancy::{Authentication, Scope};
+use bilibi_tenancy::Scope;
 use bilibi_ui::{
-    forms::Field,
     page::{LiveState, PageRequest},
-    Alert, Badge, BadgeKind, Button, ButtonVariant, Card, Header, Html, InputKind, StatusKind,
+    Badge, BadgeKind, Header, Html,
 };
 use std::sync::Arc;
 
@@ -30,20 +29,15 @@ pub(crate) struct DatabaseTables {
     owners: Arc<owners::Owners>,
 }
 impl DatabaseTables {
-    pub(crate) fn new(
-        db: Db,
-        authentication: Arc<Authentication>,
-        modules: &[&'static Module],
-    ) -> Self {
+    pub(crate) fn new(db: Db, modules: &[&'static Module]) -> Self {
         Self {
-            gate: gate::Gate::new(db, authentication),
+            gate: gate::Gate::new(db),
             rules: Arc::new(sensitive::Rules::from_inventory()),
             owners: Arc::new(owners::Owners::new(modules)),
         }
     }
 
-    /// The first paint: owner proof, then only the step-up form. Data is
-    /// rendered by the mounted page once the owner has confirmed.
+    /// The first paint, after the route's step-up and the owner proof.
     pub(crate) async fn render(&self, request: &PageRequest<'_, Scope>) -> Result<Html> {
         let scope = request.scope.ok_or(Error::Unauthorized)?;
         self.gate.owner(scope).await?;
@@ -84,87 +78,6 @@ fn table_path(name: &str) -> String {
         }
     }
     path
-}
-
-/// Whether the mounted page has confirmed the owner's password, and what the
-/// last attempt said.
-#[derive(Default)]
-struct Confirmation {
-    confirmed: bool,
-    error: Option<&'static str>,
-}
-impl Confirmation {
-    /// Handles a `step_up` event; `subject` is the page the record names.
-    async fn attempt(
-        &mut self,
-        gate: &gate::Gate,
-        scope: &Scope,
-        value: &serde_json::Value,
-        subject: serde_json::Value,
-    ) -> Result<()> {
-        let values = bilibi_ui::params::form_values(value, "step_up");
-        let password = values.get("password").map_or("", String::as_str);
-        self.error = None;
-        if password.is_empty() || password.len() > 1024 {
-            self.error = Some("Enter your password.");
-            return Ok(());
-        }
-        match gate.step_up(scope, password, subject).await? {
-            gate::StepUp::Confirmed => self.confirmed = true,
-            gate::StepUp::Rejected => self.error = Some("That password is not correct."),
-            gate::StepUp::Throttled => {
-                self.error = Some("Too many attempts. Wait a minute and try again.")
-            }
-        }
-        Ok(())
-    }
-
-    fn form(&self) -> Result<Html> {
-        let mut field = Field::in_form("step_up", "password")
-            .id("database-tables-step-up-password")
-            .kind(InputKind::Password)
-            .label("Password")
-            .autocomplete("current-password")
-            .required()
-            .wrapper_class("mb-0")
-            .hint("Database tables show live records of every tenant. Confirm your password to open them on this page.");
-        if let Some(error) = self.error {
-            field = field.error(error);
-        }
-        let mut body = render(Alert {
-            kind: StatusKind::Info,
-            id: "database-tables-step-up-notice",
-            class: "mb-4",
-            body: Html::text("Only the installation owner may open database tables. Every view is recorded in the audit log; sensitive columns stay masked."),
-        })?;
-        body.push(&render(StepUpForm {
-            field,
-            confirm: render(Button {
-                id: "database-tables-step-up-confirm",
-                button_type: "submit",
-                variant: ButtonVariant::Primary,
-                body: Html::text("Confirm"),
-                ..Button::default()
-            })?,
-        })?);
-        render(Card {
-            id: "database-tables-step-up",
-            title: "Confirm it's you",
-            inner_class: "p-4",
-            body,
-            ..Card::default()
-        })
-    }
-}
-
-#[derive(Template)]
-#[template(
-    source = r#"{% import "forms.html" as form %}<form id="database-tables-step-up-form" data-event="step_up" class="space-y-4">{% call form::input(field=field) %}{% endcall %}<div class="flex justify-end">{{ confirm|safe }}</div></form>"#,
-    ext = "html"
-)]
-struct StepUpForm {
-    field: Field,
-    confirm: Html,
 }
 
 #[derive(Template)]

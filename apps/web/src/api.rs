@@ -661,6 +661,7 @@ fn api_error(error: bilibi_base::agent_api::Error) -> Refusal {
         | E::PlanExpired
         | E::StalePlan
         | E::WritesNotEnabled => self::error(StatusCode::CONFLICT, &error.to_string()),
+        E::ChannelNotAllowed => self::error(StatusCode::FORBIDDEN, "channel_not_allowed"),
         E::PlanRejected(results) => refusal(
             StatusCode::UNPROCESSABLE_ENTITY,
             json!({"error":"plan_rejected","results":results}),

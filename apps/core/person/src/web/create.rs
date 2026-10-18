@@ -1,8 +1,8 @@
 use super::*;
 use crate::{
     contributions::CREATE, model, DuplicateQuery, FieldError, Person, PersonInput, PersonKind,
-    WriteError,
 };
+use bilibi_agent_api::Error as ContractError;
 use bilibi_ui::{
     BackLink, Button, ButtonVariant, Field, Header, InputKind, PageVariant, RestrictedField,
     StatusKind,
@@ -204,11 +204,25 @@ impl LiveState<Scope, Error> for Create {
                     self.errors = model::validate(&self.input).err().unwrap_or_default();
                     self.notice.clear();
                     if action == "create" && self.errors.is_empty() {
-                        match self.pages.persons.create(request.scope, &self.input).await {
-                            Ok(person) => self.created = Some(person.id),
-                            Err(WriteError::Validation(errors)) => self.errors = errors,
-                            Err(WriteError::Backend(Error::Unauthorized)) => return Err(Error::Unauthorized),
-                            Err(WriteError::Backend(Error::Forbidden)) => self.notice = "You do not have permission to create this contact or write these contact fields.".into(),
+                        let call = self.pages.call(
+                            request.scope,
+                            request.credential,
+                            "create",
+                            "core.person.create",
+                        );
+                        let mut input = json!({"name": self.input.name, "kind": model::kind_key(self.input.kind)});
+                        for (key, contact) in
+                            [("email", &self.input.email), ("phone", &self.input.phone)]
+                        {
+                            if let Some(contact) = contact {
+                                input[key] = json!(contact);
+                            }
+                        }
+                        match self.pages.contracts.submit(&call, input).await {
+                            Ok(result) => self.created = result["result"]["id"].as_i64().and_then(|id| PersonId::new(id).ok()),
+                            Err(ContractError::InvalidInput(fields)) => self.notice = fields.values().flatten().cloned().collect::<Vec<_>>().join(" "),
+                            Err(ContractError::Backend(error @ (Error::Unauthorized | Error::StepUpRequired { .. }))) => return Err(error),
+                            Err(ContractError::Forbidden | ContractError::Backend(Error::Forbidden)) => self.notice = "You do not have permission to create this contact or write these contact fields.".into(),
                             Err(_) => self.notice = "The contact was not created. Try again.".into(),
                         }
                     }

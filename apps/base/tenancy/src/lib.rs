@@ -823,3 +823,11 @@ impl PartyProofs {
         .await
     }
 }
+
+// ADR 01 gap, listed so it stays visible: these pages still write through
+// the facade rather than an operation contract (`base/agent_api` page).
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::PAGE_WRITES, "base/tenancy.pages", bilibi_module_registry::Provenance { module: "base/tenancy", source: file!(), line: line!() }, &bilibi_module_registry::contributions::PageWrites {
+    service: "base/tenancy.pages",
+    contracts: &[],
+    pending: bilibi_module_registry::contributions::Pending::Every { reason: "Tenant administration writes through the Tenancy facade; no contract yet." },
+}) }

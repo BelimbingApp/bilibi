@@ -18,7 +18,7 @@
 //! archived company is never offered, since a write into it would be refused.
 use crate::{
     form::{self, Field, Plan, Step},
-    reveal::{self, Refusal, Reveal, Throttle},
+    reveal::{self, Refusal, Reveal},
     COMPANY_MANAGE, GLOBAL_MANAGE,
 };
 use askama::Template;
@@ -26,7 +26,8 @@ use bilibi_authz::authorize_operator;
 use bilibi_database::{Db, Error, MutationBoundary, Result};
 use bilibi_party_ids::OrganisationId;
 use bilibi_settings::{ScopeKind, Settings, Target, ValueType};
-use bilibi_tenancy::{Authentication, NamedOrganisation, PartyProofs, Scope};
+use bilibi_step_up::StepUp;
+use bilibi_tenancy::{NamedOrganisation, PartyProofs, Scope};
 use bilibi_ui::{
     choices,
     forms::{Field as Control, InputKind},
@@ -34,7 +35,7 @@ use bilibi_ui::{
         LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, MountFuture, Page, PageBody,
         PageFuture, PageRequest,
     },
-    Attrs, Button, ButtonVariant, ConfirmDialog, EmptyState, FlashMap, Header, Html, IconButton,
+    Button, ButtonVariant, ConfirmDialog, EmptyState, FlashMap, Header, Html, IconButton,
     IconContext, SecretInput, StatusKind,
 };
 use serde_json::{json, Value};
@@ -52,9 +53,8 @@ pub struct Core {
     pub db: Db,
     pub settings: Arc<Settings>,
     pub boundary: Arc<MutationBoundary>,
-    pub authentication: Arc<Authentication>,
     pub parties: Arc<PartyProofs>,
-    pub throttle: Throttle,
+    pub step_up: Arc<StepUp>,
 }
 pub struct Pages(Arc<Core>);
 impl Pages {
@@ -68,7 +68,6 @@ struct Editor {
     flash: Option<(StatusKind, String)>,
     /// The overrides the restore dialog counted; restore acts on these only.
     pending_restore: Option<Vec<String>>,
-    pending_reveal: Option<String>,
     events: Vec<(&'static str, Value)>,
     /// The picked company scope; `None` is Global. An id, never a proof.
     company: Option<NamedOrganisation>,
@@ -80,7 +79,6 @@ impl Editor {
             core,
             flash: None,
             pending_restore: None,
-            pending_reveal: None,
             events: Vec::new(),
             company: None,
         }
@@ -182,7 +180,6 @@ impl Editor {
         self.company = Some(company);
         self.flash = None;
         self.pending_restore = None;
-        self.pending_reveal = None;
         Ok(())
     }
 
@@ -212,7 +209,6 @@ impl Editor {
                     self.company = None;
                     self.flash = None;
                     self.pending_restore = None;
-                    self.pending_reveal = None;
                 }
                 Some(id) => self.switch(scope, id).await?,
                 None => self.flash(StatusKind::Error, "Choose an available settings scope."),
@@ -227,15 +223,13 @@ impl Editor {
                 if offered
                     && reveal::available(&**client, &plan, &self.core.settings, scope).await?
                 {
-                    self.pending_reveal = Some(key.to_owned());
+                    self.reveal(scope, &plan, key).await?;
                 } else {
                     // Even a forged request is recorded as a refused reveal.
                     reveal::refuse(&**client, scope, key).await?;
                     self.flash(StatusKind::Error, "Stored value cannot be shown.");
                 }
             }
-            "cancel_secret_reveal" => self.pending_reveal = None,
-            "confirm_secret_reveal" => self.confirm_reveal(scope, payload).await?,
             _ => return Err(Error::Invalid),
         }
         Ok(())
@@ -402,45 +396,32 @@ impl Editor {
         Ok(())
     }
 
-    async fn confirm_reveal(&mut self, scope: &Scope, payload: &Value) -> Result<()> {
-        let Some(key) = self.pending_reveal.clone() else {
-            return Ok(());
-        };
-        let password = payload
-            .get("reveal[password]")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        let plan = self.plan(scope).await?;
+    /// Shows one stored secret after Base Step-up. A check the session owes
+    /// goes up to the host, which sends the browser to confirm and back to
+    /// this page, where the person asks again.
+    async fn reveal(&mut self, scope: &Scope, plan: &Plan, key: &str) -> Result<()> {
         let client = self.core.db.get().await?;
         let reveal = Reveal {
             settings: &self.core.settings,
-            authentication: &self.core.authentication,
-            throttle: &self.core.throttle,
+            step_up: &self.core.step_up,
         };
-        match reveal.reveal(&**client, &plan, scope, &key, password).await {
+        match reveal.reveal(&**client, plan, scope, key).await {
             Ok(value) => {
                 let duration = plan
-                    .field(&key)
+                    .field(key)
                     .map_or(10_000, |field| field.editor.reveal_duration_ms);
-                self.pending_reveal = None;
                 self.flash = None;
                 self.events.push((
                     "secret:reveal",
-                    json!({"id": format!("input-{}", form::dom(&key)), "value": value, "duration_ms": duration}),
+                    json!({"id": format!("input-{}", form::dom(key)), "value": value, "duration_ms": duration}),
                 ));
             }
-            Err(Refusal::Throttled) => {
-                self.flash(StatusKind::Error, "Too many attempts. Try again later.")
-            }
-            Err(Refusal::InvalidPassword) => {
-                self.flash(StatusKind::Error, "Password was not accepted.")
-            }
+            Err(Refusal::StepUp(error)) => return Err(error),
             Err(Refusal::AuditUnavailable) => self.flash(
                 StatusKind::Error,
                 "The reveal could not be recorded, so the value was not shown. Try again later.",
             ),
             Err(Refusal::Refused) => {
-                self.pending_reveal = None;
                 self.flash(StatusKind::Error, "This stored value cannot be shown.");
             }
         }
@@ -536,23 +517,6 @@ impl Editor {
                     .id("company-settings-withheld"),
             })?
         };
-        let reveal = match &self.pending_reveal {
-            Some(_) => render(RevealConfirm {
-                password: SecretInput::new(
-                    "secret-reveal-password",
-                    "reveal[password]",
-                    "password",
-                )
-                .label("Your password")
-                .no_reveal()
-                .attrs(Attrs {
-                    autocomplete: Some("current-password".into()),
-                    required: true,
-                    ..Attrs::default()
-                }),
-            })?,
-            None => Html::EMPTY,
-        };
         let dialog = match &self.pending_restore {
             Some(held) => {
                 let consequence = format!(
@@ -604,7 +568,6 @@ impl Editor {
                 body: Html::text("Save"),
                 ..Button::default()
             })?,
-            reveal,
             dialog,
         };
         view.render().map_err(|_| Error::Internal)
@@ -716,7 +679,6 @@ struct SettingsView<'a> {
     empty: Html,
     restore: Html,
     save: Html,
-    reveal: Html,
     dialog: Html,
 }
 /// Bilimbi renders a bare input under the card's own label here, not the
@@ -757,11 +719,6 @@ struct ScopePicker {
 )]
 struct Withheld {
     state: EmptyState,
-}
-#[derive(Template)]
-#[template(path = "settings_reveal.html")]
-struct RevealConfirm {
-    password: SecretInput,
 }
 fn render(fragment: impl Template) -> Result<Html> {
     Html::render(&fragment).map_err(|_| Error::Internal)

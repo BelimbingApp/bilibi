@@ -1147,3 +1147,11 @@ inventory::submit! {
         })))) }],
     }
 }
+
+// ADR 01 gap, listed so it stays visible: these pages still write through
+// the facade rather than an operation contract (`base/agent_api` page).
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::PAGE_WRITES, "core/agent_access.pages", bilibi_module_registry::Provenance { module: "core/agent_access", source: file!(), line: line!() }, &bilibi_module_registry::contributions::PageWrites {
+    service: "core/agent_access.pages",
+    contracts: &[],
+    pending: bilibi_module_registry::contributions::Pending::Every { reason: "Approving devices and revoking connections write through Agent Access; no contract yet." },
+}) }

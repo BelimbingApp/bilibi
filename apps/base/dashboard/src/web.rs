@@ -140,7 +140,7 @@ impl Core {
         let mut client = self.db.get().await?;
         let mut tx = self
             .boundary
-            .begin(&mut client, scope.mutation_context("dashboard.arrangement"))
+            .begin_view_state(&mut client, scope.mutation_context("dashboard.arrangement"))
             .await?;
         let ids: Vec<_> = entries.iter().map(|widget| widget.id).collect();
         self.settings

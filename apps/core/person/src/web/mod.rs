@@ -6,17 +6,25 @@ mod panels;
 
 use crate::{PersonId, PersonService};
 use askama::Template;
+use bilibi_agent_api::page::{Call, PageContracts};
 use bilibi_authz::effective_capabilities;
 use bilibi_database::{Db, Error, Result};
 use bilibi_datetime::{DisplayContext, DisplayPolicy};
 use bilibi_grid::PageViews;
 use bilibi_locale::Locales;
+use bilibi_module_registry::contributions::{PageWrites, Pending, PAGE_WRITES};
 use bilibi_tenancy::Scope;
 use bilibi_ui::{page::*, Html};
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc};
 
 pub const SERVICE: &str = "core/person.pages";
+// Every write these pages make is a Person contract (ADR 01).
+inventory::submit! { bilibi_module_registry::Contribution::new(PAGE_WRITES, SERVICE, bilibi_module_registry::Provenance { module: "core/person", source: file!(), line: line!() }, &PageWrites {
+    service: SERVICE,
+    contracts: &[("create", "core.person.create"), ("save_field", "core.person.update"), ("retire", "core.person.retire")],
+    pending: Pending::None,
+}) }
 #[derive(Clone)]
 pub struct RecordPanel {
     anchor: String,
@@ -27,12 +35,29 @@ pub struct RecordPanel {
 pub struct Pages {
     pub db: Db,
     pub persons: Arc<PersonService>,
+    pub contracts: Arc<PageContracts>,
     pub views: Arc<PageViews>,
     pub display: Arc<DisplayPolicy>,
     pub locales: Arc<Locales>,
     pub person_panels: Vec<RecordPanel>,
 }
 impl Pages {
+    /// One of these pages' write events, as the contract it declared.
+    fn call<'a>(
+        &self,
+        scope: &'a Scope,
+        credential: &'a str,
+        event: &'a str,
+        contract: &'static str,
+    ) -> Call<'a> {
+        Call {
+            scope,
+            credential,
+            service: SERVICE,
+            event,
+            contract,
+        }
+    }
     async fn allowed(&self, scope: &Scope, capability: &str) -> Result<bool> {
         let client = self.db.get().await?;
         Ok(effective_capabilities(&**client, scope)

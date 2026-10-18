@@ -1,8 +1,9 @@
 //! Module-owned live state. Web only owns routing, guards, targeting and transport.
 use crate::{routes, App};
 use axum::extract::ws::{Message, WebSocket};
+use bilibi_base::agent_api::page::PageContracts;
 use bilibi_base::perf::{Finish, Kind, Outcome};
-use bilibi_database::{Error, Result};
+use bilibi_database::{page_write, Error, Result};
 use bilibi_module_registry::contributions::{Access, Embed, EMBEDS};
 use bilibi_security::Scope;
 use bilibi_ui::page::{
@@ -116,9 +117,45 @@ struct Wake {
     target: String,
     change: Option<Change>,
 }
+/// The page-write permit of one live event (ADR 01, `base/agent_api`
+/// `page`): while the owner handles it, a business write its page writes
+/// declaration does not cover is refused. Refresh and params write nothing.
+fn page_event(
+    app: &App,
+    service: &'static str,
+    input: &LiveInput<'_>,
+) -> Result<Option<page_write::Event>> {
+    let LiveInput::Event(value) = input else {
+        return Ok(None);
+    };
+    let name = value
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    let pages: Arc<PageContracts> = app.services.get(bilibi_base::agent_api::page::SERVICE)?;
+    Ok(Some(page_write::Event {
+        service,
+        permit: pages.permit(service, &name),
+        name,
+    }))
+}
+async fn permitted<T>(
+    event: Option<page_write::Event>,
+    update: impl std::future::Future<Output = T>,
+) -> T {
+    match event {
+        Some(event) => page_write::during(event, update).await,
+        None => update.await,
+    }
+}
+
 struct Mounted {
     state: State,
     access: Access,
+    /// The page or panel service, whose page writes declaration permits
+    /// this state's event writes.
+    service: &'static str,
     jobs: JoinSet<()>,
     generation: u64,
 }
@@ -126,6 +163,7 @@ impl Mounted {
     fn new(
         mut state: State,
         access: Access,
+        service: &'static str,
         generation: u64,
         target: &str,
         sender: &mpsc::Sender<Wake>,
@@ -158,6 +196,7 @@ impl Mounted {
         Self {
             state,
             access,
+            service,
             jobs,
             generation,
         }
@@ -283,6 +322,7 @@ impl Session {
         self.page = Some(Mounted::new(
             state,
             bound.route.access,
+            bound.route.service,
             self.generation,
             "page",
             &self.sender,
@@ -361,6 +401,7 @@ impl Session {
             let mounted = Mounted::new(
                 state,
                 slot.embed.access,
+                slot.embed.service,
                 self.generation,
                 &slot.id,
                 &self.sender,
@@ -384,17 +425,17 @@ impl Session {
     ) -> Result<Vec<Value>> {
         let scope = self.scope(app, token).await?;
         if target == "page" {
-            let mut body = self
-                .page
-                .as_mut()
-                .ok_or(Error::Invalid)?
-                .state
-                .update(LiveRequest {
+            let page = self.page.as_mut().ok_or(Error::Invalid)?;
+            let event = page_event(app, page.service, &input)?;
+            let mut body = permitted(
+                event,
+                page.state.update(LiveRequest {
                     scope: &scope,
                     credential: token,
                     input,
-                })
-                .await?;
+                }),
+            )
+            .await?;
             hold_flash(app, token, &mut body);
             // A page may move only among its own routes; any other path is a
             // module bug, not a navigation.
@@ -415,15 +456,16 @@ impl Session {
             None => self.panels.get_mut(target).ok_or(Error::Invalid)?,
         };
         routes::check_access(app, panel.mounted.access, Some(token)).await?;
-        let mut body = panel
-            .mounted
-            .state
-            .update(LiveRequest {
+        let event = page_event(app, panel.mounted.service, &input)?;
+        let mut body = permitted(
+            event,
+            panel.mounted.state.update(LiveRequest {
                 scope: &scope,
                 credential: token,
                 input,
-            })
-            .await?;
+            }),
+        )
+        .await?;
         hold_flash(app, token, &mut body);
         let owns_query = self.merge_panel_query(target, &body.query)?;
         let mut message = fragment(target, body);
@@ -568,8 +610,14 @@ impl Session {
                         .await?
                         .ok_or(Error::Invalid)?;
                     self.generation += 1;
-                    let mounted =
-                        Mounted::new(state, embed.access, self.generation, &id, &self.sender);
+                    let mounted = Mounted::new(
+                        state,
+                        embed.access,
+                        embed.service,
+                        self.generation,
+                        &id,
+                        &self.sender,
+                    );
                     self.panels.insert(id.clone(), Panel { spec, mounted });
                 }
                 let panel = self.panels.get_mut(&id).ok_or(Error::Internal)?;

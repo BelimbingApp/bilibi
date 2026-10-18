@@ -10,8 +10,12 @@
 //! starts at, and `replay` acts on that held request, never on a client value.
 //! The facade rechecks `admin.events.replay` and the tenant's step-up policy
 //! in its own transaction; a refusal is a flash, a step-up the host's prompt.
-use crate::{Events, ReplayFrom, SubscriberState, REPLAY};
+use crate::{Events, SubscriberState, REPLAY};
 use askama::Template;
+use bilibi_agent_api::{
+    page::{Call, PageContracts},
+    Error as ContractError,
+};
 use bilibi_authz::effective_capabilities;
 use bilibi_database::{Db, Error, Result};
 use bilibi_datetime::{DisplayContext, DisplayPolicy, Format, Precision};
@@ -29,7 +33,7 @@ use bilibi_ui::{
     ToolbarControl, NO_FLASH,
 };
 use jiff::Timestamp;
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::{
     collections::HashMap,
     sync::{Arc, LazyLock},
@@ -69,6 +73,7 @@ fn builtins() -> Vec<BuiltinColumn> {
 pub(crate) struct Pages {
     pub db: Db,
     pub events: Arc<Events>,
+    pub contracts: Arc<PageContracts>,
     pub display: Arc<DisplayPolicy>,
     pub locales: Arc<Locales>,
 }
@@ -166,7 +171,7 @@ impl Index {
         self.flash = Some((kind, message.into()));
     }
 
-    async fn event(&mut self, scope: &Scope, value: &Value) -> Result<()> {
+    async fn event(&mut self, scope: &Scope, credential: &str, value: &Value) -> Result<()> {
         let get = |key: &str| value.get(key).and_then(Value::as_str);
         match get("type").ok_or(Error::Invalid)? {
             "filters" => self
@@ -207,32 +212,49 @@ impl Index {
                     return Ok(());
                 };
                 let key = request.subscriber;
+                // The `base.events.replay` contract, as agents call it.
+                let call = Call {
+                    scope,
+                    credential,
+                    service: crate::PAGES,
+                    event: "replay",
+                    contract: "base.events.replay",
+                };
                 let outcome = self
                     .pages
-                    .events
-                    .replay(scope, &key, ReplayFrom::Event(request.from), 1000)
-                    .await;
+                    .contracts
+                    .submit(
+                        &call,
+                        json!({"subscriber": key, "from_event": request.from, "limit": 1000}),
+                    )
+                    .await
+                    .map(|result| {
+                        let replay = &result["result"];
+                        let count = |field: &str| replay[field].as_i64().unwrap_or_default();
+                        (count("pending"), count("created"), replay["next"].as_i64())
+                    });
                 match outcome {
-                    Ok(replay) if replay.pending == 0 => self.flash(
+                    Ok((0, _, _)) => self.flash(
                         StatusKind::Info,
                         format!("Nothing to replay: every event from #{} on is already delivered to {key}.", request.from),
                     ),
-                    Ok(replay) => {
+                    Ok((pending, created, next)) => {
                         let mut message = format!(
-                            "{} events handed to {key} ({} new deliveries). Delivery runs in the background.",
-                            replay.pending, replay.created
+                            "{pending} events handed to {key} ({created} new deliveries). Delivery runs in the background."
                         );
-                        if let Some(next) = replay.next {
+                        if let Some(next) = next {
                             message.push_str(&format!(" More events remain from #{next}: replay again."));
                         }
                         self.flash(StatusKind::Success, message);
                     }
                     // Base Step-up: the host sends the browser to confirm and back.
-                    Err(error @ (Error::StepUpRequired { .. } | Error::Unauthorized)) => {
-                        return Err(error)
+                    Err(ContractError::Backend(
+                        error @ (Error::StepUpRequired { .. } | Error::Unauthorized),
+                    )) => return Err(error),
+                    Err(ContractError::Forbidden | ContractError::Backend(Error::Forbidden)) => {
+                        self.flash(StatusKind::Error, DENIED)
                     }
-                    Err(Error::Forbidden) => self.flash(StatusKind::Error, DENIED),
-                    Err(Error::NotFound) => self.flash(
+                    Err(ContractError::InvalidInput(fields)) if fields.contains_key("subscriber") => self.flash(
                         StatusKind::Error,
                         format!("{key} is not mounted, so nothing was replayed."),
                     ),
@@ -462,7 +484,9 @@ impl LiveState<Scope, Error> for Index {
             match request.input {
                 LiveInput::Refresh => {}
                 LiveInput::Params(values) => self.state = parse(values)?,
-                LiveInput::Event(value) => self.event(request.scope, value).await?,
+                LiveInput::Event(value) => {
+                    self.event(request.scope, request.credential, value).await?
+                }
             }
             let html = self.render(request.scope).await?;
             Ok(LiveBody {

@@ -38,12 +38,14 @@ overrides the dialog counted that are still overridden.
 
 "Show stored value" appears only for an actor holding
 `base.settings.secret.view` by name (`authz::explicitly_granted`; `grant_all`
-does not count) when the key is configured. The actor re-enters their own
-password (`tenancy::Authentication::confirm_password`, bound by Core User);
-five failures a minute per account are throttled in-process. Every attempt,
-including a forged request, records a retained `settings.secret.reveal` audit
-action without the value, and a reveal whose audit row cannot be written shows
-nothing. The value reaches the browser only as a `LiveBody.events` push to the
+does not count) when the key is configured. Showing it is the Base Step-up
+operation `base.settings_editor.secret.reveal` ("Show a stored secret
+setting"), on the installation floor; it replaced the password prompt. When
+the session owes a check, the host sends the browser to confirm and back, and
+the person clicks again; the authenticator locks repeated failures. Every
+attempt, including a forged request, records a retained
+`settings.secret.reveal` audit action without the value, and a reveal whose
+audit row cannot be written shows nothing. The value reaches the browser only as a `LiveBody.events` push to the
 `SecretStored` hook (`bilibi:secret:reveal`), which re-masks it after the
 definition's `reveal_duration_ms`.
 

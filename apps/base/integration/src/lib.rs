@@ -709,3 +709,11 @@ bilibi_menu::contribute!(
     .requires(bilibi_menu::Requirement::Capability(LIST))
     .order(45)
 );
+
+// ADR 01 gap, listed so it stays visible: these pages still write through
+// the facade rather than an operation contract (`base/agent_api` page).
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::PAGE_WRITES, "base/integration.pages", bilibi_module_registry::Provenance { module: "base/integration", source: file!(), line: line!() }, &bilibi_module_registry::contributions::PageWrites {
+    service: "base/integration.pages",
+    contracts: &[],
+    pending: bilibi_module_registry::contributions::Pending::Every { reason: "Exchange actions write through the Integration facade; no contract yet." },
+}) }

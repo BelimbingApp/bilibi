@@ -164,3 +164,11 @@ bilibi_authz::VOCABULARY,"workflow.vocabulary",bilibi_module_registry::Provenanc
     capabilities:&[bilibi_authz::CapabilityDefinition::platform("admin.workflow.definition.manage"),
         bilibi_authz::CapabilityDefinition::tenant(web::APPROVE)],
     roles:&[],system_principals:&[]}) }
+
+// ADR 01 gap, listed so it stays visible: these pages still write through
+// the facade rather than an operation contract (`base/agent_api` page).
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::PAGE_WRITES, "base/workflow.pages", bilibi_module_registry::Provenance { module: "base/workflow", source: file!(), line: line!() }, &bilibi_module_registry::contributions::PageWrites {
+    service: "base/workflow.pages",
+    contracts: &[],
+    pending: bilibi_module_registry::contributions::Pending::Every { reason: "The workflow reference page drives the Workflow engine directly; no contract yet." },
+}) }

@@ -80,11 +80,9 @@ Controls:
   The routes are `Access::StepUp { operation, inner: &Access::Owner }`: outside
   development (`BILIBI_ENV`) the host sends the owner to confirm first unless
   the session's window holds, and an open page leaves for the prompt when the
-  window runs out. In every
-  environment each mounted page then asks for the owner's password
-  (`Authentication::confirm_password`, the stored-secret reveal's re-proof,
-  five failures a minute). The first paint carries no data.
-- **Audit.** `system.database_tables.step_up` records each attempt and
+  window runs out. The host re-admits the step-up on every live event. The
+  page no longer asks for a password of its own.
+- **Audit.** Base Step-up records each check (`step_up.*`) and
   `system.database_tables.viewed` each distinct view (table, tab, page, page
   size, sort, whether a search or which filter column was used). Search text,
   filter values and row values are never recorded; a view whose record cannot

@@ -22,7 +22,7 @@ pub const GLOBAL_MANAGE: &str = "base.settings.global.manage";
 pub const COMPANY_MANAGE: &str = "base.settings.company.manage";
 pub const USER_MANAGE: &str = "base.settings.user.manage";
 pub const SUPPORT_OVERRIDE_MANAGE: &str = "base.settings.support-override.manage";
-/// Shows one stored encrypted value after reauthentication. Granted by name
+/// Shows one stored encrypted value after Base Step-up. Granted by name
 /// only: a `grant_all` role does not confer it.
 pub const SECRET_VIEW: &str = "base.settings.secret.view";
 
@@ -66,17 +66,24 @@ bilibi_menu::contribute!(
 
 inventory::submit! {
     Module { id: "base/settings_editor", layer: bilibi_module_registry::Layer::Base,
-        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/audit", "base/settings", "base/ui", "base/menu"],
+        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/audit", "base/settings", "base/step_up", "base/ui", "base/menu"],
         migrations: &[],
         services: &[Service { id: "base/settings_editor.pages", factory: |services| {
             Ok(Arc::new(bilibi_ui::page::PageService::<bilibi_tenancy::Scope, Error>(Arc::new(web::Pages::new(web::Core {
                 db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
                 settings: services.get("base/settings.store")?,
                 boundary: services.get("base/database.mutations")?,
-                authentication: services.get("base/tenancy.authentication")?,
                 parties: services.get("base/tenancy.parties")?,
-                throttle: reveal::Throttle::default(),
+                step_up: services.get(bilibi_step_up::SERVICE)?,
             })))))
         } }],
     }
 }
+
+// ADR 01 gap, listed so it stays visible: these pages still write through
+// the facade rather than an operation contract (`base/agent_api` page).
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::PAGE_WRITES, "base/settings_editor.pages", bilibi_module_registry::Provenance { module: "base/settings_editor", source: file!(), line: line!() }, &bilibi_module_registry::contributions::PageWrites {
+    service: "base/settings_editor.pages",
+    contracts: &[],
+    pending: bilibi_module_registry::contributions::Pending::Every { reason: "Saving and restoring settings write through the Settings facade; no contract yet." },
+}) }

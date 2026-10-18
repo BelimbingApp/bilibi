@@ -10,10 +10,15 @@ use crate::{
     OrganisationId, PersonId, Search,
 };
 use askama::Template;
+use bilibi_agent_api::{
+    page::{Call, PageContracts},
+    Error as ContractError,
+};
 use bilibi_authz::effective_capabilities;
 use bilibi_database::{Db, Error, Result};
 use bilibi_datetime::{DisplayContext, DisplayPolicy};
 use bilibi_locale::Locales;
+use bilibi_module_registry::contributions::{PageWrites, Pending, PAGE_WRITES};
 use bilibi_principal_directory::{PrincipalDirectory, PrincipalKind, PrincipalRef, Query};
 use bilibi_tenancy::{PartyProofs, Scope};
 use bilibi_ui::{
@@ -26,13 +31,19 @@ use bilibi_ui::{
     InputKind, ListColumns, ListSpec, ListState, Modal, Pagination, Restricted, RestrictedField,
     SectionHeading, SortDir, TableEmpty, ToolbarControl,
 };
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, HashMap},
     sync::{Arc, LazyLock},
 };
 
 pub const SERVICE: &str = "core/affiliation.pages";
+// Every write the panel makes is an Affiliation contract (ADR 01).
+inventory::submit! { bilibi_module_registry::Contribution::new(PAGE_WRITES, SERVICE, bilibi_module_registry::Provenance { module: "core/affiliation", source: file!(), line: line!() }, &PageWrites {
+    service: SERVICE,
+    contracts: &[("add_affiliation", "core.affiliation.create"), ("save_field", "core.affiliation.update"), ("end_affiliation", "core.affiliation.end"), ("unlink", "core.affiliation.unlink")],
+    pending: Pending::None,
+}) }
 const SIZES: [u64; 4] = [25, 50, 100, 300];
 /// The most rows a panel reads before filtering in memory, as Bilimbi's
 /// company employees panel lists every employee and pages the result.
@@ -67,6 +78,7 @@ static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
 pub struct Pages {
     pub db: Db,
     pub affiliations: Arc<AffiliationService>,
+    pub contracts: Arc<PageContracts>,
     pub proofs: Arc<PartyProofs>,
     pub directory: Arc<PrincipalDirectory>,
     pub display: Arc<DisplayPolicy>,
@@ -906,8 +918,15 @@ impl Panel {
             dates: dates?,
         })
     }
-    async fn handle(&mut self, scope: &Scope, value: &Value) -> Result<()> {
+    async fn handle(&mut self, scope: &Scope, credential: &str, value: &Value) -> Result<()> {
         let get = |key: &str| value.get(key).and_then(Value::as_str).unwrap_or("");
+        let call = |event: &'static str, contract: &'static str| Call {
+            scope,
+            credential,
+            service: SERVICE,
+            event,
+            contract,
+        };
         match event(value)? {
             "filters" => self
                 .list
@@ -942,24 +961,35 @@ impl Panel {
                 }
                 let posted = params::form_values(value, "affiliation");
                 if let Some(input) = self.add_input(&posted) {
-                    match self.pages.affiliations.create(scope, &input).await {
+                    let mut facts = facts_json(&input);
+                    facts.insert("person_id".into(), json!(input.person_id.get()));
+                    facts.insert("organisation_id".into(), json!(input.organisation_id.get()));
+                    let result = self
+                        .pages
+                        .contracts
+                        .submit(
+                            &call("add_affiliation", "core.affiliation.create"),
+                            Value::Object(facts),
+                        )
+                        .await;
+                    match result {
                         Ok(_) => {
                             self.adding = false;
                             self.form.clear();
                             self.notice = "Affiliation added.".into();
                         }
-                        Err(Error::Unauthorized) => return Err(Error::Unauthorized),
-                        Err(Error::Invalid) => {
+                        Err(ContractError::Backend(error @ (Error::Unauthorized | Error::StepUpRequired { .. }))) => return Err(error),
+                        Err(ContractError::InvalidInput(_)) => {
                             self.form_notice = "The title, work contacts or dates are not accepted. Check the values and try again.".into()
                         }
-                        Err(Error::NotFound) => {
+                        Err(ContractError::NotFound | ContractError::Backend(Error::NotFound)) => {
                             let (party, _) = self.host.party_column();
                             self.errors.insert(
                                 format!("{party}_id"),
                                 format!("is not a live {party} of this workspace"),
                             );
                         }
-                        Err(Error::Forbidden) => {
+                        Err(ContractError::Forbidden | ContractError::Backend(Error::Forbidden)) => {
                             self.form_notice = "The affiliation was not added: you may not add it, a work contact is hidden from you, or the company or person refuses new links.".into()
                         }
                         Err(_) => {
@@ -1015,16 +1045,15 @@ impl Panel {
                 let status = match shaped {
                     Err(reason) => CommitStatus::refusal(field, submitted, &[reason]),
                     Ok(()) => {
+                        let mut facts = facts_json(&input);
+                        facts.insert("affiliation_id".into(), json!(current.id.get()));
+                        facts.insert("version".into(), json!(version));
                         let result = self
                             .pages
-                            .affiliations
-                            .update(
-                                scope,
-                                current.id,
-                                &crate::Update {
-                                    version,
-                                    affiliation: input,
-                                },
+                            .contracts
+                            .submit(
+                                &call("save_field", "core.affiliation.update"),
+                                Value::Object(facts),
                             )
                             .await;
                         let masked = self
@@ -1038,18 +1067,27 @@ impl Panel {
                         let echoed = if masked { "" } else { submitted };
                         match result {
                             Ok(_) => CommitStatus::Saved,
-                            Err(Error::Unauthorized) => return Err(Error::Unauthorized),
-                            Err(Error::Forbidden) => {
+                            Err(ContractError::Backend(
+                                error @ (Error::Unauthorized | Error::StepUpRequired { .. }),
+                            )) => return Err(error),
+                            Err(
+                                ContractError::Forbidden | ContractError::Backend(Error::Forbidden),
+                            ) => {
                                 self.notice = "You do not have permission to edit this affiliation, or the field is hidden from you.".into();
                                 self.statuses.clear_saved();
                                 CommitStatus::Error(self.notice.clone())
                             }
-                            Err(Error::Invalid) => CommitStatus::refusal(
-                                field,
-                                echoed,
-                                &["is not in the accepted shape"],
-                            ),
-                            Err(Error::Conflict) => CommitStatus::refusal(
+                            Err(error)
+                                if !changed(&error)
+                                    && matches!(error, ContractError::InvalidInput(_)) =>
+                            {
+                                CommitStatus::refusal(
+                                    field,
+                                    echoed,
+                                    &["is not in the accepted shape"],
+                                )
+                            }
+                            Err(error) if changed(&error) => CommitStatus::refusal(
                                 field,
                                 echoed,
                                 &["has changed since this edit began; reload before trying again"],
@@ -1093,23 +1131,24 @@ impl Panel {
                     pending.error = "must be a YYYY-MM-DD date".into();
                     return Ok(());
                 };
+                let input = json!({"affiliation_id": pending.id.get(), "version": pending.version, "effective_to": on.as_str()});
                 match self
                     .pages
-                    .affiliations
-                    .end(scope, pending.id, pending.version, on)
+                    .contracts
+                    .submit(&call("end_affiliation", "core.affiliation.end"), input)
                     .await
                 {
                     Ok(_) => {
                         self.pending_end = None;
                         self.notice = "Affiliation ended. The dated record is kept.".into();
                     }
-                    Err(Error::Unauthorized) => return Err(Error::Unauthorized),
-                    Err(Error::Invalid) => {
-                        pending.error = "must be on or after the from date".into()
-                    }
-                    Err(Error::Conflict) => {
+                    Err(ContractError::Backend(error @ (Error::Unauthorized | Error::StepUpRequired { .. }))) => return Err(error),
+                    Err(error) if changed(&error) => {
                         pending.error =
                             "The affiliation changed while this was open. Review it before trying again.".into()
+                    }
+                    Err(ContractError::InvalidInput(_)) => {
+                        pending.error = "must be on or after the from date".into()
                     }
                     Err(_) => {
                         pending.error =
@@ -1140,15 +1179,17 @@ impl Panel {
             "cancel_unlink" => self.pending_unlink = None,
             "unlink" => {
                 if let Some(pending) = self.pending_unlink.take() {
+                    let input =
+                        json!({"affiliation_id": pending.id.get(), "version": pending.version});
                     self.notice = match self
                         .pages
-                        .affiliations
-                        .unlink(scope, pending.id, pending.version)
+                        .contracts
+                        .submit(&call("unlink", "core.affiliation.unlink"), input)
                         .await
                     {
                         Ok(_) => "Affiliation unlinked. The dated record is kept.".into(),
-                        Err(Error::Unauthorized) => return Err(Error::Unauthorized),
-                        Err(Error::Conflict) => "The affiliation changed while confirmation was open. Review it before trying again.".into(),
+                        Err(ContractError::Backend(error @ (Error::Unauthorized | Error::StepUpRequired { .. }))) => return Err(error),
+                        Err(error) if changed(&error) => "The affiliation changed while confirmation was open. Review it before trying again.".into(),
                         Err(_) => "The affiliation was not unlinked. Review your permission and reload before trying again.".into(),
                     };
                 }
@@ -1170,7 +1211,10 @@ impl LiveState<Scope, Error> for Panel {
                     self.list =
                         ListState::parse(values, SPEC.clone()).map_err(|_| Error::Internal)?;
                 }
-                LiveInput::Event(value) => self.handle(request.scope, value).await?,
+                LiveInput::Event(value) => {
+                    self.handle(request.scope, request.credential, value)
+                        .await?
+                }
             }
             self.view(request.scope).await
         })
@@ -1234,3 +1278,35 @@ embed!(
     "core/company",
     "organisation"
 );
+
+/// The facts of a contract input: a hidden or empty contact and an open date
+/// are omitted, which the owner reads as clear or keep (`core.affiliation`).
+fn facts_json(input: &AffiliationInput) -> serde_json::Map<String, Value> {
+    let mut facts = serde_json::Map::new();
+    for (key, value) in [
+        ("title", &input.title),
+        ("work_email", &input.work_email),
+        ("work_phone", &input.work_phone),
+    ] {
+        if let Some(value) = value {
+            facts.insert(key.into(), json!(value));
+        }
+    }
+    for (key, date) in [
+        ("effective_from", input.dates.from()),
+        ("effective_to", input.dates.to()),
+    ] {
+        if let Some(date) = date {
+            facts.insert(key.into(), json!(date.as_str()));
+        }
+    }
+    facts
+}
+/// The owner's stale-version refusal, as its contract words it.
+fn changed(error: &ContractError) -> bool {
+    match error {
+        ContractError::Backend(Error::Conflict) => true,
+        ContractError::InvalidInput(fields) => fields.contains_key("version"),
+        _ => false,
+    }
+}

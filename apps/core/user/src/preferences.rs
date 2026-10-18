@@ -143,7 +143,7 @@ impl UserService {
             "theme" if THEMES.contains(&value) => {
                 let mut tx = self
                     .mutations
-                    .begin(&mut client, scope.mutation_context("user.preference.theme"))
+                    .begin_view_state(&mut client, scope.mutation_context("user.preference.theme"))
                     .await?;
                 if value == "system" {
                     self.settings
@@ -159,7 +159,7 @@ impl UserService {
             "timezone" => {
                 let mut tx = self
                     .mutations
-                    .begin(
+                    .begin_view_state(
                         &mut client,
                         scope.mutation_context("user.preference.timezone"),
                     )
@@ -174,7 +174,7 @@ impl UserService {
             "locale" if value.is_empty() || bilibi_locale::supports(value) => {
                 let mut tx = self
                     .mutations
-                    .begin(
+                    .begin_view_state(
                         &mut client,
                         scope.mutation_context("user.preference.locale"),
                     )
@@ -311,7 +311,7 @@ impl UserService {
         }
         let mut tx = self
             .mutations
-            .begin(&mut client, scope.mutation_context("user.pin.toggle"))
+            .begin_view_state(&mut client, scope.mutation_context("user.pin.toggle"))
             .await?;
         let (tenant, user) = (scope.tenant(), scope.user());
         // Serialize this account's pin writes: two toggles of one page must

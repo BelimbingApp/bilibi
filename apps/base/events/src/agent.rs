@@ -10,8 +10,8 @@
 use crate::{Events, ReplayFrom, SubscriberState, REPLAY, STEP_UP_REPLAY, VIEW};
 use bilibi_agent_api::{
     json::{Data, Output},
-    Definitions, Error as AgentError, Guide, Handler, Operation, OperationClient, OperationFuture,
-    ReadHandler, WriteHandler, DEFINITIONS,
+    Channels, Definitions, Error as AgentError, Guide, Handler, Operation, OperationClient,
+    OperationFuture, ReadHandler, WriteHandler, DEFINITIONS,
 };
 use bilibi_database::{Error, MutationTransaction};
 use bilibi_module_registry::{Contribution, Provenance};
@@ -213,9 +213,9 @@ fn replay_output() -> Value {
 
 inventory::submit! { Contribution::new(DEFINITIONS, "base/events", Provenance { module: "base/events", source: file!(), line: line!() }, &Definitions {
     operations: &[
-        Operation { key:"base.events.subscriber.list", title:"List domain event subscribers", summary:"Every subscriber of this tenant's domain events: whether it is mounted, the last event delivered to it, pending deliveries and the events it missed while unmounted.", keywords:&["event","subscriber","delivery","gap","replay","remount"], capability:VIEW, input:subscribers_schema, output:subscribers_output, handler:Handler::Read(&Read::Subscribers) },
-        Operation { key:"base.events.delivery.list", title:"List domain event deliveries", summary:"This tenant's event deliveries from an event ID on, with attempts and the last failure code.", keywords:&["event","delivery","pending","failure"], capability:VIEW, input:deliveries_schema, output:deliveries_output, handler:Handler::Read(&Read::Deliveries) },
-        Operation { key:"base.events.replay", title:"Replay domain events to a subscriber", summary:"Hand a mounted subscriber the events it has no delivery for, and requeue its pending ones, from an event ID or a time on. Delivered events are skipped, so a repeat does nothing. Step-up: base.events.replay.", keywords:&["event","replay","subscriber","remount","gap","delivery"], capability:REPLAY, input:replay_schema, output:replay_output, handler:Handler::SafeWrite(&Replay) },
+        Operation { key:"base.events.subscriber.list", title:"List domain event subscribers", summary:"Every subscriber of this tenant's domain events: whether it is mounted, the last event delivered to it, pending deliveries and the events it missed while unmounted.", keywords:&["event","subscriber","delivery","gap","replay","remount"], capability:VIEW, input:subscribers_schema, output:subscribers_output, handler:Handler::Read(&Read::Subscribers),channels:Channels::Every,step_up:&[] },
+        Operation { key:"base.events.delivery.list", title:"List domain event deliveries", summary:"This tenant's event deliveries from an event ID on, with attempts and the last failure code.", keywords:&["event","delivery","pending","failure"], capability:VIEW, input:deliveries_schema, output:deliveries_output, handler:Handler::Read(&Read::Deliveries),channels:Channels::Every,step_up:&[] },
+        Operation { key:"base.events.replay", title:"Replay domain events to a subscriber", summary:"Hand a mounted subscriber the events it has no delivery for, and requeue its pending ones, from an event ID or a time on. Delivered events are skipped, so a repeat does nothing. Step-up: base.events.replay.", keywords:&["event","replay","subscriber","remount","gap","delivery"], capability:REPLAY, input:replay_schema, output:replay_output, handler:Handler::SafeWrite(&Replay),channels:Channels::Every,step_up:&[STEP_UP_REPLAY] },
     ],
     guides: &[Guide { key:"base.events", title:"Domain event replay", summary:"Find a subscriber's gap after a remount and close it.", keywords:&["event","replay","remount","gap","subscriber"], capability:VIEW,
         body:"A module in one container reacts to another's facts through domain events. Deliveries are created for the subscribers mounted when an event is recorded, so a subscriber unmounted at that time never receives it. List subscribers with base.events.subscriber.list: missed counts events it has no delivery for and gap_from is where a replay closing the gap starts. Replay with base.events.replay from gap_from (or an earlier event or a time): plan, show the review to the person, then commit. Replaying is safe to repeat; delivered events are skipped. If next is not null, plan again from next. Delivery runs in the background; read the subscriber list again to see it finish. A commit may answer step_up_required; ask the person for the current code from their authenticator app and commit the same plan again with step_up_code." }],

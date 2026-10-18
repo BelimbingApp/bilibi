@@ -11,6 +11,13 @@ query operations; it is an explicit escape hatch, not automatic SQL interception
 Every business write using it must still call `record`. Sessions and migration or
 seed ledgers are lifecycle writes, rather than business mutations.
 
+During a live page event `begin` also asks the page-write check
+([src/page_write.rs](src/page_write.rs)): it refuses a business transaction
+the page's declaration does not cover (the contract, the allowance and the
+host's part are in `apps/base/agent_api/README.md`). A person's own view state
+(list columns, arrangement, theme, pins) opens `begin_view_state` instead,
+which the check leaves alone; never use it for business data.
+
 The authoritative API is [src/transaction.rs](src/transaction.rs). Audit binds its
 `Capture` implementation once through `MutationBoundary::bind_capture` during
 service installation; a readiness check refuses boot, and `begin` refuses a

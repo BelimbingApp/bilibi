@@ -182,6 +182,21 @@ impl Sessions {
     pub async fn check(&self, client: &(impl GenericClient + Sync), token: &str) -> Result<Scope> {
         self.resolve(client, token, false).await
     }
+    /// `check`, then holds the row until `client`'s transaction ends, so a
+    /// sign-out or termination waits for a write the session is making (Agent
+    /// API's page caller). A key-share lock: the session's own step-up and
+    /// activity updates still go ahead.
+    pub async fn hold(&self, client: &(impl GenericClient + Sync), token: &str) -> Result<Scope> {
+        let scope = self.resolve(client, token, false).await?;
+        client
+            .query_opt(
+                "SELECT id FROM sessions WHERE id=$1 AND tenant_id=$2 AND user_id=$3 AND expires_at>clock_timestamp() FOR KEY SHARE",
+                &[&token, &scope.tenant(), &scope.user()],
+            )
+            .await?
+            .ok_or(Error::Unauthorized)?;
+        Ok(scope)
+    }
     /// Call only for authenticated HTTP navigation or accepted user activity.
     /// The conditional update cannot revive an idle or absolutely expired session.
     pub async fn activity(
@@ -582,3 +597,11 @@ inventory::submit! {
         ],
     }
 }
+
+// ADR 01 gap, listed so it stays visible: these pages still write through
+// the facade rather than an operation contract (`base/agent_api` page).
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::PAGE_WRITES, "base/session.pages", bilibi_module_registry::Provenance { module: "base/session", source: file!(), line: line!() }, &bilibi_module_registry::contributions::PageWrites {
+    service: "base/session.pages",
+    contracts: &[],
+    pending: bilibi_module_registry::contributions::Pending::Every { reason: "Ending sessions writes through the Session facade; no contract yet." },
+}) }

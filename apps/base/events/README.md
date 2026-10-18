@@ -150,7 +150,7 @@ Replay closes a subscriber's gap after a remount: it creates a delivery for each
 **Administration › System › Domain Events** (`/system/events`, `admin.events.view`). No Bilimbi counterpart; the list follows Sessions.
 
 - One row per subscriber: status (Up to date, Gap, Not mounted), events it reads, last delivered event and when, pending (and failing), missed (and from which event).
-- A row with a gap has Replay (`admin.events.replay`). It confirms through `ConfirmDialog`, then replays from `gap_from`. The facade rechecks the capability and the step-up policy; a step-up sends the browser to its check and back.
+- A row with a gap has Replay (`admin.events.replay`). It confirms through `ConfirmDialog`, then calls the `base.events.replay` contract from `gap_from` (`PageContracts::submit`, ADR 01). The owner rechecks the capability and the step-up policy; a step-up sends the browser to its check and back.
 
 ### Agent operations
 
