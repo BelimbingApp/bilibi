@@ -50,9 +50,22 @@ fi
 # start-app.sh does on launch, so the running app never queries a schema the
 # database lacks. The seed stays launch-only.
 step 'the database migration' "$root/target/debug/bilibi-web" migrate
+# A stop by name (pkill -f "target/debug/bilibi-web run", pkill bilibi-web,
+# killall bilibi-web, kill $(pgrep -x bilibi-web)) reaches every process whose
+# name or command line matches, so an agent stopping its own test server that
+# way also stopped the developer's app. Serve a copy named bilibi-dev from
+# .local/dev instead: neither its process name nor its command line matches.
+# A hard link is instant and a rebuild writes a new file, so the link never
+# serves a stale build; fall back to a copy where linking fails. Remove the old
+# link first: after a change that rebuilt nothing it already is the same file.
+dev_bin="$root/.local/dev/bilibi-dev"
+mkdir -p "$root/.local/dev"
+rm -f "$dev_bin"
+ln "$root/target/debug/bilibi-web" "$dev_bin" 2>/dev/null \
+    || cp "$root/target/debug/bilibi-web" "$dev_bin"
 echo serve > "$state"
 result=0
-"$root/target/debug/bilibi-web" run || result=$?
+"$dev_bin" run || result=$?
 # Reached only when the app stopped and this script was not killed with it.
 if [[ $result == 143 ]]; then
     not_running 'another process stopped it (SIGTERM), not a file change. To start it again, save any file or run `touch Cargo.toml`, or press Ctrl-C and run ./scripts/start-app.sh again.'
