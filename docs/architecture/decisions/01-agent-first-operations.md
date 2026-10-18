@@ -114,7 +114,7 @@ Verified against the code on 2026-10-17.
 The registry is `base/agent_api` (`apps/base/agent_api/README.md`). It is the partial form of this decision:
 
 - It is **agent-facing only**. Pages do not use it.
-- Only three Core modules contribute operations: `core/company` (companies, relationship roles and relationships), `core/person` and `core/affiliation`.
+- Contributors: three Core modules, `core/company` (companies, relationship roles and relationships), `core/person` and `core/affiliation`; and two Base modules, `base/authz_agent` (roles and grants) and `base/events` (domain event subscribers, deliveries and replay, `apps/base/events/README.md`).
 - No Domain or Extension contributes yet. None is mounted in this repository.
 - Discovery refuses authority-administration capabilities for agents (role, grant and field administration, impersonation, settings, agent-connection management). `apps/base/agent_api/src/reach.rs` and `apps/core/agent_access/src/lib.rs` hold these refusals. This contradicts the decision above, except for impersonation, which stays refused for agents.
 - Writes use the plan service: preview, then a single-use code. Idempotency today is that code plus version fencing in each owner. There is no caller-supplied idempotency key.

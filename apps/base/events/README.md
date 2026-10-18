@@ -124,26 +124,45 @@ delivery row, runs the subscriber, sets the receipt and writes the audit.
   (`Grants::set_system`). Without the grant, deliveries cancel with
   `actor_refused`, the rows stay pending, and a replay delivers them once
   the grant exists.
-- **Mounting.** Deliveries are created for the subscribers mounted when an
-  event is recorded. A subscriber mounted later starts with the next event.
-  An unmounted subscriber's pending rows wait, without holding the job, for
-  a replay once it is mounted again.
+- **Mounting.** Deliveries are created for the subscribers mounted when an event is recorded. An event recorded while a subscriber is unmounted (or before it was first mounted) gets no delivery for it, and its pending rows wait without holding the job. Nothing is replayed automatically: the gap shows on the Domain Events page, and an operator or agent closes it with a replay (Operators).
 
 ## Operators
 
-- `Events::deliveries(client, scope, from_event, pending_only, limit)` lists
-  the scope tenant's deliveries: event, version, subject, key, subscriber,
-  whether it is mounted, attempts, last failure code and receipt time. It
-  needs `admin.events.view`.
-- `Events::replay(scope, subscriber, from_event, limit)` hands the tenant's
-  events from `from_event` on to a mounted subscriber. Use it for a new
-  subscriber or for a delivery whose job ran out of attempts. It enqueues one
-  job per subject, skips events already delivered, and answers how many are
-  now pending and where the next batch starts. It needs
-  `admin.events.replay`.
+Replay closes a subscriber's gap after a remount: it creates a delivery for each event the subscriber has none for and requeues its pending ones. Delivery then runs as usual.
 
-This module owns `base_events` and `base_events_deliveries`. It has no page
-yet.
+| Facade (`Events`) | Answers | Needs |
+| --- | --- | --- |
+| `subscriber_states(client, scope)` | Each subscriber: mounted, events it reads, last delivered event, pending and failing deliveries, missed events (no delivery at all) and `gap_from` | `admin.events.view` |
+| `deliveries(client, scope, from_event, pending_only, limit)` | The tenant's deliveries (1–500 rows) with attempts and the last failure code | `admin.events.view` |
+| `replay_review(client, scope, subscriber, from, limit)` | What a replay would do, writing nothing | `admin.events.replay` |
+| `replay(scope, subscriber, from, limit)` / `replay_in(tx, …)` | The replay, in its own transaction or the caller's | `admin.events.replay`, step-up `base.events.replay` |
+
+- **Gap.** A subscriber's missed events are those of a name it reads with no delivery for it. They are computed when the page or the operation reads them, so a remount shows its gap at once, and boot writes nothing.
+- **Start.** `ReplayFrom::Event(id)` or `ReplayFrom::Time(instant)` (the first event recorded at or after it). Starting earlier is safe.
+- **Idempotent.** A delivery is created only where the subscriber has none (`ON CONFLICT DO NOTHING`) and a delivered event is never handed over again. A replay with nothing to create or requeue writes nothing, not even audit, and asks for no step-up.
+- **Batch.** At most `limit` events (1–1,000) are looked at; `next` names where the following batch starts.
+- **Audit.** One `base/events.replay` change per replay (subscriber, first and last event, deliveries created, pending), attributed to the operator. Each delivery then audits as `domain-events`.
+- **Step-up.** `base.events.replay` is off by default, because a replay hands over only recorded facts and never twice. A tenant turns it on at Administration › Authorization › Two-factor Requirements.
+- **Mounted only.** Replay to an unmounted subscriber is refused (`NotFound`); its pending rows wait for the remount.
+
+### Page
+
+**Administration › System › Domain Events** (`/system/events`, `admin.events.view`). No Bilimbi counterpart; the list follows Sessions.
+
+- One row per subscriber: status (Up to date, Gap, Not mounted), events it reads, last delivered event and when, pending (and failing), missed (and from which event).
+- A row with a gap has Replay (`admin.events.replay`). It confirms through `ConfirmDialog`, then replays from `gap_from`. The facade rechecks the capability and the step-up policy; a step-up sends the browser to its check and back.
+
+### Agent operations
+
+| Key | Kind | Capability |
+| --- | --- | --- |
+| `base.events.subscriber.list` | Read | `admin.events.view` |
+| `base.events.delivery.list` | Read (`from_event`, `pending_only`, `limit`) | `admin.events.view` |
+| `base.events.replay` | Reviewed write (`subscriber`, exactly one of `from_event` or `from_time`, `limit`) | `admin.events.replay`, step-up `base.events.replay` |
+
+The guide `base.events` tells an agent how to find a gap and close it.
+
+This module owns `base_events` and `base_events_deliveries`.
 
 ## Proof
 
@@ -165,6 +184,8 @@ covers:
 - A replay from the first event delivers the earlier receipt, and a second
   replay finds nothing pending.
 - With the subscriber alone, it boots and nothing new is recorded.
+
+The remount case runs on the real containers: mount `bilibi-dom-supply-chain` and `bilibi-dom-finance`, send an order with Finance unmounted, remount, and Domain Events shows `finance/payables.purchase_orders` with a gap; replay it and a bill naming that order line is accepted and posts.
 
 Every composition also prints the boot refusals of a same-container
 subscriber and of a malformed event name.

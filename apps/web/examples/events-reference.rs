@@ -250,7 +250,15 @@ impl Proof {
         Ok(())
     }
     async fn replay(&self) -> Result<()> {
-        let replay = self.events.replay(&self.admin, SUBSCRIBER, 1, 1000).await?;
+        let replay = self
+            .events
+            .replay(
+                &self.admin,
+                SUBSCRIBER,
+                bilibi_base::events::ReplayFrom::Event(1),
+                1000,
+            )
+            .await?;
         println!("replay {SUBSCRIBER} from event 1: {replay:?}");
         self.until("replayed deliveries", |db| async move {
             Ok(Self::pending(db).await? == 0)

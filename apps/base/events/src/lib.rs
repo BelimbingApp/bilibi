@@ -11,10 +11,12 @@
 //! subject, and each subscriber's effects commit with its receipt and audit
 //! in one transaction. Nothing is broadcast in process: the outbox rows are
 //! the source of truth.
+mod agent;
 mod catalog;
 mod delivery;
 mod operator;
-pub use operator::{DeliveryState, Replay};
+mod web;
+pub use operator::{Delivered, DeliveryState, Replay, ReplayFrom, SubscriberState};
 
 use bilibi_authz::{
     CapabilityDefinition, SystemPrincipalDefinition, SystemScope, VocabularyContribution,
@@ -22,7 +24,9 @@ use bilibi_authz::{
 };
 use bilibi_database::{Change, Db, Error, MutationBoundary, MutationTransaction, Result};
 use bilibi_module_registry::{
-    Catalog, Contribution, Layer, Module, Provenance, Result as RegistryResult, Service,
+    contributions::{Access, Method, Route, ROUTES},
+    Catalog, Contribution, Layer, Module, Provenance, RegistryError, Result as RegistryResult,
+    Service,
 };
 use bilibi_queue::{
     execution::{HandlerBinding, HandlerService, HANDLERS},
@@ -49,6 +53,9 @@ pub const DELIVER: &str = "events.delivery.deliver";
 pub const VIEW: &str = "admin.events.view";
 /// Replay events to a subscriber in the operator's tenant.
 pub const REPLAY: &str = "admin.events.replay";
+/// The Base Step-up operation a replay asks for; off unless the tenant turns
+/// it on, since a replay hands over only recorded facts and never twice.
+pub const STEP_UP_REPLAY: &str = "base.events.replay";
 const WORKER: &str = "base/events-delivery";
 const DELIVERY: &str = "base/events.delivery";
 
@@ -135,6 +142,7 @@ pub struct Events {
     db: Db,
     boundary: Arc<MutationBoundary>,
     queue: Arc<Queue>,
+    step_up: Arc<bilibi_step_up::StepUp>,
     /// Event name → (publisher module, current version).
     types: BTreeMap<&'static str, (&'static str, u16)>,
     subscribers: BTreeMap<&'static str, &'static Subscriber>,
@@ -262,19 +270,53 @@ fn build(services: &bilibi_module_registry::Services) -> RegistryResult<Events> 
         db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
         boundary: services.get("base/database.mutations")?,
         queue: services.get("base/queue.store")?,
+        step_up: services.get(bilibi_step_up::SERVICE)?,
         types,
         subscribers,
     })
 }
+bilibi_step_up::declare!(
+    "base/events",
+    bilibi_step_up::Operation::new(STEP_UP_REPLAY, "Replay domain events to a subscriber")
+        .off_by_default()
+);
+inventory::submit! { Contribution::new(ROUTES, "base/events.index", provenance!(), &Route {
+    method: Method::Get, path: web::PATH, service: PAGES, operation: "index",
+    access: Access::Capability(VIEW), framed: true,
+}) }
+bilibi_menu::contribute!(
+    "base/events",
+    bilibi_menu::MenuItem::page("admin.system.events", "Domain Events", web::PATH)
+        .icon("arrow-path")
+        .under("admin.system")
+        .requires(bilibi_menu::Requirement::Capability(VIEW))
+        .order(20)
+);
+const PAGES: &str = "base/events.pages";
+
 inventory::submit! {
     Module {
         id: "base/events", layer: Layer::Base,
-        dependencies: &["base/module_registry", "base/database", "base/audit", "base/tenancy", "base/authz", "base/queue"],
+        dependencies: &["base/module_registry", "base/database", "base/audit", "base/tenancy", "base/authz", "base/queue", "base/step_up", "base/agent_api", "base/ui", "base/menu", "base/datetime", "base/locale"],
         migrations: &[("base-events-001", include_str!("../migrations/001-events.sql"))],
         services: &[
             Service { id: SERVICE, factory: |services| Ok(Arc::new(build(services)?)) },
             Service { id: DELIVERY, factory: |services| {
                 Ok(Arc::new(HandlerService(Arc::new(delivery::Delivery { events: services.get(SERVICE)? }))))
+            } },
+            Service { id: "base/events.agent", factory: |services| {
+                if !agent::bind(services.get(SERVICE)?) {
+                    return Err(RegistryError::Service("duplicate events agent binding".into()));
+                }
+                Ok(Arc::new(()))
+            } },
+            Service { id: PAGES, factory: |services| {
+                Ok(Arc::new(bilibi_ui::page::PageService::<bilibi_tenancy::Scope, Error>(Arc::new(web::Pages {
+                    db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
+                    events: services.get(SERVICE)?,
+                    display: services.get("base/datetime.display")?,
+                    locales: services.get("base/locale.locales")?,
+                }))))
             } },
         ],
     }

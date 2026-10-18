@@ -6,12 +6,20 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+askama.workspace = true
+bilibi-agent-api.workspace = true
 bilibi-database.workspace = true
+bilibi-datetime.workspace = true
+bilibi-locale.workspace = true
+bilibi-menu.workspace = true
 bilibi-module-registry.workspace = true
 bilibi-authz = { path = "../authz" }
+bilibi-step-up.workspace = true
 bilibi-tenancy = { path = "../tenancy" }
 bilibi-queue = { path = "../queue" }
+bilibi-ui.workspace = true
 inventory.workspace = true
+jiff = "0.2.38"
 serde_json.workspace = true
 tokio.workspace = true
 tokio-postgres.workspace = true
