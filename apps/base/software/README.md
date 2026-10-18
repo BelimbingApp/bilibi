@@ -55,7 +55,7 @@ All six go through Agent API (`apps/base/agent_api/README.md`): reads are called
 | `base.software.catalogue` | read | none | the catalogue, with the Platform versions each Domain release was tested on; or `available: false` and why |
 | `base.software.change` | write, Dev only | `domains` (the full wanted set; a mounted Domain left out is removed), optional `platform`, `plugins`, `switch` | the change list (add, update, downgrade, remove, keep; plug-ins switched on or off), whether every version was tested together on that Platform, warnings, a rough estimate, what happens, the steps |
 | `base.software.install` | write, Staging and Production | `release` (a number the source reports as tested), optional `switch` | the source, the checks the installer makes, the pause |
-| `base.software.undo` | write | optional `job` | which release it goes back to, and whether the backup is restored and later entries lost (`loss` names the backup's `backup_at`: the job result's, or the `backup` step's start; no count, since a count changes with every write and a confirmation is bound to the review. the Software page counts the audited changes since `backup_at` with `Software::undo_loss` only while an Undo review is open; the committed job's review records `lost_at_commit`: the same server-wide counts the undo result carries) |
+| `base.software.undo` | write | optional `job` | which release it goes back to, and whether the backup is restored and later entries lost. `loss` names the backup's `backup_at` (the job result's, or the `backup` step's start) and carries no count: a count changes with every write, and a confirmation is bound to the review. The Software page counts the audited changes since `backup_at` with `Software::undo_loss`, only while an Undo review is open. The committed job's review records the count at commit as `lost_at_commit`, the same server-wide counts the undo result carries |
 | `base.software.cancel` | write, no 2FA | optional `job` | removed from the queue, or asked to stop before the pause; refused once the pause started |
 
 Rules the reviews enforce, each as a field error that says what to do:
@@ -127,10 +127,10 @@ The builder (below, Dev) runs under the `bilibi-build` user as the instance's wo
    | `release` | the release number put in service |
    | `previous_release` | the one it replaced, kept for Undo |
    | `migrated` | `true` when the database changed shape; Undo then restores the backup and says what is lost |
-   | `backup`, `backup_at` | where the backup is and when (UTC, `YYYY-MM-DDTHH:MM:SSZ`) it was taken; the undo review counts what was entered since |
+   | `backup`, `backup_at` | where the backup is and when (UTC, `YYYY-MM-DDTHH:MM:SSZ`) it was taken; `Software::undo_loss` counts what was entered since |
    | `platform`, `domains`, `extensions`, `changes` | what the release in service is made of and what differs from the release it replaced; the installer reads them from the release's own `status`, so Done can list what changed (`apps/installer/README.md`, "How it talks to the page") |
    | `pause_seconds` | how long the instance was paused; the message for the person names it |
-   | `lost` | an undo that restored a backup writes the counts only (`since`, `changes`, `by_kind`). `status` adds the sentence as `loss`, from the same definition the undo review uses |
+   | `lost` | an undo that restored a backup writes the counts only (`since`, `changes`, `by_kind`). `status` adds the sentence as `loss` (`review::loss_sentence`) |
    | `message` | one plain sentence for the person |
 
    A `change` job's result should also list the Domains and versions the new program holds, so `status` can show them before the program restarts. The installer's result also names the source and its checksum (`apps/installer/README.md`, "How it talks to the page").
