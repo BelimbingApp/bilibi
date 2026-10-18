@@ -24,7 +24,7 @@ You may already have questions: what if the new release does not work, what does
 
 | Step | What we do | If it fails |
 | --- | --- | --- |
-| **Copy the release and check it** | Read the release from the source instance's folder on this machine (`/opt/bilibi/dev/releases/3`), check its checksum, check that the source still runs it and answers, check there is disk for the program and a backup, copy it into the next number here (`releases/2`), check the copy, and run its `status` to prove it runs on this server. | Nothing changed. The instance never paused. The message says what to fix. |
+| **Check the release and copy it into place** | Find the release: the source instance's folder on this machine (`/opt/bilibi/dev/releases/3`), the folder the program downloaded it into from a source on another machine (`incoming/job-<n>/`), or an uploaded release file (`incoming/upload-<n>/`). Check its checksum; check it was built for this kind of server (a Linux program for this processor, and a system library this server has); for a sibling, check that it still runs the release and answers; check it is not already the program in service; check there is disk for the program and a backup. Copy it into the next number here (`releases/2`), check the copy, run its `status` to prove it runs on this server, and remove it from `incoming/`. | Nothing changed. The instance never paused. The message says what to fix. |
 | **Back up the database** (the pause starts) | Stop the service. Caddy shows the waiting page from here. Dump the database with PostgreSQL's own `pg_dump` into `backups/job-<n>/`. | The service is started again. Nothing changed. |
 | **Update the database** | Run the new program's `migrate` and then its production seeds, as one step. `migrate` is one transaction: all of it or none of it. The step is judged on the migration ledger (the table that lists the migrations applied): we count it before and after. | If the ledger did not grow, nothing changed: the previous release is started again. If it grew (`migrate` committed and a seed then failed), the database has changed shape, so the step goes back like a failed check: restore the backup, then start the previous release. |
 | **Switch to the new program** | Point `releases/current` at the new release (the instance's `current` is a fixed link to it) and start the service. | **Switch back by itself.** See below. |
@@ -36,7 +36,7 @@ When the switch or the check fails, or the database update failed after it chang
 
 If the backup cannot be restored, the job ends `failed` with the service **left stopped** and a message that names the dump to restore by hand. It does not try again by itself.
 
-A release is only copied from an instance on the same machine for now. Downloading one from another machine is a later piece; the step says so plainly when the source is an address.
+How a release reaches this machine from another one, with the pairing key and the release file, is the program's side: `apps/base/software/README.md`, "Release transport". An install from another machine has a **Download the release from the source** step before this one, which the program carries out; the installer leaves such a job alone until that step is done.
 
 ### "Switch as soon as it is ready" or "ask me first"
 
@@ -134,6 +134,7 @@ It needs `DATABASE_URL` and `BIND_ADDR` from that file, the sudo rule from `scri
 ## Caveats
 
 - **The first release is not its job.** A fresh instance has no program to queue a job in; `install-server.sh release` puts the first release in service.
+- **Plug-ins travel with the release.** A `plugins/` folder in the release is copied with it, file by file; links are left out.
 - **The database tools must match the cluster.** `pg_dump` and `pg_restore` come with `postgresql-client-18`, which `install-server.sh create` installs.
 - **A restore keeps the software's own audit trail, and nothing else entered since.** The history file carries the `software.*` and `step_up.*` actions and the `base/software.job` changes written after the backup, so the owner's 2FA check and the Undo's own queue record survive. A carried job whose recorded outcome is not in the restored audit trail is marked unsettled, and the app records it again. Every other row written after the backup is the loss the Undo counts and states before the owner confirms.
 - **A restore puts back the `public` schema only.** Bilibi keeps everything there. The job history is carried across into whatever shape the restored release gives those tables; a column the older release lacks is dropped from the carried rows. The installer reads only the job columns that exist from the first `base/software` migration on, so an older dump does not break its queries.

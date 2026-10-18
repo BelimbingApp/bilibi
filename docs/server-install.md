@@ -42,7 +42,8 @@ Each instance lives in one folder:
     releases/current -> 2        the release in service; the installer moves this link
     current -> releases/current  fixed, so the service always starts current/bilibi-web
     backups/job-<n>/  the database backup the installer took before job <n> changed anything
-    data/             the only folder the running program may write: media/ uploads, mailbox/ outgoing mail
+    incoming/         a release on its way in: downloaded from the source or uploaded as a file, until the installer copies it
+    data/             the folder the running program writes: media/ uploads, mailbox/ outgoing mail
     site/waiting.html the page Caddy shows while the service is stopped
   dev/                the same, for Dev
   build/              home of bilibi-build: bin/bilibi-installer; on Dev the Rust toolchain (.cargo, .rustup), the Platform
@@ -53,8 +54,8 @@ Two system users share the work, so the program that serves pages can never rewr
 
 | User | Runs | Owns |
 | --- | --- | --- |
-| `bilibi` | the service `bilibi@<instance>` | `data/` only; it can read `releases/` and `env` |
-| `bilibi-build` | the worker `bilibi-worker@<instance>` (builds on Dev) and the installer `bilibi-installer@<instance>`: put releases into service | `releases/`, `backups/`, `/opt/bilibi/build`; it may start, stop and restart `bilibi@*`, restart `bilibi-worker@*` and reload Caddy through sudo, nothing else |
+| `bilibi` | the service `bilibi@<instance>` | `data/`, and `incoming/` together with `bilibi-build`; it can read `releases/` and `env` |
+| `bilibi-build` | the worker `bilibi-worker@<instance>` (builds on Dev) and the installer `bilibi-installer@<instance>`: put releases into service | `releases/`, `backups/`, `/opt/bilibi/build`, and `incoming/` with `bilibi`; it may start, stop and restart `bilibi@*`, restart `bilibi-worker@*` and reload Caddy through sudo, nothing else |
 
 Three systemd unit templates serve every instance: `bilibi@production`, `bilibi@dev` read `env`, run `current/bilibi-web run` as `bilibi`, restart it after a crash, and stop it with Ctrl-C's signal so running jobs finish; the program may write only under `data/`. `bilibi-worker@production`, `bilibi-worker@dev` run `current/bilibi-web software-worker` as `bilibi-build` beside each instance: the software worker that builds the changes the Software page queues. `release` and `switch` restart it, so it always runs the release in service. On Dev it builds; on Staging and Production the same program refuses to build, because the role below says so (`apps/base/software/README.md`, "The builder"). `bilibi-installer@production` runs `/opt/bilibi/build/bin/bilibi-installer` as `bilibi-build` and carries out the install and undo jobs the Software page queues ([`apps/installer/README.md`](../apps/installer/README.md)).
 
@@ -89,7 +90,7 @@ In code, `bilibi_base::system::Instance::resolve` returns the role, label, colou
 
 **Dev and Production on one machine** is the cheapest setup and the script supports it: two instances, two databases, two ports, two addresses. The script warns when you create the second one: a build on Dev competes with Production for CPU and memory, so people may find Production slow while Dev builds. For a small company that is usually fine. When it matters, run Dev elsewhere.
 
-**Dev and Production on two machines**: run `create` once on each machine with that machine's instance. Production's "Install releases tested on" setting then holds Dev's address. Moving a release between machines is the release transport, a later piece; today you copy the `bilibi-web` file across and run `release` on the target.
+**Dev and Production on two machines**: run `create` once on each machine with that machine's instance. Production's "Install releases tested on" setting then holds Dev's address, and the same pairing key is set on both (Administration › System › Release files). Production downloads the release from Dev when the owner installs it; nothing is pushed to Production. A Dev the servers cannot reach (a laptop): download the release file on Dev's Release files page and upload it on Production's. The three ways, the checks and the pairing key: [`apps/base/software/README.md`](../apps/base/software/README.md), "Release transport".
 
 Staging is optional. Set Production to install from Staging when you have one, or straight from Dev when you do not.
 
@@ -131,7 +132,7 @@ sudo scripts/install-server.sh installer target/release/bilibi-installer
 
 This copies the program to `/opt/bilibi/build/bin/bilibi-installer`, owned by root so neither Bilibi user can change it, and starts `bilibi-installer@<instance>` for every instance on the machine. A `create` after that starts one for the new instance too. Run `installer` again with a newer program to update it: the services restart, and a job one of them was in the middle of is settled by the rules in [`apps/installer/README.md`](../apps/installer/README.md) ("If the server restarts mid-way"): before the database changed it ends `interrupted` and nothing changed; after, it finishes.
 
-The installer reads the instance's `env` for its database and port, and copies releases only from another instance's folder on this machine (the one named in "Install releases tested on"). Downloading a release from another machine is a later piece.
+The installer reads the instance's `env` for its database and port. It copies a release from another instance's folder on this machine (the one named in "Install releases tested on"), or from `incoming/`, where the program puts a release it downloaded from a source on another machine or received as an uploaded file.
 
 The installer unit is skipped quietly while `/opt/bilibi/build/bin/bilibi-installer` does not exist, so starting `bilibi@<instance>` before you have run `installer` does not make it fail and retry.
 
@@ -207,7 +208,6 @@ Progress, the time estimate, cancel and failures are reported on the job's steps
 This script is the server layout and the builder. These are separate pieces of the Software plan:
 
 - **Installing** a built change as part of a job: the installer carries out install and undo jobs ([`apps/installer/README.md`](../apps/installer/README.md)) but does not yet take a built change over from the builder. The Software page that drives it all.
-- **Release transport** between machines (download from the source instance, or upload a file). Today a release is copied between instance folders on one machine.
 
 ## Reference
 
@@ -232,7 +232,7 @@ Keys in `env` (the service's environment; `README.md` explains each):
 | `DATABASE_URL` | the instance's own database and role on the local cluster |
 | `BILIBI_SETTINGS_KEY`, `BILIBI_USER_SIGNING_KEY`, `BILIBI_MEDIA_SIGNING_KEY` | generated 64-hex-character keys; keep them, losing `BILIBI_SETTINGS_KEY` loses every secret setting and authenticator key |
 | `BILIBI_MAIL_DIR` | `data/mailbox`, until an SMTP relay is set |
-| `BILIBI_INSTANCE_DIR`, `BILIBI_BUILD_DIR` | the instance folder and `/opt/bilibi/build`: where the worker puts releases, and where the Dev builder keeps its checkout and cache |
+| `BILIBI_INSTANCE_DIR`, `BILIBI_BUILD_DIR` | the instance folder and `/opt/bilibi/build`: where the worker puts releases, where the program lists, serves and receives them (`incoming/`), and where the Dev builder keeps its checkout and cache |
 
 Files outside `/opt/bilibi`: `/etc/systemd/system/bilibi@.service`, `/etc/systemd/system/bilibi-worker@.service`, `/etc/systemd/system/bilibi-installer@.service`, `/etc/sudoers.d/bilibi-build`, `/etc/caddy/sites/bilibi-<instance>.caddy`, and one `import` line in `/etc/caddy/Caddyfile`.
 

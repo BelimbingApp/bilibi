@@ -37,7 +37,10 @@ same bound and leaves cleanup of a partial target to the caller. The whole-call
 timeout defaults to 30 s. `Failure::Invalid` (bad metadata, URL, non-HTTP
 scheme or header) sends and records nothing. `Failure::Unrecorded` means the
 remote system may have acted but the row could not be written: never treat it
-as permission to repeat a consequential command.
+as permission to repeat a consequential command. HTTPS trusts the public roots
+and the server's own trust store (`/etc/ssl/certs`, where `update-ca-certificates`
+puts a private authority), so an instance on a private name is reachable once
+its authority is installed.
 
 ## Incoming calls
 
