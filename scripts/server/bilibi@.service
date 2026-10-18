@@ -3,8 +3,8 @@
 [Unit]
 Description=Bilibi instance %i
 Documentation=https://github.com/BelimbingApp/bilibi/blob/main/docs/server-install.md
-After=network-online.target postgresql.service
-Wants=network-online.target
+After=network-online.target postgresql.service bilibi-installer@%i.service
+Wants=network-online.target bilibi-installer@%i.service
 
 [Service]
 Type=simple

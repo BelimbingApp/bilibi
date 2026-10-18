@@ -82,9 +82,14 @@ A job is one row in `base_software_jobs`, with its ordered steps in `base_softwa
 | `running` | A worker claimed it | the worker |
 | `done`, `failed` | Finished; `result` says how | the worker |
 | `cancelled` | Removed from the queue, or stopped before the pause | this module (queued), the worker (running) |
-| `interrupted` | The worker was lost mid-way (a restart) and could not resume; nothing changed | the worker, when it starts again |
+| `interrupted` | The worker was restarted before the change that cannot be taken back; nothing changed and the release that was in service is running. The page offers Start again | the worker, when it starts again |
 
-A restart does not always interrupt: every step of an install or an undo can run again from where it was, so the installer resumes the job and marks the cut-off step's detail `resumed`. A build cannot, so the builder marks it `interrupted`.
+A worker that finds a job it was running asks whether the change that cannot be taken back has happened. The installer's rules (`apps/installer/README.md`, "If the server restarts mid-way"):
+
+- **Before the pause**, or in the pause before the database update committed (the migration ledger did not grow): the job ends `interrupted`, the half-copied folder is removed, the previous release is running.
+- **After it committed**, or in a switch back or an Undo's restore: the job carries on, and the cut-off step's detail is marked `resumed`.
+
+A build has no such point, so the builder marks a cut-off build `interrupted`.
 
 At most one job per server is `queued` or `running` (a unique index enforces it). The steps are created with the job as `pending`: for a change *check, fetch, build, backup, migrate, switch, verify*; for an install *fetch, backup, migrate, switch, verify*; for an undo *backup, restore (only when a backup is restored), switch, verify*. The `backup` step is marked `pauses`: from there the instance is stopped, and a cancel is no longer honoured.
 
@@ -96,7 +101,7 @@ The builder (below, Dev) runs under the `bilibi-build` user as the instance's wo
 
 1. **Wake up.** `LISTEN bilibi_software_jobs`. Every queue and every cancel sends `NOTIFY bilibi_software_jobs, '<job id>'` inside the commit, so it arrives once the row is visible. Also poll on start-up: a notification sent while the worker was down is lost.
 2. **Claim.** `UPDATE base_software_jobs SET state='running', worker=$1, started_at=now() WHERE id=$2 AND state='queued'`. Zero rows means someone else has it, or it was cancelled.
-3. **Report each step.** Set `state='running', started_at=now()` when it starts, then `done` or `failed` with `finished_at` and a plain `detail` (`{"message": "Compiled 214 of 412 parts"}`), never a secret. Skip the rest after a failure (`skipped`).
+3. **Report each step.** Set `state='running', started_at=now()` when it starts, then `done` or `failed` with `finished_at` and a plain `detail` (`{"message": "Compiled 214 of 412 parts"}`), never a secret. Skip the rest after a failure (`skipped`). A worker may append a step the job was not made with when it goes back after a failure (the installer's `switch_back`), with the next `seq`.
 4. **Honour a cancel before the pause.** Before starting a step that `pauses`, in one transaction lock the job (`SELECT cancel_requested_at FROM base_software_jobs WHERE id=$1 FOR UPDATE`). If it is set, mark the remaining steps `skipped` and the job `cancelled`. If not, mark the pausing step `running` in the same transaction, so a cancel either lands before the pause or is refused as too late.
 5. **Finish.** Set `state`, `finished_at` and `result`. Undo needs these keys in `result`:
 
@@ -106,6 +111,7 @@ The builder (below, Dev) runs under the `bilibi-build` user as the instance's wo
    | `previous_release` | the one it replaced, kept for Undo |
    | `migrated` | `true` when the database changed shape; Undo then restores the backup and says what is lost |
    | `backup`, `backup_at` | where the backup is and when (UTC, `YYYY-MM-DDTHH:MM:SSZ`) it was taken; the undo review counts what was entered since |
+   | `lost` | an undo that restored a backup writes the counts only (`since`, `changes`, `by_kind`). `status` adds the sentence as `loss`, from the same definition the undo review uses |
    | `message` | one plain sentence for the person |
 
    A `change` job's result should also list the Domains and versions the new program holds, so `status` can show them before the program restarts. The installer's result also names the source and its checksum (`apps/installer/README.md`, "How it talks to the page").

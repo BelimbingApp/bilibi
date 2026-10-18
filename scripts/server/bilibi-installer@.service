@@ -7,6 +7,9 @@ Description=Bilibi installer for instance %i
 Documentation=https://github.com/BelimbingApp/bilibi/blob/main/apps/installer/README.md
 After=network-online.target postgresql.service
 Wants=network-online.target
+# After a reboot in the middle of a job this starts first, so it can stop the
+# instance again before the old program takes any entry.
+Before=bilibi@%i.service
 
 [Service]
 Type=simple
@@ -17,7 +20,7 @@ Group=bilibi-build
 EnvironmentFile=/opt/bilibi/%i/env
 WorkingDirectory=/opt/bilibi/build
 ExecStart=/opt/bilibi/build/bin/bilibi-installer /opt/bilibi/%i
-# A job cut off here resumes from the step it was in when the service is back.
+# A job cut off here is settled when the service is back: see "If the server restarts mid-way".
 Restart=always
 RestartSec=3
 PrivateTmp=yes

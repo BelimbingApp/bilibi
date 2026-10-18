@@ -26,9 +26,15 @@ You may already have questions: what if the new release does not work, what does
 | --- | --- | --- |
 | **Copy the release and check it** | Read the release from the source instance's folder on this machine (`/opt/bilibi/dev/releases/3`), check its checksum, check that the source still runs it and answers, check there is disk for the program and a backup, copy it into the next number here (`releases/2`), check the copy, and run its `status` to prove it runs on this server. | Nothing changed. The instance never paused. The message says what to fix. |
 | **Back up the database** (the pause starts) | Stop the service. Caddy shows the waiting page from here. Dump the database with PostgreSQL's own `pg_dump` into `backups/job-<n>/`. | The service is started again. Nothing changed. |
-| **Update the database** | Run the new program's `migrate` and its production seeds. `migrate` is one transaction: all of it or none of it. We also note whether the database changed shape, because Undo needs to know. | The previous release is started again. Nothing changed. |
-| **Switch to the new program** | Point `releases/current` at the new release (the instance's `current` is a fixed link to it) and start the service. | See the check below. |
-| **Check that it works** | Wait up to 60 seconds for the program to answer on its own port. | **Switch back by itself**: stop, restore the backup if the database changed shape, point `current` at the previous release, start it, and check that it answers. Nothing entered is lost, because the instance was paused the whole time. |
+| **Update the database** | Run the new program's `migrate` and then its production seeds, as one step. `migrate` is one transaction: all of it or none of it. The step is judged on the migration ledger (the table that lists the migrations applied): we count it before and after. | If the ledger did not grow, nothing changed: the previous release is started again. If it grew (`migrate` committed and a seed then failed), the database has changed shape, so the step goes back like a failed check: restore the backup, then start the previous release. |
+| **Switch to the new program** | Point `releases/current` at the new release (the instance's `current` is a fixed link to it) and start the service. | **Switch back by itself.** See below. |
+| **Check that it works** | Wait up to 60 seconds for the program to answer on its own port. | **Switch back by itself.** See below. |
+
+### Going back
+
+When the switch or the check fails, or the database update failed after it changed the database, the installer adds a step to the job, **Switch back to release N**, and does this in it: stop, restore the backup if the database changed shape, point `current` at the previous release, start it, check that it answers. The step records what it did, so the page shows it and a restart in the middle can finish it. When the instance was never restarted during the job, nothing entered is lost, because the instance was paused the whole time.
+
+If the backup cannot be restored, the job ends `failed` with the service **left stopped** and a message that names the dump to restore by hand. It does not try again by itself.
 
 A release is only copied from an instance on the same machine for now. Downloading one from another machine is a later piece; the step says so plainly when the source is an address.
 
@@ -47,25 +53,38 @@ Undo takes back the newest finished install. The steps:
 | Step | What we do |
 | --- | --- |
 | **Back up the database** (the pause starts) | Stop the service and dump the database as it is now, so even a failed Undo can be put back. |
-| **Restore the backup taken before the change** (only when that change updated the database) | Count what was entered since that backup, from the audit trail. Then clear the database and restore the backup with `pg_restore`. The job history (`base_software_*`) is taken aside first and put back after, so Undo does not erase its own record. |
+| **Restore the backup taken before the change** (only when that change updated the database) | Count what was entered since that backup, from the audit trail, and keep the counts in the step. Then save the job history (`base_software_*`) to a file beside the safety backup, clear the database and restore the backup with `pg_restore`, and put the history back, so Undo does not erase its own record. |
 | **Switch back to the previous program** | Point `current` at the previous release and start it. |
-| **Check that it works** | As for an install. If the previous release does not answer, we return to the release that was running, with the safety backup when the database was restored. |
+| **Check that it works** | As for an install. If the previous release does not answer, a **Switch back to release N** step returns to the release that was running, with the safety backup when the database was restored. |
 
-**When the install updated the database, Undo loses what was entered since the backup, and says so with a count.** The review on the page states it before the owner confirms ("so far 15 changes across every company on this server: 12 to finance/ledger.entry, 3 to finance/payables.bill"), and the restore step records the final count. When the install only added Domains and left the database's shape alone, Undo keeps your data as it is and says that instead.
+**When the install updated the database, Undo loses what was entered since the backup, and says so with a count.** The review on the page states it before the owner confirms ("so far 15 changes across every company on this server: 12 to finance/ledger.entry, 3 to finance/payables.bill"), and the restore step records the final count as numbers (`lost`); the app writes the sentence from them, so there is one wording. When the install only added Domains and left the database's shape alone, Undo keeps your data as it is and says that instead.
 
 > [!WARNING]
 > Undo is not available for a job whose result was never recorded, and an Undo cannot be undone. Both are the Software page's rules (`apps/base/software/README.md`).
 
 ## If the server restarts mid-way
 
-Every step can run again from where it was, so **the installer resumes the job** when its service comes back (systemd starts it after a reboot):
+When the installer starts and finds a job it was running, it does not carry on blindly. It asks one question: **did the change that cannot be taken back by starting the old program already happen?**
 
-- During the copy: the half-copied folder is removed and the copy starts over.
-- During the backup: the dump is taken again.
-- During the database update: `migrate` runs again. It is one transaction, so a cut-off run left nothing behind, and a run that had committed has nothing left to apply.
-- During the switch or the check: `current` is pointed again, the service started, the check made.
+| Where the job was | What happens | The job ends |
+| --- | --- | --- |
+| Before the pause (copy, or waiting for the owner to say go) | The half-copied folder is removed. The remaining steps are skipped. | `interrupted`: "The installer was interrupted before the pause. Nothing changed. Start again." |
+| In the pause, the database update had not committed (the dump was cut off, or the migration ledger did not grow) | The service is stopped first, then the previous release is started and checked. | `interrupted`: the previous release is back and nothing changed. |
+| In the pause, the database update had committed | The service is stopped first. The seeds run again (they are safe to repeat), then the switch and the check carry on from the first step not done. | `done`, or `failed` with the switch back |
+| In a switch back, or in an Undo's restore | The service is stopped first. The step runs again from its saved state: the history file beside the backup is read instead of the database, and a restore already finished is not repeated. | `failed` (after a switch back) or `done` (after an Undo), with the right release in service |
 
-The step that was cut off says so in its detail: "(the installer restarted during this step and continued)". The `interrupted` state in the job tables is for work that cannot resume, such as a build.
+An Undo follows the same rules: its restore (or, when it restores nothing, its switch) is the change that cannot be taken back.
+
+What makes a restore safe to repeat:
+
+- **The history file.** Before clearing the database, the installer saves the job history and the shape of its tables to `backups/job-<n>/history-<step>.json`. A run that finds the file reads it instead of the database, which a cut-off restore left empty.
+- **A cut-off restore.** If the installer starts and the job tables do not exist, it looks for such a file, finishes the restore from the dump named in it, and then finds the job and settles it as above.
+- **A failed restore.** If `pg_restore` fails, the job tables are made again from the file, so the job can record that it failed. The service stays stopped.
+- **Cleaning up.** The files are removed when the job's outcome is recorded.
+
+After a reboot, systemd starts `bilibi-installer@<instance>` before `bilibi@<instance>` (`Before=` in the installer's unit, `After=` and `Wants=` in the instance's). The installer stops the instance again as its first act, but the old program may have answered for a moment before that. So a message after a restart does not claim that nothing entered is lost.
+
+A step that was running when the restart came says so in its detail: "(the installer restarted during this step and continued)".
 
 ## How it talks to the page
 
@@ -80,7 +99,10 @@ The result carries what Undo and the page need:
 | `backup`, `backup_at` | where the backup is and when (UTC) it was taken |
 | `source`, `source_release`, `sha256`, `program` | where the release came from, its number there, its checksum and its first `status` line |
 | `switched_back`, `restored`, `previous_healthy` | on a failure: what the installer did to put things back |
-| `lost` | on an Undo that restored: `{"since", "changes", "by_kind"}` |
+
+An `interrupted` job's result has `migrated: false` and the release in service.
+
+| `lost` | on an Undo that restored: the counts `{"since", "changes", "by_kind"}`, never a sentence |
 | `message` | one or two plain sentences for the person |
 
 The audit trail is the app's job, not the installer's: `base/software` records each finished job as one audited change the next time the server looks (every 15 seconds, and right after it starts), attributed to the worker as a system principal.
@@ -94,14 +116,13 @@ cargo build --release -p bilibi-installer
 sudo scripts/install-server.sh installer target/release/bilibi-installer
 ```
 
-That copies the program to `/opt/bilibi/build/bin/bilibi-installer` and starts `bilibi-installer@<instance>` for every instance. A later `create` starts one for the new instance too. Rerun `installer` with a newer program to update it; the services restart and a job in progress resumes.
+That copies the program to `/opt/bilibi/build/bin/bilibi-installer` and starts `bilibi-installer@<instance>` for every instance. A later `create` starts one for the new instance too. Rerun `installer` with a newer program to update it; the services restart and a job in progress is settled as in "If the server restarts mid-way".
 
 By hand, for one instance, with its `env` file loaded:
 
 ```sh
 set -a; . /opt/bilibi/production/env; set +a
 bilibi-installer /opt/bilibi/production          # serve until stopped
-bilibi-installer /opt/bilibi/production --once   # work through what is waiting, then exit
 ```
 
 It needs `DATABASE_URL` and `BIND_ADDR` from that file, the sudo rule from `scripts/server/sudoers` to start and stop `bilibi@*`, and PostgreSQL's `pg_dump` and `pg_restore` on the path. Progress lines go to the journal: `journalctl -u bilibi-installer@production`.

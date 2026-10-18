@@ -361,7 +361,8 @@ EOF
 # ================================================================ installer
 # The installer program, shared by every instance on this machine, and one
 # service per instance. Rerun with a newer program to update it: the services
-# restart, and a job one of them was running resumes where it was.
+# restart, and a job one of them was running is settled by the rules in
+# apps/installer/README.md ("If the server restarts mid-way").
 installer() {
     local source=${1:-}
     [[ -n $source ]] || usage

@@ -51,10 +51,9 @@ impl Installer {
             database_url,
         })
     }
-    /// Serves the instance until stopped: resumes a job cut off by a restart,
-    /// then claims each install or undo as it is queued. With `once`, works
-    /// through what is waiting and returns.
-    pub async fn run(&self, once: bool) -> Result<(), String> {
+    /// Serves the instance until stopped: settles a job cut off by a restart,
+    /// then claims each install or undo as it is queued.
+    pub async fn run(&self) -> Result<(), String> {
         println!(
             "bilibi-installer: serving {} ({}) as {}",
             self.layout.name,
@@ -65,12 +64,6 @@ impl Installer {
             let (mut client, mut wake) = match self.connect().await {
                 Ok(connected) => connected,
                 Err(error) => {
-                    if once {
-                        return Err(format!(
-                            "could not connect to the database: {}",
-                            jobs::short(&error)
-                        ));
-                    }
                     eprintln!(
                         "bilibi-installer: could not connect to the database: {}; retrying",
                         jobs::short(&error)
@@ -82,7 +75,6 @@ impl Installer {
             loop {
                 match self.scan(&mut client).await {
                     Ok(true) => continue,
-                    Ok(false) if once => return Ok(()),
                     Ok(false) => {}
                     Err(error) => {
                         eprintln!(
@@ -140,13 +132,23 @@ impl Installer {
     /// One job, if there is one for this worker: first the one it was running
     /// when last stopped, then the oldest waiting. True when it did some work.
     async fn scan(&self, client: &mut Client) -> Result<bool, tokio_postgres::Error> {
-        let job = match jobs::mine_running(&*client, &self.worker).await? {
+        let running = match jobs::mine_running(&*client, &self.worker).await {
+            Ok(running) => running,
+            Err(error) if jobs::table_missing(&error) => {
+                if self.finish_cut_off_restore(&*client).await {
+                    return Ok(true);
+                }
+                return Err(error);
+            }
+            Err(error) => return Err(error),
+        };
+        let (job, resumed) = match running {
             Some(job) => {
                 println!(
-                    "job {}: resuming the {} this installer was running",
+                    "job {}: the installer restarted while it was running this {}",
                     job.id, job.kind
                 );
-                job
+                (job, true)
             }
             None => match jobs::next_waiting(&*client).await? {
                 Some(job) => {
@@ -154,12 +156,16 @@ impl Installer {
                         return Ok(true);
                     }
                     println!("job {}: claimed ({})", job.id, job.kind);
-                    job
+                    (job, false)
                 }
                 None => return Ok(false),
             },
         };
-        let mut run = flow::Run::new(client, &self.layout, &self.service, &self.pg, job).await?;
+        let mut run =
+            flow::Run::new(client, &self.layout, &self.service, &self.pg, job, resumed).await?;
+        if resumed && run.resume().await? {
+            return Ok(true);
+        }
         match run.job().kind.as_str() {
             "install" => run.install().await?,
             "undo" => run.undo().await?,
@@ -172,5 +178,27 @@ impl Installer {
             }
         }
         Ok(true)
+    }
+    /// A restore cut off by a restart leaves no job tables to read, so the
+    /// job cannot be found. The history saved beside its backup can finish
+    /// the restore, and then the job is found again and settled like any
+    /// other. True when the job tables are back.
+    async fn finish_cut_off_restore(&self, client: &Client) -> bool {
+        let Some((history, dump)) = backup::unfinished_restore(&self.layout.backups()) else {
+            return false;
+        };
+        println!(
+            "a restore was cut off by a restart; finishing it from {}",
+            dump.display()
+        );
+        let _ = self.service.stop();
+        if let Err(why) = backup::restore(client, &self.pg, &dump, &history).await {
+            eprintln!("bilibi-installer: the cut-off restore failed: {why}");
+        }
+        if jobs::history_tables_exist(client).await.unwrap_or(false) {
+            return true;
+        }
+        backup::set_aside(&history);
+        false
     }
 }

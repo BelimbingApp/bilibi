@@ -125,6 +125,7 @@ impl Software {
         let job = match shown {
             Some(job) => {
                 let mut value = job.json();
+                value["result"] = json!(jobs::with_loss(job.result.clone()));
                 value["steps"] = Value::Array(jobs::steps_json(&**client, tenant, job.id).await?);
                 value["cancel"] = json!(cancel_state(&**client, tenant, &job).await?);
                 value

@@ -1,7 +1,14 @@
 //! The steps of one job, in the order `base/software` created them, each
-//! written back as it runs so the Software page can show it. Every step can
-//! be run again from where it was: when the installer is stopped mid-way
-//! (a restart), the same flow resumes from the first step not yet done.
+//! written back as it runs so the Software page can show it.
+//!
+//! A job found running when the installer starts was cut off by a restart,
+//! and `resume` decides what that means. Before the pause nothing changed:
+//! the job ends `interrupted`. During the pause the question is whether the
+//! database update committed (the migration ledger grew): if not, the
+//! previous program is started and the job ends `interrupted`; if so, the
+//! flow carries on. A failure or restore path (`switch_back`, `restore`)
+//! writes everything it needs to the job's steps and to files beside the
+//! backup, so a restart in it ends with the right release in service.
 use crate::{
     backup::{self, PgEnv},
     jobs::{self, Job, Step},
@@ -32,6 +39,25 @@ pub struct Run<'a> {
     pg: &'a PgEnv,
     job: Job,
     steps: Vec<Step>,
+    /// The installer found this job running when it started.
+    resumed: bool,
+}
+/// The release an undo takes back, as its job recorded it.
+struct Undone {
+    id: i64,
+    release: u64,
+    previous: u64,
+    migrated: bool,
+    original: Option<PathBuf>,
+    since: String,
+}
+/// Where a failed install or undo goes back to, and what it says about it.
+struct Back {
+    to: u64,
+    restore_from: Option<PathBuf>,
+    base: Value,
+    lead: String,
+    restored_note: String,
 }
 impl<'a> Run<'a> {
     pub async fn new(
@@ -40,6 +66,7 @@ impl<'a> Run<'a> {
         service: &'a Service,
         pg: &'a PgEnv,
         job: Job,
+        resumed: bool,
     ) -> Db<Run<'a>> {
         let steps = jobs::steps(&*client, &job).await?;
         Ok(Self {
@@ -49,6 +76,7 @@ impl<'a> Run<'a> {
             pg,
             job,
             steps,
+            resumed,
         })
     }
     pub fn job(&self) -> &Job {
@@ -60,12 +88,28 @@ impl<'a> Run<'a> {
     fn step(&self, key: &str) -> Option<&Step> {
         self.steps.iter().find(|step| step.key == key)
     }
+    fn state(&self, key: &str) -> &str {
+        self.step(key).map_or("", |step| step.state.as_str())
+    }
     fn is_done(&self, key: &str) -> bool {
-        self.step(key).is_some_and(|step| step.state == "done")
+        self.state(key) == "done"
     }
     fn detail(&self, key: &str) -> Value {
         self.step(key)
             .map_or(Value::Null, |step| step.detail.clone())
+    }
+    /// The step that failed, not counting the one that goes back.
+    fn failed_step(&self) -> Option<&Step> {
+        self.steps
+            .iter()
+            .find(|step| step.state == "failed" && step.key != "switch_back")
+    }
+    fn failure_reason(&self) -> String {
+        self.failed_step()
+            .and_then(|step| step.detail["message"].as_str())
+            .unwrap_or("a step failed")
+            .trim_end_matches('.')
+            .to_owned()
     }
     async fn set(&mut self, key: &str, state: &str, detail: Value) -> Db<()> {
         jobs::step_set(&*self.client, &self.job, key, state, &detail).await?;
@@ -75,13 +119,22 @@ impl<'a> Run<'a> {
         }
         Ok(())
     }
+    async fn add_step(&mut self, key: &str, label: &str, detail: Value) -> Db<()> {
+        jobs::step_add(&*self.client, &self.job, key, label, &detail).await?;
+        self.steps.push(Step {
+            key: key.into(),
+            state: "running".into(),
+            detail,
+        });
+        Ok(())
+    }
     /// Marks a step running. A step found running already was cut off by a
     /// restart; its detail says so and the step runs again.
     async fn start(&mut self, key: &str, message: &str) -> Db<()> {
         self.start_with(key, json!({"message": message})).await
     }
     async fn start_with(&mut self, key: &str, mut detail: Value) -> Db<()> {
-        if self.step(key).is_some_and(|step| step.state == "running") {
+        if self.state(key) == "running" {
             detail["resumed"] = json!(true);
             detail["message"] = json!(format!(
                 "{} (the installer restarted during this step and continued)",
@@ -91,28 +144,19 @@ impl<'a> Run<'a> {
         self.log(detail["message"].as_str().unwrap_or(key));
         self.set(key, "running", detail).await
     }
-    /// The detail the pausing step starts with; a pause cut off by a restart
-    /// is marked resumed like any other step.
-    fn pause_detail(&self, message: String) -> Value {
-        let mut detail = json!({"message": message});
-        if self
-            .step("backup")
-            .is_some_and(|step| step.state == "running")
-        {
-            detail["resumed"] = json!(true);
-            detail["message"] = json!(format!(
-                "{message} (the installer restarted during this step and continued)"
-            ));
-        }
-        detail
-    }
     async fn done(&mut self, key: &str, detail: Value) -> Db<()> {
         self.log(detail["message"].as_str().unwrap_or(key));
         self.set(key, "done", detail).await
     }
     async fn fail(&mut self, key: &str, reason: &str) -> Db<()> {
-        self.log(&format!("{key} failed: {reason}"));
-        self.set(key, "failed", json!({"message": reason})).await
+        self.fail_with(key, json!({"message": reason})).await
+    }
+    async fn fail_with(&mut self, key: &str, detail: Value) -> Db<()> {
+        self.log(&format!(
+            "{key} failed: {}",
+            detail["message"].as_str().unwrap_or("")
+        ));
+        self.set(key, "failed", detail).await
     }
     async fn finish(&mut self, state: &str, result: Value) -> Db<()> {
         jobs::skip_pending(&*self.client, &self.job).await?;
@@ -121,27 +165,160 @@ impl<'a> Run<'a> {
             "{state}: {}",
             result["message"].as_str().unwrap_or("")
         ));
+        self.forget_history();
         Ok(())
     }
-    /// A step failed before anything changed on the instance.
+    /// The saved history of a restore in this job; see `backup::restore`.
+    fn history_file(&self, key: &str) -> PathBuf {
+        self.job_backups().join(format!("history-{key}.json"))
+    }
+    fn job_backups(&self) -> PathBuf {
+        self.layout.backups().join(format!("job-{}", self.job.id))
+    }
+    /// Once the job's outcome is recorded no restore of it is waiting.
+    fn forget_history(&self) {
+        for entry in fs::read_dir(self.job_backups())
+            .into_iter()
+            .flatten()
+            .flatten()
+        {
+            if entry.file_name().to_string_lossy().starts_with("history-") {
+                let _ = fs::remove_file(entry.path());
+            }
+        }
+    }
+    /// A step failed and nothing was changed on the instance: it runs the
+    /// release it ran before. The service is started again when the pause
+    /// had stopped it.
     async fn nothing_changed(&mut self, key: &str, reason: &str) -> Db<()> {
         self.fail(key, reason).await?;
+        self.settle_clean_failure().await
+    }
+    async fn settle_clean_failure(&mut self) -> Db<()> {
+        let mut message = format!("Nothing changed. {}.", self.failure_reason());
+        if self.state("backup") != "pending" && self.service.state() != "active" {
+            let started = match self.service.start() {
+                Ok(()) => self.service.wait_healthy(HEALTH_LIMIT).await.map(|_| ()),
+                Err(why) => Err(why),
+            };
+            message.push_str(&match started {
+                Ok(()) => " The service was started again and answers.".to_owned(),
+                Err(why) => format!(
+                    " The service was started again but does not answer: {why}. Check the service."
+                ),
+            });
+        }
         let current = self.layout.current();
+        let backup = self.detail("backup");
         self.finish(
             "failed",
             json!({
                 "release": current, "previous_release": current, "migrated": false,
-                "message": format!("Nothing changed. {reason}"),
+                "backup": backup["backup"], "backup_at": backup["backup_at"], "message": message,
             }),
         )
         .await
     }
+    /// The job ended without changing anything: the owner can start again.
+    async fn interrupted(&mut self, message: &str) -> Db<()> {
+        let current = self.layout.current();
+        self.finish(
+            "interrupted",
+            json!({"release": current, "previous_release": current, "migrated": false, "message": message}),
+        )
+        .await
+    }
+
+    // ------------------------------------------------------------- resume
+    /// What a restart means for a job found running. True when the restart
+    /// ended the job; false when the flow carries on from the first step not
+    /// yet done.
+    pub async fn resume(&mut self) -> Db<bool> {
+        let paused = self.state("backup") != "pending";
+        if paused {
+            // From the first moment: nothing may be entered while the
+            // database is being decided on.
+            if let Err(reason) = self.service.stop() {
+                self.log(&reason);
+            }
+        }
+        if self.failed_step().is_some() || self.step("switch_back").is_some() {
+            self.after_failure().await?;
+            return Ok(true);
+        }
+        if !paused {
+            if let Some(stale) = self.detail("fetch")["release"].as_u64() {
+                if Some(stale) != self.layout.current() {
+                    let _ = fs::remove_dir_all(self.layout.release(stale));
+                }
+            }
+            self.interrupted(
+                "The installer was interrupted before the pause. Nothing changed. Start again.",
+            )
+            .await?;
+            return Ok(true);
+        }
+        if self.update_committed().await? {
+            return Ok(false);
+        }
+        let back = match self.service.start() {
+            Ok(()) => match self.service.wait_healthy(HEALTH_LIMIT).await {
+                Ok(_) => "The release that was in service is back and answers.".to_owned(),
+                Err(why) => format!("The release that was in service was started again but does not answer: {why}. Check the service."),
+            },
+            Err(why) => format!("The release that was in service could not be started again: {why}. Check the service."),
+        };
+        self.interrupted(&format!(
+            "The installer was interrupted during the pause, before the database was changed. {back} Nothing changed. Start again."
+        ))
+        .await?;
+        Ok(true)
+    }
+    /// Whether the cut-off job had already made the change that cannot be
+    /// taken back by starting the old program. An install's is the database
+    /// update (the migration ledger grew); an undo's is the restore, or the
+    /// switch when it restores nothing.
+    async fn update_committed(&self) -> Db<bool> {
+        if self.job.kind == "undo" {
+            let changing = if self.step("restore").is_some() {
+                "restore"
+            } else {
+                "switch"
+            };
+            return Ok(matches!(self.state(changing), "running" | "done"));
+        }
+        Ok(match self.state("migrate") {
+            "done" => true,
+            "running" => {
+                let before = self.detail("migrate")["ledger_before"]
+                    .as_i64()
+                    .unwrap_or(i64::MAX);
+                jobs::ledger_count(&*self.client).await? > before
+            }
+            _ => false,
+        })
+    }
+    /// Closes a job one of whose steps failed, or that was going back, with
+    /// the release in service that the failure calls for.
+    async fn after_failure(&mut self) -> Db<()> {
+        if self.step("switch_back").is_some() {
+            return self.switch_back().await;
+        }
+        let Some(failed) = self.failed_step().cloned() else {
+            return self.settle_clean_failure().await;
+        };
+        match failed.key.as_str() {
+            "switch" | "verify" => self.switch_back().await,
+            "migrate" if failed.detail["migrated"].as_bool() == Some(true) => {
+                self.switch_back().await
+            }
+            "restore" => self.finish("failed", failed.detail).await,
+            _ => self.settle_clean_failure().await,
+        }
+    }
 
     // ------------------------------------------------------------ install
     pub async fn install(&mut self) -> Db<()> {
-        if self.steps.iter().any(|step| step.state == "failed") {
-            return self.finish_after_failed_step().await;
-        }
         let fetched = if self.is_done("fetch") {
             self.detail("fetch")
         } else {
@@ -174,10 +351,10 @@ impl<'a> Run<'a> {
             if !self.wait_for_go().await? {
                 return Ok(());
             }
-            let detail = self.pause_detail(format!(
+            let detail = json!({"message": format!(
                 "{} pauses from here: the service stops and the database is backed up.",
                 self.layout.name
-            ));
+            )});
             if !jobs::begin_pause(&mut *self.client, &self.job, "backup", &detail).await? {
                 self.log("stopped before the pause, as asked");
                 return Ok(());
@@ -185,15 +362,9 @@ impl<'a> Run<'a> {
             match self.backup().await {
                 Ok(detail) => self.done("backup", detail).await?,
                 Err(reason) => {
-                    self.fail("backup", &reason).await?;
-                    let _ = self.service.start();
-                    return self
-                        .finish(
-                            "failed",
-                            json!({"release": previous, "previous_release": previous, "migrated": false,
-                                "message": format!("Nothing changed: the backup failed, so the service was started again. {reason}")}),
-                        )
-                        .await;
+                    self.fail("backup", &format!("The backup failed: {reason}"))
+                        .await?;
+                    return self.settle_clean_failure().await;
                 }
             }
         }
@@ -214,20 +385,20 @@ impl<'a> Run<'a> {
             match self.migrate(release, before).await {
                 Ok(detail) => self.done("migrate", detail).await?,
                 Err(reason) => {
-                    self.fail("migrate", &reason).await?;
-                    let healthy = match self.service.start() {
-                        Ok(()) => self.service.wait_healthy(HEALTH_LIMIT).await.is_ok(),
-                        Err(_) => false,
-                    };
-                    let message = if healthy {
-                        format!("Nothing changed: the database update failed as one piece, so release {previous} is back in service. {reason}")
+                    // The update is judged on the migration ledger alone: if
+                    // it grew, the database has changed shape, whichever
+                    // command failed.
+                    let migrated = jobs::ledger_count(&*self.client).await? > before;
+                    self.fail_with(
+                        "migrate",
+                        json!({"message": reason, "ledger_before": before, "migrated": migrated}),
+                    )
+                    .await?;
+                    return if migrated {
+                        self.switch_back().await
                     } else {
-                        format!("The database update failed as one piece, but release {previous} did not answer when started again; check the service. {reason}")
+                        self.settle_clean_failure().await
                     };
-                    return self
-                        .finish("failed", json!({"release": previous, "previous_release": previous, "migrated": false,
-                            "backup": backup["backup"], "backup_at": backup["backup_at"], "message": message}))
-                        .await;
                 }
             }
         }
@@ -239,9 +410,7 @@ impl<'a> Run<'a> {
                 .await?;
             if let Err(reason) = self.switch_to(release) {
                 self.fail("switch", &reason).await?;
-                return self
-                    .switch_back(release, previous, migrated, &backup, &reason)
-                    .await;
+                return self.switch_back().await;
             }
             self.done("switch", json!({"message": format!("current points at release {release}; the service is starting")}))
                 .await?;
@@ -256,7 +425,7 @@ impl<'a> Run<'a> {
                 }
                 Err(reason) => {
                     self.fail("verify", &reason).await?;
-                    return self.switch_back(release, previous, migrated, &backup, &reason).await;
+                    return self.switch_back().await;
                 }
             }
         }
@@ -284,12 +453,6 @@ impl<'a> Run<'a> {
     /// The release the owner asked for, copied from the sibling instance's
     /// folder into the next number here, checked and tried.
     async fn fetch(&mut self) -> Result<Value, String> {
-        if let Some(stale) = self.detail("fetch")["release"].as_u64() {
-            // A copy cut off by a restart: start it over.
-            if Some(stale) != self.layout.current() {
-                let _ = fs::remove_dir_all(self.layout.release(stale));
-            }
-        }
         let request = self.job.request.clone();
         let wanted = request["release"]
             .as_u64()
@@ -386,8 +549,10 @@ impl<'a> Run<'a> {
         )
         .await
         .map_err(|error| jobs::short(&error))?;
-        let bytes = layout::copy_release(&from, &dst)
-            .map_err(|error| format!("could not copy into {}: {error}", dst.display()))?;
+        let bytes = layout::copy_release(&from, &dst).map_err(|error| {
+            let _ = fs::remove_dir_all(&dst);
+            format!("could not copy into {}: {error}", dst.display())
+        })?;
         if layout::verify_checksum(&dst)? != sha {
             let _ = fs::remove_dir_all(&dst);
             return Err(format!(
@@ -449,7 +614,7 @@ impl<'a> Run<'a> {
     }
     /// The new program's `migrate` (one transaction, all or nothing) and its
     /// production seeds. `migrated` says whether the shape changed.
-    async fn migrate(&mut self, release: u64, before: i64) -> Result<Value, String> {
+    async fn migrate(&self, release: u64, before: i64) -> Result<Value, String> {
         let program = self.layout.release(release).join("bilibi-web");
         run_program(&program, "migrate", MIGRATE_LIMIT_SECONDS)?;
         run_program(&program, "seed-production", "600")?;
@@ -478,173 +643,239 @@ impl<'a> Run<'a> {
             .map_err(|error| format!("could not point current at release {release}: {error}"))?;
         self.service.start()
     }
-    /// The new release did not work: go back to the previous one, restoring
-    /// the backup first when the database changed shape. Nothing entered is
-    /// lost, because the instance was paused the whole time.
-    async fn switch_back(
-        &mut self,
-        release: u64,
-        previous: u64,
-        migrated: bool,
-        backup: &Value,
-        reason: &str,
-    ) -> Db<()> {
-        self.log(&format!("switching back to release {previous}"));
-        let _ = self.service.stop();
-        let mut notes = Vec::new();
-        let mut restored = false;
-        if migrated {
-            match backup["backup"].as_str() {
-                Some(file) => match backup::restore(&*self.client, self.pg, &PathBuf::from(file)).await {
-                    Ok(done) => {
-                        restored = true;
-                        notes.push("The database backup taken before the update was restored, so nothing entered is lost.".to_owned());
-                        notes.extend(done.problems);
-                    }
-                    Err(why) => {
-                        notes.push(format!("The database could not be put back: {why}. The service was left stopped; restore {file} by hand before starting it."));
-                        return self
-                            .finish("failed", json!({"release": release, "previous_release": previous, "migrated": migrated,
-                                "backup": backup["backup"], "backup_at": backup["backup_at"], "switched_back": false, "restored": false,
-                                "message": format!("Release {release} failed its check ({reason}). {}", notes.join(" "))}))
-                            .await;
-                    }
-                },
-                None => notes.push("The database changed shape but no backup was recorded, so it was left as it is.".to_owned()),
+    /// Goes back after a failure: the release that was in service returns,
+    /// with the backup restored first when the database was changed. It is a
+    /// step of the job like the others, so a restart in it ends the same way.
+    async fn switch_back(&mut self) -> Db<()> {
+        if matches!(self.state("switch_back"), "done" | "failed") {
+            let result = self.detail("switch_back");
+            return self.finish("failed", result).await;
+        }
+        let reason = self.failure_reason();
+        let back = match self.back_plan(&reason).await? {
+            Ok(back) => back,
+            Err(why) => {
+                return self
+                    .finish(
+                        "failed",
+                        json!({"message": format!("{reason}. {why} Check the service.")}),
+                    )
+                    .await
+            }
+        };
+        let label = format!("Switch back to release {}", back.to);
+        if self.step("switch_back").is_none() {
+            self.add_step("switch_back", &label, json!({"message": label}))
+                .await?;
+        }
+        self.log(&label);
+        if let Err(why) = self.service.stop() {
+            self.log(&why);
+        }
+        let mut restored = self.detail("switch_back")["restored"]
+            .as_bool()
+            .unwrap_or(false);
+        let mut problems = Vec::new();
+        if let (Some(file), false) = (&back.restore_from, restored) {
+            match backup::restore(
+                &*self.client,
+                self.pg,
+                file,
+                &self.history_file("switch_back"),
+            )
+            .await
+            {
+                Ok(done) => {
+                    restored = true;
+                    problems = done.problems;
+                    self.set(
+                        "switch_back",
+                        "running",
+                        json!({"message": label, "restored": true}),
+                    )
+                    .await?;
+                }
+                Err(why) => {
+                    let mut result = back.base.clone();
+                    result["switched_back"] = json!(false);
+                    result["restored"] = json!(false);
+                    result["message"] = json!(format!(
+                        "{} The database could not be put back: {why}. The service was left stopped; restore {} by hand before starting it.",
+                        back.lead, file.display()
+                    ));
+                    self.set("switch_back", "failed", result.clone()).await?;
+                    return self.finish("failed", result).await;
+                }
             }
         }
-        let back = match self.switch_to(previous) {
+        let answered = match self.switch_to(back.to) {
             Ok(()) => self.service.wait_healthy(HEALTH_LIMIT).await.map(|_| ()),
             Err(why) => Err(why),
         };
-        match &back {
-            Ok(()) => notes.insert(
-                0,
-                format!("Switched back to release {previous}, which answers."),
+        let mut notes = vec![match &answered {
+            Ok(()) => format!("Switched back to release {}, which answers.", back.to),
+            Err(why) => format!(
+                "Switched back to release {}, but it does not answer either: {why}",
+                back.to
             ),
-            Err(why) => notes.insert(
-                0,
-                format!(
-                    "Switched back to release {previous}, but it does not answer either: {why}"
-                ),
-            ),
+        }];
+        if restored {
+            notes.push(back.restored_note.clone());
+        } else if back.base["migrated"].as_bool() == Some(true) {
+            notes.push(
+                "The database changed shape but no backup was recorded, so it was left as it is."
+                    .to_owned(),
+            );
         }
-        self.finish(
-            "failed",
-            json!({
-                "release": release, "previous_release": previous, "migrated": migrated,
-                "backup": backup["backup"], "backup_at": backup["backup_at"],
-                "switched_back": true, "restored": restored, "previous_healthy": back.is_ok(),
-                "message": format!("Release {release} failed its check: {reason}. {}", notes.join(" ")),
-            }),
-        )
-        .await
+        notes.extend(problems);
+        let mut result = back.base;
+        result["switched_back"] = json!(true);
+        result["restored"] = json!(restored);
+        result["previous_healthy"] = json!(answered.is_ok());
+        result["message"] = json!(format!("{} {}", back.lead, notes.join(" ")));
+        self.set("switch_back", "done", result.clone()).await?;
+        self.finish("failed", result).await
+    }
+    /// Where to go back to, from what the job's steps recorded.
+    async fn back_plan(&self, reason: &str) -> Db<Result<Back, String>> {
+        let backup = self.detail("backup");
+        if self.job.kind == "undo" {
+            let undone = match self.undone().await? {
+                Ok(undone) => undone,
+                Err(why) => return Ok(Err(why)),
+            };
+            let restore_from = self
+                .step("restore")
+                .and(backup["backup"].as_str().map(PathBuf::from));
+            return Ok(Ok(Back {
+                to: undone.release,
+                restore_from,
+                base: json!({"release": undone.release, "previous_release": undone.previous, "migrated": false,
+                    "backup": backup["backup"], "backup_at": backup["backup_at"]}),
+                lead: format!(
+                    "Undo failed: release {} did not answer ({reason}).",
+                    undone.previous
+                ),
+                restored_note: "The database is as it was before this undo.".into(),
+            }));
+        }
+        let fetched = self.detail("fetch");
+        let (Some(release), Some(previous)) =
+            (fetched["release"].as_u64(), fetched["previous"].as_u64())
+        else {
+            return Ok(Err(
+                "The releases it was switching between were not recorded.".into(),
+            ));
+        };
+        let migrated = self.detail("migrate")["migrated"]
+            .as_bool()
+            .unwrap_or(false);
+        let lead = if self.failed_step().is_some_and(|step| step.key == "migrate") {
+            format!("The database update of release {release} failed after it had changed the database: {reason}.")
+        } else {
+            format!("Release {release} failed its check: {reason}.")
+        };
+        let nothing_lost = if self.resumed {
+            "."
+        } else {
+            ", so nothing entered is lost."
+        };
+        Ok(Ok(Back {
+            to: previous,
+            restore_from: backup["backup"]
+                .as_str()
+                .map(PathBuf::from)
+                .filter(|_| migrated),
+            base: json!({"release": release, "previous_release": previous, "migrated": migrated,
+                "backup": backup["backup"], "backup_at": backup["backup_at"]}),
+            lead,
+            restored_note: format!(
+                "The database backup taken before the update was restored{nothing_lost}"
+            ),
+        }))
     }
 
     // --------------------------------------------------------------- undo
     pub async fn undo(&mut self) -> Db<()> {
-        if self.steps.iter().any(|step| step.state == "failed") {
-            return self.finish_after_failed_step().await;
-        }
-        let undone = match self.job.undo_of {
-            Some(id) => jobs::get(&*self.client, self.job.tenant, id).await?,
-            None => None,
+        let undone = match self.undone().await? {
+            Ok(undone) => undone,
+            Err(reason) => return self.nothing_changed("backup", &reason).await,
         };
-        let Some(facts) = undone.as_ref().and_then(|job| job.result.clone()) else {
-            return self
-                .nothing_changed(
-                    "backup",
-                    "the job to undo recorded no result, so there is nothing to go back to",
-                )
-                .await;
-        };
-        let (Some(release), Some(previous)) = (
-            facts["release"].as_u64(),
-            facts["previous_release"].as_u64(),
-        ) else {
-            return self
-                .nothing_changed(
-                    "backup",
-                    "the job to undo did not record which releases it switched between",
-                )
-                .await;
-        };
-        let migrated = facts["migrated"].as_bool().unwrap_or(false);
         let restores = self.step("restore").is_some();
-        let current = self.layout.current();
-        if !self.is_done("switch") && current != Some(release) {
-            return self
-                .nothing_changed("backup", &format!("this instance runs release {} now, not release {release}, so job {} is not what is in service", current.map_or("none".to_owned(), |n| n.to_string()), undone.as_ref().map_or(0, |job| job.id)))
-                .await;
-        }
-        if let Err(reason) = layout::verify_checksum(&self.layout.release(previous)) {
-            return self
-                .nothing_changed(
-                    "backup",
-                    &format!("release {previous} cannot be put back: {reason}"),
-                )
-                .await;
-        }
-        let original = facts["backup"].as_str().map(PathBuf::from);
-        if restores && !original.as_ref().is_some_and(|file| file.is_file()) {
-            return self.nothing_changed("backup", "the backup taken before the change is missing, so the database cannot be put back").await;
+        if !self.resumed {
+            let current = self.layout.current();
+            if current != Some(undone.release) {
+                return self
+                    .nothing_changed("backup", &format!("this instance runs release {} now, not release {}, so job {} is not what is in service", current.map_or("none".to_owned(), |n| n.to_string()), undone.release, undone.id))
+                    .await;
+            }
+            if let Err(reason) = layout::verify_checksum(&self.layout.release(undone.previous)) {
+                return self
+                    .nothing_changed(
+                        "backup",
+                        &format!("release {} cannot be put back: {reason}", undone.previous),
+                    )
+                    .await;
+            }
+            if restores && !undone.original.as_ref().is_some_and(|file| file.is_file()) {
+                return self.nothing_changed("backup", "the backup taken before the change is missing, so the database cannot be put back").await;
+            }
         }
         if !self.is_done("backup") {
-            let detail = self.pause_detail(format!(
+            let detail = json!({"message": format!(
                 "{} pauses from here: the service stops and the database as it is now is backed up first.",
                 self.layout.name
-            ));
+            )});
             if !jobs::begin_pause(&mut *self.client, &self.job, "backup", &detail).await? {
                 return Ok(());
             }
             match self.backup().await {
                 Ok(detail) => self.done("backup", detail).await?,
                 Err(reason) => {
-                    self.fail("backup", &reason).await?;
-                    let _ = self.service.start();
-                    return self
-                        .finish("failed", json!({"release": release, "previous_release": release, "migrated": false,
-                            "message": format!("Nothing changed: the safety backup failed, so the service was started again. {reason}")}))
-                        .await;
+                    self.fail("backup", &format!("The safety backup failed: {reason}"))
+                        .await?;
+                    return self.settle_clean_failure().await;
                 }
             }
         }
         let safety = self.detail("backup");
         if restores && !self.is_done("restore") {
-            let since = facts["backup_at"].as_str().unwrap_or("").to_owned();
-            self.start("restore", &format!("Restoring the backup taken at {since}"))
-                .await?;
+            let lost = match self.detail("restore")["lost"].clone() {
+                lost if lost.is_object() => lost,
+                _ => jobs::changes_since(&*self.client, &undone.since).await?,
+            };
+            self.start_with(
+                "restore",
+                json!({"message": format!("Restoring the backup taken at {}", undone.since), "lost": lost}),
+            )
+            .await?;
             let _ = self.service.stop();
-            let lost = jobs::changes_since(&*self.client, &since)
+            let file = undone.original.clone().unwrap_or_default();
+            match backup::restore(&*self.client, self.pg, &file, &self.history_file("restore"))
                 .await
-                .unwrap_or_else(|_| json!({"since": since, "changes": 0, "by_kind": []}));
-            let file = original.clone().unwrap_or_default();
-            match backup::restore(&*self.client, self.pg, &file).await {
+            {
                 Ok(done) => {
-                    let mut notes = vec![jobs::loss_sentence(&lost)];
-                    notes.extend(done.problems.clone());
-                    self.done("restore", json!({"message": format!("Restored the backup from {since}. {}", notes.join(" ")), "lost": lost, "carried": done.carried, "problems": done.problems}))
+                    self.done("restore", json!({"message": format!("Restored the backup from {}. {}", undone.since, done.problems.join(" ")), "lost": lost, "carried": done.carried, "problems": done.problems}))
                         .await?
                 }
                 Err(why) => {
-                    self.fail("restore", &why).await?;
-                    return self
-                        .finish("failed", json!({"release": release, "previous_release": release, "migrated": false,
-                            "backup": safety["backup"], "backup_at": safety["backup_at"], "restored": false,
-                            "message": format!("The database could not be put back: {why}. The service was left stopped; restore {} by hand (the state before this undo is in {}).", file.display(), safety["backup"].as_str().unwrap_or("the safety backup"))}))
-                        .await;
+                    let result = json!({
+                        "release": undone.release, "previous_release": undone.release, "migrated": false,
+                        "backup": safety["backup"], "backup_at": safety["backup_at"], "restored": false,
+                        "message": format!("The database could not be put back: {why}. The service was left stopped; restore {} by hand (the state before this undo is in {}).", file.display(), safety["backup"].as_str().unwrap_or("the safety backup")),
+                    });
+                    self.fail_with("restore", result.clone()).await?;
+                    return self.finish("failed", result).await;
                 }
             }
         }
-        let lost = self.detail("restore")["lost"].clone();
+        let previous = undone.previous;
         if !self.is_done("switch") {
             self.start("switch", &format!("Switching back to release {previous}"))
                 .await?;
             if let Err(reason) = self.switch_to(previous) {
                 self.fail("switch", &reason).await?;
-                return self
-                    .undo_failed(release, previous, restores, &safety, &reason)
-                    .await;
+                return self.switch_back().await;
             }
             self.done("switch", json!({"message": format!("current points at release {previous}; the service is starting")}))
                 .await?;
@@ -659,102 +890,58 @@ impl<'a> Run<'a> {
                 }
                 Err(reason) => {
                     self.fail("verify", &reason).await?;
-                    return self.undo_failed(release, previous, restores, &safety, &reason).await;
+                    return self.switch_back().await;
                 }
             }
         }
         let data = if restores {
-            jobs::loss_sentence(&lost)
+            format!("The database was put back as it was at {}.", undone.since)
         } else {
             "Your data stayed as it was.".to_owned()
         };
         self.finish(
             "done",
             json!({
-                "release": previous, "previous_release": release, "migrated": restores && migrated,
-                "backup": safety["backup"], "backup_at": safety["backup_at"], "restored": restores, "lost": lost,
+                "release": previous, "previous_release": undone.release, "migrated": restores && undone.migrated,
+                "backup": safety["backup"], "backup_at": safety["backup_at"], "restored": restores,
+                "lost": self.detail("restore")["lost"],
                 "message": format!("Back on release {previous}. {data}"),
             }),
         )
         .await?;
-        self.prune(&[previous, release]);
+        self.prune(&[previous, undone.release]);
         Ok(())
     }
-    /// The previous release did not come back: return to the one that was
-    /// running, with the safety backup when the database was put back.
-    async fn undo_failed(
-        &mut self,
-        release: u64,
-        previous: u64,
-        restored: bool,
-        safety: &Value,
-        reason: &str,
-    ) -> Db<()> {
-        self.log(&format!("undo failed, returning to release {release}"));
-        let _ = self.service.stop();
-        let mut notes = Vec::new();
-        if restored {
-            match safety["backup"].as_str() {
-                Some(file) => match backup::restore(&*self.client, self.pg, &PathBuf::from(file)).await {
-                    Ok(_) => notes.push("The database is as it was before this undo.".to_owned()),
-                    Err(why) => {
-                        return self
-                            .finish("failed", json!({"release": previous, "previous_release": release, "migrated": true,
-                                "backup": safety["backup"], "backup_at": safety["backup_at"],
-                                "message": format!("Release {previous} did not answer ({reason}), and the database could not be put back either: {why}. The service was left stopped; restore {file} by hand before starting it.")}))
-                            .await
-                    }
-                },
-                None => notes.push("No safety backup was recorded, so the database was left as it is.".to_owned()),
-            }
-        }
-        let back = match self.switch_to(release) {
-            Ok(()) => self.service.wait_healthy(HEALTH_LIMIT).await.map(|_| ()),
-            Err(why) => Err(why),
+    /// The job this undo takes back, and what it recorded for Undo.
+    async fn undone(&self) -> Db<Result<Undone, String>> {
+        let job = match self.job.undo_of {
+            Some(id) => jobs::get(&*self.client, self.job.tenant, id).await?,
+            None => None,
         };
-        match &back {
-            Ok(()) => notes.insert(0, format!("Release {release} is back in service.")),
-            Err(why) => notes.insert(
-                0,
-                format!("Release {release} was put back but does not answer: {why}"),
-            ),
-        }
-        self.finish(
-            "failed",
-            json!({
-                "release": release, "previous_release": previous, "migrated": false,
-                "backup": safety["backup"], "backup_at": safety["backup_at"], "previous_healthy": back.is_ok(),
-                "message": format!("Undo failed: release {previous} did not answer ({reason}). {}", notes.join(" ")),
-            }),
-        )
-        .await
-    }
-
-    /// A restart landed after a step was marked failed but before the job
-    /// was closed: close it, with the service running whatever `current` is.
-    async fn finish_after_failed_step(&mut self) -> Db<()> {
-        let failed: Vec<String> = self
-            .steps
-            .iter()
-            .filter(|step| step.state == "failed")
-            .map(|step| {
-                format!(
-                    "{}: {}",
-                    step.label,
-                    step.detail["message"].as_str().unwrap_or("failed")
-                )
-            })
-            .collect();
-        if self.service.state() != "active" {
-            let _ = self.service.start();
-        }
-        let current = self.layout.current();
-        self.finish(
-            "failed",
-            json!({"release": current, "previous_release": current, "migrated": false,
-                "message": format!("The installer was restarted after a step failed. {} Release {} is in service.", failed.join(" "), current.map_or("none".to_owned(), |n| n.to_string()))}),
-        )
-        .await
+        let Some(job) = job else {
+            return Ok(Err("the job to undo was not found".into()));
+        };
+        let Some(facts) = job.result.as_ref() else {
+            return Ok(Err(
+                "the job to undo recorded no result, so there is nothing to go back to".into(),
+            ));
+        };
+        let (Some(release), Some(previous)) = (
+            facts["release"].as_u64(),
+            facts["previous_release"].as_u64(),
+        ) else {
+            return Ok(Err(
+                "the job to undo did not record which releases it switched between".into(),
+            ));
+        };
+        Ok(Ok(Undone {
+            id: job.id,
+            release,
+            previous,
+            migrated: facts["migrated"].as_bool().unwrap_or(false),
+            original: facts["backup"].as_str().map(PathBuf::from),
+            since: facts["backup_at"].as_str().unwrap_or("").to_owned(),
+        }))
     }
 
     /// Keeps the releases named, the newest few, and the newest backups.

@@ -34,7 +34,6 @@ impl Job {
 #[derive(Clone, Debug)]
 pub struct Step {
     pub key: String,
-    pub label: String,
     pub state: String,
     pub detail: Value,
 }
@@ -98,7 +97,7 @@ pub async fn steps(
 ) -> Result<Vec<Step>, tokio_postgres::Error> {
     let rows = client
         .query(
-            "SELECT key, label, state, detail FROM base_software_steps WHERE tenant_id=$1 AND job_id=$2 ORDER BY seq",
+            "SELECT key, state, detail FROM base_software_steps WHERE tenant_id=$1 AND job_id=$2 ORDER BY seq",
             &[&job.tenant, &job.id],
         )
         .await?;
@@ -106,9 +105,8 @@ pub async fn steps(
         .iter()
         .map(|row| Step {
             key: row.get(0),
-            label: row.get(1),
-            state: row.get(2),
-            detail: row.get::<_, Option<Value>>(3).unwrap_or(Value::Null),
+            state: row.get(1),
+            detail: row.get::<_, Option<Value>>(2).unwrap_or(Value::Null),
         })
         .collect())
 }
@@ -147,6 +145,23 @@ pub async fn step_set(
             .execute(sql, &[&job.tenant, &job.id, &key, detail, &state])
             .await?;
     }
+    Ok(())
+}
+/// Appends a step the flow needs only when something went wrong, already
+/// running, after the steps the job was made with.
+pub async fn step_add(
+    client: &impl GenericClient,
+    job: &Job,
+    key: &str,
+    label: &str,
+    detail: &Value,
+) -> Result<(), tokio_postgres::Error> {
+    client
+        .execute(
+            "INSERT INTO base_software_steps(tenant_id, job_id, seq, key, label, pauses, state, detail, started_at) SELECT $1::bigint, $2::bigint, coalesce(max(seq), 0) + 1, $3::text, $4::text, false, 'running', $5::jsonb, now() FROM base_software_steps WHERE tenant_id=$1 AND job_id=$2",
+            &[&job.tenant, &job.id, &key, &label, detail],
+        )
+        .await?;
     Ok(())
 }
 /// The steps not reached are skipped once the job has failed or stopped.
@@ -244,34 +259,6 @@ pub async fn changes_since(
     let total: i64 = rows.iter().map(|row| row.get::<_, i64>(1)).sum();
     Ok(json!({"since": since, "changes": total, "by_kind": by_kind}))
 }
-/// The sentence the person reads about what a restore loses.
-pub fn loss_sentence(lost: &Value) -> String {
-    let since = lost["since"].as_str().unwrap_or("the backup");
-    let total = lost["changes"].as_i64().unwrap_or(0);
-    if total == 0 {
-        return format!("Nothing was entered after the backup at {since}, so nothing is lost.");
-    }
-    let kinds: Vec<String> = lost["by_kind"]
-        .as_array()
-        .map(|list| {
-            list.iter()
-                .take(5)
-                .filter_map(|item| {
-                    Some(format!(
-                        "{} to {}",
-                        item["changes"].as_i64()?,
-                        item["kind"].as_str()?
-                    ))
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    format!(
-        "Everything entered after the backup at {since} is lost: {total} change{} ({}).",
-        if total == 1 { "" } else { "s" },
-        kinds.join(", ")
-    )
-}
 /// Now, as the UTC instant the job rows and results carry.
 pub async fn now(client: &impl GenericClient) -> Result<String, tokio_postgres::Error> {
     let row = client
@@ -283,16 +270,16 @@ pub async fn now(client: &impl GenericClient) -> Result<String, tokio_postgres::
     Ok(row.get(0))
 }
 
-/// The software history (jobs, steps, plug-ins) as rows of JSON, taken
-/// before a restore so the restore cannot erase what it is part of.
-pub struct History(Vec<(&'static str, Vec<Value>)>);
+/// The software history (jobs, steps, plug-ins) as JSON, taken before a
+/// restore so the restore cannot erase what it is part of: for each table
+/// its columns (so the table can be made again) and its rows.
 const HISTORY_TABLES: [&str; 3] = [
     "base_software_jobs",
     "base_software_steps",
     "base_software_plugins",
 ];
-pub async fn history(client: &impl GenericClient) -> Result<History, tokio_postgres::Error> {
-    let mut tables = Vec::new();
+pub async fn history(client: &impl GenericClient) -> Result<Value, tokio_postgres::Error> {
+    let mut tables = serde_json::Map::new();
     for table in HISTORY_TABLES {
         let order = if table == "base_software_plugins" {
             "tenant_id, plugin_id"
@@ -305,34 +292,95 @@ pub async fn history(client: &impl GenericClient) -> Result<History, tokio_postg
                 &[],
             )
             .await?;
-        tables.push((
-            table,
-            rows.iter().map(|row| row.get::<_, Value>(0)).collect(),
-        ));
+        let columns = client
+            .query(
+                "SELECT a.attname::text, format_type(a.atttypid, a.atttypmod), a.attnotnull FROM pg_attribute a WHERE a.attrelid = to_regclass($1) AND a.attnum > 0 AND NOT a.attisdropped ORDER BY a.attnum",
+                &[&table],
+            )
+            .await?;
+        tables.insert(
+            table.to_owned(),
+            json!({
+                "columns": columns.iter().map(|row| json!({"name": row.get::<_, String>(0), "type": row.get::<_, String>(1), "not_null": row.get::<_, bool>(2)})).collect::<Vec<_>>(),
+                "rows": rows.iter().map(|row| row.get::<_, Value>(0)).collect::<Vec<_>>(),
+            }),
+        );
     }
-    Ok(History(tables))
+    Ok(Value::Object(tables))
+}
+/// Whether the three history tables exist.
+pub async fn history_tables_exist(
+    client: &impl GenericClient,
+) -> Result<bool, tokio_postgres::Error> {
+    for table in HISTORY_TABLES {
+        let exists: bool = client
+            .query_one("SELECT to_regclass($1) IS NOT NULL", &[&table])
+            .await?
+            .get(0);
+        if !exists {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+/// Makes the history tables again from the saved history, with their columns
+/// and nothing else, so a failed restore can still record its outcome.
+pub async fn recreate_tables(
+    client: &impl GenericClient,
+    history: &Value,
+) -> Result<(), tokio_postgres::Error> {
+    for table in HISTORY_TABLES {
+        let columns: Vec<String> = history[table]["columns"]
+            .as_array()
+            .map(|list| {
+                list.iter()
+                    .filter_map(|column| {
+                        Some(format!(
+                            "\"{}\" {}{}",
+                            column["name"].as_str()?.replace('"', "\"\""),
+                            column["type"].as_str()?,
+                            if column["not_null"].as_bool()? {
+                                " NOT NULL"
+                            } else {
+                                ""
+                            }
+                        ))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        if !columns.is_empty() {
+            client
+                .batch_execute(&format!(
+                    "CREATE TABLE IF NOT EXISTS {table} ({})",
+                    columns.join(", ")
+                ))
+                .await?;
+        }
+    }
+    Ok(())
 }
 /// Puts the history back after a restore, into whatever shape the restored
 /// tables have (a column the restored release lacks is left out). Returns
 /// the rows carried and the rows that did not fit, in plain words.
 pub async fn restore_history(
     client: &impl GenericClient,
-    history: &History,
+    history: &Value,
 ) -> Result<(i64, Vec<String>), tokio_postgres::Error> {
     let mut carried = 0;
     let mut problems = Vec::new();
     let mut present = Vec::new();
-    for (table, rows) in &history.0 {
+    for table in HISTORY_TABLES {
         let exists: bool = client
-            .query_one("SELECT to_regclass($1) IS NOT NULL", &[table])
+            .query_one("SELECT to_regclass($1) IS NOT NULL", &[&table])
             .await?
             .get(0);
         if exists {
-            present.push(*table);
+            present.push(table);
         } else {
             problems.push(format!(
                 "{table} does not exist in the restored database; its {} rows were not carried",
-                rows.len()
+                history[table]["rows"].as_array().map_or(0, Vec::len)
             ));
         }
     }
@@ -340,20 +388,20 @@ pub async fn restore_history(
     for table in present.iter().rev() {
         client.execute(&format!("DELETE FROM {table}"), &[]).await?;
     }
-    for (table, rows) in &history.0 {
-        if !present.contains(table) {
+    for table in HISTORY_TABLES {
+        if !present.contains(&table) {
             continue;
         }
         let columns: Vec<String> = client
             .query(
                 "SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name=$1",
-                &[table],
+                &[&table],
             )
             .await?
             .iter()
             .map(|row| row.get(0))
             .collect();
-        for row in rows {
+        for row in history[table]["rows"].as_array().into_iter().flatten() {
             let kept: serde_json::Map<String, Value> = row
                 .as_object()
                 .map(|fields| {
@@ -378,7 +426,7 @@ pub async fn restore_history(
                 )),
             }
         }
-        if *table != "base_software_plugins" {
+        if table != "base_software_plugins" {
             client
                 .execute(
                     &format!("SELECT setval(pg_get_serial_sequence('{table}', 'id'), coalesce((SELECT max(id) FROM {table}), 0) + 1, false)"),
@@ -388,6 +436,10 @@ pub async fn restore_history(
         }
     }
     Ok((carried, problems))
+}
+/// Whether the database says a table does not exist.
+pub fn table_missing(error: &tokio_postgres::Error) -> bool {
+    error.code() == Some(&tokio_postgres::error::SqlState::UNDEFINED_TABLE)
 }
 /// A database error as one plain line, without the statement.
 pub fn short(error: &tokio_postgres::Error) -> String {

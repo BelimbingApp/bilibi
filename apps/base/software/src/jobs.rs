@@ -202,11 +202,21 @@ pub async fn steps_json(client: &impl GenericClient, tenant: i64, job: i64) -> R
         .map(|row| {
             json!({
                 "seq": row.get::<_, i32>(0), "key": row.get::<_, String>(1), "label": row.get::<_, String>(2),
-                "pauses": row.get::<_, bool>(3), "state": row.get::<_, String>(4), "detail": row.get::<_, Option<Value>>(5),
+                "pauses": row.get::<_, bool>(3), "state": row.get::<_, String>(4), "detail": with_loss(row.get::<_, Option<Value>>(5)),
                 "started_at": row.get::<_, Option<String>>(6), "finished_at": row.get::<_, Option<String>>(7),
             })
         })
         .collect())
+}
+/// A step detail or result that carries the counts of what a restore lost
+/// also carries the sentence that says it, from the one definition.
+pub fn with_loss(value: Option<Value>) -> Option<Value> {
+    value.map(|mut value| {
+        if value["lost"].is_object() {
+            value["loss"] = json!(crate::review::loss_sentence(&value["lost"]));
+        }
+        value
+    })
 }
 /// Whether a running job has reached its pause: a cancel is then too late.
 pub async fn past_pause(client: &impl GenericClient, tenant: i64, job: i64) -> Result<bool> {

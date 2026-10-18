@@ -4,7 +4,13 @@
 //! The connection details go to the tools through the `PG*` environment,
 //! never as an argument another user could read in the process list.
 use crate::jobs;
-use std::{fs, path::Path, process::Command};
+use serde_json::{json, Value};
+use std::{
+    fs,
+    io::Write,
+    path::{Path, PathBuf},
+    process::Command,
+};
 use tokio_postgres::GenericClient;
 
 /// The instance's database connection as libpq environment variables.
@@ -75,27 +81,58 @@ pub struct Restored {
     pub problems: Vec<String>,
 }
 /// Replaces the database's contents with a dump: the software history is
-/// taken aside, the `public` schema is dropped and made again, the dump is
-/// restored into it, and the history is put back so the job doing this
-/// does not erase itself. The service must be stopped first.
+/// saved to `history_file` first, the `public` schema is dropped and made
+/// again, the dump is restored into it, and the history is put back so the
+/// job doing this does not erase itself. The service must be stopped first.
+///
+/// The file is what makes this safe to run again after a restart: when it
+/// exists it is read instead of the database, which a cut-off restore left
+/// empty. When the restore fails and the job tables are gone, they are made
+/// again from the file, so the failure can still be recorded.
 pub async fn restore(
     client: &impl GenericClient,
     pg: &PgEnv,
-    file: &Path,
+    dump: &Path,
+    history_file: &Path,
 ) -> Result<Restored, String> {
-    if !file.is_file() {
-        return Err(format!("the backup {} is missing", file.display()));
+    let outcome = replace(client, pg, dump, history_file).await;
+    let Err(why) = &outcome else {
+        return outcome;
+    };
+    if jobs::history_tables_exist(client).await.unwrap_or(false) {
+        return outcome;
     }
-    let history = jobs::history(client).await.map_err(|error| {
-        format!(
-            "could not read the software history: {}",
-            jobs::short(&error)
-        )
-    })?;
-    client
-        .batch_execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public")
-        .await
-        .map_err(|error| format!("could not clear the database: {}", jobs::short(&error)))?;
+    let Some((_, saved)) = read_saved(history_file) else {
+        return outcome;
+    };
+    match rebuild(client, &saved, false).await {
+        Ok(()) => outcome,
+        Err(more) => Err(format!("{why} {more}")),
+    }
+}
+async fn replace(
+    client: &impl GenericClient,
+    pg: &PgEnv,
+    dump: &Path,
+    history_file: &Path,
+) -> Result<Restored, String> {
+    if !dump.is_file() {
+        return Err(format!("the backup {} is missing", dump.display()));
+    }
+    let saved = match read_saved(history_file) {
+        Some((_, saved)) => saved,
+        None => {
+            let saved = jobs::history(client).await.map_err(|error| {
+                format!(
+                    "could not read the software history: {}",
+                    jobs::short(&error)
+                )
+            })?;
+            write_saved(history_file, dump, &saved)?;
+            saved
+        }
+    };
+    clear(client).await?;
     let out = pg
         .command("pg_restore")
         .args([
@@ -105,13 +142,21 @@ pub async fn restore(
             "--dbname",
             pg.dbname(),
         ])
-        .arg(file)
+        .arg(dump)
         .output()
-        .map_err(|error| format!("could not run pg_restore: {error}"))?;
-    if !out.status.success() {
-        return Err(format!("pg_restore failed: {}", tail(&out.stderr)));
+        .map_err(|error| format!("could not run pg_restore: {error}"));
+    let failed = match out {
+        Ok(out) if out.status.success() => None,
+        Ok(out) => Some(format!("pg_restore failed: {}", tail(&out.stderr))),
+        Err(why) => Some(why),
+    };
+    if let Some(why) = failed {
+        return Err(match rebuild(client, &saved, true).await {
+            Ok(()) => why,
+            Err(more) => format!("{why} {more}"),
+        });
     }
-    let (carried, problems) = jobs::restore_history(client, &history)
+    let (carried, problems) = jobs::restore_history(client, &saved)
         .await
         .map_err(|error| {
             format!(
@@ -120,6 +165,88 @@ pub async fn restore(
             )
         })?;
     Ok(Restored { carried, problems })
+}
+async fn clear(client: &impl GenericClient) -> Result<(), String> {
+    client
+        .batch_execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public")
+        .await
+        .map_err(|error| format!("could not clear the database: {}", jobs::short(&error)))
+}
+/// After a restore that failed, gives the database back its job tables and
+/// the history, so the job can record that it failed. `wipe` first clears
+/// what the cut-off restore left behind.
+async fn rebuild(client: &impl GenericClient, saved: &Value, wipe: bool) -> Result<(), String> {
+    let again = |error: tokio_postgres::Error| {
+        format!(
+            "The job record could not be made again: {}",
+            jobs::short(&error)
+        )
+    };
+    if wipe {
+        clear(client).await?;
+    }
+    jobs::recreate_tables(client, saved).await.map_err(again)?;
+    jobs::restore_history(client, saved).await.map_err(again)?;
+    Ok(())
+}
+
+/// A restore the installer was cut off in, found by its saved history: the
+/// file and the dump it was restoring. Only a file of a job that has not
+/// finished survives (`flow::Run::finish` removes them).
+pub fn unfinished_restore(backups: &Path) -> Option<(PathBuf, PathBuf)> {
+    let mut found: Vec<(u64, PathBuf, PathBuf)> = Vec::new();
+    for dir in fs::read_dir(backups).ok()?.flatten() {
+        let Some(id) = dir
+            .file_name()
+            .to_str()
+            .and_then(|name| name.strip_prefix("job-")?.parse::<u64>().ok())
+        else {
+            continue;
+        };
+        for file in fs::read_dir(dir.path()).ok()?.flatten() {
+            let path = file.path();
+            let is_saved = path.extension().is_some_and(|ext| ext == "json")
+                && file
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| name.starts_with("history-"));
+            if let (true, Some((dump, _))) = (is_saved, read_saved(&path)) {
+                found.push((id, path, dump));
+            }
+        }
+    }
+    found.sort_by_key(|(id, _, _)| std::cmp::Reverse(*id));
+    found.into_iter().next().map(|(_, file, dump)| (file, dump))
+}
+/// Sets a saved history aside after a restore that cannot be finished, so
+/// the next start does not try it again.
+pub fn set_aside(history_file: &Path) {
+    let _ = fs::rename(history_file, history_file.with_extension("failed"));
+}
+fn read_saved(file: &Path) -> Option<(PathBuf, Value)> {
+    let saved: Value = serde_json::from_slice(&fs::read(file).ok()?).ok()?;
+    Some((
+        PathBuf::from(saved["dump"].as_str()?),
+        saved["history"].clone(),
+    ))
+}
+fn write_saved(file: &Path, dump: &Path, history: &Value) -> Result<(), String> {
+    let wrote = |error: std::io::Error| {
+        format!("could not save the history in {}: {error}", file.display())
+    };
+    if let Some(dir) = file.parent() {
+        fs::create_dir_all(dir).map_err(wrote)?;
+    }
+    let partial = file.with_extension("partial");
+    let mut out = fs::File::create(&partial).map_err(wrote)?;
+    out.write_all(
+        json!({"dump": dump.display().to_string(), "history": history})
+            .to_string()
+            .as_bytes(),
+    )
+    .and_then(|()| out.sync_all())
+    .map_err(wrote)?;
+    fs::rename(&partial, file).map_err(wrote)
 }
 
 /// The last lines of a tool's output, for a plain error message.

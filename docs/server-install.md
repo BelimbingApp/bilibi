@@ -129,7 +129,7 @@ cargo build --release -p bilibi-installer
 sudo scripts/install-server.sh installer target/release/bilibi-installer
 ```
 
-This copies the program to `/opt/bilibi/build/bin/bilibi-installer`, owned by root so neither Bilibi user can change it, and starts `bilibi-installer@<instance>` for every instance on the machine. A `create` after that starts one for the new instance too. Run `installer` again with a newer program to update it: the services restart, and a job one of them was in the middle of resumes from the step it was in.
+This copies the program to `/opt/bilibi/build/bin/bilibi-installer`, owned by root so neither Bilibi user can change it, and starts `bilibi-installer@<instance>` for every instance on the machine. A `create` after that starts one for the new instance too. Run `installer` again with a newer program to update it: the services restart, and a job one of them was in the middle of is settled by the rules in [`apps/installer/README.md`](../apps/installer/README.md) ("If the server restarts mid-way"): before the database changed it ends `interrupted` and nothing changed; after, it finishes.
 
 The installer reads the instance's `env` for its database and port, and copies releases only from another instance's folder on this machine (the one named in "Install releases tested on"). Downloading a release from another machine is a later piece.
 
