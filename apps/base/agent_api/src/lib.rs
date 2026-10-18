@@ -534,8 +534,8 @@ impl Registry {
 inventory::submit! { Consumer::new::<Definitions>(DEFINITIONS,"base/agent_api",|entries|Registry::from_entries(entries).map(|_|())) }
 inventory::submit! { bilibi_module_registry::Module {
     id:"base/agent_api",layer:bilibi_module_registry::Layer::Base,
-    dependencies:&["base/module_registry","base/authz","base/database","base/settings","base/tenancy","base/step_up","base/session","base/instance"], migrations:&[("agent-api-plans-v1",include_str!("../migrations/001-plans.sql"))],
+    dependencies:&["base/module_registry","base/authz","base/database","base/settings","base/tenancy","base/step_up","base/session","base/system"], migrations:&[("agent-api-plans-v1",include_str!("../migrations/001-plans.sql"))],
     services:&[bilibi_module_registry::Service {id:"base/agent_api.registry",factory:|_|Ok(Arc::new(Registry::from_inventory()?))},
-    bilibi_module_registry::Service {id:"base/agent_api.plans",factory:|services|Ok(Arc::new(plans::Plans::new(services.get::<bilibi_database::Db>("base/database.pool")?.as_ref().clone(),services.get("base/database.mutations")?,services.get("base/agent_api.registry")?,services.get("base/settings.store")?,services.get(bilibi_instance::SERVICE)?)))},
+    bilibi_module_registry::Service {id:"base/agent_api.plans",factory:|services|Ok(Arc::new(plans::Plans::new(services.get::<bilibi_database::Db>("base/database.pool")?.as_ref().clone(),services.get("base/database.mutations")?,services.get("base/agent_api.registry")?,services.get("base/settings.store")?)))},
     bilibi_module_registry::Service {id:page::SERVICE,factory:|services|Ok(Arc::new(page::PageContracts::new(services.get::<bilibi_database::Db>("base/database.pool")?.as_ref().clone(),services.get("base/agent_api.registry")?,services.get("base/agent_api.plans")?,services.get("base/session.sessions")?,&Catalog::discover(&bilibi_module_registry::discover()?)?)?))}],
 } }

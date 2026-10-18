@@ -10,7 +10,7 @@ use crate::{
     plans::{PlanAuthority, PlannedOperation, Plans},
     Error, Registry, SearchOptions,
 };
-use bilibi_instance::Instance;
+use bilibi_system::Instance;
 use bilibi_tenancy::Scope;
 use serde_json::{json, Map, Value};
 use tokio_postgres::Client;
@@ -97,7 +97,10 @@ pub async fn dispatch(
         return error(Value::Null, -32_600, "Invalid request");
     }
     match method {
-        "initialize" => initialize(id, params, plans.instance()),
+        "initialize" => match plans.instance().await {
+            Ok(instance) => initialize(id, params, &instance),
+            Err(backend) => Outcome::Unavailable(backend),
+        },
         "ping" => result(id, json!({})),
         "tools/list" => {
             if params.contains_key("cursor") {
@@ -107,7 +110,10 @@ pub async fn dispatch(
             {
                 error(id, -32_602, "Invalid params")
             } else {
-                result(id, json!({"tools": listed(plans.instance())}))
+                match plans.instance().await {
+                    Ok(instance) => result(id, json!({"tools": listed(&instance)})),
+                    Err(backend) => Outcome::Unavailable(backend),
+                }
             }
         }
         "tools/call" => match params.get("name").and_then(Value::as_str) {
@@ -153,7 +159,7 @@ fn initialize(id: Value, params: &Map<String, Value>, instance: &Instance) -> Ou
         json!({
             "protocolVersion": negotiated,
             "capabilities": {"tools": {"listChanged": false}},
-            "serverInfo": {"name": "bilibi", "title": format!("Bilibi {}", instance.title()), "version": env!("CARGO_PKG_VERSION")},
+            "serverInfo": {"name": "bilibi", "title": format!("Bilibi {}", instance.label), "version": env!("CARGO_PKG_VERSION")},
             "instructions": format!("{INSTRUCTIONS} {} Name this Bilibi at the top of every plan review and confirmation you show; plan and commit results carry it as `instance`.", instance.notice()),
         }),
     )
@@ -298,8 +304,8 @@ fn listed(instance: &Instance) -> Vec<Value> {
             let description = format!(
                 "{} This Bilibi is {}. {}",
                 tool["description"].as_str().unwrap_or_default(),
-                instance.title(),
-                instance.consequence()
+                instance.label,
+                instance.role.consequence()
             );
             tool["description"] = json!(description);
         }

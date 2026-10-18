@@ -12,6 +12,7 @@ use bilibi_module_registry::{Contribution, Provenance};
 use bilibi_settings::{
     Definition, Editor, ScopeKind, Setting, Settings, Validator, ValueType, DEFINITIONS,
 };
+use bilibi_ui::{Html, InstanceBadge, InstanceBanner, StatusKind};
 use serde_json::{json, Value};
 use tokio_postgres::GenericClient;
 
@@ -64,6 +65,14 @@ impl Role {
             Self::Production => "Production",
         }
     }
+    /// What a change here does, in one or two short sentences.
+    pub fn consequence(self) -> &'static str {
+        match self {
+            Self::Dev => "This is a development copy. Changes here do not affect production.",
+            Self::Staging => "This is a test copy. Changes here do not affect production.",
+            Self::Production => "This is the live system. Changes here change real data.",
+        }
+    }
     /// The default colour, one of `DESIGN.md`'s status roles.
     pub fn colour(self) -> Colour {
         match self {
@@ -101,6 +110,14 @@ impl Colour {
         Self::ALL
             .into_iter()
             .find(|colour| colour.as_str() == value)
+    }
+    fn status(self) -> StatusKind {
+        match self {
+            Self::Info => StatusKind::Info,
+            Self::Success => StatusKind::Success,
+            Self::Warning => StatusKind::Warning,
+            Self::Danger => StatusKind::Error,
+        }
     }
 }
 
@@ -178,6 +195,48 @@ impl Instance {
             label,
             colour,
             installs_from,
+        })
+    }
+    /// The sentence an agent or a hover shows: "You are on Staging. This is a
+    /// test copy. Changes here do not affect production."
+    pub fn notice(&self) -> String {
+        format!("You are on {}. {}", self.label, self.role.consequence())
+    }
+    /// What the Agent API and MCP send, so an agent can tell its person
+    /// "this will create the order on Staging".
+    pub fn agent_json(&self) -> Value {
+        json!({
+            "environment": self.role.env_value(),
+            "label": self.label,
+            "production": self.role == Role::Production,
+            "notice": self.notice(),
+        })
+    }
+    /// The shell's top-bar badge. Production shows none: it is the normal
+    /// case, and a badge on every production page would teach people to stop
+    /// looking at it. The account panel still names it.
+    pub fn badge(&self) -> askama::Result<Html> {
+        if self.role == Role::Production {
+            return Ok(Html::default());
+        }
+        let title = self.notice();
+        Html::render(&InstanceBadge {
+            tone: self.colour.status(),
+            role: self.role.env_value(),
+            label: &self.label,
+            title: &title,
+        })
+    }
+    /// The banner at the top of a review or confirmation, in every role,
+    /// production included. `class` places it (`mb-4`).
+    pub fn banner(&self, id: &str, class: &str) -> askama::Result<Html> {
+        Html::render(&InstanceBanner {
+            id,
+            tone: self.colour.status(),
+            role: self.role.env_value(),
+            label: &self.label,
+            message: self.role.consequence(),
+            class,
         })
     }
 }

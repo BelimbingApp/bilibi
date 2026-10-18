@@ -95,6 +95,7 @@ async fn context<'a>(
     topbar_actions: Html,
 ) -> Result<ShellContext<'a>> {
     let client = app.db.get().await?;
+    let instance = bilibi_base::system::Instance::resolve(&app.settings, &**client).await?;
     let capabilities = authz::effective_capabilities(&**client, scope).await?;
     // Owner-only items answer the live owner proof, never a capability.
     let owner = match tenancy::prove_owner(&**client, scope).await {
@@ -179,8 +180,8 @@ async fn context<'a>(
         home,
         served_routes: serde_json::to_string(&served).map_err(|_| Error::Internal)?,
         pins: serde_json::to_string(&pins).map_err(|_| Error::Internal)?,
-        instance: app.instance.badge().map_err(|_| Error::Internal)?,
-        instance_title: app.instance.title(),
+        instance: instance.badge().map_err(|_| Error::Internal)?,
+        instance_title: instance.label,
         development: cfg!(debug_assertions),
         listen_address: if cfg!(debug_assertions) {
             app.listen_address.as_deref()

@@ -271,11 +271,11 @@ dependencies = [
  "bilibi-core",
  "bilibi-database",
  "bilibi-datetime",
- "bilibi-instance",
  "bilibi-locale",
  "bilibi-module-registry",
  "bilibi-party-ids",
  "bilibi-settings",
+ "bilibi-system",
  "bilibi-tenancy",
  "bilibi-ui",
  "bilibi-walkthrough-fixture",
@@ -298,11 +298,11 @@ version = "0.1.1"
 dependencies = [
  "bilibi-authz",
  "bilibi-database",
- "bilibi-instance",
  "bilibi-module-registry",
  "bilibi-session",
  "bilibi-settings",
  "bilibi-step-up",
+ "bilibi-system",
  "bilibi-tenancy",
  "bilibi-walkthrough-fixture",
  "bilibi-web",
@@ -457,7 +457,6 @@ dependencies = [
  "bilibi-design-library",
  "bilibi-events",
  "bilibi-grid",
- "bilibi-instance",
  "bilibi-integration",
  "bilibi-locale",
  "bilibi-mail",
@@ -679,17 +678,6 @@ dependencies = [
  "jiff",
  "serde_json",
  "tokio-postgres",
-]
-
-[[package]]
-name = "bilibi-instance"
-version = "0.1.0"
-dependencies = [
- "askama",
- "bilibi-module-registry",
- "bilibi-ui",
- "inventory",
- "serde_json",
 ]
 
 [[package]]

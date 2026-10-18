@@ -55,7 +55,7 @@ Reuse the shared macros and typed models. Do not hand-write markup or copy class
 | Page, card, section, button, badge, icon | `templates/components.html` and `src/components.rs` | `apps/base/ui` |
 | Form control | `templates/forms.html` and `src/forms.rs` | `apps/base/ui` |
 | Flash, alert, panel notice | `templates/feedback.html` and `src/feedback.rs` | `apps/base/ui` |
-| Which Bilibi this is (badge, banner) | `templates/feedback.html` and `src/instance.rs`, through Base Instance | `apps/base/ui`, `apps/base/instance` |
+| Which Bilibi this is (badge, banner) | `templates/feedback.html` and `src/instance.rs`, through `bilibi_system::Instance` | `apps/base/ui`, `apps/base/system` |
 | Modal, confirmation | `templates/dialog.html` | `apps/base/ui` |
 | Tabs | `templates/tabs.html` | `apps/base/ui` |
 | Inline edit | `templates/inline.html` and `src/inline.rs` | `apps/base/ui` |
@@ -167,7 +167,7 @@ Width is a shared decision. Every page uses `PageVariant`. All three share one c
 | Panel notice | Where a panel cannot reach the page flash |
 | Connection | Banners announce a dropped socket. The page reconnects with backoff and remounts in place |
 | Error pages | One shell from `apps/web/src/errors.rs`. Debug detail only in debug builds |
-| Which Bilibi | Development (info) and staging (warning) show a badge in the top bar and on sign-in; production shows none. A review or confirmation opens with the instance banner in every environment, production in sober ink. The label always says the kind in words |
+| Which Bilibi | Every instance but production shows a badge in the top bar and on sign-in; production shows none. A review or confirmation opens with the instance banner on every instance, production included. The colour is the operator's `instance.colour` status role, and the label is the operator's `instance.label`, so the name is always in words |
 
 - A failure says what happened, what it cost, and what to do next.
 - Recover before reporting. Users are not an error channel.

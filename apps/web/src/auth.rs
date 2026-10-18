@@ -213,7 +213,19 @@ pub fn sign_in_redirect(app: &App, had_credential: bool) -> Response {
     response
 }
 
-fn card<T: Template>(
+/// The instance badge under the brand. A failed settings read degrades to no
+/// badge and is logged; it never fails a sign-in card.
+async fn instance_badge(app: &App) -> std::result::Result<Html, HttpError> {
+    match app.instance().await {
+        Ok(instance) => Ok(instance.badge().map_err(|_| Error::Internal)?),
+        Err(error) => {
+            eprintln!("warning: instance lookup failed: {error:?}");
+            Ok(Html::default())
+        }
+    }
+}
+
+async fn card<T: Template>(
     app: &App,
     title: &str,
     card: T,
@@ -222,7 +234,7 @@ fn card<T: Template>(
 ) -> std::result::Result<Response, HttpError> {
     let body = AuthLayout {
         body: Html::render(&card).map_err(|_| Error::Internal)?,
-        instance: app.instance.badge().map_err(|_| Error::Internal)?,
+        instance: instance_badge(app).await?,
         flash,
     }
     .render()
@@ -320,6 +332,7 @@ async fn login_card(
         flash,
         status,
     )
+    .await
 }
 /// The sign-in card's workspace strip. A failed lookup degrades the strip and
 /// is logged; it never fails the sign-in card.
@@ -438,9 +451,9 @@ pub async fn forgot_page(
     if signed_in(&app, &headers).await {
         return Ok(Redirect::to(WORKSPACE).into_response());
     }
-    forgot_card(&app, &ForgotForm::default(), StatusCode::OK)
+    forgot_card(&app, &ForgotForm::default(), StatusCode::OK).await
 }
-fn forgot_card(
+async fn forgot_card(
     app: &App,
     form: &ForgotForm,
     status: StatusCode,
@@ -452,6 +465,7 @@ fn forgot_card(
         FlashMap::default(),
         status,
     )
+    .await
 }
 #[derive(Deserialize)]
 pub struct ForgotSubmission {
@@ -470,13 +484,13 @@ pub async fn forgot(
     };
     form.email_errors = validate_email(&form.email);
     if !form.email_errors.is_empty() {
-        return forgot_card(&app, &form, StatusCode::UNPROCESSABLE_ENTITY);
+        return forgot_card(&app, &form, StatusCode::UNPROCESSABLE_ENTITY).await;
     }
     match app.user.request_password_reset(&form.email).await {
         // The confirmation is the same whether or not the account exists.
         Ok(()) | Err(CredentialError::Other(Error::Invalid)) => {
             form.confirmation = RESET_REQUESTED.into();
-            forgot_card(&app, &form, StatusCode::OK)
+            forgot_card(&app, &form, StatusCode::OK).await
         }
         Err(CredentialError::Other(error)) => Err(error.into()),
         Err(_) => Err(Error::Internal.into()),
@@ -498,9 +512,9 @@ pub async fn reset_page(
         email: bounded(query.get("email").map(String::as_str).unwrap_or("")),
         ..ResetForm::default()
     };
-    reset_card(&app, &form, StatusCode::OK)
+    reset_card(&app, &form, StatusCode::OK).await
 }
-fn reset_card(
+async fn reset_card(
     app: &App,
     form: &ResetForm,
     status: StatusCode,
@@ -512,6 +526,7 @@ fn reset_card(
         FlashMap::default(),
         status,
     )
+    .await
 }
 #[derive(Deserialize)]
 pub struct ResetSubmission {
@@ -541,7 +556,7 @@ pub async fn reset(
         && form.password_errors.is_empty()
         && form.confirmation_errors.is_empty())
     {
-        return reset_card(&app, &form, StatusCode::UNPROCESSABLE_ENTITY);
+        return reset_card(&app, &form, StatusCode::UNPROCESSABLE_ENTITY).await;
     }
     let outcome = app
         .user
@@ -555,11 +570,11 @@ pub async fn reset(
         }
         Err(CredentialError::InvalidOrExpiredToken) => {
             form.email_errors = vec![RESET_LINK_INVALID.into()];
-            reset_card(&app, &form, StatusCode::UNPROCESSABLE_ENTITY)
+            reset_card(&app, &form, StatusCode::UNPROCESSABLE_ENTITY).await
         }
         Err(CredentialError::Policy(violation)) => {
             form.password_errors = vec![violation.to_string()];
-            reset_card(&app, &form, StatusCode::UNPROCESSABLE_ENTITY)
+            reset_card(&app, &form, StatusCode::UNPROCESSABLE_ENTITY).await
         }
         Err(CredentialError::Other(error)) => Err(error.into()),
         Err(_) => Err(Error::Internal.into()),

@@ -42,15 +42,15 @@
 {% endmacro %}
 
 {#- Which installation this is (src/instance.rs): a small badge for the top
-    bar. The kind is always in words; the colour only repeats it. -#}
+    bar. The label is always in words; the colour only repeats it. -#}
 {% macro instance_badge(badge) %}
-<span data-instance="{{ badge.kind.name() }}" title="{{ badge.title }}" class="inline-flex h-5 min-w-0 shrink items-center gap-1 rounded-sm border px-1.5 text-xs font-semibold {{ badge.kind.class() }}">{% call c::icon(name=badge.kind.icon(), class="size-3.5 shrink-0") %}{% endcall %}<span class="shrink-0 uppercase tracking-wide">{{ badge.label }}</span>{% if let Some(name) = badge.name %}<span class="hidden min-w-0 truncate font-medium sm:inline">{{ name }}</span>{% endif %}</span>
+<span data-instance="{{ badge.role }}" title="{{ badge.title }}" class="inline-flex h-5 min-w-0 shrink items-center gap-1 rounded-sm border px-1.5 text-xs font-semibold {{ badge.tone.surface_class() }}">{% call c::icon(name=badge.tone.icon(), class="size-3.5 shrink-0") %}{% endcall %}<span class="min-w-0 truncate uppercase tracking-wide">{{ badge.label }}</span></span>
 {% endmacro %}
 
 {#- Which installation a review or confirmation acts on, at its top
     (src/instance.rs). A note, not an alert: it is read in place, every time. -#}
 {% macro instance_banner(banner) %}
-<div{% if !banner.id.is_empty() %} id="{{ banner.id }}"{% endif %} role="note" aria-label="Which Bilibi this is" data-instance="{{ banner.kind.name() }}" class="flex items-start gap-3 rounded-lg border-2 px-3 py-2.5 text-sm {{ banner.kind.class() }}{% if !banner.class.is_empty() %} {{ banner.class }}{% endif %}">{% call c::icon(name=banner.kind.icon(), class="mt-0.5 size-5 shrink-0") %}{% endcall %}<div class="min-w-0"><p class="text-base font-semibold"><span class="uppercase tracking-wide">{{ banner.label }}</span>{% if let Some(name) = banner.name %} <span class="font-medium">· {{ name }}</span>{% endif %}</p><p>{{ banner.message }}</p></div></div>
+<div{% if !banner.id.is_empty() %} id="{{ banner.id }}"{% endif %} role="note" aria-label="Which Bilibi this is" data-instance="{{ banner.role }}" class="flex items-start gap-3 rounded-lg border-2 px-3 py-2.5 text-sm {{ banner.tone.surface_class() }}{% if !banner.class.is_empty() %} {{ banner.class }}{% endif %}">{% call c::icon(name=banner.tone.icon(), class="mt-0.5 size-5 shrink-0") %}{% endcall %}<div class="min-w-0"><p class="break-words text-base font-semibold uppercase tracking-wide">{{ banner.label }}</p><p>{{ banner.message }}</p></div></div>
 {% endmacro %}
 
 {#- An inline status alert. -#}

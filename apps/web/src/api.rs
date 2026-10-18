@@ -309,6 +309,10 @@ async fn protected_resource(State(app): State<App>) -> Response {
     )
 }
 async fn descriptor(State(app): State<App>) -> Response {
+    let instance = match app.instance().await {
+        Ok(instance) => instance,
+        Err(error) => return unavailable(&error).into_response(),
+    };
     let base = origin(&app);
     let host = base
         .split_once("://")
@@ -324,7 +328,7 @@ async fn descriptor(State(app): State<App>) -> Response {
             "plan_endpoint": format!("{base}/api/v1/plans"),
             "commit_endpoint": format!("{base}/api/v1/plans/commit"),
             "server_name": host,
-            "instance": app.instance.agent_json(),
+            "instance": instance.agent_json(),
             "client_id": CLIENT_ID,
         }),
     )

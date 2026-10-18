@@ -13,6 +13,8 @@ use askama::Template;
 use bilibi_database::{Db, Error, Result};
 use bilibi_datetime::{DisplayContext, DisplayPolicy, Format, Precision};
 use bilibi_locale::Locales;
+use bilibi_settings::Settings;
+use bilibi_system::Instance;
 use bilibi_tenancy::{Scope, SelfReport};
 use bilibi_ui::{
     page::{
@@ -39,9 +41,8 @@ pub struct Pages {
     pub db: Db,
     pub display: Arc<DisplayPolicy>,
     pub locales: Arc<Locales>,
-    /// Which installation the person connects the agent to; both consent
-    /// pages open with its banner.
-    pub instance: Arc<bilibi_instance::Instance>,
+    /// Reads the instance label and colour that both consent pages open with.
+    pub settings: Arc<Settings>,
     /// `APP_ORIGIN`, the OAuth issuer; the MCP resource is `{origin}/mcp`.
     /// Never the request's Host header.
     pub origin: String,
@@ -58,8 +59,14 @@ impl Pages {
     fn resource(&self) -> String {
         format!("{}/mcp", self.origin)
     }
-    fn instance_banner(&self, id: &str) -> Result<Html> {
-        self.instance
+    /// The banner naming which installation the person connects the agent to.
+    async fn instance_banner(
+        &self,
+        client: &(impl GenericClient + Sync),
+        id: &str,
+    ) -> Result<Html> {
+        Instance::resolve(&self.settings, client)
+            .await?
             .banner(id, "mb-4")
             .map_err(|_| Error::Internal)
     }
@@ -292,7 +299,10 @@ impl DevicePage {
             None => None,
         };
         html(DeviceView {
-            instance: self.pages.instance_banner("device-instance")?,
+            instance: self
+                .pages
+                .instance_banner(&**client, "device-instance")
+                .await?,
             flash: flash_map(self.flash),
             error: self.error,
             code: &self.code,
@@ -510,7 +520,10 @@ impl AuthorizePage {
             .map(|at| instant(&display, "oauth-expiry", at))
             .transpose()?;
         html(AuthorizeView {
-            instance: self.pages.instance_banner("oauth-instance")?,
+            instance: self
+                .pages
+                .instance_banner(&**client, "oauth-instance")
+                .await?,
             error: self.error,
             request: self.request.as_ref(),
             expiry,

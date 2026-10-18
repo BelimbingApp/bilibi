@@ -14,7 +14,7 @@ use askama::Template;
 #[template(path = "auth.html")]
 pub struct AuthLayout<'a> {
     pub body: Html,
-    /// Which installation this is (Base Instance's badge), under the brand
+    /// Which installation this is (`bilibi_system::Instance` badge), under the brand
     /// so nobody signs in to a test copy thinking it is live; empty for
     /// production and for error pages.
     pub instance: Html,

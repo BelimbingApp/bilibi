@@ -125,13 +125,13 @@ usable until expiry, subject to a fresh successful revalidation.
 
 ### Which Bilibi a plan lands on
 
-Every preview and every successful commit carries `instance` (Base Instance, `apps/base/instance/README.md`), so the agent can tell its person "this will create the order on Staging":
+Every preview and every successful commit carries `instance` (`bilibi_system::Instance`, `apps/base/system/README.md`), so the agent can tell its person "this will create the order on Staging":
 
 ```json
-"instance": {"environment": "staging", "label": "Staging", "name": "SBG Staging", "title": "Staging (SBG Staging)", "production": false, "notice": "You are on Staging (SBG Staging). This is a test copy. Changes here do not affect production."}
+"instance": {"environment": "staging", "label": "Staging", "production": false, "notice": "You are on Staging. This is a test copy. Changes here do not affect production."}
 ```
 
-- `name` is `null` when the operator set none. `environment` is `development`, `staging` or `production`.
+- `environment` is `development`, `staging` or `production` (`BILIBI_ENV`); `label` is the operator's `instance.label` setting, which defaults to Dev, Staging or Production.
 - MCP names it too: `initialize` (`serverInfo.title` and the instructions) and the `plan` and `commit` tool descriptions in `tools/list`. `GET /.well-known/bilibi` carries the same object.
 - The plugin skill (`core/agent_plugins`) tells the agent to open every review and confirmation with it, as a full-width banner in an HTML review. Bilibi draws no plan review page itself; the harness does.
 
