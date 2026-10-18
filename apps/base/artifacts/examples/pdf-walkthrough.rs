@@ -287,6 +287,10 @@ async fn main() -> Result<()> {
     bilibi_database::migrate(&db, &modules).await?;
     let mut services = Services::default();
     services.provide("bootstrap.database", Arc::new(db.clone()))?;
+    services.provide(
+        "bootstrap.composition",
+        std::sync::Arc::new(bilibi_module_registry::composition(&[], &[])),
+    )?;
     services.install(&modules)?;
     let store = services.get::<Artifacts>("base/artifacts.store")?;
     let authentication = services.get::<Authentication>("base/tenancy.authentication")?;

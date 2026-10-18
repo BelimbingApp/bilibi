@@ -124,6 +124,10 @@ pub async fn cleanup(
         let modules = crate::modules()?;
         let mut services = bilibi_module_registry::Services::default();
         services.provide("bootstrap.database", std::sync::Arc::new(db.clone()))?;
+        services.provide(
+            "bootstrap.composition",
+            std::sync::Arc::new(crate::composition()),
+        )?;
         services.install(&modules)?;
         services
     };

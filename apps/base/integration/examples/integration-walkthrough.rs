@@ -94,6 +94,10 @@ async fn main() -> DbResult<()> {
     bilibi_database::migrate(&db, &modules).await?;
     let mut services = Services::default();
     services.provide("bootstrap.database", Arc::new(db.clone()))?;
+    services.provide(
+        "bootstrap.composition",
+        std::sync::Arc::new(bilibi_module_registry::composition(&[], &[])),
+    )?;
     services.install(&modules)?;
     let integration = services.get::<Integration>(SERVICE)?;
     let schedule = services.get::<Schedule>("base/schedule.store")?;

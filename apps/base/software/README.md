@@ -7,10 +7,10 @@
 An assistant, acting for the server owner, asks Dev to add Finance and Factory. Over the Agent API that is three calls:
 
 ```
-read   base.software.status      → "Dev, builds, runs Bilibi 0.1.1 with no Domains, no job running"
+read   base.software.status      → "Dev, builds, runs Bilibi 0.1.0 with no Domains, no job running"
 plan   base.software.change      { "domains": [{"id": "finance"}, {"id": "factory"}] }
-       → review: update Bilibi 0.1.1 → 0.1.0, add Finance 0.1.0, add Factory 0.1.0,
-         both tested together on 0.1.0, about 8 minutes, then a 1-minute pause
+       → review: keep Bilibi 0.1.0, add Finance 0.1.0, add Factory 0.1.0,
+         both tested together on 0.1.0, about 6 minutes, then a 1-minute pause
 commit                           → step_up_required (every_time)
 commit  + step_up_code "123456"  → job 1 queued, seven steps pending
 ```
@@ -52,7 +52,7 @@ All six go through Agent API (`apps/base/agent_api/README.md`): reads are called
 | --- | --- | --- | --- |
 | `base.software.status` | read | none | instance; installed Platform, Domains and Extensions; plug-ins; the job waiting or running (or the last one) with its steps and whether cancel is available; whether Undo is available; recent jobs |
 | `base.software.catalogue` | read | none | the catalogue, with the Platform versions each Domain release was tested on; or `available: false` and why |
-| `base.software.change` | write, Dev only | `domains` (the full wanted set; a mounted Domain left out is removed), optional `platform`, `plugins`, `switch` | the change list (add, update, remove, keep), whether every version was tested together on that Platform, warnings, a rough estimate, what happens, the steps |
+| `base.software.change` | write, Dev only | `domains` (the full wanted set; a mounted Domain left out is removed), optional `platform`, `plugins`, `switch` | the change list (add, update, downgrade, remove, keep; plug-ins switched on or off), whether every version was tested together on that Platform, warnings, a rough estimate, what happens, the steps |
 | `base.software.install` | write, Staging and Production | `release` (a number the source reports as tested), optional `switch` | the source, the checks the installer makes, the pause |
 | `base.software.undo` | write | optional `job` | which release it goes back to, and whether the backup is restored and later entries lost |
 | `base.software.cancel` | write, no 2FA | optional `job` | removed from the queue, or asked to stop before the pause; refused once the pause started |
@@ -61,7 +61,9 @@ Rules the reviews enforce, each as a field error that says what to do:
 
 - `change` on an instance that does not build, or `install` on Dev, names the right contract for that instance.
 - A Domain not in the catalogue needs a `repository` (https) and a `ref`; it is allowed and labelled with its source, and never counts as tested (captain decision 6).
-- `platform` left out picks the newest release every chosen Domain accepts; a release that fits none says which Domain needs what.
+- `platform` left out keeps the running Bilibi when every chosen Domain accepts it. Only when a Domain needs another release does the review pick the newest one that fits, and then it says so in its own line: "Bilibi will also change from X to Y because Finance 0.2.0 needs Platform >=0.2.0", with the extra time and the database update. A release that fits none says which Domain needs what.
+- A move to an older version, of Bilibi or of a Domain, is labelled `downgrade`, never `update`, and the review warns that the database keeps what the newer release changed.
+- A Domain from outside the catalogue needs an `https://` repository with no user name or token in it, and a `ref` that does not start with `-`: the request is stored and shown as plain data.
 - A second request while one job waits or runs is refused and names that job.
 - A request that changes nothing is refused and says what already runs.
 - `undo` takes only the newest finished job, and only when the worker recorded its result (below); a finished undo cannot be undone again.
@@ -91,7 +93,7 @@ The builder (plan piece 6, Dev) and the installer (piece 5, every instance) are 
 1. **Wake up.** `LISTEN bilibi_software_jobs`. Every queue and every cancel sends `NOTIFY bilibi_software_jobs, '<job id>'` inside the commit, so it arrives once the row is visible. Also poll on start-up: a notification sent while the worker was down is lost.
 2. **Claim.** `UPDATE base_software_jobs SET state='running', worker=$1, started_at=now() WHERE id=$2 AND state='queued'`. Zero rows means someone else has it, or it was cancelled.
 3. **Report each step.** Set `state='running', started_at=now()` when it starts, then `done` or `failed` with `finished_at` and a plain `detail` (`{"message": "Compiled 214 of 412 parts"}`), never a secret. Skip the rest after a failure (`skipped`).
-4. **Honour a cancel before the pause.** Before starting a step that `pauses`, re-read `cancel_requested_at`; if set, mark the remaining steps `skipped` and the job `cancelled`.
+4. **Honour a cancel before the pause.** Before starting a step that `pauses`, in one transaction lock the job (`SELECT cancel_requested_at FROM base_software_jobs WHERE id=$1 FOR UPDATE`). If it is set, mark the remaining steps `skipped` and the job `cancelled`. If not, mark the pausing step `running` in the same transaction, so a cancel either lands before the pause or is refused as too late.
 5. **Finish.** Set `state`, `finished_at` and `result`. Undo needs these keys in `result`:
 
    | Key | Meaning |

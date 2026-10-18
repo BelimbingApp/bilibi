@@ -101,6 +101,14 @@ struct Wanted {
     external: bool,
 }
 
+/// `update` when `to` is not older than `from`, `downgrade` when it is.
+fn movement(from: Option<&str>, to: &str) -> &'static str {
+    match (from.and_then(Version::parse), Version::parse(to)) {
+        (Some(from), Some(to)) if to < from => "downgrade",
+        _ => "update",
+    }
+}
+
 /// A change on Dev: the wanted set of Domains and versions, the plug-ins and
 /// when to switch, against what runs now and what the catalogue offers.
 pub fn change(
@@ -205,19 +213,24 @@ pub fn change(
                 let known: Vec<&String> = catalogue.domains.keys().collect();
                 return Err(SoftwareError::field(&field, &format!("{id} is not in the catalogue ({}). To build a Domain from elsewhere, give its repository (https://…) and ref.", join(&known))));
             };
-            if !repository.starts_with("https://")
+            let host = repository
+                .strip_prefix("https://")
+                .map(|rest| rest.split('/').next().unwrap_or_default());
+            if host.is_none_or(|host| host.is_empty() || host.contains('@'))
                 || repository.len() > 512
                 || repository.chars().any(char::is_whitespace)
             {
                 return Err(SoftwareError::field(
                     &format!("domains.{index}.repository"),
-                    "A repository is an https:// Git address.",
+                    "A repository is an https:// Git address without a user name or token in it.",
                 ));
             }
-            let reference = entry["ref"]
-                .as_str()
-                .map(str::trim)
-                .filter(|r| !r.is_empty() && r.len() <= 128 && !r.chars().any(char::is_whitespace));
+            let reference = entry["ref"].as_str().map(str::trim).filter(|r| {
+                !r.is_empty()
+                    && r.len() <= 128
+                    && !r.starts_with('-')
+                    && !r.chars().any(char::is_whitespace)
+            });
             let Some(reference) = reference else {
                 return Err(SoftwareError::field(
                     &format!("domains.{index}.ref"),
@@ -251,6 +264,7 @@ pub fn change(
         }
         Ok(())
     };
+    let mut platform_because = None;
     let platform = match input["platform"].as_str() {
         Some(asked) => {
             let version = Version::parse(asked)
@@ -275,15 +289,24 @@ pub fn change(
             version
         }
         None => {
+            let running = Version::parse(made.version).filter(|v| platform_versions.contains(v));
             let mut last_reason = String::new();
             let mut chosen = None;
-            for candidate in &platform_versions {
-                match accepts(*candidate) {
-                    Ok(()) => {
-                        chosen = Some(*candidate);
-                        break;
+            if let Some(version) = running {
+                match accepts(version) {
+                    Ok(()) => chosen = Some(version),
+                    Err(why) => platform_because = Some(why),
+                }
+            }
+            if chosen.is_none() {
+                for candidate in &platform_versions {
+                    match accepts(*candidate) {
+                        Ok(()) => {
+                            chosen = Some(*candidate);
+                            break;
+                        }
+                        Err(why) => last_reason = why,
                     }
-                    Err(why) => last_reason = why,
                 }
             }
             chosen.ok_or_else(|| SoftwareError::field("platform", &format!("No Bilibi release fits every chosen Domain: {last_reason}. Pick other versions.")))?
@@ -340,14 +363,14 @@ pub fn change(
         let (action, from) = match current {
             None => ("add", None),
             Some(c) if c.version == Some(w.version.as_str()) => ("keep", c.version),
-            Some(c) => ("update", c.version),
+            Some(c) => (movement(c.version, &w.version), c.version),
         };
         if action != "keep" {
             changes += 1;
             summary_parts.push(match action {
                 "add" => format!("add {} {}", w.name, w.version),
                 _ => format!(
-                    "update {} {} → {}",
+                    "{action} {} {} → {}",
                     w.name,
                     from.unwrap_or("unknown"),
                     w.version
@@ -367,15 +390,33 @@ pub fn change(
         }
     }
     let platform_changes = made.version != platform_text;
+    let platform_action = if platform_changes {
+        movement(Some(made.version), &platform_text)
+    } else {
+        "keep"
+    };
     if platform_changes {
         changes += 1;
         summary_parts.insert(
             0,
-            format!("update Bilibi {} → {platform_text}", made.version),
+            format!(
+                "{platform_action} Bilibi {} → {platform_text}",
+                made.version
+            ),
         );
     }
-    let plugin_changes = plugins.iter().filter(|p| p["action"] != "keep").count();
-    changes += plugin_changes;
+    for plugin in plugins.iter().filter(|p| p["action"] != "keep") {
+        changes += 1;
+        summary_parts.push(format!(
+            "switch {} {}",
+            plugin["name"].as_str().unwrap_or_default(),
+            if plugin["enabled"].as_bool() == Some(true) {
+                "on"
+            } else {
+                "off"
+            }
+        ));
+    }
     if changes == 0 {
         return Err(SoftwareError::field(
             "domains",
@@ -407,6 +448,28 @@ pub fn change(
         })
         .collect();
     let mut warnings = Vec::new();
+    if let Some(why) = &platform_because {
+        warnings.push(format!("Bilibi will also change from {} to {platform_text} because {why}. That adds about {PLATFORM_MINUTES} minutes and a database update.", made.version));
+    }
+    let downgrades: Vec<String> = domains
+        .iter()
+        .filter(|d| d["action"] == "downgrade")
+        .map(|d| {
+            format!(
+                "{} {} → {}",
+                d["name"].as_str().unwrap_or_default(),
+                d["from_version"].as_str().unwrap_or_default(),
+                d["version"].as_str().unwrap_or_default()
+            )
+        })
+        .chain(
+            (platform_action == "downgrade")
+                .then(|| format!("Bilibi {} → {platform_text}", made.version)),
+        )
+        .collect();
+    if !downgrades.is_empty() {
+        warnings.push(format!("This goes back to an older release: {}. The database keeps the changes the newer release made, and the older one may not expect them.", join(&downgrades)));
+    }
     if !untested.is_empty() {
         warnings.push(format!("Not recorded as tested together on Bilibi {platform_text}: {}. The build may fail; nothing changes if it does.", join(&untested)));
     }
@@ -430,7 +493,7 @@ pub fn change(
     let facts = json!({
         "summary": summary,
         "instance": instance_json(instance),
-        "platform": {"from": made.version, "to": platform_text, "action": if platform_changes { "update" } else { "keep" }},
+        "platform": {"from": made.version, "to": platform_text, "action": platform_action, "because": platform_because},
         "domains": domains,
         "plugins": plugins,
         "all_tested": untested.is_empty(),

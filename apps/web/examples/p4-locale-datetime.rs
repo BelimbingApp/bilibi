@@ -47,6 +47,10 @@ async fn main() -> Result<()> {
     let modules = bilibi_module_registry::discover()?;
     let mut services = Services::default();
     services.provide("bootstrap.database", Arc::new(db.clone()))?;
+    services.provide(
+        "bootstrap.composition",
+        std::sync::Arc::new(bilibi_module_registry::composition(&[], &[])),
+    )?;
     services.install(&modules)?;
     let settings = services.get::<Settings>("base/settings.store")?;
     let locales = services.get::<Locales>("base/locale.locales")?;

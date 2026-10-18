@@ -28,6 +28,10 @@ async fn main() -> Result<()> {
     let modules = bilibi_module_registry::discover()?;
     let mut services = Services::default();
     services.provide("bootstrap.database", Arc::new(db.clone()))?;
+    services.provide(
+        "bootstrap.composition",
+        std::sync::Arc::new(bilibi_module_registry::composition(&[], &[])),
+    )?;
     services.install(&modules)?;
     let users = services.get::<UserService>("core/user.accounts")?;
     let sessions = services.get::<Sessions>("base/session.sessions")?;

@@ -332,7 +332,10 @@ pub async fn cancel(
                     )
                     .await?
                 }
-                "running" if before.cancel_requested_at.is_none() => {
+                "running"
+                    if before.cancel_requested_at.is_none()
+                        && !past_pause(sql, tenant, id).await? =>
+                {
                     sql.query_one(
                         &format!("UPDATE base_software_jobs SET cancel_requested_at=now(), cancel_requested_by=$3 WHERE tenant_id=$1 AND id=$2 RETURNING {JOB_COLUMNS}"),
                         &[&tenant, &id, &user],
