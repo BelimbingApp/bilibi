@@ -406,6 +406,7 @@ wait_healthy() {
 put_in_service() {
     local instance=$1 n=$2 previous=$3 dir
     dir=$(instance_dir "$instance")
+    ensure_current_link "$instance"
     systemctl stop "$unit_name$instance"
     point_current "$instance" "$n"
     systemctl start "$unit_name$instance"

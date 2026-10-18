@@ -108,7 +108,7 @@ Step by step, we:
 1. Copy the program into the next numbered folder, `releases/<n>`, and write its SHA-256 checksum.
 2. Stop the service. From here Caddy shows the waiting page.
 3. Update the database with the new program's `migrate` and apply its production seeds. Nothing migrates on boot, so this must happen before the new program serves. If it fails, the previous release is started again and nothing has changed.
-4. Point `releases/current` at `<n>` and start the service. The instance's `current` is a fixed link to `releases/current`, so the link that moves lives in the folder `bilibi-build` owns, and the installer can move it too; an instance created before this shape is converted the next time you run `create`.
+4. Point `releases/current` at `<n>` and start the service. The instance's `current` is a fixed link to `releases/current`, so the link that moves lives in the folder `bilibi-build` owns, and the installer can move it too; an instance created before this shape is converted the next time you run `create`, `release` or `switch`.
 5. Check that the backend answers within 60 seconds. If it does not, point `current` back at the previous release and start that.
 
 `switch` goes to any kept release the same way, after checking its checksum:
