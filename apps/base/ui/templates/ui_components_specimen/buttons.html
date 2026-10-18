@@ -5,7 +5,7 @@
 <div id="specimen-button-icons" class="flex flex-wrap gap-2 rounded-xl border border-line bg-surface p-4 shadow-xs">
 {% call ui::button() %}{% call ui::icon(name="create") %}{% endcall %} Add{% endcall %}
 {% call ui::button() %}{% call ui::icon(name="edit") %}{% endcall %} Edit{% endcall %}
-{% call ui::button() %}{% call ui::icon(name="search") %}{% endcall %} Search{% endcall %}
+{% call ui::button(size=bilibi_ui::ButtonSize::Small) %}{% call ui::icon(name="search") %}{% endcall %} Search{% endcall %}
 {% call ui::button(variant=ButtonVariant::Danger) %}{% call ui::icon(name="delete") %}{% endcall %} Delete{% endcall %}
 </div>
 {% call ui::card(id="specimen-icon-button", title="Compact icon actions", inner_class="p-4") %}

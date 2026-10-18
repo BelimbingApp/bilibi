@@ -58,6 +58,26 @@
 @theme {
   --font-sans: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
 
+  /* Compact scale, based on Bilimbi's sidebar rhythm. Floating fields keep
+   * their 40px box and 14px values; ordinary content follows the 12px menu.
+   * Keep phone input text at an explicit 1rem to prevent browser zoom. */
+  --text-xs: 0.6875rem;
+  --text-xs--line-height: calc(14 / 11);
+  --text-sm: 0.75rem;
+  --text-sm--line-height: calc(16 / 12);
+  --text-base: 0.875rem;
+  --text-base--line-height: calc(20 / 14);
+  --text-lg: 1rem;
+  --text-lg--line-height: 1.5;
+  --text-xl: 1.125rem;
+  --text-xl--line-height: calc(24 / 18);
+  --text-2xl: 1.25rem;
+  --text-2xl--line-height: 1.4;
+  --spacing-control: 2.5rem;
+  --spacing-control-sm: 1.75rem;
+  --spacing-panel: 0.75rem;
+  --spacing-feedback: 0.5rem;
+
   /* Surfaces — a warm operational base. */
   --color-canvas: var(--color-stone-50);
   --color-surface: var(--color-white);
@@ -282,7 +302,68 @@
 
 body {
   font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  line-height: var(--text-sm--line-height);
   min-width: 20rem;
+}
+
+/* The shared button has the same box as a floating field. Table, toolbar
+ * and empty-state actions use the smaller step without page-owned sizing. */
+@utility ui-button {
+  min-height: var(--ui-control-height, var(--spacing-control));
+  max-width: 100%;
+}
+
+@utility compact-control {
+  --ui-control-height: var(--spacing-control-sm);
+}
+
+.ui-compact-controls {
+  --ui-control-height: var(--spacing-control-sm);
+}
+
+.ui-compact-controls .ui-field {
+  min-height: var(--spacing-control-sm);
+  padding-block: 0.25rem;
+  font-size: var(--text-sm);
+  line-height: 1rem;
+}
+
+/* Compact desktop chrome must still be easy to hit on a touch screen.
+ * Growing real boxes (rather than overlapping invisible hit areas) keeps
+ * neighbouring actions and table cells independently reachable. */
+@media (pointer: coarse) {
+  .ui-button,
+  .ui-touch-target,
+  .ui-icon-button,
+  [data-tab],
+  [data-shared-ui] label:has(input:is([type="checkbox"], [type="radio"])),
+  [data-pagination] button,
+  [data-pagination] select,
+  .ui-compact-controls .ui-field {
+    min-height: var(--spacing-control);
+  }
+
+  .ui-icon-button,
+  .ui-touch-target,
+  [data-pagination] button {
+    min-width: var(--spacing-control);
+  }
+
+  .ui-compact-controls .ui-field {
+    font-size: 1rem;
+    line-height: 1.25rem;
+  }
+
+  .ui-field-reveal {
+    margin-left: -2.75rem;
+  }
+}
+
+@media (width < 40rem) {
+  [data-shared-ui] :is(input, select, textarea) {
+    font-size: 1rem;
+  }
 }
 
 /* An open modal dialog is promoted to the top layer and makes the rest of the
@@ -446,7 +527,7 @@ body:has(dialog:modal) #flash-group > #connection-server-error {
  *
  * - the whole fact is the read trigger, and hovering it shades the box;
  * - the text input lies over the value cell with the floating field's
- *   geometry (`control_class` in src/forms.rs: `h-10 pt-3.5 pb-0.5 px-3`),
+ *   geometry (`control_class` in src/forms.rs: `h-control pt-3.5 pb-0.5 px-3`),
  *   and the fact's label stays on top of it, where the floated label is;
  * - a long text's textarea and a choice's editor fill the value cell from
  *   its border, and the choice's select or combobox takes the field's height;
@@ -459,6 +540,12 @@ body:has(dialog:modal) #flash-group > #connection-server-error {
 [data-fact]:has(> dd > [data-hook^="Inline"]) {
   & > dd > [data-hook^="Inline"] {
     position: static;
+    font-size: inherit;
+    line-height: inherit;
+
+    & [data-role="input"] {
+      font-size: inherit;
+    }
 
     & [data-role="trigger"] {
       min-height: 0;
@@ -502,7 +589,7 @@ body:has(dialog:modal) #flash-group > #connection-server-error {
   & > dd > [data-hook="InlineEdit"] [data-role="input"] {
     inset: 0 0 auto;
     width: 100%;
-    height: calc(var(--spacing) * 10);
+    height: var(--spacing-control);
     margin: 0;
     padding: calc(var(--spacing) * 3.5) calc(var(--spacing) * 3) calc(var(--spacing) * 0.5);
     border-radius: var(--radius-md);
@@ -533,7 +620,7 @@ body:has(dialog:modal) #flash-group > #connection-server-error {
 
     & :is(select, input[role="combobox"]) {
       width: 100%;
-      height: calc(var(--spacing) * 10);
+      height: var(--spacing-control);
       padding-top: calc(var(--spacing) * 3.5);
       padding-bottom: calc(var(--spacing) * 0.5);
       line-height: calc(var(--spacing) * 5);
@@ -542,7 +629,7 @@ body:has(dialog:modal) #flash-group > #connection-server-error {
 
   @media (width < 40rem) {
     & > dd > [data-hook] :is([data-role="input"], [data-role="editor"] select, [data-role="editor"] input[role="combobox"]) {
-      font-size: var(--text-base);
+      font-size: 1rem;
     }
   }
 }

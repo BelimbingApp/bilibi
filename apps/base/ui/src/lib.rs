@@ -11,7 +11,7 @@ pub mod page;
 extern crate self as bilibi_ui;
 
 mod auth;
-pub mod components;
+mod components;
 mod error_page;
 mod feedback;
 mod feedback_specimen;
@@ -40,11 +40,11 @@ pub use auth::{
     ResetPasswordPage, COMPANY_ARCHIVED, CREDENTIALS_REJECTED, PASSWORD_RESET, RESET_LINK_INVALID,
     RESET_REQUESTED, SESSION_EXPIRED, WORKSPACE_UNAVAILABLE,
 };
-pub use components::{card_flat, card_pads, stat_strip_columns};
+pub use components::{card_body_class, card_flat, stat_strip_columns};
 pub use components::{
-    ActionLink, BackLink, Badge, BadgeKind, Button, ButtonVariant, Card, Chrome, CreateButton,
-    Fact, Facts, Fold, Header, Icon, IconButton, IconContext, IconKind, Page, PageVariant,
-    SectionHeading, StatItem, StatKind, StatStrip, DEMOTED_ACTION_CLASS, NO_COUNT,
+    ActionLink, BackLink, Badge, BadgeKind, Button, ButtonSize, ButtonVariant, Card, Chrome,
+    CreateButton, Fact, Facts, Fold, Header, Icon, IconButton, IconContext, IconKind, Page,
+    PageVariant, SectionHeading, StatItem, StatKind, StatStrip, DEMOTED_ACTION_CLASS, NO_COUNT,
 };
 pub use error_page::{
     copy_for, debug_document, error_document, DebugFrame, DebugReport, ErrorCopy,

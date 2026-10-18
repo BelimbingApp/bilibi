@@ -403,9 +403,9 @@ impl<'a> Tab<'a> {
     /// The class list of the tab, selected or not.
     pub fn class(&self) -> &'static str {
         if self.current {
-            "-mb-px shrink-0 whitespace-nowrap border-b-2 px-3 py-2 text-sm transition focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-strong/40 border-brand-strong font-medium text-ink-strong"
+            "-mb-px shrink-0 whitespace-nowrap border-b-2 px-2 py-1.5 text-sm transition focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-strong/40 border-brand-strong font-medium text-ink-strong"
         } else {
-            "-mb-px shrink-0 whitespace-nowrap border-b-2 px-3 py-2 text-sm transition focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-strong/40 border-transparent text-ink-muted hover:text-ink"
+            "-mb-px shrink-0 whitespace-nowrap border-b-2 px-2 py-1.5 text-sm transition focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-strong/40 border-transparent text-ink-muted hover:text-ink"
         }
     }
 }

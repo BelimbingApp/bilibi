@@ -60,13 +60,32 @@ Reuse the shared macros and typed models. Do not hand-write markup or copy class
 | Inline edit | `templates/inline.html` and `src/inline.rs` | `apps/base/ui` |
 | List and table | `templates/lists.html`, `flex_table.html` | `apps/base/ui` |
 
-- Name variants through the enums (`ButtonVariant`, `BadgeKind`, `PageVariant`), not class strings.
+- Name variants through the enums (`ButtonVariant`, `ButtonSize`, `BadgeKind`, `PageVariant`), not class strings.
 - Icons come from `src/icons.rs` action names or `hero-*`. Use the Belimbing equivalent for a familiar action.
-- Icon-only actions need an accessible label and a title. Inline controls are `size-6`. Table and toolbar controls are `size-7`.
+- Icon-only actions need an accessible label and a title. Inline controls are 24 px; table and toolbar controls are 28 px. Touch screens expand their targets to 40 px.
 - Links navigate; buttons act.
 - Destructive actions use calm danger text, never a solid red button.
 - Secrets use `SecretInput`. It starts masked. A stored value shows a keep-current mask, never plaintext.
 - Specimens: the Design Library (`/assets/ui-components.html`, `/assets/ui-feedback.html`) is the screenshot baseline. Extend it with each new primitive.
+
+## Compact scale
+
+Shared UI sizes follow the sidebar's 12 px text and tight row rhythm; pages do not choose their own density.
+
+| Part | Size |
+| --- | --- |
+| Body and button text | 12 / 16 px (`text-sm`); sidebar remains 12 / 14 px |
+| Hints, badges and table headings | 11 / 14 px (`text-xs`) |
+| Field values and record facts | 14 / 20 px; input values stay 16 px on phones to prevent zoom |
+| Page title | 16 / 24 px; card and empty-state headings 12 / 16 px; dialog title 14 / 20 px |
+| Default controls | 40 px minimum, including buttons and floating fields |
+| Small controls | 28 px (`ButtonSize::Small`); table, toolbar and empty-state actions use this step automatically |
+| Touch targets | `Button`, utility `IconButton`, tabs, pagination and choice labels: 40 px minimum |
+| Card | 12 px body padding; header 8 px vertically and 12 px horizontally; table frames stay at zero |
+| Feedback | 8 px vertically and 12 px horizontally; panel notices use 6 px vertically |
+| Spacing | 4 px steps: 4 within a group, 8 between controls, 12 within surfaces, 16 between groups |
+
+The scale lives in `apps/base/ui/assets/css/app.css`. Keep named sizes and shared macros; a caller's padding utilities do not change card density. Standard and compact table row zooms remain available.
 
 ## Page layout
 
@@ -88,8 +107,8 @@ Width is a shared decision. Every page uses `PageVariant`. All three share one c
 
 - **Text fields float the label.** Empty, it rests where the value goes. On focus, once filled, or when the browser autofills, it moves up small in muted ink. It never leaves the box.
 - **Selects, textareas, date-like inputs and the combobox pin it small at the top.** They always show something (a prompt, a mask, a selection) that a resting label would cover.
-- **Compact.** An inset box is 40 px with a `text-sm` value, like the app's other controls; the floated or pinned label is 11 px. Inset fields sit 12 px apart. Phones get a 16 px value so iOS does not zoom.
-- **Sections:** draw a bordered part of a form with `forms::section` (one `p-4` box and heading), not page-owned box classes. Create Address uses it.
+- **Compact.** An inset box is 40 px with a 14 px value (`text-base`); the floated or pinned label is 11 px. Inset fields sit 12 px apart. Phones get a 16 px value so iOS does not zoom.
+- **Sections:** draw a bordered part of a form with `forms::section` (one shared 12 px box and heading), not page-owned box classes. Create Address uses it.
 - **Classic label above** stays for a field with no visible label (toolbars, `sr-only`), a field with its own `class` or `label_class`, checkboxes, radio groups and multi-selects.
 - Placeholder text shows only once the person is in the field, as an example, never as the label.
 - Help and error lines sit under the box. An error is a sentence that names its field (`error_sentence`): "Parse confidence must be a number from 0 to 1…".
@@ -104,7 +123,7 @@ Width is a shared decision. Every page uses `PageVariant`. All three share one c
 
 - **State:** `ListState` keeps page, search, filters, sort and page size in the URL. Reload and shared links reopen the same view.
 - **Toolbar:** search and filters sit above the table in the open. No second card.
-- **Rows:** `py-0.5`, `px-2`. Headers `py-1.5`, sunken background, `text-xs font-semibold`.
+- **Rows:** `py-0.5`, `px-2`. Headers `py-1`, sunken background, `text-xs font-semibold`.
 - **Numbers:** tabular numerals for IDs, counts, dates and amounts.
 - **Corners:** table frames are square. A card is flat only where it frames the table.
 - **Pagination:** shown only when another page exists. The rows-per-page selector lives in the component.

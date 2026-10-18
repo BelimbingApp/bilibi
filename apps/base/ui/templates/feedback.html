@@ -12,7 +12,7 @@
     reconnecting arrow; connection ("client" | "server") binds it to the drop. -#}
 {% macro flash(kind, id="", title="", message="", spinner=false, hidden=false, auto_dismiss=false, connection="") %}
 {%- if !message.is_empty() -%}
-<div id="{% if id.is_empty() %}flash-{{ kind.name() }}{% else %}{{ id }}{% endif %}" data-flash data-event="clear-flash" data-value-key="{{ kind.name() }}" role="{{ kind.role() }}" aria-live="{{ kind.live() }}" class="w-full"{% if hidden %} hidden{% endif %}{% if !connection.is_empty() %} data-connection="{{ connection }}"{% endif %}{% if auto_dismiss %} data-hook="FlashAutoDismiss" data-auto-dismiss-ms="{{ bilibi_ui::AUTO_DISMISS_MS }}"{% endif %}><div class="flex items-start gap-3 rounded-2xl border p-4 text-sm shadow-xl shadow-ink/[0.08] backdrop-blur {{ kind.flash_class() }}">{% call c::icon(name=kind.icon(), class="size-5 shrink-0") %}{% endcall %}<div>{% if !title.is_empty() %}<p class="font-semibold">{{ title }}</p>{% endif %}<p>{{ message }}{% if spinner %} {% call c::icon(name="hero-arrow-path", class="ml-1 size-3 animate-spin") %}{% endcall %}{% endif %}</p></div><div class="flex-1"></div><button type="button" class="group self-start cursor-pointer" aria-label="close">{% call c::icon(name="close", class="size-5 opacity-40 group-hover:opacity-70") %}{% endcall %}</button></div></div>
+<div id="{% if id.is_empty() %}flash-{{ kind.name() }}{% else %}{{ id }}{% endif %}" data-flash data-event="clear-flash" data-value-key="{{ kind.name() }}" role="{{ kind.role() }}" aria-live="{{ kind.live() }}" class="w-full"{% if hidden %} hidden{% endif %}{% if !connection.is_empty() %} data-connection="{{ connection }}"{% endif %}{% if auto_dismiss %} data-hook="FlashAutoDismiss" data-auto-dismiss-ms="{{ bilibi_ui::AUTO_DISMISS_MS }}"{% endif %}><div class="flex items-start gap-2 rounded-xl border px-panel py-feedback text-sm shadow-xl shadow-ink/[0.08] backdrop-blur {{ kind.flash_class() }}">{% call c::icon(name=kind.icon(), class="mt-1 size-4 shrink-0") %}{% endcall %}<div class="min-w-0 flex-1">{% if !title.is_empty() %}<p class="font-semibold">{{ title }}</p>{% endif %}<p>{{ message }}{% if spinner %} {% call c::icon(name="hero-arrow-path", class="ml-1 size-3 animate-spin") %}{% endcall %}{% endif %}</p></div><button type="button" class="ui-icon-button group grid size-6 shrink-0 place-items-center self-start rounded-sm cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-strong/40" aria-label="close">{% call c::icon(name="close", class="size-4 opacity-40 group-hover:opacity-70") %}{% endcall %}</button></div></div>
 {%- endif -%}
 {% endmacro %}
 
@@ -43,14 +43,14 @@
 
 {#- An inline status alert. -#}
 {% macro alert(kind=bilibi_ui::StatusKind::Info, id="", class="") %}
-<div{% if !id.is_empty() %} id="{{ id }}"{% endif %} role="{{ kind.role() }}" aria-live="{{ kind.live() }}" class="flex items-start gap-2.5 rounded-lg border px-3 py-2.5 text-sm {{ kind.surface_class() }}{% if !class.is_empty() %} {{ class }}{% endif %}">{% call c::icon(name=kind.icon(), class="mt-0.5 size-4 shrink-0") %}{% endcall %}<div class="min-w-0">{{ caller() }}</div></div>
+<div{% if !id.is_empty() %} id="{{ id }}"{% endif %} role="{{ kind.role() }}" aria-live="{{ kind.live() }}" class="flex items-start gap-2 rounded-lg border px-panel py-feedback text-sm {{ kind.surface_class() }}{% if !class.is_empty() %} {{ class }}{% endif %}">{% call c::icon(name=kind.icon(), class="mt-0.5 size-4 shrink-0") %}{% endcall %}<div class="min-w-0">{{ caller() }}</div></div>
 {% endmacro %}
 
 {#- A panel's outcome notice: what the last action on a panel did, above its
     table or inside its open dialog. The Dismiss control raises dismiss_event. -#}
 {% macro panel_notice(id, kind=bilibi_ui::NoticeKind::Info, dismiss_event="", class="") %}
 {%- let status = kind.status() -%}
-<div id="{{ id }}" role="{{ status.role() }}" aria-live="{{ status.live() }}" data-kind="{{ status.name() }}" class="flex items-start gap-2 rounded-lg border px-3 py-2 text-sm {{ status.surface_class() }}{% if !class.is_empty() %} {{ class }}{% endif %}">{% call c::icon(name=status.icon(), class="mt-0.5 size-4 shrink-0") %}{% endcall %}<span class="min-w-0 flex-1">{{ caller() }}</span>{% call c::icon_button(id="{}-dismiss"|format(id), icon="close", label="Dismiss notice", context=bilibi_ui::IconContext::Inline, class="-my-0.5", event=dismiss_event, name="id", value=id) %}{% endcall %}</div>
+<div id="{{ id }}" role="{{ status.role() }}" aria-live="{{ status.live() }}" data-kind="{{ status.name() }}" class="flex items-start gap-2 rounded-lg border px-panel py-1.5 text-sm {{ status.surface_class() }}{% if !class.is_empty() %} {{ class }}{% endif %}">{% call c::icon(name=status.icon(), class="mt-0.5 size-4 shrink-0") %}{% endcall %}<span class="min-w-0 flex-1">{{ caller() }}</span>{% call c::icon_button(id="{}-dismiss"|format(id), icon="close", label="Dismiss notice", context=bilibi_ui::IconContext::Inline, class="-my-0.5", event=dismiss_event, name="id", value=id) %}{% endcall %}</div>
 {% endmacro %}
 
 {#- The problems that stopped a save, above the form (summary is a
@@ -59,6 +59,6 @@
 {% macro error_summary(summary) %}
 {%- if !summary.is_empty() -%}
 {%- let kind = bilibi_ui::StatusKind::Error -%}
-<div id="{{ summary.id }}" role="{{ kind.role() }}" aria-labelledby="{{ summary.id }}-heading" class="mb-5 flex items-start gap-2.5 rounded-lg border px-3 py-2.5 text-sm {{ kind.surface_class() }}">{% call c::icon(name=kind.icon(), class="mt-0.5 size-4 shrink-0") %}{% endcall %}<div class="min-w-0"><p id="{{ summary.id }}-heading" class="font-semibold">{{ summary.heading() }}</p><ul class="mt-1 list-disc space-y-0.5 pl-4">{% for item in summary.items %}<li><a href="#{{ item.target }}" data-focus-link class="underline underline-offset-2 hover:no-underline">{{ item.message }}</a></li>{% endfor %}</ul></div></div>
+<div id="{{ summary.id }}" role="{{ kind.role() }}" aria-labelledby="{{ summary.id }}-heading" class="mb-3 flex items-start gap-2 rounded-lg border px-panel py-feedback text-sm {{ kind.surface_class() }}">{% call c::icon(name=kind.icon(), class="mt-0.5 size-4 shrink-0") %}{% endcall %}<div class="min-w-0"><p id="{{ summary.id }}-heading" class="font-semibold">{{ summary.heading() }}</p><ul class="mt-1 list-disc space-y-0.5 pl-4">{% for item in summary.items %}<li><a href="#{{ item.target }}" data-focus-link class="underline underline-offset-2 hover:no-underline">{{ item.message }}</a></li>{% endfor %}</ul></div></div>
 {%- endif -%}
 {% endmacro %}

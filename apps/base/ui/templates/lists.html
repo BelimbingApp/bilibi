@@ -11,7 +11,7 @@
 
 {#- Summary, rows-per-page form and, with more than one page, the pager; p is a bilibi_ui::Pagination. -#}
 {% macro pagination(p) %}
-<nav id="{{ p.id }}" aria-label="Pagination" class="flex flex-col gap-2 border-t border-low-contrast-line px-2 py-2 sm:flex-row sm:items-center sm:justify-between"{% if !p.target.is_empty() %} data-target="{{ p.target }}"{% endif %}>
+<nav id="{{ p.id }}" aria-label="Pagination" data-pagination class="flex flex-col gap-2 border-t border-low-contrast-line px-2 py-2 sm:flex-row sm:items-center sm:justify-between"{% if !p.target.is_empty() %} data-target="{{ p.target }}"{% endif %}>
 <div class="flex flex-wrap items-center gap-x-3 gap-y-1.5">
 {% if p.counts.total_pages > 0 %}<p id="{{ p.id }}-summary" class="text-xs tabular-nums text-ink-muted">{{ p.counts.summary() }}</p>{% endif %}
 <form id="{{ p.id }}-page-size-form" data-event="{{ p.filters_event }}" data-change class="flex items-center gap-1.5"><span class="text-xs text-ink-muted">Rows per page</span>{% let size = p.size_field() %}{% call forms::input(field=size) %}{% endcall %}</form>
@@ -30,7 +30,7 @@
 {#- The filter toolbar; toolbar is a bilibi_ui::FilterToolbar. The form raises
     its event on change and on submit, so Enter filters in place. -#}
 {% macro filter_toolbar(toolbar) %}
-<form id="{{ toolbar.id }}" data-event="{{ toolbar.event }}" data-change class="mb-2 flex flex-wrap items-start gap-x-3 gap-y-2{% if !toolbar.class.is_empty() %} {{ toolbar.class }}{% endif %}"{% if !toolbar.target.is_empty() %} data-target="{{ toolbar.target }}"{% endif %}>
+<form id="{{ toolbar.id }}" data-event="{{ toolbar.event }}" data-change class="ui-compact-controls mb-2 flex flex-wrap items-start gap-x-3 gap-y-2{% if !toolbar.class.is_empty() %} {{ toolbar.class }}{% endif %}"{% if !toolbar.target.is_empty() %} data-target="{{ toolbar.target }}"{% endif %}>
 {% for control in toolbar.controls %}{% if control.is_search() %}<div class="min-w-52 flex-1 basis-64">{% call toolbar_label(id=control.id, label=control.label) %}{% endcall %}<div class="relative">{% call ui::icon(name="search", class="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-ink-faint") %}{% endcall %}{% call forms::input(field=control.field) %}{% endcall %}</div>{% if !control.hint.is_empty() %}<p class="mt-1.5 text-xs text-ink-subtle">{{ control.hint }}</p>{% endif %}</div>
 {% elif let Some(multi) = control.multi() %}<div class="w-full min-w-0 sm:w-auto sm:min-w-36">{% call forms::multi_select(control=multi) %}{% endcall %}</div>
 {% elif control.is_date() %}<div class="w-full min-w-0 sm:w-auto">{% call toolbar_label(id=control.id, label=control.label) %}{% endcall %}{% call forms::input(field=control.field) %}{% endcall %}</div>
@@ -46,14 +46,14 @@
 
 {#- What is missing and why, or that the viewer may not look; e is a bilibi_ui::EmptyState. -#}
 {% macro empty_state(e) %}
-<div{% if !e.id.is_empty() %} id="{{ e.id }}"{% endif %} class="text-center text-sm{% if !e.class.is_empty() %} {{ e.class }}{% endif %}"><p class="font-medium text-ink">{{ e.heading() }}</p>{% for line in e.details() %}<p class="mt-1 text-ink-muted">{{ line }}</p>{% endfor %}{% if !e.action.is_empty() %}<div class="mt-3 flex flex-wrap items-center justify-center gap-2">{{ e.action|safe }}</div>{% endif %}</div>
+<div{% if !e.id.is_empty() %} id="{{ e.id }}"{% endif %} class="ui-compact-controls text-center text-sm{% if !e.class.is_empty() %} {{ e.class }}{% endif %}"><p class="font-medium text-ink">{{ e.heading() }}</p>{% for line in e.details() %}<p class="mt-1 text-ink-muted">{{ line }}</p>{% endfor %}{% if !e.action.is_empty() %}<div class="mt-2 flex flex-wrap items-center justify-center gap-2">{{ e.action|safe }}</div>{% endif %}</div>
 {% endmacro %}
 
 {#- A compact table with a flat outer frame; t is a bilibi_ui::Table. -#}
 {% macro table(t) %}
-<div data-table-region class="overflow-x-auto{% if t.framed %} border border-line bg-surface{% endif %}"><table class="w-full text-left text-sm">{% if !t.caption.is_empty() %}<caption class="sr-only">{{ t.caption }}</caption>{% endif %}<thead class="border-b border-line bg-surface-sunken"><tr>{% for column in t.columns %}<th scope="col"{% if let Some(aria) = t.sort.aria_sort(column.sort) %} aria-sort="{{ aria }}"{% endif %} class="px-2 py-1.5 text-xs font-semibold text-ink-subtle{% if column.align_right %} text-right{% endif %}">{% if !column.sort.is_empty() %}{% call sort_heading(column=column, sort=t.sort) %}{% endcall %}{% else %}<span>{{ column.label }}</span>{% endif %}</th>{% endfor %}{% if t.actions %}<th scope="col" class="px-2 py-1.5"><span class="sr-only">Actions</span></th>{% endif %}</tr></thead>
+<div data-table-region class="overflow-x-auto{% if t.framed %} border border-line bg-surface{% endif %}"><table class="w-full text-left text-sm">{% if !t.caption.is_empty() %}<caption class="sr-only">{{ t.caption }}</caption>{% endif %}<thead class="border-b border-line bg-surface-sunken"><tr>{% for column in t.columns %}<th scope="col"{% if let Some(aria) = t.sort.aria_sort(column.sort) %} aria-sort="{{ aria }}"{% endif %} class="px-2 py-1 text-xs font-semibold text-ink-subtle{% if column.align_right %} text-right{% endif %}">{% if !column.sort.is_empty() %}{% call sort_heading(column=column, sort=t.sort) %}{% endcall %}{% else %}<span>{{ column.label }}</span>{% endif %}</th>{% endfor %}{% if t.actions %}<th scope="col" class="px-2 py-1"><span class="sr-only">Actions</span></th>{% endif %}</tr></thead>
 <tbody id="{{ t.id }}" class="divide-y divide-low-contrast-line">{% for row in t.rows %}<tr{% if !row.id.is_empty() %} id="{{ row.id }}"{% endif %} class="hover:bg-surface-sunken">{% for cell in row.cells %}{% let column = t.columns[loop.index0] %}<td class="px-2 py-0.5 text-ink{% if column.align_right %} text-right{% endif %}">{{ cell|safe }}</td>{% endfor %}{% if t.actions %}<td class="w-0 px-2 py-0.5 font-semibold"><div class="flex items-center justify-end gap-1">{{ row.actions|safe }}</div></td>{% endif %}</tr>{% endfor %}</tbody>
-{% if let Some(empty) = t.empty %}<tbody><tr id="{{ t.id }}-empty"><td colspan="{{ t.empty_colspan() }}" class="px-2 py-8 text-center text-sm text-ink-muted">{% match empty %}{% when bilibi_ui::lists::TableEmpty::Content(content) %}{{ content|safe }}{% when bilibi_ui::lists::TableEmpty::State(state) %}{% call empty_state(e=state) %}{% endcall %}{% endmatch %}</td></tr></tbody>{% endif %}
+{% if let Some(empty) = t.empty %}<tbody><tr id="{{ t.id }}-empty"><td colspan="{{ t.empty_colspan() }}" class="px-2 py-4 text-center text-sm text-ink-muted">{% match empty %}{% when bilibi_ui::lists::TableEmpty::Content(content) %}{{ content|safe }}{% when bilibi_ui::lists::TableEmpty::State(state) %}{% call empty_state(e=state) %}{% endcall %}{% endmatch %}</td></tr></tbody>{% endif %}
 </table></div>
 {% endmacro %}
 

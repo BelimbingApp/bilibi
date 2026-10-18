@@ -48,7 +48,7 @@ pub fn translate_error(template: &str, bindings: &[(&str, &str)]) -> String {
 /// horizontal padding; the list toolbar's search box makes room for its icon.
 pub fn field_base_class(readonly: bool, padding: &str) -> String {
     format!(
-        "block w-full rounded-md border {padding} py-1.5 text-sm text-ink shadow-xs \
+        "ui-field block min-h-control w-full rounded-md border {padding} py-1.5 text-base leading-5 max-sm:text-[1rem] text-ink shadow-xs \
          transition placeholder:text-ink-faint focus:border-brand-strong focus:outline-none \
          focus:ring-2 focus:ring-brand-strong/30 disabled:cursor-not-allowed \
          disabled:bg-surface-sunken disabled:text-ink-subtle {}",
@@ -87,7 +87,7 @@ pub fn field_class(class: &str, errors: &[String], extra: &str, readonly: bool) 
 }
 
 /// The control class of a field whose label sits inside the box: a compact
-/// 40 px box with the `text-sm` value of every other control (Bilibi keeps
+/// 40 px box with a 14 px value (Bilibi keeps
 /// forms as dense as its menus), room above the value for the small label,
 /// and a placeholder that only shows once the person is in the field, so it
 /// is never mistaken for a value. `peer` lets
@@ -97,8 +97,8 @@ pub fn field_class(class: &str, errors: &[String], extra: &str, readonly: bool) 
 /// pinned, so there is nothing for it to collide with.
 pub fn field_inset_class(readonly: bool, textarea: bool, prompt: bool) -> String {
     format!(
-        "peer block w-full rounded-md border px-3 text-sm leading-5 text-ink \
-         shadow-xs transition max-sm:text-base {} focus:border-brand-strong focus:outline-none \
+        "peer block w-full rounded-md border px-3 text-base leading-5 text-ink \
+         shadow-xs transition max-sm:text-[1rem] {} focus:border-brand-strong focus:outline-none \
          focus:ring-2 focus:ring-brand-strong/30 disabled:cursor-not-allowed \
          disabled:bg-surface-sunken disabled:text-ink-subtle {} {}",
         if prompt {
@@ -109,7 +109,7 @@ pub fn field_inset_class(readonly: bool, textarea: bool, prompt: bool) -> String
         if textarea {
             "min-h-24 pt-5 pb-1.5"
         } else {
-            "h-10 pt-3.5 pb-0.5"
+            "h-control pt-3.5 pb-0.5"
         },
         if readonly {
             "bg-surface-sunken"
@@ -127,7 +127,7 @@ pub fn field_inset_class(readonly: bool, textarea: bool, prompt: bool) -> String
 pub const FLOATING_LABEL_CLASS: &str = "pointer-events-none absolute left-3 top-1 \
      max-w-[calc(100%-1.5rem)] origin-left truncate text-[0.6875rem] font-medium leading-3 \
      text-ink-muted transition-all motion-reduce:transition-none peer-placeholder-shown:top-2.5 \
-     peer-placeholder-shown:text-sm peer-placeholder-shown:font-normal \
+     peer-placeholder-shown:text-base peer-placeholder-shown:font-normal \
      peer-placeholder-shown:leading-5 peer-autofill:top-1 peer-autofill:text-[0.6875rem] \
      peer-autofill:font-medium peer-autofill:leading-3 peer-focus:top-1 \
      peer-focus:text-[0.6875rem] peer-focus:font-medium peer-focus:leading-3";
@@ -1357,7 +1357,7 @@ impl MultiSelect {
 
     pub fn trigger_class(&self) -> String {
         format!(
-            "peer group floating-anchor flex w-full items-center justify-between gap-3 rounded-md border bg-surface py-1.5 px-3 text-left text-sm text-ink shadow-xs transition hover:bg-surface-muted focus:outline-none focus:ring-2 {}",
+            "ui-field min-h-control peer group floating-anchor flex w-full items-center justify-between gap-3 rounded-md border bg-surface py-1.5 px-3 text-left text-sm text-ink shadow-xs transition hover:bg-surface-muted focus:outline-none focus:ring-2 {}",
             field_state_class(
                 &self.errors,
                 "border-line focus:border-brand-strong focus:ring-brand-strong/30"

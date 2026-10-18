@@ -13,7 +13,7 @@ Components, and displays the source's informational message. The host applies
 the route capability, Origin and CSRF checks, including when framed.
 
 `source.json` pins the original Bilimbi files and their hashes. The templates
-preserve the source's text, family anchors, slots and classes; `sample.json` and
+preserve the source's text, family anchors and slots, using the shared compact UI scale; `sample.json` and
 `controls.json` hold its copied sample form values and control declarations.
 The page is split at family/card boundaries because Askama inlines macros;
 large input templates otherwise exceed the compiler's memory limit. Every

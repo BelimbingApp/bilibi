@@ -20,18 +20,18 @@
 
 {#- Compact status badge with a state dot; dot=false for a type or role. -#}
 {% macro badge(kind=bilibi_ui::BadgeKind::Neutral, dot=true, class="") %}
-<span data-badge class="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium capitalize {{ kind.class() }}{% if !class.is_empty() %} {{ class }}{% endif %}">{% if dot %}<span class="size-1.5 rounded-full bg-current opacity-70"></span>{% endif %}{{ caller() }}</span>
+<span data-badge class="inline-flex items-center gap-1.5 rounded-full px-1.5 py-px text-xs font-medium capitalize {{ kind.class() }}{% if !class.is_empty() %} {{ class }}{% endif %}">{% if dot %}<span class="size-1.5 rounded-full bg-current opacity-70"></span>{% endif %}{{ caller() }}</span>
 {% endmacro %}
 
 {#- A control with the ledger geometry; a link when href is set (busy ignored).
     working names the label the browser shows, disabled and aria-busy, from the
     click until the server replies (Bilimbi phx-disable-with). aria_busy announces
     an in-flight disabled control without busy's spinner and progress styling. -#}
-{% macro button(variant=bilibi_ui::ButtonVariant::Secondary, class="", href="", id="", button_type="", name="", value="", disabled=false, busy=false, aria_busy=false, event="", working="", aria_label="", download="") %}
+{% macro button(variant=bilibi_ui::ButtonVariant::Secondary, size=bilibi_ui::ButtonSize::Standard, class="", href="", id="", button_type="", name="", value="", disabled=false, busy=false, aria_busy=false, event="", working="", aria_label="", download="") %}
 {%- if !href.is_empty() -%}
-<a href="{{ href }}"{% if !id.is_empty() %} id="{{ id }}"{% endif %}{% if !download.is_empty() %} download="{{ download }}"{% endif %} class="inline-flex items-center justify-center gap-2 rounded-md border px-3 py-1.5 text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas disabled:cursor-not-allowed disabled:opacity-50 {{ variant.class() }}{% if !class.is_empty() %} {{ class }}{% endif %}">{{ caller() }}</a>
+<a href="{{ href }}"{% if !id.is_empty() %} id="{{ id }}"{% endif %}{% if !download.is_empty() %} download="{{ download }}"{% endif %} class="ui-button {{ size.class() }} inline-flex items-center justify-center gap-1.5 rounded-md border px-3 py-1 text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas disabled:cursor-not-allowed disabled:opacity-50 {{ variant.class() }}{% if !class.is_empty() %} {{ class }}{% endif %}">{{ caller() }}</a>
 {%- else -%}
-<button{% if !id.is_empty() %} id="{{ id }}"{% endif %} class="inline-flex items-center justify-center gap-2 rounded-md border px-3 py-1.5 text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas {% if busy %}cursor-progress{% else %}disabled:cursor-not-allowed disabled:opacity-50{% endif %} {{ variant.class() }}{% if !class.is_empty() %} {{ class }}{% endif %}"{% if busy || aria_busy %} aria-busy="true"{% endif %}{% if busy || disabled %} disabled{% endif %}{% if !button_type.is_empty() %} type="{{ button_type }}"{% endif %}{% if !name.is_empty() %} name="{{ name }}"{% endif %}{% if !value.is_empty() %} value="{{ value }}"{% endif %}{% if !event.is_empty() %} data-event="{{ event }}"{% endif %}{% if !working.is_empty() %} data-working="{{ working }}"{% endif %}{% if !aria_label.is_empty() %} aria-label="{{ aria_label }}"{% endif %}>{% if busy %}{% call icon(name="hero-arrow-path", class="size-4 motion-safe:animate-spin") %}{% endcall %}{% endif %}{{ caller() }}</button>
+<button{% if !id.is_empty() %} id="{{ id }}"{% endif %} class="ui-button {{ size.class() }} inline-flex items-center justify-center gap-1.5 rounded-md border px-3 py-1 text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas {% if busy %}cursor-progress{% else %}disabled:cursor-not-allowed disabled:opacity-50{% endif %} {{ variant.class() }}{% if !class.is_empty() %} {{ class }}{% endif %}"{% if busy || aria_busy %} aria-busy="true"{% endif %}{% if busy || disabled %} disabled{% endif %}{% if !button_type.is_empty() %} type="{{ button_type }}"{% endif %}{% if !name.is_empty() %} name="{{ name }}"{% endif %}{% if !value.is_empty() %} value="{{ value }}"{% endif %}{% if !event.is_empty() %} data-event="{{ event }}"{% endif %}{% if !working.is_empty() %} data-working="{{ working }}"{% endif %}{% if !aria_label.is_empty() %} aria-label="{{ aria_label }}"{% endif %}>{% if busy %}{% call icon(name="hero-arrow-path", class="size-4 motion-safe:animate-spin") %}{% endcall %}{% endif %}{{ caller() }}</button>
 {%- endif -%}
 {% endmacro %}
 
@@ -40,7 +40,7 @@
 {%- if chrome.is_nav() && !busy && kind.is_neutral() -%}
 nav-icon-button{% if !class.is_empty() %} {{ class }}{% endif %}
 {%- else -%}
-grid shrink-0 place-items-center transition focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-strong/40 {% if context.is_inline() %}size-6 rounded-sm{% else %}size-7 rounded-md{% endif %} {% if kind.is_neutral() %}text-ink-muted hover:bg-surface-sunken hover:text-ink{% else %}text-ink-muted hover:bg-danger-surface hover:text-danger focus-visible:bg-danger-surface focus-visible:text-danger{% endif %} {% if busy %}cursor-progress bg-surface-sunken ring-1 ring-line{% else %}disabled:text-ink-faint disabled:cursor-not-allowed disabled:opacity-50{% endif %}{% if !class.is_empty() %} {{ class }}{% endif %}
+ui-icon-button grid shrink-0 place-items-center transition focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-strong/40 {% if context.is_inline() %}size-6 rounded-sm{% else %}size-7 rounded-md{% endif %} {% if kind.is_neutral() %}text-ink-muted hover:bg-surface-sunken hover:text-ink{% else %}text-ink-muted hover:bg-danger-surface hover:text-danger focus-visible:bg-danger-surface focus-visible:text-danger{% endif %} {% if busy %}cursor-progress bg-surface-sunken ring-1 ring-line{% else %}disabled:text-ink-faint disabled:cursor-not-allowed disabled:opacity-50{% endif %}{% if !class.is_empty() %} {{ class }}{% endif %}
 {%- endif -%}
 {% endmacro %}
 
@@ -70,21 +70,20 @@ grid shrink-0 place-items-center transition focus-visible:outline-none focus-vis
 {% endmacro %}
 
 {#- Page container at the width of its workflow kind; data-page names the variant.
-    Restore the source's base type size at the ported-page boundary: the
-    temporary legacy scope sets 14px on an ancestor, and @scope's lower boundary
-    does not stop inherited font size. Explicit text-sm controls keep 14px. -#}
+    Set the shared compact body size at the ported-page boundary so legacy
+    inherited text cannot enlarge a page. -#}
 {% macro page(id="", variant=bilibi_ui::PageVariant::List, class="") %}
-<div{% if !id.is_empty() %} id="{{ id }}"{% endif %} data-page="{{ variant.name() }}" data-shared-ui class="mx-auto text-base {{ variant.width() }}{% if !class.is_empty() %} {{ class }}{% endif %}">{{ caller() }}</div>
+<div{% if !id.is_empty() %} id="{{ id }}"{% endif %} data-page="{{ variant.name() }}" data-shared-ui class="mx-auto text-sm {{ variant.width() }}{% if !class.is_empty() %} {{ class }}{% endif %}">{{ caller() }}</div>
 {% endmacro %}
 
 {#- Page header: the body is the title; subtitle_html, title_actions and actions are Html fragments. -#}
 {% macro header(subtitle="", subtitle_html=bilibi_ui::Html::EMPTY, title_actions=bilibi_ui::Html::EMPTY, actions=bilibi_ui::Html::EMPTY) %}
-<header data-page-header class="{% if !actions.is_empty() %}flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-6 {% endif %}pb-4"><div>{% if !title_actions.is_empty() %}<div class="flex items-center gap-1.5"><h1 class="text-lg font-semibold leading-8 tracking-tight text-action">{{ caller() }}</h1>{{ title_actions|safe }}</div>{% else %}<h1 class="text-lg font-semibold leading-8 tracking-tight text-action">{{ caller() }}</h1>{% endif %}{% if !subtitle_html.is_empty() %}<p class="text-sm text-ink-muted">{{ subtitle_html|safe }}</p>{% elif !subtitle.is_empty() %}<p class="text-sm text-ink-muted">{{ subtitle }}</p>{% endif %}</div>{% if !actions.is_empty() %}<div class="sm:flex-none">{{ actions|safe }}</div>{% endif %}</header>
+<header data-page-header class="{% if !actions.is_empty() %}flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4 {% endif %}pb-3"><div>{% if !title_actions.is_empty() %}<div class="flex items-center gap-1.5"><h1 class="text-lg font-semibold leading-6 tracking-tight text-action">{{ caller() }}</h1>{{ title_actions|safe }}</div>{% else %}<h1 class="text-lg font-semibold leading-6 tracking-tight text-action">{{ caller() }}</h1>{% endif %}{% if !subtitle_html.is_empty() %}<p class="text-sm text-ink-muted">{{ subtitle_html|safe }}</p>{% elif !subtitle.is_empty() %}<p class="text-sm text-ink-muted">{{ subtitle }}</p>{% endif %}</div>{% if !actions.is_empty() %}<div class="sm:flex-none">{{ actions|safe }}</div>{% endif %}</header>
 {% endmacro %}
 
 {#- Heading row of one section on a detail page; count=Some(n) adds a badge. -#}
 {% macro section_heading(title, id="", count=bilibi_ui::NO_COUNT, class="", title_actions=bilibi_ui::Html::EMPTY, description="", description_html=bilibi_ui::Html::EMPTY, actions=bilibi_ui::Html::EMPTY) %}
-<div class="mb-4 flex items-start justify-between gap-3{% if !class.is_empty() %} {{ class }}{% endif %}"><div class="min-w-0"><div class="flex items-center gap-2"><h2{% if !id.is_empty() %} id="{{ id }}"{% endif %} class="text-xs font-semibold uppercase tracking-wider text-ink-subtle">{{ title }}</h2>{% if let Some(count) = count %}{% call badge() %}{{ count }}{% endcall %}{% endif %}{{ title_actions|safe }}</div>{% if !description_html.is_empty() %}<div class="mt-0.5 text-xs text-ink-subtle">{{ description_html|safe }}</div>{% elif !description.is_empty() %}<div class="mt-0.5 text-xs text-ink-subtle">{{ description }}</div>{% endif %}</div>{% if !actions.is_empty() %}<div class="flex shrink-0 items-center gap-2">{{ actions|safe }}</div>{% endif %}</div>
+<div class="mb-3 flex items-start justify-between gap-3{% if !class.is_empty() %} {{ class }}{% endif %}"><div class="min-w-0"><div class="flex items-center gap-2"><h2{% if !id.is_empty() %} id="{{ id }}"{% endif %} class="text-xs font-semibold uppercase tracking-wider text-ink-subtle">{{ title }}</h2>{% if let Some(count) = count %}{% call badge() %}{{ count }}{% endcall %}{% endif %}{{ title_actions|safe }}</div>{% if !description_html.is_empty() %}<div class="mt-0.5 text-xs text-ink-subtle">{{ description_html|safe }}</div>{% elif !description.is_empty() %}<div class="mt-0.5 text-xs text-ink-subtle">{{ description }}</div>{% endif %}</div>{% if !actions.is_empty() %}<div class="flex shrink-0 items-center gap-2">{{ actions|safe }}</div>{% endif %}</div>
 {% endmacro %}
 
 {#- Card with a subtle border; inner_class "p-0" is the flat full-bleed table frame.
@@ -93,7 +92,7 @@ grid shrink-0 place-items-center transition focus-visible:outline-none focus-vis
     Askama refuses a macro nested in its own body, so a card inside a card
     renders the inner one through the typed `bilibi_ui::Card` model as Html. -#}
 {% macro card(id="", title="", class="", inner_class="", role="", labelledby="") %}
-<div{% if !id.is_empty() %} id="{{ id }}"{% endif %} data-card class="{% if !bilibi_ui::card_flat(inner_class) %}rounded-xl {% endif %}border border-line bg-surface shadow-xs{% if !class.is_empty() %} {{ class }}{% endif %}"{% if !role.is_empty() %} role="{{ role }}"{% endif %}{% if !labelledby.is_empty() %} aria-labelledby="{{ labelledby }}"{% endif %}>{% if !title.is_empty() %}<div class="border-b border-line px-4 py-3"><h3 class="text-base font-semibold text-ink">{{ title }}</h3></div>{% endif %}<div class="{% if bilibi_ui::card_pads(inner_class) %}p-2{% if !inner_class.is_empty() %} {% endif %}{% endif %}{{ inner_class }}">{{ caller() }}</div></div>
+<div{% if !id.is_empty() %} id="{{ id }}"{% endif %} data-card class="{% if !bilibi_ui::card_flat(inner_class) %}rounded-xl {% endif %}border border-line bg-surface shadow-xs{% if !class.is_empty() %} {{ class }}{% endif %}"{% if !role.is_empty() %} role="{{ role }}"{% endif %}{% if !labelledby.is_empty() %} aria-labelledby="{{ labelledby }}"{% endif %}>{% if !title.is_empty() %}<div class="border-b border-line px-panel py-2"><h3 class="text-sm font-semibold text-ink">{{ title }}</h3></div>{% endif %}<div data-card-body class="{{ bilibi_ui::card_body_class(inner_class) }}">{{ caller() }}</div></div>
 {% endmacro %}
 
 {#- A rarely needed part of a form folded under its title and a one-line
@@ -101,7 +100,7 @@ grid shrink-0 place-items-center transition focus-visible:outline-none focus-vis
     and the Fold hook opens the details when it appears; the patcher never
     rewrites a details' own open. -#}
 {% macro fold(id, title, summary="", open=false) %}
-<details id="{{ id }}" data-hook="Fold"{% if open %} open data-open{% endif %} class="group"><summary class="flex cursor-pointer list-none flex-wrap items-baseline gap-x-2.5 gap-y-0.5 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-strong/30 [&::-webkit-details-marker]:hidden"><span id="{{ id }}-title" class="inline-flex items-center gap-1 text-sm font-semibold text-ink">{% call icon(name="expand", class="size-3.5 text-ink-subtle transition-transform group-open:rotate-90 motion-reduce:transition-none") %}{% endcall %}{{ title }}</span>{% if !summary.is_empty() %}<span id="{{ id }}-summary" class="text-xs text-ink-subtle">{{ summary }}</span>{% endif %}</summary><div class="pt-4">{{ caller() }}</div></details>
+<details id="{{ id }}" data-hook="Fold"{% if open %} open data-open{% endif %} class="group"><summary class="flex cursor-pointer list-none flex-wrap items-baseline gap-x-2.5 gap-y-0.5 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-strong/30 [&::-webkit-details-marker]:hidden"><span id="{{ id }}-title" class="inline-flex items-center gap-1 text-sm font-semibold text-ink">{% call icon(name="expand", class="size-3.5 text-ink-subtle transition-transform group-open:rotate-90 motion-reduce:transition-none") %}{% endcall %}{{ title }}</span>{% if !summary.is_empty() %}<span id="{{ id }}-summary" class="text-xs text-ink-subtle">{{ summary }}</span>{% endif %}</summary><div class="pt-3">{{ caller() }}</div></details>
 {% endmacro %}
 
 {#- The facts of one record (Bilimbi `list`), read like the filled-in form
@@ -121,7 +120,7 @@ grid shrink-0 place-items-center transition focus-visible:outline-none focus-vis
     field in the same place (`[data-fact]` in assets/css/app.css). A long text
     or preformatted value takes the whole row. -#}
 {% macro fact(title, id="") %}
-<div data-fact class="relative min-w-0 rounded-md has-[pre,[data-hook=InlineLongText]]:col-span-full"><dt class="pointer-events-none absolute left-3 top-1 z-[1] max-w-[calc(100%-1.5rem)] truncate text-[0.6875rem] font-medium leading-3 text-ink-muted">{{ title }}</dt><dd{% if !id.is_empty() %} id="{{ id }}"{% endif %} class="min-h-10 min-w-0 border border-transparent px-3 pt-[0.9375rem] pb-[0.1875rem] text-sm leading-5 text-ink max-sm:text-base">{{ caller() }}</dd></div>
+<div data-fact class="relative min-w-0 rounded-md has-[pre,[data-hook=InlineLongText]]:col-span-full"><dt class="pointer-events-none absolute left-3 top-1 z-[1] max-w-[calc(100%-1.5rem)] truncate text-[0.6875rem] font-medium leading-3 text-ink-muted">{{ title }}</dt><dd{% if !id.is_empty() %} id="{{ id }}"{% endif %} class="min-h-10 min-w-0 border border-transparent px-3 pt-[0.9375rem] pb-[0.1875rem] text-base leading-5 text-ink max-sm:text-[1rem]">{{ caller() }}</dd></div>
 {% endmacro %}
 
 {#- Compact strip of statistics (items: &[StatItem]); href makes the strip a quiet link. -#}
