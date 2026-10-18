@@ -1,0 +1,23 @@
+# Managed by Bilibi scripts/install-server.sh for instance "@INSTANCE@".
+# Rerun the script to change it; edits here are overwritten.
+@SITE@ {
+	@TLS@
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:@PORT@
+	# While bilibi-web is stopped (a release switch, a restart, a crash) the proxy
+	# answers 503 with the waiting page. The page polls this same address and
+	# reloads once an answer arrives without the X-Bilibi-Waiting header.
+	handle_errors {
+		@down expression `{err.status_code} in [502, 503, 504]`
+		handle @down {
+			header X-Bilibi-Waiting 1
+			header Cache-Control no-store
+			header Retry-After 3
+			root * /opt/bilibi/@INSTANCE@/site
+			rewrite * /waiting.html
+			file_server {
+				status 503
+			}
+		}
+	}
+}

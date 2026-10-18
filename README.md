@@ -80,6 +80,10 @@ Open <https://bilibi.localhost> and sign in as `ai@agent.my` / `bilibi-dev` (dev
 
 Terminate TLS at a reverse proxy, and keep the database on a private network: Bilibi connects to PostgreSQL without TLS.
 
+## Run it on a server
+
+`scripts/install-server.sh` sets up Dev, Staging and Production instances under `/opt/bilibi`, each with its own database, service and address, and puts releases into service. `BILIBI_ENV` is also the instance's role: only `development` builds software. See [`docs/server-install.md`](docs/server-install.md).
+
 ## Add a business area
 
 A Domain such as Finance is its own repository, mounted as a real folder (not a submodule or symlink):

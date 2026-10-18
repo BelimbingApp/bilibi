@@ -229,3 +229,4 @@ The commands are in `AGENTS.md`. Evidence from the running app goes in `docs/run
 - **Why things are the way they are:** the decision records in [`decisions/`](decisions/README.md).
 - **Linking Domains and Extensions:** `apps/base/events/README.md` and `apps/base/ports/README.md`.
 - **Writing a module:** `apps/base/module_registry/README.md`, then any module README as an example.
+- **Running it on a server:** [`server-install.md`](../server-install.md), the instance layout, services and release switch.

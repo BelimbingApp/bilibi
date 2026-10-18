@@ -52,6 +52,23 @@ Runtime and screenshot evidence for slice O5 is recorded outside the checkout
 under the task's `data/bilibi-o5/` directory. Follow `docs/runtime-parity.md`
 from the repository root for disposable database and browser procedures.
 
+## Instance identity (`src/instance.rs`)
+
+`Instance::resolve(settings, client)` says which instance this server is: the
+role (Dev, Staging or Production), the label and colour it announces itself
+with, and the instance it installs releases from. **The role is `BILIBI_ENV`**,
+the same bootstrap value the host boots on and validates
+(`apps/web/src/environment.rs` delegates its parse to `Role::parse`); it is
+deliberately not a setting, so nothing editable can make an installing server
+build. The label (`instance.label`), colour (`instance.colour`, a `DESIGN.md`
+status role) and source (`instance.installs_from`, a sibling instance name or
+an `https://` address, parsed by `Source`) are global settings under the
+**Instance** group of the settings editor, gated by the platform capability
+`admin.system.instance.manage`; their defaults follow the role. The instance
+banner, the Software page and the agent confirm pages read `Instance` and
+nothing else, so they cannot disagree. The server layout that writes
+`BILIBI_ENV` is `docs/server-install.md`.
+
 ## Database Tables (`src/database_tables/`)
 
 Port of Belimbing `admin/system/database-tables`. `/system/database-tables`

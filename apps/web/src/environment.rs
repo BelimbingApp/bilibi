@@ -3,6 +3,10 @@
 //! forgotten value never relaxes a guard; any other value refuses to boot.
 //! It is a bootstrap fact of the deployment, not an operator setting: the
 //! settings store cannot be allowed to switch off the guards it decides.
+//! The same value is the instance's role (Dev, Staging, Production) that the
+//! banner and the Software page announce: `bilibi_base::system::Role` reads
+//! it with the one parser below, so there is no second identity source.
+use bilibi_base::system::Role;
 use bilibi_database::{Error, Result};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -24,12 +28,11 @@ impl Environment {
         }
     }
     fn parse(value: &str) -> Option<Self> {
-        match value.trim() {
-            "" | "production" => Some(Self::Production),
-            "staging" => Some(Self::Staging),
-            "development" => Some(Self::Development),
-            _ => None,
-        }
+        Some(match Role::parse(value)? {
+            Role::Dev => Self::Development,
+            Role::Staging => Self::Staging,
+            Role::Production => Self::Production,
+        })
     }
     /// Step-up (`Access::StepUp`) is enforced everywhere but development.
     pub fn requires_step_up(self) -> bool {

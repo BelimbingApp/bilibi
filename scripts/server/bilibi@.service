@@ -1,0 +1,35 @@
+# One Bilibi instance per unit instance: bilibi@dev, bilibi@production.
+# Installed by scripts/install-server.sh; the layout is in docs/server-install.md.
+[Unit]
+Description=Bilibi instance %i
+Documentation=https://github.com/BelimbingApp/bilibi/blob/main/docs/server-install.md
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bilibi
+Group=bilibi
+# BILIBI_ENV (the role), APP_ORIGIN, BIND_ADDR, DATABASE_URL and the keys.
+EnvironmentFile=/opt/bilibi/%i/env
+WorkingDirectory=/opt/bilibi/%i/data
+# "current" points at the release in service; a switch re-points it and restarts.
+ExecStart=/opt/bilibi/%i/current/bilibi-web run
+# bilibi-web shuts down cleanly on Ctrl-C (SIGINT); SIGTERM would cut jobs short.
+KillSignal=SIGINT
+TimeoutStopSec=30
+Restart=on-failure
+RestartSec=3
+# The program may write only under its data folder: uploads, the mailbox.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/bilibi/%i/data
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1053,6 +1053,7 @@ dependencies = [
  "bilibi-module-registry",
  "bilibi-perf",
  "bilibi-queue",
+ "bilibi-settings",
  "bilibi-step-up",
  "bilibi-tenancy",
  "bilibi-ui",

@@ -3,6 +3,7 @@
 mod database_tables;
 mod info;
 mod inspector;
+mod instance;
 mod localization;
 
 use bilibi_authz::{CapabilityDefinition, RoleDefinition, VocabularyContribution, VOCABULARY};
@@ -19,6 +20,11 @@ use bilibi_ui::{
     Html,
 };
 use std::sync::Arc;
+
+pub use instance::{
+    valid_instance_name, Colour, Instance, Role, Source, INSTANCE_COLOUR_KEY,
+    INSTANCE_INSTALLS_FROM_KEY, INSTANCE_LABEL_KEY, INSTANCE_MANAGE,
+};
 
 pub const INFO_VIEW: &str = "admin.system.info.view";
 pub const MENU_VIEW: &str = "admin.system.menu-inspector.view";
@@ -127,7 +133,7 @@ macro_rules! provenance {
 }
 inventory::submit! { Contribution::new(VOCABULARY, "base/system", provenance!(), &VocabularyContribution {
     domains: &[], verbs: &[],
-    capabilities: &[CapabilityDefinition::platform(INFO_VIEW), CapabilityDefinition::platform(MENU_VIEW), CapabilityDefinition::platform(LOCALIZATION_MANAGE)],
+    capabilities: &[CapabilityDefinition::platform(INFO_VIEW), CapabilityDefinition::platform(MENU_VIEW), CapabilityDefinition::platform(LOCALIZATION_MANAGE), CapabilityDefinition::platform(INSTANCE_MANAGE)],
     roles: &[RoleDefinition { code: "system_viewer", name: "System Viewer", description: "Contributed system role; reconciled explicitly", grant_all: false, capabilities: &[INFO_VIEW, MENU_VIEW] }],
     system_principals: &[],
 }) }
@@ -207,7 +213,7 @@ bilibi_menu::contribute!(
 );
 inventory::submit! {
     Module { id: "base/system", layer: bilibi_module_registry::Layer::Base,
-        dependencies: &["base/module_registry", "base/database", "base/authz", "base/locale", "base/menu", "base/perf", "base/tenancy", "base/ui", "base/audit", "base/step_up"],
+        dependencies: &["base/module_registry", "base/database", "base/authz", "base/locale", "base/menu", "base/perf", "base/settings", "base/tenancy", "base/ui", "base/audit", "base/step_up"],
         migrations: &[], services: &[Service { id: "base/system.pages", factory: |services| {
             let modules = bilibi_module_registry::discover()?;
             let catalog = Catalog::discover(&modules)?;

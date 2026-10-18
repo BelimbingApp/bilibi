@@ -16,6 +16,7 @@ bilibi-menu.workspace = true
 bilibi-module-registry.workspace = true
 bilibi-perf = { path = "../perf" }
 bilibi-queue = { path = "../queue" }
+bilibi-settings.workspace = true
 bilibi-tenancy = { path = "../tenancy" }
 bilibi-ui.workspace = true
 deadpool-postgres.workspace = true
