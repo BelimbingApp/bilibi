@@ -18,6 +18,8 @@ A record page edits its facts in place: there is no separate Edit button or
 
 The fact is read-first: a trigger button shows the stored value (an em dash, or
 the owner's `placeholder`, when empty) with a pencil on hover/focus.
+`InlineField::hint` adds one short plain sentence under the fact, like a
+field's hint; the trigger and the editor are described by it.
 
 | Fact | Opens on | Commits on | Cancels on |
 | --- | --- | --- | --- |

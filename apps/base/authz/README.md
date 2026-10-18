@@ -113,11 +113,10 @@ Authz is a Base Step-up consumer (`src/step_up.rs`, `apps/base/step_up/README.md
 
 - Each method calls `StepUp::require` after its capability check and before the write. The target names the user, role or capability.
 - For the full-access role, the doc suggests "ask every time".
-- `/authz/step-up` (Administration › Authorization › 2FA Requirements, `src/step_up_web.rs`) is the policy page for every discovered operation. It needs `admin.authz.step-up.manage` (contributed to `tenant_owner`).
-  - One FlexTable row per declared operation, with module, label, default, this tenant's state and the floor lock.
-  - Confirmed changes: off, on, ask every time, back to default.
-  - The tenant's window and cap.
-  - For the installation owner: the floor and the installation maxima.
+- `/authz/step-up` (Administration › Authorization › Step-up 2FA, `src/step_up_web.rs`) is the policy page for every discovered operation. It needs `admin.authz.step-up.manage` (contributed to `tenant_owner`).
+  - Two tabs, kept in the address as `tab`: **Settings** (the default) and **Actions**.
+  - Settings: the tenant's window ("Minutes before asking again") and cap ("Hours before always asking again") as inline facts that save when committed; for the installation owner, the installation maxima ("Longest time any organisation may choose").
+  - Actions: one FlexTable row per declared operation, with module, label, default, this tenant's state and the floor lock. Confirmed changes: off, on, ask every time, back to default; for the installation owner, the floor.
   - Every change rechecks the capability in its audited transaction and first passes step-up itself (`base.step_up.policy.update`).
 - `examples/p6-authz.rs` changes grants from a console, so run it with `BILIBI_ENV=development`.
 - Agents reach the same writes: `base/authz_agent` adds reviewed-plan agent operations over the `*_in` variants (`assign_role_in`, `set_direct_in`, `set_role_capability_in`), which run inside the plan's transaction. See `apps/base/authz_agent/README.md`.

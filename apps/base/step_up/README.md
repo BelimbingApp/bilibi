@@ -39,15 +39,15 @@ Two lines in the owning module, nothing anywhere else.
 
 ## Policy
 
-Tenants decide per operation on **Administration › Authorization › 2FA Requirements** (`/authz/step-up`, `admin.authz.step-up.manage`).
+Tenants decide per operation on **Administration › Authorization › Step-up 2FA** (`/authz/step-up`, `admin.authz.step-up.manage`).
 
 | Setting | Scope | Default | Bounds |
 |---|---|---|---|
 | Per operation: off, on, ask every time | Tenant (`step_up.policy`) | The declared default | — |
-| Window after each protected action | Tenant (`step_up.window_minutes`) | 30 minutes | 5–720 |
-| Cap after the check | Tenant (`step_up.cap_hours`) | 6 hours | 1–24, and at least the window |
+| Window after each protected action (page: "Minutes before asking again") | Tenant (`step_up.window_minutes`) | 30 minutes | 5–720 |
+| Cap after the check (page: "Hours before always asking again") | Tenant (`step_up.cap_hours`) | 6 hours | 1–24, and at least the window |
 | Floor: operations tenants cannot turn off | Installation (`step_up.floor`) | Declarations marked `.floor()` | — |
-| Longest window / cap any tenant may set | Installation (`step_up.window_limit_minutes`, `step_up.cap_limit_hours`) | 720 minutes / 24 hours | Same bounds |
+| Longest window / cap any tenant may set (page: "Longest time any organisation may choose") | Installation (`step_up.window_limit_minutes`, `step_up.cap_limit_hours`) | 720 minutes / 24 hours | Same bounds |
 
 - Changing any of these is itself a step-up operation (`base.step_up.policy.update`, on the floor). Settings audits it.
 - The installation owner sees the floor and the maxima on the same page.

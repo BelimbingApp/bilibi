@@ -64,18 +64,23 @@
         this.active = false;
         this.draft = null;
       }
+      // The owner's hint, then the outcome, as the template renders them.
+      const describedBy = [
+        this.el.querySelector('[data-role="hint"]') && `${this.el.id}-hint`,
+        this.el.dataset.status !== 'none' && `${this.el.id}-status`,
+      ].filter(Boolean).join(' ');
       const trigger = this.trigger();
       if (trigger) {
         trigger.classList.toggle(this.long || this.choice ? 'hidden' : 'invisible', this.active);
         trigger.classList.toggle('pointer-events-none', this.active);
-        if (this.el.dataset.status !== 'none') trigger.setAttribute('aria-describedby', `${this.el.id}-status`);
+        if (describedBy) trigger.setAttribute('aria-describedby', describedBy);
         else trigger.removeAttribute('aria-describedby');
       }
       this.editor()?.classList.toggle('hidden', !this.active);
       const input = this.control();
       if (input) {
         input.setAttribute('aria-invalid', String(this.el.dataset.status === 'error'));
-        if (this.el.dataset.status !== 'none') input.setAttribute('aria-describedby', `${this.el.id}-status`);
+        if (describedBy) input.setAttribute('aria-describedby', describedBy);
         else input.removeAttribute('aria-describedby');
       }
       // Only committed server data paints the fact, even on failure.

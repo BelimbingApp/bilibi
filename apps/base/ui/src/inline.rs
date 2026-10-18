@@ -103,6 +103,8 @@ pub struct InlineField {
     pub editing: bool,
     pub autofocus: bool,
     pub placeholder: String,
+    /// One short plain sentence under the fact, like a field's hint.
+    pub hint: String,
     pub status: CommitStatus,
     pub class: String,
     pub input_class: String,
@@ -128,6 +130,7 @@ impl InlineField {
             editing: false,
             autofocus: true,
             placeholder: String::new(),
+            hint: String::new(),
             status: CommitStatus::None,
             class: String::new(),
             input_class: String::new(),
@@ -154,6 +157,21 @@ impl InlineField {
     pub fn placeholder(mut self, placeholder: impl Into<String>) -> Self {
         self.placeholder = placeholder.into();
         self
+    }
+    pub fn hint(mut self, hint: impl Into<String>) -> Self {
+        self.hint = hint.into();
+        self
+    }
+    /// The trigger's `aria-describedby`: the hint, then the outcome.
+    pub fn described_by(&self) -> String {
+        let mut ids = Vec::new();
+        if !self.hint.is_empty() {
+            ids.push(format!("{}-hint", self.id));
+        }
+        if self.status.present() {
+            ids.push(format!("{}-status", self.id));
+        }
+        ids.join(" ")
     }
     pub fn display(&self) -> &str {
         match (self.value.is_empty(), self.placeholder.is_empty()) {

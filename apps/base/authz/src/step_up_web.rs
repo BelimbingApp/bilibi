@@ -1,14 +1,16 @@
 //! `/authz/step-up` (`base/authz.pages`, operation `step-up`): the tenant's
-//! two-factor requirements. One FlexTable row per step-up operation the
-//! mounted modules declared (`bilibi_step_up::declare!`), sorted by module,
-//! with its default, this tenant's choice and the installation floor; the
-//! tenant's window and cap above it; for the installation owner, the floor
-//! and the installation-wide maxima. No Bilimbi counterpart.
+//! two-factor requirements, in two tabs (`tab`, so a refresh keeps it). Settings
+//! holds the tenant's window and cap as inline facts that save on commit, and
+//! for the installation owner the installation-wide maxima. Actions holds one
+//! FlexTable row per step-up operation the mounted modules declared
+//! (`bilibi_step_up::declare!`), sorted by module, with its default, this
+//! tenant's choice and the installation floor. No Bilimbi counterpart.
 //!
-//! Every change is a confirmed intent that rechecks `admin.authz.step-up.manage`
-//! inside its audited transaction and first passes step-up itself
-//! (`base.step_up.policy.update`, on the floor): with no recent check the
-//! host sends the browser to confirm and back.
+//! Every change rechecks `admin.authz.step-up.manage` inside its audited
+//! transaction and first passes step-up itself (`base.step_up.policy.update`,
+//! on the floor): with no recent check the host sends the browser to confirm
+//! and back. An action's change is confirmed first; a setting saves as it is
+//! committed, and a refusal stays on its fact.
 use crate::web::{render, Pages, TextCell};
 use askama::Template;
 use bilibi_database::{Error, Result};
@@ -17,10 +19,10 @@ use bilibi_tenancy::Scope;
 use bilibi_ui::{
     list_state::FILTERS_FORM,
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
-    params, Badge, BadgeKind, BuiltinColumn, Button, ButtonVariant, Card, ColumnsOutcome,
-    ConfirmDialog, Field, FilterToolbar, FlashGroup, FlashMap, FlexRow, FlexTable, Header, Html,
-    InputKind, ListColumns, ListSpec, ListState, Pagination, SortDir, StatusKind, TableEmpty,
-    ToolbarControl,
+    params, Badge, BadgeKind, BuiltinColumn, Button, Card, ColumnsOutcome, CommitStates,
+    CommitStatus, ConfirmDialog, Fact, Facts, FilterToolbar, FlashGroup, FlashMap, FlexRow,
+    FlexTable, Header, Html, InlineEdit, InlineField, ListColumns, ListSpec, ListState, Pagination,
+    SectionHeading, SortDir, StatusKind, Tab, TableEmpty, Tabs, ToolbarControl,
 };
 use std::{
     collections::HashMap,
@@ -29,7 +31,10 @@ use std::{
 
 pub const OPERATION: &str = "step-up";
 pub const MANAGE: &str = "admin.authz.step-up.manage";
+const PATH: &str = "/authz/step-up";
 const PAGE_SIZES: [u64; 4] = [25, 50, 100, 300];
+/// The page's views; the first is the default and leaves `tab` out of the address.
+const TABS: [(&str, &str); 2] = [("settings", "Settings"), ("actions", "Actions")];
 
 pub(crate) fn columns() -> ListColumns {
     let column = |id: &str, label: &str, sortable: bool| {
@@ -72,6 +77,124 @@ pub(crate) fn parse(values: &HashMap<String, String>) -> Result<ListState> {
     ListState::parse(values, SPEC.clone()).map_err(|_| Error::Internal)
 }
 
+fn tab(values: &HashMap<String, String>) -> &'static str {
+    TABS.iter()
+        .find(|(id, _)| values.get("tab").map(String::as_str) == Some(*id))
+        .map_or(TABS[0].0, |(id, _)| *id)
+}
+
+/// One number on the Settings tab: the tenant's pair, then the installation's.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Setting {
+    Minutes,
+    Hours,
+    MinutesLimit,
+    HoursLimit,
+}
+
+impl Setting {
+    const ALL: [Self; 4] = [
+        Self::Minutes,
+        Self::Hours,
+        Self::MinutesLimit,
+        Self::HoursLimit,
+    ];
+    fn name(self) -> &'static str {
+        match self {
+            Self::Minutes => "window_minutes",
+            Self::Hours => "cap_hours",
+            Self::MinutesLimit => "window_limit_minutes",
+            Self::HoursLimit => "cap_limit_hours",
+        }
+    }
+    fn parse(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|setting| setting.name() == name)
+    }
+    /// The installation's maxima, which only the installation owner changes.
+    fn limit(self) -> bool {
+        matches!(self, Self::MinutesLimit | Self::HoursLimit)
+    }
+    fn minutes(self) -> bool {
+        matches!(self, Self::Minutes | Self::MinutesLimit)
+    }
+    fn label(self) -> &'static str {
+        if self.minutes() {
+            "Minutes before asking again"
+        } else {
+            "Hours before always asking again"
+        }
+    }
+    fn hint(self) -> &'static str {
+        match self {
+            Self::Minutes => "Counts from their last action that requires 2FA: with 30, a half-hour break means a new code.",
+            Self::Hours => "Counts from when they entered the code, even if they keep working.",
+            _ => "",
+        }
+    }
+    fn dom(self) -> String {
+        format!("step-up-{}", self.name().replace('_', "-"))
+    }
+    /// The stored value, which the editor shows and carries back as its version.
+    fn stored(self, window: &Window) -> i64 {
+        match self {
+            Self::Minutes => window.tenant_window_minutes,
+            Self::Hours => window.tenant_cap_hours,
+            Self::MinutesLimit => window.window_limit_minutes,
+            Self::HoursLimit => window.cap_limit_hours,
+        }
+    }
+    /// The pair to write with `value` in place of this setting.
+    fn pair(self, window: &Window, value: i64) -> (i64, i64) {
+        match self {
+            Self::Minutes => (value, window.tenant_cap_hours),
+            Self::Hours => (window.tenant_window_minutes, value),
+            Self::MinutesLimit => (value, window.cap_limit_hours),
+            Self::HoursLimit => (window.window_limit_minutes, value),
+        }
+    }
+    /// Why `value` cannot be stored, in the page's own words. The facade
+    /// checks the same rules again inside the write.
+    fn problem(self, window: &Window, value: i64) -> Option<String> {
+        let (low, high) = if self.minutes() {
+            WINDOW_RANGE
+        } else {
+            CAP_RANGE
+        };
+        if !(low..=high).contains(&value) {
+            return Some(format!("must be from {low} to {high}"));
+        }
+        let (minutes, hours) = self.pair(window, value);
+        // The organisation's pair stays within the server's longest; a stored
+        // value the server owner has since lowered the longest under is named,
+        // so the reader knows which one to lower first.
+        if !self.limit() {
+            let longest = |setting: Setting, stored: i64, limit: i64| {
+                if setting == self {
+                    format!("cannot be more than {limit}, the longest this server allows")
+                } else {
+                    format!(
+                        "cannot be saved while {} is {stored}, more than the {limit} this server allows; lower that first",
+                        setting.label().to_lowercase()
+                    )
+                }
+            };
+            if minutes > window.window_limit_minutes {
+                return Some(longest(Self::Minutes, minutes, window.window_limit_minutes));
+            }
+            if hours > window.cap_limit_hours {
+                return Some(longest(Self::Hours, hours, window.cap_limit_hours));
+            }
+        }
+        (hours * 60 < minutes).then(|| {
+            if self.minutes() {
+                format!("cannot be longer than the {hours} hours before always asking again")
+            } else {
+                format!("cannot be shorter than the {minutes} minutes before asking again")
+            }
+        })
+    }
+}
+
 /// A change waiting for its confirmation.
 enum Pending {
     Mode { key: String, mode: Option<Mode> },
@@ -80,12 +203,12 @@ enum Pending {
 
 pub(crate) struct StepUpPolicy {
     pages: Pages,
+    tab: &'static str,
     state: ListState,
     columns: ListColumns,
     pending: Option<Pending>,
     flash: Option<(StatusKind, String)>,
-    window_errors: Vec<String>,
-    limit_errors: Vec<String>,
+    statuses: CommitStates,
 }
 
 #[derive(Template)]
@@ -96,19 +219,6 @@ pub(crate) struct StepUpPolicy {
 struct OperationCell<'a> {
     label: &'a str,
     key: &'a str,
-}
-
-#[derive(Template)]
-#[template(
-    source = r#"<form id="{{ id }}" data-event="{{ event }}" class="flex flex-wrap items-end gap-3 p-4">{{ first }}{{ second }}{{ save }}</form>"#,
-    ext = "html"
-)]
-struct WindowForm<'a> {
-    id: &'a str,
-    event: &'a str,
-    first: Html,
-    second: Html,
-    save: Html,
 }
 
 fn badge(kind: BadgeKind, text: &str) -> Result<Html> {
@@ -132,13 +242,21 @@ impl StepUpPolicy {
     pub(crate) fn mount(pages: &Pages, query: &HashMap<String, String>) -> Result<Self> {
         Ok(Self {
             pages: pages.clone(),
+            tab: tab(query),
             state: parse(query)?,
             columns: columns(),
             pending: None,
             flash: None,
-            window_errors: Vec::new(),
-            limit_errors: Vec::new(),
+            statuses: CommitStates::default(),
         })
+    }
+
+    fn query(&self) -> HashMap<String, String> {
+        let mut query = self.state.to_params();
+        if self.tab != TABS[0].0 {
+            query.insert("tab".into(), self.tab.into());
+        }
+        query
     }
 
     async fn owner(&self, scope: &Scope) -> Result<bool> {
@@ -188,45 +306,76 @@ impl StepUpPolicy {
         Ok(())
     }
 
-    async fn save_window(
-        &mut self,
+    /// One committed setting. Its outcome lands on its fact; only a lost
+    /// session or a step-up still owed leaves as an error.
+    async fn save_setting(&mut self, scope: &Scope, value: &serde_json::Value) -> Result<()> {
+        let setting = value["field"]
+            .as_str()
+            .and_then(Setting::parse)
+            .ok_or(Error::Invalid)?;
+        let submitted = value["value"].as_str().ok_or(Error::Invalid)?.trim();
+        let version = value["version"].as_str().unwrap_or_default();
+        let status = self.write(scope, setting, submitted, version).await?;
+        self.statuses.put(setting.name(), status);
+        Ok(())
+    }
+
+    async fn write(
+        &self,
         scope: &Scope,
-        values: &HashMap<String, String>,
-        limits: bool,
-    ) -> Result<()> {
-        let number = |key: &str| values.get(key).and_then(|v| v.trim().parse::<i64>().ok());
-        let (first, second) = if limits {
-            (number("window_limit_minutes"), number("cap_limit_hours"))
-        } else {
-            (number("window_minutes"), number("cap_hours"))
-        };
-        let errors = if limits {
-            &mut self.limit_errors
-        } else {
-            &mut self.window_errors
-        };
-        errors.clear();
-        let (Some(minutes), Some(hours)) = (first, second) else {
-            errors.push("Enter whole numbers.".into());
-            return Ok(());
-        };
-        if limits && !self.owner(scope).await? {
-            return Err(Error::Forbidden);
+        setting: Setting,
+        submitted: &str,
+        version: &str,
+    ) -> Result<CommitStatus> {
+        let refusal = |reason: &str| CommitStatus::refusal(setting.label(), submitted, &[reason]);
+        if setting.limit() && !self.owner(scope).await? {
+            return Ok(CommitStatus::Error(
+                "Only the server owner can change this.".into(),
+            ));
         }
         let step_up = self.pages.step_up.clone();
+        let window = step_up.window(scope).await?;
+        if version != setting.stored(&window).to_string() {
+            return Ok(CommitStatus::Error(
+                "Someone else changed this setting meanwhile. Check the value shown and enter yours again."
+                    .into(),
+            ));
+        }
+        let Ok(value) = submitted.parse::<i64>() else {
+            return Ok(refusal(if setting.minutes() {
+                "must be a whole number of minutes, like 30"
+            } else {
+                "must be a whole number of hours, like 6"
+            }));
+        };
+        if let Some(problem) = setting.problem(&window, value) {
+            return Ok(refusal(&problem));
+        }
+        let (minutes, hours) = setting.pair(&window, value);
         let mut client = self.pages.db.get().await?;
         let mut tx = self
             .pages
             .mutations
             .begin(&mut client, scope.mutation_context(POLICY_UPDATE))
             .await?;
-        crate::authorize_key(tx.sql(), scope, MANAGE).await?;
+        match crate::authorize_key(tx.sql(), scope, MANAGE).await {
+            Err(Error::Forbidden) => {
+                return Ok(CommitStatus::Error(
+                    "You do not have permission to change 2FA settings.".into(),
+                ))
+            }
+            other => other?,
+        }
         let target = format!(
             "{} window:{minutes}m cap:{hours}h",
-            if limits { "installation" } else { "tenant" }
+            if setting.limit() {
+                "installation"
+            } else {
+                "tenant"
+            }
         );
         step_up.require(scope, POLICY_UPDATE, &target).await?;
-        let written = if limits {
+        let written = if setting.limit() {
             step_up.set_limits(&mut tx, scope, minutes, hours).await
         } else {
             step_up.set_window(&mut tx, scope, minutes, hours).await
@@ -234,26 +383,14 @@ impl StepUpPolicy {
         match written {
             Ok(()) => {
                 tx.commit().await?;
-                self.flash = Some((StatusKind::Success, "Confirmed-access window saved.".into()));
+                Ok(CommitStatus::Saved)
             }
-            Err(Error::Invalid) => {
-                let errors = if limits {
-                    &mut self.limit_errors
-                } else {
-                    &mut self.window_errors
-                };
-                errors.push(format!(
-                    "The window must be {}–{} minutes and the cap {}–{} hours, the cap at least the window{}.",
-                    WINDOW_RANGE.0,
-                    WINDOW_RANGE.1,
-                    CAP_RANGE.0,
-                    CAP_RANGE.1,
-                    if limits { "" } else { ", both within the installation maximum" }
-                ));
-            }
-            Err(error) => return Err(error),
+            // A pair stored before the server's longest was lowered.
+            Err(Error::Invalid) => Ok(refusal(
+                "does not fit the other setting and the longest this server allows",
+            )),
+            Err(error) => Err(error),
         }
-        Ok(())
     }
 
     fn actions(&self, rule: &Rule<'_>, owner: bool) -> Result<Html> {
@@ -358,72 +495,80 @@ impl StepUpPolicy {
         Ok(row)
     }
 
-    fn window_form(&self, window: &Window, limits: bool) -> Result<Html> {
-        let field = |name: &str, label: &str, value: i64, errors: &[String]| {
-            render(
-                Field::named(name)
-                    .id(format!("step-up-{}", name.replace('_', "-")))
-                    .label(label)
-                    .kind(InputKind::Number)
-                    .value(value.to_string())
-                    .errors(errors.to_vec()),
-            )
-        };
-        let (id, event, first, second) = if limits {
-            (
-                "step-up-limits-form",
-                "save_limits",
-                field(
-                    "window_limit_minutes",
-                    "Longest window any tenant may set (minutes)",
-                    window.window_limit_minutes,
-                    &self.limit_errors,
-                )?,
-                field(
-                    "cap_limit_hours",
-                    "Longest cap any tenant may set (hours)",
-                    window.cap_limit_hours,
-                    &[],
-                )?,
-            )
-        } else {
-            (
-                "step-up-window-form",
-                "save_window",
-                field(
-                    "window_minutes",
-                    "Window after each protected action (minutes)",
-                    window.tenant_window_minutes,
-                    &self.window_errors,
-                )?,
-                field(
-                    "cap_hours",
-                    "Ask again after the check, at the latest (hours)",
-                    window.tenant_cap_hours,
-                    &[],
-                )?,
-            )
-        };
-        render(WindowForm {
+    fn facts(&self, id: &'static str, settings: &[Setting], window: &Window) -> Result<Html> {
+        let items = settings
+            .iter()
+            .map(|&setting| {
+                let stored = setting.stored(window).to_string();
+                Ok(Fact {
+                    title: setting.label(),
+                    id: "",
+                    value: render(InlineEdit {
+                        field: InlineField::new(
+                            setting.dom(),
+                            setting.name(),
+                            setting.label(),
+                            &stored,
+                        )
+                        .version(&stored)
+                        .hint(setting.hint())
+                        .status(self.statuses.get(setting.name())),
+                    })?,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        render(Facts { id, items })
+    }
+
+    fn section(&self, id: &str, title: &str, description: &str, facts: Html) -> Result<Html> {
+        let heading = format!("{id}-heading");
+        let mut body = render(SectionHeading {
+            id: &heading,
+            title,
+            description,
+            ..SectionHeading::default()
+        })?;
+        body.push(&facts);
+        render(Card {
             id,
-            event,
-            first,
-            second,
-            save: render(Button {
-                variant: ButtonVariant::Primary,
-                id: &format!("{id}-save"),
-                button_type: "submit",
-                working: "Saving…",
-                body: Html::text("Save"),
-                ..Button::default()
-            })?,
+            class: "mb-6",
+            inner_class: "p-5 sm:p-6",
+            role: "region",
+            labelledby: &heading,
+            body,
+            ..Card::default()
         })
     }
 
-    async fn body(&mut self, scope: &Scope) -> Result<String> {
-        let owner = self.owner(scope).await?;
-        let rules = self.pages.step_up.rules(scope).await?;
+    async fn settings(&self, scope: &Scope, owner: bool) -> Result<Html> {
         let window = self.pages.step_up.window(scope).await?;
+        let mut html = self.section(
+            "step-up-window",
+            "After someone enters a 2FA code",
+            "We do not ask them again until one of these runs out.",
+            self.facts(
+                "step-up-window-facts",
+                &[Setting::Minutes, Setting::Hours],
+                &window,
+            )?,
+        )?;
+        if owner {
+            html.push(&self.section(
+                "step-up-limits",
+                "Longest time any organisation may choose (server owner only)",
+                "No organisation on this server can choose more than these.",
+                self.facts(
+                    "step-up-limits-facts",
+                    &[Setting::MinutesLimit, Setting::HoursLimit],
+                    &window,
+                )?,
+            )?);
+        }
+        Ok(html)
+    }
+
+    async fn actions_tab(&mut self, scope: &Scope, owner: bool) -> Result<Html> {
+        let rules = self.pages.step_up.rules(scope).await?;
         let search = self.state.search.to_lowercase();
         let mut shown: Vec<&Rule<'_>> = rules
             .iter()
@@ -458,7 +603,7 @@ impl StepUpPolicy {
         table.add_query = &self.columns.add_query;
         table.framed = false;
         table.actions = true;
-        table.caption = "2FA requirements";
+        table.caption = "Actions that can require 2FA";
         if page.counts.total_entries == 0 {
             table.empty = Some(TableEmpty::Content(Html::text(if search.is_empty() {
                 "No actions can require 2FA yet."
@@ -466,6 +611,34 @@ impl StepUpPolicy {
                 "No operation matches this search."
             })));
         }
+        let form = self.state.filters_form();
+        let mut html = render(FilterToolbar::new(
+            "step-up-filters",
+            vec![ToolbarControl::search(
+                "step-up-search",
+                "search",
+                "Search operations",
+                &form["search"],
+                "Search by operation or module...",
+            )],
+        ))?;
+        let mut card = render(table)?;
+        card.push(&render(Pagination::new(
+            "step-up-pagination",
+            page.counts,
+            &PAGE_SIZES,
+        ))?);
+        html.push(&render(Card {
+            id: "step-up-card",
+            inner_class: "p-0",
+            body: card,
+            ..Card::default()
+        })?);
+        Ok(html)
+    }
+
+    async fn body(&mut self, scope: &Scope) -> Result<String> {
+        let owner = self.owner(scope).await?;
         let (kind, message) = self
             .flash
             .as_ref()
@@ -483,49 +656,46 @@ impl StepUpPolicy {
             flash,
         })?;
         html.push(&render(Header {
-            title: Html::text("2FA requirements"),
-            subtitle: "Set the actions that require 2FA.",
+            title: Html::text("Step-up 2FA"),
+            subtitle:
+                "Ask for a fresh 2FA code before sensitive actions, such as giving someone a role.",
             ..Header::default()
         })?);
-        html.push(&render(Card {
-            id: "step-up-window",
-            title: "Confirmed-access window",
-            inner_class: "p-0",
-            body: self.window_form(&window, false)?,
-            ..Card::default()
+        // Each tab is this address with its own `tab`, so a refresh or Back
+        // returns to it.
+        let tab_paths: Vec<(String, String, &str, &str)> = TABS
+            .iter()
+            .map(|(id, label)| {
+                let mut query = self.query();
+                query.remove("tab");
+                if *id != TABS[0].0 {
+                    query.insert("tab".into(), (*id).into());
+                }
+                (
+                    format!("step-up-tab-{id}"),
+                    params::address(PATH, &query),
+                    *id,
+                    *label,
+                )
+            })
+            .collect();
+        html.push(&render(Tabs {
+            id: "step-up-tabs",
+            label: "Step-up 2FA views",
+            class: "mb-6",
+            tabs: tab_paths
+                .iter()
+                .map(|(dom, href, id, label)| Tab {
+                    id: dom,
+                    ..Tab::patch(href, label, self.tab == *id)
+                })
+                .collect(),
         })?);
-        if owner {
-            html.push(&render(Card {
-                id: "step-up-limits",
-                title: "Installation maximum (installation owner)",
-                inner_class: "p-0",
-                body: self.window_form(&window, true)?,
-                ..Card::default()
-            })?);
-        }
-        let form = self.state.filters_form();
-        html.push(&render(FilterToolbar::new(
-            "step-up-filters",
-            vec![ToolbarControl::search(
-                "step-up-search",
-                "search",
-                "Search operations",
-                &form["search"],
-                "Search by operation or module...",
-            )],
-        ))?);
-        let mut card = render(table)?;
-        card.push(&render(Pagination::new(
-            "step-up-pagination",
-            page.counts,
-            &PAGE_SIZES,
-        ))?);
-        html.push(&render(Card {
-            id: "step-up-card",
-            inner_class: "p-0",
-            body: card,
-            ..Card::default()
-        })?);
+        html.push(&if self.tab == "actions" {
+            self.actions_tab(scope, owner).await?
+        } else {
+            self.settings(scope, owner).await?
+        });
         if let Some(pending) = &self.pending {
             let (consequence, confirm) = match pending {
                 Pending::Mode { key, mode } => (
@@ -578,7 +748,10 @@ impl LiveState<Scope, Error> for StepUpPolicy {
             let scope = request.scope;
             match request.input {
                 LiveInput::Refresh => {}
-                LiveInput::Params(values) => self.state = parse(values)?,
+                LiveInput::Params(values) => {
+                    self.tab = tab(values);
+                    self.state = parse(values)?;
+                }
                 LiveInput::Event(value) => {
                     let get = |key: &str| value.get(key).and_then(|v| v.as_str());
                     match get("type") {
@@ -609,12 +782,7 @@ impl LiveState<Scope, Error> for StepUpPolicy {
                             }
                         }
                         Some("cancel") => self.pending = None,
-                        Some(event @ ("save_window" | "save_limits")) => {
-                            let values = params::string_values(value);
-                            self.flash = None;
-                            self.save_window(scope, &values, event == "save_limits")
-                                .await?;
-                        }
+                        Some("save_field") => self.save_setting(scope, value).await?,
                         Some("filters") => {
                             self.state
                                 .apply_filters(&params::form_values(value, FILTERS_FORM));
@@ -641,7 +809,7 @@ impl LiveState<Scope, Error> for StepUpPolicy {
             }
             Ok(LiveBody {
                 html: self.body(scope).await?,
-                query: self.state.to_params(),
+                query: self.query(),
                 ..LiveBody::default()
             })
         })

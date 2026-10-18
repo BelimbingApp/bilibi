@@ -402,7 +402,7 @@ impl Page<Scope, Error> for Pages {
             "roles" => "Roles",
             "role-create" => "Create Role",
             restrictions_web::OPERATION => "Field Restrictions",
-            crate::step_up_web::OPERATION => "2FA requirements",
+            crate::step_up_web::OPERATION => "Step-up 2FA",
             // A role page is titled by the role's name (PageBody.title).
             _ => return None,
         })

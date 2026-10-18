@@ -201,7 +201,7 @@ A replay creates a delivery only where the subscriber has none (`ON CONFLICT DO 
 
 - **Batches.** One replay looks at no more than `limit` events (1 to 1,000). `next` tells you where the following batch starts.
 - **Audit.** Each replay writes one `base/events.replay` change, attributed to the operator. It names the subscriber, the first and last event, the deliveries created and the deliveries pending. Each delivery then audits as `domain-events`.
-- **Step-up.** The `base.events.replay` step-up is off by default, because a replay only hands over recorded facts, and never twice. A tenant can turn it on at Administration › Authorization › 2FA Requirements.
+- **Step-up.** The `base.events.replay` step-up is off by default, because a replay only hands over recorded facts, and never twice. A tenant can turn it on at Administration › Authorization › Step-up 2FA.
 - **Mounted subscribers only.** A replay to an unmounted subscriber is refused with `NotFound`. Its pending rows wait for the remount.
 
 ### Replaying from code

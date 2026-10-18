@@ -450,7 +450,8 @@ body:has(dialog:modal) #flash-group > #connection-server-error {
  *   and the fact's label stays on top of it, where the floated label is;
  * - a long text's textarea and a choice's editor fill the value cell from
  *   its border, and the choice's select or combobox takes the field's height;
- * - Saving…, Saved and a refusal sit under the box, like a field's hint.
+ * - a hint, Saving…, Saved and a refusal sit under the box, like a
+ *   field's hint and errors.
  *
  * An editor nested deeper in a fact's value (a list with an "Add" line) and
  * every editor outside a fact (a table cell, a panel line) keep their own
@@ -477,6 +478,14 @@ body:has(dialog:modal) #flash-group > #connection-server-error {
 
     & :is([data-role="saving"], [data-role="connection"], [data-role="outcome"]) {
       margin-top: calc(var(--spacing) * 2);
+    }
+
+    & [data-role="hint"] {
+      margin-top: calc(var(--spacing) * 1.5);
+    }
+
+    & [data-role="hint"] ~ :is([data-role="saving"], [data-role="connection"], [data-role="outcome"]) {
+      margin-top: calc(var(--spacing) * 1);
     }
   }
 

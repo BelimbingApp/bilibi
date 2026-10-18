@@ -181,6 +181,7 @@ impl InlineSamples {
             })?,
             edit_saved: Html::render(&InlineEdit {
                 field: edit("-saved", "name", "Edit company name", "Bilimbi Industries")
+                    .hint("The name customers see on documents.")
                     .status(CommitStatus::Saved),
             })?,
             edit_add: Html::render(&InlineEdit {

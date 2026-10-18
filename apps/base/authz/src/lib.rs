@@ -488,7 +488,7 @@ page_route!(
 );
 bilibi_menu::contribute!(
     "base/authz",
-    bilibi_menu::MenuItem::page("admin.authz.step-up", "2FA Requirements", "/authz/step-up")
+    bilibi_menu::MenuItem::page("admin.authz.step-up", "Step-up 2FA", "/authz/step-up")
         .icon("lock-closed")
         .under("admin.authz")
         .requires(bilibi_menu::Requirement::Capability(step_up_web::MANAGE))
