@@ -124,7 +124,7 @@ fn job_schema() -> Value {
     }})
 }
 fn status_output() -> Value {
-    json!({"type":"object","description":"instance (role, label, builds, installs_from), installed (platform, domains, extensions from the running program), plugins, job (the one waiting or running, or the last one, with its steps and whether cancel is available), undo (available, job, restores_backup, loss_count: the audited changes entered since the backup, counted at this read, null when unknown), jobs (recent)."})
+    json!({"type":"object","description":"instance (role, label, builds, installs_from), installed (platform, domains, extensions from the running program), plugins, job (the one waiting or running, or the last one, with its steps and whether cancel is available), undo (available, job, restores_backup, backup_at), jobs (recent)."})
 }
 fn catalogue_output() -> Value {
     json!({"type":"object","description":"available, url, platform versions, domains with their releases and the Platform versions each was tested on, plugins, tested sets. When not available: message."})

@@ -59,6 +59,7 @@ pub(crate) struct Pages {
     pub display: Arc<DisplayPolicy>,
     pub locales: Arc<Locales>,
     pub follow: Arc<Follow>,
+    pub software: Arc<crate::Software>,
 }
 
 fn render(fragment: impl Template) -> Result<Html> {
@@ -718,24 +719,33 @@ impl View {
         } else {
             None
         };
+        let lost = match &self.dialog {
+            Some(Dialog::Review(review)) if review.kind == Kind::Undo => {
+                match review.facts["job"].as_i64() {
+                    Some(job) => pages.software.undo_loss(scope, job).await?["count"].as_u64(),
+                    None => None,
+                }
+            }
+            _ => None,
+        };
         self.page(
-            scope,
             &display,
             &instance,
             can_manage,
             &status,
             catalogue.as_ref(),
+            lost,
         )
     }
 
     fn page(
         &mut self,
-        _scope: &Scope,
         display: &DisplayContext,
         instance: &Instance,
         can_manage: bool,
         status: &Value,
         catalogue: Option<&Value>,
+        lost: Option<u64>,
     ) -> Result<String> {
         let builds = instance.role.builds();
         let label = instance.label.clone();
@@ -779,7 +789,7 @@ impl View {
         };
         let history_card = self.history_card(display, status)?;
         let dialog = match &self.dialog {
-            Some(Dialog::Review(review)) => self.review_dialog(instance, status, review)?,
+            Some(Dialog::Review(review)) => self.review_dialog(instance, lost, review)?,
             Some(Dialog::Cancel { job, running }) => {
                 let consequence = if *running {
                     format!("Stop job {job}?")
@@ -1484,7 +1494,12 @@ impl View {
 
     /// The review the person confirms: the instance first, then what changes,
     /// the warnings, what will happen, and the code field.
-    fn review_dialog(&self, instance: &Instance, status: &Value, review: &Review) -> Result<Html> {
+    fn review_dialog(
+        &self,
+        instance: &Instance,
+        lost: Option<u64>,
+        review: &Review,
+    ) -> Result<Html> {
         let facts = &review.facts;
         let label = instance.label.as_str();
         let banner = instance
@@ -1640,10 +1655,7 @@ impl View {
             .map(|w| (StatusKind::Warning, text(w).to_owned()))
             .collect();
         if review.kind == Kind::Undo {
-            if let (Some(count), Some(at)) = (
-                status["undo"]["loss_count"].as_u64(),
-                facts["backup_at"].as_str(),
-            ) {
+            if let (Some(count), Some(at)) = (lost, facts["backup_at"].as_str()) {
                 let (changes, verb) = if count == 1 {
                     ("1 change entered", "is")
                 } else {

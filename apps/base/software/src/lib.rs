@@ -146,17 +146,14 @@ impl Software {
         let undo = match jobs::last_done(&**client, tenant).await? {
             Some(done) if active.is_none() => match review::undo_facts(&done) {
                 Ok(facts) => {
-                    let loss_count = if facts.restores_backup {
-                        match jobs::backup_time(&**client, tenant, &done).await? {
-                            Some(at) => Some(jobs::changes_since(&**client, tenant, &at).await?),
-                            None => None,
-                        }
+                    let backup_at = if facts.restores_backup {
+                        jobs::backup_time(&**client, tenant, &done).await?
                     } else {
                         None
                     };
                     json!({"available": true, "job": done.id, "restores_backup": facts.restores_backup,
                                     "release": facts.release, "previous_release": facts.previous_release,
-                                    "loss_count": loss_count})
+                                    "backup_at": backup_at})
                 }
                 Err(reason) => json!({"available": false, "job": done.id, "reason": reason}),
             },
@@ -286,6 +283,31 @@ impl Software {
                 _ = tokio::time::sleep(SETTLE_EVERY) => {}
             }
         }
+    }
+
+    /// What restoring the backup of finished job `job` would lose: the time
+    /// of that backup and how many audited changes were entered since,
+    /// counted now. `count` is null when the job restores no backup or its
+    /// backup time is unknown. A separate read, because the count changes
+    /// with every write and is not part of what a confirmation is bound to.
+    pub async fn undo_loss(&self, scope: &Scope, job: i64) -> Result<Value> {
+        let client = self.db.get().await?;
+        authorize_operator(&**client, scope, VIEW).await?;
+        let tenant = scope.tenant();
+        let Some(job) = jobs::get(&**client, tenant, job).await? else {
+            return Ok(json!({"job": job, "backup_at": null, "count": null}));
+        };
+        let restores = review::undo_facts(&job).is_ok_and(|facts| facts.restores_backup);
+        let backup_at = if restores {
+            jobs::backup_time(&**client, tenant, &job).await?
+        } else {
+            None
+        };
+        let count = match &backup_at {
+            Some(at) => Some(jobs::changes_since(&**client, tenant, at).await?),
+            None => None,
+        };
+        Ok(json!({"job": job.id, "backup_at": backup_at, "count": count}))
     }
 
     /// The published catalogue, or why it could not be read.
@@ -647,6 +669,7 @@ inventory::submit! {
                 contracts: services.get(bilibi_agent_api::page::SERVICE)?,
                 display: services.get("base/datetime.display")?,
                 locales: services.get("base/locale.locales")?,
+                software: services.get(SERVICE)?,
             }))))
         } }, bilibi_module_registry::Service { id: SERVICE, factory: |services| {
             let software = Arc::new(Software {
