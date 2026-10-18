@@ -1,0 +1,102 @@
+# Mounts each Bilibi Domain at its default-branch HEAD into this change and
+# runs the same gates as the Domain's own CI (docs/domain-ci/ci.yml), so a
+# Platform change that breaks a Domain shows red before it merges. A Domain's
+# own CI pins an older Platform commit and would not notice. A red entry here
+# means fix the Domain in the same effort (docs/domain-ci/README.md).
+name: Domains on this change
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: domains-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  domain:
+    name: ${{ matrix.domain }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - domain: finance
+            repository: BelimbingApp/bilibi-dom-finance
+          - domain: factory
+            repository: BelimbingApp/bilibi-dom-factory
+          - domain: supply_chain
+            repository: BelimbingApp/bilibi-dom-supply-chain
+
+    env:
+      DATABASE_URL: postgres://bilibi:bilibi@localhost:5432/bilibi
+
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_DB: bilibi
+          POSTGRES_PASSWORD: bilibi
+          POSTGRES_USER: bilibi
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U bilibi"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    defaults:
+      run:
+        working-directory: bilibi
+
+    steps:
+      - name: Check out this change
+        uses: actions/checkout@v7
+        with:
+          path: bilibi
+
+      - name: Check out the Domain at its default-branch HEAD
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ matrix.repository }}
+          path: container
+
+      # Same mount as docs/domain-ci/ci.yml: a real nested checkout at
+      # apps/domains/<id>, which the Platform's .gitignore ignores.
+      - name: Mount the Domain
+        working-directory: .
+        run: |
+          mv container "bilibi/apps/domains/${{ matrix.domain }}"
+          echo "Mounted ${{ matrix.repository }} at $(git -C "bilibi/apps/domains/${{ matrix.domain }}" rev-parse HEAD)" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      # Each Domain resolves a different Cargo.lock; key the cache per Domain
+      # and keep it when a Domain is red, so a broken Domain still rebuilds fast.
+      - uses: Swatinem/rust-cache@v2.9.2
+        with:
+          workspaces: bilibi
+          key: ${{ matrix.domain }}
+          cache-on-failure: true
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: bilibi/apps/base/ui/assets/package-lock.json
+      - run: npm ci --prefix apps/base/ui/assets --no-audit --no-fund
+
+      - name: Run the mounted gates
+        run: ./scripts/domain-ci.sh
+
+      - name: Verify the gates left the Domain clean
+        run: git -C "apps/domains/${{ matrix.domain }}" diff --exit-code
