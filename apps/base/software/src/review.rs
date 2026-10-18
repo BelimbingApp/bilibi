@@ -158,6 +158,12 @@ pub fn change(
                 "A Domain id is lower-case letters, digits and underscores, like supply_chain.",
             ));
         }
+        if id == "src" {
+            return Err(SoftwareError::field(
+                &field,
+                "src is the folder that composes the Domains, so no Domain can use it as its id.",
+            ));
+        }
         if !seen.insert(id.to_owned()) {
             return Err(SoftwareError::field(
                 &field,

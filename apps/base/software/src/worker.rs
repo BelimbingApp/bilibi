@@ -327,7 +327,7 @@ impl Worker {
                 .get_global(&**client, BUILD_JOBS_KEY)
                 .await?
                 .as_u64()
-                .unwrap_or(0) as u32
+                .unwrap_or(2) as u32
         };
         println!(
             "software-worker: job {} claimed: {}",
@@ -730,7 +730,7 @@ impl Worker {
             let Some(row) = tx
                 .sql()
                 .query_opt(
-                    &format!("SELECT {JOB_COLUMNS} FROM base_software_jobs WHERE tenant_id=$1 AND id=$2 AND state='running' AND NOT EXISTS (SELECT 1 FROM base_software_steps s WHERE s.job_id=id AND s.pauses AND s.state<>'pending') FOR UPDATE"),
+                    &format!("SELECT {JOB_COLUMNS} FROM base_software_jobs j WHERE j.tenant_id=$1 AND j.id=$2 AND j.state='running' AND NOT EXISTS (SELECT 1 FROM base_software_steps s WHERE s.tenant_id=j.tenant_id AND s.job_id=j.id AND s.pauses AND s.state<>'pending') FOR UPDATE OF j"),
                     &[&tenant, &id],
                 )
                 .await?
@@ -747,7 +747,7 @@ impl Worker {
             self.skip_rest(tx.sql(), tenant, id).await?;
             let result = json!({"message": message, "release": null});
             let (old, new) = self
-                .set_state(&mut tx, tenant, &job, "cancelled", &result)
+                .set_state(&mut tx, tenant, job.id, "cancelled", &result)
                 .await?;
             tx.mutate(move |_| {
                 Box::pin(async move {
@@ -808,7 +808,9 @@ impl Worker {
             .mutations
             .begin(&mut client, Context::system(tenant, PRINCIPAL, action))
             .await?;
-        let (old, new) = self.set_state(&mut tx, tenant, job, state, &result).await?;
+        let (old, new) = self
+            .set_state(&mut tx, tenant, job.id, state, &result)
+            .await?;
         let id = job.id;
         tx.mutate(move |_| {
             Box::pin(async move {
@@ -835,19 +837,28 @@ impl Worker {
         &self,
         tx: &mut bilibi_database::MutationTransaction<'_>,
         tenant: i64,
-        job: &Job,
+        id: i64,
         state: &str,
         result: &Value,
     ) -> Result<(Value, Value)> {
+        let before = tx
+            .sql()
+            .query_one(
+                &format!("SELECT {JOB_COLUMNS} FROM base_software_jobs WHERE tenant_id=$1 AND id=$2 FOR UPDATE"),
+                &[&tenant, &id],
+            )
+            .await?;
         let row = tx
             .sql()
             .query_one(
                 &format!("UPDATE base_software_jobs SET state=$3, finished_at=now(), result=$4 WHERE tenant_id=$1 AND id=$2 RETURNING {JOB_COLUMNS}"),
-                &[&tenant, &job.id, &state, result],
+                &[&tenant, &id, &state, result],
             )
             .await?;
-        let after = Job::from_row_offset(&row, 0);
-        Ok((job.json(), after.json()))
+        Ok((
+            Job::from_row_offset(&before, 0).json(),
+            Job::from_row_offset(&row, 0).json(),
+        ))
     }
     /// Tells the person who asked. Their account is re-proved live for the
     /// notification's scope; an account that is gone gets none, and the

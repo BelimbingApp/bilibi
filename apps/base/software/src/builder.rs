@@ -138,6 +138,12 @@ impl Plan {
             if !valid_id(&id) {
                 return Err(format!("the Domain id {id} is not snake_case"));
             }
+            if id == "src" {
+                return Err("src is the folder that composes the Domains, so no Domain can use it as its id".to_owned());
+            }
+            if domains.iter().any(|d: &PlannedDomain| d.id == id) {
+                return Err(format!("Domain {id} is listed twice in the request"));
+            }
             let repository = text(&entry["repository"]).ok_or_else(|| {
                 format!("Domain {id} has no repository in the request; plan the change again")
             })?;
@@ -321,14 +327,9 @@ impl Build<'_> {
     /// target folder, and the lowest CPU priority: the instance that runs
     /// beside the build keeps its speed.
     fn command(&self, program: impl AsRef<std::ffi::OsStr>) -> Command {
-        let mut command = Command::new(program);
+        let mut command = self.toolchain.command(program);
         command
-            .env("PATH", self.toolchain.path_env())
-            .env("HOME", &self.paths.home)
             .env("CARGO_TARGET_DIR", self.paths.target())
-            .env("CARGO_TERM_COLOR", "never")
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .env_remove("CARGO_INCREMENTAL")
             .stdin(Stdio::null())
             .kill_on_drop(true)
             .process_group(0);
@@ -409,9 +410,10 @@ impl Build<'_> {
             ("python3", "python3"),
             ("cc", "build-essential"),
         ] {
-            match Command::new(program)
+            match self
+                .toolchain
+                .command(program)
                 .arg("--version")
-                .env("PATH", self.toolchain.path_env())
                 .output()
                 .await
             {
@@ -565,10 +567,13 @@ impl Build<'_> {
         let mut fetched = Vec::new();
         for domain in &plan.domains {
             let path = domains_dir.join(&domain.id);
-            let same_remote = match std::process::Command::new("git")
+            let same_remote = match self
+                .toolchain
+                .command("git")
                 .current_dir(&path)
                 .args(["remote", "get-url", "origin"])
                 .output()
+                .await
             {
                 Ok(output) if output.status.success() => {
                     String::from_utf8_lossy(&output.stdout).trim() == domain.repository
@@ -595,36 +600,38 @@ impl Build<'_> {
                 self.run(clone, &format!("git clone of {}", domain.id))
                     .await?;
             }
-            let mut checkout = self.command("git");
-            checkout
-                .current_dir(&path)
-                .args(["checkout", "-f", "--detach"])
-                .arg(&domain.reference);
-            if let Err(first) = self
-                .run(checkout, &format!("git checkout of {}", domain.id))
-                .await
-            {
-                if matches!(first, Failure::Cancelled) {
-                    return Err(first);
-                }
-                // A branch name on an existing clone lives under origin/.
-                let mut remote = self.command("git");
-                remote
+            // origin/<ref> first: a branch of the same name on a kept clone
+            // is the one the first clone made, and never moves forward.
+            let mut checkout = None;
+            for target in [
+                format!("origin/{}", domain.reference),
+                domain.reference.clone(),
+            ] {
+                let mut attempt = self.command("git");
+                attempt
                     .current_dir(&path)
                     .args(["checkout", "-f", "--detach"])
-                    .arg(format!("origin/{}", domain.reference));
-                self.run(remote, &format!("git checkout of {}", domain.id))
-                    .await
-                    .map_err(|failure| match failure {
-                        Failure::Failed { details, .. } => Failure::Failed {
-                            message: format!(
-                                "{} {} is not in {}.",
-                                domain.id, domain.reference, domain.repository
-                            ),
-                            details,
-                        },
-                        other => other,
-                    })?;
+                    .arg(&target);
+                checkout = Some(
+                    self.run(attempt, &format!("git checkout of {}", domain.id))
+                        .await,
+                );
+                if matches!(checkout, Some(Ok(_) | Err(Failure::Cancelled))) {
+                    break;
+                }
+            }
+            match checkout {
+                Some(Err(Failure::Failed { details, .. })) => {
+                    return Err(Failure::Failed {
+                        message: format!(
+                            "{} {} is not in {}.",
+                            domain.id, domain.reference, domain.repository
+                        ),
+                        details,
+                    })
+                }
+                Some(Err(Failure::Cancelled)) => return Err(Failure::Cancelled),
+                _ => {}
             }
             let mut clean = self.command("git");
             clean.current_dir(&path).args(["clean", "-fdx"]);
@@ -700,10 +707,13 @@ impl Build<'_> {
     }
     /// The `vX.Y.Z` tag at HEAD, if one.
     async fn tag_at_head(&self, path: &Path) -> Option<String> {
-        let output = std::process::Command::new("git")
+        let output = self
+            .toolchain
+            .command("git")
             .current_dir(path)
             .args(["tag", "--points-at", "HEAD"])
             .output()
+            .await
             .ok()?;
         String::from_utf8_lossy(&output.stdout)
             .split_whitespace()
@@ -820,7 +830,7 @@ impl Build<'_> {
         let sums = self.run(checksum, "sha256sum").await?;
         std::fs::write(dir.join("SHA256SUMS"), sums)
             .map_err(|e| Failure::failed(format!("could not write SHA256SUMS: {e}")))?;
-        let mut status = Command::new(dir.join("bilibi-web"));
+        let mut status = self.toolchain.command(dir.join("bilibi-web"));
         status
             .arg("status")
             .stdin(Stdio::null())

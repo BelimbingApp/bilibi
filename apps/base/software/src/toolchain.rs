@@ -34,12 +34,26 @@ impl Toolchain {
         }
         path
     }
-    /// `Some("1.99.0")` when `rustc` runs from this home.
-    pub async fn version(&self) -> Option<String> {
-        let output = Command::new(self.bin_dir().join("rustc"))
-            .arg("--version")
+    /// A command that sees only what a build needs: the toolchain on `PATH`,
+    /// the builder's `$HOME` and a locale. The instance's secrets
+    /// (`DATABASE_URL`, the `BILIBI_*` keys) reach neither Git, Cargo, nor a
+    /// Domain's build script, whatever the worker itself was started with.
+    pub fn command(&self, program: impl AsRef<std::ffi::OsStr>) -> Command {
+        let mut command = Command::new(program);
+        command
+            .env_clear()
             .env("PATH", self.path_env())
             .env("HOME", &self.home)
+            .env("LANG", "C.UTF-8")
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .env("CARGO_TERM_COLOR", "never");
+        command
+    }
+    /// `Some("1.99.0")` when `rustc` runs from this home.
+    pub async fn version(&self) -> Option<String> {
+        let output = self
+            .command(self.bin_dir().join("rustc"))
+            .arg("--version")
             .output()
             .await
             .ok()?;
@@ -57,7 +71,8 @@ impl Toolchain {
         std::fs::create_dir_all(scratch)
             .map_err(|e| format!("cannot create {}: {e}", scratch.display()))?;
         let script = scratch.join("rustup-init.sh");
-        let fetched = Command::new("curl")
+        let fetched = self
+            .command("curl")
             .args(["-fsSL", "--proto", "=https", "--tlsv1.2", RUSTUP_INIT, "-o"])
             .arg(&script)
             .output()
@@ -71,7 +86,8 @@ impl Toolchain {
                 String::from_utf8_lossy(&fetched.stderr).trim()
             ));
         }
-        let installed = Command::new("sh")
+        let installed = self
+            .command("sh")
             .arg(&script)
             .args([
                 "-y",
@@ -81,8 +97,6 @@ impl Toolchain {
                 "stable",
                 "--no-modify-path",
             ])
-            .env("HOME", &self.home)
-            .env("PATH", self.path_env())
             .output()
             .await
             .map_err(|e| format!("could not run the Rust installer: {e}"))?;
@@ -100,10 +114,9 @@ impl Toolchain {
     /// Moves the stable channel forward, for a Platform whose `rust-version`
     /// is newer than what is installed.
     pub async fn update(&self) -> Result<String, String> {
-        let updated = Command::new(self.bin_dir().join("rustup"))
+        let updated = self
+            .command(self.bin_dir().join("rustup"))
             .args(["toolchain", "install", "stable", "--profile", "minimal"])
-            .env("HOME", &self.home)
-            .env("PATH", self.path_env())
             .output()
             .await
             .map_err(|e| format!("rustup does not run: {e}"))?;

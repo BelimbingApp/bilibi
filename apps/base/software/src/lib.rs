@@ -443,10 +443,10 @@ inventory::submit! { Contribution::new(DEFINITIONS, CATALOGUE_URL_KEY, provenanc
         capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
 })) }
 inventory::submit! { Contribution::new(DEFINITIONS, BUILD_JOBS_KEY, provenance!(), &Setting::Definition(Definition {
-    value_type: ValueType::Integer, scopes: &[ScopeKind::Global], default: || json!(0), nullable: false, encrypted: false,
+    value_type: ValueType::Integer, scopes: &[ScopeKind::Global], default: || json!(2), nullable: false, encrypted: false,
     minimum: Some(0.0), maximum: Some(64.0), validator: None,
     editor: Some(Editor { group: "Software", label: "Compilers at a time: how many parts a build compiles at once",
-        help: "0 lets the build use every processor. Lower it, to 1 or 2, when Dev shares its machine with Production or has little memory: the build takes longer but leaves more for the running instance. Builds already run at the lowest CPU priority (server owner only).",
+        help: "How many parts the build compiles at the same time. 2 keeps a Dev that shares its machine with Production responsive and takes about 10 to 15 minutes for a first build. Use 1 on a small server, or a higher number on a machine of its own. 0 means use every processor, which is fastest but slows everything else on the server. Builds always run at the lowest CPU priority (server owner only).",
         capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
 })) }
 inventory::submit! {
