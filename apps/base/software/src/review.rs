@@ -289,7 +289,7 @@ pub fn change(
             version
         }
         None => {
-            let running = Version::parse(made.version).filter(|v| platform_versions.contains(v));
+            let running = Version::parse(made.version);
             let mut last_reason = String::new();
             let mut chosen = None;
             if let Some(version) = running {
@@ -484,12 +484,15 @@ pub fn change(
         }
         + DOMAIN_MINUTES * wanted.len() as u64;
     let summary = format!("{}: {}", instance.label, join(&summary_parts));
-    let request = json!({
+    let mut request = json!({
         "platform": platform_text,
         "domains": wanted.iter().map(|w| if w.external { json!({"id": w.id, "repository": w.source, "ref": w.version}) } else { json!({"id": w.id, "version": w.version}) }).collect::<Vec<_>>(),
         "plugins": plugins.iter().map(|p| json!({"id": p["id"], "enabled": p["enabled"]})).collect::<Vec<_>>(),
         "switch": switch,
     });
+    if !platform_changes && !platform_versions.contains(&platform) {
+        request["platform_commit"] = json!(made.commit);
+    }
     let facts = json!({
         "summary": summary,
         "instance": instance_json(instance),

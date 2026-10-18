@@ -7,10 +7,10 @@
 An assistant, acting for the server owner, asks Dev to add Finance and Factory. Over the Agent API that is three calls:
 
 ```
-read   base.software.status      → "Dev, builds, runs Bilibi 0.1.0 with no Domains, no job running"
+read   base.software.status      → "Dev, builds, runs Bilibi 0.1.1 with no Domains, no job running"
 plan   base.software.change      { "domains": [{"id": "finance"}, {"id": "factory"}] }
-       → review: keep Bilibi 0.1.0, add Finance 0.1.0, add Factory 0.1.0,
-         both tested together on 0.1.0, about 6 minutes, then a 1-minute pause
+       → review: keep Bilibi 0.1.1, add Finance 0.1.0, add Factory 0.1.0,
+         not recorded as tested together on 0.1.1, about 6 minutes, then a 1-minute pause
 commit                           → step_up_required (every_time)
 commit  + step_up_code "123456"  → job 1 queued, seven steps pending
 ```
@@ -61,7 +61,7 @@ Rules the reviews enforce, each as a field error that says what to do:
 
 - `change` on an instance that does not build, or `install` on Dev, names the right contract for that instance.
 - A Domain not in the catalogue needs a `repository` (https) and a `ref`; it is allowed and labelled with its source, and never counts as tested (captain decision 6).
-- `platform` left out keeps the running Bilibi when every chosen Domain accepts it. Only when a Domain needs another release does the review pick the newest one that fits, and then it says so in its own line: "Bilibi will also change from X to Y because Finance 0.2.0 needs Platform >=0.2.0", with the extra time and the database update. A release that fits none says which Domain needs what.
+- `platform` left out keeps the running Bilibi when every chosen Domain accepts it, even when that version is not a catalogue release yet (like 0.1.1 on Dev before it is published): the request then records the running version and its commit so the builder builds from it, and the review warns that the set is not recorded as tested there. Only when a Domain needs another release does the review pick the newest one that fits, and then it says so in its own line: "Bilibi will also change from X to Y because Finance 0.2.0 needs Platform >=0.2.0", with the extra time and the database update. A release that fits none says which Domain needs what.
 - A move to an older version, of Bilibi or of a Domain, is labelled `downgrade`, never `update`, and the review warns that the database keeps what the newer release changed.
 - A Domain from outside the catalogue needs an `https://` repository with no user name or token in it, and a `ref` that does not start with `-`: the request is stored and shown as plain data.
 - A second request while one job waits or runs is refused and names that job.
@@ -108,7 +108,7 @@ The builder (plan piece 6, Dev) and the installer (piece 5, every instance) are 
 6. **Plug-ins.** When a job that switches plug-ins on or off finishes well, update `base_software_plugins` (`enabled`, `version`, `job_id`) in the same transaction as the final state.
 7. **Tell the person.** Record the outcome as an audited action and a notification for `requested_by` (`bilibi_notifications`), as the builder piece decides.
 
-The job's `request` holds exactly what the owner reviewed: `platform`, `domains` with a `version` (catalogue) or `repository` and `ref` (outside it), `plugins`, `switch` (change); `release` and `source` (install); `job` (undo). The worker trusts it as reviewed data and still checks the server (disk, memory, toolchain) itself, because those facts change between the review and the build.
+The job's `request` holds exactly what the owner reviewed: `platform` (and `platform_commit` when the running Platform is not a catalogue release), `domains` with a `version` (catalogue) or `repository` and `ref` (outside it), `plugins`, `switch` (change); `release` and `source` (install); `job` (undo). The worker trusts it as reviewed data and still checks the server (disk, memory, toolchain) itself, because those facts change between the review and the build.
 
 ## Caveats
 
