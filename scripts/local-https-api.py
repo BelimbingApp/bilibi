@@ -150,11 +150,11 @@ def choose_port(servers, requested_port, own_route=None):
     return port
 
 
-def plan(requested_port):
+def plan(requested_port, http_only=False):
     try:
-        servers = request("GET", "/config/apps/http/servers") or {}
         route = get_id(ROUTE_ID)
-        owner = owns_route(route)
+        servers = request("GET", "/config/apps/http/servers") or {}
+        owner = not http_only and owns_route(route)
         # Do not claim a host already registered by a different launcher.
         if route is None and any(HOST in matcher.get("host", [])
                                  for server in servers.values() for entry in caddy_routes(server)
@@ -289,10 +289,9 @@ def main():
     if not 1024 <= requested_port <= 65535:
         raise RuntimeError("BILIBI_DEV_PORT must be 1024..65535.")
     if planning:
-        if sys.argv[1] == "--http":
-            print(f"http\n127.0.0.1\n{choose_port({}, requested_port)}")
-        else:
-            plan(requested_port)
+        # Even after losing a first-launch race, avoid the new owner's reserved
+        # backend port while its app is still building and not listening yet.
+        plan(requested_port, http_only=sys.argv[1] == "--http")
         return
     if len(sys.argv) != 5:
         raise RuntimeError("usage: local-https-api.py HOST PORT CERTIFICATE KEY")
@@ -408,6 +407,6 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except (ApiError, OSError, RuntimeError, ValueError) as error:
+    except (ApiError, OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
         print(str(error).splitlines()[0], file=sys.stderr)
         raise SystemExit(1)
