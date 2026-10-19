@@ -16,7 +16,9 @@ pub use package::https_origin;
 
 use bilibi_agent_access::{AgentAccess, OAuthError, PublicClient};
 use bilibi_agent_api::Registry;
-use bilibi_database::Error;
+use bilibi_database::{Db, Error};
+use bilibi_settings::Settings;
+use bilibi_system::Instance;
 use bilibi_tenancy::Scope;
 use package::{Connection, Package};
 use std::{path::Path, sync::Arc};
@@ -51,13 +53,16 @@ impl From<OAuthError> for PluginError {
 
 /// A built archive, ready to serve.
 pub struct Archive {
-    pub filename: &'static str,
+    pub filename: String,
     pub bytes: Vec<u8>,
 }
 
 pub struct AgentPlugins {
     access: Arc<AgentAccess>,
     registry: Arc<Registry>,
+    /// For the instance the package is named after.
+    db: Db,
+    settings: Arc<Settings>,
     /// `APP_ORIGIN`, the canonical address; never the Host header.
     origin: String,
 }
@@ -79,14 +84,20 @@ impl AgentPlugins {
     pub async fn clients(&self, scope: &Scope) -> Result<Vec<PublicClient>, PluginError> {
         Ok(self.access.clients_for(scope).await?)
     }
-    fn files(
+    /// The package for this instance, named after it. Which instance this
+    /// is comes from `Instance::resolve` like every other place that names
+    /// it, so the plugin, the banner and the MCP answers agree.
+    async fn package(
         &self,
-        harness: &dyn Harness,
         client_id: &str,
         clients: &[PublicClient],
-    ) -> Result<Vec<PackageFile>, PluginError> {
+    ) -> Result<Package, PluginError> {
         let connection = Connection::new(&self.origin, client_id, clients)?;
-        Ok(harness.files(&Package::build(connection, &self.registry)))
+        let instance = {
+            let client = self.db.get().await.map_err(Error::from)?;
+            Instance::resolve(&self.settings, &**client).await?
+        };
+        Ok(Package::build(connection, &self.registry, &instance))
     }
     /// The person's download. The client registration and the HTTPS origin
     /// are checked again here, whatever the page showed.
@@ -98,10 +109,11 @@ impl AgentPlugins {
     ) -> Result<Archive, PluginError> {
         let harness = Self::harness(harness)?;
         let clients = self.clients(scope).await?;
-        let files = self.files(harness, client_id, &clients)?;
-        let bytes = archive::zip(package::NAME, &files).map_err(|_| Error::Internal)?;
+        let package = self.package(client_id, &clients).await?;
+        let files = harness.files(&package);
+        let bytes = archive::zip(&package.name, &files).map_err(|_| Error::Internal)?;
         Ok(Archive {
-            filename: harness.archive_name(),
+            filename: harness.archive_name(&package),
             bytes,
         })
     }
@@ -119,7 +131,8 @@ impl AgentPlugins {
             .public_clients()
             .await
             .map_err(PluginError::from)?;
-        let files = self.files(harness, client_id, &clients)?;
+        let package = self.package(client_id, &clients).await?;
+        let files = harness.files(&package);
         if output.exists() {
             return Err(ExportError::OutputExists);
         }
@@ -145,12 +158,14 @@ pub const USAGE: &str =
 inventory::submit! {
     bilibi_module_registry::Module {
         id: "core/agent_plugins", layer: bilibi_module_registry::Layer::Core,
-        dependencies: &["base/database", "base/tenancy", "base/ui", "base/agent_api", "core/agent_access"],
+        dependencies: &["base/database", "base/tenancy", "base/ui", "base/agent_api", "base/settings", "base/system", "core/agent_access"],
         migrations: &[],
         services: &[
             bilibi_module_registry::Service { id: SERVICE, factory: |services| Ok(Arc::new(AgentPlugins {
                 access: services.get("core/agent_access.grants")?,
                 registry: services.get("base/agent_api.registry")?,
+                db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
+                settings: services.get("base/settings.store")?,
                 origin: std::env::var("APP_ORIGIN").unwrap_or_else(|_| "http://localhost:3000".into()).trim_end_matches('/').to_owned(),
             })) },
             bilibi_module_registry::Service { id: web::PAGES, factory: |services| Ok(Arc::new(bilibi_ui::page::PageService(Arc::new(web::Pages {

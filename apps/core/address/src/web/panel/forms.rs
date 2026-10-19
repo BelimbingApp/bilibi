@@ -71,7 +71,6 @@ fn small(
         button_type: if submit { "submit" } else { "button" },
         event: if submit { "" } else { event },
         variant,
-        class: "text-xs px-3 py-1.5",
         body: Html::text(text),
         ..Button::default()
     })
@@ -99,7 +98,6 @@ impl Panel {
                 id: &save_id,
                 button_type: "submit",
                 variant: ButtonVariant::Primary,
-                class: "text-xs px-2 py-0.5",
                 body: Html::text("Save"),
                 ..Button::default()
             })?,
@@ -107,7 +105,6 @@ impl Panel {
                 id: &cancel_id,
                 button_type: "button",
                 event: "cancel_address_kinds",
-                class: "text-xs px-2 py-0.5",
                 body: Html::text("Cancel"),
                 ..Button::default()
             })?,

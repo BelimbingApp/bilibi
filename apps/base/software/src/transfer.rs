@@ -416,7 +416,11 @@ impl Software {
         for (tenant, job) in waiting {
             let worker = self.transport_worker();
             match self.download_for(tenant, &job).await {
-                Ok(()) => {}
+                Ok(true) => {}
+                Ok(false) => eprintln!(
+                    "software job {}: download stopped because the job was cancelled",
+                    job.id
+                ),
                 Err(why) => {
                     let client = self.db.get().await?;
                     let message = format!("Nothing changed. {}", why.trim_end_matches('.'));
@@ -438,8 +442,13 @@ impl Software {
     }
     /// One job's download: ask the source about the release, fetch the file
     /// into `incoming/job-<id>/`, check it, hand it to the installer. `Err`
-    /// is the plain sentence the job fails with.
-    async fn download_for(&self, tenant: i64, job: &jobs::Job) -> std::result::Result<(), String> {
+    /// is the plain sentence the job fails with; `Ok(false)` is a download
+    /// stopped because the job was cancelled.
+    async fn download_for(
+        &self,
+        tenant: i64,
+        job: &jobs::Job,
+    ) -> std::result::Result<bool, String> {
         let paths = self.paths()?.clone();
         let address = job.request["source"]["address"]
             .as_str()
@@ -564,6 +573,7 @@ impl Software {
             inner: file,
             bytes: counted.clone(),
         };
+        let (cancelled_tx, mut cancelled) = tokio::sync::oneshot::channel::<()>();
         let ticker = {
             let db = self.db.clone();
             let counted = counted.clone();
@@ -574,6 +584,17 @@ impl Software {
                     tokio::time::sleep(Duration::from_secs(2)).await;
                     let got = counted.load(Ordering::Relaxed);
                     if let Ok(client) = db.get().await {
+                        let queued = client
+                            .query_opt(
+                                "SELECT state = 'queued' FROM base_software_jobs WHERE tenant_id=$1 AND id=$2",
+                                &[&tenant, &job],
+                            )
+                            .await
+                            .map(|row| row.is_some_and(|row| row.get::<_, bool>(0)));
+                        if let Ok(false) = queued {
+                            let _ = cancelled_tx.send(());
+                            return;
+                        }
                         let _ = jobs::download_step(&**client, tenant, job, "running", &json!({
                             "message": format!("Downloading release {wanted} from {address}: {} of {}", transport::human(got), transport::human(size)),
                             "bytes_total": size, "bytes": got,
@@ -583,28 +604,33 @@ impl Software {
                 }
             })
         };
-        let streamed = self
+        let call = Call {
+            system: SYSTEM.into(),
+            operation: "releases.download".into(),
+            ..Call::default()
+        };
+        let request = Outgoing::get(format!(
+            "{}{}",
+            address.trim_end_matches('/'),
+            transport::bundle_path(wanted)
+        ))
+        .header(transport::PAIRING_HEADER, key)
+        .timeout(DOWNLOAD_TIMEOUT)
+        .max_body_bytes(transport::MAX_BUNDLE_BYTES);
+        let download = self
             .integration
-            .stream(
-                Origin::User(&scope),
-                &Call {
-                    system: SYSTEM.into(),
-                    operation: "releases.download".into(),
-                    ..Call::default()
-                },
-                Outgoing::get(format!(
-                    "{}{}",
-                    address.trim_end_matches('/'),
-                    transport::bundle_path(wanted)
-                ))
-                .header(transport::PAIRING_HEADER, key)
-                .timeout(DOWNLOAD_TIMEOUT)
-                .max_body_bytes(transport::MAX_BUNDLE_BYTES),
-                &mut sink,
-            )
-            .await;
+            .stream(Origin::User(&scope), &call, request, &mut sink);
+        let streamed = tokio::select! {
+            streamed = download => Some(streamed),
+            _ = &mut cancelled => None,
+        };
         ticker.abort();
         drop(sink);
+        let Some(streamed) = streamed else {
+            let _ = fs::remove_file(&part);
+            let _ = fs::remove_dir_all(&into);
+            return Ok(false);
+        };
         let streamed = match streamed {
             Ok(streamed) if streamed.status == 200 => streamed,
             Ok(streamed) => {
@@ -667,7 +693,7 @@ impl Software {
             // Cancelled while the file was on its way: nothing to install.
             let _ = fs::remove_dir_all(&into);
         }
-        Ok(())
+        Ok(handed)
     }
 }
 

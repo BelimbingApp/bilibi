@@ -236,6 +236,44 @@ pub fn card_body_class(inner_class: &str) -> String {
     classes.join(" ")
 }
 
+/// The shared button owns its size: 24 px with 8 px side padding, on every
+/// pointer and width (`DESIGN.md`, Compact scale). Retain a caller's layout
+/// classes (`w-full`, `ml-auto`) but discard its padding, height and text-size
+/// utilities, including responsive and state-prefixed ones, so a page cannot
+/// give itself a larger or smaller button. The `button` macro applies it.
+pub fn button_class(class: &str) -> String {
+    const SIZE_PREFIXES: [&str; 13] = [
+        "p-", "px-", "py-", "pt-", "pr-", "pb-", "pl-", "ps-", "pe-", "h-", "min-h-", "max-h-",
+        "leading-",
+    ];
+    const TEXT_SIZES: [&str; 10] = [
+        "text-xs",
+        "text-sm",
+        "text-base",
+        "text-lg",
+        "text-xl",
+        "text-2xl",
+        "text-3xl",
+        "text-4xl",
+        "text-5xl",
+        "text-[",
+    ];
+    class_tokens(class)
+        .filter(|token| {
+            let utility = token.rsplit(':').next().unwrap_or(token);
+            !SIZE_PREFIXES
+                .iter()
+                .any(|prefix| utility.starts_with(prefix))
+                && !TEXT_SIZES.iter().any(|size| {
+                    utility == *size
+                        || utility.starts_with(&format!("{size}/"))
+                        || (size.ends_with('[') && utility.starts_with(size))
+                })
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 pub fn stat_strip_columns(count: usize) -> &'static str {
     match count {
         1 => "grid-cols-1",

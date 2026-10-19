@@ -235,6 +235,54 @@ pub async fn past_pause(client: &impl GenericClient, tenant: i64, job: i64) -> R
         .await?
         .get(0))
 }
+/// The release a job's first part made, when that part is done and no later
+/// step has started: a change's build, an install's copy. The job is then
+/// parked for the pause. `None` for any other job or moment.
+pub async fn parked_release(
+    client: &impl GenericClient,
+    tenant: i64,
+    job: &Job,
+) -> Result<Option<i64>> {
+    let first = match job.kind.as_str() {
+        "change" => "build",
+        "install" => "fetch",
+        _ => return Ok(None),
+    };
+    let steps = steps_json(client, tenant, job.id).await?;
+    let part = steps
+        .iter()
+        .find(|s| s["key"] == first && s["state"] == "done");
+    let made = if job.kind == "install" {
+        part.and(job.request["release"].as_i64())
+    } else {
+        part.and_then(|s| s["detail"]["release"].as_i64())
+    };
+    let later_started = steps
+        .iter()
+        .skip_while(|s| s["key"] != first)
+        .skip(1)
+        .any(|s| s["state"] != "pending");
+    Ok(made.filter(|_| !later_started))
+}
+/// When the backup that Undo would restore was taken: the job's result
+/// names it (`backup_at`); otherwise the backup step's start is it. `None`
+/// when no time is known.
+pub async fn backup_time(
+    client: &impl GenericClient,
+    tenant: i64,
+    job: &Job,
+) -> Result<Option<String>> {
+    if let Some(at) = job.result.as_ref().and_then(|r| r["backup_at"].as_str()) {
+        return Ok(Some(at.to_owned()));
+    }
+    Ok(client
+        .query_opt(
+            &format!("SELECT to_char(started_at AT TIME ZONE 'UTC', {TIME}) FROM base_software_steps WHERE tenant_id=$1 AND job_id=$2 AND key='backup' AND started_at IS NOT NULL"),
+            &[&tenant, &job.id],
+        )
+        .await?
+        .map(|row| row.get::<_, String>(0)))
+}
 /// The plug-ins switched on, as the status answer shows them.
 pub async fn plugins_json(client: &impl GenericClient, tenant: i64) -> Result<Vec<Value>> {
     let rows = client
@@ -422,6 +470,45 @@ pub async fn changes_since(client: &impl GenericClient, since: &str) -> Result<V
         .collect();
     let total: i64 = rows.iter().map(|row| row.get::<_, i64>(1)).sum();
     Ok(json!({"since": since, "changes": total, "by_kind": by_kind}))
+}
+/// Gives a parked job its go-ahead: `switch` turns `auto`, which is the
+/// signal the installer waits for. The caller has checked the job is parked.
+pub async fn go(tx: &mut MutationTransaction<'_>, tenant: i64, id: i64) -> Result<Job> {
+    tx.mutate(move |sql| {
+        Box::pin(async move {
+            let before = sql
+                .query_opt(
+                    &format!("SELECT {JOB_COLUMNS} FROM base_software_jobs WHERE tenant_id=$1 AND id=$2 FOR UPDATE"),
+                    &[&tenant, &id],
+                )
+                .await?
+                .map(|row| Job::from_row(&row))
+                .ok_or(Error::NotFound)?;
+            if before.state != "running"
+                || before.switch != "ask"
+                || before.cancel_requested_at.is_some()
+            {
+                return Err(Error::Conflict);
+            }
+            let row = sql
+                .query_one(
+                    &format!("UPDATE base_software_jobs SET switch='auto' WHERE tenant_id=$1 AND id=$2 RETURNING {JOB_COLUMNS}"),
+                    &[&tenant, &id],
+                )
+                .await?;
+            let after = Job::from_row(&row);
+            sql.execute("SELECT pg_notify($1, $2)", &[&CHANNEL, &id.to_string()])
+                .await?;
+            let change = Change {
+                kind: RECORD.into(),
+                id,
+                old: before.json(),
+                new: after.json(),
+            };
+            Ok((after, vec![change]))
+        })
+    })
+    .await
 }
 /// Cancels a job: one still waiting is cancelled at once; one running is
 /// asked to stop, and the worker stops before the pause. The caller has

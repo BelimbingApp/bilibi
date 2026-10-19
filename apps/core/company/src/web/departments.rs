@@ -543,7 +543,6 @@ impl Departments {
                 render(&Button {
                     id: "add-dept-btn",
                     variant: ButtonVariant::Primary,
-                    class: "text-xs",
                     button_type: "button",
                     event: "new",
                     body: Html::text("Add Department"),

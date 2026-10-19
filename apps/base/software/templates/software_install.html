@@ -1,0 +1,16 @@
+{#- Staging and Production: install the release the source tested. No Build
+    here, by design (src/web.rs InstallForm). -#}
+{%- import "forms.html" as form -%}
+{%- import "feedback.html" as feedback -%}
+{% match source %}
+{% when Some(source) %}
+<p class="text-sm text-ink">{{ label }} installs releases tested on <span class="font-medium">{{ source }}</span>.</p>
+<p class="mt-1 text-xs text-ink-muted">To change Domains or plug-ins, make the change on Dev, then install the release it built here once it has run well there.{% if production %} Pick a quiet time: the instance pauses for about a minute.{% endif %}</p>
+<form id="software-install-form" data-event="request_install" class="mt-3 flex flex-wrap items-end gap-3">
+{% call form::input(field=release) %}{% endcall %}
+{{ review|safe }}
+</form>
+{% if busy %}<p class="mt-2 text-xs text-ink-muted">A job is waiting or running. Wait for it to finish, or stop it, before installing.</p>{% endif %}
+{% when None %}
+{% call feedback::alert(kind=bilibi_ui::StatusKind::Warning, id="software-no-source") %}{{ label }} has no instance to install from yet. A server owner sets “Install releases tested on” under Settings › Instance first.{% endcall %}
+{% endmatch %}

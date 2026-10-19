@@ -46,7 +46,9 @@ pub trait Harness: Sync {
     /// The setup page; its download is the same path plus `/download`. Both
     /// are submitted in `contributions.rs` under the operation `key()`.
     fn path(&self) -> &'static str;
-    fn archive_name(&self) -> &'static str;
+    /// The download's file name, from the package's instance name
+    /// (`bilibi-staging-chatgpt-plugin.zip`).
+    fn archive_name(&self, package: &Package) -> String;
     fn copy(&self) -> &'static PageCopy;
     /// The manifest, MCP configuration and skills in this harness's layout.
     fn files(&self, package: &Package) -> Vec<PackageFile>;

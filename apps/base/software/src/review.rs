@@ -84,6 +84,16 @@ fn busy(active: Option<&Job>) -> Result<()> {
         None => Ok(()),
     }
 }
+fn production_warnings(instance: &Instance) -> Vec<String> {
+    if instance.role == bilibi_system::Role::Production {
+        vec![
+            "This changes Production. Pick a quiet time: the instance pauses for about a minute."
+                .into(),
+        ]
+    } else {
+        Vec::new()
+    }
+}
 fn valid_id(id: &str) -> bool {
     (1..=64).contains(&id.len())
         && id.bytes().next().is_some_and(|b| b.is_ascii_lowercase())
@@ -712,13 +722,7 @@ pub fn install(
         ),
         None => format!("{}: install the release in {source_text}", instance.label),
     };
-    let mut warnings: Vec<String> = Vec::new();
-    if instance.role == bilibi_system::Role::Production {
-        warnings.push(
-            "This changes Production. Pick a quiet time: the instance pauses for about a minute."
-                .into(),
-        );
-    }
+    let mut warnings = production_warnings(instance);
     if let (Chosen::Uploaded { .. }, Some(installs_from)) = (&chosen, &instance.installs_from) {
         if !made_by(&facts, installs_from) {
             warnings.push(format!(
@@ -987,18 +991,12 @@ pub fn pair(input: &Value) -> Result<Review> {
     })
 }
 
-/// A stored UTC time as plain words, like `2026-10-19 08:30:00 UTC`.
-pub fn utc_text(at: &str) -> String {
-    at.replace('T', " ").replace('Z', " UTC")
-}
 /// What the installer recorded about a finished job, read for Undo.
 pub struct UndoFacts {
     pub release: i64,
     pub previous_release: i64,
     pub restores_backup: bool,
     pub backup: Option<String>,
-    /// When the backup was taken (UTC), so what would be lost can be counted.
-    pub backup_at: Option<String>,
     /// The plug-ins switched on after it and before it, when it recorded them.
     pub plugins: Option<(Vec<String>, Vec<String>)>,
 }
@@ -1040,7 +1038,6 @@ pub fn undo_facts(job: &Job) -> std::result::Result<UndoFacts, String> {
         previous_release,
         restores_backup: migrated,
         backup: result["backup"].as_str().map(str::to_owned),
-        backup_at: result["backup_at"].as_str().map(str::to_owned),
         plugins: result["plugins"]["before"].as_array().map(|before| {
             (
                 plugin_ids(before),
@@ -1052,15 +1049,17 @@ pub fn undo_facts(job: &Job) -> std::result::Result<UndoFacts, String> {
         }),
     })
 }
-/// Taking back the newest finished change or install. `lost` is what the
-/// audit trail counts since the backup (`jobs::changes_since`), when a
-/// backup would be restored.
+/// A stored UTC time as plain words, like `2026-10-19 08:30:00 UTC`.
+pub fn utc_text(at: &str) -> String {
+    at.replace('T', " ").replace('Z', " UTC")
+}
+/// Taking back the newest finished change or install.
 pub fn undo(
     instance: &Instance,
     active: Option<&Job>,
     last: Option<&Job>,
     named: Option<&Job>,
-    lost: Option<&Value>,
+    backup_at: Option<&str>,
     input: &Value,
 ) -> Result<Review> {
     busy(active)?;
@@ -1091,18 +1090,16 @@ pub fn undo(
         }
     }
     let facts = undo_facts(last).map_err(|why| SoftwareError::field("job", &why))?;
-    let loss = if facts.restores_backup {
-        let since = facts.backup_at.as_deref().unwrap_or("before the change");
-        match lost {
-            Some(lost) => format!(
-                "This also restores the backup taken at {since} (UTC) before job {}. {}",
-                last.id,
-                loss_sentence(lost)
-            ),
-            None => format!("This also restores the backup taken at {since} (UTC) before job {}. Anything entered since then is lost.", last.id),
-        }
-    } else {
-        "Your data stays as it is.".into()
+    let loss = match (facts.restores_backup, backup_at) {
+        (false, _) => "Your data stays as it is.".to_owned(),
+        (true, Some(at)) => format!(
+            "Bilibi restores the backup from {}; anything entered since then is lost.",
+            utc_text(at)
+        ),
+        (true, None) => format!(
+            "Bilibi restores the backup taken before job {}; anything entered since then is lost.",
+            last.id
+        ),
     };
     let plugins = facts.plugins.as_ref().map(|(before, after)| {
         let (on, off) = plugin_moves(after, before);
@@ -1132,12 +1129,11 @@ pub fn undo(
         "previous_release": facts.previous_release,
         "restores_backup": facts.restores_backup,
         "backup": facts.backup,
-        "backup_at": facts.backup_at,
-        "lost": lost,
         "loss": loss,
+        "backup_at": backup_at.filter(|_| facts.restores_backup),
         "plugins": plugins,
         "pause_minutes": PAUSE_MINUTES,
-        "what_happens": format!("{} pauses for about {PAUSE_MINUTES} minute, switches back to release {} and checks that it works. {loss}{plugin_note}", instance.label, facts.previous_release),
+        "what_happens": format!("{} pauses for about {PAUSE_MINUTES} minute, switches back to release {} and checks that it works.{plugin_note}", instance.label, facts.previous_release),
         "steps": jobs::undo_steps(facts.restores_backup).iter().map(|s| json!({"seq": s.seq, "key": s.key, "label": s.label, "pauses": s.pauses})).collect::<Vec<_>>(),
         "step_up": [STEP_UP],
     });
@@ -1145,6 +1141,72 @@ pub fn undo(
         target: format!("undo: {summary}"),
         request,
         facts: facts_json,
+        switch: "auto".into(),
+    })
+}
+
+/// The go-ahead for a job the installer parks before the pause: a built
+/// change, or an install whose copy is checked. `parked` is the release its
+/// first part made while no later step has started, else `None`.
+pub fn go(instance: &Instance, job: &Job, parked: Option<i64>) -> Result<Review> {
+    let refuse = |message: String| Err(SoftwareError::field("job", &message));
+    let (what, steps) = match job.kind.as_str() {
+        "change" => ("build", jobs::change_steps()),
+        "install" => (
+            "copy",
+            jobs::install_steps(job.request["source"]["kind"].as_str() == Some("https")),
+        ),
+        kind => {
+            return refuse(format!(
+                "Job {} is {} {kind}; only a change or an install can be given a go-ahead.",
+                job.id,
+                if kind == "undo" { "an" } else { "a" }
+            ))
+        }
+    };
+    if job.state != "running" {
+        return refuse(format!(
+            "Job {} is {}; only a job that is running and waiting for your go-ahead can be given one.",
+            job.id, job.state
+        ));
+    }
+    if job.cancel_requested_at.is_some() {
+        return refuse(format!(
+            "Job {} was asked to stop, so it cannot be given a go-ahead.",
+            job.id
+        ));
+    }
+    if job.switch != "ask" {
+        return refuse(format!(
+            "Job {} already has your go-ahead; nothing more to do.",
+            job.id
+        ));
+    }
+    let Some(release) = parked else {
+        return refuse(format!(
+            "Job {} is not waiting for your go-ahead: the {what} has not finished yet, or the pause has already started.",
+            job.id
+        ));
+    };
+    let summary = format!(
+        "{}: go ahead with the pause for job {} (release {release})",
+        instance.label, job.id
+    );
+    let facts = json!({
+        "summary": summary,
+        "instance": instance_json(instance),
+        "job": job.id,
+        "release": release,
+        "warnings": production_warnings(instance),
+        "pause_minutes": PAUSE_MINUTES,
+        "what_happens": format!("{} pauses for about {PAUSE_MINUTES} minute to back up the database, update it, switch and check.", instance.label),
+        "steps": steps.iter().skip_while(|s| s.key != "backup").map(|s| json!({"seq": s.seq, "key": s.key, "label": s.label, "pauses": s.pauses})).collect::<Vec<_>>(),
+        "step_up": [STEP_UP],
+    });
+    Ok(Review {
+        target: format!("go: {summary}"),
+        request: json!({"job": job.id}),
+        facts,
         switch: "auto".into(),
     })
 }

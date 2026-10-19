@@ -63,7 +63,7 @@ Reuse the shared macros and typed models. Do not hand-write markup or copy class
 
 - Name variants through the enums (`ButtonVariant`, `BadgeKind`, `PageVariant`), not class strings.
 - Icons come from `src/icons.rs` action names or `hero-*`. Use the Belimbing equivalent for a familiar action.
-- Icon-only actions need an accessible label and a title. Inline controls are 24 px; table and toolbar controls are 28 px. Touch screens expand their targets to 40 px.
+- Icon-only actions need an accessible label and a title. Inline controls are 24 px; table and toolbar controls are 28 px. Touch screens expand icon, tab, pager and choice targets to 40 px; the labelled button stays 24 px.
 - Links navigate; buttons act.
 - Destructive actions use calm danger text, never a solid red button.
 - Secrets use `SecretInput`. It starts masked. A stored value shows a keep-current mask, never plaintext.
@@ -79,9 +79,9 @@ Shared UI sizes follow the sidebar's 12 px text and tight row rhythm; pages do n
 | Hints, badges and table headings | 11 / 14 px (`text-xs`) |
 | Field values and record facts | 14 / 20 px; input values stay 16 px on phones to prevent zoom |
 | Page title | 16 / 24 px; card and empty-state headings 12 / 16 px; dialog title 14 / 20 px |
-| Floating fields | 40 px minimum |
-| Buttons | 32 px minimum; table, toolbar and empty-state buttons are 28 px automatically (`.ui-compact-controls`) |
-| Touch targets | `Button` at phone width (under 40 rem); utility `IconButton`, tabs, pagination and choice labels on coarse pointers: 40 px minimum |
+| Floating fields | 40 px minimum; toolbar and table fields 28 px (`.ui-compact-controls`) |
+| Buttons | 24 px with 8 px side padding, one size everywhere (`ui-button`); a caller's padding, height and text-size classes are discarded (`button_class`) |
+| Touch targets | Utility `IconButton`, tabs, pagination and choice labels on coarse pointers: 40 px minimum. `Button` keeps 24 px on phones and touch screens |
 | Card | 12 px body padding; header 8 px vertically and 12 px horizontally; table frames stay at zero |
 | Feedback | 8 px vertically and 12 px horizontally; panel notices use 6 px vertically |
 | Spacing | 4 px steps: 4 within a group, 8 between controls, 12 within surfaces, 16 between groups |

@@ -1,4 +1,5 @@
 use bilibi_database::{pool, Error, Result};
+use std::io::IsTerminal;
 use std::sync::Arc;
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -156,7 +157,12 @@ async fn main() -> Result<()> {
             let listener = tokio::net::TcpListener::bind(&bind)
                 .await
                 .map_err(|_| Error::Internal)?;
-            println!("Bilibi listening at {origin}");
+            // Colour only on a terminal without NO_COLOR, so logs and services stay plain.
+            if std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none() {
+                println!("\x1b[1;32mBilibi listening at \x1b[4m{origin}\x1b[0m");
+            } else {
+                println!("Bilibi listening at {origin}");
+            }
             let mut app = bilibi_web::App::new(db, &origin)?;
             app.listen_address = Some(listen_host(&bind).into());
             let executor = bilibi_base::queue::execution::Executor::from_services(

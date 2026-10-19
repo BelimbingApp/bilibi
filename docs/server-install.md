@@ -205,9 +205,9 @@ Progress, the time estimate, cancel and failures are reported on the job's steps
 
 ## What is not here yet
 
-This script is the server layout and the builder. These are separate pieces of the Software plan:
+This script is the server layout and the builder; the Software page (`apps/base/software/README.md`) drives them. These are separate pieces of the Software plan:
 
-- **Installing** a built change as part of a job: the installer carries out install and undo jobs ([`apps/installer/README.md`](../apps/installer/README.md)) but does not yet take a built change over from the builder. The Software page that drives it all.
+- **Installing** a built change as part of a job: the installer carries out install and undo jobs ([`apps/installer/README.md`](../apps/installer/README.md)) but does not yet take a built change over from the builder.
 
 ## Reference
 
