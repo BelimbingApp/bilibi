@@ -62,6 +62,14 @@ Undo takes back the newest finished install. The steps:
 > [!WARNING]
 > Undo is not available for a job whose result was never recorded, and an Undo cannot be undone. Both are the Software page's rules (`apps/base/software/README.md`).
 
+## Backup files
+
+**Each install and undo records its backup file, UTC time and size in the backup step.** The Software page and assistant card show those facts and the retention rule.
+
+Backups are PostgreSQL dumps under `<instance>/backups/job-<n>/<database>.dump`. After a successful install or undo, the installer keeps the three newest backup folders and removes older ones (`flow.rs`, `prune`). Retention is by job number, with no fixed age in days. A recorded path may therefore refer to a file already removed.
+
+Undo restores the pre-install backup when the install changed the database structure; it takes another backup before starting. If restoration fails, the job names the dump to restore by hand and leaves the service stopped.
+
 ## If the server restarts mid-way
 
 When the installer starts and finds a job it was running, it does not carry on blindly. It asks one question: **did the change that cannot be taken back by starting the old program already happen?**

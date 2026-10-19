@@ -103,7 +103,7 @@ struct View {
     waiting: ListColumns,
     /// What the source reported when this page was mounted. Showing the page
     /// again does not ask it again (the source limits how often one sender
-    /// may); the person asks again with "Ask the source again", and saving
+    /// may); the person asks again with "Refresh releases", and saving
     /// the pairing key forgets it, since the answer then differs.
     asked: Option<Value>,
     flash: Option<(StatusKind, String)>,
@@ -112,10 +112,10 @@ struct View {
 fn release_columns() -> Vec<BuiltinColumn> {
     vec![
         BuiltinColumn::new("release", "Release").right(),
-        BuiltinColumn::new("in_service", "In service"),
+        BuiltinColumn::new("in_service", "Running now"),
         BuiltinColumn::new("platform", "Bilibi"),
         BuiltinColumn::new("domains", "Domains"),
-        BuiltinColumn::new("checksum", "Checksum"),
+        BuiltinColumn::new("checksum", "File checksum"),
         BuiltinColumn::new("file", "File"),
     ]
 }
@@ -126,7 +126,7 @@ fn waiting_columns() -> Vec<BuiltinColumn> {
         BuiltinColumn::new("from", "Made on"),
         BuiltinColumn::new("platform", "Bilibi"),
         BuiltinColumn::new("domains", "Domains"),
-        BuiltinColumn::new("checksum", "Checksum"),
+        BuiltinColumn::new("checksum", "File checksum"),
     ]
 }
 impl View {
@@ -263,7 +263,8 @@ impl View {
         }
         let mut body = render(Header {
             title: Html::text("Release files"),
-            subtitle: "Move a tested release between instances: download its file here, upload it on the instance that installs it.",
+            subtitle:
+                "Download a tested Bilibi update or upload one to install from the Software page.",
             ..Header::default()
         })?;
         body.push(
@@ -316,7 +317,7 @@ impl View {
                 }
             },
         )?;
-        table.caption = "Releases kept here";
+        table.caption = "Stored releases";
         if here["available"].as_bool() == Some(false) {
             table.empty = Some(TableEmpty::Content(Html::text(
                 here["message"]
@@ -330,13 +331,13 @@ impl View {
             ))));
         }
         let description = if manages {
-            format!("{} keeps these releases. Download the file of the one in service to install it on an instance this one cannot reach, or let that instance download it with the pairing key.", instance.label)
+            format!("{} keeps these updates. Download the one running now to install it on another Bilibi server.", instance.label)
         } else {
             format!("{} keeps these releases.", instance.label)
         };
         section(
             "release-files-here",
-            "Releases kept here",
+            "Stored releases",
             &description,
             Html::default(),
             true,
@@ -353,53 +354,51 @@ impl View {
             &source["releases"],
             |_| None,
         )?;
-        table.caption = "Releases on the source";
+        table.caption = "Updates on the update server";
         if source["available"].as_bool() != Some(true) {
             table.empty = Some(TableEmpty::Content(Html::text(
                 source["message"]
                     .as_str()
-                    .unwrap_or("The source could not be asked."),
+                    .unwrap_or("Bilibi could not contact the update server."),
             )));
         } else if source["releases"].as_array().is_none_or(Vec::is_empty) {
             table.empty = Some(TableEmpty::Content(Html::text(
-                "The source keeps no release yet.",
+                "The update server has no release yet.",
             )));
         }
         let name = match &instance.installs_from {
             Some(from) => crate::review::source_name(from),
-            None => "no source".to_owned(),
+            None => "no update server".to_owned(),
         };
         let mut description = match &instance.installs_from {
-            Some(_) => format!("{} installs releases tested on {name}.", instance.label),
-            None => format!("{} has no source to install from.", instance.label),
+            Some(_) => format!("{} gets tested updates from {name}.", instance.label),
+            None => format!("{} has no update server chosen. Choose one in Settings › Instance › Install releases tested on, or upload a tested release file below.", instance.label),
         };
         if source["available"].as_bool() == Some(true) {
             match source["current"].as_u64() {
                 Some(n) => description.push_str(&format!(
                     " It runs release {n} now{}.",
                     if source["healthy"].as_bool() == Some(true) {
-                        " and answers"
+                        " and is responding"
                     } else {
                         ", but its program does not answer"
                     }
                 )),
-                None => description.push_str(" It has no release in service."),
+                None => description.push_str(" It has no release running."),
             }
-            description.push_str(
-                " Install one from the Software page or through an assistant (base.software.install).",
-            );
+            description.push_str(" Install the running release from the Software page.");
         }
         let ask = render(Button {
             id: "release-files-source-refresh",
             button_type: "button",
             event: "refresh_source",
             working: "Asking…",
-            body: Html::text("Ask the source again"),
+            body: Html::text("Refresh releases"),
             ..Button::default()
         })?;
         section(
             "release-files-source",
-            "Install from the source",
+            "Update server",
             &description,
             ask,
             true,
@@ -412,7 +411,7 @@ impl View {
             .uploads
             .input(UPLOAD, "release-files-upload")
             .label("Release file")
-            .hint("A bilibi-release-<n>.tar.gz downloaded from the instance that tested it, up to 64 MB.");
+            .hint("Choose a tested bilibi-release-<n>.tar.gz file, up to 64 MB.");
         let form = render(Form {
             id: "release-files-upload-form",
             event: "upload_release",
@@ -422,12 +421,12 @@ impl View {
                 button_type: "submit",
                 variant: ButtonVariant::Primary,
                 working: "Receiving…",
-                body: Html::text("Receive the file"),
+                body: Html::text("Upload file"),
                 ..Button::default()
             })?,
             ..Form::default()
         })?;
-        let description = format!("For a source {} cannot reach: download the release file there, then choose it here. It is unpacked and checked, and waits until you install it.", instance.label);
+        let description = format!("Upload a tested update for {}. Bilibi checks the file; you install it separately from the Software page.", instance.label);
         section(
             "release-files-upload-card",
             "Upload a release file",
@@ -499,14 +498,14 @@ impl View {
         table.add_query = &self.waiting.add_query;
         table.framed = false;
         table.actions = manages;
-        table.caption = "Release files waiting here";
+        table.caption = "Uploaded releases";
         table.empty = Some(TableEmpty::Content(Html::text(
             "No release file is waiting here.",
         )));
         section(
             "release-files-waiting-card",
-            "Release files waiting here",
-            "Install one from the Software page or through an assistant (base.software.install with its file name as bundle).",
+            "Uploaded releases",
+            "Choose one of these files on the Software page to review and install it.",
             Html::default(),
             true,
             render(table)?,
@@ -517,7 +516,7 @@ impl View {
         let pairing = &facts["pairing"];
         let set = pairing["set"].as_bool() == Some(true);
         let status = if set {
-            "Set (stored encrypted; the settings editor lists it under Software)".to_owned()
+            "Saved securely. You can replace or clear it below.".to_owned()
         } else {
             "Not set".to_owned()
         };
@@ -533,7 +532,7 @@ impl View {
             let mut secret = SecretInput::in_form("pair", "key", "pairing key")
                 .id("release-files-pairing-key")
                 .label("Pairing key")
-                .hint("The same key on every instance that shares releases: 16 to 128 characters, no spaces. Make one with: openssl rand -hex 24. Saving or clearing it asks for your authenticator code.");
+                .hint("Use the same secret on both Bilibi servers: 16 to 128 characters, no spaces. Saving or clearing it requires your authenticator code.");
             if set {
                 secret = secret.stored();
             }
@@ -567,10 +566,10 @@ impl View {
                 ..Form::default()
             })?);
         }
-        let mut description = format!("With the same key on both, an instance downloads releases from the one it installs from, and the other way round never: {} accepts no program pushed to it.", instance.label);
+        let mut description = format!("This secret lets {} and its update server share release files. Save the same secret on both servers.", instance.label);
         if !set {
             description.push_str(&format!(
-                " With no key set, {} shares no releases and downloads none.",
+                " Without a key, {} cannot share release files automatically. You can still upload a file.",
                 instance.label
             ));
         }

@@ -464,8 +464,11 @@ impl<'a> Run<'a> {
                 self.fail("switch", &reason).await?;
                 return self.switch_back().await;
             }
-            self.done("switch", json!({"message": format!("current points at release {release}; the service is starting")}))
-                .await?;
+            self.done(
+                "switch",
+                json!({"message": format!("The server is starting release {release}.")}),
+            )
+            .await?;
         }
         if !self.is_done("verify") {
             self.start("verify", "Checking that the new release answers")
@@ -484,7 +487,7 @@ impl<'a> Run<'a> {
         let database = if migrated {
             " The database was updated."
         } else {
-            " The database kept its shape."
+            " The database structure stayed the same."
         };
         let seconds = self.pause_seconds().await?;
         let from = match fetched["source_text"].as_str() {
@@ -741,7 +744,7 @@ impl<'a> Run<'a> {
         let now = composition::parse(&status);
         let changes = composition::diff(&composition_of(&self.layout.release(current)), &now);
         Ok(json!({
-            "message": format!("Copied {} as release {n} here: {program}", source.text),
+            "message": format!("Copied {} as release {n}. Bilibi version: {}.", source.text, now["platform"]["version"].as_str().unwrap_or("not recorded")),
             "release": n, "previous": current, "source_release": wanted, "source": source.name, "source_text": source.text,
             "sha256": sha, "bytes": bytes, "program": program,
             "platform": now["platform"], "domains": now["domains"], "extensions": now["extensions"],
@@ -757,7 +760,7 @@ impl<'a> Run<'a> {
             if cancelled {
                 self.finish(
                     "cancelled",
-                    json!({"message": "Stopped before the pause, as asked. Nothing changed on this instance."}),
+                    json!({"message": "The job stopped before the pause, as requested. Nothing changed on this server."}),
                 )
                 .await?;
                 return Ok(false);
@@ -766,7 +769,7 @@ impl<'a> Run<'a> {
                 return Ok(true);
             }
             if !told {
-                self.set("backup", "pending", json!({"message": "Ready. Waiting for the owner to say when to switch; the instance keeps running until then."}))
+                self.set("backup", "pending", json!({"message": "The update is ready. This server keeps running until the owner confirms installation."}))
                     .await?;
                 self.log("waiting for the owner to say when to switch");
                 told = true;
@@ -786,7 +789,7 @@ impl<'a> Run<'a> {
         let file = self.backup_file();
         let bytes = backup::dump(self.pg, &file)?;
         Ok(json!({
-            "message": format!("{} is paused. Backed up the database ({}).", self.layout.name, human(bytes)),
+            "message": format!("{} is paused. The database backup was taken at {at} (UTC): {} ({} bytes). File on this server: {}. After a successful install or undo, the installer keeps the {KEEP_BACKUPS} newest backup folders and removes older ones. Undo restores the pre-install backup if the install changed the database structure.", self.layout.name, human(bytes), bytes, file.display()),
             "backup": file.display().to_string(), "backup_at": at, "paused_epoch": paused_epoch, "bytes": bytes,
         }))
     }
@@ -807,8 +810,8 @@ impl<'a> Run<'a> {
             .map_err(|error| jobs::short(&error))?;
         let applied = (after - before).max(0);
         Ok(json!({
-            "message": if applied == 0 { "The database already had this release's shape; nothing to apply.".to_owned() }
-                else { format!("Applied {applied} migration{} as one piece.", if applied == 1 { "" } else { "s" }) },
+            "message": if applied == 0 { "The database structure is already up to date.".to_owned() }
+                else { format!("Applied {applied} database update{} together.", if applied == 1 { "" } else { "s" }) },
             "ledger_before": before, "applied": applied, "migrated": applied > 0,
         }))
     }
@@ -921,7 +924,7 @@ impl<'a> Run<'a> {
             notes.push(back.restored_note.clone());
         } else if back.base["migrated"].as_bool() == Some(true) {
             notes.push(
-                "The database changed shape but no backup was recorded, so it was left as it is."
+                "The database structure changed, but no backup was recorded. The database was left as it is."
                     .to_owned(),
             );
         }
@@ -1090,8 +1093,11 @@ impl<'a> Run<'a> {
                 self.fail("switch", &reason).await?;
                 return self.switch_back().await;
             }
-            self.done("switch", json!({"message": format!("current points at release {previous}; the service is starting")}))
-                .await?;
+            self.done(
+                "switch",
+                json!({"message": format!("The server is starting release {previous}.")}),
+            )
+            .await?;
         }
         if !self.is_done("verify") {
             self.start("verify", "Checking that the previous release answers")

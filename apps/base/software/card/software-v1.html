@@ -18,7 +18,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Bilibi Software</title>
+<title>Manage domains and extensions</title>
 <style>
 :root {
   --surface: #ffffff; --surface-sunken: #e7e5e4; --surface-muted: #f5f5f4;
@@ -230,7 +230,7 @@ function plural(n, one, many) { return n + ' ' + (n === 1 ? one : many || one + 
 // ---------------------------------------------------------------------------
 const ROLE_WORD = { development: 'Dev', staging: 'Staging', production: 'Production' };
 const ROLE_MESSAGE = {
-  development: 'Development copy. Build in your local Bilibi copy, then install a tested release here.',
+  development: 'Development server. Ask your developer to build and test updates on their computer before installing here.',
   staging: 'Test copy. Changes here do not affect production.',
   production: 'Live system. Changes here change real data.',
 };
@@ -290,7 +290,7 @@ function opened(result) {
 function errorText(body) {
   if (!body) return 'Bilibi answered nothing.';
   if (body.message) return body.message;
-  if (body.error === 'forbidden' || body.error === 'missing_capability') return 'Only a server owner (an administrator of the platform operator) may see or change the software.';
+  if (body.error === 'forbidden' || body.error === 'missing_capability') return 'Only a server owner may see or change the software.';
   if (body.error === 'authentication_required') return 'Sign in to Bilibi through the host first.';
   if (body.error === 'invalid_input' && body.fields) return Object.entries(body.fields).map(([field, messages]) => field + ': ' + [].concat(messages).join(' ')).join(' ');
   if (body.error === 'plan_rejected') return 'The review no longer holds: ' + rejected(body.results);
@@ -317,7 +317,7 @@ function renderHome() {
   const data = state.data;
   const notes = [];
   if (data.proposal && data.proposal.unknown && data.proposal.unknown.length) notes.push(alertBox('warning', 'Not in the catalogue: ' + data.proposal.unknown.join(', ') + '.', 'proposal-unknown'));
-  show(...notes, installedLine(), discoveryView(), installView(), lastJobLine(), footer());
+  show(el('h1', { text: 'Manage domains and extensions' }), el('p', { text: 'View installed software, browse domains and extensions, and install tested updates with backups and undo.' }), ...notes, installedLine(), backupView(), discoveryView(), installView(), lastJobLine(), footer());
 }
 function installedLine() {
   const installed = state.data.installed || {};
@@ -325,9 +325,19 @@ function installedLine() {
   const domains = (installed.domains || []).map((d) => d.id + ' ' + (d.version || '')).join(', ');
   return el('p', { id: 'installed', class: 'small muted' }, [
     'Runs Bilibi ' + (platform.version || '?') + (platform.release ? ' (' + platform.release + ')' : ''),
-    domains ? ' with ' + domains : ' with no Domains',
-    platform.pin === 'unpinned' ? '. Developer build: the exact Domain versions are not recorded' : '',
+    domains ? ' with ' + domains : ' with no business modules',
+    platform.pin !== 'pinned' ? '. This build has no exact module version list' : '',
     '.',
+  ]);
+}
+function backupView() {
+  const data = state.data;
+  return el('div', { class: 'card stack', id: 'backups' }, [
+    el('h2', { text: 'Backups' }),
+    el('p', { class: 'small', text: 'Bilibi backs up before each install or undo. ' + (data.backup_policy || '') }),
+    el('p', { class: 'small', text: data.backup_undo || '' }),
+    ...(data.backups || []).map((b) => el('p', { class: 'small', text: 'Backup before ' + b.kind + ' job ' + b.job + ': ' + (b.at || 'time not recorded') + ', ' + (b.bytes == null ? 'size not recorded' : b.bytes + ' bytes') + '. File on this server: ' + (b.file || 'not recorded') })),
+    !(data.backups || []).length ? el('p', { class: 'small muted', text: 'No backup has been recorded for the ten most recent jobs.' }) : null,
   ]);
 }
 function lastJobLine() {
@@ -359,26 +369,31 @@ function footer() {
 // --- Discover, then build locally ------------------------------------------
 function discoveryView() {
   const catalogue = state.data.catalogue || {};
-  const cards = [];
+  const sections = [];
   for (const kind of ['domains', 'extensions']) {
+    const cards = [];
     for (const item of catalogue[kind] || []) {
       const installed = ((state.data.installed || {})[kind] || []).find((d) => d.id === item.id);
       const requested = ((state.data.proposal || {})[kind] || []).includes(item.id);
       cards.push(el('div', { class: 'card stack', id: kind + '-' + item.id }, [
-        el('div', { class: 'row' }, [el('h2', { text: (item.name || item.id) + (requested ? ' · requested' : '') }), el('span', { class: 'badge', text: installed ? 'Installed ' + (installed.version || '') : 'Not installed' })]),
+        el('h3', { text: (item.name || item.id) + (requested ? ' · requested' : '') }),
         el('p', { class: 'small', text: item.description || '' }),
-        el('p', { class: 'small muted', text: item.repository || '' }),
-        el('p', { class: 'small', text: item.compatibility || '' }),
-        item.local_steps ? el('pre', { text: item.local_steps.join('\n') }) : null,
+        el('p', { class: 'small muted', text: 'Code for your developer: ' + (item.repository || '') }),
+        el('p', { class: 'small', text: 'Installed version: ' + (installed ? (installed.version || 'Unknown') : 'Not installed') }),
+        el('p', { class: 'small', text: 'Compatibility: ' + (item.compatibility || '') }),
+        item.local_steps ? el('div', {}, [el('p', { class: 'small', text: 'Developer commands' }), el('p', { class: 'small muted', text: 'Run these commands in the Bilibi code folder on your computer, then test it in the browser.' }), el('pre', { text: item.local_steps.join('\n') })]) : null,
       ]));
     }
+    sections.push(el('div', { class: 'stack', id: 'available-' + kind }, [
+      el('h2', { text: kind === 'domains' ? 'Available domains' : 'Available extensions' }),
+      el('p', { text: kind === 'domains' ? 'Domains add business features, such as Finance.' : 'Extensions adapt Bilibi or connect it to other software.' }),
+      el('p', { text: state.data.next_step || 'Ask your developer to add the modules you need, build Bilibi on their computer, and test it before installing it here.' }),
+      catalogue.available === false ? alertBox('warning', 'The catalogue is not available: ' + (catalogue.message || 'no reason given')) : null,
+      catalogue.available !== false && !cards.length ? el('p', { class: 'small muted', text: 'No ' + kind + ' are listed in the catalogue.' }) : null,
+      ...cards,
+    ]));
   }
-  return el('div', { class: 'stack', id: 'discovery' }, [
-    el('h1', { text: 'Domains and Extensions' }),
-    el('p', { id: 'local-build-next-step', text: state.data.next_step || 'Add it in your local Bilibi copy and build it there; then install the tested release here.' }),
-    catalogue.available === false ? alertBox('warning', 'The catalogue is not available: ' + (catalogue.message || 'no reason given'), 'catalogue-unavailable') : null,
-    ...cards,
-  ]);
+  return el('div', { class: 'stack', id: 'discovery' }, sections);
 }
 
 // --- Install a tested release ------------------------------------------
@@ -394,15 +409,15 @@ function installView() {
   const release = el('input', { type: 'number', min: '1', step: '1', id: 'release-number', 'aria-label': 'Release number', placeholder: 'release number' });
   const go = el('button', { class: 'primary', id: 'review-install', disabled: !source, text: 'Review install', onclick: () => {
     const n = parseInt(release.value, 10);
-    if (!(n >= 1)) return show(alertBox('warning', 'Enter the release number the source reports as tested.'), renderHomeButton());
+    if (!(n >= 1)) return show(alertBox('warning', 'Enter the release number currently running on your update server.'), renderHomeButton());
     review('base.software.install', { release: n, switch: state.switchMode }, 'Install on ' + inst.label);
   } });
   return el('div', { class: 'stack', id: 'install' }, [
-    el('h1', { text: inst.label + ' installs what another instance tested' }),
-    el('p', { class: 'small muted', text: 'This instance never builds. It copies a finished release, backs up, updates the database, switches and checks: about 2 minutes with a 1-minute pause.' }),
+    el('h1', { text: 'Software update' }),
+    el('p', { class: 'small muted', text: 'Bilibi checks and copies the update, then backs up and installs it. This server pauses for about a minute.' }),
     source
-      ? el('div', { class: 'card stack' }, [el('h2', { text: 'Install the version tested on ' + source }), el('p', { class: 'small muted', text: 'Enter the release number that ' + source + ' reports as tested (its Software card or base.software.status shows it).' }), el('div', { class: 'row' }, [release, go])])
-      : alertBox('warning', 'No source instance is set, so nothing can be installed here. The server owner sets “Installs from” under Settings › Instance.', 'no-source'),
+      ? el('div', { class: 'card stack' }, [el('h2', { text: 'Update server: ' + source }), el('p', { class: 'small muted', text: 'Enter the release number currently running on ' + source + '. Its Software page shows the number.' }), el('div', { class: 'row' }, [release, go])])
+      : alertBox('warning', 'No update server is chosen. Choose one in Settings › Instance › Install releases tested on. You can also upload a tested file on the Release files page and install it from the Software page.', 'no-source'),
   ]);
 }
 function renderHomeButton() { return el('button', { onclick: renderHome, text: 'Back' }); }
@@ -461,7 +476,7 @@ async function review(key, input, verb) {
   stopPolling();
   show(el('p', { class: 'muted', text: 'Checking with ' + instance().label + '…' }));
   let planned;
-  try { planned = await tool('plan', { operations: [{ key, input }] }); } catch (e) { return showError('The host refused the call: ' + (e.message || e.code)); }
+  try { planned = await tool('plan', { operations: [{ key, input }] }); } catch (e) { return showError('The assistant could not send the request: ' + (e.message || e.code)); }
   if (planned.failed) return showError(errorText(planned.body));
   const plan = planned.body;
   state.plan = plan;
@@ -488,6 +503,9 @@ async function review(key, input, verb) {
       factsList(key, facts),
       ...(facts.warnings || []).map((w) => alertBox('warning', w)),
       facts.loss ? alertBox('danger', facts.loss, 'undo-loss') : null,
+      facts.backup_policy ? el('p', { class: 'small', text: 'Bilibi takes a database backup before any change. ' + facts.backup_policy }) : null,
+      facts.backup_undo ? el('p', { class: 'small', text: facts.backup_undo }) : null,
+      facts.backup && facts.restores_backup ? el('p', { class: 'small', text: 'Undo restores this file on the server: ' + facts.backup }) : null,
       facts.what_happens ? el('p', { class: 'small', id: 'what-happens', text: facts.what_happens }) : null,
       facts.steps ? el('details', {}, [el('summary', { text: plural(facts.steps.length, 'step') }), el('ol', { class: 'small' }, facts.steps.map((s) => el('li', { text: s.label + (s.pauses ? ' (the instance pauses from here)' : '') })))]) : null,
       switchRow,
@@ -532,7 +550,7 @@ async function commit(key, verb, code, facts) {
   const button = document.getElementById('confirm');
   if (button) { button.disabled = true; button.textContent = verb.replace(/\?$/, '') + '…'; }
   let done;
-  try { done = await tool('commit', args); } catch (e) { return showError('The host refused the call: ' + (e.message || e.code)); }
+  try { done = await tool('commit', args); } catch (e) { return showError('The assistant could not send the request: ' + (e.message || e.code)); }
   if (done.failed) {
     const body = done.body || {};
     if (button) { button.disabled = false; button.textContent = verb; }
@@ -594,6 +612,7 @@ function renderJob() {
     el('p', { class: 'small muted', text: (job.review && job.review.summary) || '' }),
     active ? progress : null,
     active && running && detail(running) ? el('p', { class: 'small', id: 'job-progress', text: detail(running) }) : null,
+    backupView(),
     el('ol', { class: 'plain steps', id: 'job-steps' }, steps.map((s) => el('li', { data: { state: s.state } }, [el('span', { class: 'mark', text: MARK[s.state] || '·' }), el('span', { class: 'grow' }, [s.label, s.state !== 'pending' && detail(s) ? el('span', { class: 'detail', text: detail(s) }) : null])]))),
     !active && result.message ? alertBox(tone, result.message, 'job-result') : null,
     !active && job.state === 'failed' && failedDetails(steps) ? el('details', {}, [el('summary', { text: 'Developer details' }), el('pre', { text: failedDetails(steps) })]) : null,
@@ -630,7 +649,7 @@ async function cancelJob(id) {
     const done = await tool('commit', { plan_code: planned.body.plan_code, operations: planned.body.operations });
     if (done.failed) { flashJob('danger', errorText(done.body)); return; }
     await pollOnce();
-  } catch (e) { flashJob('danger', 'The host refused the call: ' + (e.message || e.code)); }
+  } catch (e) { flashJob('danger', 'The assistant could not send the request: ' + (e.message || e.code)); }
 }
 function flashJob(tone, text) { renderJob(); main.prepend(alertBox(tone, text, 'flash')); sizeChanged(); }
 async function pollOnce() {
@@ -666,7 +685,7 @@ request('ui/initialize', {
   notify('ui/notifications/initialized');
   sizeChanged();
 }).catch((error) => {
-  document.getElementById('connecting').textContent = 'This card needs an MCP Apps host (ChatGPT, or a host of the 2026-01-26 specification). ' + (error && error.message ? error.message : '');
+  document.getElementById('connecting').textContent = 'Open this card in an assistant that supports interactive Bilibi cards, such as ChatGPT. ' + (error && error.message ? error.message : '');
 });
 })();
 </script>

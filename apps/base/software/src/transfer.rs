@@ -138,7 +138,7 @@ impl Software {
     pub async fn source_facts(&self, scope: &Scope, instance: &Instance) -> Result<Value> {
         Ok(match &instance.installs_from {
             None => {
-                json!({"available": false, "message": format!("{} has no source yet. A server owner sets \"Install releases tested on\" under Instance in the settings, or uploads a release file here.", instance.label)})
+                json!({"available": false, "message": format!("{} has no update server chosen. A server owner sets \"Install releases tested on\" under Instance in the settings, or uploads a release file here.", instance.label)})
             }
             Some(from) => match self.source_listing(scope, from).await? {
                 Ok(mut listing) => {

@@ -1,6 +1,6 @@
 # Base Software
 
-`base/software` discovers official Domains and Extensions, shows what each server runs, and queues safe install and undo jobs for tested releases. Build software in your local Bilibi checkout with a coding agent; servers never build it. No Bilimbi counterpart.
+`base/software` shows what this server runs, helps you find more modules, and installs tested updates with a database backup and undo. Build software in your local Bilibi checkout with a coding agent; servers never build it. No Bilimbi counterpart.
 
 ## Add a Domain
 
@@ -12,7 +12,7 @@ read base.software.open {"propose":{"domains":["finance"]}}
 
 The answer includes Finance’s description, official repository, a release that accepts this server’s Bilibi version, whether the exact commits were recorded as tested together, and `local_steps`. A proposal highlights entries; it creates no job.
 
-**Add it in your local Bilibi copy and build it there; then install the tested release here.** Follow the entry’s repository and commit, keeping any other mounted Domains and Extensions:
+**Ask your developer to add the modules you need, build Bilibi on their computer, and test it before installing it here.** Follow the entry’s repository and commit, keeping any other mounted Domains and Extensions:
 
 ```sh
 git clone -- https://github.com/BelimbingApp/bilibi-dom-finance apps/domains/finance
@@ -29,7 +29,7 @@ If it is already cloned, fetch and check out the chosen commit there instead. Ex
 
 ## Compatibility
 
-**Accepts this version** means the release’s Platform requirement accepts the running Bilibi version; **recorded as tested together** means CI recorded the exact running Platform commit and the selected Domain commit.
+**Compatibility** states whether a module version supports the running Bilibi version and whether automated checks covered the exact code running on this server. The catalogue’s Platform requirement supplies version support; its CI record supplies the exact Platform and Domain commits checked.
 
 - Prefer the newest release recorded as tested with this running commit, then the newest release whose requirements accept this version.
 - Each entry includes `recommended_version`, a plain `compatibility` sentence, `local_steps`, and `next_step`. Each release includes `fits_running` and `tested_with_running`.
@@ -38,7 +38,7 @@ If it is already cloned, fetch and check out the chosen commit there instead. Ex
 - The published catalogue is read over HTTPS through `base/integration` as the requesting person and cached for five minutes. **Software › Catalogue address** can point to an operator’s catalogue. An unavailable catalogue returns `available: false` and a reason; installed status and installation remain available.
 - `domains` and optional `extensions` hold repository and release information; extensions without CI evidence are labelled as not recorded as tested. `plugins` retains the existing release plug-in information.
 
-## Sources of facts
+## Data sources
 
 | Fact | Source |
 | --- | --- |
@@ -81,7 +81,7 @@ Install requires the source to answer and the selected release to be the one it 
 
 ## Page and ChatGPT card
 
-The Software page (`/system/software`) and MCP App (`ui://bilibi/software-v1.html`, `card/software-v1.html`) show discovery and local build steps on every instance, alongside installed status, installation and job history.
+The Software page (`/system/software`) and MCP App (`ui://bilibi/software-v1.html`, `card/software-v1.html`) use the title **Manage domains and extensions**, with **Installed version**, **Available domains**, **Available extensions**, **Compatibility** and **Backups**. Developer commands, installation reviews and job history remain available on every instance.
 
 - `?propose=finance,factory` highlights requested page entries; `open_software` accepts catalogue IDs in `propose` for the card.
 - A view-only account sees discovery and status. The facade refuses writes without manage permission.
@@ -97,6 +97,15 @@ The Software page (`/system/software`) and MCP App (`ui://bilibi/software-v1.htm
 Install steps are *fetch, backup, migrate, switch, verify*, with *download* first for a remote source. Undo uses *backup, restore* (when needed), *switch, verify*. The first `backup` pauses the instance; cancellation is refused after it starts. The installer backs up before updating, checks the new program, and automatically switches back on a failed check. Undo restores the earlier backup when migrations changed the database; its review names the backup time and the page separately refreshes the count of later audited changes. The committed review records `lost_at_commit`.
 
 Migration `base-software-003-local-builds` cancels legacy queued or running `change` jobs, skips unfinished steps, records the reason, gives never-claimed jobs the worker name `software-migration` and clears their settlement mark so the server audits and notifies the outcome. It preserves completed history and prior Undo information. A constraint prevents new active change jobs. The only builder setting, `software.build_jobs`, is removed. All existing tables and columns remain needed for install, undo, release plug-ins or historical evidence; no applied migration is edited.
+
+## Database backups
+
+**Software shows the backup file, time and size for installs and undos among the ten most recent jobs.** The page and assistant card read the same `backups` evidence from completed backup steps, including jobs that later failed; missing older metadata is labelled as not recorded. A recorded file path does not prove that the file is still kept.
+
+- The installer writes a PostgreSQL dump under the instance folder at `backups/job-<n>/<database>.dump` before changing anything.
+- After a successful install or undo, it keeps the **three newest backup folders** and removes older ones. There is no fixed age in days. This is the existing rule in `apps/installer/src/flow.rs` (`prune`); the page, reviews, job steps and card state it.
+- Undo restores the pre-install backup only when the install changed the database structure. It then loses data entered since that backup. Otherwise, Undo switches the program back and leaves data alone. Undo takes a new safety backup first.
+- If restoration fails, the service stays stopped and the job message names the file to restore by hand.
 
 ## How a worker plugs in
 
@@ -154,7 +163,7 @@ Each failed check is a plain sentence that says what to do next: "This release w
 
 ### The Release files page
 
-`/system/software/releases` (`release_files.rs`, menu **Administration › System › Release files**) is the small UI of transport: the instance banner first, so you always know which instance you are moving a release to or from; the releases kept here, each with a **Download** link (server owners); what the source offers; the upload of a release file, which is unpacked and checked at once and then waits as `upload-<n>` until you install it (or remove it); and the pairing key (setting or clearing it asks for the owner's authenticator code; the box is hidden from anyone who may only view). The page asks the source once when it opens and keeps the answer, so showing it again, sorting or saving does not ask again; **Ask the source again** asks once more, and so does saving the pairing key. The source limits each sender to 30 requests a minute, which the install review and the download need too. Installing stays with the Software page (the pick of uploaded files on its install card) and `base.software.install`.
+`/system/software/releases` (`release_files.rs`, menu **Administration › System › Release files**) is the small UI of transport: the instance banner first, so you always know which instance you are moving a release to or from; the releases kept here, each with a **Download** link (server owners); what the source offers; the upload of a release file, which is unpacked and checked at once and then waits as `upload-<n>` until you install it (or remove it); and the pairing key (setting or clearing it asks for the owner's authenticator code; the box is hidden from anyone who may only view). The page asks the source once when it opens and keeps the answer, so showing it again, sorting or saving does not ask again; **Refresh releases** asks once more, and so does saving the pairing key. The source limits each sender to 30 requests a minute, which the install review and the download need too. Installing stays with the Software page (the pick of uploaded files on its install card) and `base.software.install`.
 
 ## Caveats
 

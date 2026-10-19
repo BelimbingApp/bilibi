@@ -199,6 +199,9 @@ impl Software {
                 .map(|(bundle, facts)| json!({"bundle": bundle, "release": facts["release"], "from": facts["from"]["label"]}))
                 .collect::<Vec<_>>(),
             "pairing": pairing::state_json(pairing::is_set(&**client, &self.settings, scope).await?),
+            "backups": jobs::backups_json(&**client, tenant).await?,
+            "backup_policy": jobs::BACKUP_POLICY,
+            "backup_undo": jobs::BACKUP_UNDO,
             "job": job,
             "undo": undo,
             "jobs": recent.iter().map(|job| json!({"id": job.id, "kind": job.kind, "state": job.state,

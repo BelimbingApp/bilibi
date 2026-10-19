@@ -5,7 +5,7 @@ use bilibi_module_registry::Composition;
 use serde_json::{json, Value};
 
 pub const NEXT_STEP: &str =
-    "Add it in your local Bilibi copy and build it there; then install the tested release here.";
+    "Ask your developer to add the modules you need, build Bilibi on their computer, and test it before installing it here.";
 
 pub fn catalogue(catalogue: &Catalogue, made: &Composition) -> Value {
     let mut value = catalogue.json();
@@ -43,9 +43,9 @@ pub fn catalogue(catalogue: &Catalogue, made: &Composition) -> Value {
             let chosen = choices.pop();
             item["recommended_version"] = json!(chosen.as_ref().map(|c| &c.2));
             item["compatibility"] = json!(match &chosen {
-                Some((true, _, version, _)) => format!("{version}: recorded as tested with this Bilibi {}.", made.version),
-                Some((false, _, version, _)) => format!("{version}: accepts Bilibi {}; not recorded as tested with this running commit. Build and check it locally.", made.version),
-                None => format!("No release is recorded as accepting Bilibi {}. Check the repository's requirements in your local copy.", made.version),
+                Some((true, _, version, _)) => format!("Version {version} passed checks with the exact Bilibi code running here ({}). Test your chosen modules together before installing.", made.version),
+                Some((false, _, version, _)) => format!("Version {version} supports Bilibi {}. There is no test record for the exact code running here. Ask your developer to test it first.", made.version),
+                None => format!("No published version is listed as supporting Bilibi {}. Ask your developer to check the requirements before adding it.", made.version),
             });
             item["next_step"] = json!(NEXT_STEP);
             item["local_steps"] = json!(chosen
@@ -77,7 +77,7 @@ fn local_steps(repository: &str, id: &str, kind: &str, commit: &str) -> Option<V
     }
     let path = format!("apps/{kind}/{id}");
     Some(vec![
-        "# In your local Bilibi checkout; keep other mounted Domains and Extensions.".into(),
+        "# For your developer: run in the Bilibi code folder on your computer. Keep existing modules.".into(),
         format!("git clone -- {repository} {path}"),
         format!("git -C {path} checkout --detach {commit}"),
         "python3 scripts/discover-modules.py".into(),
@@ -86,7 +86,7 @@ fn local_steps(repository: &str, id: &str, kind: &str, commit: &str) -> Option<V
         "python3 scripts/discover-modules.py --pin".into(),
         "cargo build --release --locked -p bilibi-web".into(),
         "./target/release/bilibi-web status".into(),
-        "# Run and check this composition locally in the browser before installing its release."
+        "# Run Bilibi with these modules on your computer and test it in the browser before installing."
             .into(),
         "# Release files and installation: docs/server-install.md".into(),
     ])
