@@ -152,6 +152,14 @@ async fn context<'a>(
             notifications = render_embed(app, scope, &slot.embed).await?;
         }
     }
+    // Display only and unlogged: the editor and its save authorize for real.
+    let manage_instance = platform_operator
+        && capabilities.contains(bilibi_base::system::INSTANCE_MANAGE)
+        && app
+            .services
+            .get::<bilibi_base::system::Instances>(bilibi_base::system::SERVICE)?
+            .is_core_administrator(scope)
+            .await?;
     let served = served_routes(app);
     let pins: Vec<_> = bilibi_user::list_pins(&**client, scope)
         .await?
@@ -186,15 +194,14 @@ async fn context<'a>(
             instance.badge().map_err(|_| Error::Internal)?
         },
         instance_status: instance
-            .status(
-                app.services
-                    .get::<bilibi_base::system::Instances>(bilibi_base::system::SERVICE)?
-                    .can_manage(scope)
-                    .await?,
-            )
+            .status(manage_instance)
             .map_err(|_| Error::Internal)?,
         instance_title: instance.label,
-        listen_address: app.listen_address.as_deref(),
+        listen_address: if instance.role == bilibi_base::system::Role::Dev {
+            app.listen_address.as_deref()
+        } else {
+            None
+        },
         versions: bilibi_ui::version_badges(&crate::composition()),
         topbar_actions,
     })

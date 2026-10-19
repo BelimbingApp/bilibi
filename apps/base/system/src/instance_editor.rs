@@ -41,28 +41,33 @@ pub struct InstanceSettings {
     pub installs_from: String,
 }
 impl Instances {
+    async fn core_administrator(
+        client: &(impl tokio_postgres::GenericClient + Sync),
+        scope: &Scope,
+    ) -> Result<bool> {
+        Ok(scope.impersonator().is_none()
+            && bilibi_authz::roles::assigned(client, scope, scope.user())
+                .await?
+                .iter()
+                .any(|role| role.is_system && role.code.as_deref() == Some("core_admin")))
+    }
     async fn authorize_in(
         client: &(impl tokio_postgres::GenericClient + Sync),
         scope: &Scope,
     ) -> Result<()> {
         bilibi_authz::authorize_operator(client, scope, INSTANCE_MANAGE).await?;
-        if scope.impersonator().is_some()
-            || !bilibi_authz::roles::assigned(client, scope, scope.user())
-                .await?
-                .iter()
-                .any(|role| role.is_system && role.code.as_deref() == Some("core_admin"))
-        {
-            return Err(Error::Forbidden);
+        if Self::core_administrator(client, scope).await? {
+            Ok(())
+        } else {
+            Err(Error::Forbidden)
         }
-        Ok(())
     }
-    pub async fn can_manage(&self, scope: &Scope) -> Result<bool> {
+    /// Whether the signed-in account is the Core Administrator, as an unlogged
+    /// read for the shell to choose a link. The caller adds the capability
+    /// from its own effective set; the editor and `save` still run `authorize_in`.
+    pub async fn is_core_administrator(&self, scope: &Scope) -> Result<bool> {
         let client = self.db.get().await?;
-        match Self::authorize_in(&**client, scope).await {
-            Ok(()) => Ok(true),
-            Err(Error::Forbidden) => Ok(false),
-            Err(error) => Err(error),
-        }
+        Self::core_administrator(&**client, scope).await
     }
 
     pub async fn resolve(&self) -> Result<Instance> {

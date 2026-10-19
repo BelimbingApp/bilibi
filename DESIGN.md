@@ -181,7 +181,7 @@ Width is a shared decision. Every page uses `PageVariant`. All three share one c
 - **Workspace shell:** `h-7` top bar, sidebar menu, status bar.
   - Top bar: sidebar toggle, brand mark, notification bell, timezone and clock selector, theme selector.
   - Sidebar: the menu, pinned items, account entry at the bottom.
-  - Status bar: the Platform version, then each mounted Domain's version (`finance 0.1.0`), with commits in the tooltip (`docs/versions.md`). It also shows the server role and instance label in the configured colour, plus the listen address when available. The role comes from `instance.role`, never the build mode.
+  - Status bar: the Platform version, then each mounted Domain's version (`finance 0.1.0`), with commits in the tooltip (`docs/versions.md`). It also shows the server role and instance label in the configured colour, plus the listen address when the role is Dev. The role comes from `instance.role`, never the build mode.
   - Below `lg` the menu is an off-canvas drawer.
 - Pages never render chrome. The host wraps them (`apps/web/src/shell.rs`).
 - The bell shows the unread count and follows new notifications live. It opens recent items.
