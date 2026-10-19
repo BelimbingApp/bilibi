@@ -25,7 +25,7 @@ use bilibi_datetime::{
 };
 use bilibi_grid::{Outcome as GridOutcome, PageColumns, PageViews};
 use bilibi_locale::Locales;
-use bilibi_tenancy::{Scope, SelfReport};
+use bilibi_tenancy::{ClientIdentity, Scope, SelfReport};
 use bilibi_ui::{
     choices,
     list_state::FILTERS_FORM,
@@ -88,6 +88,7 @@ fn builtins() -> Vec<BuiltinColumn> {
         typed("duration_ms", "Duration (ms)", ColumnType::Integer),
         BuiltinColumn::new("actor", "Person / agent"),
         BuiltinColumn::new("self_report", SelfReport::LABEL),
+        BuiltinColumn::new("client_identity", ClientIdentity::LABEL),
     ]
 }
 
@@ -353,6 +354,10 @@ impl Index {
                     .or(exchange.agent_id.as_deref())
                     .unwrap_or("System"),
             ),
+        );
+        row.slots.insert(
+            "client_identity".into(),
+            dash(exchange.client_identity.as_deref()),
         );
         row.slots
             .insert("self_report".into(), self_report(exchange));
@@ -821,6 +826,7 @@ bilibi_ui::record_fields! { pub(crate) mod fields {
     CONNECTION: bilibi_ui::RecordField::new("connection", "Connection"),
     AGENT: bilibi_ui::RecordField::new("agent", "Agent"),
     RUN: bilibi_ui::RecordField::new("run", "Run"),
+    CLIENT_IDENTITY: bilibi_ui::RecordField::new("client_identity", bilibi_tenancy::ClientIdentity::LABEL),
     SELF_REPORT: bilibi_ui::RecordField::new("self_report", bilibi_tenancy::SelfReport::LABEL),
     ERROR: bilibi_ui::RecordField::new("error", "Error"),
 } }
@@ -882,6 +888,10 @@ fn exchange_facts(
         (fields::CONNECTION, dash(exchange.connection_id.as_deref())),
         (fields::AGENT, dash(exchange.agent_id.as_deref())),
         (fields::RUN, dash(exchange.run_id.as_deref())),
+        (
+            fields::CLIENT_IDENTITY,
+            dash(exchange.client_identity.as_deref()),
+        ),
         (fields::SELF_REPORT, self_report(exchange)),
         (fields::ERROR, dash(exchange.error_class.as_deref())),
     ])

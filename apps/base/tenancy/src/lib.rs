@@ -151,6 +151,7 @@ pub struct AgentFacet {
     trace: String,
     channel: Channel,
     self_report: Option<SelfReport>,
+    client_identity: Option<ClientIdentity>,
 }
 impl AgentFacet {
     pub fn connection(&self) -> i64 {
@@ -159,6 +160,10 @@ impl AgentFacet {
     /// One request's correlation ID: audit trace and exchange log share it.
     pub fn trace(&self) -> &str {
         &self.trace
+    }
+    /// Client transport identity, distinct from the model's self-report.
+    pub fn client_identity(&self) -> Option<&ClientIdentity> {
+        self.client_identity.as_ref()
     }
     /// What the agent said about itself on this request. Evidence only.
     pub fn self_report(&self) -> Option<&SelfReport> {
@@ -181,6 +186,8 @@ impl SelfReport {
     pub const LABEL: &'static str = "Self-reported agent";
     /// The request header the agent edge (`/api/v1`, `/mcp`) reads it from.
     pub const HEADER: &'static str = "x-bilibi-agent-self-report";
+    /// Model-accessible argument on the six generic MCP tools.
+    pub const MCP_ARGUMENT: &'static str = "agent_self_report";
     /// The MCP `params._meta` key, for clients that cannot set headers.
     pub const MCP_META: &'static str = "bilibi/agent-self-report";
     /// `None` for a malformed value; the caller drops it and says so.
@@ -194,6 +201,23 @@ impl SelfReport {
             && !(harness.is_empty() && rest.is_empty())
             && part(harness)
             && part(rest))
+        .then(|| Self(value.to_owned()))
+    }
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+/// Transport-observed client label for the MCP edge. This says
+/// what the client sent, not which model ran; never authentication or authority.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClientIdentity(String);
+impl ClientIdentity {
+    pub const LABEL: &'static str = "Client identity";
+    pub const MAX_LEN: usize = 255;
+    pub fn parse(value: &str) -> Option<Self> {
+        (!value.is_empty()
+            && value.len() <= Self::MAX_LEN
+            && value.bytes().all(|byte| (0x20..=0x7e).contains(&byte)))
         .then(|| Self(value.to_owned()))
     }
     pub fn as_str(&self) -> &str {
@@ -270,10 +294,18 @@ impl Scope {
                 trace,
                 channel: Channel::Api,
                 self_report,
+                client_identity: None,
             }),
             csrf: uuid::Uuid::new_v4().simple().to_string(),
             ..self
         }
+    }
+    /// Adds transport evidence without changing the sealed actor or grant.
+    pub fn with_client_identity(mut self, client: Option<ClientIdentity>) -> Self {
+        if let Some(agent) = &mut self.agent {
+            agent.client_identity = client;
+        }
+        self
     }
     /// Web for a browser session; the agent edge it came through otherwise.
     pub fn channel(&self) -> Channel {
@@ -313,6 +345,10 @@ impl Scope {
             .map(|impersonator| bilibi_database::Principal::user(impersonator.user));
         if let Some(agent) = &self.agent {
             context.trace_id.clone_from(&agent.trace);
+            context.client_identity = agent
+                .client_identity
+                .as_ref()
+                .map(|client| client.0.clone());
             context.agent_connection = Some(agent.connection);
             context.agent_self_report = agent.self_report.as_ref().map(|report| report.0.clone());
         }

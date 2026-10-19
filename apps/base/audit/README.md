@@ -103,3 +103,5 @@ NUL handling, 2,500-row bulk capture, system/impersonator/queue attribution,
 refused unknown kinds, refused mutation and action rows leaving company and
 notification state unchanged with diagnostics written, append-only evidence, every
 console outcome recorded, and an HTTP/browser smoke of the running app.
+
+`client_identity` (migration `base-audit-008-client-identity`) records the transport client separately on actions and mutations, via the sealed scope or trusted `Context`. It is shown as "Client identity", never authorization or a replacement for "Self-reported agent".

@@ -10,7 +10,7 @@ pub mod plans;
 pub mod reach;
 mod reference;
 pub mod schema;
-pub mod search;
+mod search;
 
 use bilibi_module_registry::{Catalog, Consumer, Contribution, Entry, Provenance, RegistryError};
 use bilibi_tenancy::{Channel, ProofClient, ProofFuture, Scope};

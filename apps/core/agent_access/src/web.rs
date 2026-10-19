@@ -15,7 +15,7 @@ use bilibi_datetime::{DisplayContext, DisplayPolicy, Format, Precision};
 use bilibi_locale::Locales;
 use bilibi_settings::Settings;
 use bilibi_system::Instance;
-use bilibi_tenancy::{Scope, SelfReport};
+use bilibi_tenancy::{ClientIdentity, Scope, SelfReport};
 use bilibi_ui::{
     page::{
         LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, MountFuture, Page, PageBody,
@@ -690,6 +690,7 @@ pub struct ConnectionRow {
     /// Self-reported `harness/model-version-effort` values, newest first,
     /// comma-separated; empty when none.
     pub self_report: String,
+    pub client_identity: String,
     pub revoked: bool,
 }
 #[derive(Template)]
@@ -714,6 +715,7 @@ impl ConnectionsPage {
                     BuiltinColumn::new("status", "Status"),
                     BuiltinColumn::new("seen", "Also seen as"),
                     BuiltinColumn::new("self_report", SelfReport::LABEL),
+                    BuiltinColumn::new("client_identity", ClientIdentity::LABEL),
                 ],
             )
             .map_err(|_| Error::Internal)?,
@@ -756,6 +758,12 @@ impl ConnectionsPage {
                     },
                     seen: row
                         .seen_agent_ids
+                        .keys()
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    client_identity: row
+                        .observed_clients
                         .keys()
                         .cloned()
                         .collect::<Vec<_>>()
@@ -806,7 +814,8 @@ impl ConnectionsPage {
                                 .map_err(|_| Error::Internal)?
                         },
                     )
-                    .slot("self_report", Html::text(&row.self_report));
+                    .slot("self_report", Html::text(&row.self_report))
+                    .slot("client_identity", Html::text(&row.client_identity));
                 rendered.dom_id = Some(row.dom_id);
                 if !row.revoked {
                     rendered.actions = Html::render(&IconButton {

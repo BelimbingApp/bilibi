@@ -556,6 +556,7 @@ impl Media {
                     action: "media.attachment.cleanup".into(),
                     trace_id: uuid::Uuid::new_v4().to_string(),
                     agent_self_report: None,
+                    client_identity: None,
                     agent_connection: None,
                 };
                 let mut tx = self.boundary.begin(client, context).await?;

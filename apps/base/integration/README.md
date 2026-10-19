@@ -146,3 +146,5 @@ as Bilimbi. The column arrangement uses Grid `PageColumns` and is remembered per
 explicit click behind `.payload.view`, deletes behind a confirm dialog and
 `.delete`, and returns to the list afterwards; a refusal is a flash. To see
 rows, run the walkthrough above against the app's database.
+
+`client_identity` records the edge-observed client label separately from the agent self-report. The host bounds it to 255 printable ASCII characters; Exchanges shows it as "Client identity". It is transport evidence, never authority.

@@ -25,7 +25,7 @@ use bilibi_base::{
     },
     integration::{Incoming, Integration},
     settings::Settings,
-    tenancy::{ProofFuture, Scope, SelfReport},
+    tenancy::{ClientIdentity, ProofFuture, Scope, SelfReport},
 };
 use bilibi_core::agent_access::{
     AgentAccess, AgentClaims, CodeExchange, OAuthError, Throttle, CLIENT_ID, DEVICE_GRANT,
@@ -115,6 +115,7 @@ pub fn router(app: App) -> Router<App> {
 pub(crate) struct Trace {
     pub(crate) id: String,
     pub(crate) reported: Reported,
+    pub(crate) client_identity: Option<ClientIdentity>,
 }
 /// The self-report a request carried (ADR 01, "Agent identity at runtime").
 /// A malformed value is dropped and only the fact is recorded; neither case
@@ -162,6 +163,7 @@ pub(crate) struct Exchange {
     pub(crate) scope: Option<Scope>,
     pub(crate) operation: Option<String>,
     pub(crate) reported: Option<Reported>,
+    pub(crate) client_identity: Option<ClientIdentity>,
 }
 
 async fn record(State(app): State<App>, mut request: Request, next: Next) -> Response {
@@ -172,9 +174,11 @@ async fn record(State(app): State<App>, mut request: Request, next: Next) -> Res
     let agent_id = label(request.headers(), AGENT_ID_HEADER);
     let run_id = label(request.headers(), RUN_ID_HEADER);
     let reported = Reported::from_headers(request.headers());
+    let client_identity = client_identity(request.headers(), endpoint == "/mcp");
     request.extensions_mut().insert(Trace {
         id: trace.clone(),
         reported: reported.clone(),
+        client_identity: client_identity.clone(),
     });
     let mut response = next.run(request).await;
     let exchange = response
@@ -204,6 +208,10 @@ async fn record(State(app): State<App>, mut request: Request, next: Next) -> Res
         run_id,
         agent_self_report: reported.report().map(|report| report.as_str().to_owned()),
         agent_self_report_malformed: matches!(reported, Reported::Malformed),
+        client_identity: exchange
+            .client_identity
+            .or(client_identity)
+            .map(|client| client.as_str().to_owned()),
         correlation_id: Some(trace.clone()),
         ..Incoming::default()
     };
@@ -219,6 +227,23 @@ async fn record(State(app): State<App>, mut request: Request, next: Next) -> Res
         response.headers_mut().insert(TRACE_HEADER, value);
     }
     response
+}
+
+/// Transport evidence only: never infer a model from a harness User-Agent.
+/// An omitted/malformed label is stated explicitly for every MCP exchange.
+pub(crate) fn client_identity(headers: &HeaderMap, mcp: bool) -> Option<ClientIdentity> {
+    let mut values = headers.get_all(header::USER_AGENT).iter();
+    let client = match (values.next(), values.next()) {
+        (Some(value), None) => value.to_str().ok().and_then(|value| {
+            let value: String = value.chars().take(ClientIdentity::MAX_LEN - 12).collect();
+            ClientIdentity::parse(&format!("User-Agent: {value}"))
+        }),
+        _ => None,
+    };
+    client.or_else(|| {
+        mcp.then(|| ClientIdentity::parse("MCP: client identity not supplied"))
+            .flatten()
+    })
 }
 
 /// A self-reported label; an unshowable value is treated as not stated.
@@ -469,6 +494,7 @@ fn query_value(value: &str) -> String {
 }
 
 async fn token(State(app): State<App>, request: Request) -> Response {
+    let client_identity = client_identity(request.headers(), false);
     let sender = sender(&request);
     match allowed(&app, "token", &sender).await {
         Ok(true) => {}
@@ -504,7 +530,9 @@ async fn token(State(app): State<App>, request: Request) -> Response {
                 code_verifier: field("code_verifier").into(),
                 resource: field("resource").into(),
             };
-            access.exchange_code(&exchange, &mcp_resource(&app)).await
+            access
+                .exchange_code(&exchange, &mcp_resource(&app), client_identity.as_ref())
+                .await
         }
         Some(_) => {
             return oauth_code("unsupported_grant_type");
@@ -582,11 +610,16 @@ pub(crate) async fn authenticate(
         .await
         .map_err(fail)?;
     access
-        .observe(&claims, label(headers, AGENT_ID_HEADER).as_deref(), report)
+        .observe(
+            &claims,
+            label(headers, AGENT_ID_HEADER).as_deref(),
+            report,
+            trace.client_identity.as_ref(),
+        )
         .await
         .map_err(fail)?;
     Ok(Agent {
-        scope,
+        scope: scope.with_client_identity(trace.client_identity.clone()),
         claims,
         trace: trace.clone(),
     })
@@ -603,6 +636,7 @@ impl Agent {
             scope: Some(self.scope),
             operation,
             reported: None,
+            client_identity: None,
         });
         response
     }
@@ -635,7 +669,7 @@ impl PlanAuthority for Grant<'_> {
                 })?;
             Ok(PlanIdentity {
                 credential_binding: format!("agent-connection:{}", self.claims.connection),
-                scope,
+                scope: scope.with_client_identity(self.trace.client_identity.clone()),
             })
         })
     }

@@ -36,6 +36,8 @@ pub struct Context {
     /// The agent's self-reported `harness/model-version-effort`, already
     /// shape-checked by the agent edge. Evidence only, never authority.
     pub agent_self_report: Option<String>,
+    /// Transport-observed client identity; evidence only.
+    pub client_identity: Option<String>,
     /// The durable agent connection; evidence, never authority.
     pub agent_connection: Option<i64>,
 }
@@ -48,6 +50,7 @@ impl Context {
             action: action.into(),
             trace_id: uuid::Uuid::new_v4().to_string(),
             agent_self_report: None,
+            client_identity: None,
             agent_connection: None,
         }
     }
@@ -65,6 +68,7 @@ impl Context {
             action: action.into(),
             trace_id: uuid::Uuid::new_v4().to_string(),
             agent_self_report: None,
+            client_identity: None,
             agent_connection: None,
         }
     }
