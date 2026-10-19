@@ -149,7 +149,7 @@ APP_ORIGIN=http://127.0.0.1:4499 BIND_ADDR=127.0.0.1:4499 \
   cargo run -p bilibi-person --example person-contact-panel --locked
 ```
 
-Sign in, open the reference route with a Person ID created through `/contacts/new`,
+Sign in, open the reference route with a Person ID created with the New contact dialog on `/contacts`,
 edit a personal contact, and verify it in the ordinary Person page. The reference
 host resolves the Person through its public API on every update; a production
 company host additionally resolves its owned affiliation before supplying that ID.
