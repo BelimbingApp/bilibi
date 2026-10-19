@@ -20,8 +20,8 @@ import time
 
 STATUS = Path('.local/dev-run.status.json')
 LIMIT = 32 * 1024
-PHASES = {'prepare', 'discovery', 'css', 'build', 'migrate', 'seed', 'start', 'serve', 'stopped'}
-CAPTURE = {'discovery', 'css', 'build', 'migrate'}
+PHASES = {'prepare', 'discovery', 'css', 'build', 'migrate', 'seed', 'start', 'serve'}
+CAPTURE = {'discovery', 'css', 'build', 'migrate', 'seed'}
 
 
 def redact(raw):
@@ -128,4 +128,4 @@ if __name__ == '__main__':
         write(current['phase'], started=current.get('started_at'), failed=True,
               finished=True, output=current.get('output', ''))
     else:
-        write(sys.argv[1], failed='--failed' in sys.argv[2:])
+        write(sys.argv[1])

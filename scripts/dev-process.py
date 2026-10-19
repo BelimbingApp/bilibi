@@ -115,22 +115,22 @@ def watch(command):
                     if app is not None and app.poll() is not None:
                         result = app.returncode
                         state = Path(".local/dev-run.state")
-                        if state.exists() and state.read_text().strip() == "serve":
-                            state.write_text("ended\n")
-                            status.write("serve", failed=True, finished=True)
                         if result == -signal.SIGTERM:
-                            reason = (
-                                "another process stopped it (SIGTERM), not a file change. "
+                            cause = "another process stopped it (SIGTERM), not a file change"
+                            advice = (
                                 "To start it again, save any file or run `touch Cargo.toml`, "
                                 "or press Ctrl-C and run ./scripts/start-app.sh again."
                             )
                         else:
-                            code = 128 - result if result < 0 else result
-                            reason = (
-                                f"the app stopped (exit {code}, see above). "
+                            cause = f"the app stopped (exit {128 - result if result < 0 else result})"
+                            advice = (
                                 "Fix the error and save a file to try again, or press Ctrl-C "
                                 "and run ./scripts/start-app.sh again."
                             )
+                        if state.exists() and state.read_text().strip() == "serve":
+                            state.write_text("ended\n")
+                            status.write("serve", failed=True, finished=True, output=cause[0].upper() + cause[1:] + ".")
+                        reason = f"{cause}. {advice}"
                         print(f"Bilibi is not running: {reason}", flush=True)
                         app = None
                         PID.unlink(missing_ok=True)
@@ -185,7 +185,6 @@ def watch(command):
                 stop(app)
                 PID.unlink(missing_ok=True)
                 SOCKET.unlink(missing_ok=True)
-                status.write('stopped')
                 http.shutdown()
                 http.server_close()
         return 130 if stopping else watcher.returncode

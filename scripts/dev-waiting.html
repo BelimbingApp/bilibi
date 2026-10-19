@@ -15,7 +15,7 @@
 </template>
 <script>
 (function () {
-  var labels = {prepare:'Preparing', discovery:'Discovering modules', css:'Building CSS', build:'Building', migrate:'Migrating the database', seed:'Preparing the development account', start:'Starting', serve:'Starting', stopped:'Launcher stopped'};
+  var labels = {prepare:'Preparing', discovery:'Discovering modules', css:'Building CSS', build:'Building', migrate:'Migrating the database', seed:'Preparing the development account', start:'Starting', serve:'Starting'};
   var failures = {discovery:'Module discovery failed', css:'CSS build failed', build:'Rust build failed', migrate:'Database migration failed', seed:'Development account setup failed', start:'App failed to start', serve:'App stopped'};
   var latest = null, unavailable = false, busy = false;
   var waiting = document.documentElement;
@@ -34,12 +34,11 @@
     var elapsed = Math.max(0, Math.floor(((latest.finished_at || Date.now() / 1000) - latest.started_at)));
     var duration = (elapsed >= 60 ? Math.floor(elapsed / 60) + 'm ' : '') + elapsed % 60 + 's';
     var label = labels[latest.phase] || 'Starting';
-    progress.textContent = unavailable ? 'Launcher status is unavailable. Checking again…' : latest.failed ? (failures[latest.phase] || label + ' failed') + ' (' + duration + ').' : label + ' (' + duration + ')…';
+    progress.textContent = unavailable ? 'The dev launcher is not running. Run ./scripts/start-app.sh to start it.' : latest.failed ? (failures[latest.phase] || label + ' failed') + ' (' + duration + ').' : label + ' (' + duration + ')…';
     progress.setAttribute('role', latest.failed ? 'alert' : 'status');
     progress.setAttribute('aria-live', latest.failed ? 'assertive' : 'polite');
     document.getElementById('waiting-heading').textContent = latest.failed ? 'Bilibi could not start' : 'Bilibi is starting';
-    next.hidden = !latest.failed && latest.phase !== 'stopped';
-    next.textContent = latest.phase === 'stopped' ? 'Run ./scripts/start-app.sh to start the launcher again.' : 'Fix the error and save a file. The launcher rebuilds by itself.';
+    next.hidden = !latest.failed;
     var tail = latest.output || '';
     if (output.textContent !== tail) {
       var atEnd = output.hidden || output.scrollHeight - output.clientHeight - output.scrollTop < 24;
