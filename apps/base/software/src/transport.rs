@@ -336,8 +336,14 @@ pub struct Unpacked {
 /// the files a release folder has: a path that is not one of them, a link
 /// or anything outside the folder is refused and the folder removed.
 pub fn unpack_bundle(reader: impl Read, into: &Path) -> Result<Unpacked, String> {
-    fs::create_dir_all(into)
-        .map_err(|error| format!("could not make {}: {error}", into.display()))?;
+    // The installer, another user in the same group, removes the folder
+    // once the release is copied into place, so the group may write it.
+    make_group_dir(into).map_err(|error| {
+        format!(
+            "The incoming folder on this server could not be written ({}: {error}). Run scripts/install-server.sh create <instance> again on the server to put its permissions right.",
+            into.display()
+        )
+    })?;
     let result = unpack_into(reader, into);
     if result.is_err() {
         let _ = fs::remove_dir_all(into);
@@ -372,7 +378,7 @@ fn unpack_into(reader: impl Read, into: &Path) -> Result<Unpacked, String> {
         match entry.header().entry_type() {
             tar::EntryType::Directory => {
                 if name == PLUGINS_DIR || name.starts_with("plugins/") {
-                    fs::create_dir_all(into.join(&name))
+                    make_group_dir(&into.join(&name))
                         .map_err(|error| format!("could not make {name}: {error}"))?;
                 }
                 continue;
@@ -389,8 +395,8 @@ fn unpack_into(reader: impl Read, into: &Path) -> Result<Unpacked, String> {
             return Err("The release file is larger than a release can be. Download it again from the source.".into());
         }
         let target = into.join(&name);
-        if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent)
+        if let Some(parent) = target.parent().filter(|parent| *parent != into) {
+            make_group_dir(parent)
                 .map_err(|error| format!("could not make {}: {error}", parent.display()))?;
         }
         let mut file = fs::File::create(&target)
@@ -417,6 +423,14 @@ fn unpack_into(reader: impl Read, into: &Path) -> Result<Unpacked, String> {
         return Err("The release file has no checksum list (SHA256SUMS), so it cannot be checked. Download it again from the source.".into());
     }
     Ok(Unpacked { bytes, files })
+}
+/// A folder of a received release, writable by the group so the installer
+/// (another user in it) can remove it once the release is in place.
+fn make_group_dir(dir: &Path) -> io::Result<()> {
+    fs::create_dir_all(dir)?;
+    // The group comes from incoming/ (set-group-id); the program is not a
+    // member of it, so it may not set that bit itself.
+    fs::set_permissions(dir, fs::Permissions::from_mode(0o770))
 }
 /// The name an archive entry is allowed to have inside a release folder.
 fn bundle_entry_name(path: &Path) -> Option<String> {

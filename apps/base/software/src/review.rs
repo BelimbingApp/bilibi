@@ -568,6 +568,7 @@ pub fn install(
     input: &Value,
     source: Option<&SourceFacts>,
     uploads: &[(String, Value)],
+    running_sha256: Option<&str>,
 ) -> Result<Review> {
     if instance.role.builds() {
         return Err(SoftwareError::field("instance", &format!("{} builds its own software; use base.software.change here. Installing a tested release is for Staging and Production.", instance.label)));
@@ -709,8 +710,10 @@ pub fn install(
     if changes.is_null() {
         warnings.push("What this release holds is not recorded, so the change list is known only once the installer reads it.".into());
     }
-    if let Some(sha) = facts["sha256"].as_str() {
-        if made_checksum_matches(made, &facts) {
+    // The same rule the installer applies: the program in service, byte for
+    // byte, is not installed again.
+    if let (Some(sha), Some(running)) = (facts["sha256"].as_str(), running_sha256) {
+        if sha == running {
             return Err(SoftwareError::field(
                 "release",
                 &format!(
@@ -729,6 +732,12 @@ pub fn install(
         vec![
             "The source still runs and reports this release healthy",
             "The download's checksum matches",
+            "The release was built for this kind of server",
+            "Enough disk for the program and a backup",
+        ]
+    } else if matches!(chosen, Chosen::Uploaded { .. }) {
+        vec![
+            "The checksum matches",
             "The release was built for this kind of server",
             "Enough disk for the program and a backup",
         ]
@@ -772,37 +781,6 @@ pub fn source_name(source: &Source) -> String {
         Source::SameMachine(name) => format!("instance {name} on this machine"),
         Source::Https(address) => address.clone(),
     }
-}
-/// Whether the running program is the very one a release's facts describe.
-fn made_checksum_matches(made: &Composition, facts: &Value) -> bool {
-    // The running program's own checksum is not compiled in; the installer
-    // compares files. Here the commits decide: same Platform commit and the
-    // same Domains at the same commits mean the same program.
-    let Some(commit) = made.commit else {
-        return false;
-    };
-    if facts["platform"]["commit"].as_str() != Some(commit) {
-        return false;
-    }
-    let Some(domains) = facts["domains"].as_array() else {
-        return false;
-    };
-    let running: BTreeSet<(String, String)> = made
-        .containers
-        .iter()
-        .filter(|c| c.layer == Layer::Domains)
-        .map(|c| (c.id.to_string(), c.commit.unwrap_or("").to_string()))
-        .collect();
-    let theirs: BTreeSet<(String, String)> = domains
-        .iter()
-        .filter_map(|d| {
-            Some((
-                d["id"].as_str()?.to_owned(),
-                d["commit"].as_str().unwrap_or("").to_owned(),
-            ))
-        })
-        .collect();
-    !running.is_empty() && running == theirs || (running.is_empty() && theirs.is_empty())
 }
 /// What differs between the running program and a release's recorded
 /// make-up: `{"platform": {"from","to"} | null, "domains": [{"id","change","from","to"}]}`,

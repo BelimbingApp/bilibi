@@ -197,7 +197,7 @@ pub fn verify_checksum(dir: &Path) -> Result<String, String> {
         .map_err(|error| format!("could not run sha256sum: {error}"))?;
     if !checked.status.success() {
         return Err(format!(
-            "the program in {} does not match its checksum",
+            "The program in {} does not match its checksum list (SHA256SUMS): the release was damaged on the way. Make the release file again on the source, or build it again.",
             dir.display()
         ));
     }

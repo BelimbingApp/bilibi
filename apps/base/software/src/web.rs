@@ -393,7 +393,7 @@ impl View {
             waiting,
         })?;
         render(Card {
-            id: "release-files-upload",
+            id: "release-files-upload-card",
             title: "Upload a release file",
             body,
             ..Card::default()

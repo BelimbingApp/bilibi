@@ -366,7 +366,7 @@ impl<'a> Run<'a> {
         let fetched = if self.is_done("fetch") {
             self.detail("fetch")
         } else {
-            self.start("fetch", "Copying the release and checking it")
+            self.start("fetch", "Checking the release and copying it into place")
                 .await?;
             match self.fetch().await {
                 Ok(detail) => {

@@ -127,7 +127,7 @@ fn install_schema() -> Value {
 }
 fn pair_schema() -> Value {
     json!({"type":"object","properties":{
-        "key":{"type":"string","minLength":16,"maxLength":128,"description":"The pairing key: 16 to 128 characters, no spaces. Set the same key on the instance this one shares releases with. Never shown back."},
+        "key":{"type":"string","maxLength":128,"description":"The pairing key: 16 to 128 characters, no spaces. Set the same key on the instance this one shares releases with. Never shown back."},
         "clear":{"type":"boolean","description":"true removes the key: this instance then shares no releases and downloads none."}
     }})
 }

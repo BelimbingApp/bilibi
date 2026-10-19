@@ -517,6 +517,11 @@ impl Software {
             .as_ref()
             .map(transport::Paths::uploads)
             .unwrap_or_default();
+        let running_sha256 = self
+            .paths
+            .as_ref()
+            .and_then(|paths| paths.current().map(|n| paths.release(n)))
+            .and_then(|dir| transport::expected_checksum(&dir).ok());
         review::install(
             &instance,
             &self.composition,
@@ -524,6 +529,7 @@ impl Software {
             input,
             source.as_ref(),
             &uploads,
+            running_sha256.as_deref(),
         )
     }
     async fn undo_review(
