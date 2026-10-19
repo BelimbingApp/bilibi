@@ -107,7 +107,7 @@ pub(super) static LEGAL_ENTITY_TYPES: Spec = Spec {
     kind: Kind::LegalEntityType,
     form_as: "legal_entity_type",
     page_title: "Legal Entity Types",
-    subtitle: "Set the legal entity types a company can choose from.",
+    subtitle: "The legal form a company is registered as. For example, a Private Limited Company (Sdn Bhd), a Partnership, or a Branch Office of a foreign company.",
     add_label: "Legal Entity Type",
     caption: "Legal Entity Types",
     empty: "No legal entity types defined yet.",
@@ -656,7 +656,6 @@ impl ReferenceTypes {
             actions.push(&render(&CreateButton {
                 noun: spec.add_label,
                 id: spec.dom_new,
-                class: "text-xs",
                 event: "new",
                 button_type: "button",
                 ..CreateButton::default()
@@ -685,7 +684,6 @@ impl ReferenceTypes {
                     } else {
                         ButtonVariant::Secondary
                     },
-                    class: "text-xs py-1 px-2.5",
                     button_type: "button",
                     event: "filter_category",
                     name: "category",

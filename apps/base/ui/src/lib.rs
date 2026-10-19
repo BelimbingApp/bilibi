@@ -42,7 +42,7 @@ pub use auth::{
     ResetPasswordPage, COMPANY_ARCHIVED, CREDENTIALS_REJECTED, PASSWORD_RESET, RESET_LINK_INVALID,
     RESET_REQUESTED, SESSION_EXPIRED, WORKSPACE_UNAVAILABLE,
 };
-pub use components::{card_body_class, card_flat, stat_strip_columns};
+pub use components::{button_class, card_body_class, card_flat, stat_strip_columns};
 pub use components::{
     ActionLink, BackLink, Badge, BadgeKind, Button, ButtonVariant, Card, Chrome, CreateButton,
     Fact, Facts, Fold, Header, Icon, IconButton, IconContext, IconKind, Page, PageVariant,

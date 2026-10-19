@@ -88,7 +88,7 @@ impl Download<Scope, Error> for Pages {
                 Ok(archive) => Ok(FileBody::attachment(
                     archive.bytes,
                     "application/zip",
-                    archive.filename,
+                    &archive.filename,
                 )),
                 Err(PluginError::PersonRequired) => Err(Error::Forbidden),
                 Err(PluginError::InvalidClient | PluginError::UnknownHarness) => {

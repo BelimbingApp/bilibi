@@ -156,7 +156,6 @@ impl Panel {
                 id: "btn-open-attach-address",
                 button_type: "button",
                 event: "open_attach_modal",
-                class: "text-xs px-2.5 py-1",
                 body: label("Attach Address")?,
                 ..Button::default()
             })?);
@@ -165,7 +164,6 @@ impl Panel {
                 button_type: "button",
                 event: "open_create_modal",
                 variant: ButtonVariant::Primary,
-                class: "text-xs px-2.5 py-1",
                 body: label("Create &amp; Attach")?,
                 ..Button::default()
             })?);

@@ -165,7 +165,7 @@ BEGIN
             tax_id=CASE WHEN c.tax_id='TAX-1' THEN '' ELSE c.tax_id END,
             revenue=CASE WHEN c.revenue=125001 THEN 0 ELSE c.revenue END,
             registration_number=CASE WHEN c.registration_number='202401000001' THEN NULL ELSE c.registration_number END,
-            legal_entity_type_id=CASE WHEN c.registration_number='202401000001' AND c.legal_entity_type_id=1 THEN NULL ELSE c.legal_entity_type_id END,
+            legal_entity_type_id=CASE WHEN c.registration_number='202401000001' AND c.legal_entity_type_id=(SELECT id FROM company_legal_entity_types WHERE code='sdn_bhd') THEN NULL ELSE c.legal_entity_type_id END,
             website=CASE WHEN c.website='https://company-001.example.test' THEN NULL ELSE c.website END,
             version=c.version+1, updated_at=now()
         FROM tenant_primary_companies p

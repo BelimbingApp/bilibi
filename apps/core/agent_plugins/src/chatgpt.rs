@@ -57,8 +57,8 @@ impl Harness for ChatGpt {
     fn path(&self) -> &'static str {
         "/settings/chatgpt-plugin"
     }
-    fn archive_name(&self) -> &'static str {
-        "bilibi-chatgpt-plugin.zip"
+    fn archive_name(&self, package: &Package) -> String {
+        format!("{}-chatgpt-plugin.zip", package.name)
     }
     fn copy(&self) -> &'static PageCopy {
         &COPY
@@ -84,7 +84,7 @@ impl Harness for ChatGpt {
         let mcp = json!({
             "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
             "mcpServers": {
-                (package.name): {
+                (package.name.as_str()): {
                     "type": "streamable-http",
                     "url": connection.server_url(),
                     "extensions": {

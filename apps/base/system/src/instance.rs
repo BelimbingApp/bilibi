@@ -197,6 +197,31 @@ impl Instance {
             installs_from,
         })
     }
+    /// The label as an identifier: lower-case letters, digits and hyphens,
+    /// at most 24 characters (`Dev (laptop)` is `dev-laptop`), or the role
+    /// when the label has none. The MCP server name (`bilibi-<slug>`) and the
+    /// plugin package name are built from it, so a person who connects Dev,
+    /// Staging and Production to one harness can tell the three apart.
+    pub fn slug(&self) -> String {
+        const LIMIT: usize = 24;
+        let mut slug = String::new();
+        for c in self.label.chars() {
+            if c.is_ascii_alphanumeric() {
+                slug.push(c.to_ascii_lowercase());
+            } else if !slug.is_empty() && !slug.ends_with('-') {
+                slug.push('-');
+            }
+            if slug.len() >= LIMIT {
+                break;
+            }
+        }
+        let slug = slug.trim_end_matches('-');
+        if slug.is_empty() {
+            self.role.env_value().to_owned()
+        } else {
+            slug.to_owned()
+        }
+    }
     /// The sentence an agent or a hover shows: "You are on Staging. This is a
     /// test copy. Changes here do not affect production."
     pub fn notice(&self) -> String {

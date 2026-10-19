@@ -1053,7 +1053,6 @@ fn actions(task: &Task, dom: &str, can_execute: bool, can_manage: bool) -> Resul
                 event,
                 name: "key",
                 value: task.key,
-                class: "px-2 py-1 text-xs",
                 body: Html::text(label),
                 ..Button::default()
             })?);

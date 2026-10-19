@@ -1,0 +1,719 @@
+<!doctype html>
+<!--
+  The Software card: Bilibi's Software page as one self-contained document an
+  MCP Apps host (ChatGPT, or any host of the 2026-01-26 specification) shows
+  inline in a conversation. Registered by apps/base/software/src/agent.rs as the
+  MCP App behind the open_software tool and served by /mcp as
+  ui://bilibi/software-v1.html.
+
+  It holds no credential and reaches no address of its own: every fact comes
+  through the host's tools/call bridge (read, plan, commit), so Bilibi's
+  capability checks and the owner's authenticator code apply exactly as on the
+  page. No Bilimbi counterpart; the admin page (PR 35) is the full version.
+
+  Colour roles follow DESIGN.md; the values are app.css's, copied here because
+  the host's content policy allows no external stylesheet.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bilibi Software</title>
+<style>
+:root {
+  --surface: #ffffff; --surface-sunken: #e7e5e4; --surface-muted: #f5f5f4;
+  --ink: #1c1917; --ink-muted: #57534e; --ink-faint: #a8a29e;
+  --line: rgba(28, 25, 23, .12); --line-strong: rgba(28, 25, 23, .2);
+  --action: #1a2e05; --action-ink: #f7fee7; --action-hover: #65a30d;
+  --brand-surface: #f7fee7; --brand-ink: #1a2e05; --brand: #bef264;
+  --success: #059669; --success-surface: #ecfdf5; --success-line: #a7f3d0; --success-ink: #064e3b;
+  --info: #2563eb; --info-surface: #eff6ff; --info-line: #bfdbfe; --info-ink: #1e3a8a;
+  --warning: #f59e0b; --warning-surface: #fffbeb; --warning-line: #fcd34d; --warning-ink: #78350f;
+  --danger: #dc2626; --danger-surface: #fef2f2; --danger-line: #fecaca; --danger-ink: #7f1d1d;
+  color-scheme: light;
+}
+:root[data-theme="dark"] {
+  --surface: #1c1917; --surface-sunken: #262321; --surface-muted: #292524;
+  --ink: #f5f5f4; --ink-muted: #a8a29e; --ink-faint: #57534e;
+  --line: rgba(245, 245, 244, .12); --line-strong: rgba(245, 245, 244, .2);
+  --action: #65a30d; --action-ink: #1a2e05; --action-hover: #84cc16;
+  --brand-surface: #1a2e05; --brand-ink: #ecfccb; --brand: #a3e635;
+  --success: #10b981; --success-surface: #022c22; --success-line: #065f46; --success-ink: #a7f3d0;
+  --info: #3b82f6; --info-surface: #172554; --info-line: #1e40af; --info-ink: #bfdbfe;
+  --warning: #f59e0b; --warning-surface: #451a03; --warning-line: #92400e; --warning-ink: #fde68a;
+  --danger: #ef4444; --danger-surface: #450a0a; --danger-line: #991b1b; --danger-ink: #fecaca;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { font: 14px/1.45 ui-sans-serif, system-ui, sans-serif; color: var(--ink); background: var(--surface); padding: 0 0 8px; }
+h1, h2, h3 { margin: 0; font-weight: 600; line-height: 1.3; }
+h1 { font-size: 16px; } h2 { font-size: 14px; } h3 { font-size: 13px; }
+p { margin: 0; }
+.muted { color: var(--ink-muted); }
+.small { font-size: 12px; }
+.stack > * + * { margin-top: 10px; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.grow { flex: 1 1 auto; }
+main { padding: 10px 12px; }
+.banner { display: flex; gap: 10px; align-items: center; padding: 10px 12px; border-left: 5px solid; }
+.banner .role { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; padding: 2px 6px; border-radius: 4px; border: 1px solid; }
+.banner .label { font-size: 15px; font-weight: 700; }
+.banner .message { font-size: 12px; }
+[data-tone="info"] { background: var(--info-surface); border-color: var(--info); color: var(--info-ink); }
+[data-tone="success"] { background: var(--success-surface); border-color: var(--success); color: var(--success-ink); }
+[data-tone="warning"] { background: var(--warning-surface); border-color: var(--warning); color: var(--warning-ink); }
+[data-tone="danger"] { background: var(--danger-surface); border-color: var(--danger); color: var(--danger-ink); }
+.alert { padding: 8px 10px; border: 1px solid; border-radius: 6px; font-size: 13px; }
+.alert[data-tone="info"] { border-color: var(--info-line); }
+.alert[data-tone="success"] { border-color: var(--success-line); }
+.alert[data-tone="warning"] { border-color: var(--warning-line); }
+.alert[data-tone="danger"] { border-color: var(--danger-line); }
+.card { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: var(--surface); }
+.card.selected { border-color: var(--brand); box-shadow: inset 0 0 0 1px var(--brand); }
+.card label.pick { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; }
+.card input[type="checkbox"] { margin-top: 3px; width: 16px; height: 16px; flex: none; }
+.badge { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 999px; border: 1px solid var(--line-strong); color: var(--ink-muted); background: var(--surface-muted); white-space: nowrap; }
+.badge.on { color: var(--success-ink); background: var(--success-surface); border-color: var(--success-line); }
+select, input[type="text"], input[type="number"] { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--line-strong); border-radius: 6px; padding: 5px 8px; }
+input[type="text"], input[type="number"] { min-width: 0; }
+button { font: inherit; font-weight: 600; border-radius: 6px; padding: 7px 12px; border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink); cursor: pointer; }
+button:disabled { opacity: .5; cursor: default; }
+button.primary { background: var(--action); color: var(--action-ink); border-color: var(--action); }
+button.primary:not(:disabled):hover { background: var(--action-hover); border-color: var(--action-hover); }
+button.quiet { border-color: transparent; color: var(--ink-muted); }
+button.danger { color: var(--danger); border-color: var(--danger-line); background: var(--surface); }
+.bar { position: sticky; bottom: 0; background: var(--surface); border-top: 1px solid var(--line); padding: 8px 0 2px; margin-top: 12px; }
+ul.plain { list-style: none; margin: 0; padding: 0; }
+ul.plain li { padding: 4px 0; border-top: 1px solid var(--line); }
+ul.plain li:first-child { border-top: 0; }
+.steps li { display: flex; gap: 10px; align-items: baseline; }
+.steps .mark { width: 18px; flex: none; text-align: center; font-weight: 700; }
+.steps [data-state="done"] .mark { color: var(--success); }
+.steps [data-state="running"] .mark { color: var(--info); }
+.steps [data-state="failed"] .mark { color: var(--danger); }
+.steps [data-state="pending"] .mark, .steps [data-state="skipped"] .mark { color: var(--ink-faint); }
+.steps .detail { display: block; color: var(--ink-muted); font-size: 12px; }
+progress { width: 100%; height: 8px; accent-color: var(--action); }
+.code { font-family: ui-monospace, monospace; font-size: 12px; background: var(--surface-sunken); padding: 1px 5px; border-radius: 4px; }
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; font-size: 13px; }
+.kv dt { color: var(--ink-muted); } .kv dd { margin: 0; }
+details summary { cursor: pointer; color: var(--ink-muted); font-size: 12px; }
+pre { white-space: pre-wrap; font-size: 11px; background: var(--surface-sunken); padding: 8px; border-radius: 6px; margin: 6px 0 0; max-height: 200px; overflow: auto; }
+.action-add { color: var(--success-ink); } .action-remove, .action-downgrade { color: var(--danger-ink); } .action-update { color: var(--info-ink); }
+.twofa input { width: 9ch; letter-spacing: .15em; font-family: ui-monospace, monospace; text-align: center; }
+.tabs { display: flex; gap: 4px; }
+.tabs button { padding: 4px 10px; font-weight: 500; }
+.tabs button[aria-selected="true"] { background: var(--surface-muted); border-color: var(--line-strong); font-weight: 600; }
+</style>
+</head>
+<body>
+<header id="banner" role="status" aria-live="polite"></header>
+<main id="main" class="stack"><p class="muted" id="connecting">Connecting to Bilibi…</p></main>
+<script>
+(() => {
+'use strict';
+// ---------------------------------------------------------------------------
+// The host bridge: JSON-RPC 2.0 over postMessage (MCP Apps 2026-01-26).
+// ---------------------------------------------------------------------------
+const PROTOCOL = '2026-01-26';
+// Messages are accepted only from the parent window, and after the
+// ui/initialize reply only from the origin that sent it ('null' is the opaque
+// origin of a sandboxed host). Request ids carry a random prefix so a forged
+// reply cannot match a pending request. Before the handshake the host's origin
+// is unknown, so post() targets '*', as the MCP Apps SDK transport does.
+const pending = new Map();
+const idPrefix = Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => b.toString(16).padStart(2, '0')).join('');
+let nextId = 1;
+let hostOrigin = null;
+let host = { theme: 'light', displayMode: 'inline', capabilities: {} };
+function post(message) { window.parent.postMessage(message, hostOrigin && hostOrigin !== 'null' ? hostOrigin : '*'); }
+function request(method, params) {
+  return new Promise((resolve, reject) => {
+    const id = idPrefix + '-' + nextId++;
+    pending.set(id, { resolve, reject });
+    post({ jsonrpc: '2.0', id, method, params });
+  });
+}
+function notify(method, params) { post({ jsonrpc: '2.0', method, params }); }
+function reply(id, result) { post({ jsonrpc: '2.0', id, result }); }
+window.addEventListener('message', (event) => {
+  if (event.source !== window.parent) return;
+  if (hostOrigin !== null && event.origin !== hostOrigin) return;
+  const message = event.data;
+  if (!message || message.jsonrpc !== '2.0') return;
+  if (message.id !== undefined && message.method === undefined) {
+    const waiter = pending.get(message.id);
+    if (!waiter) return;
+    pending.delete(message.id);
+    if (hostOrigin === null) hostOrigin = event.origin;
+    if (message.error) waiter.reject(message.error); else waiter.resolve(message.result);
+    return;
+  }
+  switch (message.method) {
+    case 'ui/notifications/tool-input':
+      state.toolInput = (message.params && message.params.arguments) || {};
+      break;
+    case 'ui/notifications/tool-input-partial':
+      break;
+    case 'ui/notifications/tool-result':
+      opened(message.params || {});
+      break;
+    case 'ui/notifications/tool-cancelled':
+      showError('The host cancelled opening the card.' + reason(message.params));
+      break;
+    case 'ui/notifications/host-context-changed':
+      applyContext(message.params || {});
+      break;
+    case 'ui/resource-teardown':
+      stopPolling();
+      reply(message.id, {});
+      break;
+    case 'ping':
+      reply(message.id, {});
+      break;
+    default:
+      if (message.id !== undefined) post({ jsonrpc: '2.0', id: message.id, error: { code: -32601, message: 'Method not found' } });
+  }
+});
+function reason(params) { return params && params.reason ? ' ' + params.reason : ''; }
+function applyContext(context) {
+  host = Object.assign({}, host, context);
+  if (context.theme) document.documentElement.dataset.theme = context.theme;
+  if (context.locale) document.documentElement.lang = context.locale;
+}
+function sizeChanged() {
+  requestAnimationFrame(() => {
+    const height = Math.ceil(document.documentElement.getBoundingClientRect().height);
+    notify('ui/notifications/size-changed', { height });
+  });
+}
+// Calls one of the server's tools through the host; answers the tool's
+// structured body and whether the tool reported an error.
+async function tool(name, args) {
+  const result = await request('tools/call', { name, arguments: args });
+  let body = result && result.structuredContent;
+  if (body === undefined && result && Array.isArray(result.content)) {
+    const text = result.content.find((block) => block.type === 'text');
+    try { body = text ? JSON.parse(text.text) : undefined; } catch (_) { body = { error: text && text.text }; }
+  }
+  return { body: body === undefined ? {} : body, failed: !!(result && result.isError) };
+}
+function tellModel(text, structured) {
+  request('ui/update-model-context', { content: [{ type: 'text', text }], structuredContent: structured }).catch(() => {});
+}
+function askAssistant(text) {
+  return request('ui/message', { role: 'user', content: [{ type: 'text', text }] });
+}
+
+// ---------------------------------------------------------------------------
+// Rendering helpers: every value goes in as text, never as markup.
+// ---------------------------------------------------------------------------
+function el(tag, attrs, children) {
+  const node = document.createElement(tag);
+  if (attrs) for (const [key, value] of Object.entries(attrs)) {
+    if (value === undefined || value === null || value === false) continue;
+    if (key === 'class') node.className = value;
+    else if (key === 'text') node.textContent = value;
+    else if (key.startsWith('on')) node.addEventListener(key.slice(2), value);
+    else if (key === 'data') for (const [k, v] of Object.entries(value)) node.dataset[k] = v;
+    else node.setAttribute(key, value === true ? '' : value);
+  }
+  for (const child of [].concat(children || [])) {
+    if (child === undefined || child === null || child === false) continue;
+    node.append(typeof child === 'string' ? document.createTextNode(child) : child);
+  }
+  return node;
+}
+const main = document.getElementById('main');
+function show(...children) { main.replaceChildren(...children.filter(Boolean)); sizeChanged(); }
+function alertBox(tone, text, id) { return el('div', { class: 'alert', role: tone === 'danger' || tone === 'warning' ? 'alert' : 'status', data: { tone }, id }, text); }
+function plural(n, one, many) { return n + ' ' + (n === 1 ? one : many || one + 's'); }
+function minutes(n) { return n == null ? '' : 'about ' + plural(Math.max(1, Math.round(n)), 'minute'); }
+
+// ---------------------------------------------------------------------------
+// The instance banner: on every screen, in the instance's own colour.
+// ---------------------------------------------------------------------------
+const ROLE_WORD = { development: 'Dev', staging: 'Staging', production: 'Production' };
+const ROLE_MESSAGE = {
+  development: 'Build machine. Changes are built and tried here first.',
+  staging: 'Test copy. Changes here do not affect production.',
+  production: 'Live system. Changes here change real data.',
+};
+function banner(instance) {
+  const tone = instance.colour || 'info';
+  document.getElementById('banner').replaceChildren(el('div', { class: 'banner', data: { tone }, id: 'instance-banner' }, [
+    el('span', { class: 'role', text: ROLE_WORD[instance.role] || instance.role }),
+    el('span', { class: 'label', text: instance.label }),
+    el('span', { class: 'message', text: ROLE_MESSAGE[instance.role] || '' }),
+  ]));
+}
+function instanceLine(instance) {
+  return el('p', { class: 'small', id: 'review-instance', 'data-tone': instance.colour }, [
+    'On ', el('strong', { text: instance.label }), (ROLE_WORD[instance.role] || instance.role) === instance.label ? '. ' : ' (' + (ROLE_WORD[instance.role] || instance.role) + '). ', ROLE_MESSAGE[instance.role] || '',
+  ]);
+}
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+const state = {
+  toolInput: {},
+  data: null,          // the open_software answer
+  pick: { domains: new Map(), plugins: new Map() }, // id -> wanted version (domains), id -> enabled (plugins)
+  switchMode: 'auto',
+  plan: null,          // the last plan answer
+  job: null,           // the job being followed
+  poll: null,
+  lastReported: null,
+};
+function unwrap(body) { return body && body.result !== undefined && body.meta ? body.result : body; }
+function instance() { return state.data.instance; }
+
+// ---------------------------------------------------------------------------
+// Opening
+// ---------------------------------------------------------------------------
+function opened(result) {
+  let body = result.structuredContent;
+  if (body === undefined && Array.isArray(result.content)) {
+    const text = result.content.find((block) => block.type === 'text');
+    try { body = text ? JSON.parse(text.text) : {}; } catch (_) { body = { error: text && text.text }; }
+  }
+  if (result.isError || (body && body.error)) {
+    return showError(errorText(body || {}));
+  }
+  state.data = unwrap(body) || {};
+  if (!state.data.instance) return showError('The answer has no instance; is this the open_software tool?');
+  banner(state.data.instance);
+  const proposal = state.data.proposal || {};
+  state.pick.domains = new Map();
+  for (const domain of (state.data.installed && state.data.installed.domains) || []) state.pick.domains.set(domain.id, domain.version || null);
+  for (const id of proposal.domains || []) if (!state.pick.domains.has(id)) state.pick.domains.set(id, null);
+  state.pick.plugins = new Map();
+  for (const id of proposal.plugins || []) state.pick.plugins.set(id, true);
+  const job = state.data.job;
+  if (job && (job.state === 'queued' || job.state === 'running')) {
+    state.job = job;
+    renderJob();
+    startPolling();
+  } else {
+    renderHome();
+  }
+}
+function errorText(body) {
+  if (!body) return 'Bilibi answered nothing.';
+  if (body.message) return body.message;
+  if (body.error === 'forbidden' || body.error === 'missing_capability') return 'Only a server owner (an administrator of the platform operator) may see or change the software.';
+  if (body.error === 'authentication_required') return 'Sign in to Bilibi through the host first.';
+  if (body.error === 'invalid_input' && body.fields) return Object.entries(body.fields).map(([field, messages]) => field + ': ' + [].concat(messages).join(' ')).join(' ');
+  if (body.error === 'plan_rejected') return 'The review no longer holds: ' + rejected(body.results);
+  if (typeof body.error === 'string') return body.error.replace(/_/g, ' ');
+  return 'Bilibi refused.';
+}
+function rejected(results) {
+  return (results || []).filter((r) => r && r.valid === false).map((r) => {
+    const e = r.error || {};
+    if (e.fields) return Object.entries(e.fields).map(([field, messages]) => field + ': ' + [].concat(messages).join(' ')).join(' ');
+    return e.code || 'rejected';
+  }).join(' ') || 'rejected';
+}
+function showError(text) {
+  const back = state.data ? el('button', { onclick: renderHome, text: 'Back' }) : null;
+  show(alertBox('danger', text, 'card-error'), back);
+}
+
+// ---------------------------------------------------------------------------
+// Home: pick (Dev) or install (Staging, Production), plus the last job.
+// ---------------------------------------------------------------------------
+function renderHome() {
+  stopPolling();
+  const data = state.data;
+  const inst = instance();
+  const notes = [];
+  if (data.proposal && data.proposal.ignored) notes.push(alertBox('info', data.proposal.ignored, 'proposal-ignored'));
+  if (data.proposal && data.proposal.unknown && data.proposal.unknown.length) notes.push(alertBox('warning', 'Not in the catalogue, so not ticked: ' + data.proposal.unknown.join(', ') + '.', 'proposal-unknown'));
+  const content = inst.builds ? pickView() : installView();
+  show(...notes, installedLine(), content, lastJobLine(), footer());
+}
+function installedLine() {
+  const installed = state.data.installed || {};
+  const platform = installed.platform || {};
+  const domains = (installed.domains || []).map((d) => d.id + ' ' + (d.version || '')).join(', ');
+  return el('p', { id: 'installed', class: 'small muted' }, [
+    'Runs Bilibi ' + (platform.version || '?') + (platform.release ? ' (' + platform.release + ')' : ''),
+    domains ? ' with ' + domains : ' with no Domains',
+    platform.pin === 'unpinned' ? '. Developer build: the exact Domain versions are not recorded' : '',
+    '.',
+  ]);
+}
+function lastJobLine() {
+  const job = state.data.job;
+  if (!job) return null;
+  const summary = (job.review && job.review.summary) || job.kind;
+  return el('div', { class: 'row small', id: 'last-job' }, [
+    el('span', { class: 'muted grow', text: 'Last job: #' + job.id + ' ' + summary + ' (' + job.state + ')' }),
+    el('button', { class: 'quiet', onclick: () => { state.job = job; renderJob(); }, text: 'Show' }),
+  ]);
+}
+function footer() {
+  const undo = state.data.undo || {};
+  const question = el('input', { type: 'text', placeholder: 'Ask the assistant…', 'aria-label': 'Question for the assistant', id: 'ask-text' });
+  const ask = el('button', { class: 'quiet', id: 'ask-assistant', text: 'Ask', onclick: async () => {
+    const ticked = [...state.pick.domains.keys()].join(', ') || 'nothing';
+    const text = 'From the Bilibi ' + instance().label + ' card · ticked: ' + ticked + '. ' + (question.value.trim() || 'What would you suggest?');
+    try { await askAssistant(text); question.value = ''; } catch (e) { showError('The host did not take the message: ' + (e.message || e.code)); }
+  } });
+  return el('div', { class: 'stack' }, [
+    el('div', { class: 'row' }, [el('span', { class: 'grow' }), question, ask]),
+    undo.available ? el('div', { class: 'row small', id: 'undo-row' }, [
+      el('span', { class: 'muted grow', text: 'Undo is available for job #' + undo.job + (undo.restores_backup ? ' (restores the backup)' : ' (your data stays as it is)') }),
+      el('button', { class: 'danger', id: 'undo', onclick: () => review('base.software.undo', { job: undo.job }, 'Undo on ' + instance().label), text: 'Undo' }),
+    ]) : null,
+  ]);
+}
+
+// --- Pick (Dev) --------------------------------------------------------------
+function pickView() {
+  const data = state.data;
+  const catalogue = data.catalogue || {};
+  if (catalogue.available === false) {
+    return alertBox('warning', 'The catalogue is not available: ' + (catalogue.message || 'no reason given') + (catalogue.url ? ' (' + catalogue.url + ')' : ''), 'catalogue-unavailable');
+  }
+  const installed = new Map(((data.installed || {}).domains || []).map((d) => [d.id, d]));
+  const cards = (catalogue.domains || []).map((domain) => domainCard(domain, installed.get(domain.id)));
+  const plugins = (catalogue.plugins || []).map((plugin) => pluginRow(plugin));
+  const summary = el('div', { class: 'bar row', id: 'pick-bar' });
+  const render = () => {
+    const n = changes().length;
+    summary.replaceChildren(
+      el('span', { class: 'grow small', id: 'change-count', text: n ? plural(n, 'change') + ' · build on ' + instance().label + ', then it pauses for about 1 minute' : 'No changes yet. Tick a Domain to add it, untick one to remove it.' }),
+      el('button', { class: 'primary', id: 'review-change', disabled: n === 0, text: 'Review', onclick: () => review('base.software.change', changeInput(), 'Build on ' + instance().label) }),
+    );
+  };
+  main.addEventListener('pick-changed', render);
+  render();
+  return el('div', { class: 'stack', id: 'pick' }, [
+    el('h1', { text: 'Choose what ' + instance().label + ' is made of' }),
+    el('p', { class: 'small muted', text: 'Tick the Domains this server should have. Only Dev builds; Staging and Production install what Dev tested.' }),
+    ...cards,
+    plugins.length ? el('div', { class: 'stack', id: 'plugins' }, [el('h2', { text: 'Plug-ins' }), el('p', { class: 'small muted', text: 'Switch on in seconds, no rebuild.' }), el('ul', { class: 'plain' }, plugins)]) : null,
+    summary,
+  ]);
+}
+function pickChanged() { main.dispatchEvent(new Event('pick-changed')); }
+function newest(domain) { return (domain.versions || []).map((v) => v.version).sort(compareVersions).reverse()[0] || null; }
+function compareVersions(a, b) {
+  const pa = String(a).split('.').map(Number), pb = String(b).split('.').map(Number);
+  for (let i = 0; i < 3; i++) if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) - (pb[i] || 0);
+  return 0;
+}
+function domainCard(domain, installed) {
+  const ticked = state.pick.domains.has(domain.id);
+  const wanted = state.pick.domains.get(domain.id) || (installed && installed.version) || newest(domain);
+  const card = el('div', { class: 'card' + (ticked ? ' selected' : ''), id: 'domain-' + domain.id });
+  const versions = (domain.versions || []).map((v) => v.version).sort(compareVersions).reverse();
+  const select = el('select', { 'aria-label': domain.name + ' version', id: 'version-' + domain.id, disabled: !ticked, onchange: () => { state.pick.domains.set(domain.id, select.value); pickChanged(); } },
+    versions.map((v) => el('option', { value: v, selected: v === wanted, text: v })));
+  const checkbox = el('input', { type: 'checkbox', checked: ticked, id: 'tick-' + domain.id, onchange: () => {
+    if (checkbox.checked) state.pick.domains.set(domain.id, select.value || null); else state.pick.domains.delete(domain.id);
+    select.disabled = !checkbox.checked;
+    card.classList.toggle('selected', checkbox.checked);
+    removeNote.hidden = !(installed && !checkbox.checked);
+    pickChanged();
+  } });
+  const removeNote = el('p', { class: 'small', 'data-tone': 'warning', hidden: !(installed && !ticked), text: 'Its pages leave the menu. Its data stays in the database and comes back if you add it again.' });
+  const tested = (domain.versions || []).find((v) => v.version === wanted);
+  const testedOn = tested && tested.tested_on && tested.tested_on.length ? 'Tested on Bilibi ' + tested.tested_on.join(', ') : 'Not recorded as tested together';
+  card.append(
+    el('label', { class: 'pick' }, [checkbox, el('div', { class: 'grow stack' }, [
+      el('div', { class: 'row' }, [el('h2', { text: domain.name || domain.id }), installed ? el('span', { class: 'badge on', text: 'Installed ' + (installed.version || '') }) : el('span', { class: 'badge', text: 'Not installed' })]),
+      el('p', { class: 'small muted', text: domain.description || '' }),
+      domain.modules && domain.modules.length ? el('p', { class: 'small muted', text: 'Modules: ' + domain.modules.join(', ') }) : null,
+    ])]),
+    el('div', { class: 'row small' }, [el('span', { class: 'muted', text: 'Version' }), select, el('span', { class: 'muted', text: testedOn })]),
+    removeNote,
+  );
+  return card;
+}
+function pluginRow(plugin) {
+  const current = (state.data.plugins || []).find((p) => p.id === plugin.id);
+  const on = state.pick.plugins.has(plugin.id) ? state.pick.plugins.get(plugin.id) : !!(current && current.enabled);
+  const checkbox = el('input', { type: 'checkbox', checked: on, id: 'plugin-' + plugin.id, onchange: () => {
+    const was = !!(current && current.enabled);
+    if (checkbox.checked === was) state.pick.plugins.delete(plugin.id); else state.pick.plugins.set(plugin.id, checkbox.checked);
+    pickChanged();
+  } });
+  return el('li', {}, [el('label', { class: 'row' }, [checkbox, el('span', { class: 'grow' }, [el('strong', { text: plugin.name || plugin.id }), plugin.publisher ? el('span', { class: 'muted small', text: ' · By ' + plugin.publisher }) : null, plugin.domain ? el('span', { class: 'muted small', text: ' · for ' + plugin.domain }) : null]), current && current.enabled ? el('span', { class: 'badge on', text: 'On' }) : null])]);
+}
+function changes() {
+  const installed = new Map(((state.data.installed || {}).domains || []).map((d) => [d.id, d.version]));
+  const list = [];
+  for (const [id, version] of state.pick.domains) {
+    if (!installed.has(id)) list.push({ id, action: 'add' });
+    else if (version && installed.get(id) && version !== installed.get(id)) list.push({ id, action: 'update' });
+  }
+  for (const id of installed.keys()) if (!state.pick.domains.has(id)) list.push({ id, action: 'remove' });
+  for (const [id, enabled] of state.pick.plugins) list.push({ id, action: enabled ? 'plugin on' : 'plugin off' });
+  return list;
+}
+function changeInput() {
+  const domains = [...state.pick.domains].map(([id, version]) => version ? { id, version } : { id });
+  const plugins = [...state.pick.plugins].map(([id, enabled]) => ({ id, enabled }));
+  const input = { domains, switch: state.switchMode };
+  if (plugins.length) input.plugins = plugins;
+  return input;
+}
+
+// --- Install (Staging, Production) ------------------------------------------
+function sourceText(source) {
+  if (!source) return null;
+  if (source.kind === 'same_machine') return source.instance + ' (on this machine)';
+  if (source.kind === 'https') return source.address;
+  return null;
+}
+function installView() {
+  const inst = instance();
+  const source = sourceText(inst.installs_from);
+  const release = el('input', { type: 'number', min: '1', step: '1', id: 'release-number', 'aria-label': 'Release number', placeholder: 'release number' });
+  const go = el('button', { class: 'primary', id: 'review-install', disabled: !source, text: 'Review install', onclick: () => {
+    const n = parseInt(release.value, 10);
+    if (!(n >= 1)) return show(alertBox('warning', 'Enter the release number the source reports as tested.'), renderHomeButton());
+    review('base.software.install', { release: n, switch: state.switchMode }, 'Install on ' + inst.label);
+  } });
+  return el('div', { class: 'stack', id: 'install' }, [
+    el('h1', { text: inst.label + ' installs what another instance tested' }),
+    el('p', { class: 'small muted', text: 'This instance never builds. It copies a finished release, backs up, updates the database, switches and checks: about 2 minutes with a 1-minute pause.' }),
+    source
+      ? el('div', { class: 'card stack' }, [el('h2', { text: 'Install the version tested on ' + source }), el('p', { class: 'small muted', text: 'Enter the release number that ' + source + ' reports as tested (its Software card or base.software.status shows it).' }), el('div', { class: 'row' }, [release, go])])
+      : alertBox('warning', 'No source instance is set, so nothing can be installed here. The server owner sets “Installs from” under Settings › Instance.', 'no-source'),
+  ]);
+}
+function renderHomeButton() { return el('button', { onclick: renderHome, text: 'Back' }); }
+
+// ---------------------------------------------------------------------------
+// Review: plan, show the facts under the instance, take the code, commit.
+// ---------------------------------------------------------------------------
+async function review(key, input, verb) {
+  stopPolling();
+  show(el('p', { class: 'muted', text: 'Checking with ' + instance().label + '…' }));
+  let planned;
+  try { planned = await tool('plan', { operations: [{ key, input }] }); } catch (e) { return showError('The host refused the call: ' + (e.message || e.code)); }
+  if (planned.failed) return showError(errorText(planned.body));
+  const plan = planned.body;
+  state.plan = plan;
+  const inst = plan.instance || {};
+  const first = (plan.results || [])[0] || {};
+  if (!plan.valid || !first.valid) {
+    return show(alertBox('danger', 'Not possible: ' + rejected(plan.results), 'plan-invalid'), renderHomeButton());
+  }
+  const facts = unwrap(first.preview) || {};
+  const needsCode = Array.isArray(facts.step_up) && facts.step_up.length > 0;
+  const code = el('input', { type: 'text', inputmode: 'numeric', autocomplete: 'one-time-code', maxlength: '8', id: 'step-up-code', 'aria-label': 'Authenticator code', placeholder: '000000' });
+  const confirm = el('button', { class: key === 'base.software.undo' ? 'danger' : 'primary', id: 'confirm', text: verb, onclick: () => commit(key, verb, code.value.trim(), facts) });
+  const switchRow = (key === 'base.software.change' || key === 'base.software.install') ? el('div', { class: 'row small', id: 'switch-row' }, [
+    el('span', { class: 'muted', text: 'When the new version is ready:' }),
+    ...['auto', 'ask'].map((mode) => el('label', { class: 'row' }, [el('input', { type: 'radio', name: 'switch', value: mode, checked: state.switchMode === mode, onchange: () => { state.switchMode = mode; input.switch = mode; review(key, input, verb); } }), mode === 'auto' ? 'switch to it at once' : (key === 'base.software.install' ? 'copy it now, ask me before the pause' : 'build now, ask me before the pause')])),
+  ]) : null;
+  const productionNote = instance().role === 'production' && key !== 'base.software.cancel'
+    ? alertBox('danger', 'This changes Production. Pick a quiet time: it pauses for about ' + plural(facts.pause_minutes || 1, 'minute') + '.', 'production-note') : null;
+  show(
+    el('h1', { text: verb + '?' }),
+    instanceLine({ role: inst.environment || instance().role, label: inst.label || instance().label, colour: instance().colour }),
+    el('div', { class: 'card stack', id: 'review' }, [
+      el('p', {}, [el('strong', { text: facts.summary || '' })]),
+      factsList(key, facts),
+      ...(facts.warnings || []).map((w) => alertBox('warning', w)),
+      facts.all_tested === false ? alertBox('warning', 'These versions are not recorded as tested together.') : null,
+      facts.all_tested === true ? alertBox('success', 'These versions were tested together.') : null,
+      facts.loss ? alertBox('danger', facts.loss, 'undo-loss') : null,
+      facts.what_happens ? el('p', { class: 'small', id: 'what-happens', text: facts.what_happens }) : null,
+      facts.steps ? el('details', {}, [el('summary', { text: plural(facts.steps.length, 'step') }), el('ol', { class: 'small' }, facts.steps.map((s) => el('li', { text: s.label + (s.pauses ? ' (the instance pauses from here)' : '') })))]) : null,
+      switchRow,
+    ]),
+    productionNote,
+    needsCode ? el('div', { class: 'twofa stack', id: 'twofa' }, [
+      el('label', { class: 'row' }, [el('span', { text: 'Your authenticator code' }), code]),
+      el('p', { class: 'small muted', text: 'Asked every time, on every instance, because this changes the server itself.' }),
+    ]) : null,
+    el('div', { class: 'row' }, [confirm, el('button', { class: 'quiet', onclick: renderHome, text: 'Back' }), el('span', { class: 'grow' }), plan.expires_at ? el('span', { class: 'small muted', text: 'Review valid until ' + plan.expires_at.replace('T', ' ').slice(0, 16) + ' UTC' }) : null]),
+  );
+  if (needsCode) code.focus();
+}
+function factsList(key, facts) {
+  const items = [];
+  if (key === 'base.software.change') {
+    const p = facts.platform || {};
+    if (p.action && p.action !== 'keep') items.push(el('li', { class: 'action-' + p.action }, [actionWord(p.action) + ' Bilibi ' + (p.from || '') + ' → ' + (p.to || ''), p.because ? el('span', { class: 'detail small muted', text: ' ' + p.because }) : null]));
+    for (const d of facts.domains || []) items.push(el('li', { class: 'action-' + d.action, text: actionWord(d.action) + ' ' + (d.name || d.id) + ' ' + (d.action === 'remove' ? (d.from_version || '') : (d.from_version && d.version && d.from_version !== d.version ? d.from_version + ' → ' + d.version : (d.version || ''))) + (d.repository && d.action !== 'remove' && !d.version ? ' from ' + d.repository : '') }));
+    for (const pl of facts.plugins || []) if (pl.action && pl.action !== 'keep') items.push(el('li', { text: 'Plug-in ' + (pl.name || pl.id) + ': ' + pl.action }));
+    const timing = [facts.estimate_minutes != null ? 'build takes ' + minutes(facts.estimate_minutes) : null, facts.pause_minutes != null ? 'then ' + instance().label + ' pauses for ' + minutes(facts.pause_minutes) : null].filter(Boolean).join(', ');
+    if (timing) items.push(el('li', { class: 'muted', text: timing }));
+  } else if (key === 'base.software.install') {
+    items.push(el('li', { text: 'Release ' + facts.release + ' from ' + (sourceText(facts.source) || 'the source') }));
+    const running = facts.running || {};
+    items.push(el('li', { class: 'muted small', text: 'Running now: Bilibi ' + (running.platform || '') + (running.domains && running.domains.length ? ' with ' + running.domains.map((d) => d.id + ' ' + d.version).join(', ') : '') }));
+    for (const check of facts.checks || []) items.push(el('li', { class: 'small', text: '✓ ' + check }));
+    if (facts.changes) items.push(el('li', { class: 'small muted', text: facts.changes }));
+  } else if (key === 'base.software.undo') {
+    items.push(el('li', { text: 'Back to release ' + facts.previous_release + ' from release ' + facts.release }));
+    items.push(el('li', { class: 'small muted', text: facts.restores_backup ? 'This restores the backup from ' + (facts.backup_at || '') + '.' : 'Your data stays as it is.' }));
+    if (facts.undone) items.push(el('li', { class: 'small muted', text: 'Undoes: ' + facts.undone }));
+  } else if (key === 'base.software.cancel') {
+    if (facts.effect) items.push(el('li', { text: facts.effect }));
+  }
+  return items.length ? el('ul', { class: 'plain', id: 'change-list' }, items) : null;
+}
+function actionWord(action) { return { add: '+ Add', remove: '− Remove', update: '↑ Update', downgrade: '↓ Downgrade', keep: 'Keep' }[action] || action; }
+
+async function commit(key, verb, code, facts) {
+  const plan = state.plan;
+  const args = { plan_code: plan.plan_code, operations: plan.operations };
+  const needsCode = Array.isArray(facts.step_up) && facts.step_up.length > 0;
+  if (needsCode) {
+    if (!/^\d{6,8}$/.test(code)) return flash('warning', 'Enter the 6-digit code from your authenticator app.');
+    args.step_up_code = code;
+  }
+  const button = document.getElementById('confirm');
+  if (button) { button.disabled = true; button.textContent = verb.replace(/\?$/, '') + '…'; }
+  let done;
+  try { done = await tool('commit', args); } catch (e) { return showError('The host refused the call: ' + (e.message || e.code)); }
+  if (done.failed) {
+    const body = done.body || {};
+    if (button) { button.disabled = false; button.textContent = verb; }
+    if (body.error === 'step_up_required') {
+      const field = document.getElementById('step-up-code');
+      if (field) { field.value = ''; field.focus(); }
+      return flash('warning', body.message || 'A new code is needed.');
+    }
+    if (body.error === 'plan_expired' || body.error === 'plan_already_used' || body.error === 'stale_plan') return flash('warning', 'The review is no longer valid (' + body.error.replace(/_/g, ' ') + '). Go back and review again.');
+    return flash('danger', errorText(body));
+  }
+  const first = ((done.body || {}).results || [])[0] || {};
+  const job = unwrap(first.result) || {};
+  const label = (done.body && done.body.instance && done.body.instance.label) || instance().label;
+  state.job = job;
+  tellModel('Bilibi ' + label + ': job #' + job.id + ' queued (' + (facts.summary || key) + '). The card follows its progress.', { instance: label, job: job.id, state: job.state, summary: facts.summary });
+  renderJob();
+  startPolling();
+}
+function flash(tone, text) {
+  const old = document.getElementById('flash');
+  const box = alertBox(tone, text, 'flash');
+  if (old) old.replaceWith(box); else { const twofa = document.getElementById('twofa') || document.getElementById('review'); if (twofa) twofa.after(box); else main.prepend(box); }
+  sizeChanged();
+}
+
+// ---------------------------------------------------------------------------
+// The job: steps while it runs, the result when it ends.
+// ---------------------------------------------------------------------------
+const MARK = { done: '✓', running: '›', failed: '✕', skipped: '–', pending: '·' };
+function renderJob() {
+  const job = state.job || {};
+  const inst = instance();
+  const steps = job.steps || [];
+  const active = job.state === 'queued' || job.state === 'running';
+  const doneCount = steps.filter((s) => s.state === 'done').length;
+  const running = steps.find((s) => s.state === 'running');
+  const detail = (s) => s && s.detail && (s.detail.message || s.detail.reason) || '';
+  const result = job.result || {};
+  const tone = { done: 'success', failed: 'danger', cancelled: 'warning', interrupted: 'warning', running: 'info', queued: 'info' }[job.state] || 'info';
+  const headline = job.state === 'queued' ? 'Waiting for the ' + (job.kind === 'change' ? 'builder' : 'installer') + ' on ' + inst.label
+    : job.state === 'running' ? (running ? running.label : 'Running') + ' on ' + inst.label
+    : job.state === 'done' ? 'Done on ' + inst.label
+    : job.state === 'failed' ? 'Failed on ' + inst.label + '. Nothing changed.'
+    : job.state === 'cancelled' ? 'Stopped on ' + inst.label
+    : job.state === 'interrupted' ? 'Interrupted on ' + inst.label + '. Nothing changed.'
+    : job.state + ' on ' + inst.label;
+  const progress = el('progress', { max: String(steps.length || 1), value: String(doneCount + (running ? 0.5 : 0)) });
+  const buttons = [];
+  if (active && job.cancel === 'available') buttons.push(el('button', { class: 'danger', id: 'cancel', text: 'Stop', onclick: () => cancelJob(job.id) }));
+  if (active && job.cancel === 'requested') buttons.push(el('span', { class: 'small muted', text: 'Stop requested…' }));
+  if (active && job.cancel === 'too_late') buttons.push(el('span', { class: 'small muted', text: 'Too late to stop: the pause has started.' }));
+  if (!active) buttons.push(el('button', { onclick: refreshHome, text: inst.builds ? 'Choose Domains' : 'Back' }));
+  if (!active && state.data.undo && state.data.undo.available && state.data.undo.job === job.id) buttons.push(el('button', { class: 'danger', id: 'undo', onclick: () => review('base.software.undo', { job: job.id }, 'Undo on ' + inst.label), text: 'Undo' }));
+  show(
+    el('h1', { id: 'job-headline', text: 'Job #' + job.id + ': ' + headline }),
+    el('p', { class: 'small muted', text: (job.review && job.review.summary) || '' }),
+    active ? progress : null,
+    active && running && detail(running) ? el('p', { class: 'small', id: 'job-progress', text: detail(running) }) : null,
+    el('ol', { class: 'plain steps', id: 'job-steps' }, steps.map((s) => el('li', { data: { state: s.state } }, [el('span', { class: 'mark', text: MARK[s.state] || '·' }), el('span', { class: 'grow' }, [s.label, s.state !== 'pending' && detail(s) ? el('span', { class: 'detail', text: detail(s) }) : null])]))),
+    !active && result.message ? alertBox(tone, result.message, 'job-result') : null,
+    !active && job.state === 'failed' && failedDetails(steps) ? el('details', {}, [el('summary', { text: 'Developer details' }), el('pre', { text: failedDetails(steps) })]) : null,
+    !active && job.state === 'done' && inst.builds ? el('p', { class: 'small muted', text: 'Next: try it here, then install it on Staging.' }) : null,
+    active ? el('p', { class: 'small muted', text: 'You can close this card. The work keeps going; the result appears here and in your Bilibi notifications.' }) : null,
+    el('div', { class: 'row' }, buttons),
+  );
+  if (!active && state.lastReported !== job.id + ':' + job.state) {
+    state.lastReported = job.id + ':' + job.state;
+    tellModel('Bilibi ' + inst.label + ': job #' + job.id + ' ' + job.state + '. ' + (result.message || ''), { instance: inst.label, job: job.id, state: job.state, result });
+  }
+}
+function failedDetails(steps) {
+  const failed = steps.find((s) => s.state === 'failed');
+  const d = failed && failed.detail;
+  return d && (d.details || d.error) ? String(d.details || d.error) : '';
+}
+async function refreshHome() {
+  stopPolling();
+  try {
+    const opened = await tool('read', { key: 'base.software.status', input: {} });
+    if (!opened.failed) {
+      const status = unwrap(opened.body) || {};
+      Object.assign(state.data, { instance: status.instance || state.data.instance, installed: status.installed, plugins: status.plugins, job: status.job, undo: status.undo, jobs: status.jobs });
+      state.pick.domains = new Map(((status.installed || {}).domains || []).map((d) => [d.id, d.version || null]));
+      state.pick.plugins = new Map();
+      banner(state.data.instance);
+    }
+  } catch (_) {}
+  renderHome();
+}
+async function cancelJob(id) {
+  show(el('p', { class: 'muted', text: 'Asking ' + instance().label + ' to stop job #' + id + '…' }));
+  try {
+    const planned = await tool('plan', { operations: [{ key: 'base.software.cancel', input: { job: id } }] });
+    if (planned.failed || !planned.body.valid) { flashJob('danger', planned.failed ? errorText(planned.body) : 'Cannot stop: ' + rejected(planned.body.results)); return; }
+    const done = await tool('commit', { plan_code: planned.body.plan_code, operations: planned.body.operations });
+    if (done.failed) { flashJob('danger', errorText(done.body)); return; }
+    await pollOnce();
+  } catch (e) { flashJob('danger', 'The host refused the call: ' + (e.message || e.code)); }
+}
+function flashJob(tone, text) { renderJob(); main.prepend(alertBox(tone, text, 'flash')); sizeChanged(); }
+async function pollOnce() {
+  let read;
+  try { read = await tool('read', { key: 'base.software.status', input: {} }); } catch (_) { return; }
+  if (read.failed) return;
+  const status = unwrap(read.body) || {};
+  if (status.job && state.job && status.job.id === state.job.id) {
+    state.job = status.job;
+    state.data.undo = status.undo;
+    state.data.job = status.job;
+    state.data.installed = status.installed || state.data.installed;
+    renderJob();
+    if (!(status.job.state === 'queued' || status.job.state === 'running')) stopPolling();
+  }
+}
+function startPolling() {
+  stopPolling();
+  state.poll = setInterval(pollOnce, 4000);
+}
+function stopPolling() { if (state.poll) { clearInterval(state.poll); state.poll = null; } }
+
+// ---------------------------------------------------------------------------
+// Start: say hello to the host, then wait for the tool's answer.
+// ---------------------------------------------------------------------------
+request('ui/initialize', {
+  protocolVersion: PROTOCOL,
+  appInfo: { name: 'bilibi-software-card', version: '1' },
+  appCapabilities: { availableDisplayModes: ['inline', 'fullscreen'] },
+}).then((result) => {
+  applyContext((result && result.hostContext) || {});
+  host.capabilities = (result && result.hostCapabilities) || {};
+  notify('ui/notifications/initialized');
+  sizeChanged();
+}).catch((error) => {
+  document.getElementById('connecting').textContent = 'This card needs an MCP Apps host (ChatGPT, or a host of the 2026-01-26 specification). ' + (error && error.message ? error.message : '');
+});
+})();
+</script>
+</body>
+</html>

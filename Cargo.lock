@@ -325,6 +325,8 @@ dependencies = [
  "bilibi-agent-api",
  "bilibi-database",
  "bilibi-module-registry",
+ "bilibi-settings",
+ "bilibi-system",
  "bilibi-tenancy",
  "bilibi-ui",
  "inventory",

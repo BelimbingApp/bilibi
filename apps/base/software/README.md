@@ -47,12 +47,13 @@ An administrator of another organisation is refused with `denied_platform_scope`
 
 ## The contracts
 
-All seven go through Agent API (`apps/base/agent_api/README.md`): reads are called, writes are planned, reviewed by the person, then committed. The Software page calls the same contracts through `PageContracts` (below).
+Every contract here goes through Agent API (`apps/base/agent_api/README.md`): reads are called, writes are planned, reviewed by the person, then committed. The Software page calls the same contracts through `PageContracts` (below).
 
 | Contract | Kind | Input | What the review or answer says |
 | --- | --- | --- | --- |
 | `base.software.status` | read | none | instance; installed Platform, Domains and Extensions; plug-ins; the job waiting or running (or the last one) with its steps and whether cancel is available; whether Undo is available; recent jobs |
 | `base.software.catalogue` | read | none | the catalogue, with the Platform versions each Domain release was tested on; or `available: false` and why |
+| `base.software.open` | read | optional `propose` (`domains`, `plugins`: catalogue ids to pre-tick) | what the card opens with: everything `status` says, plus the catalogue on an instance that builds, the proposal checked against it (`proposal.domains`, `.plugins`, `.unknown`; or `proposal.ignored` with the reason on an instance that installs), and `card.resource`. This is the `open_software` MCP tool |
 | `base.software.change` | write, Dev only | `domains` (the full wanted set; a mounted Domain left out is removed), optional `platform`, `plugins`, `switch` | the change list (add, update, downgrade, remove, keep; plug-ins switched on or off), whether every version was tested together on that Platform, warnings, a rough estimate, what happens, the steps |
 | `base.software.install` | write, Staging and Production | `release` (a number the source reports as tested), optional `switch` | the source, the checks the installer makes, the pause |
 | `base.software.undo` | write | optional `job` | which release it goes back to, and whether the backup is restored and later entries lost. `loss` names the backup's `backup_at` (the job result's, or the `backup` step's start) and carries no count: a count changes with every write, and a confirmation is bound to the review. The Software page counts the audited changes since `backup_at` with `Software::undo_loss`, only while an Undo review is open. The committed job's review records the count at commit as `lost_at_commit`, the same server-wide counts the undo result carries |
@@ -163,6 +164,19 @@ What one change job does on Dev, step by step:
 - **Paths.** `BILIBI_INSTANCE_DIR` (the instance folder, whose `releases/` receives the result) and `BILIBI_BUILD_DIR` (the builder's folder; default `/opt/bilibi/build`) come from the instance's `env` file; the toolchain lives in the worker user's `$HOME` (`~/.cargo`, `~/.rustup`), so an operator's own Cargo configuration there applies.
 
 `bilibi-web software-worker --once` handles the job waiting now and exits; `--prepare` installs the toolchain now (Dev only) and exits.
+
+## The card: the Software page inside a chat
+
+One answer: `open_software` shows the same page as a card in ChatGPT (or any MCP Apps host); the person picks, reviews and confirms inside it, with the instance named on every screen.
+
+- **What it is.** `card/software-v1.html`, one self-contained document registered as an MCP App (`src/agent.rs`, `bilibi_agent_api::App`; the mechanism is in `apps/base/agent_api/README.md`, "MCP Apps"). `/mcp` serves it as `ui://bilibi/software-v1.html`; the `open_software` tool answers `base.software.open` and points the host at it. The agent may pass `propose` to pre-tick Domains or plug-ins the person named; nothing is chosen until the person presses Build.
+- **The instance first.** The banner at the top names the instance in its colour (Dev blue, Staging amber, Production red) on every screen, the review repeats it in its heading and its button ("Build on Dev?", "Install on Production?"), and Production adds a red "This changes Production. Pick a quiet time." note. The label and colour are `status`'s `instance`, which is `Instance::resolve`, so the card, the page and the agent answers cannot disagree.
+- **Dev.** A card per catalogue Domain (description, modules, installed badge, version picker, whether that version was tested on a Platform release), the plug-ins, a bar counting the changes, Review. The review is `plan` `base.software.change`: the change list, warnings, "tested together", the estimate and the pause, what happens, the steps, when to switch (`auto` or `ask`), then the authenticator code and Build. The commit is `commit` with `step_up_code`; a `step_up_required` answer asks for the code again in place.
+- **Staging and Production.** No Build. "Install the version tested on <source>" takes the release number the source reports, then `plan` `base.software.install`: the checks, the pause, the code, Install. Without an `installs_from` setting the card says what the owner must set.
+- **The job.** After a commit the card shows the steps and the builder's progress line, reading `base.software.status` every 4 seconds while the job is queued or running, with Stop while a cancel is still honoured. When it ends, the result sentence, Undo when `status` offers it, and "You can close this card" while it runs. The card reports the queued job and the outcome to the model with `ui/update-model-context`, so the conversation can carry on ("Release 4 is built on Dev").
+- **Ask the assistant.** A question typed in the card is posted into the chat with `ui/message`, prefixed with the instance and what is ticked.
+- **What it never does.** Hold a credential, fetch an address of its own, frame the live page, trust a message that did not come from the host, or decide a permission: every fact and every write goes through the host's `tools/call` bridge to `read`, `plan` and `commit`, so the owner's capability and the `.always()` code apply exactly as on the page. The bridge accepts messages only from the parent window and, after the handshake, only from the origin that answered `ui/initialize`; request ids carry a random prefix, so another frame cannot forge a reply or a tool result.
+- **The plugin package** (`core/agent_plugins`) lists `open_software` in its workflow skill and writes the card's own skill, `bilibi-<instance>-software`, from `CARD_SKILL` here.
 
 ## Caveats
 

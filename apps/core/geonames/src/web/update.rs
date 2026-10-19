@@ -216,7 +216,6 @@ impl Run {
             button_type: "button",
             event,
             disabled: self.busy,
-            class: "px-3 py-1.5",
             body: Html::raw(format!("{icon}<span>{}</span>", Html::text(label))),
             ..Button::default()
         })

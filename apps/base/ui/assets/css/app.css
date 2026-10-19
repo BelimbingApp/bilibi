@@ -74,7 +74,7 @@
   --text-2xl: 1.25rem;
   --text-2xl--line-height: 1.4;
   --spacing-control: 2.5rem;
-  --spacing-button: 2rem;
+  --spacing-button: 1.5rem;
   --spacing-control-sm: 1.75rem;
   --spacing-panel: 0.75rem;
   --spacing-feedback: 0.5rem;
@@ -308,15 +308,16 @@ body {
   min-width: 20rem;
 }
 
-/* The shared button is 32 px, shorter than a floating field. Table, toolbar
- * and empty-state actions use the smaller step without page-owned sizing. */
+/* The shared button is one size everywhere: 24 px with 8 px side padding
+ * (the `button` macro in templates/components.html), on phones and touch
+ * screens too, so it reads with the sidebar's rows and the table text rather
+ * than with a floating field. Pages never size a button: `button_class`
+ * (src/components.rs) discards a caller's padding, height and text-size
+ * utilities. Only the compact fields of a toolbar or table have a smaller
+ * step of their own (`.ui-compact-controls`). */
 @utility ui-button {
-  min-height: var(--ui-button-height, var(--spacing-button));
+  min-height: var(--spacing-button);
   max-width: 100%;
-}
-
-.ui-compact-controls {
-  --ui-button-height: var(--spacing-control-sm);
 }
 
 .ui-compact-controls .ui-field {
@@ -326,9 +327,10 @@ body {
   line-height: 1rem;
 }
 
-/* Compact desktop chrome must still be easy to hit on a touch screen.
+/* Compact icon, tab, choice and pager controls grow on a touch screen.
  * Growing real boxes (rather than overlapping invisible hit areas) keeps
- * neighbouring actions and table cells independently reachable. */
+ * neighbouring actions and table cells independently reachable. The shared
+ * button keeps its one 24 px size on every pointer and width. */
 @media (pointer: coarse) {
   .ui-touch-target,
   .ui-icon-button,
@@ -357,10 +359,6 @@ body {
 }
 
 @media (width < 40rem) {
-  .ui-button {
-    min-height: var(--spacing-control);
-  }
-
   [data-shared-ui] :is(input, select, textarea) {
     font-size: 1rem;
   }

@@ -41,6 +41,10 @@ pub use jobs::{CHANNEL, RECORD};
 pub use review::Review;
 pub use worker::{Worker, PRINCIPAL as WORKER_PRINCIPAL, USAGE as WORKER_USAGE};
 
+/// The MCP App card (`card/software-v1.html`): the Software page as one
+/// self-contained document a chat host shows inline. `open_software` opens it.
+pub const CARD_URI: &str = "ui://bilibi/software-v1.html";
+
 /// A refusal that names the field and says what to do, or a backend error.
 #[derive(Debug)]
 pub enum SoftwareError {
@@ -173,6 +177,65 @@ impl Software {
             "jobs": recent.iter().map(|job| json!({"id": job.id, "kind": job.kind, "state": job.state,
                 "summary": job.review["summary"], "requested_at": job.requested_at, "finished_at": job.finished_at})).collect::<Vec<_>>(),
         }))
+    }
+
+    /// What the card opens with: the status, and on an instance that builds
+    /// the catalogue too, with the agent's proposal (Domains and plug-ins to
+    /// pre-tick) checked against it. Nothing is chosen by a proposal: the
+    /// person ticks and confirms in the card. On an instance that installs,
+    /// a proposal is reported as ignored, so the agent can say so.
+    pub async fn open(&self, scope: &Scope, input: &Value) -> Result<Value> {
+        let mut value = self.status(scope).await?;
+        let builds = value["instance"]["builds"].as_bool().unwrap_or(false);
+        let proposed = input.get("propose").filter(|p| p.is_object());
+        if builds {
+            let catalogue = self.catalogue(scope).await?;
+            let ids = |kind: &str| -> Vec<String> {
+                catalogue[kind]
+                    .as_array()
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(|item| item["id"].as_str().map(str::to_owned))
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            };
+            let (domains, plugins) = (ids("domains"), ids("plugins"));
+            let wanted = |kind: &str| -> Vec<String> {
+                proposed
+                    .and_then(|p| p[kind].as_array())
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(|item| item.as_str().map(str::to_owned))
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            };
+            let (wanted_domains, wanted_plugins) = (wanted("domains"), wanted("plugins"));
+            let unknown: Vec<&String> = wanted_domains
+                .iter()
+                .filter(|id| !domains.contains(id))
+                .chain(wanted_plugins.iter().filter(|id| !plugins.contains(id)))
+                .collect();
+            value["proposal"] = json!({
+                "domains": wanted_domains.iter().filter(|id| domains.contains(id)).collect::<Vec<_>>(),
+                "plugins": wanted_plugins.iter().filter(|id| plugins.contains(id)).collect::<Vec<_>>(),
+                "unknown": unknown,
+            });
+            value["catalogue"] = catalogue;
+        } else {
+            value["catalogue"] = Value::Null;
+            value["proposal"] = match proposed {
+                Some(_) => {
+                    json!({"ignored": format!("{} does not build: it installs a release that another instance tested. Propose on Dev.", value["instance"]["label"].as_str().unwrap_or("This instance"))})
+                }
+                None => Value::Null,
+            };
+        }
+        value["card"] = json!({"resource": CARD_URI});
+        Ok(value)
     }
 
     /// Puts the outcomes the builder and the installer wrote into the audit

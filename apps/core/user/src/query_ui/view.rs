@@ -379,7 +379,7 @@ pub(super) fn detail(state: &detail::Detail, editor: bool) -> Result<String> {
         run: {
             let mut body = fragment(&Icon { name: "play", class: "size-3.5 mr-1" })?;
             body.push(&Html::text("Run Query"));
-            fragment(&Button { id: "btn-run-query", event: "run_query", class: "px-3 py-1 text-xs", variant: ButtonVariant::Primary, body, ..Default::default() })?
+            fragment(&Button { id: "btn-run-query", event: "run_query", variant: ButtonVariant::Primary, body, ..Default::default() })?
         },
         prompt: fragment(&prompt)?, sql: fragment(&sql)?, parameters,
         caution: fragment(&Alert { id: "database-query-reach-caution", kind: StatusKind::Warning, class: "mt-2", body: Html::text("Not limited to your company: SQL here can read every company's data in the database.") })?,

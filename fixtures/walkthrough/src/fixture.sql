@@ -16,12 +16,11 @@ SELECT n,1,'Company '||lpad(n::text,3,'0'),'company_'||lpad(n::text,3,'0'),CASE 
 INSERT INTO companies(id,tenant_id,name,code,status,email,phone,tax_id,revenue) VALUES(100,2,'Private other-tenant company','private_other_tenant_company','active','private@example.test','private phone','PRIVATE-TAX',987654321) ON CONFLICT DO NOTHING;
 -- K1 organisation facts: reference catalogs, the first company's legal
 -- identity and departments, and each tenant's primary company.
-INSERT INTO company_legal_entity_types(id,code,name,description) VALUES(1,'sdn_bhd','Sdn. Bhd.','Private limited company (Malaysia)'),(2,'bhd','Bhd.','Public limited company (Malaysia)'),(3,'pte_ltd','Pte. Ltd.','Private limited company (Singapore)') ON CONFLICT DO NOTHING;
+INSERT INTO company_legal_entity_types(code,name,description) VALUES('sdn_bhd','Sdn. Bhd.','Private limited company (Malaysia)'),('bhd','Bhd.','Public limited company (Malaysia)'),('pte_ltd','Pte. Ltd.','Private limited company (Singapore)') ON CONFLICT DO NOTHING;
 INSERT INTO company_department_types(id,code,name,category) VALUES(1,'ENG','Engineering','operational'),(2,'OPS','Operations','operational'),(3,'FIN','Finance','administrative'),(4,'SALES','Sales','revenue') ON CONFLICT DO NOTHING;
 INSERT INTO company_departments(tenant_id,company_id,department_type_id,status) VALUES(1,1,1,'active'),(1,1,2,'active') ON CONFLICT DO NOTHING;
-UPDATE companies SET legal_name='Company 001 Sdn. Bhd.',registration_number='202401000001',legal_entity_type_id=1,website='https://company-001.example.test' WHERE tenant_id=1 AND id=1 AND legal_name IS NULL;
+UPDATE companies SET legal_name='Company 001 Sdn. Bhd.',registration_number='202401000001',legal_entity_type_id=(SELECT id FROM company_legal_entity_types WHERE code='sdn_bhd'),website='https://company-001.example.test' WHERE tenant_id=1 AND id=1 AND legal_name IS NULL;
 INSERT INTO tenant_primary_companies(tenant_id,company_id) VALUES(1,1),(2,100) ON CONFLICT DO NOTHING;
-SELECT setval(pg_get_serial_sequence('company_legal_entity_types','id'),GREATEST((SELECT max(id) FROM company_legal_entity_types),1));
 SELECT setval(pg_get_serial_sequence('company_department_types','id'),GREATEST((SELECT max(id) FROM company_department_types),1));
 SELECT setval(pg_get_serial_sequence('tenants','id'),GREATEST((SELECT max(id) FROM tenants),1));
 SELECT setval(pg_get_serial_sequence('roles','id'),GREATEST((SELECT max(id) FROM roles),1));
