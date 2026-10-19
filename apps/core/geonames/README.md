@@ -168,8 +168,9 @@ flash, never a page-clearing error.
   country at a time in the background (`src/web/update.rs` `Run`), so the
   page shows which country is running and the rows so far; Update runs
   every imported country again. The finished run is one flash that names
-  what was imported, what kept its existing data because the download
-  failed, and what was not imported and why. A result lands on the page
+  what was imported, what was imported from the local download because the
+  download failed (Import) or kept its existing data (Update), and what was
+  not imported and why. A result lands on the page
   that started the run; leaving it loses the message, not the import.
 
 Name updates write the reference tables outside mutation capture, like the
