@@ -3,6 +3,8 @@
 # One development entrypoint; no daemon management or automatic installation.
 # Install prerequisites first with ./scripts/setup.sh.
 set -euo pipefail
+# Set the local role before the process owner starts so its app inherits it.
+export BILIBI_ENV=${BILIBI_ENV-development}
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 cd "$root"
 # Acquire the checkout owner and bring up status before any build can fail.
