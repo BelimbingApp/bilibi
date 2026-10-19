@@ -4,7 +4,7 @@
 set -euo pipefail
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 cd "$root"
-for tool in rustc cargo psql pg_isready caddy mkcert python3 openssl curl ss flock; do
+for tool in rustc cargo psql pg_isready python3 curl ss flock; do
     command -v "$tool" >/dev/null || { echo "Missing prerequisite: $tool. Run ./scripts/setup.sh" >&2; exit 1; }
 done
 cargo watch --version >/dev/null 2>&1 || { echo 'Missing prerequisite: cargo-watch. Run ./scripts/setup.sh' >&2; exit 1; }
@@ -53,17 +53,23 @@ cargo build -p bilibi-web --timings
 echo "Initial Rust build took $(($(date +%s)-started))s. Timing report: target/cargo-timings/cargo-timing.html"
 ./target/debug/bilibi-web migrate
 ./target/debug/bilibi-web seed --at-startup
-if "$root/scripts/local-https.sh"; then
-    readarray -t instance < "$root/.local/https/instance"
-    scheme=https
-else
-    echo 'Caddy did not accept Bilibi HTTPS; check its admin API and existing certificates, then rerun. Continuing with the local HTTP backend.' >&2
-    instance=(bilibi.localhost "${BILIBI_DEV_PORT:-4300}")
-    while [[ -n $(ss -H -ltn "sport = :${instance[1]}") ]]; do
-        ((instance[1] += 1))
-        ((instance[1] <= 65535)) || { echo 'No free local backend port is available.' >&2; exit 1; }
-    done
-    scheme=http
+host=${BILIBI_DEV_HOST:-bilibi.localhost}
+# Plan before calling local-https.sh: other checkouts never register with Caddy.
+# The registrar rechecks ownership under its lock in case two first launches race.
+plan=$(python3 "$root/scripts/local-https-api.py" --plan "$host" "${BILIBI_DEV_PORT:-4300}")
+readarray -t origin_plan <<< "$plan"
+scheme=${origin_plan[0]}
+instance=("${origin_plan[1]}" "${origin_plan[2]}")
+if [[ $scheme == https ]]; then
+    if "$root/scripts/local-https.sh"; then
+        readarray -t instance < "$root/.local/https/instance"
+    else
+        echo 'Local HTTPS is unavailable for this checkout. Continuing with its loopback HTTP address.' >&2
+        plan=$(python3 "$root/scripts/local-https-api.py" --http "$host" "${BILIBI_DEV_PORT:-4300}")
+        readarray -t origin_plan <<< "$plan"
+        scheme=${origin_plan[0]}
+        instance=("${origin_plan[1]}" "${origin_plan[2]}")
+    fi
 fi
 if [[ $scheme == https ]]; then
     export APP_ORIGIN="https://${instance[0]}"

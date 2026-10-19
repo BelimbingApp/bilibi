@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Register only Bilibi's HTTPS route and certificate through the running Caddy API.
+# Register the owner's HTTPS route and certificate; the API rejects other checkouts.
 set -euo pipefail
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
-host=bilibi.localhost
+host=${BILIBI_DEV_HOST:-bilibi.localhost}
 port=${BILIBI_DEV_PORT:-4300}
 for tool in mkcert openssl python3 ss flock; do
     command -v "$tool" >/dev/null || { echo "Missing prerequisite: $tool. Run ./scripts/setup.sh" >&2; exit 1; }
@@ -16,12 +16,7 @@ exec 8>"/tmp/bilibi-local-https-$(id -u).lock"
 flock 8
 certificate="$root/.local/https/$host.pem"
 key="$root/.local/https/$host-key.pem"
-ca_root=$(mkcert -CAROOT)
-if [[ ! -f "$certificate" || ! -f "$key" ]] || \
-    ! openssl x509 -in "$certificate" -checkend 2592000 -noout >/dev/null 2>&1 || \
-    ! openssl verify -CAfile "$ca_root/rootCA.pem" -verify_hostname "$host" "$certificate" >/dev/null 2>&1; then
-    (umask 077; mkcert -cert-file "$certificate" -key-file "$key" "$host")
-fi
+# Ownership is checked before the API helper creates or renews these files.
 port=$(python3 "$root/scripts/local-https-api.py" \
     "$host" "$port" "$certificate" "$key")
 printf '%s\n%s\n' "$host" "$port" > "$root/.local/https/instance"
