@@ -278,8 +278,10 @@ impl Board {
             tab,
             tasks,
             runs,
-            task_columns: columns("schedule-tasks", task_builtins())?,
-            run_columns: columns("schedule-runs", run_builtins())?,
+            task_columns: columns("schedule-tasks", task_builtins())?
+                .with_record_fields(task_fields::ALL.iter().copied()),
+            run_columns: columns("schedule-runs", run_builtins())?
+                .with_record_fields(run_fields::ALL.iter().copied()),
             rows_changed: true,
             browser_zone: None,
             timezone_request: uuid::Uuid::new_v4().to_string(),
@@ -735,6 +737,10 @@ impl Board {
             for (id, content) in cells {
                 row = row.slot(id, cell(content, compact)?);
             }
+            row = row
+                .slot("overlap", Html::text(task.overlap.as_str()))
+                .slot("misfire", Html::text(task.misfire.as_str()))
+                .slot("last_runtime", Html::text(&duration));
             row.actions = actions(task, &dom, can_execute, can_manage)?;
             rows.push(row);
         }
@@ -930,6 +936,9 @@ impl Board {
             for (id, content) in cells {
                 row = row.slot(id, cell(content, compact)?);
             }
+            row = row
+                .slot("runtime", Html::text(&runtime))
+                .slot("trigger", Html::text(&trigger));
             rows.push(row);
         }
         let mut table = FlexTable::new("schedule-runs", self.run_columns.flex_columns(), rows)
@@ -1136,6 +1145,18 @@ fn task_status_kind(task: &Task) -> BadgeKind {
         _ => status_kind(task.last_status.as_deref().unwrap_or("never")),
     }
 }
+// Bilimbi schedule board facts: a cell's second line is hidden in compact rows,
+// so each scalar it carries is also a column.
+bilibi_ui::record_fields! { mod task_fields {
+    OVERLAP: bilibi_ui::RecordField::new("overlap", "Overlap policy"),
+    MISFIRE: bilibi_ui::RecordField::new("misfire", "Misfire policy"),
+    LAST_RUNTIME: bilibi_ui::RecordField::new("last_runtime", "Last runtime"),
+} }
+bilibi_ui::record_fields! { mod run_fields {
+    RUNTIME: bilibi_ui::RecordField::new("runtime", "Runtime"),
+    TRIGGER: bilibi_ui::RecordField::new("trigger", "Trigger"),
+} }
+
 fn duration(milliseconds: Option<i32>) -> String {
     match milliseconds {
         None => "—".into(),
