@@ -3,18 +3,20 @@
 # remain visible, plus explicit wall-clock timing including failed compilations.
 #
 # On a change cargo-watch kills the whole process group of the running copy of
-# this script (SIGTERM, then SIGKILL before it starts the next copy), so the old
-# copy cannot say why. Each copy records what it is doing in $state, and the next
+# this script (SIGTERM, then SIGKILL before it starts the next copy). The app is
+# owned by dev-process.py outside that group and keeps serving during builds.
+# Each copy records what it is doing in $state, and the next
 # copy reads it to explain the restart. A run that ends on its own (a failed
-# step, or the app stopping) leaves cargo-watch idle until the next change, so it
-# says how to recover. start-app.sh clears $state on launch.
+# step, or a successful start) leaves cargo-watch idle until the next change.
+# The process owner reports an unexpected app exit even during a failed build.
+# start-app.sh clears $state on launch.
 set -euo pipefail
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 cd "$root"
 state="$root/.local/dev-run.state"
 mkdir -p "$root/.local"
 case $(cat "$state" 2>/dev/null || true) in
-    serve) echo 'Files changed (for example after git pull): Bilibi stopped and is rebuilding. It starts again by itself when the build finishes.' ;;
+    serve) echo 'Files changed (for example after git pull): rebuilding Bilibi. The current app keeps serving until the build succeeds, then it restarts by itself.' ;;
     build) echo 'Files changed during the build: starting the build again.' ;;
     ended) echo 'Files changed: building and starting Bilibi again.' ;;
 esac
@@ -26,13 +28,21 @@ not_running() {
     echo ended > "$state"
     echo "Bilibi is not running: $1"
 }
+build_failed() {
+    echo ended > "$state"
+    if python3 scripts/dev-process.py running; then
+        echo "Bilibi is still running the previous build: $1"
+    else
+        not_running "$1"
+    fi
+}
 # Run one step; if it fails, say which and how to recover.
 step() {
     local what=$1 result=0
     shift
     "$@" || result=$?
     if [[ $result != 0 ]]; then
-        not_running "$what failed (see above). $retry"
+        build_failed "$what failed (see above). $retry"
         exit "$result"
     fi
 }
@@ -43,12 +53,12 @@ result=0
 cargo build -p bilibi-web --timings || result=$?
 echo "Rust build took $(($(date +%s)-started))s (exit $result). Timing report: target/cargo-timings/cargo-timing.html"
 if [[ $result != 0 ]]; then
-    not_running "the Rust build failed (see above). $retry"
+    build_failed "the Rust build failed (see above). $retry"
     exit "$result"
 fi
-# A rebuild can carry a module's new migration; apply it before serving, as
-# start-app.sh does on launch, so the running app never queries a schema the
-# database lacks. The seed stays launch-only.
+# Only a successful build may replace the old app. Stop it before migrations:
+# a new schema may be incompatible with the old code. The seed stays launch-only.
+python3 scripts/dev-process.py stop
 step 'the database migration' "$root/target/debug/bilibi-web" migrate
 # A stop by name (pkill -f "target/debug/bilibi-web run", pkill bilibi-web,
 # killall bilibi-web, kill $(pgrep -x bilibi-web)) reaches every process whose
@@ -64,12 +74,4 @@ rm -f "$dev_bin"
 ln "$root/target/debug/bilibi-web" "$dev_bin" 2>/dev/null \
     || cp "$root/target/debug/bilibi-web" "$dev_bin"
 echo serve > "$state"
-result=0
-"$dev_bin" run || result=$?
-# Reached only when the app stopped and this script was not killed with it.
-if [[ $result == 143 ]]; then
-    not_running 'another process stopped it (SIGTERM), not a file change. To start it again, save any file or run `touch Cargo.toml`, or press Ctrl-C and run ./scripts/start-app.sh again.'
-else
-    not_running "the app stopped (exit $result, see above). $retry"
-fi
-exit "$result"
+step 'starting the app' python3 scripts/dev-process.py start

@@ -95,6 +95,9 @@ echo 'Cargo output stays visible. Edit Rust/templates/assets to rebuild; Ctrl-C 
 # npm may touch node_modules) under apps/; watching them would make every rebuild
 # trigger the next one. cargo-watch reads .gitignore only when .git is a
 # directory, so in a git worktree these ignores are the only ones it applies.
-exec cargo watch --watch apps --watch Cargo.toml --watch Cargo.lock --watch scripts \
+# Keep the app owned by the launcher, outside cargo-watch's rebuild process
+# group. The owner stops only its own child on replacement or Ctrl-C.
+# Ignore prose, while retaining all Rust, SQL, templates, assets and include files.
+exec python3 scripts/dev-process.py watch cargo watch --watch apps --watch Cargo.toml --watch Cargo.lock --watch scripts \
     --ignore 'apps/base/ui/assets/app.css' --ignore 'apps/base/ui/assets/css/.mounted-*.css' \
-    --ignore '**/node_modules/**' --shell './scripts/dev-run.sh'
+    --ignore '**/node_modules/**' --ignore '*.md' --shell './scripts/dev-run.sh'
