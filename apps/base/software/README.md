@@ -75,7 +75,7 @@ Reads and reviewed writes use the shared Agent API; the page uses the same contr
 | `base.software.cancel` | optional `job` | Remove a queued job, or request stop before the pause; refused after the pause starts |
 | `base.software.pair` | `key`, or `clear: true` | Set or clear the encrypted pairing key; never show it back |
 
-`base.software.change` is removed. There is no server build operation, builder worker, compiler setting or builder service.
+The `base.software.change` agent operation is removed; only its step-up key stays (see Access). There is no server build operation, builder worker, compiler setting or builder service.
 
 Install requires the source to answer and the selected release to be the one it runs now, or an uploaded bundle. Uploads use the same installer checks. A file made by a different instance than the configured source raises a warning; unsigned `bundle.json` is not proof of origin. Installing the program already in service or starting a second active job is refused. `switch: auto` proceeds after copying; `switch: ask` waits for `go` before the pause.
 
