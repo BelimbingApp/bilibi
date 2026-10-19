@@ -1220,16 +1220,9 @@ impl View {
         let mut checks: Vec<String> = Vec::new();
         let (title, lead, submit, variant) = match review.kind {
             Kind::Install => {
-                let release = facts["release"].as_i64().unwrap_or_default();
-                let source = &facts["source"];
-                let source_text = if source["kind"] == "same_machine" {
-                    format!("{} on this machine", text(&source["instance"]))
-                } else {
-                    text(&source["address"]).to_owned()
-                };
-                lines.push(ChangeLine::change(format!(
-                    "Install release {release} from {source_text}"
-                )));
+                // The operation already names every source, including an
+                // uploaded file whose release number may be unknown.
+                lines.push(ChangeLine::change(text(&facts["summary"]).to_owned()));
                 let running = &facts["running"];
                 let domains: Vec<String> = running["domains"]
                     .as_array()

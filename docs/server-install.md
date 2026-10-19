@@ -4,7 +4,13 @@
 
 ## The short version
 
-On a fresh Ubuntu or Debian server, from a Bilibi checkout, as root:
+Build both programs on your own machine, from your local Bilibi checkout:
+
+```sh
+cargo build --release --locked -p bilibi-web -p bilibi-installer
+```
+
+Copy the programs from `target/release/` and the whole `scripts/` directory to a fresh Ubuntu or Debian server. The server needs neither Cargo nor a Rust compiler. On that server, as root:
 
 ```sh
 sudo scripts/install-server.sh create production --role production --site erp.example.com
@@ -123,9 +129,16 @@ sudo scripts/install-server.sh switch production 1
 
 ## The installer service
 
+Build the installer on your own machine:
+
 ```sh
-cargo build --release -p bilibi-installer
-sudo scripts/install-server.sh installer target/release/bilibi-installer
+cargo build --release --locked -p bilibi-installer
+```
+
+Copy the finished program to the server, then run there:
+
+```sh
+sudo scripts/install-server.sh installer /path/to/bilibi-installer
 ```
 
 This copies the program to `/opt/bilibi/build/bin/bilibi-installer`, owned by root so neither Bilibi user can change it, and starts `bilibi-installer@<instance>` for every instance on the machine. A `create` after that starts one for the new instance too. Run `installer` again with a newer program to update it: the services restart, and a job one of them was in the middle of is settled by the rules in [`apps/installer/README.md`](../apps/installer/README.md) ("If the server restarts mid-way"): before the database changed it ends `interrupted` and nothing changed; after, it finishes.
@@ -207,6 +220,8 @@ Keep other mounted Domains and Extensions. For an existing clone, fetch and chec
 
 Copy `target/release/bilibi-web`, `.local/composition/manifest.txt` and `.local/composition/Cargo.lock` into a release folder. Put the first release on a test instance with `scripts/install-server.sh release` and check it there. Its Release files page downloads the existing transport bundle; upload that on Staging or Production and install it from Software, or configure the source and let the target download it. Install and undo retain the same fresh 2FA check, backup, automatic switch-back and audit path. There is no new server build or packaging path.
 
+A folder prepared this way has no `release.json`. An uploaded file's review therefore warns that its change list is known only once the installer reads the program. The installer records the pinned composition and changes in the job's result.
+
 When upgrading an older installation, `create`, `installer` and `release` stop and disable each former `bilibi-worker@<instance>` service, then remove that obsolete unit and its sudoers rule. Rerunning is safe, and a fresh server is left alone. The new `base-software-003-local-builds` migration cancels queued and running build jobs with local build guidance, preserving their history. Install and undo jobs continue normally.
 
 ## Reference
@@ -238,6 +253,7 @@ Files outside `/opt/bilibi`: `/etc/systemd/system/bilibi@.service`, `/etc/system
 
 ## Where to go next
 
+- [Repeat the fresh-server proof](server-proof/README.md): disposable systemd lab, local Finance build, file upload, 2FA, Undo and a failed health check.
 - The design behind this layout: the Software page plan, in the Firstmate scout report `bilibi-domain-chooser` (sections 2, 3 and 6).
 - What each environment variable does: [`README.md`](../README.md), Configuration.
 - 2FA step-up and why Dev skips it: [`apps/base/step_up/README.md`](../apps/base/step_up/README.md).

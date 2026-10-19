@@ -113,11 +113,10 @@ The audit trail is the app's job, not the installer's: `base/software` records e
 
 ## Running it
 
-`scripts/install-server.sh` does this on a server:
+Build `bilibi-installer` on your own machine, then copy the finished program to the server ([local builds](../../docs/server-install.md#build-locally)). On the server, run:
 
 ```sh
-cargo build --release -p bilibi-installer
-sudo scripts/install-server.sh installer target/release/bilibi-installer
+sudo scripts/install-server.sh installer /path/to/bilibi-installer
 ```
 
 That copies the program to `/opt/bilibi/build/bin/bilibi-installer` and starts `bilibi-installer@<instance>` for every instance. A later `create` starts one for the new instance too. Rerun `installer` with a newer program to update it; the services restart and a job in progress is settled as in "If the server restarts mid-way".

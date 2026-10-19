@@ -85,7 +85,7 @@ The Software page (`/system/software`) and MCP App (`ui://bilibi/software-v1.htm
 
 - `?propose=finance,factory` highlights requested page entries; `open_software` accepts catalogue IDs in `propose` for the card.
 - A view-only account sees discovery and status. The facade refuses writes without manage permission.
-- Install, undo and go-ahead show the shared instance banner and a review, then commit that exact plan with the person’s authenticator code. A wrong code stays in the review.
+- Install, undo and go-ahead show the shared instance banner and a review, then commit that exact plan with the person’s authenticator code. The install headline uses the operation's summary to name an uploaded file, sibling instance or HTTPS source. A wrong code stays in the review.
 - The page follows `NOTIFY bilibi_software_jobs` through `follow.rs`; the card polls status every four seconds while a job is active. Closing either leaves the job running.
 - The card calls only the host’s read/plan/commit bridge, holds no credential and fetches no independent URL. It reports job outcomes to the model and can send the person’s question back to the chat.
 - Plugin packages obtain the card guidance from `CARD_SKILL` and identify the connected instance.
@@ -159,12 +159,14 @@ Each failed check is a plain sentence that says what to do next: "This release w
 ## Caveats
 
 - An unpinned program cannot prove its exact Domain versions or CI pair. Pin before building locally.
+- The documented local release folder has no `release.json`; an uploaded file's review says its change list is known only after the installer reads the program. The completed job records its pinned composition and changes.
 - Downloads by a person hold one bundle in memory; pulling instances stream it. Live uploads are limited to 64 MB.
 - Transport calls trust system certificate roots as well as public roots and refuse redirects so pairing keys never go to another address. Install a private authority on the receiving server when needed.
 
 ## Where to go next
 
 - [Local builds and server installation](../../../docs/server-install.md).
+- [Repeatable fresh-server proof](../../../docs/server-proof/README.md).
 - [Versions and CI evidence](../../../docs/versions.md).
 - [Installer checks and recovery](../../installer/README.md).
 - [Step-up](../step_up/README.md) and [Agent API plans](../agent_api/README.md).
