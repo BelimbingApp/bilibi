@@ -82,7 +82,7 @@ pub fn renderable(name: &str) -> bool {
 }
 
 /// The accepted Heroicon for a shell action (`clock`, `light`, `dark`,
-/// `system`, `chevron`, `password`, `logout`, `warning`), so the top bar, the
+/// `system`, `chevron`, `settings`, `logout`, `warning`), so the top bar, the
 /// account menu and the Design Library cannot drift apart on the same action.
 ///
 /// # Panics
@@ -211,7 +211,7 @@ pub const SHELL: &[(&str, &str)] = &[
     ("dark", "hero-moon"),
     ("light", "hero-sun"),
     ("logout", "hero-arrow-right-on-rectangle"),
-    ("password", "hero-key"),
+    ("settings", "hero-cog-6-tooth"),
     ("system", "hero-computer-desktop"),
     ("warning", "hero-exclamation-triangle"),
 ];

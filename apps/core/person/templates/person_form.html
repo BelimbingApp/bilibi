@@ -1,10 +1,12 @@
-{% import "components.html" as ui %}
+{# New contact, inside the list's dialog (Bilimbi Contacts create; the dialog
+   matches company `reference_type_form.html`). Values changing raise validate;
+   Enter or Create contact raises create. Labels float or pin inside the box. #}
 {% import "forms.html" as forms %}
-<form id="person-form" data-event="validate" data-change data-submit-event="create" class="mt-3 rounded-xl border border-line bg-surface p-6 shadow-xs" novalidate>
-  <div class="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2">
-    {% for field in fields %}{% call forms::input(field=field) %}{% endcall %}{% endfor %}
-    {% for field in restricted %}{% call forms::restricted_field(field=field) %}{% endcall %}{% endfor %}
-  </div>
-  {% if !duplicates.is_empty() %}<div id="person-duplicates" class="mb-4 text-sm text-ink-muted"><p>Possible existing contacts. Open a record to check before creating another.</p><ul>{% for person in duplicates %}<li><a href="/contacts/{{ person.id.get() }}" class="text-link hover:underline">{{ person.name }}</a>{% if person.retired_at.is_some() %} (retired){% endif %}</li>{% endfor %}</ul></div>{% endif %}
-  <div class="mt-4 flex items-center justify-end gap-3">{{ cancel }}{{ submit }}</div>
+<form id="person-form" data-event="validate" data-change data-submit-event="create" class="mt-4 space-y-4" novalidate>
+  {{ summary }}
+  {{ notice }}
+  {% for field in fields %}{% call forms::input(field=field) %}{% endcall %}{% endfor %}
+  {% for field in restricted %}{% call forms::restricted_field(field=field) %}{% endcall %}{% endfor %}
+  {% if !duplicates.is_empty() %}<div id="person-duplicates" class="text-sm text-ink-muted"><p>Possible existing contacts. Open a record to check before creating another.</p><ul>{% for person in duplicates %}<li><a href="/contacts/{{ person.id.get() }}" class="text-link hover:underline">{{ person.name }}</a>{% if person.retired_at.is_some() %} (retired){% endif %}</li>{% endfor %}</ul></div>{% endif %}
+  <div class="mt-6 flex justify-end gap-2">{{ cancel }}{{ submit }}</div>
 </form>

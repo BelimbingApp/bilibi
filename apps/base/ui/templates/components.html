@@ -67,9 +67,10 @@ ui-icon-button grid shrink-0 place-items-center transition focus-visible:outline
 <a href="{{ href }}"{% if !id.is_empty() %} id="{{ id }}"{% endif %}{% if !title.is_empty() %} title="{{ title }}" aria-label="{{ title }}"{% endif %} class="{{ bilibi_ui::DEMOTED_ACTION_CLASS }}{% if !class.is_empty() %} {{ class }}{% endif %}"><span aria-hidden="true">←</span> Back</a>
 {% endmacro %}
 
-{#- A demoted secondary action; method marks a submitting action for the browser adapter. -#}
+{#- A demoted secondary action; an empty icon gives a text-only link.
+    method marks a submitting action for the browser adapter. -#}
 {% macro action_link(id, icon, title, href, method="") %}
-<a href="{{ href }}"{% if !method.is_empty() %} data-method="{{ method }}" data-to="{{ href }}"{% endif %} id="{{ id }}" title="{{ title }}" aria-label="{{ title }}" class="{{ bilibi_ui::DEMOTED_ACTION_CLASS }}">{% call icon(name=icon, class="size-4") %}{% endcall %} {{ caller() }}</a>
+<a href="{{ href }}"{% if !method.is_empty() %} data-method="{{ method }}" data-to="{{ href }}"{% endif %} id="{{ id }}" title="{{ title }}" aria-label="{{ title }}" class="{{ bilibi_ui::DEMOTED_ACTION_CLASS }}">{% if !icon.is_empty() %}{% call icon(name=icon, class="size-4") %}{% endcall %} {% endif %}{{ caller() }}</a>
 {% endmacro %}
 
 {#- Page container at the width of its workflow kind; data-page names the variant.

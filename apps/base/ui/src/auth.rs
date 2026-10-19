@@ -112,6 +112,7 @@ impl LoginPage {
             password: Html::render(
                 &Field::in_form("login", "password")
                     .id("login-password")
+                    .wrapper_class("mb-0")
                     .kind(InputKind::Password)
                     .label("Password")
                     .value(&form.password)

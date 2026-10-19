@@ -465,104 +465,23 @@ impl View<'_> {
         render(toolbar)
     }
     fn period_filter(&self, id: &str) -> askama::Result<Html> {
-        use bilibi_datetime::{Period, Preset};
+        // Mirrors Bilimbi's period-filter specimen through the production component.
         let clock = self
             .state
             .display
             .clock(self.state.browser_zone.as_deref(), jiff::Timestamp::now());
-        let period = Period::parse(|key| self.state.period.get(key).cloned(), clock.today);
-        let editing = self
+        let period =
+            bilibi_datetime::Period::parse(|key| self.state.period.get(key).cloned(), clock.today);
+        let Some(mut filter) = self
             .state
-            .period_edit
-            .as_ref()
-            .filter(|(owner, _, _)| owner == id);
-        let selected = if editing.is_some() {
-            if period.preset == Preset::Custom {
-                "change_custom"
-            } else {
-                "custom"
-            }
-        } else {
-            period.preset.as_str()
-        };
-        let mut options: Vec<_> = Preset::ALL
+            .period_filters
             .iter()
-            .map(|(label, preset)| Choice::new(*label, preset.as_str()))
-            .collect();
-        if period.preset == Preset::Custom {
-            options.push(Choice::new("Change dates…", "change_custom"));
-        }
-        let mut select = Field::named("period")
-            .id(format!("{id}-period"))
-            .kind(InputKind::Select)
-            .label("Period")
-            .label_class("sr-only")
-            .value(selected)
-            .options(options)
-            .wrapper_class("mb-0");
-        select.attrs.extra.push((
-            "title".into(),
-            format!("{} – {} ({})", period.from, period.to, clock.timezone),
-        ));
-        let mut html = Html::raw(format!(
-            r#"<div id="{}" class="w-full sm:w-40"><form id="{}-selection" data-event="period-filter" data-change>"#,
-            Html::text(id),
-            Html::text(id)
-        ));
-        html.push(&render(
-            Field::named("period_id").kind(InputKind::Hidden).value(id),
-        )?);
-        html.push(&render(select)?);
-        html.push(&Html::raw("</form>"));
-        if let Some((_, from, to)) = editing {
-            let mut body = Html::raw(format!(
-                r#"<form id="{}-range-form" data-event="period-range" class="mt-4 space-y-4">"#,
-                Html::text(id)
-            ));
-            if !self.state.period_error.is_empty() {
-                body.push(&Html::raw(format!(
-                    r#"<p id="{}-range-error" role="alert" class="text-sm text-danger-ink">{}</p>"#,
-                    Html::text(id),
-                    Html::text(&self.state.period_error)
-                )));
-            }
-            body.push(&Html::raw(r#"<div class="grid gap-3 sm:grid-cols-2">"#));
-            for (key, label, value) in [("from", "From", from), ("to", "To", to)] {
-                body.push(&render(
-                    Field::named(key)
-                        .id(format!("{id}-draft-{key}"))
-                        .kind(InputKind::Date)
-                        .label(label)
-                        .value(value)
-                        .required(),
-                )?);
-            }
-            body.push(&Html::raw(r#"</div><div class="flex justify-end gap-2">"#));
-            body.push(&render(bilibi_ui::Button {
-                id: &format!("{id}-cancel"),
-                event: "period-cancel",
-                button_type: "button",
-                body: Html::text("Cancel"),
-                ..bilibi_ui::Button::default()
-            })?);
-            body.push(&render(bilibi_ui::Button {
-                id: &format!("{id}-apply"),
-                button_type: "submit",
-                body: Html::text("Apply range"),
-                ..bilibi_ui::Button::default()
-            })?);
-            body.push(&Html::raw("</div></form>"));
-            html.push(&render(bilibi_ui::Modal {
-                id: &format!("{id}-range"),
-                title: "Custom date range",
-                description: "Choose the first and last dates to include.",
-                width: bilibi_ui::ModalWidth::Compact,
-                cancel_event: "period-cancel",
-                body,
-                ..bilibi_ui::Modal::default()
-            })?);
-        }
-        html.push(&Html::raw("</div>"));
-        Ok(html)
+            .find(|f| f.id == id)
+            .cloned()
+        else {
+            return Ok(Html::EMPTY);
+        };
+        filter.set(period, &clock);
+        render(filter)
     }
 }

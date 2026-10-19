@@ -28,11 +28,25 @@ const CONFIRMATION_MISMATCH: &str = "does not match password";
 const UPDATED: &str = "Password updated successfully.";
 const NOT_UPDATED: &str = "Could not update password.";
 
-/// One entry of the settings nav; an empty `href` marks a page not ported yet.
+/// One linked tab in the personal settings navigation.
 pub struct SettingsEntry {
+    pub id: String,
     pub key: &'static str,
     pub label: &'static str,
     pub href: &'static str,
+}
+
+pub(crate) fn settings_tabs<'a>(
+    entries: &'a [SettingsEntry],
+    current: &str,
+) -> Vec<bilibi_ui::Tab<'a>> {
+    entries
+        .iter()
+        .map(|entry| bilibi_ui::Tab {
+            id: &entry.id,
+            ..bilibi_ui::Tab::link(entry.href, entry.label, entry.key == current)
+        })
+        .collect()
 }
 
 /// The settings sections in Bilimbi's order.
@@ -54,7 +68,12 @@ pub fn settings_entries() -> Vec<SettingsEntry> {
         ),
     ]
     .into_iter()
-    .map(|(key, label, href)| SettingsEntry { key, label, href })
+    .map(|(key, label, href)| SettingsEntry {
+        id: format!("settings-nav-{key}"),
+        key,
+        label,
+        href,
+    })
     .collect()
 }
 

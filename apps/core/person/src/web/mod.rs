@@ -111,7 +111,7 @@ impl Pages {
             "list" => Box::new(
                 index::Index::new(self.clone(), scope, request.query, request.framed).await?,
             ),
-            "create" => return Ok(Box::new(create::Create::new(self.clone()))),
+            "create" => return Ok(Box::new(create::Create)),
             "detail" => Box::new(detail::Detail::new(
                 self.clone(),
                 id(request.path)?,
@@ -138,6 +138,9 @@ impl Pages {
     }
 }
 impl Page<Scope, Error> for Pages {
+    fn redirect(&self, operation: &str) -> Option<&'static str> {
+        (operation == "create").then_some(create::open_query())
+    }
     fn title(&self, operation: &str) -> Option<&'static str> {
         Some(match operation {
             "list" => "Contacts",

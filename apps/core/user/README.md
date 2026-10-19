@@ -195,7 +195,8 @@ BILIBI_COMPANY_ACCOUNTS_DEMO=disposable cargo run -p bilibi-user --example compa
 `templates/password.html`), `/settings/two-factor` (below) and
 `/settings/appearance` are the signed-in
 account's own settings inside the shell, on the settings layout of
-`templates/settings.html` (Bilimbi `SettingsComponents.settings_layout`).
+`templates/settings.html` (Bilimbi `SettingsComponents.settings_layout`, adapted to the shared horizontal tabs).
+Open **My settings** in the account panel at the bottom of the sidebar to start at Profile.
 Agent connections links to `core/agent_access`'s own page, as in Bilimbi.
 The password page is live: the form
 submits as the `change-password` event carrying its field values, the state

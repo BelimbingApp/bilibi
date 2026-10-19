@@ -1,10 +1,11 @@
-{#- The account settings shell (Bilimbi `SettingsComponents.settings_layout`):
-    the shared page header, the section nav and the heading of the current
-    page around its body. `header` is the rendered shared Header; `entries`
-    are the sections in source order, and one whose page is not ported yet
-    (profile) renders as text with the same
-    geometry rather than a link to a missing page. The root carries
-    data-shared-ui so the legacy compatibility sheet stops at it. -#}
+{#- The account settings shell mirrors Bilimbi `SettingsComponents.settings_layout`.
+    Bilibi uses the shared horizontal tab strip and standard page alignment. -#}
+{% import "components.html" as ui %}
+{% import "tabs.html" as tabs %}
 {% macro layout(header, entries, current, heading, subheading) %}
-<div data-shared-ui class="w-full"><div class="relative mb-2 w-full">{{ header }}<hr class="border-line" /></div><div class="flex items-start max-md:flex-col"><div class="me-10 w-full pb-4 md:w-[220px] shrink-0"><nav class="flex flex-col space-y-1">{% for entry in entries %}{% if entry.href.is_empty() %}<span id="settings-nav-{{ entry.key }}" class="rounded-lg px-4 py-2 text-sm transition-colors text-ink-faint" aria-disabled="true" title="Not available yet">{{ entry.label }}</span>{% elif entry.key == current.as_str() %}<a id="settings-nav-{{ entry.key }}" href="{{ entry.href }}" class="rounded-lg px-4 py-2 text-sm transition-colors bg-surface-muted font-medium text-action">{{ entry.label }}</a>{% else %}<a id="settings-nav-{{ entry.key }}" href="{{ entry.href }}" class="rounded-lg px-4 py-2 text-sm transition-colors text-muted hover:bg-surface-muted hover:text-ink">{{ entry.label }}</a>{% endif %}{% endfor %}</nav></div><hr class="md:hidden border-line my-4 w-full" /><div class="flex-1 self-stretch max-md:pt-2"><h2 class="text-lg font-semibold text-ink">{{ heading }}</h2>{% if !subheading.is_empty() %}<p class="text-sm text-muted">{{ subheading }}</p>{% endif %}<div class="mt-5 w-full max-w-lg">{{ caller() }}</div></div></div></div>
+{{ header }}
+{% let items = crate::web::settings_tabs(entries.as_slice(), current.as_str()) %}
+{% call tabs::tabs(id="settings-tabs", items=items, label="My settings", class="mb-4") %}{% endcall %}
+{% call ui::section_heading(title=heading, description=subheading) %}{% endcall %}
+{{ caller() }}
 {% endmacro %}

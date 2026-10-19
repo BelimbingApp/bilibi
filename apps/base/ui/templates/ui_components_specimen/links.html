@@ -1,3 +1,4 @@
+{#- Shared link specimens for Bilimbi `UI.Components` (components.ex). -#}
 {%- import "components.html" as ui -%}
 {%- import "lists.html" as lists -%}
 <div class="grid gap-3 lg:grid-cols-2">
@@ -7,7 +8,7 @@
 {% endcall %}
 {% call ui::card(id="specimen-action-link", title="Action link", inner_class="p-3") %}
 <p class="mb-2 text-xs text-ink-muted">Reaching a related workflow is a secondary action, so it is a plain link, never a button.</p>
-<div class="flex flex-wrap items-center gap-6">{% call ui::action_link(id="specimen-action-link-navigate", icon="manage", href="/system/design-library", title="Manage department types") %}Department Types{% endcall %}{% call ui::action_link(id="specimen-action-link-submit", icon="bilimbi-impersonate", href="/system/design-library/components/specimen-request", method="post", title="Try it: send a sample request that changes nothing") %}Try it{% endcall %}</div>
+<div class="flex flex-wrap items-center gap-6">{% call ui::action_link(id="specimen-action-link-text", icon="", href="/forgot-password", title="Forgot your password?") %}Forgot your password?{% endcall %}{% call ui::action_link(id="specimen-action-link-navigate", icon="manage", href="/system/design-library", title="Manage department types") %}Department Types{% endcall %}{% call ui::action_link(id="specimen-action-link-submit", icon="bilimbi-impersonate", href="/system/design-library/components/specimen-request", method="post", title="Try it: send a sample request that changes nothing") %}Try it{% endcall %}</div>
 {% endcall %}
 </div>
 <div id="specimen-badge" class="flex flex-wrap gap-2 rounded-xl border border-line bg-surface p-4 shadow-xs">

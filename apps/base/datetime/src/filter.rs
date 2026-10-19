@@ -3,25 +3,22 @@
 //! a preset select and, for a custom range, a compact modal whose dates stay a
 //! draft until Apply range succeeds. The page keeps the applied [`Period`] in
 //! its URL and owns this component's transient state (open, draft, error),
-//! because the server decides whether the dialog exists.
+//! because the server decides whether the dialog exists. Each filter's events
+//! carry its id, so several filters can share a page.
 //!
 //! Wire it like this: build one with [`PeriodFilter::new`] from the URL's
 //! period and the request clock, render it beside the filter toolbar, and
-//! hand every live event to [`PeriodFilter::event`]; an
-//! [`Outcome::Applied`] replaces the URL period and resets the page, an
-//! [`Outcome::Update`] only re-renders. The events are fixed names
-//! ([`SELECT`], [`APPLY`], [`CANCEL`]), one filter per page.
+//! hand every live event to [`PeriodFilter::event`] (a filter ignores another
+//! filter's events); an [`Outcome::Applied`] replaces the URL period and
+//! resets the page, an [`Outcome::Update`] only re-renders.
 use crate::{Clock, Period, Preset};
 use askama::Template;
 use bilibi_ui::{params, Choice, Field, InputKind};
 use serde_json::Value;
 
-/// The selection form's change event; posts `period_filter[period]`.
-pub const SELECT: &str = "period_select";
-/// The range form's submit event; posts `range[from]` and `range[to]`.
-pub const APPLY: &str = "period_apply";
-/// Escape, the backdrop and Cancel: the applied state stays as it was.
-pub const CANCEL: &str = "period_cancel";
+const SELECT: &str = "period_select";
+const APPLY: &str = "period_apply";
+const CANCEL: &str = "period_cancel";
 /// The select's rendered value while editing an applied custom range, so the
 /// patcher restores the applied option on Cancel.
 const CHANGE_CUSTOM: &str = "change_custom";
@@ -85,9 +82,28 @@ impl PeriodFilter {
         self.error
     }
 
+    /// The selection form's change event; posts `period_filter[period]`.
+    pub fn select_event(&self) -> String {
+        format!("{SELECT}:{}", self.id)
+    }
+
+    /// The range form's submit event; posts `range[from]` and `range[to]`.
+    pub fn apply_event(&self) -> String {
+        format!("{APPLY}:{}", self.id)
+    }
+
+    /// Escape, the backdrop and Cancel: the applied state stays as it was.
+    pub fn cancel_event(&self) -> String {
+        format!("{CANCEL}:{}", self.id)
+    }
+
     /// Handles one of this component's events; `None` is someone else's event.
     pub fn event(&mut self, kind: &str, payload: &Value, clock: &Clock) -> Option<Outcome> {
-        match kind {
+        let (name, id) = kind.split_once(':')?;
+        if id != self.id {
+            return None;
+        }
+        match name {
             SELECT => {
                 let posted = params::form_values(payload, SELECTION_FORM);
                 let period = posted.get("period").map(String::as_str).unwrap_or("");
@@ -190,6 +206,7 @@ impl PeriodFilter {
             .id(format!("{}-draft-{key}", self.id))
             .kind(InputKind::Date)
             .label(label)
+            .wrapper_class("mb-0")
             .value(value)
             .required()
     }

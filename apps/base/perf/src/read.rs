@@ -87,6 +87,14 @@ pub struct Regression {
     pub current_p95_ms: f64,
     pub delta_percent: f64,
 }
+#[derive(Clone, Debug)]
+pub struct Slowest {
+    pub kind: Kind,
+    pub identity: String,
+    pub samples: i64,
+    pub average_ms: f64,
+    pub p95_ms: f64,
+}
 #[derive(Clone, Copy, Debug)]
 pub struct Windows {
     pub baseline_from: SystemTime,
@@ -279,6 +287,48 @@ impl Recorder {
                         current_average_ms: row.get("current_average"),
                         current_p95_ms: row.get("current_p95"),
                         delta_percent: (row.get::<_, f64>("delta") * 10.0).round() / 10.0,
+                    })
+                })
+                .collect::<Result<Vec<_>>>()
+        };
+        timeout(READ_TIMEOUT, read)
+            .await
+            .map_err(|_| Error::Internal)?
+    }
+
+    /// Routes, events and jobs with the highest p95 duration among the samples
+    /// observed in `[from, to)`. `limit` is 1 to 100.
+    pub async fn slowest(
+        &self,
+        from: SystemTime,
+        to: SystemTime,
+        limit: i64,
+    ) -> Result<Vec<Slowest>> {
+        if from >= to || !(1..=100).contains(&limit) {
+            return Err(Error::Invalid);
+        }
+        let read = async {
+            let client = self.db.get().await?;
+            let rows = client
+                .query(
+                    "SELECT kind, identity, count(*)::bigint AS samples, avg(duration_ms)::float8 AS average, \
+                            (percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms))::float8 AS p95 \
+                     FROM base_perf_samples \
+                     WHERE kind <> 'runtime' AND observed_at >= $1 AND observed_at < $2 \
+                     GROUP BY kind, identity \
+                     ORDER BY p95 DESC, kind, identity LIMIT $3",
+                    &[&from, &to, &limit],
+                )
+                .await?;
+            rows.iter()
+                .map(|row| {
+                    let kind: &str = row.get("kind");
+                    Ok(Slowest {
+                        kind: Kind::parse(kind).ok_or(Error::Internal)?,
+                        identity: row.get("identity"),
+                        samples: row.get("samples"),
+                        average_ms: row.get("average"),
+                        p95_ms: row.get("p95"),
                     })
                 })
                 .collect::<Result<Vec<_>>>()
