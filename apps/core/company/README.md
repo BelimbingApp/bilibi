@@ -432,3 +432,7 @@ Company scalar facts share a record-field schema with Grid. Optional columns inc
 `CompanyService::preview_tenant_companies` and `provision_new_tenant_in` compose tenant provisioning with [Core Tenant Administration](../tenant_administration/README.md). Names use ordinary Company validation, generated codes and the person's field restrictions; duplicate generated codes are refused. The first company becomes primary.
 
 The write requires Tenancy's sealed `CreatedTenant` receipt, bound to the current transaction and original actor. It accepts no arbitrary target tenant id and never changes the caller's scope. Tenant-create capability and live operator standing authorize the complete provisioning action; its contract enforces Base Step-up. Every company and primary assignment is a `Change` on that same transaction. Existing tenant business data remains behind its ordinary scoped facade.
+
+## Postal addresses
+
+Companies and contacts have linked postal addresses, owned by [Core Address](../address/README.md). The `core.address` guide explains saving an office or billing address and attaching it to a company or person. Use `core.address.company.list` or `core.address.person.list` to read those links. Address creation and attachment are reviewed writes; a namecard contact can be created first, then linked to its office address. An affiliation holds a position and work email/phone, not a postal address.

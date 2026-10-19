@@ -229,7 +229,6 @@ Each gap is a `Pending` declaration in the owning module, with its reason. Remov
 | `base/system.pages` | Localization changes |
 | `base/tiling.pages` | Workspace and shared layouts |
 | `base/workflow.pages` | The workflow reference page |
-| `core/address.pages` | Addresses (no `core.address` contract) |
 | `core/agent_access.pages` | Device approval and connection revocation |
 | `core/company.pages` | Company edits, lifecycle, activities, departments, reference types; the create form records activities `core.company.create` does not take |
 | `core/geonames.pages` | Postcode corrections |

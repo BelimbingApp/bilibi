@@ -84,6 +84,7 @@ struct PendingDetach {
     attachment: crate::AttachmentId,
     version: i64,
     label: Option<String>,
+    code: String,
 }
 
 pub(super) struct Panel {
@@ -203,7 +204,10 @@ impl LiveState<Scope, Error> for Panel {
     fn update<'a>(&'a mut self, request: LiveRequest<'a, Scope>) -> LiveFuture<'a, Error> {
         Box::pin(async move {
             match request.input {
-                LiveInput::Event(value) => self.handle(request.scope, value).await?,
+                LiveInput::Event(value) => {
+                    self.handle(request.scope, request.credential, value)
+                        .await?
+                }
                 LiveInput::Refresh | LiveInput::Params(_) => self.reload(request.scope).await?,
             }
             Ok(LiveBody {

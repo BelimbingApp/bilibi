@@ -11,8 +11,6 @@ pub const COLUMNS: &str = "id,label,phone,line1,line2,line3,locality,postcode,co
 pub const ATTACHMENT_COLUMNS: &str = "id,address_id,organisation_id,person_id,kinds,is_primary,priority,valid_from::text AS valid_from,valid_to::text AS valid_to,version,created_at,updated_at";
 /// Bilimbi's create form and detail page offer exactly these.
 pub const VERIFICATION_STATUSES: [&str; 3] = ["unverified", "suggested", "verified"];
-/// Fields a field restriction can hide (the Grid catalog leaves them unprotected).
-pub const RESTRICTABLE: &[&str] = &["phone"];
 
 macro_rules! identity {
     ($name:ident) => {

@@ -1,7 +1,7 @@
 //! Address screens (Bilimbi `Address.Web.{IndexLive, CreateLive, ShowLive,
 //! AddressesPanel}`): the administration index, the create form, the
 //! read-first detail page with its grouped location Apply, and the owner panel
-//! that Company and Person detail mount. Every read and write goes through
+//! that Company and Person detail mount. Writes call operation contracts through `PageContracts`; reads use
 //! `AddressService`, which rechecks capabilities on each call; the pages only
 //! decide what to draw, and a refusal is a message, never a cleared page.
 mod create;
@@ -12,6 +12,7 @@ mod panel;
 
 use crate::{AddressChanged, AddressId, AddressService, PartyId, WriteError};
 use askama::Template;
+use bilibi_agent_api::page::{Call, PageContracts};
 use bilibi_authz::effective_capabilities;
 use bilibi_database::{Db, Error, Result};
 use bilibi_tenancy::Scope;
@@ -28,8 +29,93 @@ const AUDIT_LIST: &str = "admin.audit.log.list";
 pub struct Pages {
     pub db: Db,
     pub addresses: Arc<AddressService>,
+    pub contracts: Arc<PageContracts>,
 }
 impl Pages {
+    fn call<'a>(
+        &self,
+        scope: &'a Scope,
+        credential: &'a str,
+        event: &'a str,
+        contract: &'static str,
+    ) -> Call<'a> {
+        Call {
+            scope,
+            credential,
+            event,
+            contract,
+            service: SERVICE,
+        }
+    }
+    async fn submit(
+        &self,
+        scope: &Scope,
+        credential: &str,
+        event: &str,
+        contract: &'static str,
+        mut input: Value,
+    ) -> Result<crate::WriteResult<()>> {
+        omit_nulls(&mut input);
+        outcome(
+            self.contracts
+                .submit(&self.call(scope, credential, event, contract), input)
+                .await,
+        )
+        .map(|result| result.map(|_| ()))
+    }
+    async fn preview(
+        &self,
+        scope: &Scope,
+        credential: &str,
+        event: &str,
+        contract: &'static str,
+        input: Value,
+    ) -> Result<crate::WriteResult<String>> {
+        let value = outcome(
+            self.contracts
+                .preview(&self.call(scope, credential, event, contract), input)
+                .await,
+        )?;
+        let value = match value {
+            Ok(value) => value,
+            Err(error) => return Ok(Err(error)),
+        };
+        if value["valid"] != true {
+            let error = &value["results"][0]["error"];
+            use bilibi_agent_api::Error as E;
+            return outcome::<String>(Err(match error["code"].as_str() {
+                Some("invalid_input") => E::InvalidInput(
+                    serde_json::from_value(error["fields"].clone()).map_err(|_| Error::Internal)?,
+                ),
+                Some("missing_capability") => E::Forbidden,
+                Some("not_found") => E::NotFound,
+                _ if error["reason"] == "record_changed" => Error::Conflict.into(),
+                _ => Error::Invalid.into(),
+            }));
+        }
+        Ok({
+            value["plan_code"]
+                .as_str()
+                .map(str::to_owned)
+                .ok_or(WriteError::Access(Error::Internal))
+        })
+    }
+    async fn commit(
+        &self,
+        scope: &Scope,
+        credential: &str,
+        event: &str,
+        contract: &'static str,
+        code: &str,
+        input: Value,
+    ) -> Result<crate::WriteResult<()>> {
+        outcome(
+            self.contracts
+                .commit(&self.call(scope, credential, event, contract), code, input)
+                .await,
+        )
+        .map(|result| result.map(|_| ()))
+    }
     async fn allowed(&self, scope: &Scope, capability: &str) -> Result<bool> {
         let client = self.db.get().await?;
         Ok(effective_capabilities(&**client, scope)
@@ -319,3 +405,99 @@ bilibi_ui::record_fields! { pub(crate) mod fields {
     PARSE_CONFIDENCE: bilibi_ui::RecordField::new("parse_confidence", "Parse Confidence"),
     RAW_INPUT: bilibi_ui::RecordField::new("raw_input", "Raw Input").excluded("Long text"),
 } }
+
+// Struct serialization contains null for optional values; contract inputs use
+// omitted fields, whose clearing/preservation semantics the guide documents.
+fn omit_nulls(value: &mut Value) {
+    match value {
+        Value::Object(fields) => {
+            fields.retain(|_, value| !value.is_null());
+            for value in fields.values_mut() {
+                omit_nulls(value);
+            }
+        }
+        Value::Array(values) => {
+            for value in values {
+                omit_nulls(value);
+            }
+        }
+        _ => {}
+    }
+}
+fn outcome<T>(result: bilibi_agent_api::Result<T>) -> Result<crate::WriteResult<T>> {
+    use bilibi_agent_api::Error as E;
+    Ok(match result {
+        Ok(value) => Ok(value),
+        Err(E::Backend(error @ (Error::Unauthorized | Error::StepUpRequired { .. }))) => {
+            return Err(error)
+        }
+        Err(E::Backend(Error::Conflict) | E::StalePlan | E::PlanRejected(_)) => {
+            Err(WriteError::Stale)
+        }
+        Err(E::Backend(error)) => Err(WriteError::Access(error)),
+        Err(E::Forbidden) => Err(WriteError::Access(Error::Forbidden)),
+        Err(E::NotFound) => Err(WriteError::NotFound),
+        Err(E::InvalidInput(fields)) => Err(if fields.contains_key("archived_owner") {
+            WriteError::Archived
+        } else if fields.contains_key("read_only_owner") {
+            WriteError::OwnerReadOnly
+        } else if fields.contains_key("attached_address") {
+            WriteError::InUse
+        } else if fields.contains_key("existing_attachment") {
+            WriteError::AlreadyAttached
+        } else {
+            WriteError::Invalid(
+                fields
+                    .into_iter()
+                    .flat_map(|(key, messages)| {
+                        let field = [
+                            "label",
+                            "phone",
+                            "line1",
+                            "line2",
+                            "line3",
+                            "locality",
+                            "postcode",
+                            "country_iso",
+                            "admin1_code",
+                            "raw_input",
+                            "source",
+                            "source_ref",
+                            "parser_version",
+                            "parse_confidence",
+                            "verification_status",
+                            "priority",
+                            "kinds",
+                            "dates",
+                        ]
+                        .into_iter()
+                        .find(|field| {
+                            *field
+                                == key
+                                    .trim_start_matches("address.")
+                                    .trim_start_matches("attachment.")
+                        })
+                        .unwrap_or("address");
+                        messages
+                            .into_iter()
+                            .map(move |message| crate::FieldError::new(field, message))
+                    })
+                    .collect(),
+            )
+        }),
+        Err(_) => Err(WriteError::Access(Error::Invalid)),
+    })
+}
+fn owner_contract(owner: PartyId, company: &'static str, person: &'static str) -> &'static str {
+    match owner {
+        PartyId::Organisation(_) => company,
+        PartyId::Person(_) => person,
+    }
+}
+fn owner_input(owner: PartyId, mut input: Value) -> Value {
+    match owner {
+        PartyId::Organisation(id) => input["company_id"] = serde_json::json!(id),
+        PartyId::Person(id) => input["person_id"] = serde_json::json!(id),
+    }
+    input
+}

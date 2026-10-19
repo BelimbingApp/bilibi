@@ -17,7 +17,6 @@ use super::{
 };
 use crate::{
     contributions::UPDATE, AddressInput, Detail as Record, FieldError, LinkedOwner, Location,
-    Update,
 };
 use bilibi_ui::{
     BackLink, Badge, BuiltinColumn, Button, ButtonVariant, Card, Choice, ColumnsOutcome,
@@ -206,6 +205,7 @@ impl Detail {
     async fn save_fact(
         &mut self,
         scope: &Scope,
+        credential: &str,
         name: &str,
         submitted: &str,
         version: i64,
@@ -223,9 +223,14 @@ impl Detail {
         }
         let result = self
             .pages
-            .addresses
-            .update(scope, self.id, &Update { version, address })
-            .await;
+            .submit(
+                scope,
+                credential,
+                "save_field",
+                "core.address.update",
+                serde_json::json!({"address_id":self.id,"version":version,"address":address}),
+            )
+            .await?;
         let status = match result {
             Ok(_) => CommitStatus::Saved,
             Err(error) if fatal(&error) => return Err(Error::Unauthorized),
@@ -247,7 +252,12 @@ impl Detail {
         self.statuses.put(name, status);
         Ok(())
     }
-    async fn save_location(&mut self, scope: &Scope, value: &Value) -> Result<()> {
+    async fn save_location(
+        &mut self,
+        scope: &Scope,
+        credential: &str,
+        value: &Value,
+    ) -> Result<()> {
         let Some(editing) = &mut self.editing else {
             return Ok(());
         };
@@ -264,9 +274,14 @@ impl Detail {
         let version = editing.version;
         match self
             .pages
-            .addresses
-            .update(scope, self.id, &Update { version, address })
-            .await
+            .submit(
+                scope,
+                credential,
+                "save_location",
+                "core.address.update",
+                serde_json::json!({"address_id":self.id,"version":version,"address":address}),
+            )
+            .await?
         {
             Ok(_) => {
                 self.editing = None;
@@ -295,7 +310,7 @@ impl Detail {
         }
         Ok(())
     }
-    async fn handle(&mut self, scope: &Scope, value: &Value) -> Result<bool> {
+    async fn handle(&mut self, scope: &Scope, credential: &str, value: &Value) -> Result<bool> {
         match event(value)? {
             "save_field" => {
                 let name = value["field"].as_str().ok_or(Error::Invalid)?;
@@ -311,7 +326,8 @@ impl Detail {
                     .ok_or(Error::Invalid)?;
                 // Every write asks Authz again: what the page drew is not a decision.
                 if self.pages.allowed(scope, UPDATE).await? {
-                    self.save_fact(scope, name, submitted, version).await?;
+                    self.save_fact(scope, credential, name, submitted, version)
+                        .await?;
                 } else {
                     self.statuses
                         .put(name, CommitStatus::Error(FORBIDDEN.into()));
@@ -352,7 +368,7 @@ impl Detail {
             }
             "save_location" => {
                 if self.pages.allowed(scope, UPDATE).await? {
-                    self.save_location(scope, value).await?;
+                    self.save_location(scope, credential, value).await?;
                 } else {
                     self.editing = None;
                     self.statuses
@@ -791,7 +807,8 @@ impl LiveState<Scope, Error> for Detail {
                 LiveInput::Refresh => {}
                 LiveInput::Params(query) => self.params(query),
                 LiveInput::Event(value) => {
-                    self.handle(request.scope, value).await?;
+                    self.handle(request.scope, request.credential, value)
+                        .await?;
                 }
             }
             self.view(request.scope).await

@@ -1,13 +1,19 @@
-//! The panel's events. Each write goes through `AddressService`; a refusal
+//! The panel's events. Each write calls the Address contract through `PageContracts`; a refusal
 //! becomes the panel notice and never an `Error` the host treats as fatal.
 use super::*;
-use crate::{AttachmentInput, AttachmentUpdate};
+use crate::AttachmentInput;
 use bilibi_ui::CommitStatus;
 
 impl Panel {
-    pub(super) async fn handle(&mut self, scope: &Scope, value: &Value) -> Result<()> {
+    pub(super) async fn handle(
+        &mut self,
+        scope: &Scope,
+        credential: &str,
+        value: &Value,
+    ) -> Result<()> {
         let fields = |ns: &str| form(value, ns);
-        match event(value)? {
+        let event = event(value)?;
+        match event {
             "clear_notice" => self.notice = None,
             "open_attach_modal" if self.can_manage => {
                 self.notice = None;
@@ -19,7 +25,7 @@ impl Panel {
                 self.attach = Some(AttachDraft::default());
             }
             "close_attach_modal" => self.attach = None,
-            "attach_address" => self.attach(scope, &fields("address")).await?,
+            "attach_address" => self.attach(scope, credential, &fields("address")).await?,
             "open_create_modal" if self.can_manage => {
                 self.notice = None;
                 if self.countries.is_empty() {
@@ -46,7 +52,7 @@ impl Panel {
             }
             "save_create_address" => {
                 self.take_create(&fields("address")).await?;
-                self.save_create(scope).await?;
+                self.save_create(scope, credential).await?;
             }
             "edit_address_kinds" => {
                 if let Some(listed) = self.listed(value.get("id").and_then(Value::as_str)) {
@@ -63,10 +69,11 @@ impl Panel {
                     let saved = self
                         .write_attachment(
                             scope,
+                            credential,
+                            event,
                             &listed,
                             attachment,
-                            "Address kinds updated.",
-                            "Failed to update address kinds.",
+                            ("Address kinds updated.", "Failed to update address kinds."),
                         )
                         .await?;
                     if saved {
@@ -83,10 +90,14 @@ impl Panel {
                     attachment.is_primary = !attachment.is_primary;
                     self.write_attachment(
                         scope,
+                        credential,
+                        event,
                         &listed,
                         attachment,
-                        "Address setting updated.",
-                        "Failed to update address setting.",
+                        (
+                            "Address setting updated.",
+                            "Failed to update address setting.",
+                        ),
                     )
                     .await?;
                 }
@@ -103,10 +114,11 @@ impl Panel {
                             let saved = self
                                 .write_attachment(
                                     scope,
+                                    credential,
+                                    event,
                                     &listed,
                                     attachment,
-                                    "Address setting updated.",
-                                    "Failed to update priority.",
+                                    ("Address setting updated.", "Failed to update priority."),
                                 )
                                 .await?;
                             self.statuses.put(
@@ -142,6 +154,12 @@ impl Panel {
             "request_detach" => match self.listed(value.get("id").and_then(Value::as_str)) {
                 Some(listed) => {
                     self.pending = Some(PendingDetach {
+                        code: match self.pages.preview(scope,credential,"request_detach",
+                            owner_contract(self.owner,"core.address.company.detach","core.address.person.detach"),
+                            owner_input(self.owner,serde_json::json!({"attachment_id":listed.attachment.id,"version":listed.attachment.version}))).await? {
+                                Ok(code)=>code,
+                                Err(error)=> {let message=self.refusal(&error,"The address was not unlinked. Try again.");self.notice(NoticeKind::Error,message);return Ok(());}
+                            },
                         attachment: listed.attachment.id,
                         version: listed.attachment.version,
                         label: listed.address.address.label.clone(),
@@ -155,9 +173,9 @@ impl Panel {
                 if let Some(pending) = self.pending.take() {
                     match self
                         .pages
-                        .addresses
-                        .detach(scope, pending.attachment, pending.version)
-                        .await
+                        .commit(scope,credential,"detach_address",owner_contract(self.owner,"core.address.company.detach","core.address.person.detach"),&pending.code,
+                            owner_input(self.owner,serde_json::json!({"attachment_id":pending.attachment,"version":pending.version})))
+                        .await?
                     {
                         Ok(()) => self.notice(NoticeKind::Success, "Address unlinked."),
                         Err(error) if fatal(&error) => return Err(Error::Unauthorized),
@@ -198,20 +216,18 @@ impl Panel {
     async fn write_attachment(
         &mut self,
         scope: &Scope,
+        credential: &str,
+        event: &str,
         listed: &AttachedAddress,
         attachment: AttachmentInput,
-        saved: &str,
-        failed: &str,
+        messages: (&str, &str),
     ) -> Result<bool> {
-        let update = AttachmentUpdate {
-            version: listed.attachment.version,
-            attachment,
-        };
+        let (saved, failed) = messages;
         match self
             .pages
-            .addresses
-            .update_attachment(scope, listed.attachment.id, &update)
-            .await
+            .submit(scope,credential,event,owner_contract(self.owner,"core.address.company.update_attachment","core.address.person.update_attachment"),
+                owner_input(self.owner,serde_json::json!({"attachment_id":listed.attachment.id,"version":listed.attachment.version,"attachment":attachment})))
+            .await?
         {
             Ok(_) => {
                 self.notice(NoticeKind::Success, saved);
@@ -229,7 +245,12 @@ impl Panel {
             }
         }
     }
-    async fn attach(&mut self, scope: &Scope, fields: &HashMap<String, String>) -> Result<()> {
+    async fn attach(
+        &mut self,
+        scope: &Scope,
+        credential: &str,
+        fields: &HashMap<String, String>,
+    ) -> Result<()> {
         let Some(draft) = &mut self.attach else {
             return Ok(());
         };
@@ -238,6 +259,15 @@ impl Panel {
                 .and_then(|id| AddressId::new(id).ok())
         else {
             draft.error = "Please select an address.".into();
+            return Ok(());
+        };
+        let Some(address_version) = self
+            .available
+            .iter()
+            .find(|a| a.id == address)
+            .map(|a| a.version)
+        else {
+            draft.error = "That address is no longer available. Reopen the picker.".into();
             return Ok(());
         };
         let input = AttachmentInput {
@@ -251,9 +281,21 @@ impl Panel {
         };
         match self
             .pages
-            .addresses
-            .attach(scope, address, self.owner, &input)
-            .await
+            .submit(
+                scope,
+                credential,
+                "attach_address",
+                owner_contract(
+                    self.owner,
+                    "core.address.company.attach",
+                    "core.address.person.attach",
+                ),
+                owner_input(
+                    self.owner,
+                    serde_json::json!({"address_id":address,"address_version":address_version,"attachment":input}),
+                ),
+            )
+            .await?
         {
             Ok(_) => {
                 self.attach = None;
@@ -303,7 +345,7 @@ impl Panel {
         }
         Ok(())
     }
-    async fn save_create(&mut self, scope: &Scope) -> Result<()> {
+    async fn save_create(&mut self, scope: &Scope, credential: &str) -> Result<()> {
         let Some(draft) = &mut self.create else {
             return Ok(());
         };
@@ -318,9 +360,21 @@ impl Panel {
         };
         match self
             .pages
-            .addresses
-            .create_and_attach(scope, self.owner, &draft.input, &link)
-            .await
+            .submit(
+                scope,
+                credential,
+                "save_create_address",
+                owner_contract(
+                    self.owner,
+                    "core.address.company.create_and_attach",
+                    "core.address.person.create_and_attach",
+                ),
+                owner_input(
+                    self.owner,
+                    serde_json::json!({"address":draft.input,"attachment":link}),
+                ),
+            )
+            .await?
         {
             Ok(_) => {
                 self.create = None;

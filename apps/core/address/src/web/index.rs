@@ -78,6 +78,7 @@ struct Pending {
     id: AddressId,
     version: i64,
     label: Option<String>,
+    code: String,
 }
 
 pub(super) struct Index {
@@ -167,13 +168,44 @@ impl Index {
         }
         Ok(())
     }
-    fn request_delete(&mut self, id: Option<&str>) {
+    async fn request_delete(
+        &mut self,
+        scope: &Scope,
+        credential: &str,
+        id: Option<&str>,
+    ) -> Result<()> {
         let listed = bilibi_ui::params::positive_id(id)
             .and_then(|id| self.entries.iter().find(|a| a.id.get() == id));
         match listed {
             Some(address) => {
+                let input = serde_json::json!({"address_id":address.id,"version":address.version});
+                let code = match self
+                    .pages
+                    .preview(
+                        scope,
+                        credential,
+                        "request_delete",
+                        "core.address.delete",
+                        input,
+                    )
+                    .await?
+                {
+                    Ok(code) => code,
+                    Err(error) => {
+                        let name = address_name(address.address.label.as_deref());
+                        let message = match error {
+                            WriteError::InUse => format!("{name} was not deleted: it is still attached to a company or person. Unlink it there first."),
+                            WriteError::NotFound => "That address no longer exists.".into(),
+                            WriteError::Access(Error::Forbidden) => "You do not have permission to delete addresses.".into(),
+                            _ => format!("{name} was not deleted. Reload the page and try again."),
+                        };
+                        self.flash.put(StatusKind::Error, message);
+                        return Ok(());
+                    }
+                };
                 self.flash.clear();
                 self.pending = Some(Pending {
+                    code,
                     id: address.id,
                     version: address.version,
                     label: address.address.label.clone(),
@@ -183,17 +215,17 @@ impl Index {
                 .flash
                 .put(StatusKind::Error, "That address no longer exists."),
         }
+        Ok(())
     }
-    async fn delete(&mut self, scope: &Scope) -> Result<()> {
+    async fn delete(&mut self, scope: &Scope, credential: &str) -> Result<()> {
         let Some(pending) = self.pending.take() else {
             return Ok(());
         };
         let name = address_name(pending.label.as_deref());
         match self
             .pages
-            .addresses
-            .delete(scope, pending.id, pending.version)
-            .await
+            .commit(scope,credential,"delete","core.address.delete",&pending.code,serde_json::json!({"address_id":pending.id,"version":pending.version}))
+            .await?
         {
             Ok(()) => self.flash.put(StatusKind::Success, "Address deleted."),
             Err(error) if fatal(&error) => return Err(Error::Unauthorized),
@@ -449,7 +481,12 @@ impl LiveState<Scope, Error> for Index {
                     "request_delete" => {
                         requery = false;
                         if self.pages.allowed(scope, DELETE).await? {
-                            self.request_delete(value.get("id").and_then(Value::as_str));
+                            self.request_delete(
+                                scope,
+                                request.credential,
+                                value.get("id").and_then(Value::as_str),
+                            )
+                            .await?;
                         } else {
                             self.flash.put(
                                 StatusKind::Error,
@@ -461,7 +498,7 @@ impl LiveState<Scope, Error> for Index {
                         requery = false;
                         self.pending = None;
                     }
-                    "delete" => self.delete(scope).await?,
+                    "delete" => self.delete(scope, request.credential).await?,
                     "clear-flash" => {
                         requery = false;
                         self.flash.dismiss(value.get("key").and_then(Value::as_str));

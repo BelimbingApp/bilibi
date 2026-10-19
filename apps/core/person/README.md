@@ -167,3 +167,7 @@ account arrangement and shareable URL are the saved-view contract here too.
 - Retiring a person is the Base Step-up operation `core.person.retire` (`src/step_up.rs`), off by default.
 - A tenant that turns it on in `/authz/step-up` gets the account holder's code asked for both the page facade (`PersonService::retire`) and the agent write (`core.person.retire`).
 - See `apps/base/step_up/README.md`.
+
+## Postal addresses
+
+Companies and contacts have linked postal addresses, owned by [Core Address](../address/README.md). The `core.address` guide explains saving an office or billing address and attaching it to a company or person. Use `core.address.company.list` or `core.address.person.list` to read those links. Address creation and attachment are reviewed writes; a namecard contact can be created first, then linked to its office address. An affiliation holds a position and work email/phone, not a postal address.

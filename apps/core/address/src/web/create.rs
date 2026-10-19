@@ -1,6 +1,6 @@
 //! `/addresses/create` (Bilimbi `CreateLive`): label, phone and street
 //! lines, the shared location fields with their cascade, and provenance. It
-//! validates as values change and creates through `AddressService::create`,
+//! validates as values change and creates through the `core.address.create` contract,
 //! which is the authority on every refusal.
 //!
 //! Beyond Bilimbi, the page keeps rarely used parts out of the way: street
@@ -151,11 +151,21 @@ impl Create {
         };
         self.lines.max(held)
     }
-    async fn save(&mut self, scope: &Scope) -> Result<()> {
+    async fn save(&mut self, scope: &Scope, credential: &str) -> Result<()> {
         if !self.errors.is_empty() {
             return Ok(());
         }
-        match self.pages.addresses.create(scope, &self.input).await {
+        match self
+            .pages
+            .submit(
+                scope,
+                credential,
+                "create",
+                "core.address.create",
+                serde_json::json!({"address":self.input}),
+            )
+            .await?
+        {
             Ok(_) => self.created = true,
             Err(error) if fatal(&error) => return Err(Error::Unauthorized),
             Err(WriteError::Invalid(errors)) => self.errors = errors,
@@ -341,7 +351,7 @@ impl LiveState<Scope, Error> for Create {
                         self.flash.clear();
                         self.attempted = true;
                         self.take(value).await?;
-                        self.save(request.scope).await?;
+                        self.save(request.scope, request.credential).await?;
                     }
                     "add_line" => self.lines = (self.shown_lines() + 1).min(3),
                     "create" => {}
