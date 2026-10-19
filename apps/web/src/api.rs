@@ -531,7 +531,7 @@ async fn token(State(app): State<App>, request: Request) -> Response {
                 resource: field("resource").into(),
             };
             access
-                .exchange_code(&exchange, &mcp_resource(&app), client_identity.as_ref())
+                .exchange_code_from(&exchange, &mcp_resource(&app), client_identity.as_ref())
                 .await
         }
         Some(_) => {

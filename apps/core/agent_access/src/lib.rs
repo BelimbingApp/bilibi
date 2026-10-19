@@ -389,6 +389,15 @@ impl AgentAccess {
         &self,
         params: &CodeExchange,
         resource: &str,
+    ) -> std::result::Result<TokenResponse, OAuthError> {
+        self.exchange_code_from(params, resource, None).await
+    }
+    /// `exchange_code` for a host that observed the transport client: its
+    /// label is recorded on the action audit.
+    pub async fn exchange_code_from(
+        &self,
+        params: &CodeExchange,
+        resource: &str,
         client_identity: Option<&ClientIdentity>,
     ) -> std::result::Result<TokenResponse, OAuthError> {
         if !secret_shaped(&params.code) {

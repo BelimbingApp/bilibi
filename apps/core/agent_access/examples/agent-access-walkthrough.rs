@@ -643,20 +643,15 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
                         ..exchange.clone()
                     },
                     resource,
-                    None,
                 )
                 .await
         )
     );
     println!(
         "wrong resource:       {}",
-        outcome(
-            &grants
-                .exchange_code(&exchange, "https://elsewhere", None)
-                .await
-        )
+        outcome(&grants.exchange_code(&exchange, "https://elsewhere").await)
     );
-    let mcp = grants.exchange_code(&exchange, resource, None).await?;
+    let mcp = grants.exchange_code(&exchange, resource).await?;
     println!(
         "redeemed:             access={} scope={:?} expires_in={}",
         hint(&mcp.access_token),
@@ -677,7 +672,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("refresh as chatgpt:   {}", outcome(&mcp_rotated));
     println!(
         "code replay:          {}",
-        outcome(&grants.exchange_code(&exchange, resource, None).await)
+        outcome(&grants.exchange_code(&exchange, resource).await)
     );
     println!(
         "bearer after replay:  {}",

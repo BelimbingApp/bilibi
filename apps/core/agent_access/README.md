@@ -195,4 +195,4 @@ its own disposable rows and resets the two global settings it changed. Raw
 codes and tokens are never printed in full. This is an opt-in demonstration,
 not a test suite.
 
-`observe` also keeps the newest 20 transport client labels in `observed_clients`, separately shown as "Client identity". Its observation audit carries both that label and any valid self-report from the same request. `exchange_code` accepts optional host-observed `ClientIdentity` for its action audit; a later tool report cannot fill an earlier immutable action.
+`observe` also keeps the newest 20 transport client labels in `observed_clients`, separately shown as "Client identity". Its observation audit carries both that label and any valid self-report from the same request. `exchange_code_from` is `exchange_code` with the host-observed `ClientIdentity` on its action audit; a later tool report cannot fill an earlier immutable action.
