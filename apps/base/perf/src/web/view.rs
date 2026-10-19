@@ -4,8 +4,9 @@ use askama::Template;
 use bilibi_database::{Error, Result};
 use bilibi_datetime::{DisplayContext, Format, Precision};
 use bilibi_ui::{
-    choices, Alert, Card, FilterToolbar, FlexRow, FlexTable, Header, Html, IconButton, IconContext,
-    ListColumns, ListState, PageCounts, Pagination, StatusKind, TableEmpty, ToolbarControl,
+    choices, params, Alert, Card, FilterToolbar, FlexRow, FlexTable, Header, Html, IconButton,
+    IconContext, ListColumns, ListState, PageCounts, Pagination, StatusKind, Tab, TableEmpty, Tabs,
+    ToolbarControl,
 };
 
 pub(super) struct Data {
@@ -17,30 +18,13 @@ pub(super) struct Data {
 pub(super) fn render(template: impl Template) -> Result<Html> {
     Html::render(&template).map_err(|_| Error::Internal)
 }
-fn status(health: Health) -> &'static str {
-    match health {
-        Health::Available => "Available",
-        Health::Degraded => "Degraded",
-        Health::Unavailable => "Unavailable",
-    }
-}
-
 #[derive(Template)]
 #[template(
-    source = r#"<div id="performance-health" class="mb-2 grid gap-2 sm:grid-cols-5">{% for card in cards %}{{ card|safe }}{% endfor %}</div>"#,
+    source = r#"<p id="performance-status" role="status" class="mb-2 text-xs text-ink-muted">{{ text }}</p>"#,
     ext = "html"
 )]
-struct HealthCards {
-    cards: Vec<Html>,
-}
-#[derive(Template)]
-#[template(
-    source = r#"<p class="text-xs font-semibold text-muted">{{ label }}</p><p class="mt-1 text-sm tabular-nums text-ink">{{ value }}</p>"#,
-    ext = "html"
-)]
-struct Metric<'a> {
-    label: &'a str,
-    value: String,
+struct StatusText<'a> {
+    text: &'a str,
 }
 #[derive(Template)]
 #[template(
@@ -63,52 +47,158 @@ struct When {
     utc: String,
     mode: &'static str,
 }
-fn health(data: &Data) -> Result<Html> {
-    let d = &data.diagnostics;
-    let mut cards = Vec::new();
-    for (id, label, value) in [
-        (
-            "performance-recorder",
-            "Recorder",
-            status(d.recorder).into(),
-        ),
-        (
-            "performance-store",
-            "History store",
-            if d.store == Store::Available {
-                "Available"
-            } else {
-                "Unavailable"
-            }
-            .into(),
-        ),
-        (
-            "performance-samples",
-            "Visible samples",
-            data.samples
-                .as_ref()
-                .map(|p| p.total.to_string())
-                .unwrap_or_else(|_| "—".into()),
-        ),
-        (
-            "performance-pending",
-            "Recorder backlog",
-            d.stats.pending.to_string(),
-        ),
-        (
-            "performance-dropped",
-            "Dropped samples",
-            d.stats.dropped.to_string(),
-        ),
-    ] {
-        cards.push(render(Card {
-            id,
-            inner_class: "p-3",
-            body: render(Metric { label, value })?,
-            ..Card::default()
-        })?);
+fn grouped(locale: &str, value: u64) -> String {
+    i64::try_from(value)
+        .ok()
+        .and_then(|value| {
+            bilibi_locale::Numbers::new(locale)
+                .ok()
+                .map(|numbers| numbers.integer(value))
+        })
+        .unwrap_or_else(|| value.to_string())
+}
+fn waiting_phrase(locale: &str, value: u64) -> String {
+    if value == 1 {
+        "1 sample is waiting to be saved".to_owned()
+    } else {
+        format!("{} samples are waiting to be saved", grouped(locale, value))
     }
-    render(HealthCards { cards })
+}
+fn dropped_phrase(locale: &str, value: u64) -> String {
+    if value == 1 {
+        "1 sample was dropped".to_owned()
+    } else {
+        format!("{} samples were dropped", grouped(locale, value))
+    }
+}
+fn kept_phrase(locale: &str, value: u64, earlier: bool) -> String {
+    if value == 0 {
+        return if earlier {
+            "no earlier samples kept".to_owned()
+        } else {
+            "no samples kept".to_owned()
+        };
+    }
+    let word = match (value == 1, earlier) {
+        (true, true) => "earlier sample kept",
+        (true, false) => "sample kept",
+        (false, true) => "earlier samples kept",
+        (false, false) => "samples kept",
+    };
+    format!("{} {word}", grouped(locale, value))
+}
+fn sentence(parts: Vec<String>) -> String {
+    let mut parts = parts.into_iter();
+    let Some(first) = parts.next() else {
+        return String::new();
+    };
+    let mut chars = first.chars();
+    let mut text = chars
+        .next()
+        .map(|c| c.to_uppercase().collect::<String>() + chars.as_str())
+        .unwrap_or_default();
+    for part in parts {
+        text.push_str(" · ");
+        text.push_str(&part);
+    }
+    text
+}
+/// One line for the five old facts. A warning only when the recorder or the
+/// history store is down, or when samples are waiting or were dropped.
+fn status_text(diagnostics: &Diagnostics, locale: &str) -> String {
+    let waiting = diagnostics.stats.pending as u64;
+    let dropped = diagnostics.stats.dropped;
+    let store_down = diagnostics.store == Store::Unavailable;
+    let recorder_down = diagnostics.recorder == Health::Unavailable;
+    let calm = !recorder_down && !store_down && waiting == 0 && dropped == 0;
+    let mut parts = Vec::new();
+    if calm {
+        parts.push(
+            if diagnostics.recording {
+                "Recording normally"
+            } else {
+                "Recording is off"
+            }
+            .to_owned(),
+        );
+    } else if !diagnostics.recording && !store_down {
+        parts.push("Recording is off".to_owned());
+    }
+    if recorder_down {
+        parts.push("the recorder is not running".to_owned());
+    } else if store_down {
+        parts.push("the recorder is running".to_owned());
+    }
+    if store_down {
+        parts.push("history cannot be read".to_owned());
+    }
+    if waiting > 0 {
+        parts.push(waiting_phrase(locale, waiting));
+    }
+    if dropped > 0 {
+        parts.push(dropped_phrase(locale, dropped));
+    }
+    if let Some(samples) = diagnostics.samples {
+        let samples = u64::try_from(samples).unwrap_or(0);
+        parts.push(kept_phrase(locale, samples, !diagnostics.recording));
+    }
+    if waiting == 0 {
+        parts.push("none waiting".to_owned());
+    }
+    if dropped == 0 {
+        parts.push("none dropped".to_owned());
+    }
+    sentence(parts)
+}
+fn attention(diagnostics: &Diagnostics) -> Option<StatusKind> {
+    if diagnostics.recorder == Health::Unavailable || diagnostics.store == Store::Unavailable {
+        Some(StatusKind::Error)
+    } else if diagnostics.stats.pending > 0 || diagnostics.stats.dropped > 0 {
+        Some(StatusKind::Warning)
+    } else {
+        None
+    }
+}
+fn status(data: &Data) -> Result<Html> {
+    let text = status_text(&data.diagnostics, data.display.locale);
+    match attention(&data.diagnostics) {
+        Some(kind) => render(Alert {
+            id: "performance-status",
+            kind,
+            body: Html::text(&text),
+            class: "mb-2",
+        }),
+        None => render(StatusText { text: &text }),
+    }
+}
+fn tabs(list: &ListState, current: &str) -> Result<Html> {
+    let tab_paths: Vec<(String, String, &str, &str)> = super::TABS
+        .iter()
+        .map(|(id, label)| {
+            let mut query = list.to_params();
+            if *id != super::TABS[0].0 {
+                query.insert("tab".into(), (*id).into());
+            }
+            (
+                format!("performance-tab-{id}"),
+                params::address(super::PATH, &query),
+                *id,
+                *label,
+            )
+        })
+        .collect();
+    render(Tabs {
+        id: "performance-tabs",
+        label: "Performance views",
+        class: "mb-2",
+        tabs: tab_paths
+            .iter()
+            .map(|(dom, href, id, label)| Tab {
+                id: dom,
+                ..Tab::patch(href, label, current == *id)
+            })
+            .collect(),
+    })
 }
 fn number(text: String) -> Result<Html> {
     render(Number { text })
@@ -188,11 +278,21 @@ fn notice(id: &str, text: &str) -> Result<Html> {
         class: "mb-2",
     })
 }
+fn samples_empty(list: &ListState, ok: bool) -> &'static str {
+    if !ok {
+        "History is unavailable."
+    } else if list.search.is_empty() && list.filters.values().all(|value| value.is_empty()) {
+        "No samples have been kept."
+    } else {
+        "No samples match these filters."
+    }
+}
 pub(super) fn page(
     list: &ListState,
     samples: &ListColumns,
     regressions: &ListColumns,
     data: &Data,
+    tab: &str,
 ) -> Result<String> {
     let mut body = render(Header {
         title: Html::text("Performance"),
@@ -205,116 +305,109 @@ pub(super) fn page(
         })?,
         ..Header::default()
     })?;
-    body.push(&health(data)?);
-    if !data.diagnostics.recording && data.diagnostics.store == Store::Available {
-        body.push(&render(bilibi_ui::PanelNotice {
-            id: "performance-disabled",
-            body: Html::text("Recording is off; earlier history is still shown."),
-            ..bilibi_ui::PanelNotice::default()
+    body.push(&status(data)?);
+    body.push(&tabs(list, tab)?);
+    if tab == super::TABS[1].0 {
+        body.push(&render(FilterToolbar::new(
+            "performance-filters",
+            vec![
+                ToolbarControl::search(
+                    "performance-identity",
+                    "identity",
+                    "Page address or job name",
+                    &list.search,
+                    "Full page address or job name",
+                )
+                .hint("Type the whole page address or job name, not part of it."),
+                ToolbarControl::select(
+                    "performance-kind",
+                    "kind",
+                    "Kind of sample",
+                    &list.filters["kind"],
+                    choices(&[
+                        ("All kinds", ""),
+                        ("Request", "request"),
+                        ("Live event", "event"),
+                        ("Job", "job"),
+                        ("Runtime", "runtime"),
+                    ]),
+                ),
+                ToolbarControl::select(
+                    "performance-outcome",
+                    "outcome",
+                    "How it ended",
+                    &list.filters["outcome"],
+                    choices(&[
+                        ("All outcomes", ""),
+                        ("OK", "ok"),
+                        ("Error", "error"),
+                        ("Cancelled", "cancelled"),
+                        ("Discarded", "discarded"),
+                    ]),
+                ),
+            ],
+        ))?);
+        if data.samples.is_err() {
+            body.push(&notice(
+                "performance-unavailable",
+                "Sample history is unavailable. It will retry on the next refresh.",
+            )?);
+        }
+        let sample_rows = data
+            .samples
+            .as_ref()
+            .map(|page| {
+                page.entries
+                    .iter()
+                    .map(|sample| sample_row(sample, &data.display))
+                    .collect()
+            })
+            .unwrap_or_else(|_| Ok(vec![]))?;
+        let mut history = render(table(
+            samples,
+            sample_rows,
+            "samples_grid",
+            "All samples",
+            samples_empty(list, data.samples.is_ok()),
+        ))?;
+        if let Ok(page) = &data.samples {
+            history.push(&render(Pagination::new(
+                "performance-pagination",
+                PageCounts::new(list.page, list.page_size, page.total as u64),
+                &super::SIZES,
+            ))?);
+        }
+        body.push(&render(Card {
+            id: "performance-history",
+            inner_class: "p-0",
+            body: history,
+            ..Card::default()
+        })?);
+    } else {
+        let regression_rows = data
+            .regressions
+            .as_ref()
+            .map(|rows| rows.iter().map(regression_row).collect())
+            .unwrap_or_else(|_| Ok(vec![]))?;
+        let regression_body = render(table(
+            regressions,
+            regression_rows,
+            "regressions_grid",
+            "Recent slowdowns",
+            if data.regressions.is_ok() {
+                "Nothing has slowed down recently."
+            } else {
+                "Slowdown checks are unavailable."
+            },
+        ))?;
+        body.push(&render(Card {
+            id: "performance-regressions",
+            title: "Recent slowdowns",
+            inner_class: "p-0",
+            body: regression_body,
+            ..Card::default()
         })?);
     }
-    let regression_rows = data
-        .regressions
-        .as_ref()
-        .map(|rows| rows.iter().map(regression_row).collect())
-        .unwrap_or_else(|_| Ok(vec![]))?;
-    let regression_body = render(table(
-        regressions,
-        regression_rows,
-        "regressions_grid",
-        "Recent regressions",
-        if data.regressions.is_ok() {
-            "Nothing has slowed down recently."
-        } else {
-            "Regression diagnostics are unavailable."
-        },
-    ))?;
-    body.push(&render(Card {
-        id: "performance-regressions",
-        title: "Recent regressions",
-        inner_class: "p-0",
-        class: "mb-2",
-        body: regression_body,
-        ..Card::default()
-    })?);
-    body.push(&render(FilterToolbar::new(
-        "performance-filters",
-        vec![
-            ToolbarControl::search(
-                "performance-identity",
-                "identity",
-                "Route or worker",
-                &list.search,
-                "Exact identity",
-            ),
-            ToolbarControl::select(
-                "performance-kind",
-                "kind",
-                "Kind",
-                &list.filters["kind"],
-                choices(&[
-                    ("All", ""),
-                    ("Request", "request"),
-                    ("Live event", "event"),
-                    ("Job", "job"),
-                    ("Runtime", "runtime"),
-                ]),
-            ),
-            ToolbarControl::select(
-                "performance-outcome",
-                "outcome",
-                "Outcome",
-                &list.filters["outcome"],
-                choices(&[
-                    ("All", ""),
-                    ("OK", "ok"),
-                    ("Error", "error"),
-                    ("Cancelled", "cancelled"),
-                    ("Discarded", "discarded"),
-                ]),
-            ),
-        ],
-    ))?);
-    if data.samples.is_err() {
-        body.push(&notice(
-            "performance-unavailable",
-            "Performance history is unavailable. It will retry on the next refresh.",
-        )?);
-    }
-    let sample_rows = data
-        .samples
-        .as_ref()
-        .map(|p| {
-            p.entries
-                .iter()
-                .map(|s| sample_row(s, &data.display))
-                .collect()
-        })
-        .unwrap_or_else(|_| Ok(vec![]))?;
-    let mut history = render(table(
-        samples,
-        sample_rows,
-        "samples_grid",
-        "Performance history",
-        if data.samples.is_ok() {
-            "No matching performance history."
-        } else {
-            "History unavailable."
-        },
-    ))?;
-    if let Ok(page) = &data.samples {
-        history.push(&render(Pagination::new(
-            "performance-pagination",
-            PageCounts::new(list.page, list.page_size, page.total as u64),
-            &super::SIZES,
-        ))?);
-    }
-    body.push(&render(Card {
-        id: "performance-history",
-        inner_class: "p-0",
-        body: history,
-        ..Card::default()
-    })?);
     Ok(render(bilibi_ui::Page {
         id: "performance-index",
         body,
