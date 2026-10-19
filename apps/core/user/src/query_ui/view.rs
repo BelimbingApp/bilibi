@@ -306,7 +306,6 @@ fn action(id: &str, event: &str, label: &str, icon: &str, variant: ButtonVariant
 }
 fn editor_field(name: &str, id: &str, value: &str, placeholder: &str, class: &str) -> Field {
     Field::named(name)
-        .label(super::fields::get(name).label)
         .id(id)
         .value(value)
         .placeholder(placeholder)
