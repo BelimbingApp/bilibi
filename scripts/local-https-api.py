@@ -333,13 +333,15 @@ def main():
         "key": private_key,
         "tags": [CERT_TAG],
     }
-    if tls_config:
+    if "load_pem" in tls_config:
         upsert_id(
             CERT_ID,
             certificate_config,
             "/config/apps/tls/certificates/load_pem",
-            [certificate_config],
+            certificate_config,
         )
+    elif tls_config:
+        request("PUT", "/config/apps/tls/certificates/load_pem", [certificate_config])
     else:
         # No certificates yet, and possibly no TLS app at all (a bare :443 server).
         try:
@@ -360,7 +362,10 @@ def main():
         policies = server.get("tls_connection_policies", [])
         default_policy = next((i for i, policy in enumerate(policies) if not policy.get("match")), None)
         if default_policy is None:
-            request("POST", server_path + "/tls_connection_policies", [tls_policy])
+            if "tls_connection_policies" in server:
+                request("POST", server_path + "/tls_connection_policies", tls_policy)
+            else:
+                request("PUT", server_path + "/tls_connection_policies", [tls_policy])
         else:
             request("PUT", f"{server_path}/tls_connection_policies/{default_policy}", tls_policy)
 
