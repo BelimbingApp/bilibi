@@ -7,6 +7,7 @@
 {% import "components.html" as ui %}
 {% import "feedback.html" as fb %}
 {{ flash }}
+{% call ui::page(variant=bilibi_ui::PageVariant::Form) %}
 {% call settings::layout(header=header, entries=entries, current=current, heading=heading, subheading=subheading) %}
 <div id="two-factor" class="space-y-4">
 {%- if !notice.is_empty() %}{% call fb::alert(kind=bilibi_ui::StatusKind::Warning, id="two-factor-notice") %}{{ notice }}{% endcall %}{% endif -%}
@@ -29,4 +30,5 @@
 <form id="two-factor-disable-form" data-event="disable" class="space-y-4 rounded-xl border border-line bg-surface p-6"><h3 class="text-sm font-semibold text-ink">Turn off 2FA</h3><p class="text-sm text-muted">Deletes the authenticator key and every recovery code. Sensitive pages then ask you to set it up again.</p>{{ disable_code }}<div class="flex justify-end">{% call ui::button(variant=bilibi_ui::ButtonVariant::Danger, id="two-factor-disable", button_type="submit", working="Turning off…") %}Turn off{% endcall %}</div></form>
 {%- endif %}
 </div>
+{% endcall %}
 {% endcall %}

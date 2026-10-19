@@ -3,7 +3,10 @@
     values change and saves on Save or Enter (`save_profile`, never `save`,
     which the transport reserves for the inline-edit shape). -#}
 {% import "settings.html" as settings %}
+{% import "components.html" as ui %}
 {{ flash }}
+{% call ui::page(variant=bilibi_ui::PageVariant::Form) %}
 {% call settings::layout(header=header, entries=entries, current=current, heading=heading, subheading=subheading) %}
 <form id="profile-form" data-event="validate" data-change data-submit-event="save_profile" class="space-y-4 rounded-xl border border-line bg-surface p-6" novalidate>{{ name }}{{ email }}{{ landing }}<div class="flex justify-end pt-2">{{ save }}</div></form>
+{% endcall %}
 {% endcall %}

@@ -19,7 +19,7 @@ mod reset;
 mod two_factor;
 mod two_factor_ui;
 mod verification;
-pub mod web;
+mod web;
 
 pub use accounts::{
     AccountError, AccountField, AccountInput, FieldError, LandingPage, ProfileOutcome,
