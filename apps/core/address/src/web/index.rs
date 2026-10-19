@@ -87,6 +87,7 @@ pub(super) struct Index {
     framed: bool,
     flash: Flash,
     entries: Vec<Address>,
+    names: HashMap<String, String>,
     total: u64,
     pending: Option<Pending>,
 }
@@ -96,10 +97,12 @@ impl Index {
             pages,
             list: ListState::parse(query, SPEC.clone()).map_err(|_| Error::Internal)?,
             columns: ListColumns::mount("addresses-table", builtins())
+                .map(|columns| columns.with_record_fields(super::fields::ALL.iter().copied()))
                 .map_err(|_| Error::Internal)?,
             framed,
             flash: Flash::default(),
             entries: Vec::new(),
+            names: HashMap::new(),
             total: 0,
             pending: None,
         })
@@ -138,6 +141,35 @@ impl Index {
         // The rows changed: ListColumns forgets an unfinished add box.
         self.columns.load(&page.entries, |a| a.id.to_string());
         self.total = page.total as u64;
+        self.names.clear();
+        for entry in &page.entries {
+            if let Some(code) = &entry.address.country_iso {
+                if !self.names.contains_key(code) {
+                    let name = self
+                        .pages
+                        .addresses
+                        .geonames()
+                        .get_country(code)
+                        .await?
+                        .map(|country| country.country)
+                        .unwrap_or_else(|| code.clone());
+                    self.names.insert(code.clone(), name);
+                }
+            }
+            if let Some(code) = &entry.address.admin1_code {
+                if !self.names.contains_key(code) {
+                    let name = self
+                        .pages
+                        .addresses
+                        .geonames()
+                        .get_admin1(code)
+                        .await?
+                        .map(|division| division.name)
+                        .unwrap_or_else(|| code.clone());
+                    self.names.insert(code.clone(), name);
+                }
+            }
+        }
         self.entries = page.entries;
         Ok(())
     }
@@ -272,9 +304,39 @@ impl Index {
                     "country_iso",
                     Html::raw(format!(
                         "<span class=\"whitespace-nowrap font-mono text-xs text-ink-muted\">{}</span>",
-                        Html::text(a.country_iso.as_deref().unwrap_or("—"))
+                        Html::text(a.country_iso.as_deref().map(|code| self.names.get(code).map_or(code, String::as_str)).unwrap_or("—"))
                     )),
                 );
+            for field in super::fields::ALL {
+                let Some(column) = field.column else { continue };
+                if ["label", "country_iso", "locality", "verification_status"].contains(&column) {
+                    continue;
+                }
+                let value = match field.id {
+                    "phone" => &a.phone,
+                    "line1" => &a.line1,
+                    "line2" => &a.line2,
+                    "line3" => &a.line3,
+                    "postcode" => &a.postcode,
+                    "admin1_code" => &a.admin1_code,
+                    "source" => &a.source,
+                    "source_ref" => &a.source_ref,
+                    "parser_version" => &a.parser_version,
+                    "parse_confidence" => &a.parse_confidence,
+                    _ => continue,
+                };
+                let shown = value
+                    .as_deref()
+                    .map(|value| {
+                        if field.id == "admin1_code" {
+                            self.names.get(value).map_or(value, String::as_str)
+                        } else {
+                            value
+                        }
+                    })
+                    .unwrap_or("—");
+                row = row.slot(column, Html::text(shown));
+            }
             let status = a.verification_status.as_deref().unwrap_or("unverified");
             row = row.slot(
                 "verification_status",
@@ -349,6 +411,11 @@ impl LiveState<Scope, Error> for Index {
     fn update<'a>(&'a mut self, request: LiveRequest<'a, Scope>) -> LiveFuture<'a, Error> {
         Box::pin(async move {
             let scope = request.scope;
+            let client = self.pages.db.get().await?;
+            let masked = bilibi_authz::restrictions_for(&**client, scope, "addresses").await?;
+            self.columns
+                .set_available(super::fields::ALL, |field| !masked.contains(field.id));
+
             let mut requery = true;
             match request.input {
                 LiveInput::Refresh => {}

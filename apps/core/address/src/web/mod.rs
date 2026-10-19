@@ -300,3 +300,22 @@ impl LiveState<Scope, Error> for Reactive {
         vec![Subscription { receiver }]
     }
 }
+
+// Bilimbi record detail vocabulary, shared with its list columns.
+bilibi_ui::record_fields! { pub(crate) mod fields {
+    LABEL: bilibi_ui::RecordField::new("label", "Label"),
+    PHONE: bilibi_ui::RecordField::new("phone", "Phone"),
+    VERIFICATION_STATUS: bilibi_ui::RecordField::new("verification_status", "Verification Status"),
+    LINE1: bilibi_ui::RecordField::new("line1", "Address Line 1"),
+    LINE2: bilibi_ui::RecordField::new("line2", "Address Line 2"),
+    LINE3: bilibi_ui::RecordField::new("line3", "Address Line 3"),
+    COUNTRY_ISO: bilibi_ui::RecordField::new("country_iso", "Country"),
+    ADMIN1_CODE: bilibi_ui::RecordField::new("admin1_code", "State / Province"),
+    POSTCODE: bilibi_ui::RecordField::new("postcode", "Postal Code"),
+    LOCALITY: bilibi_ui::RecordField::new("locality", "Locality"),
+    SOURCE: bilibi_ui::RecordField::new("source", "Source"),
+    SOURCE_REF: bilibi_ui::RecordField::new("source_ref", "Source Reference"),
+    PARSER_VERSION: bilibi_ui::RecordField::new("parser_version", "Parser Version"),
+    PARSE_CONFIDENCE: bilibi_ui::RecordField::new("parse_confidence", "Parse Confidence"),
+    RAW_INPUT: bilibi_ui::RecordField::new("raw_input", "Raw Input").excluded("Long text"),
+} }

@@ -764,3 +764,20 @@ impl LiveState<Scope, Error> for CompanyPage {
         panels
     }
 }
+
+// Shared facts mirror Bilimbi’s record detail module; columns extend its list vocabulary.
+bilibi_ui::record_fields! { pub(crate) mod fields {
+    NAME: bilibi_ui::RecordField::new("name", "Name"),
+    CODE: bilibi_ui::RecordField::new("code", "Code"),
+    LEGAL_NAME: bilibi_ui::RecordField::new("legal_name", "Legal Name"),
+    STATUS: bilibi_ui::RecordField::new("status", "Status"),
+    LEGAL_ENTITY_TYPE_ID: bilibi_ui::RecordField::new("legal_entity_type_id", "Legal Entity Type").path("legal_entity_type.name"),
+    REGISTRATION_NUMBER: bilibi_ui::RecordField::new("registration_number", "Registration Number"),
+    TAX_ID: bilibi_ui::RecordField::new("tax_id", "Tax ID"),
+    JURISDICTION: bilibi_ui::RecordField::new("jurisdiction", "Jurisdiction"),
+    EMAIL: bilibi_ui::RecordField::new("email", "Email"),
+    WEBSITE: bilibi_ui::RecordField::new("website", "Website"),
+    PARENT_ID: bilibi_ui::RecordField::new("parent_id", "Parent Company").path("parent.name").slot("parent_name"),
+    ACTIVITIES: bilibi_ui::RecordField::new("scope_activities", "Business Activities").excluded("Nested collection"),
+    METADATA: bilibi_ui::RecordField::new("metadata", "Metadata").excluded("Long structured text"),
+} }

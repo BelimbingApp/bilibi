@@ -83,6 +83,7 @@ pub struct PageColumns {
     table: String,
     builtins: Vec<BuiltinColumn>,
     defaults: Vec<String>,
+    record_fields: Vec<bilibi_ui::RecordField>,
     view: View,
     catalog: Option<Catalog>,
     /// The walked columns shown, resolved by the last load.
@@ -132,6 +133,7 @@ impl PageColumns {
             view: View::new(table),
             defaults: builtins.iter().map(|b| b.id.clone()).collect(),
             builtins,
+            record_fields: Vec::new(),
             catalog: None,
             extras: Vec::new(),
             columns: Vec::new(),
@@ -148,6 +150,36 @@ impl PageColumns {
     pub fn with_defaults(mut self, specs: &[&str]) -> Self {
         self.defaults = specs.iter().map(|spec| (*spec).to_owned()).collect();
         self
+    }
+
+    /// Scalar facts already supplied by the owner's authorized read model.
+    /// Keep the original defaults; add every other fact as an optional slot.
+    /// Use contributed Grid record fields when the owner has a catalog table.
+    pub fn with_record_slots(mut self, fields: &[bilibi_ui::RecordField]) -> Self {
+        self.record_fields = fields.to_vec();
+        for field in fields {
+            let Some(column) = field.builtin() else {
+                continue;
+            };
+            if let Some(builtin) = self.builtins.iter_mut().find(|b| b.id == column.id) {
+                builtin.label = column.label;
+                builtin.short_label = column.short_label;
+            } else {
+                self.builtins.push(column);
+            }
+        }
+        self
+    }
+
+    fn label_record_columns(&mut self) {
+        for column in self.columns.iter_mut().chain(&mut self.suggestions) {
+            if let Some(field) = self.record_fields.iter().find(|f| {
+                f.column == Some(column.spec.as_str()) || f.slot == Some(column.spec.as_str())
+            }) {
+                column.label = field.label.into();
+                column.short_label = field.label.into();
+            }
+        }
     }
 
     pub fn view(&self) -> &View {
@@ -207,6 +239,17 @@ impl PageColumns {
             let client = self.views.db().get().await?;
             Catalog::for_scope(&**client, scope).await?
         };
+        if let Some(root) = catalog.table(&self.table) {
+            self.record_fields = root.record_fields.clone();
+            for builtin in &mut self.builtins {
+                if let Some(field) = self.record_fields.iter().find(|f| {
+                    f.column == Some(builtin.id.as_str()) || f.slot == Some(builtin.id.as_str())
+                }) {
+                    builtin.label = field.label.into();
+                    builtin.short_label = field.label.into();
+                }
+            }
+        }
         let kept = self.split(&catalog);
         let builtins = &self.builtins;
         let default_ids = self.default_ids(&catalog);
@@ -304,6 +347,11 @@ impl PageColumns {
         self.since = view.since().to_string();
         self.extras = extras;
         self.catalog = Some(catalog);
+        let query = self.add_query.clone();
+        if !query.is_empty() {
+            self.suggest(&query);
+        }
+        self.label_record_columns();
         Ok(())
     }
 
@@ -339,7 +387,9 @@ impl PageColumns {
         let mut walked = 0;
         for spec in specs {
             if let Some(index) = self.builtins.iter().position(|b| b.id == spec) {
-                kept.push(Kept::Builtin(index));
+                if self.builtin_allowed(catalog, &self.builtins[index]) {
+                    kept.push(Kept::Builtin(index));
+                }
             } else if let Some(column) = root
                 .filter(|_| walked < MAX_COLUMNS)
                 .and_then(|root| catalog.resolve(root, spec).ok())
@@ -349,9 +399,32 @@ impl PageColumns {
             }
         }
         if kept.is_empty() {
-            kept = (0..self.builtins.len()).map(Kept::Builtin).collect();
+            kept = self
+                .builtins
+                .iter()
+                .enumerate()
+                .filter(|(_, builtin)| self.builtin_allowed(catalog, builtin))
+                .map(|(index, _)| Kept::Builtin(index))
+                .collect();
         }
         kept
+    }
+
+    fn builtin_field(&self, builtin: &BuiltinColumn) -> Option<&bilibi_ui::RecordField> {
+        self.record_fields
+            .iter()
+            .find(|field| field.slot.or(field.column) == Some(builtin.id.as_str()))
+    }
+
+    fn builtin_allowed(&self, catalog: &Catalog, builtin: &BuiltinColumn) -> bool {
+        let Some(field) = self.builtin_field(builtin) else {
+            return true;
+        };
+        catalog.table(&self.table).is_none_or(|root| {
+            field
+                .column
+                .is_some_and(|path| catalog.resolve(root, path).is_ok())
+        })
     }
 
     /// The flexible table over the page's rows (this state's [`Self::rows`]
@@ -381,7 +454,13 @@ impl PageColumns {
             return Ok(self
                 .builtins
                 .iter()
-                .find(|b| b.id == get("sort"))
+                .find(|b| {
+                    b.id == get("sort")
+                        && self
+                            .catalog
+                            .as_ref()
+                            .is_none_or(|catalog| self.builtin_allowed(catalog, b))
+                })
                 .and_then(|b| b.sort.clone())
                 .map_or(Outcome::Noop, Outcome::Sort));
         }
@@ -491,7 +570,14 @@ impl PageColumns {
             self.clear_suggestions();
             return;
         }
-        let shown: Vec<String> = self.view.columns.clone();
+        let shown: Vec<String> = if self.view.columns.is_empty() {
+            self.catalog.as_ref().map_or_else(
+                || self.defaults.clone(),
+                |catalog| self.default_ids(catalog),
+            )
+        } else {
+            self.view.columns.clone()
+        };
         let mut suggestions: Vec<FlexColumn> = self
             .removed_builtins(&shown, text)
             .into_iter()
@@ -505,17 +591,34 @@ impl PageColumns {
                 taken.push(&builtin.id);
             }
         }
+        for builtin in &self.builtins {
+            if let Some(path) = self.builtin_field(builtin).and_then(|field| field.column) {
+                if !taken.contains(&path) {
+                    taken.push(path);
+                }
+            }
+        }
         if let Some((catalog, root)) = self.root() {
             // A removed default is a page column even when Grid projects it.
             // Offer it before the wider catalog so a common label such as
             // "company" cannot bury it under dozens of related fields.
             let wanted = text.to_lowercase();
-            for spec in &self.defaults {
-                if taken.contains(&spec.as_str()) {
+            for spec in self
+                .defaults
+                .iter()
+                .map(String::as_str)
+                .chain(self.record_fields.iter().filter_map(|f| f.column))
+            {
+                if taken.contains(&spec) {
                     continue;
                 }
                 if let Ok(column) = catalog.resolve(root, spec) {
-                    if column.label.to_lowercase().contains(&wanted) || spec.contains(&wanted) {
+                    if column.label.to_lowercase().contains(&wanted)
+                        || spec.contains(&wanted)
+                        || self.record_fields.iter().any(|f| {
+                            f.column == Some(spec) && f.label.to_lowercase().contains(&wanted)
+                        })
+                    {
                         let worn = lens::normalize(self.view.lens(spec), &column);
                         suggestions.push(lens::flex_column(&column, worn));
                         taken.push(spec);
@@ -529,6 +632,7 @@ impl PageColumns {
         }
         self.add_query = text.into();
         self.suggestions = suggestions;
+        self.label_record_columns();
     }
 
     fn root(&self) -> Option<(&Catalog, &crate::Table)> {
@@ -542,6 +646,10 @@ impl PageColumns {
             .iter()
             .filter(|builtin| {
                 !shown.contains(&builtin.id)
+                    && self
+                        .catalog
+                        .as_ref()
+                        .is_none_or(|catalog| self.builtin_allowed(catalog, builtin))
                     && (builtin.label.to_lowercase().contains(&wanted)
                         || builtin.id.contains(&wanted))
             })

@@ -65,7 +65,9 @@ pub(crate) fn columns() -> ListColumns {
             column
         },
     ];
-    ListColumns::mount("roles", builtins).expect("roles columns")
+    ListColumns::mount("roles", builtins)
+        .expect("roles columns")
+        .with_record_fields(fields::ALL.iter().copied())
 }
 
 pub(crate) fn principal_columns() -> ListColumns {
@@ -165,7 +167,11 @@ struct CapabilityCountCell {
     count: i64,
 }
 
-fn role_row(role: &RoleSummary, mode: RowMode) -> Result<FlexRow> {
+fn role_row(
+    role: &RoleSummary,
+    mode: RowMode,
+    owner: Option<&NamedOrganisation>,
+) -> Result<FlexRow> {
     let mut grants_all = Badge::status(BadgeKind::Warning, "Grants all");
     grants_all.class = "ml-1";
     let mut row = FlexRow::new(role.id.to_string());
@@ -204,7 +210,21 @@ fn role_row(role: &RoleSummary, mode: RowMode) -> Result<FlexRow> {
     {
         row = row.slot(id, cell);
     }
+    row = row
+        .slot("company_id", Html::text(&owner_name(role, owner)))
+        .slot(
+            "grant_all",
+            Html::text(if role.grant_all { "Yes" } else { "No" }),
+        );
     Ok(row)
+}
+
+fn owner_name(role: &RoleSummary, owner: Option<&NamedOrganisation>) -> String {
+    match (owner, role.company_id) {
+        (Some(owner), _) => owner.name.clone(),
+        (None, Some(id)) => format!("Company {id}"),
+        (None, None) => "—".to_owned(),
+    }
 }
 
 impl Pages {
@@ -259,15 +279,16 @@ impl Pages {
         );
         toolbar.event = "search";
         html.push(&render(toolbar)?);
-        let mut table = FlexTable::new(
-            "roles",
-            columns.flex_columns(),
-            page.entries
-                .iter()
-                .map(|role| role_row(role, columns.mode()))
-                .collect::<Result<Vec<_>>>()?,
-        )
-        .sorted(state.sort_by.as_deref(), state.sort_dir);
+        let mut rows = Vec::with_capacity(page.entries.len());
+        for role in &page.entries {
+            let owner = match role.company_id.and_then(|id| OrganisationId::new(id).ok()) {
+                Some(id) => self.parties.organisation_name(&**client, scope, id).await?,
+                None => None,
+            };
+            rows.push(role_row(role, columns.mode(), owner.as_ref())?);
+        }
+        let mut table = FlexTable::new("roles", columns.flex_columns(), rows)
+            .sorted(state.sort_by.as_deref(), state.sort_dir);
         table.zoom = columns.zoom;
         table.suggestions = columns.flex_suggestions();
         table.add_query = &columns.add_query;
@@ -373,12 +394,7 @@ fn render_role(
     columns: &ListColumns,
 ) -> Result<String> {
     let role = &details.role;
-    let owner_name = match (owner, role.company_id) {
-        (Some(owner), _) => owner.name.clone(),
-        // Owned by a company the directory no longer names.
-        (None, Some(id)) => format!("Company {id}"),
-        (None, None) => "—".to_owned(),
-    };
+    let owner_name = owner_name(role, owner);
     let back = render(BackLink {
         href: "/authz/roles",
         id: "role-back",
@@ -399,22 +415,22 @@ fn render_role(
     let facts = render(Facts {
         items: vec![
             Fact {
-                title: "Scope",
+                title: fields::get("is_system").label,
                 value: render(scope_badge(role))?,
                 ..Fact::default()
             },
             Fact {
-                title: "Description",
+                title: fields::get("description").label,
                 value: Html::text(description),
                 ..Fact::default()
             },
             Fact {
-                title: "Owning company",
+                title: fields::get("company_id").label,
                 value: Html::text(&owner_name),
                 ..Fact::default()
             },
             Fact {
-                title: "Grants all capabilities",
+                title: fields::get("grant_all").label,
                 value: Html::text(if role.grant_all { "Yes" } else { "No" }),
                 ..Fact::default()
             },
@@ -828,3 +844,13 @@ impl LiveState<Scope, Error> for RoleCreate {
         })
     }
 }
+
+// Bilimbi Authz.RoleShowLive facts, shared with RolesIndexLive columns.
+bilibi_ui::record_fields! { pub(crate) mod fields {
+    NAME: bilibi_ui::RecordField::new("name", "Name"),
+    CODE: bilibi_ui::RecordField::new("code", "Code"),
+    SCOPE: bilibi_ui::RecordField::new("is_system", "Scope"),
+    COMPANY: bilibi_ui::RecordField::new("company_id", "Owning company"),
+    GRANT_ALL: bilibi_ui::RecordField::new("grant_all", "Grants all capabilities"),
+    DESCRIPTION: bilibi_ui::RecordField::new("description", "Description").excluded("Long text"),
+} }

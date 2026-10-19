@@ -445,7 +445,7 @@ impl Detail {
         let mut items = Vec::new();
         for (name, label) in &TEXT_FACTS[..2] {
             items.push(Fact {
-                title: label,
+                title: super::fields::get(name).label,
                 id: if *name == "label" {
                     "address-view-label"
                 } else {
@@ -455,7 +455,7 @@ impl Detail {
             });
         }
         items.push(Fact {
-            title: "Verification Status",
+            title: super::fields::VERIFICATION_STATUS.label,
             id: "address-view-verification-status",
             value: render(InlineChoice {
                 field: choice,
@@ -471,7 +471,7 @@ impl Detail {
             ("line3", "Address Line 3", "address-view-line3"),
         ] {
             lines.push(Fact {
-                title: label,
+                title: super::fields::get(name).label,
                 id,
                 value: self.text_fact(record, name, label, editable)?,
             });
@@ -554,17 +554,17 @@ impl Detail {
                     id: "address-location-facts",
                     items: vec![
                         Fact {
-                            title: "Country",
+                            title: super::fields::COUNTRY_ISO.label,
                             id: "address-view-country",
                             value: shown(&record.country_name, &a.country_iso),
                         },
                         Fact {
-                            title: "State / Province",
+                            title: super::fields::ADMIN1_CODE.label,
                             id: "address-view-admin1",
                             value: shown(&record.admin1_name, &a.admin1_code),
                         },
                         Fact {
-                            title: "Postal Code",
+                            title: super::fields::POSTCODE.label,
                             id: "address-view-postcode",
                             value: Html::raw(format!(
                                 "<span class=\"tabular-nums\">{}</span>",
@@ -572,7 +572,7 @@ impl Detail {
                             )),
                         },
                         Fact {
-                            title: "Locality",
+                            title: super::fields::LOCALITY.label,
                             id: "address-view-locality",
                             value: Html::text(a.locality.as_deref().unwrap_or("—")),
                         },
@@ -593,22 +593,22 @@ impl Detail {
         let a = &record.address.address;
         let mut items = vec![
             Fact {
-                title: "Source",
+                title: super::fields::SOURCE.label,
                 id: "address-view-source",
                 value: self.text_fact(record, "source", "Source", editable)?,
             },
             Fact {
-                title: "Source Reference",
+                title: super::fields::SOURCE_REF.label,
                 id: "address-view-source-ref",
                 value: self.text_fact(record, "source_ref", "Source Reference", editable)?,
             },
             Fact {
-                title: "Parser Version",
+                title: super::fields::PARSER_VERSION.label,
                 id: "address-view-parser-version",
                 value: Html::text(a.parser_version.as_deref().unwrap_or("—")),
             },
             Fact {
-                title: "Parse Confidence",
+                title: super::fields::PARSE_CONFIDENCE.label,
                 id: "address-view-parse-confidence",
                 value: Html::raw(format!(
                     "<span class=\"tabular-nums\">{}</span>",
@@ -618,7 +618,7 @@ impl Detail {
         ];
         if let Some(raw) = &a.raw_input {
             items.push(Fact {
-                title: "Raw Input",
+                title: super::fields::RAW_INPUT.label,
                 id: "address-view-raw-input",
                 value: Html::raw(format!(
                     "<pre class=\"overflow-x-auto rounded-xl border border-line bg-surface-muted p-3 font-mono text-xs text-ink\">{}</pre>",

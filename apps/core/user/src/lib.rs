@@ -242,3 +242,14 @@ inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_reg
     contracts: &[],
     pending: bilibi_module_registry::contributions::Pending::Every { reason: "Saved database queries write through the User facade; no contract yet." },
 }) }
+
+// Shared facts mirror Bilimbi’s record detail module; columns extend its list vocabulary.
+bilibi_ui::record_fields! { pub(crate) mod record_fields {
+    NAME: bilibi_ui::RecordField::new("name", "Name"),
+    EMAIL: bilibi_ui::RecordField::new("email", "Email"),
+    PERSON_ID: bilibi_ui::RecordField::new("person_id", "Person").path("person.name"),
+    COMPANY_ID: bilibi_ui::RecordField::new("company_id", "Company").path("company.name").slot("company_name"),
+    EMAIL_VERIFIED_AT: bilibi_ui::RecordField::new("email_verified_at", "Email Verified"),
+    CREATED_AT: bilibi_ui::RecordField::new("created_at", "Created"),
+    UPDATED_AT: bilibi_ui::RecordField::new("updated_at", "Updated"),
+} }

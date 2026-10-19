@@ -40,6 +40,21 @@ joins, a link id that shadows a field, wrong source shape, claimed record types)
 and the Ready check refuses a table naming a capability Authz does not declare.
 Nothing executes a source at boot.
 
+## Detail fields become columns
+
+A scalar field shown on a record can also be added to its list, under the same label.
+
+For example, Contacts calls its email **Personal email** in both places. Work email comes from the Affiliations panel and becomes a Contacts column through that panel's Grid contribution.
+
+- Declare the vocabulary once with `bilibi_ui::record_fields!`. Use its named fields or `get` for detail labels and `RecordField::fact` for a complete fact.
+- Add `RecordFields { table, fields: fields::ALL }` to the owning `GridContribution.record_fields`. A panel may contribute fields to the table at its link's start. `PageColumns` collects them automatically.
+- Use `.path("parent.name")` for a related readable value. Grid resolves the path against the reader's fresh catalog before offering or loading it.
+- For a list whose owner already returns all values, use `ListColumns::with_record_fields` or `PageColumns::with_record_slots`. Fill its slots from the same authorized read model. Refresh restrictions with `ListColumns::set_available`, including on empty pages.
+- Keep existing default columns. Fields added to this vocabulary appear in the picker; they do not change the default arrangement. New projected columns are display-only.
+- Exclude long text, files, structured documents and nested collections with `.excluded("reason")`. Short work-contact values may roll up across current affiliations. Existing default columns remain available even when they contain longer text.
+
+**Field metadata never grants access.** Grid checks table access and field restrictions on each load. A revoked column disappears from the table, address and pending suggestions. A built-in-only owner must apply its own current restrictions before rendering or handling column events.
+
 ## The scoped catalog
 
 `Catalog::for_scope(client, &scope)` reads fresh grants and field restrictions

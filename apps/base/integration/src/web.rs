@@ -33,9 +33,9 @@ use bilibi_ui::{
         LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, MountFuture, Page, PageBody,
         PageFuture, PageRequest,
     },
-    params, BuiltinColumn, ColumnType, ConfirmDialog, EmptyState, Fact, Facts, FilterToolbar,
-    FlashMap, FlexRow, Html, Instant, ListSpec, ListState, PageCounts, Pagination, RowMode,
-    StatusKind, Tab, TableEmpty, Tabs, ToolbarControl, NO_FLASH,
+    params, BuiltinColumn, ColumnType, ConfirmDialog, EmptyState, Facts, FilterToolbar, FlashMap,
+    FlexRow, Html, Instant, ListSpec, ListState, PageCounts, Pagination, RowMode, StatusKind, Tab,
+    TableEmpty, Tabs, ToolbarControl, NO_FLASH,
 };
 use jiff::Timestamp;
 use serde_json::{json, Value};
@@ -259,6 +259,7 @@ impl Index {
             filter: PeriodFilter::new("exchange-period", period, &clock),
             browser_zone: None,
             columns: PageColumns::mount(views, "integration-exchanges", builtins())
+                .map(|columns| columns.with_record_slots(fields::ALL))
                 .map_err(|_| Error::Internal)?,
             reload: true,
         })
@@ -355,6 +356,13 @@ impl Index {
         );
         row.slots
             .insert("self_report".into(), self_report(exchange));
+        for (field, value) in exchange_facts(display, exchange)? {
+            if let Some(column) = field.column {
+                if column != "operation" {
+                    row.slots.insert(column.into(), value);
+                }
+            }
+        }
         Ok(row)
     }
 
@@ -580,114 +588,12 @@ impl Show {
     }
 
     fn facts(display: &DisplayContext, exchange: &Summary) -> Result<Html> {
-        let owner = match (&exchange.owner_type, exchange.owner_id) {
-            (None, None) => "—".to_owned(),
-            (kind, id) => format!(
-                "{} {}",
-                kind.as_deref().unwrap_or("—"),
-                id.map(|id| id.to_string()).unwrap_or_default()
-            )
-            .trim_end()
-            .to_owned(),
-        };
-        let text = |value: Option<String>| dash(value.as_deref());
-        let items = vec![
-            Fact {
-                title: "Direction",
-                value: Html::text(&exchange.direction),
-                ..Fact::default()
-            },
-            Fact {
-                title: "Operation",
-                value: Html::text(&exchange.operation),
-                ..Fact::default()
-            },
-            Fact {
-                title: "Method",
-                value: dash(exchange.method.as_deref()),
-                ..Fact::default()
-            },
-            Fact {
-                title: "Endpoint",
-                value: Html::text(&exchange.endpoint),
-                ..Fact::default()
-            },
-            Fact {
-                title: "Outcome",
-                value: Html::text(&exchange.outcome),
-                ..Fact::default()
-            },
-            Fact {
-                title: "HTTP status",
-                value: text(exchange.response_status.map(|status| status.to_string())),
-                ..Fact::default()
-            },
-            Fact {
-                title: "Duration",
-                value: text(exchange.duration_ms.map(|ms| format!("{ms} ms"))),
-                ..Fact::default()
-            },
-            Fact {
-                title: "Time",
-                value: render(TimeTag {
-                    id: "exchange-time",
-                    i: instant(display, exchange.occurred_at)?,
-                })?,
-                ..Fact::default()
-            },
-            Fact {
-                title: "Tenant",
-                value: Html::text(
-                    &exchange
-                        .tenant_id
-                        .map_or_else(|| "Unknown / system".to_owned(), |id| id.to_string()),
-                ),
-                ..Fact::default()
-            },
-            Fact {
-                title: "Owner",
-                value: Html::text(&owner),
-                ..Fact::default()
-            },
-            Fact {
-                title: "Person",
-                value: text(exchange.user_id.map(|id| id.to_string())),
-                ..Fact::default()
-            },
-            Fact {
-                title: "Impersonator",
-                value: text(exchange.impersonator_id.map(|id| id.to_string())),
-                ..Fact::default()
-            },
-            Fact {
-                title: "Connection",
-                value: dash(exchange.connection_id.as_deref()),
-                ..Fact::default()
-            },
-            Fact {
-                title: "Agent",
-                value: dash(exchange.agent_id.as_deref()),
-                ..Fact::default()
-            },
-            Fact {
-                title: "Run",
-                value: dash(exchange.run_id.as_deref()),
-                ..Fact::default()
-            },
-            Fact {
-                title: SelfReport::LABEL,
-                value: self_report(exchange),
-                ..Fact::default()
-            },
-            Fact {
-                title: "Error",
-                value: dash(exchange.error_class.as_deref()),
-                ..Fact::default()
-            },
-        ];
         render(Facts {
             id: "exchange-facts",
-            items,
+            items: exchange_facts(display, exchange)?
+                .into_iter()
+                .map(|(field, value)| field.fact(value))
+                .collect(),
         })
     }
 
@@ -891,4 +797,86 @@ impl Page<Scope, Error> for Pages {
             Ok(Some(state))
         })
     }
+}
+
+// Bilimbi Integration.ShowLive metadata, shared with IndexLive columns.
+bilibi_ui::record_fields! { pub(crate) mod fields {
+    DIRECTION: bilibi_ui::RecordField::new("direction", "Direction"),
+    OPERATION: bilibi_ui::RecordField::new("operation", "Operation"),
+    METHOD: bilibi_ui::RecordField::new("method", "Method"),
+    ENDPOINT: bilibi_ui::RecordField::new("endpoint", "Endpoint"),
+    OUTCOME: bilibi_ui::RecordField::new("outcome", "Outcome"),
+    STATUS: bilibi_ui::RecordField::new("status", "HTTP status"),
+    DURATION_MS: bilibi_ui::RecordField::new("duration_ms", "Duration"),
+    OCCURRED_AT: bilibi_ui::RecordField::new("occurred_at", "Time"),
+    TENANT: bilibi_ui::RecordField::new("tenant", "Tenant"),
+    OWNER: bilibi_ui::RecordField::new("owner", "Owner"),
+    USER_ID: bilibi_ui::RecordField::new("user_id", "Person"),
+    IMPERSONATOR: bilibi_ui::RecordField::new("impersonator", "Impersonator"),
+    CONNECTION: bilibi_ui::RecordField::new("connection", "Connection"),
+    AGENT: bilibi_ui::RecordField::new("agent", "Agent"),
+    RUN: bilibi_ui::RecordField::new("run", "Run"),
+    SELF_REPORT: bilibi_ui::RecordField::new("self_report", bilibi_tenancy::SelfReport::LABEL),
+    ERROR: bilibi_ui::RecordField::new("error", "Error"),
+} }
+
+fn exchange_facts(
+    display: &DisplayContext,
+    exchange: &Summary,
+) -> Result<Vec<(bilibi_ui::RecordField, Html)>> {
+    let owner = match (&exchange.owner_type, exchange.owner_id) {
+        (None, None) => "—".to_owned(),
+        (kind, id) => format!(
+            "{} {}",
+            kind.as_deref().unwrap_or("—"),
+            id.map(|id| id.to_string()).unwrap_or_default()
+        )
+        .trim_end()
+        .to_owned(),
+    };
+    let text = |value: Option<String>| dash(value.as_deref());
+    Ok(vec![
+        (fields::get("direction"), Html::text(&exchange.direction)),
+        (fields::OPERATION, Html::text(&exchange.operation)),
+        (fields::METHOD, dash(exchange.method.as_deref())),
+        (fields::ENDPOINT, Html::text(&exchange.endpoint)),
+        (fields::OUTCOME, Html::text(&exchange.outcome)),
+        (
+            fields::STATUS,
+            text(exchange.response_status.map(|v| v.to_string())),
+        ),
+        (
+            fields::DURATION_MS,
+            text(exchange.duration_ms.map(|v| format!("{v} ms"))),
+        ),
+        (
+            fields::OCCURRED_AT,
+            render(TimeTag {
+                id: &format!("exchange-time-{}", exchange.id),
+                i: instant(display, exchange.occurred_at)?,
+            })?,
+        ),
+        (
+            fields::TENANT,
+            Html::text(
+                &exchange
+                    .tenant_id
+                    .map_or_else(|| "Unknown / system".to_owned(), |id| id.to_string()),
+            ),
+        ),
+        (fields::OWNER, Html::text(&owner)),
+        (
+            fields::USER_ID,
+            text(exchange.user_id.map(|v| v.to_string())),
+        ),
+        (
+            fields::IMPERSONATOR,
+            text(exchange.impersonator_id.map(|v| v.to_string())),
+        ),
+        (fields::CONNECTION, dash(exchange.connection_id.as_deref())),
+        (fields::AGENT, dash(exchange.agent_id.as_deref())),
+        (fields::RUN, dash(exchange.run_id.as_deref())),
+        (fields::SELF_REPORT, self_report(exchange)),
+        (fields::ERROR, dash(exchange.error_class.as_deref())),
+    ])
 }

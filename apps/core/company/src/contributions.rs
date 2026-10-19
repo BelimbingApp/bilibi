@@ -115,6 +115,7 @@ inventory::submit! {
 // company field reaches the Audit screens and a record's History
 // (`bilibi_authz::fields::withheld_by_record_type`).
 static GRID: GridContribution = GridContribution {
+    record_fields: &[bilibi_grid::RecordFields { table: "companies", fields: crate::web::fields::ALL }],
     tables: &[TableDecl::new(
         "companies",
         "Companies",

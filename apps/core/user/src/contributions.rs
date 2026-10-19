@@ -61,6 +61,7 @@ bilibi_menu::contribute!(
 // and the Person it names, plus the inbound many-links back to the accounts.
 // Core User depends on Company and Person, so it may name their tables.
 static GRID: bilibi_grid::GridContribution = bilibi_grid::GridContribution {
+    record_fields: &[bilibi_grid::RecordFields { table: "users", fields: crate::record_fields::ALL }],
     tables: &[bilibi_grid::TableDecl::new("users", "Users", LIST,
         bilibi_grid::Source::tenant("SELECT id,name,email,email_verified_at,created_at,updated_at,organisation_id AS company_id,person_id FROM users WHERE tenant_id=$1 AND deleted_at IS NULL"), "id", &[
             bilibi_grid::Field::new("id", "ID", bilibi_grid::FieldType::Integer),

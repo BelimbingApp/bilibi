@@ -137,7 +137,8 @@ Width is a shared decision. Every page uses `PageVariant`. All three share one c
 - Many-links become rollup cells that expand in place.
 - Row height has two named zooms: Compact and Normal. A compact row is one line.
 - The arrangement is remembered per account and page (`PageColumns`). An address that carries it wins. "Reset to default columns" forgets it.
-- Catalog: `apps/base/grid/README.md`.
+- Every scalar detail field is available in the column picker under its detail label; shared `RecordField` definitions keep them together. Existing defaults stay unchanged. Long text, files and nested collections stay on the detail page. Restrictions apply to the picker and cells as they do to the record.
+- Catalog and field contract: `apps/base/grid/README.md`.
 
 ## Record pages
 

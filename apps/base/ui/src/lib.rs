@@ -30,6 +30,8 @@ pub mod list_columns;
 pub mod list_state;
 pub mod lists;
 pub mod params;
+mod record_fields;
+pub use record_fields::RecordField;
 mod section;
 mod settings;
 mod shell;

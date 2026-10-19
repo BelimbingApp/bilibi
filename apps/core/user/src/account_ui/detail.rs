@@ -547,21 +547,21 @@ impl Detail {
         };
         let items = vec![
             Fact {
-                title: "Name",
+                title: crate::record_fields::get("name").label,
                 id: "user-view-name",
                 value: render(&InlineEdit {
                     field: self.inline(loaded, "name", "Name", &account.name),
                 })?,
             },
             Fact {
-                title: "Email",
+                title: crate::record_fields::EMAIL.label,
                 id: "user-view-email",
                 value: render(&InlineEdit {
                     field: self.inline(loaded, "email", "Email", &account.email),
                 })?,
             },
             Fact {
-                title: "Person",
+                title: crate::record_fields::PERSON_ID.label,
                 id: "user-view-person",
                 value: render(&InlineChoice {
                     field: person_field,
@@ -570,7 +570,7 @@ impl Detail {
                 })?,
             },
             Fact {
-                title: "Company",
+                title: crate::record_fields::COMPANY_ID.label,
                 id: "user-view-company",
                 value: render(&InlineChoice {
                     field: affiliation_field,
@@ -579,19 +579,19 @@ impl Detail {
                 })?,
             },
             Fact {
-                title: "Email Verified",
+                title: crate::record_fields::EMAIL_VERIFIED_AT.label,
                 id: "user-view-email-verified",
                 value: verified,
             },
             Fact {
-                title: "Created",
+                title: crate::record_fields::CREATED_AT.label,
                 id: "user-view-created",
                 value: render(&Stamp {
                     value: datetime(&display, "user-created-at", account.created_at)?,
                 })?,
             },
             Fact {
-                title: "Updated",
+                title: crate::record_fields::UPDATED_AT.label,
                 id: "user-view-updated",
                 value: render(&Stamp {
                     value: datetime(&display, "user-updated-at", account.updated_at)?,

@@ -236,23 +236,6 @@ impl Index {
                 }
             }
         }
-        // Keep the business labels short; Grid still owns the paths, values,
-        // suggestions, masking and persisted arrangement.
-        for column in self
-            .columns
-            .columns
-            .iter_mut()
-            .chain(&mut self.columns.suggestions)
-        {
-            let label = match column.spec.as_str() {
-                "work.work_email:list" => "Work email",
-                "work.title:list" => "Role",
-                "work.company.name:list" => "Company",
-                _ => continue,
-            };
-            column.label = label.into();
-            column.short_label = label.into();
-        }
         let mut table = self
             .columns
             .flex_table("persons", rows)

@@ -131,3 +131,5 @@ attachments, primary resolution, the bootstrap facts before and after the
 operator's address, archived-company and retired-Person freezes, refused and
 soft delete, and audit counts. It marks tenant 1 as the platform operator when
 none exists, so use it only on a disposable database.
+
+The directory shares its detail-field vocabulary through `web::fields` and `ListColumns::with_record_fields`. Street lines, phone, location names and provenance scalars are optional columns; raw input remains long text on the record. The original five default columns stay in place. Phone restrictions refresh even when a search returns no rows.

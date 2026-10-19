@@ -52,6 +52,8 @@ pub struct ListColumns {
     pub id: String,
     builtins: Vec<BuiltinColumn>,
     columns: Vec<String>,
+    defaults: Vec<String>,
+    unavailable: Vec<String>,
     pub suggestions: Vec<BuiltinColumn>,
     pub add_query: String,
     pub zoom: u16,
@@ -94,6 +96,8 @@ impl ListColumns {
         }
         Ok(Self {
             id: id.into(),
+            defaults: builtins.iter().map(|column| column.id.clone()).collect(),
+            unavailable: Vec::new(),
             builtins,
             columns: vec![],
             suggestions: vec![],
@@ -101,15 +105,53 @@ impl ListColumns {
             zoom: DEFAULT_ZOOM,
         })
     }
+    /// Extend the picker from the detail schema, retaining the original defaults.
+    /// Pass only fields the scope may read, including on an empty result page.
+    pub fn with_record_fields(
+        mut self,
+        fields: impl IntoIterator<Item = crate::RecordField>,
+    ) -> Self {
+        for field in fields {
+            let Some(column) = field.builtin() else {
+                continue;
+            };
+            if let Some(existing) = self.builtins.iter_mut().find(|c| c.id == column.id) {
+                existing.label.clone_from(&column.label);
+                existing.short_label.clone_from(&column.short_label);
+            } else {
+                self.builtins.push(column);
+            }
+        }
+        self
+    }
+    /// Refresh scoped availability even on an empty page. Restrictions prune
+    /// selected columns and offers; lifting one restores its picker entry.
+    pub fn set_available(
+        &mut self,
+        fields: &[crate::RecordField],
+        visible: impl Fn(&crate::RecordField) -> bool,
+    ) {
+        self.unavailable = fields
+            .iter()
+            .filter(|field| !visible(field))
+            .filter_map(|field| field.column.map(str::to_owned))
+            .collect();
+        self.columns.retain(|id| !self.unavailable.contains(id));
+        self.suggestions = self.find_suggestions(&self.add_query);
+    }
     pub fn builtins(&self) -> &[BuiltinColumn] {
         &self.builtins
     }
     pub fn visible_ids(&self) -> Vec<&str> {
-        if self.columns.is_empty() {
-            self.builtins.iter().map(|c| c.id.as_str()).collect()
+        let ids = if self.columns.is_empty() {
+            &self.defaults
         } else {
-            self.columns.iter().map(String::as_str).collect()
-        }
+            &self.columns
+        };
+        ids.iter()
+            .filter(|id| !self.unavailable.contains(id))
+            .map(String::as_str)
+            .collect()
     }
     /// All are slot/value columns, removable, with no alternative lenses. U7's
     /// presenter can map these descriptors without querying a Grid catalog.
@@ -156,7 +198,7 @@ impl ListColumns {
                 return self
                     .builtins
                     .iter()
-                    .find(|c| c.id == get("sort"))
+                    .find(|c| c.id == get("sort") && !self.unavailable.contains(&c.id))
                     .and_then(|c| c.sort.clone())
                     .map_or(ColumnsOutcome::Noop, ColumnsOutcome::Sort)
             }
@@ -166,7 +208,10 @@ impl ListColumns {
                 return ColumnsOutcome::Update;
             }
             "add"
-                if self.builtins.iter().any(|c| c.id == spec)
+                if self
+                    .builtins
+                    .iter()
+                    .any(|c| c.id == spec && !self.unavailable.contains(&c.id))
                     && !visible.iter().any(|id| id == spec) =>
             {
                 visible.push(spec.into())
@@ -234,7 +279,8 @@ impl ListColumns {
         self.builtins
             .iter()
             .filter(|c| {
-                !shown.contains(&c.id.as_str())
+                !self.unavailable.contains(&c.id)
+                    && !shown.contains(&c.id.as_str())
                     && (c.label.to_lowercase().contains(&wanted)
                         || c.id.to_lowercase().contains(&wanted))
             })

@@ -11,6 +11,7 @@ bilibi_walkthrough_fixture::walkthrough_vocabulary!();
 bilibi_walkthrough_fixture::walkthrough_module_roles!();
 
 static EXTRA: GridContribution = GridContribution {
+    record_fields: &[],
     tables: &[
         TableDecl::new("g2_private", "Actor-private groups", "grid.reference.view",
             Source::tenant("SELECT id, name FROM base_grid_ref_groups WHERE tenant_id=$1 AND $2::bigint=1"), "id",
