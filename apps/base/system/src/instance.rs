@@ -290,6 +290,6 @@ inventory::submit! { Contribution::new(DEFINITIONS, INSTANCE_INSTALLS_FROM_KEY, 
     minimum: None, maximum: None,
     validator: Some(Validator { accepts: |value: &Value| value.is_null() || value.as_str().is_some_and(|source| Source::parse(source).is_some()), message: "Name an instance on this machine, like dev, or an address, like https://dev.erp.example.com." }),
     editor: Some(Editor { group: "Instance", label: "Install releases tested on",
-        help: "The instance whose tested release this one installs: a name on this machine, like dev, or an address, like https://staging.erp.example.com. Leave empty on Dev, which builds its own (server owner only).",
+        help: "The instance whose tested release this one installs: a name on this machine, like dev, or an address, like https://staging.erp.example.com. Leave empty to install only releases uploaded here (server owner only).",
         capability: Some(INSTANCE_MANAGE), reveal_duration_ms: 5_000 }),
 })) }

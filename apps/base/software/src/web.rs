@@ -277,7 +277,6 @@ impl View {
         let values = params::string_values(value);
         let get = |key: &str| value.get(key).and_then(Value::as_str);
         match get("type").ok_or(Error::Invalid)? {
-            "reload_catalogue" => self.catalogue = None,
             "request_install" => {
                 self.release = values.get("release").cloned().unwrap_or_default();
                 self.bundle = values.get("bundle").cloned().unwrap_or_default();
@@ -619,7 +618,7 @@ impl View {
             self.job_card(display, instance, can_manage, status)?
         };
         let discovery_card = self.discovery_card(status, catalogue)?;
-        let change_card = if can_manage {
+        let install_card = if can_manage {
             self.install_card(instance, status, active)?
         } else {
             Html::EMPTY
@@ -666,7 +665,7 @@ impl View {
             instance_card,
             job_card,
             discovery_card,
-            change_card,
+            install_card,
             history_card,
             dialog,
         }
@@ -1487,7 +1486,7 @@ struct PageView<'a> {
     instance_card: Html,
     job_card: Html,
     discovery_card: Html,
-    change_card: Html,
+    install_card: Html,
     history_card: Html,
     dialog: Html,
 }
@@ -1536,17 +1535,6 @@ struct ReviewBody {
     error: Html,
     cancel: Html,
     confirm: Html,
-}
-
-#[derive(Template)]
-#[template(
-    source = r#"{% import "feedback.html" as feedback %}<p class="text-sm text-ink">{{ message }}</p><p class="mt-1 text-xs text-ink-muted">Address: {{ url }}. A server owner changes it under Settings › Software.</p><div class="mt-3">{{ retry|safe }}</div>"#,
-    ext = "html"
-)]
-struct CatalogueUnavailable<'a> {
-    message: &'a str,
-    url: &'a str,
-    retry: Html,
 }
 
 #[derive(Template)]
