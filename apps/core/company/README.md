@@ -35,6 +35,8 @@ tenant → primary company relationship; nothing infers it from an id or the
 oldest company. The migration also advances the `companies` identity past
 rows inserted with explicit ids.
 
+The production seed `company-legal-entity-types-v1` inserts Belimbing's eleven common legal forms, from sole proprietorship to branch office, each with a one-line description. It uses `ON CONFLICT (code) DO NOTHING`. After the first apply the seed ledger skips that version, so an edit, a deactivation or an added type stays on the next `bilibi-web seed`.
+
 ## Capabilities and reach
 
 `contributions.rs` declares Belimbing's keys: `admin.company.view`, `.list`,

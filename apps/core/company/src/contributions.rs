@@ -208,6 +208,32 @@ inventory::submit! {
     })
 }
 
+// Belimbing's eleven common legal forms (`company.php` `legal_entity_types`).
+// Codes stay lowercase snake_case, the style already stored for this catalog
+// (`sdn_bhd`, `pte_ltd`). A repeat does not restore a row: the seed ledger
+// skips an applied version, and `ON CONFLICT (code) DO NOTHING` leaves a
+// code that was already there.
+const LEGAL_ENTITY_TYPES_SEED: &str = "\
+INSERT INTO company_legal_entity_types(code,name,description) VALUES
+('sole_proprietorship','Sole Proprietorship','One person owns and runs the business.'),
+('partnership','Partnership','Two or more people own the business and share its profits and debts.'),
+('llp','Limited Liability Partnership','Partners own the business together, with limited personal risk.'),
+('private_limited','Private Limited Company','Owners risk only what they put in, and the shares stay private.'),
+('public_listed','Public Listed Company','Anyone can buy its shares on a stock exchange.'),
+('public_unlisted','Public Unlisted Company','The public can own shares, but they are not traded on a stock exchange.'),
+('corporation','Corporation','The law treats the company as separate from the people who own it.'),
+('cooperative','Cooperative','Members own it and run it for their shared benefit.'),
+('non_profit','Non-Profit Organisation','It serves a public purpose, such as charity or education, rather than paying its owners.'),
+('government','Government Entity','A government body, or a company the government owns.'),
+('branch','Branch Office','A local office of a company registered in another country.')
+ON CONFLICT (code) DO NOTHING";
+
+inventory::submit! { Contribution::new(bilibi_module_registry::contributions::SEEDS, "core/company.legal-entity-types", provenance!(), &bilibi_module_registry::contributions::Seed {
+    version: "company-legal-entity-types-v1",
+    mode: bilibi_module_registry::contributions::SeedMode::Production,
+    action: bilibi_module_registry::contributions::SeedAction::Sql(LEGAL_ENTITY_TYPES_SEED),
+}) }
+
 // Development sample data (Bilimbi's `priv/dev_seed.exs`): the Engineering
 // and Operations department types, and one department of each on the
 // platform operator's primary company. Only `bilibi-web seed` runs it, on the
