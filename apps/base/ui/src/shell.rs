@@ -131,7 +131,8 @@ pub struct ShellContext<'a> {
     pub instance_title: String,
     /// The shared status-bar role and label, linked for a Core Administrator.
     pub instance_status: Html,
-    /// The bind address of this server, when available.
+    /// The bind address of this server, shown after the role. The host supplies
+    /// it only when the role is Dev.
     pub listen_address: Option<&'a str>,
     /// The Platform version first, then each mounted Domain or Extension, from
     /// `version_badges`.
