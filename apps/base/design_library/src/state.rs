@@ -1,5 +1,5 @@
 use bilibi_database::{Error, Result};
-use bilibi_datetime::DisplayContext;
+use bilibi_datetime::{filter, DisplayContext, Period, PeriodFilter};
 use bilibi_ui::{
     flex_sample::FlexSample, BuiltinColumn, CommitStates, CommitStatus, ListColumns, ListSpec,
     ListState, SortDir, UploadSpec, Uploads,
@@ -52,8 +52,7 @@ pub struct State {
     pub display: DisplayContext,
     pub browser_zone: Option<String>,
     pub period: HashMap<String, String>,
-    pub period_edit: Option<(String, String, String)>,
-    pub period_error: String,
+    pub period_filter: PeriodFilter,
     pub inline: BTreeMap<String, String>,
     pub statuses: CommitStates,
     pub version: u64,
@@ -92,6 +91,8 @@ impl State {
         let sample =
             serde_json::from_str(include_str!("sample.json")).expect("copied specimen values");
         let list = ListState::parse(query, SPEC.clone()).map_err(|_| Error::Invalid)?;
+        let clock = DisplayContext::anonymous().clock(None, jiff::Timestamp::now());
+        let period = Period::parse(|key| query.get(key).cloned(), clock.today);
         let mut result = Self {
             area: area.into(),
             csrf: String::new(),
@@ -130,8 +131,7 @@ impl State {
             display: DisplayContext::anonymous(),
             browser_zone: None,
             period: HashMap::new(),
-            period_edit: None,
-            period_error: String::new(),
+            period_filter: PeriodFilter::new("example-period-filter", period, &clock),
             inline: BTreeMap::new(),
             statuses: CommitStates::default(),
             version: 0,
@@ -352,56 +352,21 @@ impl State {
                     }
                 }
             }
-            "period-filter" => {
-                if let Some(preset) = get("period") {
-                    if preset == "custom" || preset == "change_custom" {
-                        let clock = self
-                            .display
-                            .clock(self.browser_zone.as_deref(), jiff::Timestamp::now());
-                        let current = bilibi_datetime::Period::parse(
-                            |key| self.period.get(key).cloned(),
-                            clock.today,
-                        );
-                        self.period_edit = Some((
-                            get("period_id").unwrap_or_default(),
-                            current.from.to_string(),
-                            current.to.to_string(),
-                        ));
-                        self.period_error.clear();
-                    } else if bilibi_datetime::Preset::ALL
-                        .iter()
-                        .any(|(_, p)| p.as_str() == preset)
-                    {
-                        self.period = HashMap::from([("period".into(), preset)]);
-                        self.list.page = 1;
-                        self.period_edit = None;
-                    }
-                }
-            }
-            "period-cancel" => {
-                self.period_edit = None;
-                self.period_error.clear();
-            }
-            "period-range" => {
-                if let Some((id, _, _)) = self.period_edit.clone() {
-                    let from = get("from").unwrap_or_default();
-                    let to = get("to").unwrap_or_default();
-                    match bilibi_datetime::Period::custom(&from, &to) {
-                        Ok(period) => {
-                            self.period = period
-                                .params()
-                                .into_iter()
-                                .map(|(k, v)| (k.into(), v))
-                                .collect();
-                            self.list.page = 1;
-                            self.period_edit = None;
-                            self.period_error.clear();
-                        }
-                        Err(error) => {
-                            self.period_edit = Some((id, from, to));
-                            self.period_error = error.into();
-                        }
-                    }
+            filter::SELECT | filter::APPLY | filter::CANCEL => {
+                let clock = self
+                    .display
+                    .clock(self.browser_zone.as_deref(), jiff::Timestamp::now());
+                let period = Period::parse(|key| self.period.get(key).cloned(), clock.today);
+                self.period_filter.set(period, &clock);
+                if let Some(filter::Outcome::Applied(period)) =
+                    self.period_filter.event(&ty, event, &clock)
+                {
+                    self.period = period
+                        .params()
+                        .into_iter()
+                        .map(|(k, v)| (k.into(), v))
+                        .collect();
+                    self.list.page = 1;
                 }
             }
             "browser_timezone" => {

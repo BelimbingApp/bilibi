@@ -9,8 +9,9 @@
 {% import "components.html" as ui %}
 {% import "forms.html" as form %}
 {% import "dialog.html" as dialog %}
-<div id="{{ id }}" class="w-full sm:w-40">
-<form id="{{ id }}-selection" data-event="{{ bilibi_datetime::filter::SELECT }}" data-change>
+<div id="{{ id }}" class="w-full sm:w-fit sm:min-w-36">
+{# Keep toolbar density on the selection form so the modal's pinned date labels retain their shared field geometry. #}
+<form id="{{ id }}-selection" data-event="{{ bilibi_datetime::filter::SELECT }}" data-change class="ui-compact-controls">
 {% call form::input(field=self.selection()) %}{% endcall %}
 </form>
 {%- if open -%}

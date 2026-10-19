@@ -190,6 +190,7 @@ impl PeriodFilter {
             .id(format!("{}-draft-{key}", self.id))
             .kind(InputKind::Date)
             .label(label)
+            .wrapper_class("mb-0")
             .value(value)
             .required()
     }
