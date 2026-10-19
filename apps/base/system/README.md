@@ -68,7 +68,7 @@ an `https://` address, parsed by `Source`) are global settings under the
 banner, the Software page and the agent confirm pages read `Instance` and
 nothing else, so they cannot disagree. `Role::consequence` is the plain
 sentence for what a change does here ("This is a test copy. Changes here do
-not affect production."). `Instance::badge` (sign-in pages, none on
+not affect production."). `Instance::badge` (top bar and sign-in pages, none on
 Production), `banner` (every review and confirmation, Production included) and
 `agent_json` (the `instance` object of plans, commits, MCP and
 `/.well-known/bilibi`) are drawn from the same label, colour and role, so an

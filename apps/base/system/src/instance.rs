@@ -237,8 +237,9 @@ impl Instance {
             "notice": self.notice(),
         })
     }
-    /// The sign-in badge. Production shows none; the account panel still
-    /// names every installation.
+    /// The shell's top-bar badge. Production shows none: it is the normal
+    /// case, and a badge on every production page would teach people to stop
+    /// looking at it. The account panel still names it.
     pub fn badge(&self) -> askama::Result<Html> {
         if self.role == Role::Production {
             return Ok(Html::default());

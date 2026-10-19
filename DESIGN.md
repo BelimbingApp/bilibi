@@ -167,7 +167,7 @@ Width is a shared decision. Every page uses `PageVariant`. All three share one c
 | Panel notice | Where a panel cannot reach the page flash |
 | Connection | Banners announce a dropped socket. The page reconnects with backoff and remounts in place |
 | Error pages | One shell from `apps/web/src/errors.rs`. Debug detail only in debug builds |
-| Which Bilibi | Every instance but production shows a badge on sign-in; production shows none. A review or confirmation opens with the instance banner on every instance, production included. The colour is the operator's `instance.colour` status role, and the label is the operator's `instance.label`, so the name is always in words |
+| Which Bilibi | Every instance but production shows a badge in the top bar and on sign-in; production shows none. A debug build leaves the top-bar badge to the status bar's `dev` marker. A review or confirmation opens with the instance banner on every instance, production included. The colour is the operator's `instance.colour` status role, and the label is the operator's `instance.label`, so the name is always in words |
 
 - A failure says what happened, what it cost, and what to do next.
 - Recover before reporting. Users are not an error channel.
