@@ -9,6 +9,7 @@ WHERE step.tenant_id = job.tenant_id AND step.job_id = job.id
   AND step.state IN ('pending', 'running');
 UPDATE base_software_jobs
 SET state = 'cancelled', finished_at = now(), settled_at = NULL,
+    worker = coalesce(worker, 'software-migration'), started_at = coalesce(started_at, now()),
     result = coalesce(result, '{}'::jsonb) || jsonb_build_object('message', 'Server builds were removed. Add Domains in your local Bilibi copy and build there; then install the tested release here.')
 WHERE kind = 'change' AND state IN ('queued', 'running');
 -- Keep terminal legacy history for audit and Undo; no new change may wait.

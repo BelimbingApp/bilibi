@@ -125,10 +125,29 @@ ensure_users() {
     # bilibi-build reads each instance's env (the database address) to migrate.
     id -nG bilibi-build | tr ' ' '\n' | grep -qx bilibi || usermod -aG bilibi bilibi-build
     install -d -m 0750 -o bilibi-build -g bilibi-build "$root/build"
-    if [[ -d /etc/sudoers.d ]]; then
-        install -m 0440 "$here/server/sudoers" /etc/sudoers.d/bilibi-build
-        visudo -cf /etc/sudoers.d/bilibi-build >/dev/null || fail 'the sudoers rule for bilibi-build did not validate'
-    fi
+    install_sudoers
+}
+# install_sudoers: the rule for bilibi-build, replaced only when it differs.
+install_sudoers() {
+    [[ -d /etc/sudoers.d ]] || return 0
+    cmp -s "$here/server/sudoers" /etc/sudoers.d/bilibi-build && return 0
+    install -m 0440 "$here/server/sudoers" /etc/sudoers.d/bilibi-build
+    visudo -cf /etc/sudoers.d/bilibi-build >/dev/null || fail 'the sudoers rule for bilibi-build did not validate'
+}
+# retire_worker: servers that once built software ran bilibi-worker@<instance>.
+# Stop and disable each, then remove the unit template and the old sudoers
+# rule. Does nothing once the template is gone, so fresh installs skip it.
+retire_worker() {
+    local template=/etc/systemd/system/bilibi-worker@.service instance stuck=
+    [[ -f $template ]] || { install_sudoers; return 0; }
+    for instance in $(instances); do
+        systemctl disable --now "bilibi-worker@$instance" >/dev/null 2>&1 || stuck=1
+    done
+    [[ -z $stuck ]] || fail 'could not stop bilibi-worker@<instance>, which Bilibi no longer uses' 'run: systemctl disable --now "bilibi-worker@*", then rerun this command'
+    rm -f "$template"
+    systemctl daemon-reload
+    install_sudoers
+    say 'retired the obsolete bilibi-worker@<instance> services'
 }
 
 # ---------------------------------------------------------------- database
@@ -263,6 +282,7 @@ create() {
     install_packages
     ensure_users
     install_unit
+    retire_worker
     local dir env created=
     dir=$(instance_dir "$instance"); env=$dir/env
     install -d -m 0755 "$root" "$dir" "$dir/site"
@@ -343,6 +363,7 @@ installer() {
     [[ -f $source && -x $source ]] || fail "$source is not an executable bilibi-installer" "build it with: cargo build --release -p bilibi-installer"
     [[ -d $root/build ]] || fail "no instance exists yet" "create one first: $0 create <instance> --role ... --site ..."
     install_unit
+    retire_worker
     install -d -m 0755 -o root -g root "$root/build/bin"
     install -m 0755 -o root -g root "$source" "$installer_bin.new" && mv -T "$installer_bin.new" "$installer_bin"
     say "installer: $installer_bin updated"
@@ -407,6 +428,7 @@ release() {
     [[ -n $instance && -n $source ]] || usage
     need_root release "$@"
     instance_exists "$instance" || fail "no instance named $instance" "create it first: $0 create $instance --role ... --site ..."
+    retire_worker
     local binary dir n previous
     if [[ -d $source ]]; then binary=$source/bilibi-web; else binary=$source; fi
     [[ -f $binary && -x $binary ]] || fail "$binary is not an executable bilibi-web"

@@ -207,7 +207,7 @@ Keep other mounted Domains and Extensions. For an existing clone, fetch and chec
 
 Copy `target/release/bilibi-web`, `.local/composition/manifest.txt` and `.local/composition/Cargo.lock` into a release folder. Put the first release on a test instance with `scripts/install-server.sh release` and check it there. Its Release files page downloads the existing transport bundle; upload that on Staging or Production and install it from Software, or configure the source and let the target download it. Install and undo retain the same fresh 2FA check, backup, automatic switch-back and audit path. There is no new server build or packaging path.
 
-When upgrading an older installation, disable its former `bilibi-worker@<instance>` service before replacing the program, then remove that obsolete unit. The new `base-software-003-local-builds` migration cancels queued and running build jobs with local build guidance, preserving their history. Install and undo jobs continue normally.
+When upgrading an older installation, `create`, `installer` and `release` stop and disable each former `bilibi-worker@<instance>` service, then remove that obsolete unit and its sudoers rule. Rerunning is safe, and a fresh server is left alone. The new `base-software-003-local-builds` migration cancels queued and running build jobs with local build guidance, preserving their history. Install and undo jobs continue normally.
 
 ## Reference
 
