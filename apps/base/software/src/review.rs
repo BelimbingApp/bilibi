@@ -84,6 +84,16 @@ fn busy(active: Option<&Job>) -> Result<()> {
         None => Ok(()),
     }
 }
+fn production_warnings(instance: &Instance) -> Vec<String> {
+    if instance.role == bilibi_system::Role::Production {
+        vec![
+            "This changes Production. Pick a quiet time: the instance pauses for about a minute."
+                .into(),
+        ]
+    } else {
+        Vec::new()
+    }
+}
 fn valid_id(id: &str) -> bool {
     (1..=64).contains(&id.len())
         && id.bytes().next().is_some_and(|b| b.is_ascii_lowercase())
@@ -577,14 +587,7 @@ pub fn install(
         "{}: install release {release} from {source_text}",
         instance.label
     );
-    let warnings: Vec<String> = if instance.role == bilibi_system::Role::Production {
-        vec![
-            "This changes Production. Pick a quiet time: the instance pauses for about a minute."
-                .into(),
-        ]
-    } else {
-        Vec::new()
-    };
+    let warnings = production_warnings(instance);
     let request = json!({"release": release, "source": source_json(source), "switch": switch});
     let facts = json!({
         "summary": summary,
@@ -786,6 +789,7 @@ pub fn go(instance: &Instance, job: &Job, parked: Option<i64>) -> Result<Review>
         "instance": instance_json(instance),
         "job": job.id,
         "release": release,
+        "warnings": production_warnings(instance),
         "pause_minutes": PAUSE_MINUTES,
         "what_happens": format!("{} pauses for about {PAUSE_MINUTES} minute to back up the database, update it, switch and check.", instance.label),
         "steps": steps.iter().skip_while(|s| s.key != "backup").map(|s| json!({"seq": s.seq, "key": s.key, "label": s.label, "pauses": s.pauses})).collect::<Vec<_>>(),

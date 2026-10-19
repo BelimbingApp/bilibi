@@ -981,10 +981,14 @@ impl View {
             .map(Vec::as_slice)
             .unwrap_or_default();
         let first = if kind == "install" { "fetch" } else { "build" };
-        let built = steps_json
+        let part = steps_json
             .iter()
-            .find(|s| s["key"] == first && s["state"] == "done")
-            .and_then(|s| s["detail"]["release"].as_i64());
+            .find(|s| s["key"] == first && s["state"] == "done");
+        let built = if kind == "install" {
+            part.and(job["request"]["release"].as_i64())
+        } else {
+            part.and_then(|s| s["detail"]["release"].as_i64())
+        };
         let installer_started = steps_json
             .iter()
             .skip_while(|s| s["key"] != first)
@@ -1765,7 +1769,9 @@ impl View {
                 );
             }
         }
-        if review.kind == Kind::Install && instance.role == bilibi_system::Role::Production {
+        if matches!(review.kind, Kind::Install | Kind::Go)
+            && instance.role == bilibi_system::Role::Production
+        {
             // The review's own Production warning is the first; it is drawn as an error so it reads as the alert it is.
             if let Some(first) = warnings.first_mut() {
                 first.0 = StatusKind::Error;

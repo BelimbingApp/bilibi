@@ -242,10 +242,14 @@ pub async fn parked_release(
         _ => return Ok(None),
     };
     let steps = steps_json(client, tenant, job.id).await?;
-    let made = steps
+    let part = steps
         .iter()
-        .find(|s| s["key"] == first && s["state"] == "done")
-        .and_then(|s| s["detail"]["release"].as_i64());
+        .find(|s| s["key"] == first && s["state"] == "done");
+    let made = if job.kind == "install" {
+        part.and(job.request["release"].as_i64())
+    } else {
+        part.and_then(|s| s["detail"]["release"].as_i64())
+    };
     let later_started = steps
         .iter()
         .skip_while(|s| s["key"] != first)
