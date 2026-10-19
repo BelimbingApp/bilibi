@@ -541,15 +541,19 @@ impl Authorization {
             .await
     }
 }
+async fn require_operator_marker(client: &(impl GenericClient + Sync), tenant: i64) -> Result<()> {
+    client
+        .query_opt("SELECT t.id FROM tenants t JOIN platform_operator o ON o.tenant_id=t.id WHERE o.singleton=true AND t.id=$1 AND t.status='active' AND t.deleted_at IS NULL", &[&tenant])
+        .await?
+        .map(|_| ())
+        .ok_or(Error::Forbidden)
+}
 pub async fn prove_operator(
     client: &(impl GenericClient + Sync),
     scope: &Scope,
 ) -> Result<OperatorProof> {
+    require_operator_marker(client, scope.tenant()).await?;
     let fresh = scope.authentication.reprove(client, scope).await?;
-    let row = client.query_opt("SELECT t.id FROM tenants t JOIN platform_operator o ON o.tenant_id=t.id WHERE o.singleton=true AND t.id=$1 AND t.status='active' AND t.deleted_at IS NULL", &[&scope.tenant()]).await?;
-    if row.is_none() {
-        return Err(Error::Forbidden);
-    }
     Ok(OperatorProof { scope: fresh })
 }
 
@@ -574,8 +578,8 @@ pub async fn prove_owner(
     if scope.impersonator().is_some() {
         return Err(Error::Forbidden);
     }
-    let operator = prove_operator(client, scope).await?;
-    let fresh = operator.scope();
+    require_operator_marker(client, scope.tenant()).await?;
+    let fresh = &scope.authentication.reprove(client, scope).await?;
     let identity = fresh
         .authentication
         .verifier

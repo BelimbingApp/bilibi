@@ -120,7 +120,7 @@ or creates and marks it, and re-running creates neither a second operator
 nor a second company (`bilibi-web create-owner` calls it first when no
 operator company exists, then creates the first account). Both are deployment writes recorded as one retained
 `company.*.provisioned` audit action by the `provision` system principal,
-through Tenancy's `admin::provision_tenant` / `provision_platform_operator`
+through Tenancy's `provision_tenant` / `provision_platform_operator`
 seams. Ids come from PostgreSQL.
 
 ## Platform-operator setup and dashboard panels (K17)
