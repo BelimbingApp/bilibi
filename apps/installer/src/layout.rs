@@ -247,7 +247,7 @@ pub fn read_plugins(dir: &Path) -> Result<Option<Vec<serde_json::Value>>, String
     };
     let damaged = || {
         format!(
-            "{PLUGINS_DIR}/{PLUGINS_ENABLED} is not a list of add-ons. Make the release file again on the source."
+            "{PLUGINS_DIR}/{PLUGINS_ENABLED} is not a list of add-ons. Make the release file again on the server it came from."
         )
     };
     let list: Vec<Value> = serde_json::from_str(&text).map_err(|_| damaged())?;

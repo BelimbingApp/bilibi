@@ -1440,9 +1440,10 @@ impl View {
             .flatten()
             .map(|s| text(&s["label"]).to_owned())
             .collect();
+        let mut what_happens = text(&facts["what_happens"]).to_owned();
         if review.kind == Kind::Undo && facts["restores_backup"] == true {
             if let Some(file) = facts["backup"].as_str() {
-                checks.push(format!("Undo restores this file on the server: {file}"));
+                what_happens.push_str(&format!(" Undo restores this file on the server: {file}"));
             }
         }
         let code = CodeInput::new(
@@ -1482,7 +1483,7 @@ impl View {
             lines,
             checks,
             warnings,
-            what_happens: text(&facts["what_happens"]).to_owned(),
+            what_happens,
             steps,
             event: review.kind.event(),
             code,
