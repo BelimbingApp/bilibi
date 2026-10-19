@@ -89,7 +89,7 @@ return `live: false`. F6 owns queued events and retained fragment/iframe lifecyc
 
 The host owns the machine endpoints; discovered pages cannot claim them
 (`api::reserved`: `/api/v1/…`, `/.well-known/…`, `/oauth/device_authorization`,
-`/oauth/token`, `/mcp`, `/webhooks/…`).
+`/oauth/token`, `/mcp`, `/webhooks/…`, `/transport/…`).
 
 - Discovery: `/.well-known/oauth-authorization-server`,
   `/.well-known/oauth-protected-resource[/mcp]` and `/.well-known/bilibi`, all
@@ -200,7 +200,7 @@ See `apps/core/agent_plugins/README.md`.
 
 # Webhooks (`src/webhooks.rs`)
 
-`POST /webhooks/{identifier}` is the only signed machine namespace. Register a
+`POST /webhooks/{identifier}` is the only signed machine namespace (`/transport/…` below takes a pairing key, not a signature). Register a
 handler with `Contribution::new(WEBHOOKS, …, &Webhook { identifier, service })`
 from `bilibi_base::integration::webhooks`; the service must resolve to a
 `WebhookService` wrapping a `WebhookHandler` (`verify`, then `handle`). Boot
@@ -227,3 +227,7 @@ registered identifier (or `unknown`) and a host reason (`accepted`,
 the window closes. No body, header, signature, callback error or verified
 context is ever recorded, and webhooks do not enter the exchange log. A
 delivery whose audit row cannot be written is refused.
+
+# Release transport (`src/transport.rs`)
+
+`GET /transport/releases` lists the releases kept on this instance and `GET /transport/releases/{n}` streams one release file, for a paired instance that installs from this one. GET only: the target pulls, so nothing is ever pushed to an instance. The request carries the pairing key in `X-Bilibi-Pairing-Key` and nothing else (no cookie, CSRF or Origin); `base/software` decides admission and compares the key in constant time. The host throttles per sender, answers with fixed JSON errors and records one system incoming exchange per request, never the key. The contract, the checks and the pairing key: `apps/base/software/README.md`, "Release transport".
