@@ -1143,16 +1143,10 @@ impl View {
                     },
                     Fact {
                         title: "Compatibility",
-                        value: Html::text(&match item["recommended_version"].as_str() {
-                            Some(version) => format!(
-                                "Yes · Version {version} supports Bilibi {}.",
-                                text(&catalogue["running_platform"]["version"])
-                            ),
-                            None => format!(
-                                "No · No published version supports Bilibi {}.",
-                                text(&catalogue["running_platform"]["version"])
-                            ),
-                        }),
+                        value: Html::text(&compatibility(
+                            item,
+                            text(&catalogue["running_platform"]["version"]),
+                        )),
                         ..Fact::default()
                     },
                 ];
@@ -1895,5 +1889,40 @@ impl Page<Scope, Error> for Pages {
                 Box::new(View::new(self.clone(), request.query)?);
             Ok(Some(state))
         })
+    }
+}
+
+/// Plain-words compatibility of the recommended version with the running platform.
+fn compatibility(item: &Value, platform: &str) -> String {
+    let versions = item["versions"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    match item["recommended_version"].as_str() {
+        Some(version) => {
+            let tested = versions
+                .iter()
+                .any(|v| v["version"] == version && v["tested_with_running"] == true);
+            if tested {
+                format!("Yes · tested with Bilibi {platform}")
+            } else {
+                format!(
+                    "Yes, not tested yet · supports Bilibi {platform}; test it before installing"
+                )
+            }
+        }
+        None => {
+            let newest = versions
+                .iter()
+                .filter_map(|v| {
+                    let parsed = crate::catalogue::Version::parse(v["version"].as_str()?)?;
+                    Some((parsed, v["platform"].as_str()?))
+                })
+                .max_by_key(|(parsed, _)| *parsed);
+            match newest {
+                Some((_, requirement)) => format!("No · needs Bilibi {requirement}"),
+                None => format!("No · no published version supports Bilibi {platform}"),
+            }
+        }
     }
 }
