@@ -356,10 +356,15 @@ impl Index {
         );
         row.slots
             .insert("self_report".into(), self_report(exchange));
-        for (field, value) in exchange_facts(display, exchange)? {
-            if let Some(column) = field.column {
-                if column != "operation" {
-                    row.slots.insert(column.into(), value);
+        if self.columns.columns.iter().any(|shown| {
+            fields::ALL
+                .iter()
+                .any(|field| field.column == Some(shown.id.as_str()))
+                && !row.slots.contains_key(&shown.id)
+        }) {
+            for (field, value) in exchange_facts(display, exchange, "exchange-time")? {
+                if let Some(column) = field.column {
+                    row.slots.entry(column.into()).or_insert(value);
                 }
             }
         }
@@ -590,7 +595,7 @@ impl Show {
     fn facts(display: &DisplayContext, exchange: &Summary) -> Result<Html> {
         render(Facts {
             id: "exchange-facts",
-            items: exchange_facts(display, exchange)?
+            items: exchange_facts(display, exchange, "exchange-time")?
                 .into_iter()
                 .map(|(field, value)| field.fact(value))
                 .collect(),
@@ -806,8 +811,8 @@ bilibi_ui::record_fields! { pub(crate) mod fields {
     METHOD: bilibi_ui::RecordField::new("method", "Method"),
     ENDPOINT: bilibi_ui::RecordField::new("endpoint", "Endpoint"),
     OUTCOME: bilibi_ui::RecordField::new("outcome", "Outcome"),
-    STATUS: bilibi_ui::RecordField::new("status", "HTTP status"),
-    DURATION_MS: bilibi_ui::RecordField::new("duration_ms", "Duration"),
+    STATUS: bilibi_ui::RecordField::new("status", "HTTP status").excluded("The default Status column shows it"),
+    DURATION_MS: bilibi_ui::RecordField::new("duration_ms", "Duration").excluded("The default Duration (ms) column shows it"),
     OCCURRED_AT: bilibi_ui::RecordField::new("occurred_at", "Time"),
     TENANT: bilibi_ui::RecordField::new("tenant", "Tenant"),
     OWNER: bilibi_ui::RecordField::new("owner", "Owner"),
@@ -823,6 +828,7 @@ bilibi_ui::record_fields! { pub(crate) mod fields {
 fn exchange_facts(
     display: &DisplayContext,
     exchange: &Summary,
+    time_id: &str,
 ) -> Result<Vec<(bilibi_ui::RecordField, Html)>> {
     let owner = match (&exchange.owner_type, exchange.owner_id) {
         (None, None) => "—".to_owned(),
@@ -852,7 +858,7 @@ fn exchange_facts(
         (
             fields::OCCURRED_AT,
             render(TimeTag {
-                id: &format!("exchange-time-{}", exchange.id),
+                id: time_id,
                 i: instant(display, exchange.occurred_at)?,
             })?,
         ),

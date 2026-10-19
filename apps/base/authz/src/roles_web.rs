@@ -279,13 +279,28 @@ impl Pages {
         );
         toolbar.event = "search";
         html.push(&render(toolbar)?);
+        let mut owners = HashMap::new();
+        if columns.visible_ids().contains(&"company_id") {
+            for id in page.entries.iter().filter_map(|role| role.company_id) {
+                if let (false, Ok(organisation)) =
+                    (owners.contains_key(&id), OrganisationId::new(id))
+                {
+                    owners.insert(
+                        id,
+                        self.parties
+                            .organisation_name(&**client, scope, organisation)
+                            .await?,
+                    );
+                }
+            }
+        }
         let mut rows = Vec::with_capacity(page.entries.len());
         for role in &page.entries {
-            let owner = match role.company_id.and_then(|id| OrganisationId::new(id).ok()) {
-                Some(id) => self.parties.organisation_name(&**client, scope, id).await?,
-                None => None,
-            };
-            rows.push(role_row(role, columns.mode(), owner.as_ref())?);
+            let owner = role
+                .company_id
+                .and_then(|id| owners.get(&id))
+                .and_then(Option::as_ref);
+            rows.push(role_row(role, columns.mode(), owner)?);
         }
         let mut table = FlexTable::new("roles", columns.flex_columns(), rows)
             .sorted(state.sort_by.as_deref(), state.sort_dir);

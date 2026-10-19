@@ -82,6 +82,7 @@ pub struct PageColumns {
     views: Arc<PageViews>,
     table: String,
     builtins: Vec<BuiltinColumn>,
+    mounted: usize,
     defaults: Vec<String>,
     record_fields: Vec<bilibi_ui::RecordField>,
     view: View,
@@ -132,6 +133,7 @@ impl PageColumns {
             table: table.into(),
             view: View::new(table),
             defaults: builtins.iter().map(|b| b.id.clone()).collect(),
+            mounted: builtins.len(),
             builtins,
             record_fields: Vec::new(),
             catalog: None,
@@ -403,6 +405,7 @@ impl PageColumns {
                 .builtins
                 .iter()
                 .enumerate()
+                .take(self.mounted)
                 .filter(|(_, builtin)| self.builtin_allowed(catalog, builtin))
                 .map(|(index, _)| Kept::Builtin(index))
                 .collect();

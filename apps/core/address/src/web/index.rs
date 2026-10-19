@@ -142,20 +142,15 @@ impl Index {
         self.columns.load(&page.entries, |a| a.id.to_string());
         self.total = page.total as u64;
         self.names.clear();
-        for entry in &page.entries {
-            if let Some(code) = &entry.address.country_iso {
-                if !self.names.contains_key(code) {
-                    let name = self
-                        .pages
-                        .addresses
-                        .geonames()
-                        .get_country(code)
-                        .await?
-                        .map(|country| country.country)
-                        .unwrap_or_else(|| code.clone());
-                    self.names.insert(code.clone(), name);
-                }
-            }
+        self.entries = page.entries;
+        self.admin1_names().await
+    }
+
+    async fn admin1_names(&mut self) -> Result<()> {
+        if !self.columns.visible_ids().contains(&"admin1_code") {
+            return Ok(());
+        }
+        for entry in &self.entries {
             if let Some(code) = &entry.address.admin1_code {
                 if !self.names.contains_key(code) {
                     let name = self
@@ -170,7 +165,6 @@ impl Index {
                 }
             }
         }
-        self.entries = page.entries;
         Ok(())
     }
     fn request_delete(&mut self, id: Option<&str>) {
@@ -304,7 +298,7 @@ impl Index {
                     "country_iso",
                     Html::raw(format!(
                         "<span class=\"whitespace-nowrap font-mono text-xs text-ink-muted\">{}</span>",
-                        Html::text(a.country_iso.as_deref().map(|code| self.names.get(code).map_or(code, String::as_str)).unwrap_or("—"))
+                        Html::text(a.country_iso.as_deref().unwrap_or("—"))
                     )),
                 );
             for field in super::fields::ALL {
@@ -441,7 +435,10 @@ impl LiveState<Scope, Error> for Index {
                                 return Err(Error::Invalid);
                             }
                         }
-                        ColumnsOutcome::Update | ColumnsOutcome::Noop => requery = false,
+                        ColumnsOutcome::Update | ColumnsOutcome::Noop => {
+                            requery = false;
+                            self.admin1_names().await?;
+                        }
                     },
                     "page" => self
                         .list
