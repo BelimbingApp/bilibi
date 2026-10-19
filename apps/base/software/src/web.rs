@@ -1850,7 +1850,8 @@ impl View {
             "code",
             "6-digit code from your authenticator app",
             6,
-        );
+        )
+        .numeric();
         let error = match &review.error {
             Some(message) => render(Alert {
                 kind: StatusKind::Error,

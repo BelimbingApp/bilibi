@@ -26,6 +26,7 @@
   --line: rgba(28, 25, 23, .12); --line-strong: rgba(28, 25, 23, .2);
   --action: #1a2e05; --action-ink: #f7fee7; --action-hover: #65a30d;
   --brand-surface: #f7fee7; --brand-ink: #1a2e05; --brand: #bef264;
+  --brand-strong: #65a30d;
   --success: #059669; --success-surface: #ecfdf5; --success-line: #a7f3d0; --success-ink: #064e3b;
   --info: #2563eb; --info-surface: #eff6ff; --info-line: #bfdbfe; --info-ink: #1e3a8a;
   --warning: #f59e0b; --warning-surface: #fffbeb; --warning-line: #fcd34d; --warning-ink: #78350f;
@@ -38,6 +39,7 @@
   --line: rgba(245, 245, 244, .12); --line-strong: rgba(245, 245, 244, .2);
   --action: #65a30d; --action-ink: #1a2e05; --action-hover: #84cc16;
   --brand-surface: #1a2e05; --brand-ink: #ecfccb; --brand: #a3e635;
+  --brand-strong: #84cc16;
   --success: #10b981; --success-surface: #022c22; --success-line: #065f46; --success-ink: #a7f3d0;
   --info: #3b82f6; --info-surface: #172554; --info-line: #1e40af; --info-ink: #bfdbfe;
   --warning: #f59e0b; --warning-surface: #451a03; --warning-line: #92400e; --warning-ink: #fde68a;
@@ -77,6 +79,12 @@ main { padding: 10px 12px; }
 .badge.on { color: var(--success-ink); background: var(--success-surface); border-color: var(--success-line); }
 select, input[type="text"], input[type="number"] { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--line-strong); border-radius: 6px; padding: 5px 8px; }
 input[type="text"], input[type="number"] { min-width: 0; }
+.code-input label { display: block; margin-bottom: 6px; font-size: 12px; font-weight: 500; }
+.code-control { position: relative; width: fit-content; }
+.code-control input { position: absolute; inset: 0; width: 100%; opacity: 0; font-size: 16px; }
+.code-boxes { display: flex; gap: 4px; }
+.code-boxes span { display: flex; width: 28px; height: 40px; align-items: center; justify-content: center; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); font: 12px ui-monospace, monospace; }
+.code-boxes [data-active] { border-color: var(--brand-strong); box-shadow: 0 0 0 1px color-mix(in srgb, var(--brand-strong) 30%, transparent); }
 button { font: inherit; font-weight: 600; border-radius: 6px; padding: 7px 12px; border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink); cursor: pointer; }
 button:disabled { opacity: .5; cursor: default; }
 button.primary { background: var(--action); color: var(--action-ink); border-color: var(--action); }
@@ -492,6 +500,53 @@ function renderHomeButton() { return el('button', { onclick: renderHome, text: '
 // ---------------------------------------------------------------------------
 // Review: plan, show the facts under the instance, take the code, commit.
 // ---------------------------------------------------------------------------
+// Mirrors base/ui's CodeInput (Bilimbi forms.ex and code_input.js). The card
+// cannot load shared assets; keep one native field, including touch paste.
+function authenticatorInput() {
+  const input = el('input', { type: 'text', inputmode: 'numeric', autocomplete: 'one-time-code', pattern: '[0-9]{6}', id: 'step-up-code', 'aria-describedby': 'step-up-code-hint', spellcheck: 'false', autocapitalize: 'off' });
+  const boxes = Array.from({ length: 6 }, (_, index) => el('span', { data: { codeIndex: index } }));
+  const normalize = value => value.replace(/[^0-9]/g, '').slice(0, 6);
+  const paint = () => {
+    const active = Math.min(input.selectionStart ?? 0, 5);
+    boxes.forEach((box, index) => {
+      const text = input.value[index] || '';
+      if (box.textContent !== text) box.textContent = text;
+      box.toggleAttribute('data-active', document.activeElement === input &&
+        (index === active || (index >= input.selectionStart && index < input.selectionEnd)));
+    });
+  };
+  input.addEventListener('input', () => {
+    const caret = normalize(input.value.slice(0, input.selectionStart)).length;
+    input.value = normalize(input.value);
+    input.setSelectionRange(caret, caret);
+    paint();
+  });
+  input.addEventListener('paste', event => {
+    const text = event.clipboardData?.getData('text');
+    if (text == null) return;
+    event.preventDefault();
+    const code = normalize(text), start = input.selectionStart, end = input.selectionEnd;
+    input.value = code.length === 6 ? code : normalize(input.value.slice(0, start) + code + input.value.slice(end));
+    const caret = code.length === 6 ? 6 : Math.min(start + code.length, 6);
+    input.setSelectionRange(caret, caret);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  for (const event of ['focus', 'blur', 'keyup', 'select']) input.addEventListener(event, paint);
+  const control = el('div', { class: 'code-control', onclick: event => {
+    if (event.target === input && (input.selectionStart !== input.selectionEnd ||
+      event.shiftKey || event.detail > 1)) { paint(); return; }
+    const box = event.target === input ? boxes.find(box => {
+      const rect = box.getBoundingClientRect();
+      return event.clientX >= rect.left && event.clientX <= rect.right;
+    }) : event.target.closest('[data-code-index]');
+    if (!box) return;
+    input.focus();
+    const index = Math.min(Number(box.dataset.codeIndex), input.value.length);
+    input.setSelectionRange(index, index);
+    paint();
+  } }, [input, el('div', { class: 'code-boxes', 'aria-hidden': 'true' }, boxes)]);
+  return { input, field: el('div', { class: 'code-input' }, [el('label', { for: input.id, text: 'Your authenticator code' }), control]) };
+}
 async function review(key, input, verb) {
   stopPolling();
   show(el('p', { class: 'muted', text: 'Checking with ' + instance().label + '…' }));
@@ -507,9 +562,7 @@ async function review(key, input, verb) {
   }
   const facts = unwrap(first.preview) || {};
   const needsCode = Array.isArray(facts.step_up) && facts.step_up.length > 0;
-  // Every code-bearing review uses the card's standard text input. A narrow
-  // character width plus letter spacing clipped the code and its native caret.
-  const code = el('input', { type: 'text', inputmode: 'numeric', autocomplete: 'one-time-code', maxlength: '8', size: '12', id: 'step-up-code', 'aria-describedby': 'step-up-code-hint', placeholder: '123456', spellcheck: 'false' });
+  const { input: code, field: codeField } = authenticatorInput();
   const confirm = el('button', { class: key === 'base.software.undo' ? 'danger' : 'primary', id: 'confirm', text: verb, onclick: () => commit(key, verb, code.value.trim(), facts) });
   const switchRow = (key === 'base.software.change' || key === 'base.software.install') ? el('div', { class: 'row small', id: 'switch-row' }, [
     el('span', { class: 'muted', text: 'When the new version is ready:' }),
@@ -533,8 +586,8 @@ async function review(key, input, verb) {
     ]),
     productionNote,
     needsCode ? el('div', { class: 'twofa stack', id: 'twofa' }, [
-      el('div', { class: 'row' }, [el('label', { for: code.id, text: 'Your authenticator code' }), code]),
-      el('p', { class: 'small muted', id: 'step-up-code-hint', text: 'Asked every time, on every instance, because this changes the server itself.' }),
+      codeField,
+      el('p', { class: 'small muted', id: 'step-up-code-hint', text: 'Type or paste all 6 digits. Asked every time, on every instance, because this changes the server itself.' }),
     ]) : null,
     el('div', { class: 'row' }, [confirm, el('button', { class: 'quiet', onclick: renderHome, text: 'Back' }), el('span', { class: 'grow' }), plan.expires_at ? el('span', { class: 'small muted', text: 'Review valid until ' + plan.expires_at.replace('T', ' ').slice(0, 16) + ' UTC' }) : null]),
   );
@@ -571,7 +624,7 @@ async function commit(key, verb, code, facts) {
   const args = { plan_code: plan.plan_code, operations: plan.operations };
   const needsCode = Array.isArray(facts.step_up) && facts.step_up.length > 0;
   if (needsCode) {
-    if (!/^\d{6,8}$/.test(code)) return flash('warning', 'Enter the 6-digit code from your authenticator app.');
+    if (!/^\d{6}$/.test(code)) return flash('warning', 'Enter the 6-digit code from your authenticator app.');
     args.step_up_code = code;
   }
   const button = document.getElementById('confirm');
@@ -583,7 +636,7 @@ async function commit(key, verb, code, facts) {
     if (button) { button.disabled = false; button.textContent = verb; }
     if (body.error === 'step_up_required') {
       const field = document.getElementById('step-up-code');
-      if (field) { field.value = ''; field.focus(); }
+      if (field) { field.value = ''; field.dispatchEvent(new Event('input', { bubbles: true })); field.focus(); }
       return flash('warning', body.message || 'A new code is needed.');
     }
     if (body.error === 'plan_expired' || body.error === 'plan_already_used' || body.error === 'stale_plan') return flash('warning', 'The review is no longer valid (' + body.error.replace(/_/g, ' ') + '). Go back and review again.');

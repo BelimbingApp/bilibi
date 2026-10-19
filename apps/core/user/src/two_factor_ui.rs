@@ -14,7 +14,7 @@ use bilibi_database::Error;
 use bilibi_security::Scope;
 use bilibi_ui::{
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
-    Attrs, Button, Field, FlashGroup, FlashMap, Header, Html, SecretInput, StatusKind,
+    Attrs, Button, CodeInput, Field, FlashGroup, FlashMap, Header, Html, SecretInput, StatusKind,
 };
 use std::{collections::HashMap, sync::Arc};
 
@@ -33,18 +33,45 @@ fn fragment(rendered: askama::Result<Html>) -> Result<Html, Error> {
     rendered.map_err(|_| Error::Internal)
 }
 
-fn code_field(id: &str, label: &str, errors: &[String]) -> Result<Html, Error> {
-    fragment(Html::render(
-        &Field::in_form("two_factor", "code")
-            .id(id)
-            .label(label)
-            .hint("6 digits from the app, or a recovery code")
-            .autocomplete("one-time-code")
-            .attr("spellcheck", "false")
-            .attr("autocapitalize", "off")
-            .attr("maxlength", "32")
-            .errors(errors.to_vec()),
-    ))
+// Mirrors Bilimbi's shared CodeInput; recovery stays a separate native field
+// so six-digit normalization never truncates a recovery code.
+fn code_field(id: &str, recovery: Option<bool>, errors: &[String]) -> Result<Html, Error> {
+    let mut field = if recovery == Some(true) {
+        fragment(Html::render(
+            &Field::in_form("two_factor", "code")
+                .id(format!("{id}_recovery"))
+                .label("Recovery code")
+                .hint("One of the recovery codes you saved during setup")
+                .autocomplete("off")
+                .attr("spellcheck", "false")
+                .attr("autocapitalize", "off")
+                .attr("maxlength", "32")
+                .errors(errors.to_vec()),
+        ))?
+    } else {
+        fragment(Html::render(
+            &CodeInput::new(id, "two_factor[code]", "Authentication code", 6)
+                .numeric()
+                .errors(errors.to_vec()),
+        ))?
+    };
+    if let Some(recovery) = recovery {
+        field.push(&fragment(Html::render(&Button {
+            button_type: "button",
+            event: if recovery {
+                "use-authenticator"
+            } else {
+                "use-recovery"
+            },
+            body: Html::text(if recovery {
+                "Use authenticator code"
+            } else {
+                "Use a recovery code"
+            }),
+            ..Button::default()
+        }))?);
+    }
+    Ok(field)
 }
 
 /// The browser's return address from the query, kept only when it is a
@@ -84,6 +111,7 @@ pub struct TwoFactorPage {
     /// Which managed-stage form the last intent came from, so its error
     /// shows under that form only.
     last_on: &'static str,
+    recovery: bool,
 }
 
 #[derive(serde::Deserialize)]
@@ -99,6 +127,8 @@ enum TwoFactorEvent {
     },
     Cancel {},
     Done {},
+    UseRecovery {},
+    UseAuthenticator {},
     Regenerate {
         #[serde(rename = "two_factor[code]", default)]
         code: String,
@@ -163,11 +193,13 @@ impl TwoFactorPage {
             },
             success: "",
             last_on: "",
+            recovery: false,
         })
     }
 
     async fn reload(&mut self, scope: &Scope) -> Result<(), Error> {
         self.status = self.users.two_factor_status(scope).await?;
+        self.recovery = false;
         self.stage = if self.status.enabled {
             Stage::On
         } else {
@@ -186,6 +218,8 @@ impl TwoFactorPage {
         self.errors.clear();
         self.success = "";
         match event {
+            TwoFactorEvent::UseRecovery {} => self.recovery = true,
+            TwoFactorEvent::UseAuthenticator {} => self.recovery = false,
             TwoFactorEvent::Start { password } => {
                 if password.is_empty() {
                     self.errors.push(BLANK.into());
@@ -325,23 +359,19 @@ impl TwoFactorPage {
             key: enrollment.map_or("", |e| e.key.as_str()),
             issuer: enrollment.map_or("", |e| e.issuer.as_str()),
             account: enrollment.map_or("", |e| e.account.as_str()),
-            code: code_field(
-                "two_factor_code",
-                "Authentication code",
-                &errors_for("setup"),
-            )?,
+            code: code_field("two_factor_code", None, &errors_for("setup"))?,
             codes,
             download,
             returning: self.return_to.is_some(),
             recovery_left: self.status.recovery_codes_left,
             regenerate_code: code_field(
                 "two_factor_regenerate_code",
-                "Authentication code",
+                Some(self.recovery),
                 &self.on_errors("regenerate"),
             )?,
             disable_code: code_field(
                 "two_factor_disable_code",
-                "Authentication code",
+                Some(self.recovery),
                 &self.on_errors("disable"),
             )?,
         };
@@ -404,6 +434,7 @@ impl LiveState<Scope, Error> for TwoFactorPage {
 pub struct ConfirmPage {
     users: Arc<UserService>,
     enabled: bool,
+    recovery: bool,
     minutes: i64,
     hours: i64,
     return_to: Option<String>,
@@ -414,6 +445,8 @@ pub struct ConfirmPage {
 #[derive(serde::Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case", deny_unknown_fields)]
 enum ConfirmEvent {
+    UseRecovery {},
+    UseAuthenticator {},
     Verify {
         #[serde(rename = "two_factor[code]", default)]
         code: String,
@@ -443,6 +476,7 @@ impl ConfirmPage {
         Ok(Self {
             users,
             enabled,
+            recovery: false,
             minutes: window.window_minutes,
             hours: window.cap_hours,
             return_to: return_to(query),
@@ -475,7 +509,7 @@ impl ConfirmPage {
             enabled: self.enabled,
             minutes: self.minutes,
             hours: self.hours,
-            code: code_field("two_factor_code", "Authentication code", &self.errors)?,
+            code: code_field("two_factor_code", Some(self.recovery), &self.errors)?,
             setup_href: &setup_href,
         }
         .render()
@@ -490,27 +524,37 @@ impl LiveState<Scope, Error> for ConfirmPage {
                 LiveInput::Refresh => {}
                 LiveInput::Params(_) => return Err(Error::Invalid),
                 LiveInput::Event(value) => {
-                    let ConfirmEvent::Verify { code } =
-                        serde_json::from_value::<ConfirmEvent>(value.clone())
-                            .map_err(|_| Error::Invalid)?;
+                    let event = serde_json::from_value::<ConfirmEvent>(value.clone())
+                        .map_err(|_| Error::Invalid)?;
                     self.errors.clear();
-                    if code.trim().is_empty() {
-                        self.errors.push(BLANK.into());
-                    } else {
-                        match self.users.step_up(request.scope, &code).await {
-                            Ok(()) => {
-                                return Ok(LiveBody {
-                                    html: self.render()?,
-                                    rows: 1,
-                                    redirect: Some(
-                                        self.return_to.clone().unwrap_or_else(|| "/".into()),
-                                    ),
-                                    flash: Some((StatusKind::Success, "Access confirmed.".into())),
-                                    ..LiveBody::default()
-                                });
+                    match event {
+                        ConfirmEvent::UseRecovery {} => self.recovery = true,
+                        ConfirmEvent::UseAuthenticator {} => self.recovery = false,
+                        ConfirmEvent::Verify { code } => {
+                            if code.trim().is_empty() {
+                                self.errors.push(BLANK.into());
+                            } else {
+                                match self.users.step_up(request.scope, &code).await {
+                                    Ok(()) => {
+                                        return Ok(LiveBody {
+                                            html: self.render()?,
+                                            rows: 1,
+                                            redirect: Some(
+                                                self.return_to
+                                                    .clone()
+                                                    .unwrap_or_else(|| "/".into()),
+                                            ),
+                                            flash: Some((
+                                                StatusKind::Success,
+                                                "Access confirmed.".into(),
+                                            )),
+                                            ..LiveBody::default()
+                                        });
+                                    }
+                                    Err(TwoFactorError::NotEnabled) => self.enabled = false,
+                                    Err(error) => self.errors.push(field_error(error)?),
+                                }
                             }
-                            Err(TwoFactorError::NotEnabled) => self.enabled = false,
-                            Err(error) => self.errors.push(field_error(error)?),
                         }
                     }
                 }

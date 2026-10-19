@@ -359,6 +359,8 @@ Pages (signed in only, live, `Cache-Control: no-store` like every page):
 - `/settings/two-factor`: set up (password, QR code, setup key, first code), recovery codes with a text download, new codes, turn off.
 - `/settings/two-factor/confirm?return=<path>`: the step-up prompt. Success returns to `return`, which must be a local path (`safe_return`).
 
+Authenticator entry uses the shared six-digit `CodeInput`: one native field, numeric keypad, OTP autocomplete and whole-code paste. Management and Confirm access offer **Use a recovery code**, which switches to an unrestricted text field without truncating the saved code; setup accepts only an authenticator code.
+
 Security rules:
 
 - **Secret at rest.** `user_two_factor.secret` is the AES-256-GCM envelope of `Settings::seal_owned` (`BILIBI_SETTINGS_KEY`), bound to `core/user.two_factor`, tenant and account. Without the key, setup refuses.
