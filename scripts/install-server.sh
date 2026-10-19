@@ -63,11 +63,11 @@ point_current() { # <instance> <n>
     local dir; dir=$(instance_dir "$1")
     ln -sfn "$2" "$dir/releases/current.new" && chown -h bilibi-build:bilibi "$dir/releases/current.new" && mv -T "$dir/releases/current.new" "$dir/releases/current"
 }
-# ensure_current_link <instance>: the two-link shape above; an instance made
-# `incoming/` is where the program (bilibi) puts a release that arrives from
-# another machine or as an uploaded file, and where the installer
-# (bilibi-build) takes it from: both write, nobody else reads.
+# ensure_incoming <instance>: `incoming/` is where the program (bilibi) puts a
+# release that arrives from another machine or as an uploaded file, and where
+# the installer (bilibi-build) takes it from: both write, nobody else reads.
 ensure_incoming() { install -d -m 2770 -o bilibi -g bilibi-build "$(instance_dir "$1")/incoming"; }
+# ensure_current_link <instance>: the two-link shape above; an instance made
 # before it (`current -> releases/<n>`) is converted without a pause.
 ensure_current_link() {
     local dir link; dir=$(instance_dir "$1"); link=$(readlink "$dir/current" 2>/dev/null || true)
