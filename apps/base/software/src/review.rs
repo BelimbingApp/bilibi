@@ -737,13 +737,25 @@ pub fn undo(
     })
 }
 
-/// The go-ahead for a built change that waits before the pause. `built` is
-/// the release it built while no later step has started, else `None`.
-pub fn go(instance: &Instance, job: &Job, built: Option<i64>) -> Result<Review> {
+/// The go-ahead for a job the installer parks before the pause: a built
+/// change, or an install whose copy is checked. `parked` is the release its
+/// first part made while no later step has started, else `None`.
+pub fn go(instance: &Instance, job: &Job, parked: Option<i64>) -> Result<Review> {
     let refuse = |message: String| Err(SoftwareError::field("job", &message));
-    if job.kind != "change" || job.state != "running" {
+    let (what, steps) = match job.kind.as_str() {
+        "change" => ("build", jobs::change_steps()),
+        "install" => ("copy", jobs::install_steps()),
+        kind => {
+            return refuse(format!(
+                "Job {} is {} {kind}; only a change or an install can be given a go-ahead.",
+                job.id,
+                if kind == "undo" { "an" } else { "a" }
+            ))
+        }
+    };
+    if job.state != "running" {
         return refuse(format!(
-            "Job {} is {}; only a build that is running and waiting for your go-ahead can be given one.",
+            "Job {} is {}; only a job that is running and waiting for your go-ahead can be given one.",
             job.id, job.state
         ));
     }
@@ -759,9 +771,9 @@ pub fn go(instance: &Instance, job: &Job, built: Option<i64>) -> Result<Review> 
             job.id
         ));
     }
-    let Some(release) = built else {
+    let Some(release) = parked else {
         return refuse(format!(
-            "Job {} is not waiting for your go-ahead: it is still building, or the pause has already started.",
+            "Job {} is not waiting for your go-ahead: the {what} has not finished yet, or the pause has already started.",
             job.id
         ));
     };
@@ -776,7 +788,7 @@ pub fn go(instance: &Instance, job: &Job, built: Option<i64>) -> Result<Review> 
         "release": release,
         "pause_minutes": PAUSE_MINUTES,
         "what_happens": format!("{} pauses for about {PAUSE_MINUTES} minute to back up the database, update it, switch and check.", instance.label),
-        "steps": jobs::change_steps().iter().skip_while(|s| s.key != "backup").map(|s| json!({"seq": s.seq, "key": s.key, "label": s.label, "pauses": s.pauses})).collect::<Vec<_>>(),
+        "steps": steps.iter().skip_while(|s| s.key != "backup").map(|s| json!({"seq": s.seq, "key": s.key, "label": s.label, "pauses": s.pauses})).collect::<Vec<_>>(),
         "step_up": [STEP_UP],
     });
     Ok(Review {

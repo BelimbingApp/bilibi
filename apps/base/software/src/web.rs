@@ -417,7 +417,8 @@ impl View {
             "request_go" => {
                 let job = &status["job"];
                 if let Some(id) = job["id"].as_i64() {
-                    if job["kind"] == "change" && job["switch"] == "ask" {
+                    if matches!(text(&job["kind"]), "change" | "install") && job["switch"] == "ask"
+                    {
                         self.preview(scope, credential, Kind::Go, json!({"job": id}))
                             .await?
                     }
@@ -979,18 +980,24 @@ impl View {
             .as_array()
             .map(Vec::as_slice)
             .unwrap_or_default();
+        let first = if kind == "install" { "fetch" } else { "build" };
         let built = steps_json
             .iter()
-            .find(|s| s["key"] == "build" && s["state"] == "done")
+            .find(|s| s["key"] == first && s["state"] == "done")
             .and_then(|s| s["detail"]["release"].as_i64());
         let installer_started = steps_json
             .iter()
-            .skip_while(|s| s["key"] != "build")
+            .skip_while(|s| s["key"] != first)
             .skip(1)
             .any(|s| s["state"] != "pending");
         let building_done = kind == "change" && state == "running" && built.is_some();
-        let handed_over = building_done && !installer_started;
-        let awaiting_go = handed_over && job["switch"] == "ask";
+        let parked = matches!(kind, "change" | "install")
+            && state == "running"
+            && built.is_some()
+            && !installer_started;
+        let awaiting_go = parked && job["switch"] == "ask";
+        let handed_over = awaiting_go || (building_done && !installer_started);
+        let ready = if kind == "install" { "copied" } else { "built" };
         let label = job["review"]["instance"]["label"]
             .as_str()
             .unwrap_or(&instance.label);
@@ -1016,7 +1023,7 @@ impl View {
                 }
             ),
             "running" if handed_over => format!(
-                "Release {} is built and waiting to be installed",
+                "Release {} is {ready} and waiting to be installed",
                 built.unwrap_or_default()
             ),
             "running" if building_done => format!(
@@ -1090,8 +1097,13 @@ impl View {
         }
         if awaiting_go {
             notes.push(format!(
-                "Release {} is built and waits for your go-ahead: Install now, or Stop to throw the build away.",
-                built.unwrap_or_default()
+                "Release {} is {ready} and waits for your go-ahead: Install now, or Stop to {}.",
+                built.unwrap_or_default(),
+                if kind == "install" {
+                    "cancel the install"
+                } else {
+                    "throw the build away"
+                }
             ));
         } else if handed_over {
             notes.push(format!(
@@ -1131,9 +1143,11 @@ impl View {
         }
         let mut actions = Html::EMPTY;
         if can_manage && job["cancel"] == "available" {
-            let label = if awaiting_go || (state == "running" && kind == "change" && !handed_over) {
+            let label = if (awaiting_go && kind == "change")
+                || (state == "running" && kind == "change" && !handed_over)
+            {
                 "Stop the build"
-            } else if state == "running" && !handed_over {
+            } else if state == "running" && (!handed_over || awaiting_go) {
                 "Stop"
             } else {
                 "Cancel"
@@ -1689,7 +1703,7 @@ impl View {
                 (
                     "Go ahead with the pause".to_owned(),
                     format!(
-                        "Release {release} is built. {label} pauses for {} once you go ahead.",
+                        "Release {release} is ready. {label} pauses for {} once you go ahead.",
                         minutes_text(pause)
                     ),
                     format!("Install now on {label}"),

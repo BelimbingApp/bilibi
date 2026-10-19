@@ -56,7 +56,7 @@ All seven go through Agent API (`apps/base/agent_api/README.md`): reads are call
 | `base.software.change` | write, Dev only | `domains` (the full wanted set; a mounted Domain left out is removed), optional `platform`, `plugins`, `switch` | the change list (add, update, downgrade, remove, keep; plug-ins switched on or off), whether every version was tested together on that Platform, warnings, a rough estimate, what happens, the steps |
 | `base.software.install` | write, Staging and Production | `release` (a number the source reports as tested), optional `switch` | the source, the checks the installer makes, the pause |
 | `base.software.undo` | write | optional `job` | which release it goes back to, and whether the backup is restored and later entries lost. `loss` names the backup's `backup_at` (the job result's, or the `backup` step's start) and carries no count: a count changes with every write, and a confirmation is bound to the review. The Software page counts the audited changes since `backup_at` with `Software::undo_loss`, only while an Undo review is open. The committed job's review records the count at commit as `lost_at_commit`, the same server-wide counts the undo result carries |
-| `base.software.go` | write, 2FA | optional `job` | refused unless the job is a running change whose build is done, with no later step started, and whose `switch` is `ask`. The review names the instance, the release built, the pause and the steps that follow. The commit turns `switch` to `auto` in the audited transaction (the installer's `wait_for_go` sees it), sends `NOTIFY`, and notifies the requester |
+| `base.software.go` | write, 2FA | optional `job` | refused unless the job is a running change whose build is done, or a running install whose copy is done, with no later step started and `switch` `ask`. The review names the instance, the release, the pause and the steps that follow. The commit turns `switch` to `auto` in the audited transaction (the installer's `wait_for_go` sees it), sends `NOTIFY`, and notifies the requester |
 | `base.software.cancel` | write, no 2FA | optional `job` | removed from the queue, or asked to stop before the pause; refused once the pause started |
 
 Rules the reviews enforce, each as a field error that says what to do:
@@ -71,7 +71,7 @@ Rules the reviews enforce, each as a field error that says what to do:
 - A request that changes nothing is refused and says what already runs.
 - `undo` takes only the newest finished job, and only when the worker recorded its result (below); a finished undo cannot be undone again.
 
-`switch` is `auto` (switch as soon as the build is ready) or `ask` (build now, wait for the owner before the one-minute pause). The worker reads it; this module only records it. **The signal to go ahead is the job's `switch` turning `auto`**: the worker polls the row while it waits with the instance running. The Software page's **Install now** button and the `base.software.go` contract give it: they turn `switch` to `auto` for a built change that waits.
+`switch` is `auto` (switch as soon as the build is ready) or `ask` (build now, wait for the owner before the one-minute pause). The worker reads it; this module only records it. **The signal to go ahead is the job's `switch` turning `auto`**: the worker polls the row while it waits with the instance running. The Software page's **Install now** button and the `base.software.go` contract give it: they turn `switch` to `auto` for a built change or a copied install that waits.
 
 ## The Software page
 

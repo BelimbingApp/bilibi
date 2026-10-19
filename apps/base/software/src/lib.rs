@@ -602,7 +602,7 @@ impl Software {
         let job = named.or(active).ok_or_else(|| {
             SoftwareError::field("job", "No job is waiting or running on this instance.")
         })?;
-        let built = jobs::built_release(client, tenant, job.id).await?;
+        let built = jobs::parked_release(client, tenant, &job).await?;
         review::go(&instance, &job, built)
     }
     async fn cancel_review(

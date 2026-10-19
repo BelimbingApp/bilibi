@@ -228,24 +228,30 @@ pub async fn past_pause(client: &impl GenericClient, tenant: i64, job: i64) -> R
         .await?
         .get(0))
 }
-/// The release a running change built, when the build is done and no later
-/// step has started: the job is parked for the installer. `None` otherwise.
-pub async fn built_release(
+/// The release a job's first part made, when that part is done and no later
+/// step has started: a change's build, an install's copy. The job is then
+/// parked for the pause. `None` for any other job or moment.
+pub async fn parked_release(
     client: &impl GenericClient,
     tenant: i64,
-    job: i64,
+    job: &Job,
 ) -> Result<Option<i64>> {
-    let steps = steps_json(client, tenant, job).await?;
-    let built = steps
+    let first = match job.kind.as_str() {
+        "change" => "build",
+        "install" => "fetch",
+        _ => return Ok(None),
+    };
+    let steps = steps_json(client, tenant, job.id).await?;
+    let made = steps
         .iter()
-        .find(|s| s["key"] == "build" && s["state"] == "done")
+        .find(|s| s["key"] == first && s["state"] == "done")
         .and_then(|s| s["detail"]["release"].as_i64());
     let later_started = steps
         .iter()
-        .skip_while(|s| s["key"] != "build")
+        .skip_while(|s| s["key"] != first)
         .skip(1)
         .any(|s| s["state"] != "pending");
-    Ok(built.filter(|_| !later_started))
+    Ok(made.filter(|_| !later_started))
 }
 /// When the backup that Undo would restore was taken: the job's result
 /// names it (`backup_at`); otherwise the backup step's start is it. `None`
