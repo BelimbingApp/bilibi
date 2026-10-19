@@ -255,6 +255,30 @@ pub fn hide_backup_files(job: &mut Value, backups: &mut [Value]) {
     paths.sort_unstable_by_key(|path| std::cmp::Reverse(path.len()));
     scrub_backup_paths(job, &paths);
 }
+const BACKUP_FILE_WORDS: &str = "a backup file on this server";
+/// Replaces every path under a `backups/job-<n>` folder in a message, whether
+/// or not the backup was recorded: a failure can name the folder or a file in it.
+fn hide_backup_locations(text: &str) -> String {
+    const MARKER: &str = "backups/job-";
+    let opens = |c: char| c.is_whitespace() || "\"'(".contains(c);
+    let closes = |c: char| c.is_whitespace() || "\"')`,;".contains(c);
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(MARKER) {
+        let start = rest[..at].rfind(opens).map_or(0, |i| {
+            i + rest[i..].chars().next().map_or(1, char::len_utf8)
+        });
+        let mut end = rest[at..].find(closes).map_or(rest.len(), |i| at + i);
+        while end > at && rest[..end].ends_with(['.', ':']) {
+            end -= 1;
+        }
+        out.push_str(&rest[..start]);
+        out.push_str(BACKUP_FILE_WORDS);
+        rest = &rest[end..];
+    }
+    out.push_str(rest);
+    out
+}
 fn collect_backup_paths(value: &Value, paths: &mut Vec<String>) {
     match value {
         Value::Object(map) => {
@@ -274,8 +298,9 @@ fn scrub_backup_paths(value: &mut Value, paths: &[String]) {
     match value {
         Value::String(text) => {
             for path in paths {
-                *text = text.replace(path.as_str(), "a backup file on this server");
+                *text = text.replace(path.as_str(), BACKUP_FILE_WORDS);
             }
+            *text = hide_backup_locations(text);
         }
         Value::Object(map) => {
             map.remove("backup");
