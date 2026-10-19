@@ -77,6 +77,13 @@ async fn main() -> Result<(), Error> {
     let other = app.security.guard(&other_login.token).await?;
     let client = db.get().await?;
     let client: &tokio_postgres::Client = &client;
+    let sdn_bhd_id: i64 = client
+        .query_one(
+            "SELECT id FROM company_legal_entity_types WHERE code='sdn_bhd'",
+            &[],
+        )
+        .await?
+        .get(0);
     // Re-runs start from the fixture state.
     client.batch_execute("DELETE FROM company_departments WHERE department_type_id IN (SELECT id FROM company_department_types WHERE code LIKE 'WT_%'); DELETE FROM company_department_types WHERE code LIKE 'WT_%'; UPDATE companies SET legal_entity_type_id=NULL WHERE code LIKE 'walkthrough%'; DELETE FROM company_legal_entity_types WHERE code LIKE 'WT_%'; DELETE FROM companies WHERE code LIKE 'walkthrough%' AND id NOT IN (SELECT company_id FROM tenant_primary_companies); UPDATE companies SET status='active' WHERE tenant_id=1 AND id=2").await?;
 
@@ -167,7 +174,7 @@ async fn main() -> Result<(), Error> {
                 name: "Walkthrough Trading Sdn. Bhd.".into(),
                 legal_name: Some("Walkthrough Trading Sdn. Bhd.".into()),
                 registration_number: Some("202410000042".into()),
-                legal_entity_type_id: Some(1),
+                legal_entity_type_id: Some(sdn_bhd_id),
                 parent_id: Some(1),
                 email: Some("hello@walkthrough.example.test".into()),
                 ..NewCompany::default()
@@ -302,9 +309,9 @@ async fn main() -> Result<(), Error> {
             .map_err(|e| e.to_string()),
     );
     show(
-        "delete type 1 (in use by company 1)",
+        "delete the Sdn. Bhd. type (in use by company 1)",
         companies
-            .delete_legal_entity_type(&manager, 1)
+            .delete_legal_entity_type(&manager, sdn_bhd_id)
             .await
             .map_err(|e| e.to_string()),
     );
