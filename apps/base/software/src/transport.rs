@@ -44,9 +44,9 @@ pub const RELEASE_FILES: [&str; 6] = [
     "release.json",
     "bundle.json",
 ];
-/// Plug-ins that travel with the release live here, inside the folder.
+/// Add-ons that travel with the release live here, inside the folder.
 pub const PLUGINS_DIR: &str = "plugins";
-/// The plug-ins the release switches on, a list of `{id, name, publisher,
+/// The add-ons the release switches on, a list of `{id, name, publisher,
 /// version, source}` the local build includes in `PLUGINS_DIR`.
 pub const PLUGINS_ENABLED: &str = "enabled.json";
 /// A release file larger than this is refused unread: a program is tens of

@@ -64,9 +64,9 @@ Undo takes back the newest finished install. The steps:
 
 ## Backup files
 
-**Each install and undo records its backup file, UTC time and size in the backup step.** The Software page and assistant card show those facts and the retention rule.
+**Each install and undo records its backup file, UTC time, size and the number of backups kept (`keep_backups`) in the backup step.** The Software page and assistant card show those facts; the file only to accounts that can manage software.
 
-Backups are PostgreSQL dumps under `<instance>/backups/job-<n>/<database>.dump`. After a successful install or undo, the installer keeps the three newest backup folders and removes older ones (`flow.rs`, `prune`). Retention is by job number, with no fixed age in days. A recorded path may therefore refer to a file already removed.
+Backups are PostgreSQL dumps under `<instance>/backups/job-<n>/<database>.dump`. After a successful install or undo, the installer keeps the newest `KEEP_BACKUPS` (3) backup folders and removes older ones (`flow.rs`, `prune`). Retention is by job number, with no fixed age in days. A recorded path may therefore refer to a file already removed.
 
 Undo restores the pre-install backup when the install changed the database structure; it takes another backup before starting. If restoration fails, the job names the dump to restore by hand and leaves the service stopped.
 
@@ -141,7 +141,7 @@ It needs `DATABASE_URL` and `BIND_ADDR` from that file, the sudo rule from `scri
 ## Caveats
 
 - **The first release is not its job.** A fresh instance has no program to queue a job in; `install-server.sh release` puts the first release in service.
-- **Plug-ins travel with the release.** A `plugins/` folder in the release is copied with it, file by file; links are left out. Its `enabled.json` lists the plug-ins to switch on; when the job finishes `done`, the same transaction makes `base_software_plugins` match it and records `plugins: {before, after}` in the result, and the review (the program's side) lists what is switched on or off. An Undo puts `before` back, after the restore if there is one, so a restore of the database does not bring back the newer list. A release without `enabled.json` leaves the list alone.
+- **Add-ons travel with the release.** A `plugins/` folder in the release is copied with it, file by file; links are left out. Its `enabled.json` lists the add-ons to switch on; when the job finishes `done`, the same transaction makes `base_software_plugins` match it and records `plugins: {before, after}` in the result, and the review (the program's side) lists what is switched on or off. An Undo puts `before` back, after the restore if there is one, so a restore of the database does not bring back the newer list. A release without `enabled.json` leaves the list alone.
 - **The database tools must match the cluster.** `pg_dump` and `pg_restore` come with `postgresql-client-18`, which `install-server.sh create` installs.
 - **A restore keeps the software's own audit trail, and nothing else entered since.** The history file carries the `software.*` and `step_up.*` actions and the `base/software.job` changes written after the backup, so the owner's 2FA check and the Undo's own queue record survive. A carried job whose recorded outcome is not in the restored audit trail is marked unsettled, and the app records it again. Every other row written after the backup is the loss the Undo counts and states before the owner confirms.
 - **A restore puts back the `public` schema only.** Bilibi keeps everything there. The job history is carried across into whatever shape the restored release gives those tables; a column the older release lacks is dropped from the carried rows. The installer reads only the job columns that exist from the first `base/software` migration on, so an older dump does not break its queries.

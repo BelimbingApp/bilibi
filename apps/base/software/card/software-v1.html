@@ -334,9 +334,8 @@ function backupView() {
   const data = state.data;
   return el('div', { class: 'card stack', id: 'backups' }, [
     el('h2', { text: 'Backups' }),
-    el('p', { class: 'small', text: 'Bilibi backs up before each install or undo. ' + (data.backup_policy || '') }),
-    el('p', { class: 'small', text: data.backup_undo || '' }),
-    ...(data.backups || []).map((b) => el('p', { class: 'small', text: 'Backup before ' + b.kind + ' job ' + b.job + ': ' + (b.at || 'time not recorded') + ', ' + (b.bytes == null ? 'size not recorded' : b.bytes + ' bytes') + '. File on this server: ' + (b.file || 'not recorded') })),
+    el('p', { class: 'small', text: data.backup_rule || '' }),
+    ...(data.backups || []).map((b) => el('p', { class: 'small', text: 'Backup before ' + b.kind + ' job ' + b.job + ': ' + (b.at || 'time not recorded') + ', ' + (b.bytes == null ? 'size not recorded' : b.bytes + ' bytes') + (b.file ? '. File on this server: ' + b.file : '') })),
     !(data.backups || []).length ? el('p', { class: 'small muted', text: 'No backup has been recorded for the ten most recent jobs.' }) : null,
   ]);
 }
@@ -503,8 +502,6 @@ async function review(key, input, verb) {
       factsList(key, facts),
       ...(facts.warnings || []).map((w) => alertBox('warning', w)),
       facts.loss ? alertBox('danger', facts.loss, 'undo-loss') : null,
-      facts.backup_policy ? el('p', { class: 'small', text: 'Bilibi takes a database backup before any change. ' + facts.backup_policy }) : null,
-      facts.backup_undo ? el('p', { class: 'small', text: facts.backup_undo }) : null,
       facts.backup && facts.restores_backup ? el('p', { class: 'small', text: 'Undo restores this file on the server: ' + facts.backup }) : null,
       facts.what_happens ? el('p', { class: 'small', id: 'what-happens', text: facts.what_happens }) : null,
       facts.steps ? el('details', {}, [el('summary', { text: plural(facts.steps.length, 'step') }), el('ol', { class: 'small' }, facts.steps.map((s) => el('li', { text: s.label + (s.pauses ? ' (the instance pauses from here)' : '') })))]) : null,

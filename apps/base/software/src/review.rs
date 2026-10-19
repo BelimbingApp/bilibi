@@ -110,7 +110,7 @@ enum Chosen {
 
 /// What this server already has that an install is checked against: the
 /// release files uploaded here, the checksum of the program in service and
-/// the plug-ins switched on.
+/// the add-ons switched on.
 pub struct Held<'a> {
     pub uploads: &'a [(String, Value)],
     pub running_sha256: Option<&'a str>,
@@ -288,7 +288,7 @@ pub fn install(
             ));
         }
     }
-    // The plug-ins the release switches on travel with it; a release that
+    // The add-ons the release switches on travel with it; a release that
     // does not say leaves the server's own list as it is.
     let plugins = facts["plugins"].as_array().map(|list| {
         let wanted = plugin_ids(list);
@@ -357,8 +357,6 @@ pub fn install(
         "warnings": warnings,
         "pause_minutes": PAUSE_MINUTES,
         "switch": switch,
-        "backup_policy": jobs::BACKUP_POLICY,
-        "backup_undo": jobs::BACKUP_UNDO,
         "what_happens": format!("{}Then {} pauses for about {PAUSE_MINUTES} minute to back up the database, update it, switch and check. If the check fails it switches back by itself.",
             if downloads { "The release is downloaded from the source, checked and copied into place. " } else { "The release is copied and checked. " },
             instance.label),
@@ -372,7 +370,7 @@ pub fn install(
         switch,
     })
 }
-/// The ids in a list of `{id, ...}` plug-in entries.
+/// The ids in a list of `{id, ...}` add-on entries.
 fn plugin_ids(list: &[Value]) -> Vec<String> {
     list.iter()
         .filter_map(|plugin| plugin["id"].as_str().map(str::to_owned))
@@ -385,7 +383,7 @@ fn strings(list: &Value) -> Vec<String> {
         .filter_map(|id| id.as_str().map(str::to_owned))
         .collect()
 }
-/// Going from the plug-ins switched on `now` to `wanted`: (to switch on, to switch off).
+/// Going from the add-ons switched on `now` to `wanted`: (to switch on, to switch off).
 fn plugin_moves(now: &[String], wanted: &[String]) -> (Vec<String>, Vec<String>) {
     (
         wanted
@@ -548,7 +546,7 @@ pub struct UndoFacts {
     pub previous_release: i64,
     pub restores_backup: bool,
     pub backup: Option<String>,
-    /// The plug-ins switched on after it and before it, when it recorded them.
+    /// The add-ons switched on after it and before it, when it recorded them.
     pub plugins: Option<(Vec<String>, Vec<String>)>,
 }
 /// Undo needs the facts the worker wrote at the end: which release it put
@@ -684,8 +682,6 @@ pub fn undo(
         "backup_at": backup_at.filter(|_| facts.restores_backup),
         "plugins": plugins,
         "pause_minutes": PAUSE_MINUTES,
-        "backup_policy": jobs::BACKUP_POLICY,
-        "backup_undo": jobs::BACKUP_UNDO,
         "what_happens": format!("{} pauses for about {PAUSE_MINUTES} minute, switches back to release {} and checks that it works.{plugin_note}", instance.label, facts.previous_release),
         "steps": jobs::undo_steps(facts.restores_backup).iter().map(|s| json!({"seq": s.seq, "key": s.key, "label": s.label, "pauses": s.pauses})).collect::<Vec<_>>(),
         "step_up": [STEP_UP],
@@ -750,8 +746,6 @@ pub fn go(instance: &Instance, job: &Job, parked: Option<i64>) -> Result<Review>
         "release": release,
         "warnings": production_warnings(instance),
         "pause_minutes": PAUSE_MINUTES,
-        "backup_policy": jobs::BACKUP_POLICY,
-        "backup_undo": jobs::BACKUP_UNDO,
         "what_happens": format!("{} pauses for about {PAUSE_MINUTES} minute to back up the database, update it, switch and check.", instance.label),
         "steps": steps.iter().skip_while(|s| s.key != "backup").map(|s| json!({"seq": s.seq, "key": s.key, "label": s.label, "pauses": s.pauses})).collect::<Vec<_>>(),
         "step_up": [STEP_UP],

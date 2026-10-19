@@ -128,7 +128,7 @@ fn duration_text(seconds: i64) -> String {
         format!("{} min {} s", seconds / 60, seconds % 60)
     }
 }
-/// A Domain or plug-in id from the catalogue, safe inside a DOM id and a form
+/// A Domain or add-on id from the catalogue, safe inside a DOM id and a form
 /// field name: the same rule the review applies to a request.
 fn safe_id(id: &str) -> bool {
     (1..=64).contains(&id.len())
@@ -295,7 +295,7 @@ impl View {
                                 .await?
                         }
                         _ => self.install_error = Some(
-                            "Enter the release number the source instance reports as tested, like 42, or pick a release file uploaded here."
+                            "Enter the release number shown on the update server, like 42, or pick a release file uploaded here."
                                 .into(),
                         ),
                     }
@@ -749,7 +749,7 @@ impl View {
                     value: Html::text(&domains),
                 },
                 Fact {
-                    title: "Enabled plug-ins",
+                    title: "Enabled add-ons",
                     id: "software-fact-plugins",
                     value: Html::text(&plugins),
                 },
@@ -1065,11 +1065,7 @@ impl View {
     /// Recorded backups remain visible after another job becomes the latest.
     /// Uses the same status evidence as the card; no Bilimbi counterpart.
     fn backups_card(&self, display: &DisplayContext, status: &Value) -> Result<Html> {
-        let mut body = Html::text(&format!(
-            "Bilibi backs up the database before each install or undo. {} {}",
-            crate::jobs::BACKUP_POLICY,
-            crate::jobs::BACKUP_UNDO
-        ));
+        let mut body = Html::text(status["backup_rule"].as_str().unwrap_or_default());
         let backups = status["backups"]
             .as_array()
             .map(Vec::as_slice)
@@ -1097,30 +1093,33 @@ impl View {
                 || "Size not recorded".to_owned(),
                 |bytes| format!("{} ({bytes} bytes)", crate::transport::human(bytes)),
             );
+            let mut items = vec![
+                Fact {
+                    title: "Backup taken",
+                    value: Html::text(&format!("Before {kind} job {id}")),
+                    ..Fact::default()
+                },
+                Fact {
+                    title: "When",
+                    value: when,
+                    ..Fact::default()
+                },
+                Fact {
+                    title: "Size",
+                    value: Html::text(&size),
+                    ..Fact::default()
+                },
+            ];
+            if let Some(file) = backup["file"].as_str() {
+                items.push(Fact {
+                    title: "File on this server",
+                    value: Html::text(file),
+                    ..Fact::default()
+                });
+            }
             body.push(&render(Facts {
                 id: &format!("software-backup-{id}"),
-                items: vec![
-                    Fact {
-                        title: "Backup taken",
-                        value: Html::text(&format!("Before {kind} job {id}")),
-                        ..Fact::default()
-                    },
-                    Fact {
-                        title: "When",
-                        value: when,
-                        ..Fact::default()
-                    },
-                    Fact {
-                        title: "Size",
-                        value: Html::text(&size),
-                        ..Fact::default()
-                    },
-                    Fact {
-                        title: "File on this server",
-                        value: Html::text(backup["file"].as_str().unwrap_or("File not recorded")),
-                        ..Fact::default()
-                    },
-                ],
+                items,
             })?);
         }
         render(Card {
@@ -1441,14 +1440,6 @@ impl View {
             .flatten()
             .map(|s| text(&s["label"]).to_owned())
             .collect();
-        if let Some(policy) = facts["backup_policy"].as_str() {
-            checks.push(format!(
-                "Bilibi takes a database backup before any change. {policy}"
-            ));
-        }
-        if let Some(undo) = facts["backup_undo"].as_str() {
-            checks.push(undo.to_owned());
-        }
         if review.kind == Kind::Undo && facts["restores_backup"] == true {
             if let Some(file) = facts["backup"].as_str() {
                 checks.push(format!("Undo restores this file on the server: {file}"));

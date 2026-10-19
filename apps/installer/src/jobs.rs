@@ -212,7 +212,7 @@ pub async fn finish(
         .await?;
     Ok(())
 }
-/// The job's final state and result, with the plug-in list the release
+/// The job's final state and result, with the add-on list the release
 /// switches on put in `base_software_plugins` in the same transaction: the
 /// list and the outcome are recorded together or not at all.
 pub async fn finish_with_plugins(
@@ -229,7 +229,7 @@ pub async fn finish_with_plugins(
     finish(&tx, job, state, result).await?;
     tx.commit().await
 }
-/// The plug-ins switched on for the job's tenant, as `{id, name, publisher,
+/// The add-ons switched on for the job's tenant, as `{id, name, publisher,
 /// version, source}`.
 pub async fn enabled_plugins(
     client: &impl GenericClient,
@@ -252,7 +252,7 @@ pub async fn enabled_plugins(
         })
         .collect())
 }
-/// Makes the plug-ins switched on exactly `plugins`: those listed are on,
+/// Makes the add-ons switched on exactly `plugins`: those listed are on,
 /// every other one is off.
 async fn set_plugins(
     client: &impl GenericClient,
@@ -369,7 +369,7 @@ pub async fn now(client: &impl GenericClient) -> Result<String, tokio_postgres::
     Ok(row.get(0))
 }
 
-/// The software history (jobs, steps, plug-ins) as JSON, taken before a
+/// The software history (jobs, steps, add-ons) as JSON, taken before a
 /// restore so the restore cannot erase what it is part of: for each table
 /// its columns (so the table can be made again) and its rows.
 const HISTORY_TABLES: [&str; 3] = [
@@ -520,7 +520,7 @@ pub async fn restore_history(
             ));
         }
     }
-    // Plug-ins and steps point at jobs, so they are emptied first and refilled last.
+    // Add-ons and steps point at jobs, so they are emptied first and refilled last.
     // The audit rows are only added to: that ledger is never emptied.
     for table in present
         .iter()

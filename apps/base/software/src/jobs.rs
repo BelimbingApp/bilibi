@@ -188,20 +188,9 @@ pub async fn steps_json(client: &impl GenericClient, tenant: i64, job: i64) -> R
     Ok(rows
         .iter()
         .map(|row| {
-            let key: String = row.get(1);
-            let mut detail = with_loss(row.get::<_, Option<Value>>(5));
-            if key == "backup" {
-                if let Some(value) = detail.as_mut().filter(|value| value["backup"].is_string()) {
-                    let size = value["bytes"].as_u64().map_or_else(|| "size not recorded".to_owned(), |bytes| format!("{bytes} bytes"));
-                    let message = value["message"].as_str().unwrap_or_default();
-                    if !message.contains("File on this server:") {
-                        value["message"] = json!(format!("{message} The database backup was taken at {} ({size}). File on this server: {}. {BACKUP_POLICY} {BACKUP_UNDO}", value["backup_at"].as_str().unwrap_or("a time that was not recorded"), value["backup"].as_str().unwrap_or_default()));
-                    }
-                }
-            }
             json!({
-                "seq": row.get::<_, i32>(0), "key": key, "label": row.get::<_, String>(2),
-                "pauses": row.get::<_, bool>(3), "state": row.get::<_, String>(4), "detail": detail,
+                "seq": row.get::<_, i32>(0), "key": row.get::<_, String>(1), "label": row.get::<_, String>(2),
+                "pauses": row.get::<_, bool>(3), "state": row.get::<_, String>(4), "detail": with_loss(row.get::<_, Option<Value>>(5)),
                 "started_at": row.get::<_, Option<String>>(6), "finished_at": row.get::<_, Option<String>>(7),
             })
         })
@@ -217,26 +206,62 @@ pub fn with_loss(value: Option<Value>) -> Option<Value> {
         value
     })
 }
-/// Backup evidence for the recent jobs. A path records where the installer
-/// wrote the file; it does not promise that retention has kept it. No Bilimbi counterpart.
-pub async fn backups_json(client: &impl GenericClient, tenant: i64) -> Result<Vec<Value>> {
+/// Backup evidence for the recent jobs, and how many backups the installer
+/// keeps (as the newest backup step recorded it). A path records where the
+/// installer wrote the file; it does not promise that retention has kept it.
+/// No Bilimbi counterpart.
+pub async fn backups_json(
+    client: &impl GenericClient,
+    tenant: i64,
+) -> Result<(Vec<Value>, Option<u64>)> {
     let rows = client.query(
         "SELECT j.id, j.kind, s.detail FROM (SELECT id, tenant_id, kind FROM base_software_jobs WHERE tenant_id=$1 ORDER BY id DESC LIMIT 10) j JOIN base_software_steps s ON s.tenant_id=j.tenant_id AND s.job_id=j.id WHERE s.tenant_id=$1 AND s.key='backup' AND s.state='done' ORDER BY j.id DESC",
         &[&tenant],
     ).await?;
-    Ok(rows
+    let mut keep = None;
+    let list = rows
         .iter()
         .map(|row| {
             let detail: Option<Value> = row.get(2);
             let detail = detail.unwrap_or(Value::Null);
+            keep = keep.or(detail["keep_backups"].as_u64());
             json!({"job": row.get::<_, i64>(0), "kind": row.get::<_, String>(1),
             "file": detail["backup"], "at": detail["backup_at"], "bytes": detail["bytes"]})
         })
-        .collect())
+        .collect();
+    Ok((list, keep))
 }
-/// The existing installer policy (apps/installer/src/flow.rs, `prune`).
-pub const BACKUP_POLICY: &str = "After a successful install or undo, Bilibi keeps the three newest backup folders and removes older ones. There is no fixed number of days. Older files listed here may have been removed.";
-pub const BACKUP_UNDO: &str = "Undo switches back to the previous program. If the install changed the database structure, Undo also restores its backup and loses data entered since. Otherwise, your data stays as it is. Undo takes another backup first.";
+/// The one statement of the backup rules, for the page, the card and the
+/// assistant. The number kept is the installer's, as its backup step recorded it.
+pub fn backup_rule(keep: Option<u64>) -> String {
+    let kept = keep.map_or_else(
+        || "removes the oldest ones".to_owned(),
+        |keep| format!("keeps only the newest {keep} and removes the older ones"),
+    );
+    format!("Bilibi backs up the database before every install and undo. After a successful install or undo it {kept}, so a listed file may no longer exist. Undo switches back to the previous program. Only if the install changed the database structure does Undo also restore its backup, which loses data entered since. Undo takes a new backup first.")
+}
+/// Hides where a backup file is from anyone who cannot manage software:
+/// they see that the backup exists, when it was taken and its size.
+pub fn hide_backup_files(job: &mut Value, backups: &mut [Value]) {
+    for backup in backups {
+        backup["file"] = Value::Null;
+    }
+    if !job.is_object() {
+        return;
+    }
+    if let Some(steps) = job["steps"].as_array_mut() {
+        for step in steps {
+            if let Some(detail) = step["detail"].as_object_mut() {
+                detail.remove("backup");
+            }
+        }
+    }
+    for part in ["result", "review"] {
+        if let Some(object) = job[part].as_object_mut() {
+            object.remove("backup");
+        }
+    }
+}
 
 /// Whether a running job has reached its pause: a cancel is then too late.
 pub async fn past_pause(client: &impl GenericClient, tenant: i64, job: i64) -> Result<bool> {
@@ -291,7 +316,7 @@ pub async fn backup_time(
         .await?
         .map(|row| row.get::<_, String>(0)))
 }
-/// The plug-ins switched on, as the status answer shows them.
+/// The add-ons switched on, as the status answer shows them.
 pub async fn plugins_json(client: &impl GenericClient, tenant: i64) -> Result<Vec<Value>> {
     let rows = client
         .query(
@@ -310,7 +335,7 @@ pub async fn plugins_json(client: &impl GenericClient, tenant: i64) -> Result<Ve
         })
         .collect())
 }
-/// The plug-in ids switched on now.
+/// The add-on ids switched on now.
 pub async fn enabled_plugins(client: &impl GenericClient, tenant: i64) -> Result<Vec<String>> {
     let rows = client
         .query(

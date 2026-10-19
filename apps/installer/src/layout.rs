@@ -9,7 +9,7 @@ use std::{
 };
 
 /// The files the installer copies with a release, when the build wrote them
-/// (`release.json`) or the release came as a file (`bundle.json`). Plug-ins
+/// (`release.json`) or the release came as a file (`bundle.json`). Add-ons
 /// that travel with the release are the `plugins/` folder beside them.
 const RELEASE_FILES: [&str; 6] = [
     "bilibi-web",
@@ -20,7 +20,7 @@ const RELEASE_FILES: [&str; 6] = [
     "bundle.json",
 ];
 const PLUGINS_DIR: &str = "plugins";
-/// The plug-ins a release switches on, included by the local build in the
+/// The add-ons a release switches on, included by the local build in the
 /// release's `plugins/` folder.
 const PLUGINS_ENABLED: &str = "enabled.json";
 
@@ -207,7 +207,7 @@ pub fn verify_checksum(dir: &Path) -> Result<String, String> {
     Ok(sha)
 }
 
-/// Copies a release folder's files, and its plug-ins, into `dst` and
+/// Copies a release folder's files, and its add-ons, into `dst` and
 /// returns the program's size.
 pub fn copy_release(src: &Path, dst: &Path) -> io::Result<u64> {
     fs::create_dir_all(dst)?;
@@ -232,9 +232,9 @@ pub fn copy_release(src: &Path, dst: &Path) -> io::Result<u64> {
     }
     Ok(bytes)
 }
-/// The plug-ins the release at `dir` switches on (`plugins/enabled.json`), as
+/// The add-ons the release at `dir` switches on (`plugins/enabled.json`), as
 /// `{id, name, publisher, version, source}`; `None` when the release does not
-/// say (one made before plug-ins travelled), which leaves the server's own
+/// say (one made before add-ons travelled), which leaves the server's own
 /// list as it is. A file that cannot be read as a list is an error: the
 /// release was damaged on the way.
 pub fn read_plugins(dir: &Path) -> Result<Option<Vec<serde_json::Value>>, String> {
@@ -247,7 +247,7 @@ pub fn read_plugins(dir: &Path) -> Result<Option<Vec<serde_json::Value>>, String
     };
     let damaged = || {
         format!(
-            "{PLUGINS_DIR}/{PLUGINS_ENABLED} is not a list of plug-ins. Make the release file again on the source."
+            "{PLUGINS_DIR}/{PLUGINS_ENABLED} is not a list of add-ons. Make the release file again on the source."
         )
     };
     let list: Vec<Value> = serde_json::from_str(&text).map_err(|_| damaged())?;

@@ -6,7 +6,7 @@
 //! versions (`bilibi_module_registry::Composition`, handed in by the host as
 //! `bootstrap.composition`), `bilibi_system::Instance` for which instance
 //! this is, the published catalogue for what can be chosen, and the job
-//! tables here for history and plug-ins.
+//! tables here for history and add-ons.
 mod agent;
 mod catalogue;
 mod discovery;
@@ -20,8 +20,8 @@ mod transport;
 mod web;
 
 use bilibi_authz::{
-    authorize_operator, CapabilityDefinition, SystemPrincipalDefinition, VocabularyContribution,
-    VOCABULARY,
+    authorize_operator, effective_capabilities, CapabilityDefinition, SystemPrincipalDefinition,
+    VocabularyContribution, VOCABULARY,
 };
 use bilibi_database::{Context, Db, Error, MutationBoundary, MutationTransaction, Result};
 use bilibi_integration::Integration;
@@ -147,7 +147,7 @@ fn bound() -> Result<&'static Arc<Software>> {
 
 impl Software {
     /// What this instance announces itself as, what is
-    /// installed, the plug-ins, the job waiting or running (or the last
+    /// installed, the add-ons, the job waiting or running (or the last
     /// one), whether Undo is available, and the recent jobs.
     pub async fn status(&self, scope: &Scope) -> Result<Value> {
         let client = self.db.get().await?;
@@ -160,7 +160,7 @@ impl Software {
             Some(job) => Some(job.clone()),
             None => recent.first().cloned(),
         };
-        let job = match shown {
+        let mut job = match shown {
             Some(job) => {
                 let mut value = job.json();
                 value["result"] = json!(jobs::with_loss(job.result.clone()));
@@ -191,6 +191,13 @@ impl Software {
                 json!({"available": false, "reason": "Nothing to undo: no change has finished on this instance."})
             }
         };
+        let (mut backups, keep) = jobs::backups_json(&**client, tenant).await?;
+        if !effective_capabilities(&**client, scope)
+            .await?
+            .contains(MANAGE)
+        {
+            jobs::hide_backup_files(&mut job, &mut backups);
+        }
         Ok(json!({
             "instance": review::instance_json(&instance),
             "installed": review::installed_json(&self.composition),
@@ -199,9 +206,8 @@ impl Software {
                 .map(|(bundle, facts)| json!({"bundle": bundle, "release": facts["release"], "from": facts["from"]["label"]}))
                 .collect::<Vec<_>>(),
             "pairing": pairing::state_json(pairing::is_set(&**client, &self.settings, scope).await?),
-            "backups": jobs::backups_json(&**client, tenant).await?,
-            "backup_policy": jobs::BACKUP_POLICY,
-            "backup_undo": jobs::BACKUP_UNDO,
+            "backups": backups,
+            "backup_rule": jobs::backup_rule(keep),
             "job": job,
             "undo": undo,
             "jobs": recent.iter().map(|job| json!({"id": job.id, "kind": job.kind, "state": job.state,

@@ -51,7 +51,7 @@ struct Undone {
     migrated: bool,
     original: Option<PathBuf>,
     since: String,
-    /// The plug-ins that were switched on before it, when it recorded them.
+    /// The add-ons that were switched on before it, when it recorded them.
     plugins: Option<Vec<Value>>,
 }
 /// Where the release the owner asked for was found, and how to name it.
@@ -175,7 +175,7 @@ impl<'a> Run<'a> {
     async fn finish(&mut self, state: &str, result: Value) -> Db<()> {
         self.finish_with_plugins(state, result, None).await
     }
-    /// `finish`, with the plug-ins that are to be switched on after it put
+    /// `finish`, with the add-ons that are to be switched on after it put
     /// in the same transaction as the outcome.
     async fn finish_with_plugins(
         &mut self,
@@ -789,8 +789,8 @@ impl<'a> Run<'a> {
         let file = self.backup_file();
         let bytes = backup::dump(self.pg, &file)?;
         Ok(json!({
-            "message": format!("{} is paused. The database backup was taken at {at} (UTC): {} ({} bytes). File on this server: {}. After a successful install or undo, the installer keeps the {KEEP_BACKUPS} newest backup folders and removes older ones. Undo restores the pre-install backup if the install changed the database structure.", self.layout.name, human(bytes), bytes, file.display()),
-            "backup": file.display().to_string(), "backup_at": at, "paused_epoch": paused_epoch, "bytes": bytes,
+            "message": format!("{} is paused. Backed up the database ({}).", self.layout.name, human(bytes)),
+            "backup": file.display().to_string(), "backup_at": at, "paused_epoch": paused_epoch, "keep_backups": KEEP_BACKUPS, "bytes": bytes,
         }))
     }
     fn backup_file(&self) -> PathBuf {
@@ -1239,7 +1239,7 @@ fn program_status(dir: &std::path::Path) -> Result<String, String> {
 fn composition_of(dir: &std::path::Path) -> Value {
     program_status(dir).map_or(Value::Null, |status| composition::parse(&status))
 }
-/// What changes in the plug-ins switched on, in words, or nothing when the
+/// What changes in the add-ons switched on, in words, or nothing when the
 /// release does not say or the list stays the same.
 fn plugin_sentence(before: Option<&[Value]>, after: Option<&[Value]>) -> String {
     let (Some(before), Some(after)) = (before, after) else {
@@ -1275,7 +1275,7 @@ fn plugin_sentence(before: Option<&[Value]>, after: Option<&[Value]>) -> String 
     if parts.is_empty() {
         String::new()
     } else {
-        format!(" Plug-ins: {}.", parts.join("; "))
+        format!(" Add-ons: {}.", parts.join("; "))
     }
 }
 fn pause_sentence(seconds: i64) -> String {
