@@ -144,7 +144,7 @@ flash, never a page-clearing error.
 
 - **Countries**: ISO, name (inline edit → `update_country_name`), capital,
   phone, currency, population and updated date. Update (operators) runs
-  `ReferenceImport::run_as` for the countries dataset in the background and
+  `ReferenceImport::import_as` for the countries dataset in the background and
   reports what it did: a fresh or confirmed-current download counts as an
   update, a fallback to the cached file is a warning that says how old that
   data is, and a failed download or import says the data was not changed.
