@@ -163,6 +163,25 @@ disposable database. This is a manual app-service specimen with no test runner,
 mocked identities or assertions. Sessions and temporary grants are removed on
 successful completion; reference/audit evidence remains for inspection.
 
+## MCP Apps: a module's card in the chat
+
+One answer: a module that wants a small page inside a chat host registers one `App` under `APPS`; `/mcp` does the rest, and the card itself works through the generic tools.
+
+An MCP App (specification 2026-01-26, which ChatGPT implements) is an HTML document the host shows in a sandboxed frame when a tool points at it. In Bilibi:
+
+| Part | Where | What it is |
+| --- | --- | --- |
+| `App` contribution | the owning module, `Contribution::new(APPS, …)` | `uri` (`ui://bilibi/<name>-v1.html`), `tool` (`open_software`), `title`, `description`, `operation` (a read operation of the same module whose input schema is the tool's and whose answer is the card's first data), `html` (the whole document, self-contained), `connect_domains` and `resource_domains` (both empty for a card that reaches nothing but the host), `skill` (how an agent uses it, for the plugin package) |
+| Boot check | `Registry::validate_apps`, `from_catalog` | the tool name is lower-case with underscores and not a generic tool; the URI is unique and `ui://`; the operation exists, is a read and belongs to the registering module |
+| `initialize` | `src/mcp.rs` | declares the `resources` capability beside `tools` |
+| `tools/list` | `src/mcp.rs` | one tool per app after the six generic ones, with `_meta.ui.resourceUri` and the older `openai/outputTemplate` alias, `readOnlyHint`, and the instance in its description |
+| `tools/call` of an app tool | `src/mcp.rs` | `Registry::call` of the app's operation: schema, channel and capability checks as for `read` |
+| `resources/list`, `resources/read` | `src/mcp.rs`, public like `tools/list` | the card as `text/html;profile=mcp-app` with `_meta.ui.csp` (and the `openai/widgetCSP` alias) from the declared domains; an unknown URI is JSON-RPC `-32002` |
+
+The card calls `read`, `plan` and `commit` through the host's `tools/call` bridge, so it adds no permission path: a person who cannot reach an operation is refused inside the card exactly as an agent is. Every tool carries `openai/widgetAccessible: true` for that reason. The card tells the model what happened with `ui/update-model-context` and can post into the chat with `ui/message`; the host decides whether to pass either on. A card never frames a Bilibi page (sign-in cookies do not travel into the host's frame) and never loads a script or style from elsewhere.
+
+The first card is `base/software` (`apps/base/software/card/software-v1.html`, tool `open_software`, operation `base.software.open`). The plugin package (`core/agent_plugins`) lists each app tool in the workflow skill and writes the app's `skill` as a skill of its own.
+
 ## Pages as callers
 
 A page's write event calls the contract the agent doors call, through `base/agent_api.pages` ([src/page.rs](src/page.rs), `PageContracts`). Same validation, capability check, owner preview, audited transaction, version fence and step-up; the page keeps its rendering and live patching.

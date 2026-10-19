@@ -155,14 +155,18 @@ anything but POST is `405` with `Allow: POST`; an `Accept` lacking both
 Malformed JSON is a `400` JSON-RPC parse error. Notifications answer `202` with
 no body. Bodies are capped like `/api/v1`.
 
-`initialize`, `ping`, `tools/list` and the two notifications are public. Every
-other message passes `api::authenticate` with the MCP resource
+`initialize`, `ping`, `tools/list`, `resources/list`, `resources/read` and
+the two notifications are public: the tool list and a card's HTML hold no data
+and no credential, and an MCP Apps host may fetch them before the person signs
+in. Every other message passes `api::authenticate` with the MCP resource
 (`APP_ORIGIN/mcp`) as audience; a refusal is `401 invalid_token` with
 `WWW-Authenticate: Bearer resource_metadata="…/.well-known/oauth-protected-resource/mcp"`.
 The protocol adapter is `bilibi_base::agent_api::mcp`: six generic tools
 (`search`, `describe`, `guide`, `read`, `plan`, `commit`) over the one Agent
 API, so permission and domain decisions happen exactly where `/api/v1` makes
-them. Business refusals are tool results with `isError: true` and Bilimbi's
+them, plus one tool per registered MCP App (`open_software`), which is that
+module's read operation under the tool's name and points the host at the
+card's `ui://` resource (`apps/base/agent_api/README.md`, "MCP Apps"). Business refusals are tool results with `isError: true` and Bilimbi's
 bodies (`invalid_input`, `forbidden`/`missing_capability`, `writes_not_enabled`,
 `plan_already_used`, …); wrong tool arguments and unknown tools are JSON-RPC
 `-32602`. A grant that stops proving live inside a plan transaction is `401`,
@@ -184,7 +188,9 @@ can be in are in `docs/versions.md`.
 The downloadable plugin package for an agent harness (Plugin for ChatGPT at
 `/settings/chatgpt-plugin`) is a `core/agent_plugins` page and `Download`,
 not a host route. It points the harness at this `/mcp` edge from
-`APP_ORIGIN`. The host only parses the exporter subcommand:
+`APP_ORIGIN`, and it is named after the instance (`bilibi-staging`, "Bilibi
+Staging", `bilibi-staging-chatgpt-plugin.zip`), so a person can hold a Dev, a
+Staging and a Production connection in one harness. The host only parses the exporter subcommand:
 
 ```sh
 bilibi-web plugin-export --harness chatgpt --client <registered-id> --output <new-directory>
