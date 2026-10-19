@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Local launcher plumbing, with no Bilimbi module counterpart.
 # Used on the first launch and every watched rebuild. Cargo's own diagnostics
 # remain visible, plus explicit wall-clock timing including failed compilations.
 #
@@ -9,7 +10,7 @@
 # copy reads it to explain the restart. A run that ends on its own (a failed
 # step, or a successful start) leaves cargo-watch idle until the next change.
 # The process owner reports an unexpected app exit even during a failed build.
-# start-app.sh clears $state on launch.
+# The process owner clears $state on launch.
 set -euo pipefail
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 cd "$root"
@@ -24,6 +25,7 @@ echo build > "$state"
 retry='Fix the error and save a file to try again, or press Ctrl-C and run ./scripts/start-app.sh again.'
 # Ctrl-C: cargo-watch passes SIGINT on and exits; stop quietly.
 trap 'exit 130' INT
+trap 'python3 scripts/dev-status.py fail' ERR
 not_running() {
     echo ended > "$state"
     echo "Bilibi is not running: $1"
@@ -40,17 +42,17 @@ build_failed() {
 step() {
     local what=$1 result=0
     shift
-    "$@" || result=$?
+    python3 scripts/dev-status.py run "$what" "$@" || result=$?
     if [[ $result != 0 ]]; then
         build_failed "$what failed (see above). $retry"
         exit "$result"
     fi
 }
-step 'module discovery' python3 scripts/discover-modules.py
-step 'the CSS build' ./scripts/build-assets.sh
+step discovery python3 scripts/discover-modules.py
+step css ./scripts/build-assets.sh
 started=$(date +%s)
 result=0
-cargo build -p bilibi-web --timings || result=$?
+python3 scripts/dev-status.py run build cargo build -p bilibi-web --timings || result=$?
 echo "Rust build took $(($(date +%s)-started))s (exit $result). Timing report: target/cargo-timings/cargo-timing.html"
 if [[ $result != 0 ]]; then
     build_failed "the Rust build failed (see above). $retry"
@@ -59,7 +61,12 @@ fi
 # Only a successful build may replace the old app. Stop it before migrations:
 # a new schema may be incompatible with the old code. The seed stays launch-only.
 python3 scripts/dev-process.py stop
-step 'the database migration' "$root/target/debug/bilibi-web" migrate
+step migrate "$root/target/debug/bilibi-web" migrate
+if [[ -e "$root/.local/dev/seed-needed" ]]; then
+    step seed "$root/target/debug/bilibi-web" seed --at-startup
+    rm -f "$root/.local/dev/seed-needed"
+fi
+python3 scripts/dev-status.py start
 # A stop by name (pkill -f "target/debug/bilibi-web run", pkill bilibi-web,
 # killall bilibi-web, kill $(pgrep -x bilibi-web)) reaches every process whose
 # name or command line matches, so an agent stopping its own test server that
@@ -74,4 +81,4 @@ rm -f "$dev_bin"
 ln "$root/target/debug/bilibi-web" "$dev_bin" 2>/dev/null \
     || cp "$root/target/debug/bilibi-web" "$dev_bin"
 echo serve > "$state"
-step 'starting the app' python3 scripts/dev-process.py start
+step start python3 scripts/dev-process.py start

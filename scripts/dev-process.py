@@ -6,16 +6,55 @@ Only this owner signals the child it created, never a stale PID from disk.
 This is Bilibi launcher plumbing, with no Bilimbi module counterpart.
 """
 import fcntl
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import importlib.util
+import json
+import os
 from pathlib import Path
 import signal
 import socket
 import subprocess
 import sys
+import threading
+
+
+spec = importlib.util.spec_from_file_location('dev_status', Path(__file__).with_name('dev-status.py'))
+status = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(status)
+
+
+class StatusHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        # No CORS, arbitrary file serving or environment/runtime log endpoint.
+        # Reject DNS rebinding; Caddy sets this loopback Host on its proxy hop.
+        if self.headers.get('Host') != f'127.0.0.1:{self.server.server_port}':
+            self.send_error(403)
+            return
+        if self.path != '/__bilibi_dev/status':
+            self.send_error(404)
+            return
+        body = json.dumps(status.read()).encode()
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Cache-Control', 'no-store')
+        self.send_header('X-Content-Type-Options', 'nosniff')
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
+    def log_message(self, _format, *_args):
+        pass
 
 
 DEV = Path(".local/dev")
 SOCKET = DEV / "control.sock"
 PID = DEV / "app.pid"
+# start-app.sh prepares these after the owner starts. Transfer only these values
+# over the private control socket; never persist credentials or log the payload.
+APP_ENVIRONMENT = {'DATABASE_URL', 'APP_ORIGIN', 'BIND_ADDR'}
 
 
 def reply(connection, result):
@@ -45,6 +84,13 @@ def watch(command):
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             sys.exit("This checkout already has a dev launcher. Stop it before starting another.")
+        status.write('prepare')
+        (DEV / 'seed-needed').touch()
+        Path('.local/dev-run.state').unlink(missing_ok=True)
+        http = ThreadingHTTPServer(('127.0.0.1', 0), StatusHandler)
+        http.daemon_threads = True
+        threading.Thread(target=http.serve_forever, daemon=True).start()
+        environment = {**os.environ, 'BILIBI_DEV_STATUS_PORT': str(http.server_port)}
         stopping = False
 
         def shutdown(_signum, _frame):
@@ -64,13 +110,14 @@ def watch(command):
             try:
                 # Neither child shares the terminal/rebuild process group. The
                 # launcher forwards Ctrl-C to cargo-watch and reaps its own app.
-                watcher = subprocess.Popen(command, start_new_session=True)
+                watcher = subprocess.Popen(command, start_new_session=True, env=environment)
                 while not stopping and watcher.poll() is None:
                     if app is not None and app.poll() is not None:
                         result = app.returncode
                         state = Path(".local/dev-run.state")
-                        if state.read_text().strip() == "serve":
+                        if state.exists() and state.read_text().strip() == "serve":
                             state.write_text("ended\n")
+                            status.write("serve", failed=True, finished=True)
                         if result == -signal.SIGTERM:
                             reason = (
                                 "another process stopped it (SIGTERM), not a file change. "
@@ -95,7 +142,12 @@ def watch(command):
                     try:
                         with connection.makefile("rb") as stream:
                             action = stream.readline(32).strip()
-                    except (TimeoutError, ConnectionResetError):
+                            app_environment = json.loads(stream.readline(16384)) if action == b'start' else {}
+                            if (not isinstance(app_environment, dict)
+                                    or app_environment.keys() - APP_ENVIRONMENT
+                                    or any(not isinstance(value, str) for value in app_environment.values())):
+                                raise ValueError('Invalid app environment')
+                    except (TimeoutError, ConnectionResetError, ValueError):
                         connection.close()
                         continue
                     if action == b"running":
@@ -110,6 +162,7 @@ def watch(command):
                             app = subprocess.Popen(
                                 [str(DEV.resolve() / "bilibi-dev"), "run"],
                                 start_new_session=True, stdin=subprocess.DEVNULL,
+                                env={**os.environ, **app_environment},
                             )
                             PID.write_text(f"{app.pid}\n")
                             reply(connection, 0)
@@ -117,6 +170,7 @@ def watch(command):
                             stop(app)
                             app = None
                             PID.unlink(missing_ok=True)
+                            status.write('start', failed=True, finished=True)
                             print(f"Could not start Bilibi: {error}", file=sys.stderr)
                             reply(connection, 1)
                     else:
@@ -131,13 +185,19 @@ def watch(command):
                 stop(app)
                 PID.unlink(missing_ok=True)
                 SOCKET.unlink(missing_ok=True)
+                status.write('stopped')
+                http.shutdown()
+                http.server_close()
         return 130 if stopping else watcher.returncode
 
 
 def request(action):
     with socket.socket(socket.AF_UNIX) as connection:
         connection.connect(str(SOCKET))
-        connection.sendall(action.encode() + b"\n")
+        payload = action.encode() + b"\n"
+        if action == 'start':
+            payload += json.dumps({key: os.environ[key] for key in APP_ENVIRONMENT if key in os.environ}).encode() + b'\n'
+        connection.sendall(payload)
         return int(connection.recv(32))
 
 

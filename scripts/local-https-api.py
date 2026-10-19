@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Plan a local origin; only the HTTPS owner's checkout may register with Caddy."""
+"""Plan a local origin; only the HTTPS owner's checkout may register with Caddy.
+
+Local launcher plumbing, with no Bilimbi module counterpart.
+"""
 import hashlib
 import json
 import os
@@ -80,7 +83,7 @@ def walk(value):
 
 def route_port(route):
     for value in walk(route):
-        if value.get("handler") == "reverse_proxy":
+        if value.get("handler") == "reverse_proxy" and not value.get("@id", "").endswith("-build-status"):
             for upstream in value.get("upstreams", []):
                 dial = upstream.get("dial", "")
                 match = re.search(r":(\d+)$", dial)
@@ -176,7 +179,11 @@ def waiting_route(host):
     brace in the page is escaped. X-Bilibi-Waiting lets the page tell its own
     answer from the app's when it polls for the backend to return.
     """
-    body = WAITING_PAGE.read_text().replace("{", "\\{")
+    body = WAITING_PAGE.read_text()
+    if os.environ.get('BILIBI_DEV_STATUS_PORT'):
+        extra = WAITING_PAGE.with_name('dev-waiting.html').read_text()
+        body = body.replace('</body>', extra + '\n</body>')
+    body = body.replace("{", "\\{")
     return {
         "@id": ERROR_ROUTE_ID,
         "match": [{
@@ -195,6 +202,33 @@ def waiting_route(host):
             "body": body,
         }],
         "terminal": True,
+    }
+
+
+def build_status_route(port):
+    """Only the local launcher owns this loopback diagnostic upstream.
+
+    Use the page's local-client policy, including the Windows host on WSL NAT.
+    """
+    port = int(port)
+    if not 1024 <= port <= 65535:
+        raise RuntimeError('Invalid launcher status port.')
+    return {
+        'match': [{'path': ['/__bilibi_dev/status']}],
+        'handle': [{'handler': 'subroute', 'routes': [
+            {
+                'match': [{'not': [{'remote_ip': {'ranges': allowed_clients()}}]}],
+                'handle': [{'handler': 'static_response', 'status_code': 403}],
+                'terminal': True,
+            },
+            {'handle': [{
+                '@id': ROUTE_ID + '-build-status',
+                'handler': 'reverse_proxy',
+                'headers': {'request': {'set': {'Host': [f'127.0.0.1:{port}']}}},
+                'upstreams': [{'dial': f'127.0.0.1:{port}'}],
+            }]},
+        ]}],
+        'terminal': True,
     }
 
 
@@ -393,6 +427,8 @@ def main():
         }],
         "terminal": True,
     }
+    if status_port := os.environ.get('BILIBI_DEV_STATUS_PORT'):
+        route_config['handle'][0]['routes'].insert(1, build_status_route(status_port))
     if own_route is None:
         if "routes" in server:
             request("POST", server_path + "/routes", route_config)

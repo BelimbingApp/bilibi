@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
+# Local launcher plumbing, with no Bilimbi module counterpart.
 # One development entrypoint; no daemon management or automatic installation.
 # Install prerequisites first with ./scripts/setup.sh.
 set -euo pipefail
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 cd "$root"
+# Acquire the checkout owner and bring up status before any build can fail.
+if [[ ${1:-} != --owned ]]; then
+    exec python3 scripts/dev-process.py watch "$root/scripts/start-app.sh" --owned
+fi
 for tool in rustc cargo psql pg_isready python3 curl ss flock; do
     command -v "$tool" >/dev/null || { echo "Missing prerequisite: $tool. Run ./scripts/setup.sh" >&2; exit 1; }
 done
 cargo watch --version >/dev/null 2>&1 || { echo 'Missing prerequisite: cargo-watch. Run ./scripts/setup.sh' >&2; exit 1; }
 echo "$(rustc --version); $(cargo --version)"
-python3 scripts/discover-modules.py
-./scripts/build-assets.sh
 if [[ -z ${DATABASE_URL:-} ]]; then
     pg_bin=${PG18_BIN:-/usr/lib/postgresql/18/bin}
     [[ -x "$pg_bin/initdb" && -x "$pg_bin/pg_ctl" ]] || {
@@ -48,11 +51,6 @@ fi
 pg_isready -d "$DATABASE_URL" >/dev/null || { echo 'PostgreSQL is not ready for DATABASE_URL.' >&2; exit 1; }
 # A supplied URL must point at an existing database.
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc 'select 1' >/dev/null
-started=$(date +%s)
-cargo build -p bilibi-web --timings
-echo "Initial Rust build took $(($(date +%s)-started))s. Timing report: target/cargo-timings/cargo-timing.html"
-./target/debug/bilibi-web migrate
-./target/debug/bilibi-web seed --at-startup
 host=${BILIBI_DEV_HOST:-bilibi.localhost}
 # Plan before calling local-https.sh: other checkouts never register with Caddy.
 # The registrar rechecks ownership under its lock in case two first launches race.
@@ -88,8 +86,6 @@ else
     highlight() { printf '%s%s' "$1" "$2"; }
 fi
 echo "$(highlight 'Open ' "$APP_ORIGIN") — sign in as ai@agent.my / bilibi-dev (the platform operator's administrator)."
-# dev-run.sh explains each restart from the state the previous run left here.
-rm -f "$root/.local/dev-run.state"
 echo 'Cargo output stays visible. Edit Rust/templates/assets to rebuild; Ctrl-C stops this app, leaving shared Caddy running.'
 # The asset build rewrites app.css, writes a scratch css/.mounted-<pid>.css (and
 # npm may touch node_modules) under apps/; watching them would make every rebuild
@@ -98,6 +94,6 @@ echo 'Cargo output stays visible. Edit Rust/templates/assets to rebuild; Ctrl-C 
 # Keep the app owned by the launcher, outside cargo-watch's rebuild process
 # group. The owner stops only its own child on replacement or Ctrl-C.
 # Ignore prose, while retaining all Rust, SQL, templates, assets and include files.
-exec python3 scripts/dev-process.py watch cargo watch --watch apps --watch Cargo.toml --watch Cargo.lock --watch scripts \
+exec cargo watch --watch apps --watch Cargo.toml --watch Cargo.lock --watch scripts \
     --ignore 'apps/base/ui/assets/app.css' --ignore 'apps/base/ui/assets/css/.mounted-*.css' \
     --ignore '**/node_modules/**' --ignore '*.md' --shell './scripts/dev-run.sh'

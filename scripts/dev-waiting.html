@@ -1,0 +1,66 @@
+<!-- Local launcher diagnostics only; injected by local-https-api.py, never by
+     install-server.sh. Launcher plumbing has no Bilimbi module counterpart. -->
+<style>
+.dev-status .column{max-width:48rem}
+.dev-status .hint,.dev-status #waiting-state,.dev-status .dot{display:none}
+.dev-status .status{justify-content:flex-end}
+.dev-progress{margin-top:1rem;font-size:.875rem;font-variant-numeric:tabular-nums}
+.dev-output{margin:1rem 0 0;padding:.75rem;border:1px solid var(--line);border-radius:.375rem;max-height:24rem;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;background:var(--canvas);color:var(--ink)}
+.dev-output:focus-visible{outline:2px solid var(--strong);outline-offset:2px}
+</style>
+<template id="dev-status-template">
+<div class="dev-progress" id="dev-progress" role="status" aria-live="polite"></div>
+<p id="dev-next" hidden>Fix the error and save a file. The launcher rebuilds by itself.</p>
+<pre class="dev-output" id="dev-output" aria-label="Latest build output" tabindex="0" hidden></pre>
+</template>
+<script>
+(function () {
+  var labels = {prepare:'Preparing', discovery:'Discovering modules', css:'Building CSS', build:'Building', migrate:'Migrating the database', seed:'Preparing the development account', start:'Starting', serve:'Starting', stopped:'Launcher stopped'};
+  var failures = {discovery:'Module discovery failed', css:'CSS build failed', build:'Rust build failed', migrate:'Database migration failed', seed:'Development account setup failed', start:'App failed to start', serve:'App stopped'};
+  var latest = null, unavailable = false, busy = false;
+  var waiting = document.documentElement;
+  var template = document.getElementById('dev-status-template');
+  // The shared waiting page still owns backend polling and automatic reload.
+  document.querySelector('.body').insertBefore(template.content, document.querySelector('.status'));
+  var progress = document.getElementById('dev-progress');
+  var output = document.getElementById('dev-output');
+  var next = document.getElementById('dev-next');
+  // Announce progress changes without re-announcing the whole diagnostic tail.
+  document.querySelector('.card').removeAttribute('role');
+  document.querySelector('.card').removeAttribute('aria-live');
+  function render() {
+    if (!latest) return;
+    waiting.classList.add('dev-status');
+    var elapsed = Math.max(0, Math.floor(((latest.finished_at || Date.now() / 1000) - latest.started_at)));
+    var duration = (elapsed >= 60 ? Math.floor(elapsed / 60) + 'm ' : '') + elapsed % 60 + 's';
+    var label = labels[latest.phase] || 'Starting';
+    progress.textContent = unavailable ? 'Launcher status is unavailable. Checking again…' : latest.failed ? (failures[latest.phase] || label + ' failed') + ' (' + duration + ').' : label + ' (' + duration + ')…';
+    progress.setAttribute('role', latest.failed ? 'alert' : 'status');
+    progress.setAttribute('aria-live', latest.failed ? 'assertive' : 'polite');
+    document.getElementById('waiting-heading').textContent = latest.failed ? 'Bilibi could not start' : 'Bilibi is starting';
+    next.hidden = !latest.failed && latest.phase !== 'stopped';
+    next.textContent = latest.phase === 'stopped' ? 'Run ./scripts/start-app.sh to start the launcher again.' : 'Fix the error and save a file. The launcher rebuilds by itself.';
+    var tail = latest.output || '';
+    if (output.textContent !== tail) {
+      var atEnd = output.hidden || output.scrollHeight - output.clientHeight - output.scrollTop < 24;
+      output.textContent = tail;
+      output.hidden = !tail;
+      if (atEnd) output.scrollTop = output.scrollHeight;
+    }
+    output.hidden = !tail;
+  }
+  function poll() {
+    if (busy) return;
+    busy = true;
+    fetch('/__bilibi_dev/status', {cache:'no-store', credentials:'omit', signal:AbortSignal.timeout(4000)})
+      .then(function (response) { if (!response.ok) throw new Error('unavailable'); return response.json(); })
+      .then(function (data) { latest = data; unavailable = false; render(); })
+      .catch(function () { unavailable = true; render(); })
+      .finally(function () { busy = false; });
+  }
+  setInterval(function () { render(); poll(); }, 1000);
+  document.getElementById('waiting-retry').addEventListener('click', poll);
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) poll(); });
+  poll();
+})();
+</script>

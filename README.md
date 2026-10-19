@@ -54,7 +54,9 @@ On Ubuntu, Debian or WSL2:
 
 `setup.sh` installs everything once (Rust, PostgreSQL 18, Caddy, mkcert, Node.js) and is safe to rerun.
 
-Open the address printed by the launcher and sign in as `ai@agent.my` / `bilibi-dev` (development seed only). One checkout owns <https://bilibi.localhost>; other checkouts use their own `http://127.0.0.1:<port>` address. Setting `BILIBI_DEV_PORT` selects a backend port, without taking over another checkout's HTTPS address. The launcher starts a private database, builds, migrates, seeds and rebuilds on change. If a rebuild fails or the app stops, the terminal says why and how to start it again. Restart it after changing an environment variable.
+Open the address printed by the launcher and sign in as `ai@agent.my` / `bilibi-dev` (development seed only). One checkout owns <https://bilibi.localhost>; other checkouts use their own `http://127.0.0.1:<port>` address. Setting `BILIBI_DEV_PORT` selects a backend port, without taking over another checkout's HTTPS address.
+
+The launcher starts a private database, builds, migrates, seeds and rebuilds on change. While the HTTPS app is down, its waiting page shows the current build step and elapsed time. A failed build shows the latest diagnostics; fix the error and save a file to rebuild. Cargo output stays in the terminal, and a previous successful build keeps serving until its replacement is ready. Restart it after changing an environment variable.
 
 ## Configuration
 
