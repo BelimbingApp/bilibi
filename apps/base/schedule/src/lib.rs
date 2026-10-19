@@ -1,19 +1,25 @@
-//! Immutable contributed recurrences, fingerprint review and suppression, and
-//! the durable occurrence claim that hands exactly one job per occurrence to
-//! the Queue, the operator board at `/system/schedule` and history retention.
-//! Work itself runs on the Queue.
-pub mod board;
-pub mod cron;
-pub mod definition;
-pub mod occurrence;
+//! Immutable contributed recurrences, fingerprint review and suppression, an
+//! operator clock in the zone a person typed, and the durable occurrence claim
+//! that hands exactly one job per occurrence to the Queue. The operator board
+//! at `/system/schedule` and history retention live here too. Work itself runs
+//! on the Queue.
+mod board;
+mod clock;
+mod cron;
+mod definition;
+mod occurrence;
+mod phrase;
 pub mod recurrence;
 mod retention;
-pub mod scheduler;
+mod scheduler;
 mod web;
 pub mod worker;
+pub use board::{Availability, Diagnostics, DueWork, Pruned, RunPage, RunQuery, RunSort};
+pub use cron::{Cron, CronError};
+pub use definition::fingerprint;
 pub use definition::{Definition, Misfire, Overlap, DEFINITIONS, RESERVED_ARGUMENT};
 pub use occurrence::{Refusal, Run, Trigger, TriggeredBy};
-pub use scheduler::Scheduler;
+pub use scheduler::{operator_tenant, Config as SchedulerConfig, Poll, Scheduler};
 
 use bilibi_authz::{
     authorize_key, authorize_operator, CapabilityDefinition, RoleDefinition,
@@ -102,8 +108,11 @@ pub struct Task {
     pub owner: &'static str,
     pub owner_route: Option<&'static str>,
     pub task_name: &'static str,
-    pub expression: &'static str,
-    pub timezone: &'static str,
+    /// The clock that runs: the operator clock when one is saved, otherwise
+    /// the contributed expression.
+    pub expression: String,
+    /// Zone that `expression` is written in.
+    pub timezone: String,
     pub overlap: Overlap,
     pub misfire: Misfire,
     pub fingerprint: String,
@@ -262,26 +271,31 @@ impl Schedule {
                 )
             })
             .collect();
+        let clocks = self.saved_clocks(client).await?;
         Ok(self
             .definitions
             .values()
-            .map(|item| Task {
-                key: item.key,
-                name: item.definition.name,
-                owner: item.owner,
-                owner_route: item.definition.owner_route,
-                task_name: item.definition.task_name,
-                expression: item.definition.expression,
-                timezone: item.definition.timezone,
-                overlap: item.definition.overlap,
-                misfire: item.definition.misfire,
-                fingerprint: item.fingerprint.clone(),
-                review: review_state(item, reviews.get(item.key)),
-                suppressed: suppressed.iter().any(|key| key == item.key),
-                next_due_at: item.next(now).ok(),
-                last_status: latest.get(item.key).map(|run| run.0.clone()),
-                last_started_at: latest.get(item.key).map(|run| run.1),
-                last_runtime_ms: latest.get(item.key).and_then(|run| run.2),
+            .map(|item| {
+                let active = item.clock(clocks.get(item.key));
+                let next_due_at = active.next(now).ok();
+                Task {
+                    key: item.key,
+                    name: item.definition.name,
+                    owner: item.owner,
+                    owner_route: item.definition.owner_route,
+                    task_name: item.definition.task_name,
+                    expression: active.expression,
+                    timezone: active.timezone,
+                    overlap: item.definition.overlap,
+                    misfire: item.definition.misfire,
+                    fingerprint: item.fingerprint.clone(),
+                    review: review_state(item, reviews.get(item.key)),
+                    suppressed: suppressed.iter().any(|key| key == item.key),
+                    next_due_at,
+                    last_status: latest.get(item.key).map(|run| run.0.clone()),
+                    last_started_at: latest.get(item.key).map(|run| run.1),
+                    last_runtime_ms: latest.get(item.key).and_then(|run| run.2),
+                }
             })
             .collect())
     }
@@ -498,6 +512,7 @@ impl Schedule {
                 item,
                 occurrence::micros(now),
                 Trigger::Manual,
+                None,
                 Some(&triggered_by),
             )
             .await
@@ -546,6 +561,14 @@ impl Schedule {
             tx.rollback().await?;
             return Ok(Err(refusal));
         }
+        let clocks = self.saved_clocks(tx.sql()).await?;
+        let active = item.clock(clocks.get(key));
+        // The operator may have saved a clock since this poll calculated its
+        // occurrence. Recheck under the same key lock as that save.
+        if trigger == Trigger::Scheduled && active.previous(intended_at).ok() != Some(intended_at) {
+            tx.rollback().await?;
+            return Ok(Err(Refusal::ClockChanged));
+        }
         occurrence::reconcile(tx.sql(), Some(key)).await?;
         let at = occurrence::to_pg(intended_at);
         if tx
@@ -579,7 +602,7 @@ impl Schedule {
         let metadata = worker::Metadata {
             key: key.into(),
             name: item.definition.task_name.into(),
-            expression: (trigger == Trigger::Scheduled).then(|| item.definition.expression.into()),
+            expression: (trigger == Trigger::Scheduled).then_some(active.expression),
             fingerprint: item.fingerprint.clone(),
             intended_at,
             trigger,
@@ -682,7 +705,7 @@ inventory::submit! { Contribution::new(VOCABULARY, "base/schedule", Provenance {
 inventory::submit! {
     Module { id: "base/schedule", layer: bilibi_module_registry::Layer::Base,
         dependencies: &["base/module_registry", "base/database", "base/audit", "base/tenancy", "base/authz", "base/queue", "base/settings", "base/locale", "base/datetime", "base/ui", "base/menu"],
-        migrations: &[("base-schedule-001", include_str!("../migrations/001-schedule.sql")), ("base-schedule-002", include_str!("../migrations/002-schedule-occurrences.sql"))],
+        migrations: &[("base-schedule-001", include_str!("../migrations/001-schedule.sql")), ("base-schedule-002", include_str!("../migrations/002-schedule-occurrences.sql")), ("base-schedule-003-clock", include_str!("../migrations/003-schedule-clocks.sql"))],
         services: &[Service { id: "base/schedule.store", factory: |services| {
             let catalog = Catalog::discover(&bilibi_module_registry::discover()?)?;
             let queue = services.get::<Queue>("base/queue.store")?;

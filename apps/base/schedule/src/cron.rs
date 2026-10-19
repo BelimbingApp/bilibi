@@ -215,6 +215,22 @@ impl Cron {
         None
     }
 
+    pub(crate) fn minute_values(&self) -> Vec<u8> {
+        bits(self.minutes, 0, 59)
+    }
+    pub(crate) fn hour_values(&self) -> Vec<u8> {
+        bits(u64::from(self.hours), 0, 23)
+    }
+    pub(crate) fn day_values(&self) -> Vec<u8> {
+        bits(u64::from(self.days), 1, 31)
+    }
+    pub(crate) fn month_values(&self) -> Vec<u8> {
+        bits(u64::from(self.months), 1, 12)
+    }
+    pub(crate) fn weekday_values(&self) -> Vec<u8> {
+        bits(u64::from(self.weekdays), 0, 6)
+    }
+
     /// Latest matching minute in `since..=from` (`from` rounds down).
     pub fn prev_at_or_before(&self, from: DateTime, since: DateTime) -> Option<DateTime> {
         let from = from.with().second(0).subsec_nanosecond(0).build().ok()?;
@@ -246,6 +262,13 @@ impl Cron {
         }
         None
     }
+}
+
+fn bits(bits: u64, min: u32, max: u32) -> Vec<u8> {
+    (min..=max)
+        .filter(|n| bits & (1u64 << n) != 0)
+        .map(|n| n as u8)
+        .collect()
 }
 
 fn ceil_minute(at: DateTime) -> Option<DateTime> {

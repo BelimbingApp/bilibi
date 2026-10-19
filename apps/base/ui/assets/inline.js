@@ -70,7 +70,15 @@
         this.el.dataset.status !== 'none' && `${this.el.id}-status`,
       ].filter(Boolean).join(' ');
       const trigger = this.trigger();
+      const title = this.el.dataset.title || '';
       if (trigger) {
+        if (title) {
+          trigger.title = title;
+          trigger.setAttribute('aria-description', title);
+        } else {
+          trigger.removeAttribute('title');
+          trigger.removeAttribute('aria-description');
+        }
         trigger.classList.toggle(this.long || this.choice ? 'hidden' : 'invisible', this.active);
         trigger.classList.toggle('pointer-events-none', this.active);
         if (describedBy) trigger.setAttribute('aria-describedby', describedBy);

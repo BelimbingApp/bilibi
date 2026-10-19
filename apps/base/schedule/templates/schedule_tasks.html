@@ -1,9 +1,10 @@
 {%- import "forms.html" as forms -%}
-<section id="schedule-tasks-panel" aria-labelledby="schedule-tab-tasks">
+<section id="schedule-tasks-panel" data-hook="BrowserTimeZone" data-timezone-request="{{ timezone_request }}" aria-labelledby="schedule-tab-tasks">
 <form id="schedule-task-filters" data-event="filter_tasks" data-change class="mt-4 flex flex-wrap gap-3">
 <div class="min-w-[240px] flex-1">{% call forms::input(field=search) %}{% endcall %}</div>
 <div>{% call forms::input(field=status) %}{% endcall %}</div>
 </form>
+<p id="schedule-zone-note" class="mt-3 text-xs text-ink-muted">Times you enter use the top-bar time zone. Point at a schedule to see its cron.</p>
 {{ unavailable|safe }}
 {{ card|safe }}
 </section>

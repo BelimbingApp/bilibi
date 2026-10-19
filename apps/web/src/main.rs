@@ -171,7 +171,7 @@ async fn main() -> Result<()> {
             )?;
             let scheduler = bilibi_base::schedule::Scheduler::from_services(
                 &app.services,
-                bilibi_base::schedule::scheduler::Config::default(),
+                bilibi_base::schedule::SchedulerConfig::default(),
             )?;
             // The outcomes the installer and builder write land in the audit
             // trail through the owning module, not through the workers.

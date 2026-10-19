@@ -111,8 +111,10 @@ impl Scheduler {
         let scheduler = SystemScope::rehydrate(&**client, tenant, Some(PRINCIPAL)).await?;
         let keys: Vec<&str> = self.schedule.definitions().map(|item| item.key()).collect();
         let latest = occurrence::latest_scheduled(&**client, &keys).await?;
+        let clocks = self.schedule.saved_clocks(&**client).await?;
         for item in self.schedule.definitions() {
-            let intended = match item.previous(now) {
+            let active = item.clock(clocks.get(item.key()));
+            let intended = match active.previous(now) {
                 Ok(at) => at,
                 Err(error) => {
                     report.failed.push((item.key().into(), error.to_string()));
@@ -140,6 +142,7 @@ impl Scheduler {
                             item,
                             intended,
                             Trigger::Scheduled,
+                            Some(active.expression.as_str()),
                             None,
                         )
                         .await

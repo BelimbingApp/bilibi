@@ -27,11 +27,8 @@ use bilibi_queue::{
     store, Queue, Worker, WORKERS,
 };
 use bilibi_schedule::{
-    definition::fingerprint,
-    recurrence,
-    scheduler::{operator_tenant, Config as SchedulerConfig, Poll},
-    worker, Definition, Eligibility, Misfire, Overlap, Refusal, Schedule, Scheduler, DEFINITIONS,
-    EXECUTE, PRINCIPAL,
+    fingerprint, operator_tenant, recurrence, worker, Definition, Eligibility, Misfire, Overlap,
+    Poll, Refusal, Schedule, Scheduler, SchedulerConfig, DEFINITIONS, EXECUTE, PRINCIPAL,
 };
 use bilibi_tenancy::{Authentication, Scope};
 use jiff::{tz::TimeZone, Timestamp};
@@ -217,7 +214,7 @@ fn dst(schedule: &Schedule, args: &[String]) -> Result<()> {
         "60 * * * *",
         "0 0 L * *",
     ] {
-        match bilibi_schedule::cron::Cron::parse(expression) {
+        match bilibi_schedule::Cron::parse(expression) {
             Ok(_) => println!("  {expression:<24} accepted"),
             Err(error) => println!("  {expression:<24} refused: {error}"),
         }
