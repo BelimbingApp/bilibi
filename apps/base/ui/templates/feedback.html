@@ -41,8 +41,8 @@
 </div>
 {% endmacro %}
 
-{#- Which installation this is (src/instance.rs): a small badge for the top
-    bar. The label is always in words; the colour only repeats it. -#}
+{#- Which installation this is (src/instance.rs): a small badge for
+    sign-in. The label is always in words; the colour only repeats it. -#}
 {% macro instance_badge(badge) %}
 <span data-instance="{{ badge.role }}" title="{{ badge.title }}" class="inline-flex h-5 min-w-0 shrink items-center gap-1 rounded-sm border px-1.5 text-xs font-semibold {{ badge.tone.surface_class() }}">{% call c::icon(name=badge.tone.icon(), class="size-3.5 shrink-0") %}{% endcall %}<span class="min-w-0 truncate uppercase tracking-wide">{{ badge.label }}</span></span>
 {% endmacro %}

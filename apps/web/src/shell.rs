@@ -180,7 +180,6 @@ async fn context<'a>(
         home,
         served_routes: serde_json::to_string(&served).map_err(|_| Error::Internal)?,
         pins: serde_json::to_string(&pins).map_err(|_| Error::Internal)?,
-        instance: instance.badge().map_err(|_| Error::Internal)?,
         instance_title: instance.label,
         development: cfg!(debug_assertions),
         listen_address: if cfg!(debug_assertions) {

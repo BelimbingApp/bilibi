@@ -126,10 +126,7 @@ pub struct ShellContext<'a> {
     /// The account's pins as JSON (`[{id,label,url,icon,sort_order}]`), already
     /// limited to pages this deployment serves.
     pub pins: String,
-    /// Which installation this is (`bilibi_system::Instance`): the top-bar badge for
-    /// every instance but production, empty for production.
-    pub instance: Html,
-    /// The same in words for the account panel, production included
+    /// Which installation this is, in words for the account panel, production included
     /// ("Staging").
     pub instance_title: String,
     pub development: bool,
