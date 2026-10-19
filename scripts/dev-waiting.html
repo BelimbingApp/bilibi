@@ -41,7 +41,7 @@
     var elapsed = Math.max(0, Math.floor(latest.elapsed + (latest.finished_at ? 0 : (performance.now() - received) / 1000)));
     var duration = (elapsed >= 60 ? Math.floor(elapsed / 60) + 'm ' : '') + elapsed % 60 + 's';
     var label = labels[latest.phase] || 'Starting';
-    progress.textContent = latest.failed ? (failures[latest.phase] || label + ' failed') + ' (' + duration + ').' : label + ' (' + duration + ')…';
+    progress.textContent = latest.failed ? (failures[latest.phase] || label + ' failed') + (latest.phase === 'serve' ? '.' : ' (' + duration + ').') : label + ' (' + duration + ')…';
     progress.setAttribute('role', latest.failed ? 'alert' : 'status');
     progress.setAttribute('aria-live', latest.failed ? 'assertive' : 'polite');
     document.getElementById('waiting-heading').textContent = latest.failed ? 'Bilibi could not start' : 'Bilibi is starting';

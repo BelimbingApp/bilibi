@@ -31,11 +31,11 @@ def redact(raw):
     text = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', text)
     text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text).replace('\r\n', '\n').replace('\r', '\n')
     for key, value in os.environ.items():
-        if value and (key == 'DATABASE_URL' or len(value) >= 8 and re.search(r'PASSWORD|SECRET|TOKEN|CREDENTIAL|AUTHORIZATION|COOKIE|SESSION|(?:^|_)KEY(?:_ID)?$', key)):
+        if value and (key == 'DATABASE_URL' or len(value) >= 8 and re.search(r'PASSWORD|SECRET|TOKEN|CREDENTIAL|AUTHORIZATION|COOKIE|(?:^|_)KEY(?:_ID)?$', key)):
             text = text.replace(value, '[redacted]')
     text = re.sub(r'(\b[a-z][a-z0-9+.-]*://)[^\s/@]+:[^\s/@]+@', r'\1[redacted]@', text, flags=re.I)
-    text = re.sub(r'(?i)(\b(?:Bearer|Basic)\s+)\S+', r'\1[redacted]', text)
-    text = re.sub(r'(?i)(\b(?:password|secret|token|api_key|authorization)\s*[:=]\s*)\S+', r'\1[redacted]', text)
+    text = re.sub(r'(\b(?:Bearer|Basic)[ \t]+)\S+', r'\1[redacted]', text)
+    text = re.sub(r'(\b(?:Password|PASSWORD|Secret|SECRET|Token|TOKEN|API_KEY|Authorization|AUTHORIZATION)[ \t]*[:=][ \t]*)\S+', r'\1[redacted]', text)
     return text[-LIMIT:]
 
 

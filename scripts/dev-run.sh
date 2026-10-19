@@ -40,16 +40,16 @@ build_failed() {
 }
 # Run one step; if it fails, say which and how to recover.
 step() {
-    local what=$1 result=0
-    shift
-    python3 scripts/dev-status.py run "$what" "$@" || result=$?
+    local phase=$1 what=$2 result=0
+    shift 2
+    python3 scripts/dev-status.py run "$phase" "$@" || result=$?
     if [[ $result != 0 ]]; then
         build_failed "$what failed (see above). $retry"
         exit "$result"
     fi
 }
-step discovery python3 scripts/discover-modules.py
-step css ./scripts/build-assets.sh
+step discovery 'module discovery' python3 scripts/discover-modules.py
+step css 'the CSS build' ./scripts/build-assets.sh
 started=$(date +%s)
 result=0
 python3 scripts/dev-status.py run build cargo build -p bilibi-web --timings || result=$?
@@ -61,9 +61,9 @@ fi
 # Only a successful build may replace the old app. Stop it before migrations:
 # a new schema may be incompatible with the old code. The seed stays launch-only.
 python3 scripts/dev-process.py stop
-step migrate "$root/target/debug/bilibi-web" migrate
+step migrate 'the database migration' "$root/target/debug/bilibi-web" migrate
 if [[ -e "$root/.local/dev/seed-needed" ]]; then
-    step seed "$root/target/debug/bilibi-web" seed --at-startup
+    step seed 'the development account setup' "$root/target/debug/bilibi-web" seed --at-startup
     rm -f "$root/.local/dev/seed-needed"
 fi
 python3 scripts/dev-status.py start
@@ -81,4 +81,4 @@ rm -f "$dev_bin"
 ln "$root/target/debug/bilibi-web" "$dev_bin" 2>/dev/null \
     || cp "$root/target/debug/bilibi-web" "$dev_bin"
 echo serve > "$state"
-step start python3 scripts/dev-process.py start
+step start 'starting the app' python3 scripts/dev-process.py start
