@@ -9,16 +9,9 @@ and `bilibi_extensions::MODULES` lists before any command, so a mounted crate
 whose descriptor is missing, extra or wrongly layered refuses to boot. Examples
 that link their own reference Extension descriptors skip that check.
 
-`composition` tells a program what it is made of: the Platform version, its
-commit and release tag, and each mounted Domain or Extension with its commit
-and version. `build.rs` compiles those facts in from
-`.local/composition/manifest.txt`, the pin `scripts/discover-modules.py --pin`
-writes; without a pin only the Platform commit is known. It checks the pin
-against the checkouts it compiles, and a pin that names another set of
-containers, another Platform version, or other commits than the Platform and
-Domain checkouts are at is reported stale rather than shown. The host passes
-the same `MODULES` lists it gives `verify_composition`. The scheme is
-`docs/versions.md`.
+`Composition` tells a program what it is made of: the Platform version, its commit and release tag, and each mounted Domain or Extension with its commit and version. The executable host builds it and supplies it as `bootstrap.composition`; consumers use that value.
+
+The registry owns only the stable types, so a Git commit does not rebuild every registry consumer. Pin compilation and drift checks belong to `apps/web/build.rs` and `apps/web/src/composition.rs`. The scheme is `docs/versions.md`.
 
 Deep modules register `Module` descriptors and `Contribution::new` entries with
 `inventory`. Use these contracts rather than adding host-owned module lists or

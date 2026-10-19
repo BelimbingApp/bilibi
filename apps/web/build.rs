@@ -7,12 +7,15 @@
 //! the pin recorded, the pin is left out and the reason compiled in instead.
 //! Without a pin the program only knows the Platform commit, read from Git at
 //! build time, and says so.
+//! Keep Git watches in this executable host: putting these changing facts in
+//! the shared registry recompiles every module after a commit or checkout.
+//! Bilibi-specific composition contract; no Bilimbi module counterpart.
 use std::{env, fs, path::Path, path::PathBuf, process::Command};
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     let root =
-        PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../../..");
+        PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../..");
     let folder = root.join(".local/composition");
     let manifest = folder.join("manifest.txt");
     // Cargo reruns a script whose watched path is missing on every build, so

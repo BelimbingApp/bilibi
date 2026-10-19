@@ -37,6 +37,7 @@ webpki-roots = "1.0.9"
 rustls-native-certs.workspace = true
 
 [dev-dependencies]
+bilibi-web.workspace = true
 bilibi-walkthrough-fixture = { path = "../../../fixtures/walkthrough" }
 bilibi-base = { path = ".." }
 bilibi-core = { path = "../../core" }

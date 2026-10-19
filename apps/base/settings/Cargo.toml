@@ -17,6 +17,7 @@ inventory.workspace = true
 aes-gcm = { version = "0.11.1", features = ["zeroize"] }
 
 [dev-dependencies]
+bilibi-web.workspace = true
 bilibi-walkthrough-fixture = { path = "../../../fixtures/walkthrough" }
 bilibi-base = { path = ".." }
 bilibi-core = { path = "../../core" }

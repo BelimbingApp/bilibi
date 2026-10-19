@@ -137,7 +137,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     services.provide("bootstrap.database", Arc::new(db.clone()))?;
     services.provide(
         "bootstrap.composition",
-        std::sync::Arc::new(bilibi_module_registry::composition(&[], &[])),
+        std::sync::Arc::new(bilibi_web::composition()),
     )?;
     services.install(&modules)?;
     let grants = services.get::<AgentAccess>("core/agent_access.grants")?;

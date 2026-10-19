@@ -37,6 +37,7 @@ sha1 = "0.11"
 data-encoding = "2.11"
 percent-encoding = "2.3"
 qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
+bilibi-web = { path = "apps/web" }
 bilibi-database = { path = "apps/base/database" }
 bilibi-audit = { path = "apps/base/audit" }
 bilibi-security = { path = "apps/base/security" }

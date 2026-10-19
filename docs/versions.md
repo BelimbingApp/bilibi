@@ -110,7 +110,7 @@ How CI records a set (`.github/workflows/domains.yml`):
 
 ## Versions inside the program
 
-**The program is the truth about what it contains.** `scripts/discover-modules.py --pin` records the Platform commit, its version and release tag, and each mounted Domain's commit and release in `.local/composition/manifest.txt`. The module registry's build script (`apps/base/module_registry/build.rs`) compiles that manifest into the program, and `bilibi_module_registry::composition` hands it to `bilibi-web status`, the status bar and anything else that asks. Nothing is read from a file or the database at run time, so the shown versions cannot drift from the running code.
+**The program is the truth about what it contains.** `scripts/discover-modules.py --pin` records the Platform commit, its version and release tag, and each mounted Domain's commit and release in `.local/composition/manifest.txt`. The executable host's build script (`apps/web/build.rs`) compiles that manifest into the program, and `bilibi_web::composition` hands it to `bilibi-web status`, the status bar and anything else that asks. Nothing is read from a file or the database at run time, so the shown versions cannot drift from the running code.
 
 Pin, then build:
 

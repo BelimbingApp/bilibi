@@ -32,6 +32,7 @@ getrandom = "0.4.3"
 sha2 = "0.11.1"
 
 [dev-dependencies]
+bilibi-web.workspace = true
 bilibi-walkthrough-fixture = { path = "../../../fixtures/walkthrough" }
 bilibi-base = { path = "../../base" }
 bilibi-core = { path = ".." }

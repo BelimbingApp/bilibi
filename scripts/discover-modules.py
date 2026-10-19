@@ -15,7 +15,7 @@ so `--check` also refuses a staged or committed mounted composition or
 A company build mounts Domain and Extension containers at chosen revisions.
 `--pin` records the Platform and container HEADs, the version each is at (its
 `vX.Y.Z` tag, see docs/versions.md) and the resolved `Cargo.lock` under
-`.local/composition/`; `apps/base/module_registry/build.rs` compiles that
+`.local/composition/`; `apps/web/build.rs` compiles that
 manifest into the program. `--restore` rebuilds exactly that composition
 (containers at the pinned HEADs, the pinned `Cargo.lock`) so that
 `cargo build --release --locked` is reproducible.
@@ -251,7 +251,7 @@ def pin(root, modules, files):
     if tagged is not None and tagged != platform_version:
         raise Refused(f'The Platform is tagged v{tagged} but Cargo.toml says version {platform_version}; '
                       'a release tag names the Cargo.toml version (docs/versions.md)')
-    manifest = ('# Written by scripts/discover-modules.py --pin; read by --restore and apps/base/module_registry/build.rs.\n'
+    manifest = ('# Written by scripts/discover-modules.py --pin; read by --restore and apps/web/build.rs.\n'
                 f'platform = "{platform}"\n'
                 f'platform_version = "{platform_version}"\n'
                 + (f'platform_tag = "v{tagged}"\n' if tagged else '')
@@ -262,7 +262,7 @@ def pin(root, modules, files):
             manifest += f'version = "{versions[name]}"\n'
     target = root / PIN_DIR
     target.mkdir(parents=True, exist_ok=True)
-    # Written only when changed: the module registry's build script watches
+    # Written only when changed: the executable host's build script watches
     # this folder, so an untouched pin keeps the compiled crates fresh.
     if not (target / 'Cargo.lock').is_file() or (target / 'Cargo.lock').read_bytes() != lock.read_bytes():
         shutil.copyfile(lock, target / 'Cargo.lock')

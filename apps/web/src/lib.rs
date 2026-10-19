@@ -2,6 +2,7 @@
 //! page per socket.
 mod api;
 mod auth;
+mod composition;
 mod create_owner;
 mod environment;
 mod errors;
@@ -150,7 +151,7 @@ pub fn verify_composition() -> Result<()> {
 /// commit and release tag, and each mounted Domain or Extension with its
 /// version, as `scripts/discover-modules.py --pin` recorded them at build time.
 pub fn composition() -> bilibi_module_registry::Composition {
-    bilibi_module_registry::composition(bilibi_domains::MODULES, bilibi_extensions::MODULES)
+    composition::composition()
 }
 
 /// `bilibi-web status`: the composition as plain text, one line per part.

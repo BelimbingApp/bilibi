@@ -7,7 +7,7 @@ use std::{
 };
 mod composition;
 pub mod contributions;
-pub use composition::{composition, Composition, Container, PinState};
+pub use composition::{Composition, Container, PinState};
 pub use contributions::{Catalog, Consumer, Contribution, Entry, Provenance};
 
 pub type Value = Arc<dyn Any + Send + Sync>;
