@@ -18,7 +18,8 @@
       this.input = this.el.querySelector("input")
       this.boxes = [...this.el.querySelectorAll("[data-code-index]")]
       this.length = Number(this.el.dataset.codeLength)
-      this.normalize = value => value.toUpperCase().replace(/[\s-]/g, "").slice(0, this.length)
+      this.normalize = value => (this.el.hasAttribute("data-code-numeric") ?
+        value.replace(/[^0-9]/g, "") : value.toUpperCase().replace(/[\s-]/g, "")).slice(0, this.length)
       // Writes only what changed: the runtime reports a child mutation inside
       // the control as an update, and rewriting an unchanged text node would
       // report another.
@@ -27,7 +28,9 @@
         this.boxes.forEach((box, index) => {
           const text = this.input.value[index] || ""
           if (box.textContent !== text) box.textContent = text
-          box.toggleAttribute("data-active", document.activeElement === this.input && index === active)
+          box.toggleAttribute("data-active", document.activeElement === this.input &&
+            (index === active || (index >= this.input.selectionStart && index < this.input.selectionEnd)))
+          box.toggleAttribute("data-invalid", this.input.getAttribute("aria-invalid") === "true")
         })
       }
       this.onInput = () => {
@@ -51,7 +54,14 @@
         this.input.dispatchEvent(new Event("input", {bubbles: true}))
       }
       this.onClick = event => {
-        const box = event.target.closest("[data-code-index]")
+        // The transparent native input remains hit-testable for touch paste.
+        // Preserve ranges created by dragging, Shift-click or multi-click.
+        if (event.target === this.input && (this.input.selectionStart !== this.input.selectionEnd ||
+          event.shiftKey || event.detail > 1)) { this.paint(); return }
+        const box = event.target === this.input ? this.boxes.find(box => {
+          const rect = box.getBoundingClientRect()
+          return event.clientX >= rect.left && event.clientX <= rect.right
+        }) : event.target.closest("[data-code-index]")
         if (!box) return
         this.input.focus()
         const index = Math.min(Number(box.dataset.codeIndex), this.input.value.length)
@@ -59,17 +69,8 @@
         this.paint()
       }
       this.input.value = this.normalize(this.input.value)
-      this.input.classList.add("absolute", "opacity-0", "pointer-events-none")
+      this.input.classList.add("absolute", "inset-0", "w-full", "opacity-0")
       this.el.querySelector("[data-code-boxes]").hidden = false
-      // An inline choice shell restores a versioned draft without committing.
-      this.onChoiceValue = ({detail}) => {
-        this.selectedValue = detail.value;
-        this.selectedLabel = this.options().find(option => option.dataset.value === detail.value)?.dataset.label || "";
-        this.valueInput.value = detail.value;
-        this.restore();
-        this.applyFilter();
-      }
-      this.el.addEventListener("bilibi:choice-value", this.onChoiceValue)
       this.input.addEventListener("input", this.onInput)
       this.input.addEventListener("paste", this.onPaste)
       for (const event of ["focus", "blur", "keyup", "select"]) this.input.addEventListener(event, this.paint)
@@ -77,13 +78,12 @@
       this.paint()
     },
     updated() {
-      this.input.classList.add("absolute", "opacity-0", "pointer-events-none")
+      this.input.classList.add("absolute", "inset-0", "w-full", "opacity-0")
       this.el.querySelector("[data-code-boxes]").hidden = false
       this.input.value = this.normalize(this.input.value)
       this.paint()
     },
     destroyed() {
-      this.el.removeEventListener("bilibi:choice-value", this.onChoiceValue)
       this.input.removeEventListener("input", this.onInput)
       this.input.removeEventListener("paste", this.onPaste)
       for (const event of ["focus", "blur", "keyup", "select"]) this.input.removeEventListener(event, this.paint)

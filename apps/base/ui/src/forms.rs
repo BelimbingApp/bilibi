@@ -964,6 +964,8 @@ pub struct CodeInput {
     pub label: String,
     pub length: usize,
     pub group_size: Option<usize>,
+    pub numeric: bool,
+    pub errors: Vec<String>,
 }
 
 impl CodeInput {
@@ -980,7 +982,28 @@ impl CodeInput {
             label: label.into(),
             length,
             group_size: None,
+            numeric: false,
+            errors: Vec::new(),
         }
+    }
+
+    /// Authenticator codes keep leading zeroes and request the phone keypad.
+    pub fn numeric(mut self) -> Self {
+        self.numeric = true;
+        self
+    }
+
+    pub fn errors(mut self, errors: Vec<String>) -> Self {
+        self.errors = errors;
+        self
+    }
+
+    pub fn invalid(&self) -> bool {
+        !self.errors.is_empty()
+    }
+
+    pub fn described_by(&self) -> String {
+        described_by(&self.id, true, self.errors.len())
     }
 
     pub fn value(mut self, value: impl Into<String>) -> Self {

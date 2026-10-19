@@ -68,6 +68,8 @@ sections! {
 /// sample form (`sample[...]` fields) so one reference renders both.
 pub struct FormControls {
     pub code: CodeInput,
+    pub authenticator: CodeInput,
+    pub invalid_authenticator: CodeInput,
     pub text: Field,
     pub search: Field,
     pub email: Field,
@@ -141,6 +143,16 @@ impl FormControls {
             code: CodeInput::new("specimen_code", "specimen[code]", "Device code", 8)
                 .value("ABCD-EF23")
                 .group_size(4),
+            authenticator: CodeInput::new("specimen_otp", "specimen[otp]", "Authenticator code", 6)
+                .numeric(),
+            invalid_authenticator: CodeInput::new(
+                "specimen_otp_error",
+                "specimen[otp_error]",
+                "Authenticator code",
+                6,
+            )
+            .numeric()
+            .errors(vec!["That code was not accepted. Enter a new code.".into()]),
             text: sample("text_field", "Sample text value")
                 .label("Text")
                 .placeholder("Enter a value"),
