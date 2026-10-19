@@ -53,7 +53,7 @@ Tenants decide per operation on **Administration › Authorization › Step-up 2
 
 - Changing any of these is itself a step-up operation (`base.step_up.policy.update`, on the floor). Settings audits it.
 - The installation owner sees the floor and the maxima on the same page.
-- The stored Dev role turns ordinary enforcement off. Base System binds the live `Enforcement` policy, which reads `instance.role` on each check; changing the role takes effect without restarting. A missing binding enforces. An operation declared `.always()` is enforced everywhere, as "ask every time", and the policy page shows it as fixed.
+- The stored Dev role turns ordinary enforcement off. Base System binds the live `Enforcement` policy, which reads `instance.role` on each check; changing the role takes effect without restarting. A missing binding enforces. A fixture binary with no authenticator may call `StepUp::set_enforced(false)` after installing its services; the host never does. An operation declared `.always()` is enforced everywhere, as "ask every time", and the policy page shows it as fixed.
 
 ## Proofs per channel
 

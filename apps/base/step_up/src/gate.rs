@@ -15,7 +15,10 @@ use bilibi_tenancy::{Channel, ProofFuture, Scope};
 use serde_json::{json, Map, Value};
 use std::{
     collections::BTreeMap,
-    sync::{Arc, OnceLock},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, OnceLock,
+    },
 };
 
 /// What a presented code is being spent on; the provider may record it.
@@ -134,6 +137,8 @@ pub struct StepUp {
     operations: BTreeMap<&'static str, Declared>,
     provider: OnceLock<Arc<dyn Provider>>,
     enforcement: OnceLock<Arc<dyn Enforcement>>,
+    /// Turned off only by a fixture binary that has no authenticator.
+    enforced: AtomicBool,
 }
 
 enum Outcome {
@@ -165,6 +170,7 @@ impl StepUp {
             operations,
             provider: OnceLock::new(),
             enforcement: OnceLock::new(),
+            enforced: AtomicBool::new(true),
         })
     }
     /// The second-factor owner binds itself once at boot.
@@ -184,7 +190,15 @@ impl StepUp {
             )
         })
     }
+    /// For a fixture binary that installs its own services and enrolls no
+    /// authenticator; the host never calls it, the stored role decides there.
+    pub fn set_enforced(&self, enforced: bool) {
+        self.enforced.store(enforced, Ordering::SeqCst);
+    }
     async fn enforced(&self) -> Result<bool> {
+        if !self.enforced.load(Ordering::SeqCst) {
+            return Ok(false);
+        }
         match self.enforcement.get() {
             Some(policy) => policy.enforced().await,
             None => Ok(true),
