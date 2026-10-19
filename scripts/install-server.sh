@@ -360,7 +360,7 @@ installer() {
     local source=${1:-}
     [[ -n $source ]] || usage
     need_root installer "$@"
-    [[ -f $source && -x $source ]] || fail "$source is not an executable bilibi-installer" "build it with: cargo build --release -p bilibi-installer"
+    [[ -f $source && -x $source ]] || fail "$source is not an executable bilibi-installer" "build it on your own machine with: cargo build --release --locked -p bilibi-installer, then copy target/release/bilibi-installer to this server"
     [[ -d $root/build ]] || fail "no instance exists yet" "create one first: $0 create <instance> --role ... --site ..."
     install_unit
     retire_worker
