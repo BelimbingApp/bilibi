@@ -7,7 +7,7 @@
 {% import "components.html" as ui %}
 {{ flash }}
 {% call ui::page(variant=bilibi_ui::PageVariant::Form) %}
-{% call settings::layout(header=header, entries=entries, current=current, heading=heading, subheading=subheading) %}
+{% call settings::layout(header=header, current=current, heading=heading, subheading=subheading) %}
 <form id="appearance-form" data-event="save" data-change class="space-y-4 rounded-xl border border-line bg-surface p-6"><fieldset class="space-y-4"><legend class="text-sm font-medium text-ink">Theme</legend>{% for theme in themes %}<label for="theme-{{ theme.value }}" class="flex cursor-pointer items-start gap-3 rounded-lg border p-4 transition-colors {% if theme.checked %}border-action bg-surface-muted{% else %}border-line hover:bg-surface-muted{% endif %}"><input type="radio" id="theme-{{ theme.value }}" name="appearance[theme]" value="{{ theme.value }}"{% if theme.checked %} checked{% endif %} class="mt-1" /><div><div class="text-sm font-medium text-ink">{{ theme.label }}</div><div class="text-xs text-muted">{{ theme.detail }}</div></div></label>{% endfor %}</fieldset>{{ locale }}{{ timezone }}</form>
 {% endcall %}
 {% endcall %}

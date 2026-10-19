@@ -73,16 +73,14 @@ are the base layer and stay where they are.
 2. Add it to `HARNESSES` in `src/harness.rs`.
 3. Submit its `Route` and `Download` contributions in `src/contributions.rs`
    (operation = the harness key).
-4. Link the page from the account settings nav (`core/user`
-   `settings_entries`) if people should find it there.
+4. Add its tab to `bilibi_ui::SettingsTab` (`base/ui/src/settings.rs`) if people should find it in My settings.
 5. Run the app; open the page, download, unzip and check the files.
 
 The builder, archive, page, download and exporter do not change.
 
 ## Page and download
 
-- `/settings/<harness>-plugin` (`/settings/chatgpt-plugin`): a live page named
-  for the harness; linked from account settings and Agent connections.
+- `/settings/<harness>-plugin` (`/settings/chatgpt-plugin`): a live page named for the harness; uses the shared `base/ui/templates/settings.html` layout with its tab active, and is linked from Agent connections.
 - Shows the canonical connection details with copy buttons (`ClipboardCopy`
   hook, success and failure feedback), the registered-client selection
   (auto-selected when only one is registered), and the adapter's public HTTPS

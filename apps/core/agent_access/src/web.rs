@@ -696,8 +696,8 @@ pub struct ConnectionRow {
 #[template(path = "connections.html")]
 struct ConnectionsView {
     flash: FlashMap<'static>,
-    /// Header action: the agent plugin setup page (`core/agent_plugins`).
-    plugin: Html,
+    /// Settings header with the agent plugin setup action (`core/agent_plugins`).
+    header: Html,
     table: Html,
     pending: Option<i64>,
 }
@@ -841,7 +841,12 @@ impl ConnectionsPage {
         }));
         html(ConnectionsView {
             flash: flash_map(self.flash),
-            plugin,
+            header: Html::render(&bilibi_ui::Header {
+                title: Html::text("Agent connections"),
+                actions: plugin,
+                ..bilibi_ui::Header::default()
+            })
+            .map_err(|_| Error::Internal)?,
             table: Html::render(&table).map_err(|_| Error::Internal)?,
             pending: self.pending,
         })

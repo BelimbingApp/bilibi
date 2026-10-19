@@ -28,6 +28,7 @@ pub mod list_state;
 pub mod lists;
 pub mod params;
 mod section;
+mod settings;
 mod shell;
 mod specimen;
 pub mod upload;
@@ -80,6 +81,7 @@ pub use lists::{
     Column, EmptyState, FilterToolbar, Pagination, RecordLink, Row, SortView, Table, TableEmpty,
     ToolbarControl,
 };
+pub use settings::SettingsTab;
 pub use specimen::ComponentsSpecimen;
 pub use upload::{
     ChunkOutcome, ClientEntry, FileInput, Registration, UploadEntry, UploadError, UploadSpec,

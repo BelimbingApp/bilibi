@@ -3,11 +3,7 @@
 //! else: no id is taken from the request, no capability applies, and the
 //! landing choice is validated against the menu this account can open.
 use super::*;
-use crate::{
-    accounts::FieldError,
-    web::{settings_entries, SettingsEntry},
-    AccountError, LandingPage,
-};
+use crate::{accounts::FieldError, AccountError, LandingPage};
 use bilibi_ui::{
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
     Button, ButtonVariant, Choice, Field, FlashGroup, Header, InputKind,
@@ -18,8 +14,7 @@ use bilibi_ui::{
 struct View {
     flash: Html,
     header: Html,
-    entries: Vec<SettingsEntry>,
-    current: String,
+    current: bilibi_ui::SettingsTab,
     heading: &'static str,
     subheading: &'static str,
     name: Html,
@@ -126,8 +121,7 @@ impl Profile {
                 subtitle: "",
                 ..Header::default()
             })?,
-            entries: settings_entries(),
-            current: "profile".into(),
+            current: bilibi_ui::SettingsTab::Profile,
             heading: "Profile Information",
             subheading: "Update your account's profile information and email address.",
             name,

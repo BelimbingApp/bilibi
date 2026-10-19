@@ -59,15 +59,7 @@ sorted; `url_hash` is md5 of it), at most 100, written under a lock on the
 account's row. A URL that would leave the site is refused. Pins to a page this
 deployment no longer serves stay stored and are not drawn.
 
-Web adapters (`apps/web/src/shell.rs`): `POST /preferences` (`{kind,value}`),
-`GET /api/pins`, `POST /api/pins/toggle` (`{label,url,icon}`) and
-`POST /api/pins/reorder` (`{pins:[{id}]}`), each with Origin and CSRF checks and
-a 422 `{error}` for a refused value. The shell renders the account's theme
-(`<html data-theme>` on first paint), mode and pins (`data-pins`) itself, and
-`/settings/appearance` (`src/appearance.rs`) is the same three choices as a
-live form. An impersonated session reads the viewed account's choices but
-`PreferenceError::Impersonating` refuses every write (the shell answers 403
-`{"error":"impersonating"}` and draws its controls locked), as Bilimbi does.
+Web adapters (`apps/web/src/shell.rs`): `POST /preferences` (`{kind,value}`), `GET /api/pins`, `POST /api/pins/toggle` (`{label,url,icon}`) and `POST /api/pins/reorder` (`{pins:[{id}]}`), each with Origin and CSRF checks and a 422 `{error}` for a refused value. The shell renders the account's theme (`<html data-theme>` on first paint), mode and pins (`data-pins`) itself, and `/settings/appearance` (`src/appearance.rs`) is the same three choices as a live form. It subscribes to committed theme changes for the signed-in account and reloads the saved choice immediately, including changes from the top bar. An impersonated session reads the viewed account's choices but `PreferenceError::Impersonating` refuses every write (the shell answers 403 `{"error":"impersonating"}` and draws its controls locked), as Bilimbi does.
 
 ## Impersonation (K14; `src/impersonation.rs`)
 
@@ -191,19 +183,7 @@ BILIBI_COMPANY_ACCOUNTS_DEMO=disposable cargo run -p bilibi-user --example compa
 
 ## Pages (`core/user.pages`)
 
-`/settings/profile`, `/settings/password` (`src/web.rs`,
-`templates/password.html`), `/settings/two-factor` (below) and
-`/settings/appearance` are the signed-in
-account's own settings inside the shell, on the settings layout of
-`templates/settings.html` (Bilimbi `SettingsComponents.settings_layout`, adapted to the shared horizontal tabs).
-Open **My settings** in the account panel at the bottom of the sidebar to start at Profile.
-Agent connections links to `core/agent_access`'s own page, as in Bilimbi.
-The password page is live: the form
-submits as the `change-password` event carrying its field values, the state
-keeps the field errors of the last attempt (`can't be blank`, the password
-policy, `does not match password`, `is incorrect`), and a success or failure
-is a flash in the page until dismissed. The route needs a session and no
-capability; the current password proves the holder inside `change_password`.
+`/settings/profile`, `/settings/password` (`src/web.rs`, `templates/password.html`), `/settings/two-factor` (below) and `/settings/appearance` are the signed-in account's own settings inside the shell, on the settings layout of `base/ui/templates/settings.html` with the typed `bilibi_ui::SettingsTab` (Bilimbi `SettingsComponents.settings_layout`, adapted to the shared horizontal tabs). Open **My settings** in the account panel at the bottom of the sidebar to start at Profile. Plugin for ChatGPT and Agent connections use the same six-tab layout in their owning modules. The password page is live: the form submits as the `change-password` event carrying its field values, the state keeps the field errors of the last attempt (`can't be blank`, the password policy, `does not match password`, `is incorrect`), and a success or failure is a flash in the page until dismissed. The route needs a session and no capability; the current password proves the holder inside `change_password`.
 
 `/settings/profile` (`src/account_ui/profile.rs`, Bilimbi `ProfileLive`) is
 the account's own name, email and landing page. The account is the

@@ -62,7 +62,7 @@ compare a credential yourself.
 
 Both consent pages open with the instance banner (`bilibi_system::Instance::banner`, `apps/base/system/README.md`), so the person sees which Bilibi they connect the agent to. The authorization review also shows the configured public origin (`APP_ORIGIN`) as the Bilibi address, separately from the client's return address. Its shared form groups the connection facts, access explanation and primary approval action; Your connections stays available in the page header.
 
-Opening `/oauth/device?user_code=…` only fills the code; the person checks it, reviews the stated agent and the server-computed end time, then approves or refuses. `/oauth/authorize` validates the registered client and exact callback before consent renders, and an approve or refuse answers through the live page's `redirect` with `code` or `error=access_denied`, the client's `state` and `iss` (the configured `APP_ORIGIN`, never the Host header). Both consent forms submit no fields: an approve carrying any field is refused as a changed end time. `/settings/agent-connections` lists the person's grants newest first with status, "Also seen as" and "Self-reported agent", and revokes one only through the shared confirm dialog. Audit sees each decision as the signed-in `user`.
+Opening `/oauth/device?user_code=…` only fills the code; the person checks it, reviews the stated agent and the server-computed end time, then approves or refuses. `/oauth/authorize` validates the registered client and exact callback before consent renders, and an approve or refuse answers through the live page's `redirect` with `code` or `error=access_denied`, the client's `state` and `iss` (the configured `APP_ORIGIN`, never the Host header). Both consent forms submit no fields: an approve carrying any field is refused as a changed end time. `/settings/agent-connections` lists the person's grants newest first with status, "Also seen as" and "Self-reported agent", and revokes one only through the shared confirm dialog. It uses `base/ui/templates/settings.html` with `SettingsTab::AgentConnections`, keeping all six My settings tabs visible. Audit sees each decision as the signed-in `user`.
 
 The pages render instants through `templates/datetime.html`, the Bilimbi
 `<.datetime>` markup fed by `base/datetime`'s `DisplayContext`; it belongs in
@@ -96,8 +96,7 @@ shares; none of them holds harness-specific code.
 2. Add it to `HARNESSES` in `src/harness.rs`.
 3. Submit its `Route` and `Download` in `src/contributions.rs`, with the
    harness key as the operation.
-4. Optional: link the page from the settings nav (`core/user`
-   `settings_entries`) and from the Agent connections header.
+4. Optional: add its tab to `bilibi_ui::SettingsTab` (`base/ui/src/settings.rs`) and link it from the Agent connections header.
 5. Run the app: open the page, download, unzip and check the files.
 
 The builder, archive, page, download and exporter stay unchanged, and nothing

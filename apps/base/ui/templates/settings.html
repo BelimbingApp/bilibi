@@ -2,10 +2,10 @@
     Bilibi uses the shared horizontal tab strip and standard page alignment. -#}
 {% import "components.html" as ui %}
 {% import "tabs.html" as tabs %}
-{% macro layout(header, entries, current, heading, subheading) %}
+{% macro layout(header, current, heading="", subheading="") %}
 {{ header }}
-{% let items = crate::web::settings_tabs(entries.as_slice(), current.as_str()) %}
+{% let items = current.tabs() %}
 {% call tabs::tabs(id="settings-tabs", items=items, label="My settings", class="mb-4") %}{% endcall %}
-{% call ui::section_heading(title=heading, description=subheading) %}{% endcall %}
+{% if !heading.is_empty() %}{% call ui::section_heading(title=heading, description=subheading) %}{% endcall %}{% endif %}
 {{ caller() }}
 {% endmacro %}

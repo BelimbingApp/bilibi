@@ -3,12 +3,13 @@
     download, and the public and LAN/VPN steps. The harness supplies its name
     and copy; nothing here grants access. -#}
 {%- import "components.html" as ui -%}
+{%- import "settings.html" as settings -%}
 {%- import "forms.html" as forms -%}
 {%- import "feedback.html" as feedback -%}
 {%- import "lists.html" as lists -%}
 <div data-shared-ui>
 {% call ui::page(id="plugin-page", variant=bilibi_ui::PageVariant::Detail) %}
-{{ header|safe }}
+{% call settings::layout(header=header, current=bilibi_ui::SettingsTab::ChatgptPlugin) %}
 {% if person_required %}
 {% call lists::empty_state(e=bilibi_ui::EmptyState::missing("Use your own account", "Use your own account to install the plugin. Impersonation and agents cannot set one up.").id("plugin-person-required")) %}{% endcall %}
 {% else %}
@@ -63,5 +64,6 @@
 </div>
 </div>
 {% endif %}
+{% endcall %}
 {% endcall %}
 </div>

@@ -1,5 +1,5 @@
 //! The signed-in account's self-service pages (Bilimbi `Core.User.Web`): the
-//! settings shell in `templates/settings.html` and `/settings/password`
+//! shared settings shell in `base/ui/templates/settings.html` and `/settings/password`
 //! (`PasswordLive`; `/settings/appearance` is `appearance.rs`). The password
 //! page is live: the form submits as the `change-password` event with its field values, the state keeps the field
 //! errors of the last attempt, and a success or failure shows in the page's
@@ -28,55 +28,6 @@ const CONFIRMATION_MISMATCH: &str = "does not match password";
 const UPDATED: &str = "Password updated successfully.";
 const NOT_UPDATED: &str = "Could not update password.";
 
-/// One linked tab in the personal settings navigation.
-pub struct SettingsEntry {
-    pub id: String,
-    pub key: &'static str,
-    pub label: &'static str,
-    pub href: &'static str,
-}
-
-pub(crate) fn settings_tabs<'a>(
-    entries: &'a [SettingsEntry],
-    current: &str,
-) -> Vec<bilibi_ui::Tab<'a>> {
-    entries
-        .iter()
-        .map(|entry| bilibi_ui::Tab {
-            id: &entry.id,
-            ..bilibi_ui::Tab::link(entry.href, entry.label, entry.key == current)
-        })
-        .collect()
-}
-
-/// The settings sections in Bilimbi's order.
-pub fn settings_entries() -> Vec<SettingsEntry> {
-    [
-        ("profile", "Profile", "/settings/profile"),
-        ("password", "Password", "/settings/password"),
-        ("two-factor", "2FA", crate::TWO_FACTOR_PATH),
-        ("appearance", "Appearance", "/settings/appearance"),
-        (
-            "chatgpt-plugin",
-            "Plugin for ChatGPT",
-            "/settings/chatgpt-plugin",
-        ),
-        (
-            "agent-connections",
-            "Agent connections",
-            "/settings/agent-connections",
-        ),
-    ]
-    .into_iter()
-    .map(|(key, label, href)| SettingsEntry {
-        id: format!("settings-nav-{key}"),
-        key,
-        label,
-        href,
-    })
-    .collect()
-}
-
 /// The field errors of the last attempt; values are never echoed back.
 #[derive(Clone, Debug, Default)]
 struct PasswordForm {
@@ -90,8 +41,7 @@ struct PasswordForm {
 struct PasswordView {
     flash: Html,
     header: Html,
-    entries: Vec<SettingsEntry>,
-    current: String,
+    current: bilibi_ui::SettingsTab,
     heading: &'static str,
     subheading: &'static str,
     current_password: Html,
@@ -126,8 +76,7 @@ impl PasswordView {
                 title_actions: Html::EMPTY,
                 actions: Html::EMPTY,
             }))?,
-            entries: settings_entries(),
-            current: "password".into(),
+            current: bilibi_ui::SettingsTab::Password,
             heading: "Update Password",
             subheading: "Ensure your account is using a long, random password to stay secure.",
             current_password: secret(
@@ -300,7 +249,7 @@ impl Page<Scope, Error> for Pages {
                 "appearance" if request.query.is_empty() => {
                     let scope = request.scope.ok_or(Error::Unauthorized)?;
                     let stored = Stored::load(&self.users, scope).await?;
-                    Box::new(AppearancePage::new(self.users.clone(), stored))
+                    Box::new(AppearancePage::new(self.users.clone(), stored, scope))
                 }
                 "notifications" => crate::inbox::mount_page(self, request.query)?,
                 "bell" => crate::inbox::mount_bell(self),

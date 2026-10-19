@@ -8,7 +8,7 @@
 {% import "feedback.html" as fb %}
 {{ flash }}
 {% call ui::page(variant=bilibi_ui::PageVariant::Form) %}
-{% call settings::layout(header=header, entries=entries, current=current, heading=heading, subheading=subheading) %}
+{% call settings::layout(header=header, current=current, heading=heading, subheading=subheading) %}
 <div id="two-factor" class="space-y-4">
 {%- if !notice.is_empty() %}{% call fb::alert(kind=bilibi_ui::StatusKind::Warning, id="two-factor-notice") %}{{ notice }}{% endcall %}{% endif -%}
 {%- if stage == "off" %}

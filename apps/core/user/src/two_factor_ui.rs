@@ -6,7 +6,6 @@
 //! never shows them again. Typed values are never echoed back.
 use crate::{
     two_factor::{Enrollment, TwoFactorError, TwoFactorStatus},
-    web::settings_entries,
     UserService,
 };
 use askama::Template;
@@ -119,8 +118,7 @@ enum TwoFactorEvent {
 struct TwoFactorView<'a> {
     flash: Html,
     header: Html,
-    entries: Vec<crate::web::SettingsEntry>,
-    current: String,
+    current: bilibi_ui::SettingsTab,
     heading: &'static str,
     subheading: &'static str,
     stage: &'static str,
@@ -314,8 +312,7 @@ impl TwoFactorPage {
                 title_actions: Html::EMPTY,
                 actions: Html::EMPTY,
             }))?,
-            entries: settings_entries(),
-            current: "two-factor".into(),
+            current: bilibi_ui::SettingsTab::TwoFactor,
             heading: "2FA",
             subheading: "Confirm protected actions with a code from an authenticator app.",
             stage,
