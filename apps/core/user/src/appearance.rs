@@ -279,14 +279,16 @@ impl LiveState<Scope, Error> for AppearancePage {
         let mut source = self.users.settings.subscribe();
         let (sender, receiver) = tokio::sync::broadcast::channel(16);
         let recipient = self.recipient.clone();
-        // Both theme controls write through UserService. A committed setting
-        // wakes this account's page; the normal refresh rereads the one saved
-        // value instead of saving again or keeping a browser-side copy.
+        // The top bar and this page both write theme and time zone display
+        // through UserService. A committed setting wakes this account's page;
+        // the normal refresh rereads the saved values instead of saving again
+        // or keeping a browser-side copy.
         self.forwarding = Some(tokio::spawn(async move {
             loop {
                 match source.recv().await {
                     Ok(change)
-                        if change.key == crate::THEME_KEY
+                        if (change.key == crate::THEME_KEY
+                            || change.key == bilibi_datetime::MODE_KEY)
                             && change.scope.kind == bilibi_settings::ScopeKind::User
                             && change.scope.tenant == recipient.tenant
                             && Some(change.scope.id) == recipient.user => {}
