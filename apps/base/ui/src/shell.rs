@@ -127,7 +127,8 @@ pub struct ShellContext<'a> {
     /// limited to pages this deployment serves.
     pub pins: String,
     /// Which installation this is (`bilibi_system::Instance`): the top-bar badge for
-    /// every instance but production, empty for production.
+    /// every instance but production, empty for production. A debug build
+    /// leaves it to the status bar's `dev` marker and the shell omits it.
     pub instance: Html,
     /// The same in words for the account panel, production included
     /// ("Staging").
