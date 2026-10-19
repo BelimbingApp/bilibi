@@ -1,7 +1,8 @@
-//! Exact, operator-configured public OAuth clients (the global Settings value
-//! `agent_access.oauth_clients`). No dynamic registration, caller-chosen
-//! callback, wildcard or remote metadata fetch can add a client. PKCE S256 and
-//! the MCP resource are mandatory; the protocol scope delegates only the
+//! Operator-configured public OAuth clients, mirroring Bilimbi's
+//! `core/agent_access` client registry. HTTPS callbacks match exactly; HTTP
+//! loopback callbacks may vary only their port (RFC 8252 §7.3).
+//! No dynamic registration, wildcard or remote metadata fetch can add a client.
+//! PKCE S256 and the MCP resource are mandatory; the protocol scope delegates only the
 //! person's existing Agent API reach, never a new authorization grant.
 use crate::{secrets, OAuthError, CLIENT_ID, OAUTH_SCOPE};
 use serde::Deserialize;
@@ -41,20 +42,48 @@ fn printable_label(value: &str) -> bool {
         && !value.chars().any(char::is_control)
 }
 fn valid_redirect(value: &Value) -> bool {
-    let Some(uri) = value.as_str() else {
-        return false;
-    };
-    let Some(rest) = uri.strip_prefix("https://") else {
-        return false;
-    };
-    let authority = rest.split(['/', '?']).next().unwrap_or("");
-    !authority.is_empty()
-        && !authority.contains('@')
-        && !uri.contains('#')
-        && !uri.contains('*')
-        && !uri.chars().any(|c| c.is_control() || c.is_whitespace())
+    value.as_str().is_some_and(valid_redirect_uri)
 }
-/// Client IDs mapped to exactly a name and a non-empty list of HTTPS callbacks.
+fn valid_redirect_uri(uri: &str) -> bool {
+    if uri.contains(['#', '*', '\\']) || uri.chars().any(|c| c.is_control() || c.is_whitespace()) {
+        return false;
+    }
+    let Ok(parsed) = url::Url::parse(uri) else {
+        return false;
+    };
+    let Some((scheme, rest)) = uri.split_once("://") else {
+        return false;
+    };
+    let authority = rest.split(['/', '?']).next().unwrap_or_default();
+    parsed.has_host()
+        && !authority.is_empty()
+        && !authority.contains('@')
+        && (scheme == "https" || (scheme == "http" && loopback_target(uri).is_some()))
+}
+/// Keep the spelling of the host, path and query: URL normalization must not
+/// turn an unregistered callback into a registered one. Only the port varies.
+/// `localhost` is supported for desktop harnesses; RFC 8252 prefers IP literals.
+fn loopback_target(uri: &str) -> Option<(&str, &str)> {
+    let rest = uri.strip_prefix("http://")?;
+    let end = rest.find(['/', '?']).unwrap_or(rest.len());
+    let authority = &rest[..end];
+    for host in ["127.0.0.1", "localhost", "[::1]"] {
+        let Some(port) = authority.strip_prefix(host) else {
+            continue;
+        };
+        if port.is_empty()
+            || port.strip_prefix(':').is_some_and(|port| {
+                !port.is_empty()
+                    && port.bytes().all(|b| b.is_ascii_digit())
+                    && port.parse::<u16>().is_ok()
+            })
+        {
+            return Some((host, &rest[end..]));
+        }
+    }
+    None
+}
+/// Client IDs mapped to a name and non-empty HTTPS or HTTP loopback callbacks.
 pub fn valid_clients(value: &Value) -> bool {
     value.as_object().is_some_and(|clients| {
         clients.iter().all(|(id, client)| {
@@ -78,10 +107,19 @@ pub(crate) fn client<'a>(clients: &'a Value, id: &str) -> Option<&'a Value> {
     clients.get(id).filter(|client| client.is_object())
 }
 pub(crate) fn registered_redirect(clients: &Value, id: &str, uri: &str) -> bool {
-    client(clients, id)
-        .and_then(|client| client.get("redirect_uris"))
-        .and_then(Value::as_array)
-        .is_some_and(|uris| uris.iter().any(|known| known.as_str() == Some(uri)))
+    valid_redirect_uri(uri)
+        && client(clients, id)
+            .and_then(|client| client.get("redirect_uris"))
+            .and_then(Value::as_array)
+            .is_some_and(|uris| {
+                uris.iter().filter_map(Value::as_str).any(|known| {
+                    valid_redirect_uri(known)
+                        && (known == uri
+                            || loopback_target(known)
+                                .zip(loopback_target(uri))
+                                .is_some_and(|(registered, requested)| registered == requested))
+                })
+            })
 }
 fn challenge(value: &str) -> bool {
     value.len() == 43

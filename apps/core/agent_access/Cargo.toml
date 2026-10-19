@@ -27,6 +27,7 @@ serde_json.workspace = true
 inventory.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
+url.workspace = true
 base64 = "0.23.1"
 getrandom = "0.4.3"
 sha2 = "0.11.1"

@@ -33,8 +33,8 @@ inventory::submit! { Contribution::new(DEFINITIONS, crate::CONNECTION_DAYS, prov
 })) }
 inventory::submit! { Contribution::new(DEFINITIONS, crate::OAUTH_CLIENTS, provenance!(), &Setting::Definition(Definition {
     value_type: ValueType::Array, scopes: GLOBAL, default: || json!({}), nullable: false, encrypted: false, minimum: None, maximum: None,
-    validator: Some(Validator { accepts: crate::valid_clients, message: "Use client IDs mapped to a name and non-empty HTTPS redirect_uris list." }),
-    editor: Some(Editor { group: "Agent access", label: "OAuth public clients", help: "Each client ID with its name and exact HTTPS callback addresses; add ChatGPT's here before connecting it.", capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
+    validator: Some(Validator { accepts: crate::valid_clients, message: "Use client IDs mapped to a name and non-empty HTTPS or HTTP loopback redirect_uris list." }),
+    editor: Some(Editor { group: "Agent access", label: "OAuth public clients", help: "Add each app's client ID, name and callback addresses. HTTPS must match exactly; HTTP localhost, 127.0.0.1 and [::1] callbacks may use any port.", capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
 })) }
 inventory::submit! { Contribution::new(DEFINITIONS, crate::AUTHORIZATION_CODE_SECONDS, provenance!(), &Setting::Definition(Definition {
     value_type: ValueType::Integer, scopes: GLOBAL, default: || json!(120), nullable: false, encrypted: false, minimum: Some(30.0), maximum: Some(600.0), validator: None,

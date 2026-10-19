@@ -49,8 +49,12 @@ compare a credential yourself.
   `self_service` refuses a scope carrying the agent facet or an impersonating
   operator (`access_denied`).
 - Operator-registered MCP clients live in `agent_access.oauth_clients`: client
-  IDs mapped to a name and exact HTTPS `redirect_uris` (`src/oauth_client.rs`
-  validates the setting and each request). PKCE S256 and the resource are
+  IDs mapped to a name and HTTPS or HTTP loopback `redirect_uris` (`src/oauth_client.rs`
+  validates the setting and each request). HTTPS callbacks match exactly. HTTP
+  `127.0.0.1`, `localhost` and `[::1]` callbacks may vary only their port
+  ([RFC 8252 §7.3](https://www.rfc-editor.org/rfc/rfc8252#section-7.3)); the host,
+  path and query still match exactly. The code binds the actual requested URI,
+  which must match exactly at redemption. PKCE S256 and the resource are
   mandatory; the scope is always `bilibi`. `agent_access.authorization_code_seconds`
   bounds the code (120 by default). `agent_access.oauth_requests_per_minute`
   is the host's per-sender limit; `Throttle` is the per-node counter the host applies.
@@ -62,7 +66,45 @@ compare a credential yourself.
 
 Both consent pages open with the instance banner (`bilibi_system::Instance::banner`, `apps/base/system/README.md`), so the person sees which Bilibi they connect the agent to. The authorization review also shows the configured public origin (`APP_ORIGIN`) as the Bilibi address, separately from the client's return address. Its shared form groups the connection facts, access explanation and primary approval action; Your connections stays available in the page header.
 
-Opening `/oauth/device?user_code=…` only fills the code; the person checks it, reviews the stated agent and the server-computed end time, then approves or refuses. `/oauth/authorize` validates the registered client and exact callback before consent renders, and an approve or refuse answers through the live page's `redirect` with `code` or `error=access_denied`, the client's `state` and `iss` (the configured `APP_ORIGIN`, never the Host header). Both consent forms submit no fields: an approve carrying any field is refused as a changed end time. `/settings/agent-connections` lists the person's grants newest first with status, "Also seen as" and "Self-reported agent", and revokes one only through the shared confirm dialog. It uses `base/ui/templates/settings.html` with `SettingsTab::AgentConnections`, keeping all six My settings tabs visible. Audit sees each decision as the signed-in `user`.
+Opening `/oauth/device?user_code=…` only fills the code; the person checks it, reviews the stated agent and the server-computed end time, then approves or refuses. `/oauth/authorize` validates the registered client and callback before consent renders, and an approve or refuse answers through the live page's `redirect` with `code` or `error=access_denied`, the client's `state` and `iss` (the configured `APP_ORIGIN`, never the Host header). Both consent forms submit no fields: an approve carrying any field is refused as a changed end time. `/settings/agent-connections` lists the person's grants newest first with status, "Also seen as" and "Self-reported agent", and revokes one only through the shared confirm dialog. It uses `base/ui/templates/settings.html` with `SettingsTab::AgentConnections`, keeping all six My settings tabs visible. Audit sees each decision as the signed-in `user`.
+
+## Connect a local agent
+
+Connect Claude Code or Codex directly to this Bilibi with your own sign-in; a local instance needs no tunnel.
+
+1. As the server owner, open **Administration → Settings → OAuth public clients** (`/system/settings`) and merge these entries into the existing JSON object:
+
+   ```json
+   {
+     "bilibi-claude-code": {"name": "Claude Code", "redirect_uris": ["http://localhost/callback"]},
+     "bilibi-codex": {"name": "Codex", "redirect_uris": ["http://127.0.0.1/callback"]}
+   }
+   ```
+
+2. Set `APP_ORIGIN` in your shell to this instance's address, for example `export APP_ORIGIN=https://bilibi.localhost`. The harness must trust its HTTPS certificate. Then run the command for your harness:
+
+   | Harness | Command |
+   | --- | --- |
+   | Claude Code | `claude mcp add --scope project --transport http --client-id bilibi-claude-code bilibi "$APP_ORIGIN/mcp"` |
+   | Codex | `codex mcp add bilibi --url "$APP_ORIGIN/mcp" --oauth-client-id bilibi-codex` |
+
+3. In Claude Code, approve the project's MCP server and run `/mcp` to authenticate, or run `claude mcp login bilibi`. Codex starts sign-in when you add the server; later, run `codex mcp login bilibi`. Sign in to Bilibi in the browser and review the connection before approving it.
+4. To stop access, open **Your connections** (`/settings/agent-connections`) in Bilibi and revoke the connection. Every subsequent data request rechecks it.
+
+These are public clients: **do not set a client secret**. Both harnesses support a supplied client ID, so Bilibi does not need dynamic registration. The random callback port is accepted; other callback parts remain registered. For Claude Code versions that use `127.0.0.1` instead of `localhost`, register that exact host as an additional callback.
+
+Claude Code's command writes `.mcp.json` in the current project. Codex's add command writes its user configuration; for project-only setup, put the following in a trusted project's `.codex/config.toml` instead, replace the URL with this instance's `APP_ORIGIN/mcp`, and run `codex mcp login bilibi`:
+
+```toml
+[mcp_servers.bilibi]
+url = "https://bilibi.localhost/mcp"
+
+[mcp_servers.bilibi.oauth]
+client_id = "bilibi-codex"
+callback_url = "http://127.0.0.1/callback"
+```
+
+The callback above uses Bilibi's advertised issuer support and `iss` response. See the current [Claude Code MCP instructions](https://code.claude.com/docs/en/mcp#use-pre-configured-oauth-credentials) and [Codex MCP instructions](https://developers.openai.com/codex/mcp) for CLI options and credential storage.
 
 The pages render instants through `templates/datetime.html`, the Bilimbi
 `<.datetime>` markup fed by `base/datetime`'s `DisplayContext`; it belongs in

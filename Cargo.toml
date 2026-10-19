@@ -36,6 +36,7 @@ rustls-native-certs = "0.8"
 sha1 = "0.11"
 data-encoding = "2.11"
 percent-encoding = "2.3"
+url = "2.5.8"
 qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
 bilibi-web = { path = "apps/web" }
 bilibi-database = { path = "apps/base/database" }
