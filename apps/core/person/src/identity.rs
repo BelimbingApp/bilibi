@@ -44,12 +44,27 @@ pub async fn search(client: &impl GenericClient, scope: &Scope, query: &Search) 
     // A hidden email/phone must not act as an existence oracle through search.
     let email = !masked.contains("email");
     let phone = !masked.contains("phone");
-    let predicate = "tenant_id=$1 AND ($2 OR retired_at IS NULL) AND ($3::text IS NULL OR kind=$3) AND ($4='' OR position($4 in lower(name))>0 OR ($5 AND position($4 in lower(email))>0) OR ($6 AND position($4 in lower(phone))>0))";
+    // Bilimbi Contacts: work data follows owner-contributed Grid paths so
+    // Person never reads affiliation/company tables or bypasses their masking.
+    let work = bilibi_grid::query::text_search_sql(
+        client,
+        scope,
+        "persons",
+        &[
+            "work.work_email:list",
+            "work.work_phone:list",
+            "work.title:list",
+            "work.company.name:list",
+        ],
+    )
+    .await?;
+    let predicate = format!("tenant_id=$1 AND ($4 OR retired_at IS NULL) AND ($5::text IS NULL OR kind=$5) AND ($3='' OR position($3 in lower(name))>0 OR ($6 AND position($3 in lower(email))>0) OR ($7 AND position($3 in lower(phone))>0) OR id IN ({work}))");
     let params: &[&(dyn tokio_postgres::types::ToSql + Sync)] = &[
         &scope.tenant(),
+        &scope.user(),
+        &needle,
         &query.include_retired,
         &kind,
-        &needle,
         &email,
         &phone,
     ];
@@ -76,7 +91,7 @@ pub async fn search(client: &impl GenericClient, scope: &Scope, query: &Search) 
         _ => "lower(name)",
     };
     let direction = if query.descending { "DESC" } else { "ASC" };
-    let rows = client.query(&format!("SELECT {COLUMNS} FROM persons WHERE {predicate} ORDER BY {sort} {direction},id {direction} LIMIT $7 OFFSET $8"), &paged).await?;
+    let rows = client.query(&format!("SELECT {COLUMNS} FROM persons WHERE {predicate} ORDER BY {sort} {direction},id {direction} LIMIT $8 OFFSET $9"), &paged).await?;
     Ok(Page {
         entries: rows
             .iter()

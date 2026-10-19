@@ -82,6 +82,7 @@ pub struct PageColumns {
     views: Arc<PageViews>,
     table: String,
     builtins: Vec<BuiltinColumn>,
+    defaults: Vec<String>,
     view: View,
     catalog: Option<Catalog>,
     /// The walked columns shown, resolved by the last load.
@@ -129,6 +130,7 @@ impl PageColumns {
             views,
             table: table.into(),
             view: View::new(table),
+            defaults: builtins.iter().map(|b| b.id.clone()).collect(),
             builtins,
             catalog: None,
             extras: Vec::new(),
@@ -139,6 +141,13 @@ impl PageColumns {
             suggestions: Vec::new(),
             add_query: String::new(),
         })
+    }
+
+    /// Page-owned defaults may include discovered paths. Catalog pruning still
+    /// applies, and reset forgets the saved arrangement just as for built-ins.
+    pub fn with_defaults(mut self, specs: &[&str]) -> Self {
+        self.defaults = specs.iter().map(|spec| (*spec).to_owned()).collect();
+        self
     }
 
     pub fn view(&self) -> &View {
@@ -180,10 +189,6 @@ impl PageColumns {
         self.view.to_params()
     }
 
-    fn builtin_ids(&self) -> Vec<&str> {
-        self.builtins.iter().map(|b| b.id.as_str()).collect()
-    }
-
     fn clear_suggestions(&mut self) {
         self.suggestions.clear();
         self.add_query.clear();
@@ -204,7 +209,7 @@ impl PageColumns {
         };
         let kept = self.split(&catalog);
         let builtins = &self.builtins;
-        let builtin_ids: Vec<&str> = builtins.iter().map(|b| b.id.as_str()).collect();
+        let default_ids: Vec<&str> = self.defaults.iter().map(String::as_str).collect();
         let extras: Vec<Column> = kept
             .iter()
             .filter_map(|kept| match kept {
@@ -222,7 +227,7 @@ impl PageColumns {
         // The page's own order with nothing walked is the default, and the
         // URL says nothing about a default. A lens belongs to a walked column
         // that is shown; one named for anything else is dropped, not carried.
-        self.view.columns = if kept_specs == builtin_ids {
+        self.view.columns = if kept_specs == default_ids {
             Vec::new()
         } else {
             kept_specs.iter().map(|spec| (*spec).to_owned()).collect()
@@ -308,7 +313,7 @@ impl PageColumns {
     fn split(&self, catalog: &Catalog) -> Vec<Kept> {
         let root = catalog.table(&self.table);
         let specs: Vec<&str> = if self.view.columns.is_empty() {
-            self.builtin_ids()
+            self.defaults.iter().map(String::as_str).collect()
         } else {
             self.view.columns.iter().map(String::as_str).collect()
         };
@@ -365,7 +370,7 @@ impl PageColumns {
         // An empty column list means the page default; an op that changes
         // columns starts from that default spelled out, so a built-in is
         // never lost.
-        let builtin_ids: Vec<String> = self.builtins.iter().map(|b| b.id.clone()).collect();
+        let builtin_ids = self.defaults.clone();
         if self.view.columns.is_empty() {
             self.view.columns.clone_from(&builtin_ids);
         }
@@ -480,6 +485,22 @@ impl PageColumns {
             }
         }
         if let Some((catalog, root)) = self.root() {
+            // A removed default is a page column even when Grid projects it.
+            // Offer it before the wider catalog so a common label such as
+            // "company" cannot bury it under dozens of related fields.
+            let wanted = text.to_lowercase();
+            for spec in &self.defaults {
+                if taken.contains(&spec.as_str()) {
+                    continue;
+                }
+                if let Ok(column) = catalog.resolve(root, spec) {
+                    if column.label.to_lowercase().contains(&wanted) || spec.contains(&wanted) {
+                        let worn = lens::normalize(self.view.lens(spec), &column);
+                        suggestions.push(lens::flex_column(&column, worn));
+                        taken.push(spec);
+                    }
+                }
+            }
             for column in catalog.suggest(root, text, &taken, 0) {
                 let worn = lens::normalize(self.view.lens(&column.spec), &column);
                 suggestions.push(lens::flex_column(&column, worn));

@@ -1,5 +1,5 @@
 use bilibi_authz::{CapabilityDefinition as C, RoleDefinition, VocabularyContribution, VOCABULARY};
-use bilibi_grid::{Field, FieldType, GridContribution, Source, TableDecl};
+use bilibi_grid::{Field, FieldType, GridContribution, LinkDecl, LinkKind, Source, TableDecl};
 use bilibi_module_registry::{Contribution, Provenance};
 
 pub const LIST: &str = "admin.affiliation.list";
@@ -36,7 +36,7 @@ static GRID: GridContribution = GridContribution {
             Field::new("id", "ID", FieldType::Integer).protected(),
             Field::new("person_id", "Person", FieldType::Integer).protected(),
             Field::new("organisation_id", "Organisation", FieldType::Integer).protected(),
-            Field::new("title", "Title", FieldType::String).protected(),
+            Field::new("title", "Role", FieldType::String).protected(),
             Field::new("work_email", "Work email", FieldType::String),
             Field::new("work_phone", "Work phone", FieldType::String),
             Field::new("effective_from", "From", FieldType::Date).protected(),
@@ -45,6 +45,12 @@ static GRID: GridContribution = GridContribution {
             Field::new("version", "Version", FieldType::Integer).protected(),
             Field::new("created_at", "Created", FieldType::DateTime).protected(),
             Field::new("updated_at", "Updated", FieldType::DateTime).protected(),
-        ]).time_field("created_at").record_types(&["affiliation"])], links: &[],
+        ]).time_field("created_at").record_types(&["affiliation"])], links: &[
+        // Bilimbi Contacts work details, owned here rather than by Person.
+        // Match the affiliation panel's inclusive current-date policy (UTC).
+        LinkDecl::edge("work", "Work", LinkKind::Many, "persons", "person_affiliations",
+            Source::tenant("SELECT person_id AS from_key,id AS to_key FROM person_affiliations WHERE tenant_id=$1 AND unlinked_at IS NULL AND (effective_from IS NULL OR effective_from <= (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date) AND (effective_to IS NULL OR effective_to >= (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date)")),
+        LinkDecl::on("company", "Company", LinkKind::One, "person_affiliations", "organisation_id", "companies", "id"),
+    ],
 };
 bilibi_grid::contribute!("core/affiliation", "affiliation.grid", &GRID);

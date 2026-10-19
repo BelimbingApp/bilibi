@@ -152,6 +152,10 @@ edges and global text keys; then demonstrates cardinality refusal, input bounds,
 cost rejection, timeout and a successful projection after failure. It removes its
 reference rows on success. No unit tests or test runner are involved.
 
+## Searching related text
+
+`query::text_search_sql(client, scope, root, paths)` builds a membership subquery for an owner's paginated search and count. Execute it immediately under the same scope, binding tenant, user and normalized search text to `$1`, `$2` and `$3`. The owner retains its pagination and statement timeout. Paths resolve against a fresh catalog; unavailable tables and restricted fields contribute no matches. Many-links search every text value before cell truncation, so a value beyond the displayed rollup still matches.
+
 ## Lenses (G3)
 
 A lens is how a column's values are read: `value`, `bar` (scaled to the
@@ -210,14 +214,14 @@ its inputs, as JSON lines for comparison against Bilimbi's `Lens.cell`.
 `Grid.Web.PageColumns` is: the page keeps its own query, filters, sort and
 pagination, declares the columns it draws itself as `BuiltinColumn`s, and
 `PageColumns` adds the walked columns for exactly the rows the page listed.
+Removed default columns appear first in the picker, including related columns.
+
 Do not host walked columns through `ListColumns` plus your own projection:
 `PageColumns` owns the catalog pruning, the memory and the URL shape.
 
 The page holds one `PageColumns` in its live state and:
 
-1. builds it at mount with `PageColumns::mount(views, table, builtins)`,
-   where `views` is the `base/grid.page_views` service (`PAGE_VIEWS`) and
-   `table` the catalog table its rows come from (the page's name in memory);
+1. builds it at mount with `PageColumns::mount(views, table, builtins)`, where `views` is the `base/grid.page_views` service (`PAGE_VIEWS`) and `table` is the catalog table its rows come from (the page's name in memory); optionally chain `.with_defaults(&["name", "group.name"])` when related columns should appear by default;
 2. calls `from_params(scope, query)` on render, mount and every params
    update, and merges `params()` into the query it returns as
    `LiveBody.query`, so the address carries what is shown;

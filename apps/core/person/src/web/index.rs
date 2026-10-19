@@ -56,7 +56,7 @@ pub(super) struct Index {
     /// Set while the new-contact dialog is open, including after `/contacts/new`.
     draft: Option<super::create::Draft>,
 }
-// Bilimbi Person.IndexLive: personal contact columns by default. Identity
+// Bilimbi Person.IndexLive: contact columns with discovered work details. Identity
 // filters and URL sorts remain the approved Person model's additional controls.
 fn columns(pages: &Pages, masked: &std::collections::HashSet<String>) -> Result<PageColumns> {
     PageColumns::mount(
@@ -71,6 +71,16 @@ fn columns(pages: &Pages, masked: &std::collections::HashSet<String>) -> Result<
         .filter(|column| !masked.contains(&column.id))
         .collect(),
     )
+    .map(|columns| {
+        columns.with_defaults(&[
+            "name",
+            "work.work_email:list",
+            "work.title:list",
+            "work.company.name:list",
+            "email",
+            "phone",
+        ])
+    })
     .map_err(|_| Error::Internal)
 }
 impl Index {
@@ -176,7 +186,7 @@ impl Index {
                     "search",
                     "Search contacts",
                     &form["search"],
-                    "Search by name, email, or phone...",
+                    "Search by name, email, phone, role, or company...",
                 ),
                 ToolbarControl::select(
                     "persons-kind",
@@ -225,6 +235,23 @@ impl Index {
                         .insert(key.into(), Html::text(value.as_deref().unwrap_or("—")));
                 }
             }
+        }
+        // Keep the business labels short; Grid still owns the paths, values,
+        // suggestions, masking and persisted arrangement.
+        for column in self
+            .columns
+            .columns
+            .iter_mut()
+            .chain(&mut self.columns.suggestions)
+        {
+            let label = match column.spec.as_str() {
+                "work.work_email:list" => "Work email",
+                "work.title:list" => "Role",
+                "work.company.name:list" => "Company",
+                _ => continue,
+            };
+            column.label = label.into();
+            column.short_label = label.into();
         }
         let mut table = self
             .columns

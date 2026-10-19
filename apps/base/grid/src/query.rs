@@ -378,6 +378,50 @@ pub async fn stats<S: AsRef<str>>(
     })
 }
 
+/// Build an owner-list membership subquery over visible text paths. Execute
+/// immediately with the same scope, binding tenant/user/normalized search to
+/// $1/$2/$3, inside the owner's paginated SELECT and count. Unavailable paths
+/// contribute no matches. Only catalog identifiers enter the returned SQL.
+/// Many-links search every value before list-cell truncation or aggregation.
+/// The caller owns its statement timeout and pagination, as for its own search.
+pub async fn text_search_sql(
+    client: &impl tokio_postgres::GenericClient,
+    scope: &Scope,
+    root: &str,
+    specs: &[&str],
+) -> Result<String, QueryError> {
+    if specs.len() > MAX_COLUMNS {
+        return Err(QueryError::Limit("more than 32 search paths"));
+    }
+    let catalog = Catalog::for_scope(client, scope).await?;
+    let root = catalog.table(root).ok_or(QueryError::ForbiddenRoot)?;
+    let mut predicates = Vec::new();
+    for spec in specs {
+        let Ok(column) = catalog.resolve(root, spec) else {
+            continue;
+        };
+        let Some(f) = column.field.filter(|f| f.ty == crate::FieldType::String) else {
+            continue;
+        };
+        let predicate = match walk(&catalog, root, &column) {
+            Some(w) => format!(
+                "EXISTS (SELECT 1 {} AND position($3::text in lower({}))>0)",
+                w.suffix,
+                field(&w.alias, w.table, f.id)
+            ),
+            None => format!("position($3::text in lower({}))>0", field("r", root, f.id)),
+        };
+        predicates.push(predicate);
+    }
+    // Reference both scope parameters even for sources that only use tenant.
+    let predicate = if predicates.is_empty() {
+        "false".into()
+    } else {
+        predicates.join(" OR ")
+    };
+    Ok(format!("SELECT {} FROM {} r CROSS JOIN (SELECT $1::bigint AS tenant, $2::bigint AS usr) actor WHERE ({predicate})", field("r", root, root.key()), source(root)))
+}
+
 // Every Grid read: bounded locally, and on the UTC calendar so a trend month
 // or a change-since date means the same day whatever the pool's zone.
 const BOUNDS: &str = "SET LOCAL statement_timeout = '2000ms'; SET LOCAL lock_timeout = '500ms'; SET LOCAL TimeZone = 'UTC'";

@@ -51,6 +51,12 @@ new capabilities to contributed roles. Manager/tenant-owner receive all
 commands, staff create/update, viewer read/list. Roles never follow from a
 business affiliation.
 
+## Contact directory columns
+
+Contacts shows Work email, Role and Company from current affiliations by default. The column picker can add or remove them, and search matches these values plus work phone. Personal contacts stay separate.
+
+The owner contributes Grid's `persons.work` many-link and `person_affiliations.company` one-link. The work link excludes unlinked, upcoming and ended affiliations, using inclusive dates on the UTC calendar. Multiple current affiliations roll up distinct values rather than choosing one. Grid checks affiliation and company list access and work-contact restrictions for both columns and search. History remains available in the record's Affiliations panel.
+
 ## Account and People integration
 
 Call `AffiliationService::lock_for_account_binding` inside the consumer's
