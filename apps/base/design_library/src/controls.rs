@@ -415,7 +415,7 @@ impl View<'_> {
                 })
             }
             "filter_toolbar" => self.toolbar(c),
-            "period_filter" => self.period_filter(),
+            "period_filter" => self.period_filter(string(c, "id")),
             _ => Ok(Html::EMPTY),
         }
     }
@@ -464,7 +464,7 @@ impl View<'_> {
         toolbar.class = string(c, "class");
         render(toolbar)
     }
-    fn period_filter(&self) -> askama::Result<Html> {
+    fn period_filter(&self, id: &str) -> askama::Result<Html> {
         // Mirrors Bilimbi's period-filter specimen through the production component.
         let clock = self
             .state
@@ -472,7 +472,15 @@ impl View<'_> {
             .clock(self.state.browser_zone.as_deref(), jiff::Timestamp::now());
         let period =
             bilibi_datetime::Period::parse(|key| self.state.period.get(key).cloned(), clock.today);
-        let mut filter = self.state.period_filter.clone();
+        let Some(mut filter) = self
+            .state
+            .period_filters
+            .iter()
+            .find(|f| f.id == id)
+            .cloned()
+        else {
+            return Ok(Html::EMPTY);
+        };
         filter.set(period, &clock);
         render(filter)
     }

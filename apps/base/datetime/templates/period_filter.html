@@ -11,15 +11,15 @@
 {% import "dialog.html" as dialog %}
 <div id="{{ id }}" class="w-full sm:w-fit sm:min-w-36">
 {# Keep toolbar density on the selection form so the modal's pinned date labels retain their shared field geometry. #}
-<form id="{{ id }}-selection" data-event="{{ bilibi_datetime::filter::SELECT }}" data-change class="ui-compact-controls">
+<form id="{{ id }}-selection" data-event="{{ self.select_event() }}" data-change class="ui-compact-controls">
 {% call form::input(field=self.selection()) %}{% endcall %}
 </form>
 {%- if open -%}
-{% call dialog::modal(id=self.range_id(), title="Custom date range", cancel_event=bilibi_datetime::filter::CANCEL, width=bilibi_ui::ModalWidth::Compact, description="Choose the first and last dates to include.") %}
-<form id="{{ self.id }}-range-form" data-event="{{ bilibi_datetime::filter::APPLY }}" class="mt-4 space-y-4">
+{% call dialog::modal(id=self.range_id(), title="Custom date range", cancel_event=self.cancel_event(), width=bilibi_ui::ModalWidth::Compact, description="Choose the first and last dates to include.") %}
+<form id="{{ self.id }}-range-form" data-event="{{ self.apply_event() }}" class="mt-4 space-y-4">
 {% if let Some(error) = error %}<p id="{{ self.id }}-range-error" role="alert" class="text-sm text-danger-ink">{{ error }}</p>{% endif %}
 <div class="grid gap-3 sm:grid-cols-2">{% call form::input(field=self.from_field()) %}{% endcall %}{% call form::input(field=self.to_field()) %}{% endcall %}</div>
-<div class="flex justify-end gap-2">{% call ui::button(id="{}-cancel"|format(self.id), button_type="button", event=bilibi_datetime::filter::CANCEL) %}Cancel{% endcall %}{% call ui::button(id="{}-apply"|format(self.id), button_type="submit") %}Apply range{% endcall %}</div>
+<div class="flex justify-end gap-2">{% call ui::button(id="{}-cancel"|format(self.id), button_type="button", event=self.cancel_event()) %}Cancel{% endcall %}{% call ui::button(id="{}-apply"|format(self.id), button_type="submit") %}Apply range{% endcall %}</div>
 </form>
 {% endcall %}
 {%- endif -%}

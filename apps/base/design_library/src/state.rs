@@ -52,7 +52,7 @@ pub struct State {
     pub display: DisplayContext,
     pub browser_zone: Option<String>,
     pub period: HashMap<String, String>,
-    pub period_filter: PeriodFilter,
+    pub period_filters: Vec<PeriodFilter>,
     pub inline: BTreeMap<String, String>,
     pub statuses: CommitStates,
     pub version: u64,
@@ -84,6 +84,7 @@ pub struct KeptFile {
     pub sha256: String,
 }
 /// The specimen's upload name and limit, shared by the state and the card.
+const PERIOD_FILTERS: [&str; 2] = ["example-period-filter", "design-library-filter-period"];
 pub const SAMPLE_UPLOAD: &str = "sample_file";
 pub const SAMPLE_UPLOAD_BYTES: u64 = 256 * 1024;
 impl State {
@@ -131,7 +132,10 @@ impl State {
             display: DisplayContext::anonymous(),
             browser_zone: None,
             period: HashMap::new(),
-            period_filter: PeriodFilter::new("example-period-filter", period, &clock),
+            period_filters: PERIOD_FILTERS
+                .iter()
+                .map(|id| PeriodFilter::new(*id, period, &clock))
+                .collect(),
             inline: BTreeMap::new(),
             statuses: CommitStates::default(),
             version: 0,
@@ -352,23 +356,6 @@ impl State {
                     }
                 }
             }
-            filter::SELECT | filter::APPLY | filter::CANCEL => {
-                let clock = self
-                    .display
-                    .clock(self.browser_zone.as_deref(), jiff::Timestamp::now());
-                let period = Period::parse(|key| self.period.get(key).cloned(), clock.today);
-                self.period_filter.set(period, &clock);
-                if let Some(filter::Outcome::Applied(period)) =
-                    self.period_filter.event(&ty, event, &clock)
-                {
-                    self.period = period
-                        .params()
-                        .into_iter()
-                        .map(|(k, v)| (k.into(), v))
-                        .collect();
-                    self.list.page = 1;
-                }
-            }
             "browser_timezone" => {
                 self.browser_zone = get("timezone").filter(|v| bilibi_datetime::valid_timezone(v));
             }
@@ -412,7 +399,24 @@ impl State {
                     self.dismissed.push(id);
                 }
             }
-            _ => {}
+            _ => {
+                let clock = self
+                    .display
+                    .clock(self.browser_zone.as_deref(), jiff::Timestamp::now());
+                let period = Period::parse(|key| self.period.get(key).cloned(), clock.today);
+                let outcome = self.period_filters.iter_mut().find_map(|filter| {
+                    filter.set(period, &clock);
+                    filter.event(&ty, event, &clock)
+                });
+                if let Some(filter::Outcome::Applied(period)) = outcome {
+                    self.period = period
+                        .params()
+                        .into_iter()
+                        .map(|(k, v)| (k.into(), v))
+                        .collect();
+                    self.list.page = 1;
+                }
+            }
         }
         let count = companies(&self.list).len() as u64;
         self.list
