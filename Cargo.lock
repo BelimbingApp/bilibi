@@ -537,6 +537,7 @@ dependencies = [
  "bilibi-geonames",
  "bilibi-party",
  "bilibi-person",
+ "bilibi-tenant-administration",
  "bilibi-user",
  "bilibi-user-administration",
 ]
@@ -1125,16 +1126,32 @@ dependencies = [
 name = "bilibi-tenancy"
 version = "0.1.1"
 dependencies = [
- "askama",
  "bilibi-database",
- "bilibi-menu",
  "bilibi-module-registry",
  "bilibi-party-ids",
- "bilibi-ui",
  "inventory",
  "serde_json",
  "tokio-postgres",
  "uuid",
+]
+
+[[package]]
+name = "bilibi-tenant-administration"
+version = "0.1.1"
+dependencies = [
+ "askama",
+ "bilibi-agent-api",
+ "bilibi-authz",
+ "bilibi-company",
+ "bilibi-database",
+ "bilibi-menu",
+ "bilibi-module-registry",
+ "bilibi-step-up",
+ "bilibi-tenancy",
+ "bilibi-ui",
+ "inventory",
+ "serde_json",
+ "tokio-postgres",
 ]
 
 [[package]]

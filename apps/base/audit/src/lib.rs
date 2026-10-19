@@ -381,7 +381,7 @@ impl Capture for AuditCapture {
                     &who,
                     None,
                     &context.action,
-                    &json!({"result":"committed"}),
+                    &json!({"result":"committed","agent_connection":context.agent_connection}),
                     false,
                 )
                 .await

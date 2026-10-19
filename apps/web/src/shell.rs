@@ -139,7 +139,7 @@ async fn context<'a>(
     // no primary company; a failed lookup paints no warning.
     let operator_company_missing = platform_operator
         && matches!(
-            bilibi_core::company::primary::platform_operator_company(&**client).await,
+            bilibi_core::company::platform_operator_company(&**client).await,
             Ok(None)
         );
     // A module contributes the bell through the `shell.notifications` embed;

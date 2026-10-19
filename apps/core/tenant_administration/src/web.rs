@@ -1,4 +1,4 @@
-//! `/tenancy/tenants` (`base/tenancy.pages`, operation `tenants`): the platform
+//! `/tenancy/tenants` (`core/tenant_administration.pages`, operation `tenants`): the platform
 //! tenant list and its Add Tenant dialog, ported from Bilimbi
 //! `apps/base/tenancy/lib/tenancy/web/live/tenants_live.{ex,html.heex}`.
 //!
@@ -9,12 +9,16 @@
 //! writes, as the source checks `allowed?` on both. A refusal is a flash, never
 //! a page-clearing error. Parent names and sub-tenant counts are derived from
 //! the identity list, not from associations.
-use crate::admin::{
-    self, CreateOutcome, NewTenant, TenantErrors, TenantIdentity, TenantStatus, Tenants, CREATE,
-};
-use crate::{prove_operator, Authorization, OperatorProof, Scope};
+use crate::{CREATE, LIST, PAGES};
 use askama::Template;
-use bilibi_database::{Db, Error, Result};
+use bilibi_agent_api::{
+    page::{Call, PageContracts},
+    Error as ContractError,
+};
+use bilibi_database::{Error, Result};
+use bilibi_tenancy::{
+    Authorization, OperatorProof, Scope, TenantErrors, TenantIdentity, TenantStatus,
+};
 use bilibi_ui::page::{
     LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, MountFuture, Page, PageBody,
     PageFuture, PageRequest,
@@ -71,8 +75,7 @@ fn builtins() -> Vec<BuiltinColumn> {
 /// The module's page adapter; every field is shared by mounted states.
 #[derive(Clone)]
 pub struct Pages {
-    pub db: Db,
-    pub tenants: Arc<Tenants>,
+    pub contracts: Arc<PageContracts>,
     pub authorization: Arc<Authorization>,
 }
 
@@ -185,6 +188,9 @@ struct Draft {
     parent_id: String,
     status: String,
     errors: TenantErrors,
+    primary_company: String,
+    additional_companies: String,
+    company_errors: BTreeMap<String, Vec<String>>,
 }
 impl Default for Draft {
     fn default() -> Self {
@@ -193,6 +199,9 @@ impl Default for Draft {
             parent_id: String::new(),
             status: TenantStatus::Active.as_str().into(),
             errors: TenantErrors::default(),
+            primary_company: String::new(),
+            additional_companies: String::new(),
+            company_errors: BTreeMap::new(),
         }
     }
 }
@@ -201,6 +210,9 @@ struct CreateForm {
     name: Field,
     parent: Field,
     status: Field,
+    summary: bilibi_ui::ErrorSummary,
+    primary_company: Field,
+    additional_companies: Field,
 }
 
 #[derive(Template)]
@@ -242,7 +254,7 @@ impl TenantsPage {
         match self
             .pages
             .authorization
-            .authorize_operator(scope, CREATE)
+            .authorize_operator(scope, bilibi_tenancy::CREATE)
             .await
         {
             Ok(proof) => Ok(Some(proof)),
@@ -310,7 +322,68 @@ impl TenantsPage {
         let draft = self.create.as_ref()?;
         let mut parents: Vec<&TenantIdentity> = identities.iter().collect();
         parents.sort_by_key(|identity| identity.id);
+        let mut summary = bilibi_ui::ErrorSummary::new("tenant-create-errors");
+        for (id, label, errors) in [
+            ("tenant-name", "Name", draft.errors.name.clone()),
+            (
+                "tenant-parent",
+                "Parent tenant",
+                draft.errors.parent_id.clone(),
+            ),
+            ("tenant-status", "Status", draft.errors.status.clone()),
+            (
+                "tenant-primary-company",
+                "Primary company",
+                draft
+                    .company_errors
+                    .get("primary_company")
+                    .cloned()
+                    .unwrap_or_default(),
+            ),
+            (
+                "tenant-additional-companies",
+                "Additional companies",
+                draft
+                    .company_errors
+                    .iter()
+                    .filter(|(key, _)| key.starts_with("additional_companies"))
+                    .flat_map(|(_, errors)| errors.clone())
+                    .collect(),
+            ),
+        ] {
+            for error in errors {
+                summary.push(id, bilibi_ui::error_sentence(label, &error));
+            }
+        }
         Some(CreateForm {
+            summary,
+            primary_company: Field::in_form("tenant", "primary_company")
+                .id("tenant-primary-company")
+                .label("Primary company")
+                .required()
+                .attr("maxlength", "160")
+                .value(draft.primary_company.clone())
+                .errors(
+                    draft
+                        .company_errors
+                        .get("primary_company")
+                        .cloned()
+                        .unwrap_or_default(),
+                ),
+            additional_companies: Field::in_form("tenant", "additional_companies")
+                .id("tenant-additional-companies")
+                .label("Additional companies")
+                .kind(InputKind::Textarea)
+                .hint("One company name per line, up to 99.")
+                .value(draft.additional_companies.clone())
+                .errors(
+                    draft
+                        .company_errors
+                        .iter()
+                        .filter(|(key, _)| key.starts_with("additional_companies"))
+                        .flat_map(|(_, errors)| errors.clone())
+                        .collect(),
+                ),
             name: Field::in_form("tenant", "name")
                 .id("tenant-name")
                 .label("Name")
@@ -349,10 +422,43 @@ impl TenantsPage {
     }
 
     async fn body(&mut self, scope: &Scope, rows_changed: bool) -> Result<String> {
-        let client = self.pages.db.get().await?;
-        let proof = prove_operator(&**client, scope).await?;
-        let identities = admin::list_tenants(&**client, &proof).await?;
-        drop(client);
+        // Preserve Bilimbi's complete directory/parent picker while reading
+        // through the bounded search contract in pages of at most 100.
+        let mut identities = Vec::new();
+        let mut page = 1;
+        loop {
+            let result = self
+                .pages
+                .contracts
+                .read(
+                    scope,
+                    LIST,
+                    &serde_json::json!({"page":page,"page_size":100}),
+                )
+                .await
+                .map_err(contract_error)?;
+            let rows = result["result"].as_array().ok_or(Error::Internal)?;
+            for row in rows {
+                identities.push(TenantIdentity {
+                    id: row["id"].as_i64().ok_or(Error::Internal)?,
+                    parent_id: row["parent_id"].as_i64(),
+                    name: row["name"].as_str().ok_or(Error::Internal)?.into(),
+                    status: row["status"].as_str().ok_or(Error::Internal)?.into(),
+                    is_platform_operator: row["is_platform_operator"]
+                        .as_bool()
+                        .ok_or(Error::Internal)?,
+                });
+            }
+            if rows.is_empty()
+                || identities.len() as u64
+                    >= result["meta"]["page"]["total"]
+                        .as_u64()
+                        .ok_or(Error::Internal)?
+            {
+                break;
+            }
+            page += 1;
+        }
         let can_create = self.create_proof(scope).await?.is_some();
         let rows = present(
             &identities,
@@ -398,9 +504,18 @@ impl TenantsPage {
     }
 
     /// One live event. Returns whether the rows changed, so the columns reload.
-    async fn event(&mut self, scope: &Scope, value: &serde_json::Value) -> Result<bool> {
+    async fn event(
+        &mut self,
+        scope: &Scope,
+        credential: &str,
+        value: &serde_json::Value,
+    ) -> Result<bool> {
         let get = |key: &str| value.get(key).and_then(serde_json::Value::as_str);
         match get("type").ok_or(Error::Invalid)? {
+            "clear-flash" => {
+                self.flash = None;
+                Ok(false)
+            }
             "sort" => {
                 // The source ignores an unknown column; a known one toggles.
                 if let Some(column) = get("sort") {
@@ -442,7 +557,7 @@ impl TenantsPage {
                 Ok(false)
             }
             "create" => {
-                let Some(proof) = self.create_proof(scope).await? else {
+                let Some(_) = self.create_proof(scope).await? else {
                     self.flash(StatusKind::Error, DENIED);
                     return Ok(false);
                 };
@@ -455,6 +570,9 @@ impl TenantsPage {
                     parent_id: field("parent_id"),
                     status: field("status"),
                     errors: TenantErrors::default(),
+                    primary_company: field("primary_company"),
+                    additional_companies: field("additional_companies"),
+                    company_errors: BTreeMap::new(),
                 };
                 let parent_id = params::blank_to_none(Some(draft.parent_id.trim()));
                 let parent = parent_id.map(|text| params::positive_id(Some(text)));
@@ -465,22 +583,40 @@ impl TenantsPage {
                     self.create = Some(draft);
                     return Ok(false);
                 }
-                let new = NewTenant {
-                    name: draft.name.clone(),
-                    parent_id: parent.flatten(),
-                    status: draft.status.clone(),
+                let mut input = serde_json::json!({
+                    "name":draft.name, "status":draft.status,
+                    "primary_company":draft.primary_company,
+                    "additional_companies":draft.additional_companies.lines().map(str::trim).filter(|line|!line.is_empty()).collect::<Vec<_>>()
+                });
+                if let Some(parent) = parent.flatten() {
+                    input["parent_id"] = serde_json::json!(parent);
+                }
+                let call = Call {
+                    scope,
+                    credential,
+                    service: PAGES,
+                    event: "create",
+                    contract: CREATE,
                 };
-                match self.pages.tenants.create(&proof, new).await? {
-                    CreateOutcome::Created(_) => {
+                match self.pages.contracts.submit(&call, input).await {
+                    Ok(_) => {
                         self.create = None;
-                        self.flash(StatusKind::Success, "Tenant created.");
+                        self.flash(StatusKind::Success, "Tenant and companies created.");
                         Ok(true)
                     }
-                    CreateOutcome::Refused(errors) => {
-                        draft.errors = errors;
+                    Err(ContractError::InvalidInput(mut fields)) => {
+                        draft.errors.name = fields.remove("name").unwrap_or_default();
+                        draft.errors.parent_id = fields.remove("parent_id").unwrap_or_default();
+                        draft.errors.status = fields.remove("status").unwrap_or_default();
+                        draft.company_errors = fields;
                         self.create = Some(draft);
                         Ok(false)
                     }
+                    Err(ContractError::Forbidden | ContractError::Backend(Error::Forbidden)) => {
+                        self.flash(StatusKind::Error, DENIED);
+                        Ok(false)
+                    }
+                    Err(error) => Err(contract_error(error)),
                 }
             }
             _ => Err(Error::Invalid),
@@ -523,9 +659,6 @@ impl Page<Scope, Error> for Pages {
 impl LiveState<Scope, Error> for TenantsPage {
     fn update<'a>(&'a mut self, request: LiveRequest<'a, Scope>) -> LiveFuture<'a, Error> {
         Box::pin(async move {
-            // A message shows for the render that follows its event; the next
-            // intent clears it, so a dismissed flash never comes back.
-            self.flash = None;
             let rows_changed = match request.input {
                 LiveInput::Refresh => true,
                 LiveInput::Params(values) => {
@@ -533,7 +666,9 @@ impl LiveState<Scope, Error> for TenantsPage {
                         ListState::parse(values, SPEC.clone()).map_err(|_| Error::Internal)?;
                     true
                 }
-                LiveInput::Event(value) => self.event(request.scope, value).await?,
+                LiveInput::Event(value) => {
+                    self.event(request.scope, request.credential, value).await?
+                }
             };
             let html = self.body(request.scope, rows_changed).await?;
             Ok(LiveBody {
@@ -542,5 +677,15 @@ impl LiveState<Scope, Error> for TenantsPage {
                 ..LiveBody::default()
             })
         })
+    }
+}
+
+fn contract_error(error: ContractError) -> Error {
+    match error {
+        ContractError::Backend(error) => error,
+        ContractError::Forbidden => Error::Forbidden,
+        ContractError::NotFound => Error::NotFound,
+        ContractError::InvalidInput(_) => Error::Invalid,
+        _ => Error::Internal,
     }
 }

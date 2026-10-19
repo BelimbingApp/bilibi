@@ -15,5 +15,6 @@ bilibi-company = { path = "company" }
 bilibi-geonames = { path = "geonames" }
 bilibi-party = { path = "party" }
 bilibi-person = { path = "person" }
+bilibi-tenant-administration = { path = "tenant_administration" }
 bilibi-user = { path = "user" }
 bilibi-user-administration = { path = "user_administration" }

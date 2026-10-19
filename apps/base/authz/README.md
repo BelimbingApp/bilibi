@@ -48,7 +48,7 @@ organisation directory names, and a custom role created before ownership was
 bound stays listed as "Unowned". Base never queries Core tables for this.
 
 Tenancy sits below Authz, so Authz declares Tenancy's `admin.tenancy.tenant.*`
-keys (`bilibi_tenancy::admin::{LIST, CREATE}`) and binds `OperatorAuthorizer`
+keys (`bilibi_tenancy::{LIST, CREATE}`) and binds `OperatorAuthorizer`
 into `base/tenancy.authorization` at boot (`base/authz.operator`), the one
 `authorize_operator` decision Tenancy's own page makes. A new module below
 Authz that needs a decision extends that seam; it does not import Authz.

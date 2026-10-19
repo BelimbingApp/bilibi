@@ -5,8 +5,8 @@
 (legal entity types, department types), a company's departments, the tenant's
 primary company and the provisioning commands. The public API is the
 `core/company.companies` service (`CompanyService`) and the free functions of
-`organisation`, `reference_types`, `departments`, `primary`, `lifecycle`,
-`eligibility`, `relationship_roles` and `relationships`; table layout and
+`organisation`, `reference_types`, `departments`, `lifecycle`,
+`eligibility`, `relationship_roles` and `relationships`; primary-company functions and types are re-exported at the crate root. table layout and
 SQL stay private. The module-owned pages (`web.rs`, `web/views.rs`) serve
 `/companies`, `/companies/create` and `/companies/{id}`, and
 `web/relationships.rs` serves `/companies/relationship-types`,
@@ -424,3 +424,9 @@ owners accepting an authorized upload or document and refusing the viewer,
 the archived company, the missing person and the other tenant. In the running
 app, Administration → System → Settings offers the company picker and
 Administration → Authorization → Roles → Create asks for the owning company.
+
+## Companies in a newly created tenant
+
+`CompanyService::preview_tenant_companies` and `provision_new_tenant_in` compose tenant provisioning with [Core Tenant Administration](../tenant_administration/README.md). Names use ordinary Company validation, generated codes and the person's field restrictions; duplicate generated codes are refused. The first company becomes primary.
+
+The write requires Tenancy's sealed `CreatedTenant` receipt, bound to the current transaction and original actor. It accepts no arbitrary target tenant id and never changes the caller's scope. Tenant-create capability and live operator standing authorize the complete provisioning action; its contract enforces Base Step-up. Every company and primary assignment is a `Change` on that same transaction. Existing tenant business data remains behind its ordinary scoped facade.

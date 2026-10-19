@@ -90,6 +90,7 @@ bilibi-agent-plugins = { path = "apps/core/agent_plugins" }
 bilibi-geonames = { path = "apps/core/geonames" }
 bilibi-party = { path = "apps/core/party" }
 bilibi-person = { path = "apps/core/person" }
+bilibi-tenant-administration = { path = "apps/core/tenant_administration" }
 bilibi-user-administration = { path = "apps/core/user_administration" }
 
 # Money and quantities in numeric(20,4) columns, for Domain modules.

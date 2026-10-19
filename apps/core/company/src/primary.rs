@@ -12,7 +12,7 @@ use crate::{
 use bilibi_audit::{record_action, Attribution};
 use bilibi_database::{Change, Db, Error, MutationTransaction, Result};
 use bilibi_party_ids::OrganisationId;
-use bilibi_tenancy::{admin::TenantIdentity, Scope};
+use bilibi_tenancy::{Scope, TenantIdentity};
 use serde_json::json;
 use std::collections::HashSet;
 use tokio_postgres::{GenericClient, Transaction};
@@ -239,7 +239,7 @@ pub async fn provision_tenant(
     let mut client = db.get().await?;
     let tx = client.transaction().await?;
     let sql: &Transaction<'_> = &tx;
-    let tenant = bilibi_tenancy::admin::provision_tenant(sql, tenant_name).await?;
+    let tenant = bilibi_tenancy::provision_tenant(sql, tenant_name).await?;
     crate::relationship_roles::ensure_defaults(sql, tenant.id).await?;
     let created = match provisioned_company(sql, tenant.id, company).await? {
         Ok(created) => created,
@@ -297,7 +297,7 @@ pub async fn provision_platform_operator_in(
     };
     let tx = sql;
     let (tenant, tenant_created) =
-        bilibi_tenancy::admin::provision_platform_operator(sql, tenant_name).await?;
+        bilibi_tenancy::provision_platform_operator(sql, tenant_name).await?;
     crate::relationship_roles::ensure_defaults(sql, tenant.id).await?;
     tx.execute(
         "SELECT id FROM tenants WHERE id=$1 FOR UPDATE",

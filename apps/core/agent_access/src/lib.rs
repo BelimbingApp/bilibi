@@ -231,6 +231,7 @@ impl Connection {
             action: action.into(),
             trace_id: uuid::Uuid::new_v4().to_string(),
             agent_self_report: None,
+            agent_connection: Some(self.id),
         }
     }
     fn knows(&self, label: &str) -> bool {
@@ -1127,18 +1128,49 @@ impl AgentAccess {
     }
 }
 
+// Tenancy reproofs use the same durable connection standing as the bearer
+// edge (Bilimbi AgentAccess), including the actor's recorded party bindings.
+struct GrantVerifier;
+impl bilibi_tenancy::AgentVerifier for GrantVerifier {
+    fn verify<'a>(
+        &'a self,
+        client: &'a dyn ProofClient,
+        scope: &'a Scope,
+    ) -> bilibi_tenancy::ProofFuture<'a, ()> {
+        Box::pin(async move {
+            if scope.impersonator().is_some() {
+                return Err(Error::Unauthorized);
+            }
+            let agent = scope.agent().ok_or(Error::Unauthorized)?;
+            let row = client.query_opt(
+                "SELECT organisation_id,person_id FROM core_agent_connections WHERE id=$1 AND tenant_id=$2 AND user_id=$3 AND revoked_at IS NULL AND expires_at>clock_timestamp()",
+                &[&agent.connection(), &scope.tenant(), &scope.user()],
+            ).await?.ok_or(Error::Unauthorized)?;
+            if row.get::<_, Option<i64>>(0) != scope.actor().organisation().map(OrganisationId::get)
+                || row.get::<_, Option<i64>>(1) != scope.actor().person().map(PersonId::get)
+            {
+                return Err(Error::Unauthorized);
+            }
+            Ok(())
+        })
+    }
+}
+
 inventory::submit! {
     bilibi_module_registry::Module {
         id: "core/agent_access", layer: bilibi_module_registry::Layer::Core,
         dependencies: &["base/database", "base/settings", "base/tenancy", "base/audit", "base/authz", "base/party_ids", "base/ui", "base/datetime", "base/locale", "base/system", "core/user", "core/company"],
         migrations: &[MIGRATION, SELF_REPORT_MIGRATION],
-        services: &[bilibi_module_registry::Service { id: "core/agent_access.grants", factory: |services| Ok(Arc::new(AgentAccess {
+        services: &[bilibi_module_registry::Service { id: "core/agent_access.grants", factory: |services| {
+            let authentication = services.get::<Authentication>("base/tenancy.authentication")?;
+            authentication.bind_agents(Arc::new(GrantVerifier))?;
+            Ok(Arc::new(AgentAccess {
             db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
             mutations: services.get("base/database.mutations")?,
             settings: services.get("base/settings.store")?,
             authentication: services.get("base/tenancy.authentication")?,
             parties: services.get("base/tenancy.parties")?,
-        })) }, bilibi_module_registry::Service { id: "core/agent_access.pages", factory: |services| Ok(Arc::new(bilibi_ui::page::PageService(Arc::new(web::Pages {
+        })) } }, bilibi_module_registry::Service { id: "core/agent_access.pages", factory: |services| Ok(Arc::new(bilibi_ui::page::PageService(Arc::new(web::Pages {
             access: services.get("core/agent_access.grants")?,
             db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
             display: services.get("base/datetime.display")?,

@@ -339,7 +339,7 @@ async fn login_card(
 async fn login_workspace(app: &App) -> LoginWorkspace {
     let lookup = async {
         let client = app.db.get().await.map_err(Error::from)?;
-        bilibi_core::company::primary::platform_operator_company(&**client).await
+        bilibi_core::company::platform_operator_company(&**client).await
     };
     match lookup.await {
         Ok(Some(company)) => LoginWorkspace::Ready(company.display_name),

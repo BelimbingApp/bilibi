@@ -360,6 +360,14 @@ pub struct OperatorAuthorizer {
     db: bilibi_database::Db,
 }
 impl bilibi_tenancy::OperatorAuthorizer for OperatorAuthorizer {
+    fn authorize_operator_in<'a>(
+        &'a self,
+        tx: &'a tokio_postgres::Transaction<'_>,
+        scope: &'a Scope,
+        key: &'a str,
+    ) -> bilibi_tenancy::ProofFuture<'a, bilibi_tenancy::OperatorProof> {
+        Box::pin(async move { authorize_operator(tx, scope, key).await })
+    }
     fn authorize_operator<'a>(
         &'a self,
         scope: &'a Scope,
@@ -416,10 +424,10 @@ inventory::submit! { bilibi_module_registry::Module {
 
 // Tenancy's capability keys (Bilimbi `Tenancy.Contributions`): declared here
 // because the vocabulary type is Authz's and Tenancy sits below it; the keys
-// themselves are `bilibi_tenancy::admin::{LIST, CREATE}`.
+// themselves are `bilibi_tenancy::{LIST, CREATE}`.
 inventory::submit! { bilibi_module_registry::Contribution::new(VOCABULARY,"authz.tenancy",bilibi_module_registry::Provenance {module:"base/authz",source:file!(),line:line!()}, &VocabularyContribution {
     domains:&["admin"], verbs:&["list","create"],
-    capabilities:&[CapabilityDefinition::platform(bilibi_tenancy::admin::LIST), CapabilityDefinition::platform(bilibi_tenancy::admin::CREATE)],
+    capabilities:&[CapabilityDefinition::platform(bilibi_tenancy::LIST), CapabilityDefinition::platform(bilibi_tenancy::CREATE)],
     roles:&[], system_principals:&[],
 }) }
 inventory::submit! {

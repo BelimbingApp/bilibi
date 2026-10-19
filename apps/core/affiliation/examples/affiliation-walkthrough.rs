@@ -221,7 +221,7 @@ async fn main() -> Result<(), Failure> {
         .await?;
     show(
         "proof fences concurrent primary-company transfer",
-        bilibi_company::primary::assign(&mut blocked, manager.tenant(), 2, true).await,
+        bilibi_company::assign(&mut blocked, manager.tenant(), 2, true).await,
     );
     blocked.rollback().await?;
     tx.rollback().await?;

@@ -36,7 +36,7 @@ or cache reach across requests.
 
 Search uses one fresh capability snapshot without per-candidate decision logs.
 Direct deny wins over grants and `grant_all`; platform capabilities additionally
-need explicit operator identity. An agent reaches every capability its person
+need explicit operator identity. Tenancy reproofs read the actor and agent grant live; owner standing additionally re-reads the installation bootstrap receipt and refuses impersonation. An agent holds only its own person's standing, and an owner-only write still requires its declared step-up policy. An agent reaches every capability its person
 holds, administration included, and never more. The one exception is
 impersonation (`*.impersonate`): an agent switching to another identity would
 break "the agent acts as its person" in the audit trail, so it is never agent
@@ -194,7 +194,7 @@ A page's write event calls the contract the agent doors call, through `base/agen
 
 - `Call` names the live request's scope and credential (`LiveRequest::credential`), the page service, the event and the contract. The browser session is the plan's credential: proved and held (key-share lock) on the plan's own transaction, so a sign-out cannot race the write.
 - Owner refusals come back typed: `InvalidInput(fields)`, `Forbidden`, `NotFound`, `Backend(Conflict)`, … Return `Backend(Unauthorized)` and `Backend(StepUpRequired { .. })` from the page unchanged: the host signs the browser in again or sends it to confirm and back.
-- Core Person, Core Affiliation, Core Company's relationship screens and Base Events' replay page are the running examples.
+- Core Person, Core Affiliation, Core Company's relationship screens, Core Tenant Administration and Base Events' replay page are the running examples.
 
 ## Page writes declaration and check
 
@@ -227,7 +227,6 @@ Each gap is a `Pending` declaration in the owning module, with its reason. Remov
 | `base/session.pages` | Ending sessions |
 | `base/settings_editor.pages` | Saving and restoring settings |
 | `base/system.pages` | Localization changes |
-| `base/tenancy.pages` | Tenant administration |
 | `base/tiling.pages` | Workspace and shared layouts |
 | `base/workflow.pages` | The workflow reference page |
 | `core/address.pages` | Addresses (no `core.address` contract) |
@@ -236,3 +235,9 @@ Each gap is a `Pending` declaration in the owning module, with its reason. Remov
 | `core/geonames.pages` | Postcode corrections |
 | `core/user.pages`, `core/user.query-pages` | Accounts, passwords, two-factor, notifications, saved queries |
 | `core/user_administration.pages` | Account administration |
+
+## Tenant provisioning
+
+[Core Tenant Administration](../../core/tenant_administration/README.md) registers `core.tenant_administration.tenant.list`, `.get` and `.create`. The Tenants page uses `PageContracts` for its directory reads and create event, with no pending write allowance. Search and describe discover these contracts through the same registry as the ChatGPT plugin; the plugin contains no tenant-specific logic.
+
+The create input names the tenant, a `primary_company` and optional `additional_companies` names. One reviewed commit creates the tenant, companies and primary assignment on the plan transaction. Tenant-create permission requires the platform operator's standing and capability; its declared step-up policy applies to both doors. Company provisioning takes Tenancy's sealed receipt for a fresh insert, never an input tenant id or a retargeted scope. Creating a tenant does not switch the caller into it or grant access to its business data.

@@ -40,7 +40,7 @@ pub async fn platform_operator(
     else {
         return Ok(None);
     };
-    let company = match bilibi_company::primary::primary_company(client, tenant).await {
+    let company = match bilibi_company::primary_company(client, tenant).await {
         Ok(Some(company)) => company,
         Ok(None) | Err(Error::Internal) => return Ok(None),
         Err(error) => return Err(error),

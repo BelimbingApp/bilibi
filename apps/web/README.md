@@ -4,7 +4,8 @@ Register HTTP pages with `Contribution::new(ROUTES, ...)` from
 `bilibi_module_registry::contributions`. The named service must resolve to
 `bilibi_ui::page::PageService<bilibi_tenancy::Scope, bilibi_database::Error>`,
 wrapping an owner implementation of `Page<Scope, Error>`. The generic UI contract
-imports no identity/database crate, so Tenancy can compose pages without a cycle.
+imports no identity/database crate. Pages that call operation contracts live above
+Agent API, as Core Tenant Administration does for `/tenancy/tenants`.
 Company's adapter in `apps/core/company/src/web.rs` is the current example.
 Do not add module page paths or business dispatch switches to the host router.
 
