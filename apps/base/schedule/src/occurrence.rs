@@ -36,8 +36,6 @@ pub enum Refusal {
     Suppressed,
     /// This exact intended instant was already claimed, by any process, ever.
     AlreadyClaimed,
-    /// The clock changed after the scheduler calculated this occurrence.
-    ClockChanged,
     /// A forbid-overlap definition still holds its lease for an earlier occurrence.
     Overlap,
 }
@@ -48,7 +46,6 @@ impl Refusal {
             Self::Disabled => "disabled",
             Self::Suppressed => "suppressed",
             Self::AlreadyClaimed => "already_claimed",
-            Self::ClockChanged => "clock_changed",
             Self::Overlap => "overlap",
         }
     }
@@ -166,9 +163,9 @@ pub async fn record_skipped(
     item: &Registered,
     intended_at: Timestamp,
     trigger: Trigger,
-    expression: Option<&str>,
     triggered_by: Option<&TriggeredBy>,
 ) -> Result<bool> {
+    let expression = (trigger == Trigger::Scheduled).then_some(item.definition().expression);
     Ok(client.execute(
         "INSERT INTO base_schedule_runs(key,name,expression,trigger,triggered_by_user_id,triggered_by_name,status,started_at,finished_at,runtime_ms,output_excerpt) \
          SELECT $1::text,$2::text,$3::text,$4::text,$5::bigint,$6::text,'skipped',$7::timestamptz,clock_timestamp(),0,'overlap' \

@@ -1,8 +1,5 @@
-//! Immutable contributed recurrences. Code owns what runs and the default clock.
-//! The database records an operator's decision about a definition's fingerprint
-//! and, separately, an operator clock that replaces the contributed expression
-//! and zone for display and for the next run. The fingerprint stays on the
-//! contribution.
+//! Immutable contributed recurrences. Code owns what runs and when; the database
+//! only records an operator's decision about a definition's exact fingerprint.
 use bilibi_module_registry::{Consumer, Entry, RegistryError};
 use serde_json::Value;
 use sha2::{Digest, Sha256};

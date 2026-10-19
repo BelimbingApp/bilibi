@@ -126,8 +126,6 @@ impl InlineSpecimen {
 pub struct InlineSamples {
     pub edit: Html,
     pub edit_saved: Html,
-    pub edit_tooltip: Html,
-    pub readonly_tooltip: Html,
     pub edit_add: Html,
     pub edit_error: Html,
     pub long_read: Html,
@@ -180,25 +178,6 @@ impl InlineSamples {
         Ok(Self {
             edit: Html::render(&InlineEdit {
                 field: edit("", "name", "Edit company name", "Editable entity value"),
-            })?,
-            edit_tooltip: Html::render(&InlineEdit {
-                field: edit(
-                    "-tooltip",
-                    "schedule",
-                    "Edit schedule",
-                    "Every day at 11:17 AM",
-                )
-                .title("17 11 * * * · Asia/Kuala_Lumpur"),
-            })?,
-            readonly_tooltip: Html::render(&InlineEdit {
-                field: edit(
-                    "-readonly-tooltip",
-                    "schedule",
-                    "Schedule",
-                    "Every 5 minutes",
-                )
-                .title("*/5 * * * * · Etc/UTC")
-                .readonly(),
             })?,
             edit_saved: Html::render(&InlineEdit {
                 field: edit("-saved", "name", "Edit company name", "Bilimbi Industries")

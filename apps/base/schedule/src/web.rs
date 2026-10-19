@@ -34,10 +34,9 @@ use bilibi_ui::{
         PageFuture, PageRequest,
     },
     params, Alert, BadgeKind, BuiltinColumn, Button, ButtonVariant, Card, ColumnType,
-    ColumnsOutcome, CommitStates, CommitStatus, ConfirmDialog, Filter, FilterToolbar, FlashMap,
-    FlexRow, FlexTable, Html, InlineEdit, InlineField, ListColumns, ListSpec, ListState,
-    PageCounts, Pagination, RowMode, SortDir, StatusKind, Tab, TableEmpty, Tabs, ToolbarControl,
-    NO_FLASH,
+    ColumnsOutcome, ConfirmDialog, Filter, FilterToolbar, FlashMap, FlexRow, FlexTable, Html,
+    ListColumns, ListSpec, ListState, PageCounts, Pagination, RowMode, SortDir, StatusKind, Tab,
+    TableEmpty, Tabs, ToolbarControl, NO_FLASH,
 };
 use jiff::{civil::Date, tz::TimeZone, Timestamp};
 use serde_json::Value;
@@ -238,8 +237,8 @@ impl Command {
                 "This version ({print}) is approved, but the task stays paused until you resume it. Any later change to the task needs approval again."
             ),
             Self::Enable => format!(
-                "It will run on this schedule: {} using this version ({print}). Any later change to the task stops it until approved.",
-                phrase::sentence(&task.expression, &task.timezone)
+                "It will run on its schedule ({}, {}) using this version ({print}). Any later change to the task stops it until approved.",
+                task.expression, task.timezone
             ),
             Self::Pause => "Runs already queued are cancelled. You can resume the task later.".into(),
             Self::Disable => "Runs already queued are cancelled, and it will not run again until it is reviewed and enabled.".into(),
@@ -270,8 +269,6 @@ struct Board {
     timezone_request: String,
     pending: Option<(Command, Task)>,
     flash: Option<(StatusKind, String)>,
-    /// Outcome of the schedule fact last saved, keyed by the task key.
-    saves: CommitStates,
 }
 impl Board {
     fn new(core: Arc<Core>, query: &HashMap<String, String>) -> Result<Self> {
@@ -288,7 +285,6 @@ impl Board {
             timezone_request: uuid::Uuid::new_v4().to_string(),
             pending: None,
             flash: None,
-            saves: CommitStates::default(),
         })
     }
 }
@@ -491,7 +487,6 @@ impl Board {
                 };
                 self.outcome(result, success)?;
             }
-            "save_schedule" => self.save_schedule(scope, value).await?,
             "save_retention" => {
                 if !self.allowed(scope, MANAGE).await? {
                     self.flash(StatusKind::Error, DENIED);
@@ -512,136 +507,6 @@ impl Board {
                 self.outcome(result, "Retention saved.")?;
             }
             _ => return Err(Error::Invalid),
-        }
-        Ok(())
-    }
-
-    async fn viewer_zone(&self, scope: &Scope) -> Result<String> {
-        let client = self.core.db.get().await?;
-        let now = Timestamp::now();
-        let locale = self
-            .core
-            .locales
-            .resolve(&**client, scope, None)
-            .await?
-            .locale;
-        let display = self
-            .core
-            .display
-            .display(&**client, scope, None, locale)
-            .await?;
-        Ok(display.clock(self.browser_zone.as_deref(), now).timezone)
-    }
-
-    /// The words are in the top-bar zone. The save stores that zone with the
-    /// cron, so a later viewer does not move the run.
-    async fn save_schedule(&mut self, scope: &Scope, value: &Value) -> Result<()> {
-        let get = |key: &str| value.get(key).and_then(Value::as_str).unwrap_or("");
-        let key = get("field");
-        let typed = get("value").trim();
-        let version = get("version");
-        let invalid = || {
-            CommitStatus::refusal(
-                "Schedule",
-                typed,
-                &["must read like Every day at 11:30 AM, or use five cron fields such as 30 11 * * *"],
-            )
-        };
-        if !self.allowed(scope, MANAGE).await? {
-            self.saves.clear_saved();
-            self.saves.put(key, CommitStatus::Error(DENIED.into()));
-            self.flash(StatusKind::Error, DENIED);
-            return Ok(());
-        }
-        let Ok((zone, expected_expression, expected_zone)) =
-            serde_json::from_str::<(String, String, String)>(version)
-        else {
-            self.saves.put(key, invalid());
-            return Ok(());
-        };
-        let viewer = match self.viewer_zone(scope).await {
-            Ok(zone) => zone,
-            Err(Error::Unauthorized) => return Err(Error::Unauthorized),
-            Err(_) => {
-                self.saves.put(key, CommitStatus::failure());
-                return Ok(());
-            }
-        };
-        let task = match self
-            .core
-            .schedule
-            .tasks(&**self.core.db.get().await?, scope, Timestamp::now())
-            .await
-        {
-            Ok(tasks) => tasks.into_iter().find(|task| task.key == key),
-            Err(Error::Unauthorized) => return Err(Error::Unauthorized),
-            Err(Error::Forbidden) => {
-                self.saves.clear_saved();
-                self.saves.put(key, CommitStatus::Error(DENIED.into()));
-                self.flash(StatusKind::Error, DENIED);
-                return Ok(());
-            }
-            Err(_) => {
-                self.saves.put(key, CommitStatus::failure());
-                return Ok(());
-            }
-        };
-        let Some(task) = task else {
-            self.saves.put(
-                key,
-                CommitStatus::Error("That schedule is no longer installed.".into()),
-            );
-            return Ok(());
-        };
-        if viewer != zone
-            || task.expression != expected_expression
-            || task.timezone != expected_zone
-        {
-            self.saves.put(
-                key,
-                CommitStatus::Error(
-                    "The schedule or time zone changed. Reload the page and try again.".into(),
-                ),
-            );
-            return Ok(());
-        }
-        let Some(expression) = phrase::interpret(typed) else {
-            self.saves.put(key, invalid());
-            return Ok(());
-        };
-        let mut client = self.core.db.get().await?;
-        match self
-            .core
-            .schedule
-            .set_clock(
-                &mut client,
-                scope,
-                key,
-                &expression,
-                &viewer,
-                (&expected_expression, &expected_zone),
-            )
-            .await
-        {
-            Ok(()) => self.saves.put(key, CommitStatus::Saved),
-            Err(Error::Unauthorized) => return Err(Error::Unauthorized),
-            Err(Error::Forbidden) => {
-                self.saves.clear_saved();
-                self.saves.put(key, CommitStatus::Error(DENIED.into()));
-                self.flash(StatusKind::Error, DENIED);
-            }
-            Err(Error::NotFound) => {
-                self.saves.put(
-                    key,
-                    CommitStatus::Error("That schedule is no longer installed.".into()),
-                );
-            }
-            Err(Error::Conflict) => self.saves.put(
-                key,
-                CommitStatus::Error("The schedule changed. Reload the page and try again.".into()),
-            ),
-            Err(Error::Invalid) => self.saves.put(key, invalid()),
-            Err(_) => self.saves.put(key, CommitStatus::failure()),
         }
         Ok(())
     }
@@ -671,7 +536,7 @@ impl Board {
             "tasks" => body.push(&self.tasks_panel(
                 all_tasks.as_deref(),
                 &display,
-                &zone_name,
+                (&zone_name, now),
                 can_execute,
                 can_manage,
             )?),
@@ -754,7 +619,7 @@ impl Board {
         &mut self,
         tasks: Option<&[Task]>,
         display: &DisplayContext,
-        viewer_zone: &str,
+        (viewer_zone, now): (&str, Timestamp),
         can_execute: bool,
         can_manage: bool,
     ) -> Result<Html> {
@@ -824,6 +689,7 @@ impl Board {
                 task.misfire.as_str()
             );
             let duration = duration(task.last_runtime_ms);
+            let schedule = phrase::show(task.expression, task.timezone, viewer_zone, now);
             let cells = [
                 (
                     "name",
@@ -837,6 +703,13 @@ impl Board {
                     Cell::Source {
                         owner: task.owner,
                         route: task.owner_route,
+                    },
+                ),
+                (
+                    "cron",
+                    Cell::Schedule {
+                        words: &schedule.words,
+                        tooltip: &schedule.tooltip,
                     },
                 ),
                 ("next_due", Cell::Instant(&next)),
@@ -862,10 +735,6 @@ impl Board {
             for (id, content) in cells {
                 row = row.slot(id, cell(content, compact)?);
             }
-            row = row.slot(
-                "cron",
-                schedule_fact(task, &dom, viewer_zone, can_manage, &self.saves)?,
-            );
             row.actions = actions(task, &dom, can_execute, can_manage)?;
             rows.push(row);
         }
@@ -1232,7 +1101,6 @@ fn refusal_message(refusal: Refusal) -> &'static str {
         Refusal::Suppressed => "Resume this task before queuing it.",
         Refusal::Unreviewed => "Review and enable this definition before queuing it.",
         Refusal::Overlap => "This task already has an active occurrence.",
-        Refusal::ClockChanged => "The schedule changed. Try again.",
         Refusal::AlreadyClaimed => "Schedule state is unavailable; no action was confirmed.",
     }
 }
@@ -1287,33 +1155,6 @@ fn trigger_label(run: &Run) -> String {
         (Trigger::Scheduled, ..) => "Scheduled".into(),
     }
 }
-fn schedule_fact(
-    task: &Task,
-    dom: &str,
-    viewer_zone: &str,
-    can_manage: bool,
-    saves: &CommitStates,
-) -> Result<Html> {
-    let shown = phrase::show(&task.expression, &task.timezone, viewer_zone);
-    let mut field = InlineField::new(
-        format!("{dom}-schedule"),
-        task.key,
-        format!("Schedule for {}", task.name),
-        shown.words.clone(),
-    )
-    .version(
-        serde_json::to_string(&(viewer_zone, &task.expression, &task.timezone))
-            .map_err(|_| Error::Invalid)?,
-    )
-    .title(shown.tooltip)
-    .status(saves.get(task.key));
-    field.save_event = "save_schedule".into();
-    if !can_manage {
-        field = field.readonly();
-    }
-    render(InlineEdit { field })
-}
-
 fn dom_key(key: &str) -> String {
     key.chars()
         .map(|c| {
@@ -1390,6 +1231,10 @@ pub(crate) enum Cell<'a> {
     Source {
         owner: &'a str,
         route: Option<&'a str>,
+    },
+    Schedule {
+        words: &'a str,
+        tooltip: &'a str,
     },
     Instant(&'a Instant),
     Status {

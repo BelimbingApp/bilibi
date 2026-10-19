@@ -177,23 +177,12 @@ impl Schedule {
         let refusal = match self.definitions.get(metadata.key.as_str()) {
             None => Some("schedule_removed"),
             Some(item) if item.fingerprint != metadata.fingerprint => Some("schedule_changed"),
-            Some(item) => {
-                let clocks = self.saved_clocks(&tx).await?;
-                let active = item.clock(clocks.get(&metadata.key));
-                if metadata.trigger == Trigger::Scheduled
-                    && (metadata.expression.as_deref() != Some(active.expression.as_str())
-                        || active.previous(metadata.intended_at).ok() != Some(metadata.intended_at))
-                {
-                    Some("schedule_changed")
-                } else {
-                    match self.eligibility(&tx, &metadata.key).await? {
-                        Eligibility::Eligible => None,
-                        Eligibility::Unreviewed => Some("schedule_unreviewed"),
-                        Eligibility::Disabled => Some("schedule_disabled"),
-                        Eligibility::Suppressed => Some("schedule_suppressed"),
-                    }
-                }
-            }
+            Some(_) => match self.eligibility(&tx, &metadata.key).await? {
+                Eligibility::Eligible => None,
+                Eligibility::Unreviewed => Some("schedule_unreviewed"),
+                Eligibility::Disabled => Some("schedule_disabled"),
+                Eligibility::Suppressed => Some("schedule_suppressed"),
+            },
         };
         let row = tx
             .query_opt(

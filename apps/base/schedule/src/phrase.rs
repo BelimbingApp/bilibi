@@ -1,12 +1,13 @@
 //! Mirrors Bilimbi Schedule.Web.IndexLive cron presentation, extended for the viewer clock.
-//! Plain words for a cron, and the same schedule read in another time zone.
+//! Plain words for a cron, and the same schedule read in the viewer's zone.
 //!
-//! Words follow the viewer's top-bar zone when the instants are exactly one
-//! cron there. A fixed hour across a daylight-saving change, or a half-hour
-//! offset that gives different minutes to different hours, stays in the stored
-//! zone: the words name that zone instead of showing a wrong conversion.
+//! Words follow the viewer's top-bar zone at the offset it has now, and name
+//! that zone, because a daylight-saving change moves the clock time. When no
+//! single clock time reads right in the viewer's zone (a half-hour offset that
+//! gives different minutes to different hours, or days that do not shift as
+//! one), the words stay in the saved zone and name it.
 use crate::cron::Cron;
-use jiff::{tz::TimeZone, Span, Timestamp};
+use jiff::{tz::TimeZone, Timestamp};
 use std::collections::BTreeSet;
 
 const WEEKDAYS: [&str; 7] = [
@@ -18,24 +19,31 @@ const WEEKDAYS: [&str; 7] = [
     "Friday",
     "Saturday",
 ];
+const CUSTOM: &str = "Custom schedule";
 
 pub(crate) struct Shown {
     /// What the schedule column shows.
     pub words: String,
-    /// Matching cron and zone, with the saved clock when converted.
+    /// The exact saved cron and zone.
     pub tooltip: String,
 }
 
-pub(crate) fn show(expression: &str, stored_zone: &str, viewer_zone: &str) -> Shown {
+pub(crate) fn show(
+    expression: &str,
+    stored_zone: &str,
+    viewer_zone: &str,
+    now: Timestamp,
+) -> Shown {
     let tooltip = format!("{expression} · {stored_zone}");
     let Ok(cron) = Cron::parse(expression) else {
         return Shown {
-            words: "Custom schedule".into(),
+            words: CUSTOM.into(),
             tooltip,
         };
     };
-    let stored_words = words(&cron);
-    if stored_zone == viewer_zone {
+    let pattern = Pattern::from(&cron);
+    let stored_words = words(&pattern);
+    if stored_zone == viewer_zone || stored_words == CUSTOM {
         return Shown {
             words: stored_words,
             tooltip,
@@ -48,57 +56,25 @@ pub(crate) fn show(expression: &str, stored_zone: &str, viewer_zone: &str) -> Sh
             tooltip,
         };
     };
-    if let Some(converted) = project(&cron, &stored_tz, &viewer_tz) {
+    let converted = delta_at(&stored_tz, &viewer_tz, now)
+        .and_then(|delta| shift(&pattern, delta))
+        .map(|converted| (words(&converted), converted))
+        .filter(|(text, _)| text != CUSTOM);
+    let Some((text, converted)) = converted else {
         return Shown {
-            words: words(&converted),
-            tooltip: format!(
-                "{} · {viewer_zone} (saved: {tooltip})",
-                canonical(&converted)
+            words: format!(
+                "{stored_words} ({}; shown in saved time zone)",
+                zone_label(stored_zone)
             ),
+            tooltip,
         };
-    }
-    let label = zone_label(stored_zone);
-    Shown {
-        words: format!("{stored_words} ({label}; shown in saved time zone)"),
-        tooltip: format!(
-            "{tooltip}. Shown in {label}. It does not match one schedule in your time zone."
-        ),
-    }
-}
-
-/// A sentence for a confirmation: the stored wording, then the stored zone.
-pub(crate) fn sentence(expression: &str, timezone: &str) -> String {
-    let words = Cron::parse(expression)
-        .map(|cron| words(&cron))
-        .unwrap_or_else(|_| "Custom schedule".into());
-    if words == "Custom schedule" {
-        format!("{expression}, {timezone}")
+    };
+    let words = if full(&converted.hours, 0, 23) {
+        text
     } else {
-        format!("{words} ({timezone})")
-    }
-}
-
-/// The cron a person typed, as a canonical five-field expression. Words we
-/// show round-trip; a five-field cron is accepted as typed.
-pub(crate) fn interpret(text: &str) -> Option<String> {
-    let text = strip_zone_suffix(text.trim());
-    if text.is_empty() || text.chars().count() > 120 {
-        return None;
-    }
-    let cron = Cron::parse(text).ok().or_else(|| parse_words(text))?;
-    let expression = canonical(&cron);
-    (expression.len() <= 64).then_some(expression)
-}
-
-pub(crate) fn canonical(cron: &Cron) -> String {
-    format!(
-        "{} {} {} {} {}",
-        encode(&cron.minute_values(), 0, 59),
-        encode(&cron.hour_values(), 0, 23),
-        encode(&cron.day_values(), 1, 31),
-        encode(&cron.month_values(), 1, 12),
-        encode(&cron.weekday_values(), 0, 6),
-    )
+        format!("{text} {}", offset_label(&viewer_tz, now))
+    };
+    Shown { words, tooltip }
 }
 
 fn zone_label(zone: &str) -> &str {
@@ -108,25 +84,39 @@ fn zone_label(zone: &str) -> &str {
     }
 }
 
-fn strip_zone_suffix(text: &str) -> &str {
-    match text.rfind(" (") {
-        Some(open) if text.ends_with(')') => text[..open].trim(),
-        _ => text,
+/// The zone's abbreviation at `now` (EDT, UTC), or `GMT+8` when it has none.
+fn offset_label(zone: &TimeZone, now: Timestamp) -> String {
+    let info = zone.to_offset_info(now);
+    let abbreviation = info.abbreviation();
+    if !abbreviation.is_empty() && abbreviation.chars().all(|c| c.is_ascii_alphabetic()) {
+        return abbreviation.to_owned();
+    }
+    let minutes = info.offset().seconds() / 60;
+    let (sign, minutes) = if minutes < 0 {
+        ('-', -minutes)
+    } else {
+        ('+', minutes)
+    };
+    match minutes % 60 {
+        0 => format!("GMT{sign}{}", minutes / 60),
+        rest => format!("GMT{sign}{}:{rest:02}", minutes / 60),
     }
 }
 
-fn words(cron: &Cron) -> String {
-    let minutes = cron.minute_values();
-    let hours = cron.hour_values();
-    let days = cron.day_values();
-    let months = cron.month_values();
-    let weekdays = cron.weekday_values();
-    let open = full(&days, 1, 31) && full(&months, 1, 12) && full(&weekdays, 0, 6);
-    if full(&minutes, 0, 59) && full(&hours, 0, 23) && open {
+fn words(pattern: &Pattern) -> String {
+    let Pattern {
+        minutes,
+        hours,
+        days,
+        months,
+        weekdays,
+    } = pattern;
+    let open = full(days, 1, 31) && full(months, 1, 12) && full(weekdays, 0, 6);
+    if full(minutes, 0, 59) && full(hours, 0, 23) && open {
         return "Every minute".into();
     }
-    if full(&hours, 0, 23) && open {
-        if let Some(step) = every_n(&minutes, 60) {
+    if full(hours, 0, 23) && open {
+        if let Some(step) = every_n(minutes, 60) {
             return format!("Every {step} minutes");
         }
         if minutes.len() == 1 {
@@ -138,7 +128,7 @@ fn words(cron: &Cron) -> String {
         }
     }
     if minutes.len() == 1 && open {
-        if let Some(step) = every_n(&hours, 24) {
+        if let Some(step) = every_n(hours, 24) {
             return if minutes[0] == 0 {
                 if step == 1 {
                     "Every hour".into()
@@ -152,21 +142,21 @@ fn words(cron: &Cron) -> String {
             };
         }
     }
-    if minutes.len() == 1 && hours.len() == 1 && full(&months, 1, 12) && full(&days, 1, 31) {
+    if minutes.len() == 1 && hours.len() == 1 && full(months, 1, 12) && full(days, 1, 31) {
         let time = time_of(hours[0], minutes[0]);
-        if let Some(when) = weekday_phrase(&weekdays) {
+        if let Some(when) = weekday_phrase(weekdays) {
             return format!("{when} at {time}");
         }
     }
     if minutes.len() == 1
         && hours.len() == 1
-        && full(&months, 1, 12)
-        && full(&weekdays, 0, 6)
-        && !full(&days, 1, 31)
+        && full(months, 1, 12)
+        && full(weekdays, 0, 6)
+        && !full(days, 1, 31)
     {
         return format!(
             "{} at {}",
-            monthday_phrase(&days),
+            monthday_phrase(days),
             time_of(hours[0], minutes[0])
         );
     }
@@ -179,7 +169,7 @@ fn words(cron: &Cron) -> String {
         );
         return format!("Every day at {times}");
     }
-    "Custom schedule".into()
+    CUSTOM.into()
 }
 
 fn weekday_phrase(days: &[u8]) -> Option<String> {
@@ -250,245 +240,6 @@ fn full(values: &[u8], min: u8, max: u8) -> bool {
     values.len() == usize::from(max - min) + 1
 }
 
-fn parse_words(text: &str) -> Option<Cron> {
-    let lower = text.to_ascii_lowercase();
-    if let Some(cron) = parse_monthdays(&lower) {
-        return Some(cron);
-    }
-    if lower == "every minute" {
-        return assemble(
-            &all(0, 59),
-            &all(0, 23),
-            &all(1, 31),
-            &all(1, 12),
-            &all(0, 6),
-        );
-    }
-    let rest = lower.strip_prefix("every ")?;
-    if let Some(step) = rest.strip_suffix(" minutes").and_then(|n| n.parse().ok()) {
-        if (2..60).contains(&step) && 60u8.is_multiple_of(step) {
-            return assemble(
-                &stepped(0, 59, step),
-                &all(0, 23),
-                &all(1, 31),
-                &all(1, 12),
-                &all(0, 6),
-            );
-        }
-    }
-    if rest == "hour" {
-        return at_hours(0, &stepped(0, 23, 1));
-    }
-    if let Some(step) = rest.strip_suffix(" hours").and_then(|n| n.parse().ok()) {
-        if (2..24).contains(&step) && 24u8.is_multiple_of(step) {
-            return at_hours(0, &stepped(0, 23, step));
-        }
-    }
-    if let Some(minute) = rest
-        .strip_prefix("hour at minute ")
-        .and_then(|n| n.parse().ok())
-    {
-        if minute < 60 {
-            return at_hours(minute, &all(0, 23));
-        }
-    }
-    if let Some((step, minute)) = hours_at_minute(rest) {
-        return at_hours(minute, &stepped(0, 23, step));
-    }
-    if let Some(times) = rest.strip_prefix("day at ") {
-        let times = times.replace(" and ", ", ");
-        let clocks = times
-            .split(',')
-            .map(str::trim)
-            .filter(|t| !t.is_empty())
-            .map(parse_time)
-            .collect::<Option<Vec<_>>>()?;
-        let clocks = clocks.into_iter().collect::<BTreeSet<_>>();
-        let hours = clocks.iter().map(|time| time.0).collect::<BTreeSet<_>>();
-        let minutes = clocks.iter().map(|time| time.1).collect::<BTreeSet<_>>();
-        if clocks.len() != hours.len() * minutes.len() {
-            return None;
-        }
-        return assemble(
-            &minutes.into_iter().collect::<Vec<_>>(),
-            &hours.into_iter().collect::<Vec<_>>(),
-            &all(1, 31),
-            &all(1, 12),
-            &all(0, 6),
-        );
-    }
-    if let Some(time) = rest.strip_prefix("weekday at ").and_then(parse_time) {
-        return at_weekdays(time, &[1, 2, 3, 4, 5]);
-    }
-    if let Some((days, time)) = rest.split_once(" at ") {
-        let time = parse_time(time)?;
-        let weekdays = parse_weekdays(days)?;
-        return at_weekdays(time, &weekdays);
-    }
-    None
-}
-
-fn hours_at_minute(text: &str) -> Option<(u8, u8)> {
-    let (step, minute) = text.split_once(" hours at minute ")?;
-    let step = step.parse().ok()?;
-    let minute = minute.parse().ok()?;
-    ((2..24).contains(&step) && 24u8.is_multiple_of(step) && minute < 60).then_some((step, minute))
-}
-
-fn parse_monthdays(lower: &str) -> Option<Cron> {
-    let rest = lower
-        .strip_prefix("on day ")
-        .or_else(|| lower.strip_prefix("on days "))?;
-    let (days, time) = rest.split_once(" of every month at ")?;
-    let (hour, minute) = parse_time(time)?;
-    let days = parse_numbers(days)?;
-    if days.is_empty() || days.iter().any(|day| !(1..=31).contains(day)) {
-        return None;
-    }
-    assemble(&[minute], &[hour], &days, &all(1, 12), &all(0, 6))
-}
-
-fn at_hours(minute: u8, hours: &[u8]) -> Option<Cron> {
-    assemble(&[minute], hours, &all(1, 31), &all(1, 12), &all(0, 6))
-}
-
-fn at_weekdays(time: (u8, u8), weekdays: &[u8]) -> Option<Cron> {
-    assemble(&[time.1], &[time.0], &all(1, 31), &all(1, 12), weekdays)
-}
-
-fn parse_time(text: &str) -> Option<(u8, u8)> {
-    let (clock, suffix) = text.trim().rsplit_once(' ')?;
-    let (hour, minute) = clock.split_once(':')?;
-    let hour: u8 = hour.parse().ok()?;
-    let minute: u8 = minute.parse().ok()?;
-    if !(1..=12).contains(&hour) || minute > 59 {
-        return None;
-    }
-    let hour = match suffix {
-        "am" if hour == 12 => 0,
-        "am" => hour,
-        "pm" if hour == 12 => 12,
-        "pm" => hour + 12,
-        _ => return None,
-    };
-    Some((hour, minute))
-}
-
-fn parse_weekdays(text: &str) -> Option<Vec<u8>> {
-    if text == "day" || text == "weekday" {
-        return None;
-    }
-    let mut days = Vec::new();
-    for part in text.replace(" and ", ", ").split(',') {
-        let name = part.trim();
-        if name.is_empty() {
-            continue;
-        }
-        let index = WEEKDAYS
-            .iter()
-            .position(|day| day.eq_ignore_ascii_case(name))?;
-        let index = u8::try_from(index).ok()?;
-        if !days.contains(&index) {
-            days.push(index);
-        }
-    }
-    if days.is_empty() {
-        return None;
-    }
-    days.sort_unstable();
-    Some(days)
-}
-
-fn parse_numbers(text: &str) -> Option<Vec<u8>> {
-    let mut numbers = Vec::new();
-    for part in text.replace(" and ", ", ").split(',') {
-        let part = part.trim();
-        if part.is_empty() {
-            continue;
-        }
-        let number = part.parse().ok()?;
-        if !numbers.contains(&number) {
-            numbers.push(number);
-        }
-    }
-    numbers.sort_unstable();
-    (!numbers.is_empty()).then_some(numbers)
-}
-
-fn all(min: u8, max: u8) -> Vec<u8> {
-    (min..=max).collect()
-}
-
-fn stepped(min: u8, max: u8, step: u8) -> Vec<u8> {
-    (min..=max).step_by(usize::from(step)).collect()
-}
-
-fn assemble(
-    minutes: &[u8],
-    hours: &[u8],
-    days: &[u8],
-    months: &[u8],
-    weekdays: &[u8],
-) -> Option<Cron> {
-    let expression = format!(
-        "{} {} {} {} {}",
-        encode(minutes, 0, 59),
-        encode(hours, 0, 23),
-        encode(days, 1, 31),
-        encode(months, 1, 12),
-        encode(weekdays, 0, 6),
-    );
-    let cron = Cron::parse(&expression).ok()?;
-    (cron.minute_values() == minutes
-        && cron.hour_values() == hours
-        && cron.day_values() == days
-        && cron.month_values() == months
-        && cron.weekday_values() == weekdays)
-        .then_some(cron)
-}
-
-fn encode(values: &[u8], min: u8, max: u8) -> String {
-    if values.is_empty() {
-        return min.to_string();
-    }
-    if full(values, min, max) {
-        return "*".into();
-    }
-    if let Some(step) = arithmetic_step(values) {
-        let start = values[0];
-        let end = *values.last().unwrap();
-        if step == 1 {
-            return format!("{start}-{end}");
-        }
-        let covers = u16::from(end) + u16::from(step) > u16::from(max)
-            && values.len() == usize::from((max - start) / step) + 1;
-        if covers && start == min {
-            return format!("*/{step}");
-        }
-        if covers {
-            return format!("{start}/{step}");
-        }
-        return format!("{start}-{end}/{step}");
-    }
-    let mut parts = Vec::new();
-    let mut index = 0;
-    while index < values.len() {
-        let start = values[index];
-        let mut end = start;
-        while index + 1 < values.len() && values[index + 1] == end + 1 {
-            index += 1;
-            end = values[index];
-        }
-        if start == end {
-            parts.push(start.to_string());
-        } else {
-            parts.push(format!("{start}-{end}"));
-        }
-        index += 1;
-    }
-    parts.join(",")
-}
-
 fn arithmetic_step(values: &[u8]) -> Option<u8> {
     if values.len() < 2 {
         return None;
@@ -503,7 +254,7 @@ fn arithmetic_step(values: &[u8]) -> Option<u8> {
         .then_some(step)
 }
 
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Clone)]
 struct Pattern {
     minutes: Vec<u8>,
     hours: Vec<u8>,
@@ -525,36 +276,6 @@ impl Pattern {
     fn open_days(&self) -> bool {
         full(&self.days, 1, 31) && full(&self.months, 1, 12) && full(&self.weekdays, 0, 6)
     }
-}
-
-fn project(cron: &Cron, stored: &TimeZone, viewer: &TimeZone) -> Option<Cron> {
-    let deltas = offset_deltas(stored, viewer)?;
-    if deltas.is_empty() {
-        return None;
-    }
-    if deltas.len() == 1 && deltas.contains(&0) {
-        return Some(cron.clone());
-    }
-    let pattern = Pattern::from(cron);
-    let mut shifted = None;
-    for delta in deltas {
-        let next = shift(&pattern, delta)?;
-        if shifted.as_ref().is_some_and(|seen| seen != &next) {
-            return None;
-        }
-        shifted = Some(next);
-    }
-    let shifted = shifted?;
-    if shifted == pattern {
-        return Some(cron.clone());
-    }
-    assemble(
-        &shifted.minutes,
-        &shifted.hours,
-        &shifted.days,
-        &shifted.months,
-        &shifted.weekdays,
-    )
 }
 
 fn shift(pattern: &Pattern, delta: i32) -> Option<Pattern> {
@@ -647,32 +368,6 @@ fn clock_fields(pairs: &[(i32, u8, u8)]) -> Option<(Vec<u8>, Vec<u8>)> {
         return None;
     }
     Some((hours.into_iter().collect(), minutes.into_iter().collect()))
-}
-
-fn offset_deltas(stored: &TimeZone, viewer: &TimeZone) -> Option<BTreeSet<i32>> {
-    // Inspect every transition over a full Gregorian cycle, including the
-    // recurring future rules. A current offset alone would mislabel DST clocks.
-    let start = Timestamp::now();
-    let end = start
-        .to_zoned(TimeZone::UTC)
-        .checked_add(Span::new().years(400))
-        .ok()?
-        .timestamp();
-    let mut deltas = BTreeSet::from([delta_at(stored, viewer, start)?]);
-    for zone in [stored, viewer] {
-        for transition in zone.following(start) {
-            if transition.timestamp() > end {
-                break;
-            }
-            let before = transition
-                .timestamp()
-                .checked_sub(Span::new().seconds(1))
-                .ok()?;
-            deltas.insert(delta_at(stored, viewer, before)?);
-            deltas.insert(delta_at(stored, viewer, transition.timestamp())?);
-        }
-    }
-    Some(deltas)
 }
 
 fn delta_at(stored: &TimeZone, viewer: &TimeZone, at: Timestamp) -> Option<i32> {

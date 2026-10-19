@@ -300,20 +300,10 @@ impl Schedule {
         let Ok(latest) = occurrence::latest_scheduled(client, &keys).await else {
             return DueWork::Unknown;
         };
-        let Ok(clocks) = self.saved_clocks(client).await else {
-            return DueWork::Unknown;
-        };
         let due = tasks
             .iter()
             .filter(|task| task.review == ReviewState::Enabled && !task.suppressed)
-            .filter_map(|task| {
-                let intended = self
-                    .definition(task.key)?
-                    .clock(clocks.get(task.key))
-                    .previous(now)
-                    .ok()?;
-                Some((task, intended))
-            })
+            .filter_map(|task| Some((task, self.definition(task.key)?.previous(now).ok()?)))
             .any(|(task, intended)| latest.get(task.key).is_none_or(|at| *at < intended));
         if due {
             DueWork::Due

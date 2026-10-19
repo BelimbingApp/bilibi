@@ -3,8 +3,6 @@
 <div><h2 class="text-base font-semibold text-ink-strong">Inline facts</h2><p class="text-sm text-ink-muted">Read-first facts: the stored value is the trigger. Nothing is painted until the owner replies; the fact reads "Saving…" for its own round trip, then reports the outcome on itself. This page has no live socket, so it shows the read and outcome states; <code>/inline-reference</code> in the <code>u5-inline</code> example runs the lifecycle.</p></div>
 {% call ui::card(id="specimen-inline-edit-card", title="Inline edit", inner_class="space-y-4 p-4") %}
 <div><p class="mb-2 text-xs text-ink-muted">Click the value, type, then press Enter or leave the field.</p>{{ inline.edit }}</div>
-<div><p class="mb-2 text-xs text-ink-muted">Cron in a tooltip</p>{{ inline.edit_tooltip }}</div>
-<div><p class="mb-2 text-xs text-ink-muted">Read-only value with a tooltip</p>{{ inline.readonly_tooltip }}</div>
 <div class="grid gap-4 border-t border-line pt-4 sm:grid-cols-3">
 <div><p class="mb-2 text-xs text-ink-muted">Saved, with a hint</p>{{ inline.edit_saved }}</div>
 <div><p class="mb-2 text-xs text-ink-muted">Adds rather than edits</p>{{ inline.edit_add }}</div>

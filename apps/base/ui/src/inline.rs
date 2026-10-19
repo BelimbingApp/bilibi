@@ -105,8 +105,6 @@ pub struct InlineField {
     pub placeholder: String,
     /// One short plain sentence under the fact, like a field's hint.
     pub hint: String,
-    /// Native tooltip and accessible description for the resting value.
-    pub title: String,
     pub status: CommitStatus,
     pub class: String,
     pub input_class: String,
@@ -133,7 +131,6 @@ impl InlineField {
             autofocus: true,
             placeholder: String::new(),
             hint: String::new(),
-            title: String::new(),
             status: CommitStatus::None,
             class: String::new(),
             input_class: String::new(),
@@ -163,11 +160,6 @@ impl InlineField {
     }
     pub fn hint(mut self, hint: impl Into<String>) -> Self {
         self.hint = hint.into();
-        self
-    }
-    /// Hover and focus text for the resting value, such as a stored cron.
-    pub fn title(mut self, title: impl Into<String>) -> Self {
-        self.title = title.into();
         self
     }
     /// The trigger's `aria-describedby`: the hint, then the outcome.

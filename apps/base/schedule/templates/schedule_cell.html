@@ -14,6 +14,8 @@
 <div class="min-w-[13rem]"><p class="font-medium text-ink">{{ name }}</p>{% if !compact %}<p class="font-mono text-xs text-ink-muted">{{ key }}</p>{% endif %}</div>
 {%- when Cell::Source { owner, route } -%}
 {% call ui::badge() %}{{ source }}{% endcall %}{% if !compact %}<div class="mt-1 text-xs text-ink-muted">{% if let Some(route) = route %}<a href="{{ route }}" class="font-mono text-action hover:underline">{{ owner }}</a>{% else %}<span class="font-mono">{{ owner }}</span>{% endif %}</div>{% endif %}
+{%- when Cell::Schedule { words, tooltip } -%}
+<span title="{{ tooltip }}" aria-description="{{ tooltip }}" tabindex="0" class="rounded text-xs text-ink focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-strong">{{ words }}</span>
 {%- when Cell::Instant(at) -%}
 {% call datetime(instant=at) %}{% endcall %}
 {%- when Cell::Status { kind, label, detail } -%}

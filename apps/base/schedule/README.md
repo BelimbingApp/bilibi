@@ -129,9 +129,7 @@ and every function takes the instant as an argument:
   wall-clock search skips to the following day while the first pass of a fold is
   running, so `next` here also considers the repeat that is still ahead.
 
-The board shows each schedule in the viewer's top-bar zone, in plain words ("Every day at 11:17 AM", "Every 5 minutes"). The matching cron and its zone sit on that text as a tooltip, alongside the saved cron when converted. When the instants are not exactly one cron in the viewer's zone (a fixed hour across a daylight-saving change, or a half-hour offset that splits a range), the words name the saved zone and say they are shown in it.
-
-An operator who can manage the schedule edits those words. The time they type is the top-bar zone, and the save stores that zone with the cron (`base_schedule_clocks`), so another viewer's zone does not move the run. A built-in task keeps its contributed zone until that save. Deleting the row (saving the contributed clock again) restores it. The fingerprint does not include this clock. Saves recheck permission and the previous clock inside the transaction. A poll rechecks its occurrence under the same lock; queued scheduled work that no longer matches the saved clock is cancelled before it starts.
+The board's Schedule column reads each cron in plain words in the viewer's top-bar zone, converted at the zone's offset now ("Every day at 11:17 PM EDT"). The words name that zone, because a daylight-saving change moves a fixed clock time. A cadence with no clock time ("Every 5 minutes") has no zone to name. When no single clock time reads right in the viewer's zone, the words stay in the saved zone and say so ("Every day at 3:17 AM (UTC; shown in saved time zone)"). The exact saved cron and zone are the tooltip. This is display only: the contributed expression and zone still decide when the task runs, and Next run is the real next instant in the viewer's zone.
 
 Replay any moment with `cargo run -p bilibi-schedule --example schedule-walkthrough -- dst [key instant]`
 (no database). The other modes use a disposable database
@@ -171,7 +169,7 @@ healthy default). The URL keeps Bilimbi's names (`tab`, `task_search`,
 `start_date`, `end_date`, `run_sort`, `run_dir`, `page`, `page_size`).
 
 `view` reads, `execute` queues Run now, `manage` enables, disables, pauses,
-resumes, edits the schedule and changes retention. The page shows controls from the actor's
+resumes and changes retention. The page shows controls from the actor's
 effective capabilities, but every command first re-asks
 `authorize_operator` for its capability and the Schedule API checks it again
 inside the transaction; a refusal flashes "You do not have permission for that
@@ -180,13 +178,13 @@ Disable confirm through the shared `ConfirmDialog`, which holds the task it
 describes; the confirmation acts on that held task, never on a key the client
 sends. History dates bound calendar days in the zone the Started column shows: company, browser-local or UTC according to the saved display mode. The shared `BrowserTimeZone` hook reports the local zone and display-mode changes; the display policy validates it and UTC is the fallback.
 
-The board's tables use independent shared `ListColumns`/`FlexTable` arrangements: show/hide and reorder columns, row-height steps, Compact/Normal and Reset. History alone has pagination (25/50/100 rows); tasks remain unpaged as in Bilimbi. The Schedule column is the plain words above; edit it in place. The cron stays in the tooltip, not a second line.
+The board's tables use independent shared `ListColumns`/`FlexTable` arrangements: show/hide and reorder columns, row-height steps, Compact/Normal and Reset. History alone has pagination (25/50/100 rows); tasks remain unpaged as in Bilimbi.
 
 ## Retention and contributed housekeeping
 
 `schedule.history.keep_days` is a global integer setting (default 90, 0–3650,
 zero keeps everything), changed from the board's Settings tab
-(the board’s retention command, operator + `manage`, audited as
+(`board::set_keep_days`, operator + `manage`, audited as
 `schedule.retention.changed`). The daily `base/schedule.occurrence-retention`
 task (03:37 UTC, forbid overlap) deletes finished occurrences and finished run
 rows older than that; unfinished claims and each key's latest scheduled claim
