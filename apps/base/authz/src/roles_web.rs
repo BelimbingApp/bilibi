@@ -257,7 +257,7 @@ impl Pages {
         };
         let mut html = render(Header {
             title: Html::text("Roles"),
-            subtitle: "System roles come built in; custom roles are your own.",
+            subtitle: "Manage roles.",
             title_actions: render(IconButton {
                 context: IconContext::Inline,
                 id: "roles-pin",
