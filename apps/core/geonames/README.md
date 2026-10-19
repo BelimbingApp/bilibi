@@ -159,7 +159,17 @@ flash, never a page-clearing error.
   as values change (`check_postcode`), lists the chosen country's divisions
   as `Name (CC.code)`, and saves through `create_postcode`/`update_postcode`:
   refusals land beside their fields, a stale revision or vanished row closes
-  the dialog with a flash and reloads the list.
+  the dialog with a flash and reloads the list. Import and Update
+  (operators; Belimbing `Postcodes\Index::{import, update}`, absent from
+  Bilimbi): Import opens the country picker (search, a checkbox grid with
+  ISO codes, already-imported countries marked), and pressed again runs the
+  ticked countries' postcodes through `ReferenceImport::import_as`, one
+  country at a time in the background (`src/web/update.rs` `Run`), so the
+  page shows which country is running and the rows so far; Update runs
+  every imported country again. The finished run is one flash that names
+  what was imported, what kept its existing data because the download
+  failed, and what was not imported and why. A result lands on the page
+  that started the run; leaving it loses the message, not the import.
 
 Name updates write the reference tables outside mutation capture, like the
 import, as Bilimbi excludes these schemas from audit; postcode corrections

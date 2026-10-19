@@ -289,10 +289,29 @@ impl ReferenceImport {
         scope: &Scope,
         options: &ImportOptions,
     ) -> Result<Vec<DatasetReport>, ImportError> {
+        self.authorize(scope).await?;
+        self.run(options).await
+    }
+
+    /// One target of a screen's import, checked like `run_as`. A screen that
+    /// imports several countries' postcodes calls this once per country, so
+    /// it can say which one is running and keep the finished ones when a
+    /// later one fails. `options.datasets` and `options.postcodes` are not
+    /// read; the target names what runs.
+    pub async fn import_as(
+        &self,
+        scope: &Scope,
+        target: Target,
+        options: &ImportOptions,
+    ) -> Result<DatasetReport, ImportError> {
+        self.authorize(scope).await?;
+        self.download_and_import(target, options).await
+    }
+
+    async fn authorize(&self, scope: &Scope) -> Result<(), ImportError> {
         let client = self.db.get().await.map_err(bilibi_database::Error::from)?;
         bilibi_authz::authorize_key(&**client, scope, UPDATE).await?;
-        drop(client);
-        self.run(options).await
+        Ok(())
     }
 
     async fn download_and_import(

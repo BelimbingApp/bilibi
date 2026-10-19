@@ -1,0 +1,32 @@
+{#- The country picker the Postcodes screen's Import opens (Belimbing
+    `livewire.admin.geonames.postcodes.index`, "Select countries to import").
+    Typing in the search box or ticking a country raises pick-countries with
+    the form's values (data-change); the server keeps the selection, also for
+    countries the search hides, and draws the grid again. A country whose
+    postcodes are already imported is marked and cannot be ticked: Update
+    refreshes it. -#}
+{%- import "components.html" as ui -%}
+{%- import "forms.html" as form -%}
+<div class="flex items-start justify-between gap-3">
+<div class="min-w-0">
+<h2 id="country-picker-title" class="text-sm font-semibold text-ink">Select countries to import</h2>
+<p class="mt-0.5 text-xs text-ink-muted">Already imported countries are marked. Use the Update button to refresh their data.</p>
+</div>
+{{ close|safe }}
+</div>
+<form id="country-picker-form" data-event="pick-countries" data-change class="mt-3">
+<label for="country-picker-search" class="sr-only">Search countries</label>
+<div class="relative">{% call ui::icon(name="search", class="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-ink-faint") %}{% endcall %}{% call form::input(field=search) %}{% endcall %}</div>
+<div id="country-picker-grid" class="mt-2 grid max-h-64 grid-cols-2 gap-1 overflow-y-auto sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+{%- for entry in entries %}
+{%- if entry.imported %}
+<div id="pick-{{ entry.iso }}" class="flex min-w-0 items-center gap-2 rounded-md px-2 py-1 text-sm opacity-60" title="{{ entry.name }} ({{ entry.iso }}): already imported">{% call ui::icon(name="success", class="size-4 shrink-0 text-success") %}{% endcall %}<span class="truncate text-ink-muted">{{ entry.name }}</span><span class="shrink-0 text-xs text-ink-muted">{{ entry.iso }}</span></div>
+{%- else %}
+<div class="flex min-w-0 items-center gap-2 rounded-md px-2 py-1 hover:bg-surface-sunken" title="{{ entry.name }} ({{ entry.iso }})">{% call form::input(field=entry.field) %}{% endcall %}<span class="shrink-0 text-xs text-ink-muted">{{ entry.iso }}</span></div>
+{%- endif %}
+{%- endfor %}
+{%- if entries.is_empty() %}
+<p class="col-span-full px-2 py-4 text-center text-sm text-ink-muted">No countries match your search.</p>
+{%- endif %}
+</div>
+</form>

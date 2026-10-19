@@ -1,27 +1,45 @@
-//! `/geonames/postcodes` (Bilimbi `PostcodesLive`): the per-country totals,
-//! the searchable Postcodes index with an inline place-name correction per
-//! row, and the operator's New/Edit Postcode dialog. Corrections go through
+//! `/geonames/postcodes` (Bilimbi `PostcodesLive`; the Import and Update
+//! are Belimbing `Geonames\Livewire\Postcodes\Index::{import, update}`,
+//! absent from Bilimbi): the per-country totals, the searchable Postcodes
+//! index with an inline place-name correction per row, the operator's
+//! New/Edit Postcode dialog, and the GeoNames import. Import opens the
+//! country picker (`geonames_postcode_picker.html`) and then runs the ticked
+//! countries' postcodes through the shared background `Run`, one country at
+//! a time, so the page says which one is running and shows the rows so far;
+//! Update runs every imported country again. Corrections go through
 //! `Geonames::{create_postcode, update_postcode}`, which keep the sidecar,
 //! the compatible row and the audit trail together and refuse a stale
 //! revision; the index row carries that revision in the fact's `data-id`
 //! (`{id}|{revision}`, Bilimbi's `id_value`), so a redrawn row commits with
 //! the current one.
-use super::*;
+use super::{
+    update::{self, Outcome, Run, Started},
+    *,
+};
 use crate::{
-    FieldError, PostcodeCountrySummary, PostcodeDraft, PostcodeIndex, PostcodeWriteError,
-    Provenance,
+    DownloadStatus, FieldError, ImportError, PostcodeCountrySummary, PostcodeDraft, PostcodeIndex,
+    PostcodeWriteError, Provenance, Target,
 };
 use bilibi_ui::{
+    field_base_class,
     list_state::FILTERS_FORM,
-    page::{LiveBody, LiveFuture, LiveInput, LiveRequest},
-    params, Card, Choice, ColumnType, ColumnsOutcome, CommitStates, CommitStatus, CreateButton,
-    Field, FilterToolbar, FlexRow, FlexTable, Header, IconButton, IconContext, InlineEdit,
-    InlineField, InputKind, ListColumns, Modal, ModalWidth, PageCounts, Pagination, RowMode,
-    TableEmpty, ToolbarControl,
+    page::{LiveBody, LiveFuture, LiveInput, LiveRequest, Subscription},
+    params, Alert, ButtonVariant, Card, Choice, ColumnType, ColumnsOutcome, CommitStates,
+    CommitStatus, CreateButton, Field, FilterToolbar, FlexRow, FlexTable, Header, IconButton,
+    IconContext, InlineEdit, InlineField, InputKind, ListColumns, Modal, ModalWidth, PageCounts,
+    Pagination, RowMode, TableEmpty, ToolbarControl,
 };
-use std::sync::LazyLock;
+use std::{collections::BTreeSet, sync::LazyLock};
 
 const DENIED: &str = "You do not have permission to update postcodes.";
+const IMPORT_DENIED: &str = "You do not have permission to import postcodes.";
+const NONE_SELECTED: &str = "Select at least one country to import.";
+/// The picker's checkboxes post `country[MY]=true|false`; the search box
+/// posts `country_search`.
+const PICKER_FORM: &str = "country";
+const PICKER_SEARCH: &str = "country_search";
+/// A flash lists at most this many countries by name.
+const NAMED_COUNTRIES: usize = 6;
 const NOT_CHANGED: &str = "Postcode was not changed. Review the values and try again.";
 const GONE: &str = "Postcode is no longer available.";
 const FORM: &str = "postcode";
@@ -102,10 +120,55 @@ fn postcodes_query(list: &ListState, summary: &ListState) -> HashMap<String, Str
 struct View<'a> {
     flash: FlashMap<'a>,
     header: Html,
+    picker: Html,
+    progress: Html,
     summary: Html,
     toolbar: Html,
     card: Html,
     modal: Html,
+}
+#[derive(Template)]
+#[template(path = "geonames_postcode_picker.html")]
+struct PickerView {
+    close: Html,
+    search: Field,
+    entries: Vec<PickerEntry>,
+}
+/// One country in the picker: ticked through `field`, or marked as already
+/// imported.
+struct PickerEntry {
+    iso: String,
+    name: String,
+    imported: bool,
+    field: Field,
+}
+/// The open country picker: what the search box holds and which countries
+/// are ticked, also the ones the search hides right now.
+struct Picker {
+    /// Every country as `(name, iso)`, by name.
+    countries: Vec<(String, String)>,
+    search: String,
+    selected: BTreeSet<String>,
+}
+/// Which control started the run; it words the progress and the result.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RunKind {
+    Import,
+    Update,
+}
+impl RunKind {
+    fn verb(self) -> &'static str {
+        match self {
+            Self::Import => "imported",
+            Self::Update => "updated",
+        }
+    }
+    fn gerund(self) -> &'static str {
+        match self {
+            Self::Import => "Importing",
+            Self::Update => "Updating",
+        }
+    }
 }
 #[derive(Template)]
 #[template(path = "geonames_postcode_form.html")]
@@ -149,6 +212,9 @@ pub(super) struct Postcodes {
     statuses: CommitStates,
     shown: Option<Shown>,
     draft: Option<Draft>,
+    picker: Option<Picker>,
+    run: Run,
+    run_kind: RunKind,
 }
 
 impl Postcodes {
@@ -168,6 +234,9 @@ impl Postcodes {
             statuses: CommitStates::default(),
             shown: None,
             draft: None,
+            picker: None,
+            run: Run::new(),
+            run_kind: RunKind::Import,
         })
     }
 
@@ -447,6 +516,349 @@ impl Postcodes {
         }
     }
 
+    fn imported_isos(&self) -> BTreeSet<String> {
+        self.shown
+            .iter()
+            .flat_map(|shown| shown.summaries.iter())
+            .map(|summary| summary.country_iso.clone())
+            .collect()
+    }
+
+    /// "Malaysia (MY)" for a message, or the code alone for a country that
+    /// is not imported.
+    fn country_label(&self, iso: &str) -> String {
+        self.shown
+            .iter()
+            .flat_map(|shown| shown.countries.iter())
+            .find(|choice| choice.value == iso)
+            .map(|choice| choice.label.clone())
+            .unwrap_or_else(|| iso.to_owned())
+    }
+
+    /// Import pressed with the picker closed: open it (Belimbing
+    /// `toggleCountryPicker`). The control only shows for an operator; this
+    /// asks the flag the last load read, and the import itself asks the
+    /// database again.
+    async fn open_picker(&mut self) -> Result<()> {
+        let can_update = self
+            .shown
+            .as_ref()
+            .is_some_and(|shown| shown.reader.can_update);
+        if !can_update {
+            self.flash.put(StatusKind::Error, IMPORT_DENIED);
+            return Ok(());
+        }
+        if self.picker.is_some() {
+            return Ok(());
+        }
+        let countries = self
+            .pages
+            .geonames
+            .list_countries()
+            .await?
+            .into_iter()
+            .map(|country| (country.country, country.iso))
+            .collect();
+        self.flash.clear();
+        self.picker = Some(Picker {
+            countries,
+            search: String::new(),
+            selected: BTreeSet::new(),
+        });
+        Ok(())
+    }
+
+    /// The picker form changed: the search text, and every checkbox the
+    /// search showed as `true`/`false`. A country the search hid posted
+    /// nothing and keeps its tick.
+    fn pick(&mut self, event: &Value) {
+        let Some(picker) = &mut self.picker else {
+            return;
+        };
+        if let Some(search) = event.get(PICKER_SEARCH).and_then(Value::as_str) {
+            picker.search = search.chars().take(100).collect();
+        }
+        // Read every `country[XX]` key here: `params::form_values` keeps
+        // 64 fields, and an unfiltered grid posts one per country.
+        let keys = event.as_object().into_iter().flatten();
+        for (key, value) in keys {
+            let Some(iso) = key
+                .strip_prefix(PICKER_FORM)
+                .and_then(|key| key.strip_prefix('['))
+                .and_then(|key| key.strip_suffix(']'))
+                .and_then(crate::normalize_iso)
+            else {
+                continue;
+            };
+            if value.as_str() == Some("true") {
+                picker.selected.insert(iso);
+            } else {
+                picker.selected.remove(&iso);
+            }
+        }
+    }
+
+    /// Import pressed with the picker open: run the ticked countries, in
+    /// ISO order, and close the picker (Belimbing `import`). A country
+    /// imported since the picker opened is skipped: Update owns it.
+    async fn start_import(&mut self, scope: &Scope) -> Result<()> {
+        let imported = self.imported_isos();
+        let targets: Vec<Target> = self
+            .picker
+            .as_ref()
+            .map(|picker| {
+                picker
+                    .selected
+                    .iter()
+                    .filter(|iso| !imported.contains(*iso))
+                    .cloned()
+                    .map(Target::Postcodes)
+                    .collect()
+            })
+            .unwrap_or_default();
+        if targets.is_empty() {
+            self.flash.put(StatusKind::Error, NONE_SELECTED);
+            return Ok(());
+        }
+        self.start(scope, RunKind::Import, targets, IMPORT_DENIED)
+            .await
+    }
+
+    /// Update pressed: run every imported country again (Belimbing `update`).
+    async fn start_update(&mut self, scope: &Scope) -> Result<()> {
+        let targets: Vec<Target> = self
+            .imported_isos()
+            .into_iter()
+            .map(Target::Postcodes)
+            .collect();
+        if targets.is_empty() {
+            return Ok(());
+        }
+        self.start(scope, RunKind::Update, targets, DENIED).await
+    }
+
+    async fn start(
+        &mut self,
+        scope: &Scope,
+        kind: RunKind,
+        targets: Vec<Target>,
+        denied: &'static str,
+    ) -> Result<()> {
+        match self.run.start(&self.pages, scope, targets).await? {
+            Started::Ok => {
+                self.run_kind = kind;
+                self.picker = None;
+                self.flash.clear();
+            }
+            Started::Busy => {}
+            Started::Denied => {
+                self.write_forbidden();
+                self.flash.put(StatusKind::Error, denied);
+            }
+        }
+        Ok(())
+    }
+
+    /// The finished run as one flash: what was imported, what was kept as it
+    /// was because the download failed, and what was not imported and why.
+    fn finish(&mut self, outcomes: Vec<Outcome>) {
+        if outcomes
+            .iter()
+            .any(|outcome| matches!(outcome.result, Err(ImportError::Access(Error::Forbidden))))
+        {
+            self.write_forbidden();
+            self.flash.put(StatusKind::Error, IMPORT_DENIED);
+            return;
+        }
+        let verb = self.run_kind.verb();
+        let total = outcomes.len();
+        let mut done: Vec<String> = Vec::new();
+        let mut rows = 0;
+        let mut kept: Vec<String> = Vec::new();
+        let mut failed: Vec<String> = Vec::new();
+        for outcome in &outcomes {
+            let Target::Postcodes(iso) = &outcome.target else {
+                continue;
+            };
+            let label = self.country_label(iso);
+            match &outcome.result {
+                Ok(report) => match &report.download {
+                    DownloadStatus::Fallback(cause) => kept.push(format!(
+                        "{label} ({}{}; kept the existing {} rows)",
+                        update::fallback_cause(cause),
+                        update::as_of(report.cached_at),
+                        format_integer(report.imported as i64)
+                    )),
+                    _ => {
+                        rows += report.imported;
+                        done.push(format!(
+                            "{label}: {} rows",
+                            format_integer(report.imported as i64)
+                        ));
+                    }
+                },
+                Err(error) => {
+                    failed.push(format!("{label}: {}", update::not_changed_advice(error)))
+                }
+            }
+        }
+        let mut sentences = Vec::new();
+        match done.len() {
+            0 => {}
+            1 => sentences.push(format!("Postcodes {verb} for {}.", done[0])),
+            n if n == total => sentences.push(format!(
+                "Postcodes {verb} for {n} countries, {} rows in all: {}.",
+                format_integer(rows as i64),
+                named(&done)
+            )),
+            n => sentences.push(format!(
+                "Postcodes {verb} for {n} of {total} countries, {} rows in all: {}.",
+                format_integer(rows as i64),
+                named(&done)
+            )),
+        }
+        if !kept.is_empty() {
+            sentences.push(format!(
+                "Not {verb}, because the download failed: {}. Try Update again later.",
+                named(&kept)
+            ));
+        }
+        if !failed.is_empty() {
+            sentences.push(format!("Not {verb}: {}", failed.join(" ")));
+        }
+        let kind = if done.len() == total {
+            StatusKind::Success
+        } else if done.is_empty() && kept.is_empty() {
+            StatusKind::Error
+        } else {
+            StatusKind::Warning
+        };
+        self.flash.put(kind, sentences.join(" "));
+    }
+
+    /// The Import and Update header controls (Belimbing's `actions` slot):
+    /// Import opens the picker, or runs the ticked countries once it is open.
+    fn import_buttons(&self) -> Result<Html> {
+        let (event, label) = match &self.picker {
+            Some(picker) if !picker.selected.is_empty() => (
+                "import-postcodes",
+                format!("Import ({})", picker.selected.len()),
+            ),
+            Some(_) => ("import-postcodes", "Import".to_owned()),
+            None => ("open-country-picker", "Import".to_owned()),
+        };
+        let importing = self.run.busy() && self.run_kind == RunKind::Import;
+        let mut html = Html::raw("<div class=\"flex flex-wrap items-center gap-2\">");
+        html.push(&self.run.button(
+            "postcodes-import",
+            event,
+            "hero-arrow-down-tray",
+            ButtonVariant::Primary,
+            &label,
+            if importing { "Importing…" } else { &label },
+        )?);
+        if !self.imported_isos().is_empty() {
+            let updating = self.run.busy() && self.run_kind == RunKind::Update;
+            html.push(&self.run.button(
+                "postcodes-update",
+                "update-postcodes",
+                "refresh",
+                ButtonVariant::Secondary,
+                "Update",
+                if updating { "Updating…" } else { "Update" },
+            )?);
+        }
+        Ok(html)
+    }
+
+    fn picker_view(&self) -> Result<Html> {
+        let Some(picker) = &self.picker else {
+            return Ok(Html::EMPTY);
+        };
+        let imported = self.imported_isos();
+        let needle = picker.search.trim().to_lowercase();
+        let entries = picker
+            .countries
+            .iter()
+            .filter(|(name, iso)| {
+                needle.is_empty()
+                    || name.to_lowercase().contains(&needle)
+                    || iso.to_lowercase().contains(&needle)
+            })
+            .map(|(name, iso)| PickerEntry {
+                iso: iso.clone(),
+                name: name.clone(),
+                imported: imported.contains(iso),
+                field: Field::named(format!("{PICKER_FORM}[{iso}]"))
+                    .id(format!("pick-{iso}"))
+                    .kind(InputKind::Checkbox)
+                    .checked(picker.selected.contains(iso))
+                    .label(name.clone())
+                    .wrapper_class("min-w-0")
+                    .label_class("min-w-0 gap-2"),
+            })
+            .collect();
+        let mut search = Field::named(PICKER_SEARCH)
+            .id("country-picker-search")
+            .kind(InputKind::Search)
+            .wrapper_class("mb-0")
+            .value(picker.search.clone())
+            .placeholder("Search countries...")
+            .autocomplete("off")
+            .attr("data-debounce", "300")
+            .class(field_base_class(false, "pl-8 pr-3"));
+        search.attrs.maxlength = Some("100".into());
+        let body = render(PickerView {
+            close: render(IconButton {
+                context: IconContext::Inline,
+                id: "country-picker-close",
+                event: "close-country-picker",
+                ..IconButton::new("close", "Close country picker")
+            })?,
+            search,
+            entries,
+        })?;
+        render(Card {
+            id: "postcodes-country-picker",
+            role: "region",
+            labelledby: "country-picker-title",
+            body,
+            ..Card::default()
+        })
+    }
+
+    /// Where the run is, while it goes (Belimbing's "Importing..." notice).
+    fn progress_view(&self) -> Result<Html> {
+        let Some(progress) = self.run.progress() else {
+            return Ok(Html::EMPTY);
+        };
+        let current = progress.current.as_ref().and_then(|target| match target {
+            Target::Postcodes(iso) => Some(self.country_label(iso)),
+            Target::Dataset(_) => None,
+        });
+        let gerund = self.run_kind.gerund();
+        let text = match (progress.total, current) {
+            (1, Some(country)) => format!("{gerund} postcodes for {country}."),
+            (total, Some(country)) => format!(
+                "{gerund} postcodes for {total} countries: {} done, now {country}.",
+                progress.done
+            ),
+            (total, None) => format!(
+                "{gerund} postcodes for {total} countries: {} done.",
+                progress.done
+            ),
+        };
+        render(Alert {
+            kind: StatusKind::Info,
+            id: "postcodes-import-progress",
+            body: Html::raw(format!(
+                "<p class=\"font-medium\">{}</p><p class=\"mt-0.5 text-xs opacity-75\">This may take several minutes. Keep this page open to see the result.</p>",
+                Html::text(&text)
+            )),
+            ..Alert::default()
+        })
+    }
+
     /// Typed controls debounce so the dialog validates as the person types,
     /// as Bilimbi's `phx-change` does, not only when a control loses focus.
     fn form(&self, draft: &Draft, countries: &[Choice]) -> Result<Html> {
@@ -529,18 +941,27 @@ impl Postcodes {
                 ..IconButton::new("bilimbi-pin", "Pin Postcodes to sidebar")
             })?,
             actions: if can_update {
-                render(CreateButton {
+                let mut actions = self.import_buttons()?;
+                actions.push(&render(CreateButton {
                     noun: "Postcode",
                     id: "postcodes-new",
                     event: "new-postcode",
                     button_type: "button",
                     ..CreateButton::default()
-                })?
+                })?);
+                actions.push(&Html::raw("</div>"));
+                actions
             } else {
                 Html::EMPTY
             },
             ..Header::default()
         })?;
+        let picker = if can_update {
+            self.picker_view()?
+        } else {
+            Html::EMPTY
+        };
+        let progress = self.progress_view()?;
 
         let summary = if shown.summaries.is_empty() {
             Html::EMPTY
@@ -719,6 +1140,8 @@ impl Postcodes {
         View {
             flash: self.flash.map(),
             header,
+            picker,
+            progress,
             summary,
             toolbar,
             card,
@@ -732,6 +1155,14 @@ impl Postcodes {
 impl LiveState<Scope, Error> for Postcodes {
     fn update<'a>(&'a mut self, request: LiveRequest<'a, Scope>) -> LiveFuture<'a, Error> {
         Box::pin(async move {
+            // The background import wakes the page after each country: its
+            // rows are there, so this pass reads them; the finished run
+            // becomes the flash.
+            let settled = self.run.settle();
+            let changed = settled.new_outcomes > 0 || settled.finished.is_some();
+            if let Some(outcomes) = settled.finished {
+                self.finish(outcomes);
+            }
             let mut requery = true;
             match request.input {
                 LiveInput::Refresh => {}
@@ -774,6 +1205,26 @@ impl LiveState<Scope, Error> for Postcodes {
                             }
                         }
                         Some("page") => self.list.put_page(get("page")),
+                        Some("open-country-picker") => {
+                            self.open_picker().await?;
+                            requery = false;
+                        }
+                        Some("close-country-picker") => {
+                            self.picker = None;
+                            requery = false;
+                        }
+                        Some("pick-countries") => {
+                            self.pick(event);
+                            requery = false;
+                        }
+                        Some("import-postcodes") => {
+                            self.start_import(request.scope).await?;
+                            requery = false;
+                        }
+                        Some("update-postcodes") => {
+                            self.start_update(request.scope).await?;
+                            requery = false;
+                        }
                         Some("new-postcode") => {
                             self.open_new().await?;
                             requery = false;
@@ -812,12 +1263,28 @@ impl LiveState<Scope, Error> for Postcodes {
                     }
                 }
             }
-            let html = self.view(request.scope, requery).await?;
+            let html = self.view(request.scope, requery || changed).await?;
             Ok(LiveBody {
                 html,
                 query: postcodes_query(&self.list, &self.summary),
                 ..LiveBody::default()
             })
         })
+    }
+    fn subscriptions(&mut self) -> Vec<Subscription> {
+        vec![self.run.subscription()]
+    }
+}
+
+/// "A, B and C", or the first few "and 4 more".
+fn named(items: &[String]) -> String {
+    if items.len() > NAMED_COUNTRIES {
+        format!(
+            "{} and {} more",
+            items[..NAMED_COUNTRIES].join(", "),
+            items.len() - NAMED_COUNTRIES
+        )
+    } else {
+        items.join(", ")
     }
 }
