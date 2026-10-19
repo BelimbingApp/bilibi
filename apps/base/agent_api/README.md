@@ -93,9 +93,7 @@ A model can report itself directly through any generic tool, with no local clien
 The optional `agent_self_report` argument is available on `search`, `describe`, `guide`, `read`, `plan` and `commit`. MCP connect instructions and tool descriptions ask agents to include it on every call, ask their user for unknown harness/model/version/effort parts, never guess, and omit parts nobody can give. The example is a shape example, not a value to copy.
 
 - The host consumes the argument before operation dispatch; it is never business input or part of plan identity, input or preview comparisons.
-- The argument overrides MCP `params._meta["bilibi/agent-self-report"]`, which overrides `X-Bilibi-Agent-Self-Report`. All use `bilibi_tenancy::SelfReport`'s shape check. Missing or malformed metadata never refuses a request; malformed values are dropped and flagged on the exchange.
-- Valid reports appear as **Self-reported agent** on exchanges, connections and every action and mutation committed by the request. They never authorize anything.
-- **Client identity** separately records the transport User-Agent, or explicitly says an MCP client supplied none. Initialize's `clientInfo` is recorded for that exchange only because the adapter is stateless. It never guesses model details or replaces the self-report. The [host contract](../../web/README.md) owns transport evidence.
+- The argument is the highest-precedence source of the report. Precedence, the shape check, what is recorded and the separate **Client identity** transport evidence are owned by the [host contract](../../web/README.md).
 
 ## Reviewed safe writes
 
