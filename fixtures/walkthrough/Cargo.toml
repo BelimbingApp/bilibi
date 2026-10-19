@@ -11,5 +11,7 @@ publish = false
 bilibi-authz = { path = "../../apps/base/authz" }
 bilibi-database.workspace = true
 bilibi-module-registry.workspace = true
+bilibi-step-up.workspace = true
+bilibi-tenancy = { path = "../../apps/base/tenancy" }
 inventory.workspace = true
 tokio.workspace = true

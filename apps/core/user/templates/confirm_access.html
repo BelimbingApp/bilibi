@@ -1,13 +1,21 @@
 {#- The step-up prompt (GitHub's "Confirm access"; src/two_factor_ui.rs): a
-    step-up action sent the browser here; a current authenticator code or one
-    recovery code opens the session's window and returns to `return`. -#}
+    step-up action sent the browser here; a check opens the session's window
+    and returns to `return`. By the account's method: an authenticator code
+    or one recovery code (`app`); the code of the text message the page sent
+    on opening, with another on request once the wait is over (`text`); or
+    neither yet (`none`), with where to set one up and who adds a phone. -#}
 {% import "components.html" as ui %}
 {% import "feedback.html" as fb %}
 <div data-shared-ui class="mx-auto w-full max-w-md space-y-4 py-8">{{ header }}
 {%- if !notice.is_empty() %}{% call fb::alert(kind=bilibi_ui::StatusKind::Warning, id="confirm-access-notice") %}{{ notice }}{% endcall %}{% endif -%}
-{%- if enabled %}
+{%- if method == "app" %}
 <form id="confirm-access-form" data-event="verify" class="space-y-4 rounded-xl border border-line bg-surface p-6"><p class="text-sm text-muted">You won't be asked again while you keep working. We'll ask again after {{ minutes }} {% if minutes == 1 %}minute{% else %}minutes{% endif %} without activity, or after {{ hours }} {% if hours == 1 %}hour{% else %}hours{% endif %} in total. Some actions always ask.</p>{{ code }}<div class="flex justify-end">{% call ui::button(variant=bilibi_ui::ButtonVariant::Primary, id="confirm-access-verify", button_type="submit", working="Verifying…") %}Verify{% endcall %}</div></form>
+{%- elif method == "text" %}
+<form id="confirm-access-form" data-event="verify" class="space-y-4 rounded-xl border border-line bg-surface p-6"><p id="confirm-access-sent" class="text-sm text-muted">We sent a 6-digit code by text message to <span id="confirm-access-phone" class="font-medium text-ink tabular-nums">{{ phone }}</span>. It expires in 5 minutes. You won't be asked again while you keep working. We'll ask again after {{ minutes }} {% if minutes == 1 %}minute{% else %}minutes{% endif %} without activity, or after {{ hours }} {% if hours == 1 %}hour{% else %}hours{% endif %} in total. Some actions always ask.</p>
+{%- if !info.is_empty() %}{% call fb::alert(kind=bilibi_ui::StatusKind::Info, id="confirm-access-info") %}{{ info }}{% endcall %}{% endif -%}
+{%- for error in errors %}{% call fb::alert(kind=bilibi_ui::StatusKind::Error, id="confirm-access-error") %}{{ error }}{% endcall %}{% endfor -%}
+{{ code }}<div class="flex items-center justify-between gap-2">{{ resend }}{% call ui::button(variant=bilibi_ui::ButtonVariant::Primary, id="confirm-access-verify", button_type="submit", working="Verifying…") %}Verify{% endcall %}</div></form>
 {%- else %}
-<div id="confirm-access-setup" class="space-y-4 rounded-xl border border-line bg-surface p-6"><p class="text-sm text-muted">Set up 2FA in My settings first. You will come back here afterwards.</p><div class="flex justify-end">{% call ui::button(variant=bilibi_ui::ButtonVariant::Primary, id="confirm-access-setup-link", href=setup_href) %}Set up 2FA{% endcall %}</div></div>
+<div id="confirm-access-setup" class="space-y-4 rounded-xl border border-line bg-surface p-6"><p class="text-sm text-muted">This action needs 2FA, and your account has none yet. Set up an authenticator app in My settings, or ask an administrator to add your phone number for codes by text message. You will come back here afterwards.</p><div class="flex justify-end">{% call ui::button(variant=bilibi_ui::ButtonVariant::Primary, id="confirm-access-setup-link", href=setup_href) %}Set up 2FA{% endcall %}</div></div>
 {%- endif %}
 </div>

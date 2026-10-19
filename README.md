@@ -69,18 +69,19 @@ The launcher starts a private database, builds, migrates, seeds and rebuilds on 
 | `BILIBI_USER_SIGNING_KEY` | 64 hex characters, for email verification links |
 | `BILIBI_SETTINGS_KEY` | 64 hex characters. Encrypts secret settings and authenticator keys. Two-factor setup refuses without it |
 | `BILIBI_ENV` | `development`, `staging` or `production`. Unset means `production`. Any other value refuses to boot |
+| `BILIBI_SMS_DIR` | Development only: where the SMS simulator keeps its messages. Default `.local/sms-outbox/` |
 
 Every page, consent page and agent answer says which Bilibi it is, so nobody mistakes a test copy for the live system. Every instance but production shows a badge in the top bar and on the sign-in page; reviews and agent plans name every instance, production included. The name and colour are the Instance settings (`instance.label`, `instance.colour`), read through `bilibi_base::system::Instance::resolve` ([Base System](apps/base/system/README.md)).
 
-`BILIBI_ENV` decides one more thing: whether Base Step-up is enforced.
+Base Step-up (2FA) asks as each tenant's policy says, on every `BILIBI_ENV`: a check within a sliding 30-minute window, capped at 6 hours (tenant settings), or every time. `BILIBI_ENV` decides one more thing: where text-message codes go.
 
-| `BILIBI_ENV` | Step-up operations (declared by each module, set per tenant) |
-|--------------|--------------------------------------------------------------|
-| `development` | Never ask for a code |
-| `staging`, `production`, unset | Ask as each tenant's policy says: a check within a sliding 30-minute window, capped at 6 hours (tenant settings), or every time |
+| `BILIBI_ENV` | Text-message codes |
+|--------------|--------------------|
+| `development` | The SMS simulator keeps them; read them at `/dev/sms-inbox`, which anyone who reaches the server can open |
+| `staging`, `production`, unset | Not sent: no SMS provider is built yet, so only authenticator apps work there |
 
-- Set `BILIBI_ENV=development` only on a developer machine. A missing value never weakens a guard.
-- Each account sets up its authenticator at `/settings/two-factor`. Tenants choose what asks for it at `/authz/step-up`. See [Base Step-up](apps/base/step_up/README.md).
+- Set `BILIBI_ENV=development` only on a developer machine or a Dev server nobody outside the team reaches. A missing value never weakens a guard.
+- Each account sets up its authenticator at `/settings/two-factor`, or an administrator adds its phone number. Tenants choose what asks, sign-in included, at `/authz/step-up`. See [Base Step-up](apps/base/step_up/README.md) and [Base SMS](apps/base/sms/README.md).
 
 Terminate TLS at a reverse proxy, and keep the database on a private network: Bilibi connects to PostgreSQL without TLS.
 

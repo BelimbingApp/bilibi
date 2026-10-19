@@ -34,8 +34,10 @@ impl Environment {
             Role::Production => Self::Production,
         })
     }
-    /// Step-up (`Access::StepUp`) is enforced everywhere but development.
-    pub fn requires_step_up(self) -> bool {
-        self != Self::Development
+    /// Only development binds the SMS simulator and serves its inbox
+    /// (`bilibi_sms::INBOX_PATH`), which anyone who reaches the server can
+    /// read, codes included. Step-up is enforced everywhere.
+    pub fn simulates_sms(self) -> bool {
+        self == Self::Development
     }
 }

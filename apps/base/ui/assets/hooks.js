@@ -1,6 +1,7 @@
 // Browser behaviour for the shared form controls in templates/forms.html:
 // CodeInput, Combobox, SecretReveal, SecretClear, SecretStored and
-// DisclosureDismiss (plus the dashboard's DashboardSort and the form Fold), adapted from Bilimbi's Phoenix hooks (apps/web/assets/js
+// DisclosureDismiss (plus the dashboard's DashboardSort, the form Fold and
+// the CountdownButton's Countdown), adapted from Bilimbi's Phoenix hooks (apps/web/assets/js
 // at the pinned source) with the LiveView JS commands folded into the hooks.
 // Each registers with the shared `data-hook` runtime in ui.js
 // (BilibiUI.registerHook), which mounts a control when it enters the
@@ -615,9 +616,43 @@
     },
   }
 
+  // A button usable again after a wait (CountdownButton): disabled, with the
+  // seconds left after its label, until the wait the server rendered in
+  // data-seconds ends. A new value from the server restarts it. The server
+  // refuses an early use, so the button works without this.
+  const Countdown = {
+    mounted() {
+      this.start()
+    },
+    updated() {
+      if (this.el.dataset.seconds !== this.seen) this.start()
+    },
+    destroyed() {
+      clearInterval(this.timer)
+    },
+    start() {
+      clearInterval(this.timer)
+      this.seen = this.el.dataset.seconds
+      const button = this.el.querySelector("button")
+      const text = this.el.querySelector("[data-countdown-text]")
+      if (!button || !text) return
+      const until = Date.now() + Math.max(0, Number(this.seen) || 0) * 1000
+      const tick = () => {
+        const left = Math.ceil((until - Date.now()) / 1000)
+        const label = left > 0 ? ` (${left} s)` : ""
+        // Writes only what changed, as CodeInput does.
+        if (text.textContent !== label) text.textContent = label
+        if (button.disabled !== left > 0) button.disabled = left > 0
+        if (left <= 0) clearInterval(this.timer)
+      }
+      tick()
+      if (Date.now() < until) this.timer = setInterval(tick, 1000)
+    },
+  }
+
   const registry = window.BilibiUI
   if (!registry) throw new Error("hooks.js needs ui.js loaded first")
-  for (const [name, hook] of Object.entries({CodeInput, Combobox, SecretReveal, SecretClear, SecretStored, DisclosureDismiss, DashboardSort, Fold})) {
+  for (const [name, hook] of Object.entries({CodeInput, Combobox, SecretReveal, SecretClear, SecretStored, DisclosureDismiss, DashboardSort, Fold, Countdown})) {
     registry.registerHook(name, hook)
   }
 })()

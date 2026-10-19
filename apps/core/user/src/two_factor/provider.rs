@@ -1,9 +1,10 @@
-//! The authenticator as Base Step-up's provider: Step-up asks, this answers
-//! about the scope's own account holder. It learns only an operation key and
-//! target as data to record, never what the operation is.
-use super::{Spend, TwoFactorError};
+//! Two-factor as Base Step-up's provider: Step-up asks, this answers about
+//! the scope's own account holder, by whichever method the account uses (an
+//! authenticator app, else a text message). It learns only an operation key
+//! and target as data to record, never what the operation is.
+use super::{Method, Spend, TwoFactorError};
 use crate::UserService;
-use bilibi_step_up::{Provider, Purpose, SessionProof, Spent, WindowState};
+use bilibi_step_up::{Challenge, Provider, Purpose, SessionProof, Spent, WindowState};
 use bilibi_tenancy::{ProofFuture, Scope};
 use std::sync::Arc;
 
@@ -11,7 +12,7 @@ pub struct Authenticator(pub Arc<UserService>);
 
 impl Provider for Authenticator {
     fn enrolled<'a>(&'a self, scope: &'a Scope) -> ProofFuture<'a, bool> {
-        Box::pin(async move { Ok(self.0.two_factor_status(scope).await?.enabled) })
+        Box::pin(async move { Ok(self.0.two_factor_status(scope).await?.method() != Method::None) })
     }
     fn session<'a>(
         &'a self,
@@ -59,7 +60,7 @@ impl Provider for Authenticator {
                 operation: purpose.operation.to_owned(),
                 channel: purpose.channel.as_str(),
             };
-            let outcome = match self.0.prove(scope, code).await {
+            let outcome = match self.0.prove(scope, code, true).await {
                 Ok(proof) => self.0.consume(scope, proof, spend).await,
                 Err(error) => Err(error),
             };
@@ -74,5 +75,26 @@ impl Provider for Authenticator {
     }
     fn prompt<'a>(&'a self, scope: &'a Scope, back: &'a str) -> ProofFuture<'a, String> {
         Box::pin(async move { self.0.step_up_destination(scope, back).await })
+    }
+    /// A text-message account gets a code now, unless one it can still
+    /// enter is already out; an authenticator account has nothing to send.
+    fn challenge<'a>(
+        &'a self,
+        scope: &'a Scope,
+        _purpose: Purpose<'a>,
+    ) -> ProofFuture<'a, Challenge> {
+        Box::pin(async move {
+            if self.0.two_factor_status(scope).await?.method() != Method::TextMessage {
+                return Ok(Challenge::None);
+            }
+            Ok(match self.0.send_two_factor_code(scope, false).await {
+                // Too soon after the last one: that one is still on its way.
+                Ok(_) | Err(TwoFactorError::ResendTooSoon { .. }) => Challenge::Sent,
+                Err(TwoFactorError::TooManyCodes { .. }) => Challenge::Throttled,
+                Err(TwoFactorError::Locked { .. }) => Challenge::Locked,
+                Err(TwoFactorError::Other(error)) => return Err(error),
+                Err(_) => Challenge::None,
+            })
+        })
     }
 }

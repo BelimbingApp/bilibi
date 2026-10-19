@@ -3,7 +3,7 @@
 **Document Type:** Architecture overview
 **Status:** Active
 **Scope:** Layers, modules, composition, data, audit and security of Bilibi. The UI rules are in [`DESIGN.md`](../../DESIGN.md).
-**Last Updated:** 2026-10-18
+**Last Updated:** 2026-10-19
 
 Bilibi is a business application platform written in Rust: a set of small modules that plug into one web host, each owning its own data, pages and rules.
 
@@ -133,7 +133,7 @@ Each Domain and each Extension lives in its own repository, with one or more mod
 
 | Layer | Modules |
 | --- | --- |
-| Base | `agent_api`, `artifacts`, `audit`, `audit_views`, `authz`, `authz_agent`, `dashboard`, `database`, `datetime`, `design_library`, `events`, `grid`, `integration`, `locale`, `mail`, `media`, `menu`, `module_registry`, `notifications`, `party_ids`, `perf`, `ports`, `principal_directory`, `queue`, `schedule`, `security`, `session`, `settings`, `settings_editor`, `software`, `step_up`, `system`, `tenancy`, `tiling`, `ui`, `workflow` |
+| Base | `agent_api`, `artifacts`, `audit`, `audit_views`, `authz`, `authz_agent`, `dashboard`, `database`, `datetime`, `design_library`, `events`, `grid`, `integration`, `locale`, `mail`, `media`, `menu`, `module_registry`, `notifications`, `party_ids`, `perf`, `ports`, `principal_directory`, `queue`, `schedule`, `security`, `session`, `settings`, `settings_editor`, `sms`, `software`, `step_up`, `system`, `tenancy`, `tiling`, `ui`, `workflow` |
 | Core | `address`, `affiliation`, `agent_access`, `agent_plugins`, `company`, `geonames`, `party`, `person`, `user`, `user_administration` |
 
 - `base/security` is a compatibility facade over Session, Tenancy and Authz.
@@ -200,6 +200,7 @@ See also: `apps/base/database/README.md` and `apps/base/audit/README.md`.
 | Concern | Rule |
 | --- | --- |
 | Authentication | Server-held random sessions, Argon2id passwords, 24 h absolute expiry, idle expiry from settings |
+| Second factor | Base Step-up over Core User's two-factor: an authenticator app, or a text-message code for an account with a phone number. Sign-in is a step-up operation; a pending sign-in session proves nothing until its code ([ADR 02](decisions/02-sms-second-factor.md)) |
 | Session cookie | `HttpOnly`, `SameSite=Lax`, `Secure` on HTTPS |
 | CSRF | Non-GET requests need the configured Origin. An authenticated scope also needs `X-CSRF-Token`. The token rotates on impersonation |
 | Authorization | Declared capability vocabulary. Unknown key denies. Direct deny beats every grant. Platform capabilities need operator proof |

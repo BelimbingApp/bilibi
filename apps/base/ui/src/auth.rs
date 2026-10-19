@@ -1,11 +1,14 @@
 //! The credential pages: the centered layout (Bilimbi `Layouts.auth`) and the
 //! sign-in, forgotten-password and reset cards (`LoginLive`,
-//! `ForgotPasswordLive`, `ResetPasswordLive`) as typed templates. The host
+//! `ForgotPasswordLive`, `ResetPasswordLive`) as typed templates, plus the
+//! sign-in code card (no Bilimbi counterpart) in the same layout. The host
 //! owns the routes, the validation and the credential services; these models
 //! own the DOM, the ids and the copy, so a field error lands on the element
 //! Bilimbi puts it on. Field values are the submitted text kept for another
 //! attempt; a password is never echoed back.
-use crate::{Attrs, Field, FlashMap, Html, InputKind, SecretInput};
+use crate::{
+    Attrs, ButtonVariant, CodeInput, CountdownButton, Field, FlashMap, Html, InputKind, SecretInput,
+};
 use askama::Template;
 
 /// The centered credential layout around one card body, with the page-level
@@ -121,6 +124,76 @@ impl LoginPage {
                     .autocomplete("current-password")
                     .required(),
             )?,
+        })
+    }
+}
+
+/// What the sign-in code card shows for one request: after a right password,
+/// when the tenant asks a second factor at sign-in.
+#[derive(Clone, Debug, Default)]
+pub struct VerifyCodeForm {
+    /// The masked number a text-message code went to; empty when the
+    /// account uses an authenticator app.
+    pub phone: String,
+    /// The announced problem above the form: a refused code or send.
+    pub form_error: String,
+    /// What happened, such as another code being sent.
+    pub notice: String,
+    /// Seconds before another text message may be asked for.
+    pub resend_in: i64,
+}
+
+#[derive(Template)]
+#[template(path = "verify_code.html")]
+pub struct VerifyCodePage {
+    pub text_message: bool,
+    pub phone: String,
+    pub form_error: String,
+    pub notice: String,
+    pub code: Html,
+    pub resend: Html,
+}
+
+impl VerifyCodePage {
+    pub fn new(form: &VerifyCodeForm) -> askama::Result<Self> {
+        let text_message = !form.phone.is_empty();
+        let code = if text_message {
+            Html::render(
+                &CodeInput::new("verify-code", "verify[code]", "Verification code", 6).numeric(),
+            )?
+        } else {
+            // An authenticator code, or one recovery code if the phone is lost.
+            Html::render(
+                &Field::in_form("verify", "code")
+                    .id("verify-code")
+                    .label("Authentication code")
+                    .hint("6 digits from the app, or a recovery code")
+                    .autocomplete("one-time-code")
+                    .attr("spellcheck", "false")
+                    .attr("autocapitalize", "off")
+                    .attr("maxlength", "32")
+                    .attrs(Attrs {
+                        required: true,
+                        autofocus: true,
+                        ..Attrs::default()
+                    }),
+            )?
+        };
+        Ok(Self {
+            text_message,
+            phone: form.phone.clone(),
+            form_error: form.form_error.clone(),
+            notice: form.notice.clone(),
+            code,
+            resend: Html::render(&CountdownButton {
+                variant: ButtonVariant::Secondary,
+                id: "verify-code-resend",
+                label: "Resend code",
+                seconds: form.resend_in,
+                button_type: "submit",
+                working: "Sending…",
+                ..CountdownButton::default()
+            })?,
         })
     }
 }

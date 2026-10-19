@@ -37,6 +37,8 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         )
         .await?;
     let admin = app.security.guard(&admin_login.token).await?;
+    // Base Step-up enforces everywhere; nobody is at this console to give a code.
+    bilibi_walkthrough_fixture::console_grants(&app.services, &admin).await?;
     let viewer = app.security.guard(&viewer_login.token).await?;
     let other = app.security.guard(&other_login.token).await?;
     let client = db.get().await?;

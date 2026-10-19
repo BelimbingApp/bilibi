@@ -5,6 +5,8 @@
 //! the platform operator: tenant [`TENANT_NAME`], its primary company
 //! [`COMPANY_NAME`] and `ai@agent.my` holding the grant-all `core_admin`
 //! system role, then the modules' development sample data. Nothing else.
+//! The administrator gets [`ADMIN_PHONE`], so with `BILIBI_ENV=development`
+//! its 2FA codes arrive in the SMS simulator's inbox (`/dev/sms-inbox`).
 //!
 //! The administrator bootstrap happens once: its `user_bootstrap` receipt
 //! (Bilimbi's BootstrapReceipt) stops every repeat, which leaves the account,
@@ -35,6 +37,9 @@ const ADMIN_NAME: &str = "AI Agent";
 pub const ADMIN_EMAIL: &str = "ai@agent.my";
 /// The development administrator's first password; repeats never reset it.
 pub const DEVELOPMENT_PASSWORD: &str = "bilibi-dev";
+/// Its phone number for text-message 2FA: Ofcom's range for drama, which
+/// never reaches a real phone.
+pub const ADMIN_PHONE: &str = "+447700900000";
 
 enum Bootstrap {
     Created {
@@ -175,8 +180,8 @@ async fn bootstrap(db: &Db, app: &crate::App) -> Result<Bootstrap> {
             let hash = bilibi_user::hash_password(DEVELOPMENT_PASSWORD)?;
             let user: i64 = tx
                 .query_one(
-                    "INSERT INTO users(tenant_id,name,email,password_hash) VALUES($1,$2,$3,$4) RETURNING id",
-                    &[&tenant, &ADMIN_NAME, &ADMIN_EMAIL, &hash],
+                    "INSERT INTO users(tenant_id,name,email,password_hash,phone_number) VALUES($1,$2,$3,$4,$5) RETURNING id",
+                    &[&tenant, &ADMIN_NAME, &ADMIN_EMAIL, &hash, &ADMIN_PHONE],
                 )
                 .await?
                 .get(0);

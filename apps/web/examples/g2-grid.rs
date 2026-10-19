@@ -65,6 +65,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let admin = auth
         .authenticate(client, 1, 4, std::string::String::new())
         .await?;
+    // Base Step-up enforces everywhere; nobody is at this console to give a code.
+    bilibi_walkthrough_fixture::console_grants(&app.services, &admin).await?;
     client.batch_execute("DELETE FROM base_grid_ref_movements; DELETE FROM base_grid_ref_items; DELETE FROM base_grid_ref_groups;
 INSERT INTO base_grid_ref_groups(id,tenant_id,name,region) VALUES (9001,1,'North','north'),(9002,1,'Empty','south'),(9003,2,'Other','west');
 INSERT INTO base_grid_ref_items(id,tenant_id,group_id,name,category,quantity,unit_cost,active) VALUES (9101,1,9001,'Wrench','tools',12,84.50,true),(9102,1,9001,'Bearing','parts',240,3.25,false),(9103,2,9003,'Secret','parts',1,999.99,true);

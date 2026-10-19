@@ -65,13 +65,15 @@ Caddy has one site per instance in `/etc/caddy/sites/bilibi-<instance>.caddy`, i
 
 ## How an instance knows which one it is
 
-The role comes from one place: **`BILIBI_ENV` in the instance's `env` file**, written at creation and fixed from then on. `development` is Dev, `staging` is Staging, `production` is Production. The program already boots on this value to decide whether 2FA step-up is enforced (`README.md`, Configuration), so there is no second source to keep in step.
+The role comes from one place: **`BILIBI_ENV` in the instance's `env` file**, written at creation and fixed from then on. `development` is Dev, `staging` is Staging, `production` is Production. The program already boots on this value to decide where text-message 2FA codes go (`README.md`, Configuration), so there is no second source to keep in step.
 
-| Role | `BILIBI_ENV` | Builds software | Installs from | 2FA step-up |
+| Role | `BILIBI_ENV` | Builds software | Installs from | Text-message 2FA codes |
 | --- | --- | --- | --- | --- |
-| Dev | `development` | Yes: `create --role dev` also installs the C linker, Git and Python the worker needs | itself | Off, except a software change, which always asks |
-| Staging | `staging` | No | Dev | On |
-| Production | `production` | No | Staging, or Dev directly | On |
+| Dev | `development` | Yes: `create --role dev` also installs the C linker, Git and Python the worker needs | itself | The SMS simulator: readable by anyone at `/dev/sms-inbox` |
+| Staging | `staging` | No | Dev | Not sent (no provider yet): authenticator apps only |
+| Production | `production` | No | Staging, or Dev directly | Not sent (no provider yet): authenticator apps only |
+
+Every role enforces 2FA step-up as each tenant's policy says. On Dev, a text-message code protects nothing against someone who can reach the server, so keep a Dev server private.
 
 > [!NOTE]
 > The role is deliberately not a setting. A setting can be changed from a page; a server that only installs must not become one that builds because someone edited a form. Only `BILIBI_ENV` can make an instance build, and only Dev has it.

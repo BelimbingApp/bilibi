@@ -1,8 +1,10 @@
-{#- The account's authenticator page (src/two_factor_ui.rs) inside the
+{#- The account's two-factor page (src/two_factor_ui.rs) inside the
     settings shell. One stage at a time: off (password to begin), setup (QR
     code, typed key, first code), codes (the recovery set, shown once) and
     on (regenerate codes, turn off). Every form raises its live event with
-    its field values; no value is echoed back. -#}
+    its field values; no value is echoed back. Without an app, an account
+    with a phone number gets its codes by text message: the off stage says
+    so above the app's setup. An administrator sets the number. -#}
 {% import "settings.html" as settings %}
 {% import "components.html" as ui %}
 {% import "feedback.html" as fb %}
@@ -12,7 +14,10 @@
 <div id="two-factor" class="space-y-4">
 {%- if !notice.is_empty() %}{% call fb::alert(kind=bilibi_ui::StatusKind::Warning, id="two-factor-notice") %}{{ notice }}{% endcall %}{% endif -%}
 {%- if stage == "off" %}
-<div id="two-factor-off" class="space-y-4 rounded-xl border border-line bg-surface p-6"><div class="flex items-center gap-2"><span class="text-sm font-medium text-ink">Status</span>{% call ui::badge(kind=bilibi_ui::BadgeKind::Neutral, dot=true) %}Off{% endcall %}</div><p class="text-sm text-muted">After setup, protected actions ask for a 6-digit code from an authenticator app on your phone, such as Google Authenticator or Microsoft Authenticator.</p>
+{%- if text_method %}
+<div id="two-factor-text" class="space-y-2 rounded-xl border border-line bg-surface p-6"><div class="flex items-center gap-2"><span class="text-sm font-medium text-ink">Status</span>{% call ui::badge(kind=bilibi_ui::BadgeKind::Success, dot=true) %}On: text message{% endcall %}</div><p class="text-sm text-muted">Protected actions ask for a 6-digit code sent by text message to <span id="two-factor-phone" class="font-medium text-ink tabular-nums">{{ phone }}</span>{% if phone_verified %}, a verified number{% else %}. The first code you enter verifies the number{% endif %}. An administrator changes the number. To use an authenticator app instead, set it up below.</p></div>
+{%- endif %}
+<div id="two-factor-off" class="space-y-4 rounded-xl border border-line bg-surface p-6"><div class="flex items-center gap-2"><span class="text-sm font-medium text-ink">{% if text_method %}Authenticator app{% else %}Status{% endif %}</span>{% call ui::badge(kind=bilibi_ui::BadgeKind::Neutral, dot=true) %}Off{% endcall %}</div><p class="text-sm text-muted">After setup, protected actions ask for a 6-digit code from an authenticator app on your phone, such as Google Authenticator or Microsoft Authenticator.{% if phone.is_empty() %} To get codes by text message instead, ask an administrator to add your phone number.{% endif %}</p>
 <form id="two-factor-start-form" data-event="start" class="space-y-4">{{ password }}<div class="flex justify-end">{% call ui::button(variant=bilibi_ui::ButtonVariant::Primary, id="two-factor-start", button_type="submit", working="Checking…") %}Set up authenticator{% endcall %}</div></form></div>
 {%- elif stage == "setup" %}
 <div id="two-factor-setup" class="space-y-5 rounded-xl border border-line bg-surface p-6">
@@ -25,7 +30,7 @@
 <ol id="two-factor-code-list" class="grid grid-cols-2 gap-2 font-mono text-sm text-ink">{% for code in codes %}<li class="rounded-md border border-line bg-surface-muted px-3 py-1.5 text-center">{{ code }}</li>{% endfor %}</ol>
 <div class="flex flex-wrap justify-end gap-2">{{ download }}{% call ui::button(variant=bilibi_ui::ButtonVariant::Primary, id="two-factor-done", button_type="button", event="done") %}{% if returning %}I saved them, continue{% else %}I saved them{% endif %}{% endcall %}</div></div>
 {%- else %}
-<div id="two-factor-on" class="space-y-4 rounded-xl border border-line bg-surface p-6"><div class="flex items-center gap-2"><span class="text-sm font-medium text-ink">Status</span>{% call ui::badge(kind=bilibi_ui::BadgeKind::Success, dot=true) %}On{% endcall %}</div><p class="text-sm text-muted">Protected actions ask for a code from your authenticator app. {{ recovery_left }} of 10 recovery codes left.</p></div>
+<div id="two-factor-on" class="space-y-4 rounded-xl border border-line bg-surface p-6"><div class="flex items-center gap-2"><span class="text-sm font-medium text-ink">Status</span>{% call ui::badge(kind=bilibi_ui::BadgeKind::Success, dot=true) %}On{% endcall %}</div><p class="text-sm text-muted">Protected actions ask for a code from your authenticator app. {{ recovery_left }} of 10 recovery codes left.{% if !phone.is_empty() %} Codes go by text message to <span id="two-factor-phone" class="tabular-nums">{{ phone }}</span> only if you turn the app off.{% endif %}</p></div>
 <form id="two-factor-regenerate-form" data-event="regenerate" class="space-y-4 rounded-xl border border-line bg-surface p-6"><h3 class="text-sm font-semibold text-ink">New recovery codes</h3><p class="text-sm text-muted">Replaces every recovery code; the old ones stop working at once.</p>{{ regenerate_code }}<div class="flex justify-end">{% call ui::button(id="two-factor-regenerate", button_type="submit", working="Generating…") %}Generate new codes{% endcall %}</div></form>
 <form id="two-factor-disable-form" data-event="disable" class="space-y-4 rounded-xl border border-line bg-surface p-6"><h3 class="text-sm font-semibold text-ink">Turn off 2FA</h3><p class="text-sm text-muted">Deletes the authenticator key and every recovery code. Sensitive pages then ask you to set it up again.</p>{{ disable_code }}<div class="flex justify-end">{% call ui::button(variant=bilibi_ui::ButtonVariant::Danger, id="two-factor-disable", button_type="submit", working="Turning off…") %}Turn off{% endcall %}</div></form>
 {%- endif %}

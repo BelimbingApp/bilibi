@@ -6,7 +6,7 @@
 //! how its step-up shows in a running system. Use a disposable database:
 //!
 //! ```sh
-//! BILIBI_ENV=staging BILIBI_SESSION_TOKEN=… cargo run -p bilibi-web --example step-up-reference -- <user id> <role code> assign|remove
+//! BILIBI_ENV=development BILIBI_SESSION_TOKEN=… cargo run -p bilibi-web --example step-up-reference -- <user id> <role code> assign|remove
 //! ```
 use bilibi_base::{authz::grants::Grants, step_up};
 use bilibi_database::{pool, Error};

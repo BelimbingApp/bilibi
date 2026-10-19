@@ -964,6 +964,8 @@ pub struct CodeInput {
     pub label: String,
     pub length: usize,
     pub group_size: Option<usize>,
+    /// Digits only (a text-message code): phones offer the number pad.
+    pub numeric: bool,
 }
 
 impl CodeInput {
@@ -980,7 +982,13 @@ impl CodeInput {
             label: label.into(),
             length,
             group_size: None,
+            numeric: false,
         }
+    }
+
+    pub fn numeric(mut self) -> Self {
+        self.numeric = true;
+        self
     }
 
     pub fn value(mut self, value: impl Into<String>) -> Self {

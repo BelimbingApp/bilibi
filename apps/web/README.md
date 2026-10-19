@@ -35,7 +35,13 @@ Step-up (`apps/base/step_up/README.md`) is the same on every surface:
 - A live socket on such a page rereads the window on each event and 15 s refresh without extending it. Once the window has run out, the socket reloads its address so the HTTP guard asks again.
 - When an owner's facade answers `Error::StepUpRequired` during a GET render or a live event, the browser goes to the prompt and comes back to the page; nothing acted.
 - `/api/v1` commit and the MCP `commit` tool take an optional `step_up_code` and answer `step_up_required` (`bilibi_step_up::refusal`): 403 on the API, an `isError` result on MCP.
-- `BILIBI_ENV=development` turns enforcement off at boot (`StepUp::set_enforced`).
+- Every `BILIBI_ENV` enforces it. Development only binds the SMS simulator (`Environment::simulates_sms`).
+
+The host owns the anonymous credential pages (`src/auth.rs`):
+
+- `/` and `/login`: sign-in. When the tenant's policy asks a second factor at sign-in (Core User's `core.user.sign_in`), the right password opens only a pending session, kept in the `bilibi_sign_in` cookie (path `/login/verify`, 10 minutes), and the browser goes to `/login/verify`.
+- `/login/verify`: the code card in the sign-in layout. Three forms: the code, "Resend code" (text messages, after the countdown) and "Back to login" (ends the pending session). The right code sets the session cookie and clears the pending one.
+- `/dev/sms-inbox`: the SMS simulator's messages (`bilibi_sms::InboxPage`). Bound only when `BILIBI_ENV=development`; elsewhere the path does not exist. Anonymous, because a tester needs the code before signing in.
 
 A live page or panel event runs under the page-write permit its service declared (`PageWrites`, `base/agent_api.pages`): the host wraps the owner's `update` in `bilibi_database::page_write::during`, so a business transaction the declaration does not cover is refused before it writes. Refresh and params carry no permit. Contract: `apps/base/agent_api/README.md` (Page writes declaration and check).
 

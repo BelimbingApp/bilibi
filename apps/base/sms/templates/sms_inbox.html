@@ -1,0 +1,26 @@
+{#- The development SMS inbox (src/inbox.rs): what the simulator "sent",
+    newest first, one card per message as a phone lists them: recipient and
+    time, the code of an origin-bound last line shown apart for copying, then
+    the whole text as the phone would show it. -#}
+{% import "components.html" as ui %}
+{% import "feedback.html" as fb %}
+{% import "flex_table.html" as flex %}
+<div id="sms-inbox" class="flex flex-col gap-4">
+{% call ui::section_heading(title="SMS inbox", id="sms-inbox-heading", class="mb-0", actions=refresh) %}{% endcall %}
+{% call fb::alert(kind=bilibi_ui::StatusKind::Warning, id="sms-inbox-notice") %}Development only. These messages were never sent to a phone.{% endcall %}
+{%- if items.is_empty() %}
+<p id="sms-inbox-empty" class="text-sm text-muted">No messages yet. Sign in or confirm a protected action as a user with a phone number, then refresh.</p>
+{%- endif %}
+{%- for item in items %}
+{% call ui::card(id=item.dom_id, inner_class="p-4") %}
+{% call ui::facts() %}
+{% call ui::fact(title="To") %}<span class="tabular-nums">{{ item.to }}</span>{% endcall %}
+{% call ui::fact(title="Sent") %}{% call flex::instant(id=item.time_id, i=item.sent) %}{% endcall %}{% endcall %}
+{%- if let Some(code) = item.code %}
+{% call ui::fact(title="Code") %}<span class="select-all font-mono font-semibold tracking-widest text-ink-strong" data-sms-code>{{ code }}</span>{% endcall %}
+{%- endif %}
+{% endcall %}
+<p class="mt-2 whitespace-pre-line text-sm text-ink">{{ item.body }}</p>
+{% endcall %}
+{%- endfor %}
+</div>

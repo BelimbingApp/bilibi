@@ -1,11 +1,12 @@
-//! The authenticator pages over `crate::two_factor`: `/settings/two-factor`
-//! (setup and management, inside the settings shell) and
-//! `/settings/two-factor/confirm` (the step-up prompt). Both are live: the
+//! The two-factor pages over `crate::two_factor`: `/settings/two-factor`
+//! (the account's method, authenticator setup and management, inside the
+//! settings shell) and `/settings/two-factor/confirm` (the step-up prompt,
+//! which sends a text-message account its code). Both are live: the
 //! setup key, QR code and recovery codes exist only in the socket's state
 //! after the request that produced them and are dropped with it, so a reload
 //! never shows them again. Typed values are never echoed back.
 use crate::{
-    two_factor::{Enrollment, TwoFactorError, TwoFactorStatus},
+    two_factor::{Enrollment, Method, TwoFactorError, TwoFactorStatus},
     web::settings_entries,
     UserService,
 };
@@ -14,7 +15,8 @@ use bilibi_database::Error;
 use bilibi_security::Scope;
 use bilibi_ui::{
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
-    Attrs, Button, Field, FlashGroup, FlashMap, Header, Html, SecretInput, StatusKind,
+    Attrs, Button, ButtonVariant, CodeInput, CountdownButton, Field, FlashGroup, FlashMap, Header,
+    Html, SecretInput, StatusKind,
 };
 use std::{collections::HashMap, sync::Arc};
 
@@ -137,6 +139,11 @@ struct TwoFactorView<'a> {
     recovery_left: i64,
     regenerate_code: Html,
     disable_code: Html,
+    /// Codes come by text message (a phone number, no app, a transport).
+    text_method: bool,
+    /// The masked number, when the account has one.
+    phone: &'a str,
+    phone_verified: bool,
 }
 
 impl TwoFactorPage {
@@ -317,7 +324,8 @@ impl TwoFactorPage {
             entries: settings_entries(),
             current: "two-factor".into(),
             heading: "2FA",
-            subheading: "Confirm protected actions with a code from an authenticator app.",
+            subheading:
+                "Confirm protected actions with a code from an authenticator app or a text message.",
             stage,
             notice: &self.notice,
             password,
@@ -344,6 +352,9 @@ impl TwoFactorPage {
                 "Authentication code",
                 &self.on_errors("disable"),
             )?,
+            text_method: self.status.method() == Method::TextMessage,
+            phone: self.status.phone.as_deref().unwrap_or_default(),
+            phone_verified: self.status.phone_verified,
         };
         view.render().map_err(|_| Error::Internal)
     }
@@ -403,12 +414,18 @@ impl LiveState<Scope, Error> for TwoFactorPage {
 /// `/settings/two-factor/confirm`.
 pub struct ConfirmPage {
     users: Arc<UserService>,
-    enabled: bool,
+    method: Method,
+    /// The masked number a text-message code went to.
+    phone: String,
+    /// Seconds before another text message may be asked for.
+    resend_in: i64,
     minutes: i64,
     hours: i64,
     return_to: Option<String>,
     errors: Vec<String>,
     notice: String,
+    /// What happened, such as another code being sent.
+    info: String,
 }
 
 #[derive(serde::Deserialize)]
@@ -418,6 +435,7 @@ enum ConfirmEvent {
         #[serde(rename = "two_factor[code]", default)]
         code: String,
     },
+    Resend {},
 }
 
 #[derive(Template)]
@@ -425,10 +443,15 @@ enum ConfirmEvent {
 struct ConfirmView<'a> {
     header: Html,
     notice: &'a str,
-    enabled: bool,
+    info: &'a str,
+    /// `app`, `text` or `none`.
+    method: &'static str,
+    phone: &'a str,
     minutes: i64,
     hours: i64,
     code: Html,
+    errors: &'a [String],
+    resend: Html,
     setup_href: &'a str,
 }
 
@@ -438,11 +461,13 @@ impl ConfirmPage {
         scope: &Scope,
         query: &HashMap<String, String>,
     ) -> Result<Self, Error> {
-        let enabled = users.two_factor_status(scope).await?.enabled;
+        let status = users.two_factor_status(scope).await?;
         let window = users.step_up.window(scope).await?;
-        Ok(Self {
+        let mut page = Self {
             users,
-            enabled,
+            method: status.method(),
+            phone: status.phone.unwrap_or_default(),
+            resend_in: 0,
             minutes: window.window_minutes,
             hours: window.cap_hours,
             return_to: return_to(query),
@@ -452,7 +477,33 @@ impl ConfirmPage {
             } else {
                 String::new()
             },
-        })
+            info: String::new(),
+        };
+        if page.method == Method::TextMessage && page.notice.is_empty() {
+            page.send(scope, false).await?;
+        }
+        Ok(page)
+    }
+
+    /// Sends a text-message code (another one with `resend`), noting where
+    /// it went or why it did not go.
+    async fn send(&mut self, scope: &Scope, resend: bool) -> Result<(), Error> {
+        match self.users.send_two_factor_code(scope, resend).await {
+            Ok(sent) => {
+                self.phone = sent.phone;
+                self.resend_in = sent.resend_in;
+                if resend {
+                    self.info = "A new code is on its way. The earlier one no longer works.".into();
+                }
+            }
+            Err(error) => {
+                if let TwoFactorError::ResendTooSoon { seconds } = error {
+                    self.resend_in = seconds;
+                }
+                self.errors.push(field_error(error)?);
+            }
+        }
+        Ok(())
     }
 
     fn render(&self) -> Result<String, Error> {
@@ -464,6 +515,7 @@ impl ConfirmPage {
             ),
             None => crate::TWO_FACTOR_PATH.to_owned(),
         };
+        let text = self.method == Method::TextMessage;
         ConfirmView {
             header: fragment(Html::render(&Header {
                 title: Html::text("Confirm access"),
@@ -472,10 +524,41 @@ impl ConfirmPage {
                 actions: Html::EMPTY,
             }))?,
             notice: &self.notice,
-            enabled: self.enabled,
+            info: &self.info,
+            method: match self.method {
+                Method::Authenticator => "app",
+                Method::TextMessage => "text",
+                Method::None => "none",
+            },
+            phone: &self.phone,
             minutes: self.minutes,
             hours: self.hours,
-            code: code_field("two_factor_code", "Authentication code", &self.errors)?,
+            code: if text {
+                fragment(Html::render(
+                    &CodeInput::new(
+                        "two_factor_code",
+                        "two_factor[code]",
+                        "Code from the text message",
+                        6,
+                    )
+                    .numeric(),
+                ))?
+            } else {
+                code_field("two_factor_code", "Authentication code", &self.errors)?
+            },
+            // The code boxes have no error line: the text form shows the
+            // refusal above them instead.
+            errors: if text { &self.errors } else { &[] },
+            resend: fragment(Html::render(&CountdownButton {
+                variant: ButtonVariant::Secondary,
+                id: "confirm-access-resend",
+                label: "Resend code",
+                seconds: self.resend_in,
+                button_type: "button",
+                event: "resend",
+                working: "Sending…",
+                ..CountdownButton::default()
+            }))?,
             setup_href: &setup_href,
         }
         .render()
@@ -490,27 +573,42 @@ impl LiveState<Scope, Error> for ConfirmPage {
                 LiveInput::Refresh => {}
                 LiveInput::Params(_) => return Err(Error::Invalid),
                 LiveInput::Event(value) => {
-                    let ConfirmEvent::Verify { code } =
-                        serde_json::from_value::<ConfirmEvent>(value.clone())
-                            .map_err(|_| Error::Invalid)?;
+                    let event = serde_json::from_value::<ConfirmEvent>(value.clone())
+                        .map_err(|_| Error::Invalid)?;
                     self.errors.clear();
-                    if code.trim().is_empty() {
-                        self.errors.push(BLANK.into());
-                    } else {
-                        match self.users.step_up(request.scope, &code).await {
-                            Ok(()) => {
-                                return Ok(LiveBody {
-                                    html: self.render()?,
-                                    rows: 1,
-                                    redirect: Some(
-                                        self.return_to.clone().unwrap_or_else(|| "/".into()),
-                                    ),
-                                    flash: Some((StatusKind::Success, "Access confirmed.".into())),
-                                    ..LiveBody::default()
-                                });
+                    self.info.clear();
+                    let code = match event {
+                        ConfirmEvent::Resend {} => {
+                            if self.method != Method::TextMessage {
+                                return Err(Error::Invalid);
                             }
-                            Err(TwoFactorError::NotEnabled) => self.enabled = false,
-                            Err(error) => self.errors.push(field_error(error)?),
+                            self.send(request.scope, true).await?;
+                            None
+                        }
+                        ConfirmEvent::Verify { code } => Some(code),
+                    };
+                    if let Some(code) = code {
+                        if code.trim().is_empty() {
+                            self.errors.push(BLANK.into());
+                        } else {
+                            match self.users.step_up(request.scope, &code).await {
+                                Ok(()) => {
+                                    return Ok(LiveBody {
+                                        html: self.render()?,
+                                        rows: 1,
+                                        redirect: Some(
+                                            self.return_to.clone().unwrap_or_else(|| "/".into()),
+                                        ),
+                                        flash: Some((
+                                            StatusKind::Success,
+                                            "Access confirmed.".into(),
+                                        )),
+                                        ..LiveBody::default()
+                                    });
+                                }
+                                Err(TwoFactorError::NotEnabled) => self.method = Method::None,
+                                Err(error) => self.errors.push(field_error(error)?),
+                            }
                         }
                     }
                 }

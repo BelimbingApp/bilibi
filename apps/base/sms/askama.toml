@@ -1,0 +1,4 @@
+# The development inbox composes the shared Base UI macros (components.html,
+# feedback.html, flex_table.html) in place.
+[general]
+dirs = ["templates", "../ui/templates"]

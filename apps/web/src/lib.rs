@@ -41,10 +41,11 @@ pub struct App {
     moved: Arc<Vec<&'static bilibi_module_registry::contributions::Moved>>,
     pub db: Db,
     pub origin: Arc<str>,
-    /// `BILIBI_ENV`: development turns Base Step-up enforcement off, nothing else.
+    /// `BILIBI_ENV`: development binds the SMS simulator and its inbox, nothing else.
     pub environment: Environment,
     settings: Arc<bilibi_base::settings::Settings>,
     pub step_up: Arc<bilibi_base::step_up::StepUp>,
+    pub sms: Arc<bilibi_base::sms::Sms>,
     /// The host the server listens on, for the development status bar only;
     /// the serving command sets it from `BIND_ADDR`.
     pub listen_address: Option<Arc<str>>,
@@ -85,7 +86,16 @@ impl App {
         let security = services.get("base/security.guard")?;
         let step_up: Arc<bilibi_base::step_up::StepUp> =
             services.get(bilibi_base::step_up::SERVICE)?;
-        step_up.set_enforced(environment.requires_step_up());
+        let sms: Arc<bilibi_base::sms::Sms> = services.get(bilibi_base::sms::SERVICE)?;
+        if environment.simulates_sms() {
+            let dir = std::env::var("BILIBI_SMS_DIR")
+                .ok()
+                .filter(|dir| !dir.trim().is_empty())
+                .unwrap_or_else(|| ".local/sms-outbox".into());
+            sms.use_simulator(Arc::new(bilibi_base::sms::Outbox::new(dir.into(), 100)))
+                .map_err(|_| Error::Internal)?;
+        }
+        eprintln!("sms: {}", sms.describe());
         let settings = services.get("base/settings.store")?;
         let renderer = services.get("base/ui.renderer")?;
         let menu = bilibi_base::menu::Menu::from_catalog(services.catalog()?)?;
@@ -110,6 +120,7 @@ impl App {
             environment,
             settings,
             step_up,
+            sms,
             listen_address: None,
             company,
             user,
@@ -291,12 +302,13 @@ pub async fn media_cleanup(db: &Db, tenant: i64, hours: u64) -> Result<()> {
 pub fn router(app: App) -> Router {
     let perf = app.perf.clone();
     let pages = routes::install(Router::new(), &app.routes, &app.downloads);
-    routes::install_moved(pages, &app.moved)
+    let mut router = routes::install_moved(pages, &app.moved)
         .merge(api::router(app.clone()))
         .merge(webhooks::router())
         .merge(transport::router())
         .route("/", get(auth::home).post(auth::login))
         .route("/login", get(auth::home).post(auth::login))
+        .route(auth::VERIFY_PATH, get(auth::verify_page).post(auth::verify))
         .route(
             "/forgot-password",
             get(auth::forgot_page).post(auth::forgot),
@@ -392,7 +404,13 @@ pub fn router(app: App) -> Router {
                 );
                 ([(header::CONTENT_TYPE, "text/javascript")], script)
             }),
-        )
+        );
+    // The SMS simulator's inbox exists in development only; elsewhere the
+    // path is not bound at all and answers like any unknown path.
+    if app.environment.simulates_sms() {
+        router = router.route(bilibi_base::sms::INBOX_PATH, get(auth::sms_inbox));
+    }
+    router
         .layer(DefaultBodyLimit::max(16 * 1024))
         .layer(middleware::from_fn_with_state(app.clone(), errors::pages))
         .layer(middleware::from_fn(response_headers))

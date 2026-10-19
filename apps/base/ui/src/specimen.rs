@@ -7,8 +7,8 @@ use crate::inline_specimen::InlineSamples;
 use crate::section::sections;
 use crate::{
     choices, error_sentence, ActionLink, AddMore, BadgeKind, Button, ButtonVariant, Card, Chrome,
-    ClientEntry, CodeInput, Combobox, ErrorSummary, Field, FileInput, Html, IconButton,
-    IconContext, IconKind, InputKind, MultiSelect, PageVariant, RadioGroup, Restricted,
+    ClientEntry, CodeInput, Combobox, CountdownButton, ErrorSummary, Field, FileInput, Html,
+    IconButton, IconContext, IconKind, InputKind, MultiSelect, PageVariant, RadioGroup, Restricted,
     RestrictedField, SecretInput, StatItem, UploadSpec, Uploads,
 };
 use askama::Template;
@@ -68,6 +68,10 @@ sections! {
 /// sample form (`sample[...]` fields) so one reference renders both.
 pub struct FormControls {
     pub code: CodeInput,
+    /// A one-time code by text message: digits only, and asking for another
+    /// waits behind a countdown.
+    pub one_time_code: CodeInput,
+    pub resend: Html,
     pub text: Field,
     pub search: Field,
     pub email: Field,
@@ -135,12 +139,26 @@ fn strings(values: &[&str]) -> Vec<String> {
 }
 
 impl FormControls {
-    fn new() -> Self {
+    fn new() -> askama::Result<Self> {
         let sample = |key: &str, value: &str| Field::in_form("sample", key).value(value);
-        Self {
+        Ok(Self {
             code: CodeInput::new("specimen_code", "specimen[code]", "Device code", 8)
                 .value("ABCD-EF23")
                 .group_size(4),
+            one_time_code: CodeInput::new(
+                "specimen_one_time_code",
+                "specimen[one_time_code]",
+                "Verification code",
+                6,
+            )
+            .numeric(),
+            resend: Html::render(&CountdownButton {
+                id: "specimen-resend",
+                label: "Resend code",
+                seconds: 45,
+                button_type: "button",
+                ..CountdownButton::default()
+            })?,
             text: sample("text_field", "Sample text value")
                 .label("Text")
                 .placeholder("Enter a value"),
@@ -332,7 +350,7 @@ impl FormControls {
                 .id("specimen-folded-source")
                 .label("Source")
                 .value("manual"),
-        }
+        })
     }
 }
 
@@ -439,7 +457,7 @@ impl ComponentsSpecimen {
                 StatItem::number("Active", 58),
                 StatItem::text("Current", "MY"),
             ],
-            controls: FormControls::new(),
+            controls: FormControls::new()?,
             field_states,
             radio_disabled,
             inline: InlineSamples::new()?,

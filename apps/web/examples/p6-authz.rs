@@ -1,9 +1,10 @@
 //! Running-app authorization walkthrough. Use only a disposable migrated
 //! database: this command changes demo grants and temporarily appoints tenant 1
-//! operator. No test runner or mock services. Run with DATABASE_URL,
-//! BILIBI_ENV=development (its grant changes are step-up operations, which
-//! a console has no authenticator to satisfy) and
-//! BILIBI_AUTHZ_DEMO=disposable cargo run -p bilibi-web --example p6-authz.
+//! operator. No test runner or mock services. Its grant changes are step-up
+//! operations a console cannot give a code for, so it first turns the
+//! fixture tenant's policy off for them (`console_grants`). Run with
+//! DATABASE_URL and BILIBI_AUTHZ_DEMO=disposable cargo run -p bilibi-web
+//! --example p6-authz.
 use bilibi_base::{
     authz::{
         self, fields, grants::Grants, CapabilityDefinition as C, RoleDefinition,
@@ -61,6 +62,8 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let client: &Client = &client;
     let manager = auth.authenticate(client, 1, 1, String::new()).await?;
     let admin = auth.authenticate(client, 1, 4, String::new()).await?;
+    // Base Step-up enforces everywhere; nobody is at this console to give a code.
+    bilibi_walkthrough_fixture::console_grants(&app.services, &admin).await?;
     let viewer = auth.authenticate(client, 1, 2, String::new()).await?;
     println!("== Reconciliation preserved demo role IDs and assignments");
     for row in client.query("SELECT id,tenant_id,name,code,is_system FROM roles WHERE id BETWEEN 1 AND 5 ORDER BY id",&[]).await? {

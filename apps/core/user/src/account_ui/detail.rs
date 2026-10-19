@@ -545,6 +545,19 @@ impl Detail {
             })?,
             None => render(&Badge::status(BadgeKind::Warning, "unverified"))?,
         };
+        // Verified once a code sent to the number was entered correctly.
+        let phone_verified = match (&account.phone_number, account.phone_verified_at) {
+            (None, _) => render(&Muted {
+                text: "No phone number",
+            })?,
+            (Some(_), Some(at)) => render(&Badge {
+                kind: BadgeKind::Success,
+                body: datetime(&display, "user-phone-verified-at", at)?,
+                ..Badge::default()
+            })?,
+            (Some(_), None) => render(&Badge::status(BadgeKind::Warning, "unverified"))?,
+        };
+        let phone = account.phone_number.as_deref().unwrap_or_default();
         let items = vec![
             Fact {
                 title: "Name",
@@ -558,6 +571,17 @@ impl Detail {
                 id: "user-view-email",
                 value: render(&InlineEdit {
                     field: self.inline(loaded, "email", "Email", &account.email),
+                })?,
+            },
+            Fact {
+                title: "Phone for 2FA",
+                id: "user-view-phone-number",
+                value: render(&InlineEdit {
+                    field: self
+                        .inline(loaded, "phone_number", "Phone for 2FA", phone)
+                        .allow_empty()
+                        .placeholder("+94771234567")
+                        .hint("2FA codes go here by text message. International format, starting with +."),
                 })?,
             },
             Fact {
@@ -582,6 +606,11 @@ impl Detail {
                 title: "Email Verified",
                 id: "user-view-email-verified",
                 value: verified,
+            },
+            Fact {
+                title: "Phone Verified",
+                id: "user-view-phone-verified",
+                value: phone_verified,
             },
             Fact {
                 title: "Created",
@@ -1265,6 +1294,8 @@ impl Detail {
                 }],
             ),
             Err(AccountError::Access(Error::Unauthorized)) => return Err(Error::Unauthorized),
+            // Base Step-up: the host sends the browser to confirm and back.
+            Err(AccountError::Access(error @ Error::StepUpRequired { .. })) => return Err(error),
             Err(AccountError::Access(Error::Forbidden)) => {
                 self.statuses.clear_saved();
                 self.flash.error(FORBIDDEN);
@@ -1293,12 +1324,12 @@ impl Detail {
             .ok_or(Error::Invalid)?;
         let users = self.pages.users.clone();
         match field.as_str() {
-            "name" | "email" => {
+            "name" | "email" | "phone_number" => {
                 let kind = AccountField::parse(&field).expect("matched");
-                let label = if kind == AccountField::Name {
-                    "Name"
-                } else {
-                    "Email"
+                let label = match kind {
+                    AccountField::Name => "Name",
+                    AccountField::Email => "Email",
+                    AccountField::PhoneNumber => "Phone for 2FA",
                 };
                 let result = users
                     .update_account(scope, self.id, version, kind, &submitted)

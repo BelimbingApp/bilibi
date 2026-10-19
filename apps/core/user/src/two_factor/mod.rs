@@ -1,6 +1,8 @@
-//! Authenticator-app two-factor authentication (TOTP, RFC 6238), and the
-//! second-factor provider behind Base Step-up (`provider.rs`). Bilimbi has
-//! no counterpart yet; the flow follows GitHub's: re-enter the password, scan
+//! Two-factor authentication, and the second-factor provider behind Base
+//! Step-up (`provider.rs`). Two methods, one per account: an authenticator
+//! app (TOTP, RFC 6238) the holder sets up, or, for an account with a phone
+//! number and no app, a code by text message (`sms.rs`). Bilimbi has no
+//! counterpart yet; the app flow follows GitHub's: re-enter the password, scan
 //! a QR code, confirm with a current code, keep ten one-time recovery codes.
 //! This module knows nothing of what step-up guards: it checks the account
 //! holder, opens the browser session's window ([`CONFIRM_PATH`]) and spends a
@@ -15,6 +17,7 @@
 mod provider;
 mod qr;
 mod recovery;
+mod sms;
 mod totp;
 
 pub use provider::Authenticator;
@@ -22,6 +25,7 @@ pub use provider::Authenticator;
 use crate::{password, UserService};
 use bilibi_audit::{record_action, Attribution};
 use bilibi_database::{Change, Error, Result};
+use bilibi_sms::{Message, PhoneNumber};
 use bilibi_tenancy::Scope;
 use bilibi_ui::Html;
 use serde_json::json;
@@ -35,6 +39,7 @@ pub const CONFIRM_PATH: &str = "/settings/two-factor/confirm";
 /// The record the sealed secret is bound to (`Settings::seal_owned`).
 const OWNER: &str = "core/user.two_factor";
 const KIND: &str = "user_two_factor";
+const SMS_KIND: &str = "user_two_factor_sms_codes";
 /// Failed checks allowed per window before every check of the account locks.
 const MAX_FAILURES: i32 = 5;
 const WINDOW_SECONDS: f64 = 900.0;
@@ -61,16 +66,71 @@ pub enum TwoFactorError {
     Impersonating,
     #[error("2FA needs BILIBI_SETTINGS_KEY, which this installation lacks.")]
     Unavailable,
+    #[error("is not the code in the text message")]
+    WrongTextCode,
+    #[error("This code has expired. Send a new one.")]
+    CodeExpired,
+    #[error("This account has no phone number for 2FA. Ask an administrator to add yours.")]
+    NoPhone,
+    #[error("Text messages are not available on this server. Ask an administrator.")]
+    TextUnavailable,
+    #[error("This account uses an authenticator app. Enter the code it shows.")]
+    AuthenticatorInUse,
+    #[error("Wait {seconds} seconds before asking for another code.")]
+    ResendTooSoon { seconds: i64 },
+    #[error("Too many codes were sent. Try again in {minutes} minute(s).")]
+    TooManyCodes { minutes: i64 },
+    #[error("The text message could not be sent. Try again shortly.")]
+    NotDelivered,
     #[error(transparent)]
     Other(#[from] Error),
 }
 type Outcome<T> = std::result::Result<T, TwoFactorError>;
 
 /// What the settings page shows about the account.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct TwoFactorStatus {
+    /// The authenticator app is on.
     pub enabled: bool,
     pub recovery_codes_left: i64,
+    /// The account's phone number, masked, when it has one.
+    pub phone: Option<String>,
+    /// A code sent to that number was entered correctly at least once.
+    pub phone_verified: bool,
+    /// This server can send text messages (Base SMS has a transport).
+    pub text_available: bool,
+}
+
+/// Which second factor checks the account's holder.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Method {
+    /// The authenticator app and its recovery codes; it wins over a phone.
+    Authenticator,
+    /// A code by text message to the account's phone number.
+    TextMessage,
+    /// Neither: the holder cannot pass a check yet.
+    None,
+}
+
+impl TwoFactorStatus {
+    pub fn method(&self) -> Method {
+        if self.enabled {
+            Method::Authenticator
+        } else if self.phone.is_some() && self.text_available {
+            Method::TextMessage
+        } else {
+            Method::None
+        }
+    }
+}
+
+/// A text-message code on its way, as the code pages show it.
+#[derive(Clone, Debug)]
+pub struct CodeSent {
+    /// The number it went to, masked.
+    pub phone: String,
+    /// Seconds until another code may be asked for.
+    pub resend_in: i64,
 }
 
 /// A pending enrollment's display: the QR code and the same key for typing.
@@ -128,6 +188,8 @@ async fn spent_for(
 enum Proof {
     Authenticator(i64),
     Recovery(i64),
+    /// The id of the text-message code row.
+    TextMessage(i64),
 }
 
 /// A local path the browser may be sent back to after enrollment or step-up:
@@ -154,6 +216,22 @@ fn with_return(base: &str, return_to: Option<&str>) -> String {
     }
 }
 
+/// Refuses another send while the throttle holds: too soon after the last
+/// one, or too many within the hour.
+fn refuse_sending(sending: &sms::Sending) -> Outcome<()> {
+    if sending.wait_seconds > 0 {
+        return Err(TwoFactorError::ResendTooSoon {
+            seconds: sending.wait_seconds,
+        });
+    }
+    if sending.sent_last_hour >= sms::SENDS_PER_HOUR {
+        return Err(TwoFactorError::TooManyCodes {
+            minutes: (sending.hour_frees_in + 59) / 60,
+        });
+    }
+    Ok(())
+}
+
 fn refuse_impersonation(scope: &Scope) -> Outcome<()> {
     if scope.impersonator().is_some() {
         return Err(TwoFactorError::Impersonating);
@@ -169,31 +247,175 @@ async fn now_unix(client: &impl GenericClient) -> Result<i64> {
 }
 
 impl UserService {
-    /// Whether the account has a confirmed authenticator, and how many
-    /// recovery codes are unused.
+    /// Whether the account has a confirmed authenticator, how many recovery
+    /// codes are unused, and its phone number for text-message codes.
     pub async fn two_factor_status(&self, scope: &Scope) -> Result<TwoFactorStatus> {
         let client = self.db.get().await?;
         let row = client
             .query_opt(
-                "SELECT t.confirmed_at IS NOT NULL, (SELECT count(*) FROM user_two_factor_recovery_codes c WHERE c.tenant_id=t.tenant_id AND c.user_id=t.user_id AND c.used_at IS NULL) FROM user_two_factor t WHERE t.tenant_id=$1 AND t.user_id=$2",
+                "SELECT t.confirmed_at IS NOT NULL, (SELECT count(*) FROM user_two_factor_recovery_codes c WHERE c.tenant_id=u.tenant_id AND c.user_id=u.id AND c.used_at IS NULL), u.phone_number, u.phone_verified_at IS NOT NULL FROM users u LEFT JOIN user_two_factor t ON t.tenant_id=u.tenant_id AND t.user_id=u.id WHERE u.tenant_id=$1 AND u.id=$2",
                 &[&scope.tenant(), &scope.user()],
             )
             .await?;
-        Ok(
-            row.map_or_else(TwoFactorStatus::default, |row| TwoFactorStatus {
+        Ok(row.map_or_else(TwoFactorStatus::default, |row| {
+            let phone: Option<String> = row.get(2);
+            TwoFactorStatus {
                 enabled: row.get(0),
                 recovery_codes_left: row.get(1),
-            }),
-        )
+                phone: phone
+                    .as_deref()
+                    .and_then(PhoneNumber::parse)
+                    .map(|phone| phone.masked()),
+                phone_verified: row.get(3),
+                text_available: self.sms.available(),
+            }
+        }))
     }
 
     /// Where a step-up guard sends a browser that has not confirmed access:
-    /// the prompt, or enrollment for an account with no authenticator yet.
-    /// Either brings it back to `return_to` afterwards.
+    /// the prompt, or the two-factor page for an account with no second
+    /// factor yet. Either brings it back to `return_to` afterwards.
     pub async fn step_up_destination(&self, scope: &Scope, return_to: &str) -> Result<String> {
-        let enabled = self.two_factor_status(scope).await?.enabled;
-        let base = if enabled { CONFIRM_PATH } else { SETTINGS_PATH };
+        let method = self.two_factor_status(scope).await?.method();
+        let base = if method == Method::None {
+            SETTINGS_PATH
+        } else {
+            CONFIRM_PATH
+        };
         Ok(with_return(base, Some(return_to)))
+    }
+
+    /// Where the holder's text-message codes go and the wait before another
+    /// may be sent, without sending one: for a page showing a refused code,
+    /// where the holder decides whether to ask for another.
+    pub async fn text_code_status(&self, scope: &Scope) -> Outcome<CodeSent> {
+        let phone = self
+            .two_factor_status(scope)
+            .await?
+            .phone
+            .ok_or(TwoFactorError::NoPhone)?;
+        let client = self.db.get().await.map_err(Error::from)?;
+        let sending = sms::Sending::read(&**client, scope.tenant(), scope.user()).await?;
+        Ok(CodeSent {
+            phone,
+            resend_in: sending.wait_seconds,
+        })
+    }
+
+    /// Sends the holder a text-message code, unless one that can still be
+    /// entered is out and `resend` is false: then it says where that one
+    /// went. Throttled per account (`sms.rs`); each code sent is audited as
+    /// `user.two_factor.code_sent` without the code. A code the transport
+    /// failed to deliver is voided again.
+    pub async fn send_two_factor_code(&self, scope: &Scope, resend: bool) -> Outcome<CodeSent> {
+        refuse_impersonation(scope)?;
+        self.unlocked(scope).await?;
+        let (tenant, user) = (scope.tenant(), scope.user());
+        let status = self.two_factor_status(scope).await?;
+        match status.method() {
+            Method::TextMessage => {}
+            Method::Authenticator => return Err(TwoFactorError::AuthenticatorInUse),
+            Method::None if status.phone.is_some() => return Err(TwoFactorError::TextUnavailable),
+            Method::None => return Err(TwoFactorError::NoPhone),
+        }
+        let client = self.db.get().await.map_err(Error::from)?;
+        let phone = client
+            .query_opt(
+                "SELECT phone_number FROM users WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL",
+                &[&tenant, &user],
+            )
+            .await
+            .map_err(Error::from)?
+            .and_then(|row| row.get::<_, Option<String>>(0))
+            .as_deref()
+            .and_then(PhoneNumber::parse)
+            .ok_or(TwoFactorError::NoPhone)?;
+        let masked = phone.masked();
+        let sending = sms::Sending::read(&**client, tenant, user).await?;
+        if sending.active && !resend {
+            return Ok(CodeSent {
+                phone: masked,
+                resend_in: sending.wait_seconds,
+            });
+        }
+        refuse_sending(&sending)?;
+        let issuer = self
+            .settings
+            .get_global(&**client, ISSUER_KEY)
+            .await?
+            .as_str()
+            .ok_or(Error::Internal)?
+            .to_owned();
+        drop(client);
+        // Hashed before the transaction opens, so no row lock waits on it.
+        let code = sms::generate()?;
+        let hash = password::hash(&code).await?;
+        let mut client = self.db.get().await.map_err(Error::from)?;
+        let mut tx = self
+            .mutations
+            .begin(
+                &mut client,
+                scope.mutation_context("user.two_factor.code_sent"),
+            )
+            .await?;
+        let to = masked.clone();
+        let stored = tx
+            .mutate(move |sql| {
+                Box::pin(async move {
+                    // One send at a time per account: the throttle is read
+                    // again under the account's row lock.
+                    sql.query_one(
+                        "SELECT id FROM users WHERE tenant_id=$1 AND id=$2 FOR UPDATE",
+                        &[&tenant, &user],
+                    )
+                    .await?;
+                    let sending = sms::Sending::read(sql, tenant, user).await?;
+                    if sending.wait_seconds > 0 || sending.sent_last_hour >= sms::SENDS_PER_HOUR {
+                        return Err(Error::Conflict);
+                    }
+                    let id = sms::store(sql, tenant, user, &hash).await?;
+                    Ok((
+                        (),
+                        vec![Change {
+                            kind: SMS_KIND.into(),
+                            id,
+                            old: json!({}),
+                            new: json!({"status": "sent", "to": to, "expires_in_seconds": sms::CODE_SECONDS}),
+                        }],
+                    ))
+                })
+            })
+            .await;
+        match stored {
+            Ok(()) => tx.commit().await?,
+            Err(Error::Conflict) => {
+                tx.rollback().await?;
+                let client = self.db.get().await.map_err(Error::from)?;
+                refuse_sending(&sms::Sending::read(&**client, tenant, user).await?)?;
+                return Err(TwoFactorError::ResendTooSoon {
+                    seconds: sms::RESEND_SECONDS,
+                });
+            }
+            Err(error) => return Err(error.into()),
+        }
+        let text = format!(
+            "{issuer} verification code: {code}. It expires in {} minutes. Do not share it with anyone.",
+            sms::CODE_SECONDS / 60
+        );
+        let message =
+            Message::one_time_code(phone.clone(), &text, sms::origin_host(&self.origin), &code)
+                .or_else(|_| Message::new(phone, &text))
+                .map_err(|_| Error::Internal)?;
+        if let Err(error) = self.sms.send(&message).await {
+            eprintln!("warning: two-factor text message for account {user} failed: {error}");
+            self.void_text_codes(scope, "user.two_factor.code_undelivered")
+                .await?;
+            return Err(TwoFactorError::NotDelivered);
+        }
+        Ok(CodeSent {
+            phone: masked,
+            resend_in: sms::RESEND_SECONDS,
+        })
     }
 
     /// Step one of enrollment: the password again, then a fresh secret,
@@ -358,7 +580,7 @@ impl UserService {
     /// Step-up: a current authenticator code (or one recovery code) marks
     /// this session as having confirmed access just now.
     pub async fn step_up(&self, scope: &Scope, code: &str) -> Outcome<()> {
-        let proof = self.prove(scope, code).await?;
+        let proof = self.prove(scope, code, true).await?;
         self.consume(scope, proof, Spend::StepUp).await
     }
 
@@ -369,7 +591,7 @@ impl UserService {
         scope: &Scope,
         code: &str,
     ) -> Outcome<Vec<String>> {
-        let proof = self.prove(scope, code).await?;
+        let proof = self.prove(scope, code, false).await?;
         let (codes, hashes) = fresh_recovery_codes().await?;
         self.consume(scope, proof, Spend::Regenerate(hashes))
             .await?;
@@ -379,13 +601,15 @@ impl UserService {
     /// Turns two-factor off after a current code or recovery code: the
     /// secret and every recovery code are deleted.
     pub async fn disable_two_factor(&self, scope: &Scope, code: &str) -> Outcome<()> {
-        let proof = self.prove(scope, code).await?;
+        let proof = self.prove(scope, code, false).await?;
         self.consume(scope, proof, Spend::Disable).await
     }
 
     /// Checks a code against the confirmed authenticator, or the unused
-    /// recovery codes, without consuming it. A miss counts as a failure.
-    async fn prove(&self, scope: &Scope, code: &str) -> Outcome<Proof> {
+    /// recovery codes, without consuming it. With `text_message`, an account
+    /// without an authenticator is checked against its newest text-message
+    /// code instead. A miss counts as a failure.
+    async fn prove(&self, scope: &Scope, code: &str, text_message: bool) -> Outcome<Proof> {
         refuse_impersonation(scope)?;
         self.unlocked(scope).await?;
         let (tenant, user) = (scope.tenant(), scope.user());
@@ -396,8 +620,15 @@ impl UserService {
                 &[&tenant, &user],
             )
             .await
-            .map_err(Error::from)?
-            .ok_or(TwoFactorError::NotEnabled)?;
+            .map_err(Error::from)?;
+        let row = match row {
+            Some(row) => row,
+            None if text_message => {
+                drop(client);
+                return self.prove_text(scope, code).await;
+            }
+            None => return Err(TwoFactorError::NotEnabled),
+        };
         let proof = if totp::normalize(code).is_some() {
             let secret = self.open_secret(tenant, user, &row.get(0))?;
             totp::verify(&secret, code, now_unix(&**client).await?, row.get(1))?
@@ -433,6 +664,96 @@ impl UserService {
         }
     }
 
+    /// Checks a code against the account's newest text-message code. A wrong
+    /// code counts against that code (its fifth voids it) and against the
+    /// account's checks.
+    async fn prove_text(&self, scope: &Scope, code: &str) -> Outcome<Proof> {
+        let (tenant, user) = (scope.tenant(), scope.user());
+        if !self.sms.available() || self.two_factor_status(scope).await?.phone.is_none() {
+            return Err(TwoFactorError::NotEnabled);
+        }
+        let client = self.db.get().await.map_err(Error::from)?;
+        let active = sms::active(&**client, tenant, user).await?;
+        let expired = active.is_none() && sms::newest_expired(&**client, tenant, user).await?;
+        drop(client);
+        let (Some(code), Some((id, hash))) = (sms::normalize(code), active) else {
+            self.failed(scope, "text_message").await?;
+            return Err(if expired {
+                TwoFactorError::CodeExpired
+            } else {
+                TwoFactorError::WrongTextCode
+            });
+        };
+        if password::verify(&code, Some(&hash)).await? {
+            return Ok(Proof::TextMessage(id));
+        }
+        self.text_code_failed(scope, id).await?;
+        self.failed(scope, "text_message").await?;
+        Err(TwoFactorError::WrongTextCode)
+    }
+
+    /// Counts one wrong attempt on a text-message code; the attempt that
+    /// reaches the limit voids it (`user.two_factor.code_invalidated`).
+    async fn text_code_failed(&self, scope: &Scope, id: i64) -> Result<()> {
+        let (tenant, user) = (scope.tenant(), scope.user());
+        let mut client = self.db.get().await?;
+        let mut tx = self
+            .mutations
+            .begin(
+                &mut client,
+                scope.mutation_context("user.two_factor.code_failed"),
+            )
+            .await?;
+        tx.mutate(move |sql| {
+            Box::pin(async move {
+                let failures = sms::count_failure(sql, tenant, user, id).await?;
+                let status = if failures >= sms::CODE_FAILURES {
+                    "invalidated"
+                } else {
+                    "sent"
+                };
+                Ok((
+                    (),
+                    vec![Change {
+                        kind: SMS_KIND.into(),
+                        id,
+                        old: json!({}),
+                        new: json!({"status": status, "failures": failures}),
+                    }],
+                ))
+            })
+        })
+        .await?;
+        tx.commit().await
+    }
+
+    /// Voids every outstanding text-message code of the account, audited as
+    /// `action` (an undelivered code).
+    async fn void_text_codes(&self, scope: &Scope, action: &'static str) -> Result<()> {
+        let (tenant, user) = (scope.tenant(), scope.user());
+        let mut client = self.db.get().await?;
+        let mut tx = self
+            .mutations
+            .begin(&mut client, scope.mutation_context(action))
+            .await?;
+        tx.mutate(move |sql| {
+            Box::pin(async move {
+                sms::void_outstanding(sql, tenant, user).await?;
+                Ok((
+                    (),
+                    vec![Change {
+                        kind: SMS_KIND.into(),
+                        id: user,
+                        old: json!({}),
+                        new: json!({"status": "voided"}),
+                    }],
+                ))
+            })
+        })
+        .await?;
+        tx.commit().await
+    }
+
     /// Spends a proof inside one audited transaction with what it was for:
     /// the authenticator step moves forward (compare-and-set, so a racing
     /// reuse of the same code loses) or the recovery code is marked used, and
@@ -443,14 +764,16 @@ impl UserService {
         let method = match proof {
             Proof::Authenticator(_) => "authenticator",
             Proof::Recovery(_) => "recovery_code",
+            Proof::TextMessage(_) => "text_message",
         };
         let event = match (&spend, &proof) {
             (Spend::StepUp | Spend::Purpose { .. }, Proof::Recovery(_)) => {
                 "user.two_factor.recovery_code_used"
             }
-            (Spend::StepUp | Spend::Purpose { .. }, Proof::Authenticator(_)) => {
-                "user.two_factor.verified"
-            }
+            (
+                Spend::StepUp | Spend::Purpose { .. },
+                Proof::Authenticator(_) | Proof::TextMessage(_),
+            ) => "user.two_factor.verified",
             (Spend::Regenerate(_), _) => "user.two_factor.recovery_codes_regenerated",
             (Spend::Disable, _) => "user.two_factor.disabled",
         };
@@ -481,6 +804,7 @@ impl UserService {
                                 &[&id, &tenant, &user],
                             )
                             .await?,
+                        Proof::TextMessage(id) => sms::spend(sql, tenant, user, id).await?,
                     };
                     if spent != 1 {
                         return Err(Error::Conflict);

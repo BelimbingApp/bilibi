@@ -1,0 +1,18 @@
+[package]
+name = "bilibi-sms"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+askama.workspace = true
+bilibi-datetime = { path = "../datetime" }
+bilibi-module-registry.workspace = true
+bilibi-ui.workspace = true
+inventory.workspace = true
+jiff.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+uuid.workspace = true

@@ -11,8 +11,8 @@ mod policy;
 
 pub use declaration::{Operation, OPERATIONS};
 pub use gate::{
-    end_agent_windows, Declared, Provider, Purpose, Rule, SessionProof, Spent, StepUp, Window,
-    WindowState,
+    end_agent_windows, Challenge, Declared, Provider, Purpose, Rule, SessionProof, Spent, StepUp,
+    Window, WindowState,
 };
 pub use policy::{Mode, CAP_RANGE, WINDOW_RANGE};
 #[doc(hidden)]
@@ -31,12 +31,14 @@ pub fn refusal(operation: &str, reason: &str) -> serde_json::Value {
         "operation": operation,
         "reason": reason,
         "message": match reason {
-            "invalid_code" => "The code was not accepted (wrong, expired or already used). Ask the account holder for a new current code.",
+            "invalid_code" => "The code was not accepted (wrong, expired or already used). Ask the account holder for a new code.",
             "locked" => "The account holder's checks are locked after repeated failures. Try again later.",
-            "not_enrolled" => "The account holder has no authenticator yet. They must set one up in Bilibi first.",
+            "not_enrolled" => "The account holder has no second factor yet: no authenticator app and no phone number. They must set up an authenticator in Bilibi, or ask an administrator to add their phone number.",
             "impersonating" => "Step-up cannot be satisfied while impersonating.",
             "unavailable" => "No second factor is installed, so this operation cannot be confirmed.",
-            _ => "This operation needs the account holder's authenticator code. Ask them for the current code and repeat the request with step_up_code.",
+            "code_sent" => "A code was sent by text message to the account holder's phone. Ask them for it and repeat the request with step_up_code.",
+            "throttled" => "Too many codes were sent to the account holder's phone recently. Try again later.",
+            _ => "This operation needs the account holder's 2FA code. Ask them for the current code from their authenticator app and repeat the request with step_up_code.",
         },
     })
 }

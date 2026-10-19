@@ -76,6 +76,7 @@ bilibi-schedule = { path = "apps/base/schedule" }
 bilibi-session = { path = "apps/base/session" }
 bilibi-settings = { path = "apps/base/settings" }
 bilibi-settings-editor = { path = "apps/base/settings_editor" }
+bilibi-sms = { path = "apps/base/sms" }
 bilibi-step-up = { path = "apps/base/step_up" }
 bilibi-software = { path = "apps/base/software" }
 bilibi-authz-agent = { path = "apps/base/authz_agent" }

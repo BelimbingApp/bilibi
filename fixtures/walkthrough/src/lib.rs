@@ -12,7 +12,10 @@
 //! every account's password is [`PASSWORD`]. Tenant 1 has 62 companies (ids
 //! 1-62, company 1 primary); tenant 2 has company 100. The manager and the
 //! contractor are Persons affiliated with Companies 001 and 002, and the AI
-//! Agent account is an agent Person; the others stay unlinked.
+//! Agent account is an agent Person; the others stay unlinked. The tenant 1
+//! people have phone numbers for text-message two-factor, from Ofcom's range
+//! for drama (`+447700900001` and on), which never reaches a real phone; the
+//! number's last digits are the account id.
 //!
 //! `install` writes SQL only, so any example can link it. The fixture's
 //! capabilities and roles are not product vocabulary; an example that checks
@@ -23,7 +26,9 @@
 //! Grid's reference tables and Workflow delivery). Reconciling system roles
 //! rewrites each role to its contributed set, so an example that reconciles
 //! needs both.
-use bilibi_database::{Db, Error, Result};
+use bilibi_database::{Db, Error, MutationBoundary, Result};
+use bilibi_step_up::{Mode, StepUp};
+use bilibi_tenancy::Scope;
 
 #[doc(hidden)]
 pub use {bilibi_authz as authz, bilibi_module_registry as registry, inventory};
@@ -35,14 +40,44 @@ pub const PASSWORD: &str = "bilibi-dev";
 const PASSWORD_HASH: &str =
     "$argon2id$v=19$m=19456,t=2,p=1$IzxDGAZriFfri+utaEOyhg$doAWJE1WIWBZMcskenqPXFdkVlPTz06pEmmjX51GKV0";
 
-const ACCOUNTS: [(i64, i64, &str, &str); 7] = [
-    (1, 1, "Ada Manager", "manager@example.test"),
-    (2, 1, "Lee Viewer", "viewer@example.test"),
-    (3, 1, "Sam Staff", "staff@example.test"),
-    (4, 1, "Alex Admin", "admin@example.test"),
-    (5, 2, "Other Manager", "manager@other.example.test"),
-    (6, 1, "AI Agent", "ai@agent.my"),
-    (7, 1, "Kim Contractor", "contractor@example.test"),
+const ACCOUNTS: [(i64, i64, &str, &str, Option<&str>); 7] = [
+    (
+        1,
+        1,
+        "Ada Manager",
+        "manager@example.test",
+        Some("+447700900001"),
+    ),
+    (
+        2,
+        1,
+        "Lee Viewer",
+        "viewer@example.test",
+        Some("+447700900002"),
+    ),
+    (
+        3,
+        1,
+        "Sam Staff",
+        "staff@example.test",
+        Some("+447700900003"),
+    ),
+    (
+        4,
+        1,
+        "Alex Admin",
+        "admin@example.test",
+        Some("+447700900004"),
+    ),
+    (5, 2, "Other Manager", "manager@other.example.test", None),
+    (6, 1, "AI Agent", "ai@agent.my", None),
+    (
+        7,
+        1,
+        "Kim Contractor",
+        "contractor@example.test",
+        Some("+447700900007"),
+    ),
 ];
 
 /// Installs the fixture into a migrated disposable database, or refuses one
@@ -70,15 +105,55 @@ pub async fn install(db: &Db) -> Result<()> {
         return Err(Error::Invalid);
     }
     tx.batch_execute(include_str!("fixture.sql")).await?;
-    for (id, tenant, name, email) in ACCOUNTS {
+    for (id, tenant, name, email, phone) in ACCOUNTS {
         tx.execute(
-            "INSERT INTO users(id,tenant_id,name,email,password_hash) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING",
-            &[&id, &tenant, &name, &email, &PASSWORD_HASH],
+            "INSERT INTO users(id,tenant_id,name,email,password_hash,phone_number) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING",
+            &[&id, &tenant, &name, &email, &PASSWORD_HASH, &phone],
         )
         .await?;
     }
     tx.batch_execute(include_str!("operator.sql")).await?;
     tx.commit().await?;
+    Ok(())
+}
+
+/// Turns the fixture tenant's step-up policy off for Base Authz's grant
+/// changes, for a console walkthrough that makes them with nobody to give a
+/// code: Base Step-up enforces on every deployment. `admin` is a scope of the
+/// fixture's grant-all `admin@example.test`. The change goes through Base
+/// Step-up and is audited like one made on the policy page; the tenant's
+/// policy page shows it, and "back to default" undoes it.
+pub async fn console_grants(services: &registry::Services, admin: &Scope) -> Result<()> {
+    let step_up = services
+        .get::<StepUp>(bilibi_step_up::SERVICE)
+        .map_err(|_| Error::Internal)?;
+    let mutations = services
+        .get::<MutationBoundary>("base/database.mutations")
+        .map_err(|_| Error::Internal)?;
+    let db = services
+        .get::<Db>("base/database.pool")
+        .map_err(|_| Error::Internal)?;
+    let keys: Vec<&str> = step_up
+        .catalog()
+        .into_iter()
+        .filter(|declared| declared.module == "base/authz")
+        .map(|declared| declared.operation.key)
+        .collect();
+    // One change per transaction, as the policy page makes them: `set_mode`
+    // reads the stored policy outside the caller's transaction.
+    let mut client = db.get().await?;
+    for key in keys {
+        let mut tx = mutations
+            .begin(
+                &mut client,
+                admin.mutation_context(bilibi_step_up::POLICY_UPDATE),
+            )
+            .await?;
+        step_up
+            .set_mode(&mut tx, admin, key, Some(Mode::Off))
+            .await?;
+        tx.commit().await?;
+    }
     Ok(())
 }
 

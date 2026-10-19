@@ -48,11 +48,21 @@ The web proof of Base Step-up (`apps/base/step_up/README.md`) lives on the sessi
 | `stepped_up_at` | The holder's last check here. The cap counts from it |
 | `step_up_used_at` | The last protected action the window covered. The sliding window counts from it |
 | `step_up_spent_at` | When an "ask every time" action used the last check |
+| `second_factor_pending` | A sign-in waiting for its holder's second factor (migration `004-sign-in`) |
 
-- `step_up(sql, scope)` records a check inside the verifying owner's transaction (Core User's authenticator). It names the session by the sealed scope's CSRF proof, never a token.
+- `step_up(sql, scope)` records a check inside the verifying owner's transaction (Core User's two-factor). It names the session by the sealed scope's CSRF proof, never a token. On a pending sign-in it also completes the session, with the 24-hour absolute expiry counted from then.
 - `step_up_window(client, scope, window, cap, extend)` reads, and with `extend` restarts, the window.
 - `spend_fresh_step_up(client, scope, seconds)` lets one recent check cover one "ask every time" action.
 - An impersonated session is never stepped up.
+
+## Pending sign-in
+
+**A session row can wait for its holder's second factor.** Core User's sign-in inserts every new session pending, for 10 minutes, and completes it when the tenant's sign-in policy is met (`apps/core/user/README.md`, "Sign in at 2FA").
+
+- `check`, `hold` and `activity` refuse a pending session, so no page, socket or agent call can use it.
+- `pending(client, token)` is the one guard that accepts it: the same Tenancy proofs, for the sign-in code page only.
+- `complete_sign_in(client, scope)` makes it an ordinary session when the policy asks nothing at sign-in.
+- An abandoned one ends at its own expiry and is pruned like any expired row.
 - `end_user_sessions` also ends the holder's agent step-up windows (`bilibi_step_up::end_agent_windows`).
 
 ## Listing

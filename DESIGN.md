@@ -67,6 +67,7 @@ Reuse the shared macros and typed models. Do not hand-write markup or copy class
 - Links navigate; buttons act.
 - Destructive actions use calm danger text, never a solid red button.
 - Secrets use `SecretInput`. It starts masked. A stored value shows a keep-current mask, never plaintext.
+- A one-time code uses `CodeInput`, with `.numeric()` for a code of digits so phones offer the number pad. "Resend code" is a `CountdownButton`: usable again only after the wait, which it counts down; the server refuses an early use.
 - Specimens: the Design Library (`/assets/ui-components.html`, `/assets/ui-feedback.html`) is the screenshot baseline. Extend it with each new primitive.
 
 ## Compact scale
@@ -176,7 +177,7 @@ Width is a shared decision. Every page uses `PageVariant`. All three share one c
 
 *Two shells, both minimal.*
 
-- **Credential layout:** a centered card for sign-in and password recovery. No navigation.
+- **Credential layout:** a centered card for sign-in, the sign-in code and password recovery. No navigation. Development's SMS inbox uses it too.
 - **Workspace shell:** `h-7` top bar, sidebar menu, status bar.
   - Top bar: sidebar toggle, brand mark, notification bell, timezone and clock selector, theme selector.
   - Sidebar: the menu, pinned items, account entry at the bottom.

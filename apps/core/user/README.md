@@ -16,7 +16,8 @@ pages belong to the Web host, as Bilimbi's do.
 
 | Method | Purpose |
 |---|---|
-| `login(email, password)` / `logout` | Bilimbi's global sign-in: the address alone names the account; the password is verified first, then the account's standing. Refusals are `CredentialError::{Rejected, CompanyArchived, WorkspaceUnavailable}` |
+| `login(email, password)` / `logout` | Bilimbi's global sign-in: the address alone names the account; the password is verified first, then the account's standing, then the tenant's sign-in step-up policy ("Sign in at 2FA", below). Refusals are `CredentialError::{Rejected, CompanyArchived, WorkspaceUnavailable, NoSecondFactor}` |
+| `pending_sign_in(token)` / `cancel_sign_in(token)` | The scope of a sign-in waiting for its code (the host's `/login/verify`), and abandoning it |
 | `change_password(token, csrf, current, new)` | Signed-in change. Needs the current password; ends the account's other sessions |
 | `request_password_reset(email)` | Always `Ok` for unknown, frozen or throttled accounts. Mail is sent after returning |
 | `reset_password(email, token, new)` | Consumes the one-time token, replaces the password, ends every session; a frozen account's link is as invalid as an unknown one |
@@ -225,7 +226,7 @@ service hashes, and the optional party links of the approved model. The
 Person select offers the live Persons the actor may list
 (`admin.person.list`); once one is chosen the form offers that Person's
 current affiliations (`admin.affiliation.list`) as "Signs in under", labelled
-by company and title. `create_account` validates as Bilimbi's changeset does
+by company and title, and an optional **phone number for 2FA** (E.164, `+94771234567`; spaces and hyphens are dropped). `create_account` validates as Bilimbi's changeset does
 (`can't be blank`, `must be an email address`, the password policy, `has
 already been taken` for the platform-wide unique email), proves and locks the
 links through their owners in the global order Company → Person →
@@ -340,24 +341,26 @@ calls `settle_bootstrap_affiliation` for the company link. `operator_accounts(te
 
 ## Two-factor authentication (the step-up provider)
 
-Authenticator-app codes (TOTP, RFC 6238: HMAC-SHA-1, 6 digits, 30 s) for the signed-in account. It is the second factor behind Base Step-up (`apps/base/step_up/README.md`). Bilimbi has no counterpart yet.
+**Two methods, one per account:** authenticator-app codes (TOTP, RFC 6238: HMAC-SHA-1, 6 digits, 30 s), or, for an account with a phone number and no app, a code by text message. It is the second factor behind Base Step-up (`apps/base/step_up/README.md`). Bilimbi has no counterpart yet. Decision: [ADR 02](../../../docs/architecture/decisions/02-sms-second-factor.md).
 
 - **Boundary:** this module checks the account holder and nothing else. It never names what step-up protects, and those owners never name it. They declare operations and call `StepUp::require`; tenant policy decides.
-- **Code:** `src/two_factor/` (facade on `UserService`, provider in `provider.rs`), pages in `src/two_factor_ui.rs`, migration `012-two-factor.sql`.
+- **Method:** the app wins when it is on. Without it, a phone number gives text messages, if Base SMS has a transport (`Method::{Authenticator, TextMessage, None}`). An account with neither cannot pass a check.
+- **Code:** `src/two_factor/` (facade on `UserService`, provider in `provider.rs`, text messages in `sms.rs`), pages in `src/two_factor_ui.rs`, migrations `012-two-factor.sql` and `013-phone.sql`.
 
 | Method | Purpose |
 |---|---|
-| `two_factor_status(scope)` | On or off, and unused recovery codes |
+| `two_factor_status(scope)` | App on or off, unused recovery codes, the masked phone number, whether it is verified and whether text messages can be sent; `method()` |
+| `send_two_factor_code(scope, resend)` | A text-message code, unless one that can still be entered is out and `resend` is false. Throttled (below) |
 | `begin_two_factor(scope, password)` | Password again, then a fresh 160-bit secret (OS CSPRNG), sealed and stored pending. Returns the QR code and typed key, once |
 | `confirm_two_factor(scope, code)` | A current code turns it on, stores 10 new recovery codes (returned once) and opens the session's step-up window |
-| `step_up(scope, code)` | A current code or one recovery code opens the session's step-up window (the confirm page) |
+| `step_up(scope, code)` | A current code, one recovery code or the newest text-message code opens the session's step-up window (the confirm page), and completes a pending sign-in |
 | `regenerate_recovery_codes(scope, code)` / `disable_two_factor(scope, code)` | Need a current code or a recovery code. The old set stops working / everything is deleted |
-| `two_factor::Authenticator` | The `bilibi_step_up::Provider`, bound at boot: enrolled? session window, spend an agent's code for a purpose, where to prompt |
+| `two_factor::Authenticator` | The `bilibi_step_up::Provider`, bound at boot: enrolled? session window, spend an agent's code for a purpose, where to prompt, and send an agent's human a text-message code (`challenge`) |
 
 Pages (signed in only, live, `Cache-Control: no-store` like every page):
 
-- `/settings/two-factor`: set up (password, QR code, setup key, first code), recovery codes with a text download, new codes, turn off.
-- `/settings/two-factor/confirm?return=<path>`: the step-up prompt. Success returns to `return`, which must be a local path (`safe_return`).
+- `/settings/two-factor`: the account's method (text messages to the masked number, verified or not), app setup (password, QR code, setup key, first code), recovery codes with a text download, new codes, turn off.
+- `/settings/two-factor/confirm?return=<path>`: the step-up prompt. A text-message account is sent its code when the page opens, and can ask for another after the wait (the countdown). Success returns to `return`, which must be a local path (`safe_return`).
 
 Security rules:
 
@@ -366,15 +369,31 @@ Security rules:
 - **Pending until proved.** A secret is unconfirmed until a current code arrives. Leaving setup keeps the pending row; the next setup replaces it.
 - **Verification.** Steps −1, 0 and +1 are each computed and compared in constant time (`subtle`). `last_step` only moves forward, by compare-and-set in the spending transaction, so a code is never accepted twice, even by two racing requests.
 - **Recovery codes.** 10 per set, 50 bits each (`xxxxx-xxxxx`, base32), stored as Argon2id hashes through `password::hash`. Every unused hash is checked. A used code keeps `used_at`.
-- **Throttle.** Applies per account to every failed check: password, code, recovery code, and an agent's code too. The fifth failure within 15 minutes locks every check for 15 minutes (`user_two_factor_attempts`). A success resets the count.
+- **Throttle.** Applies per account to every failed check: password, code, recovery code, text-message code, and an agent's code too. The fifth failure within 15 minutes locks every check for 15 minutes (`user_two_factor_attempts`). A success resets the count.
+- **Text-message codes.** 6 digits from the OS CSPRNG, uniform. Stored only as an Argon2id hash (`user_two_factor_sms_codes`). A code works for 5 minutes, once, and its fifth wrong attempt voids it; a newer code or a new number voids it too. Sends: one per 60 seconds, at most 5 an hour, per account, rechecked under the account's row lock. The text ends with `@<APP_ORIGIN host> #<code>` so phones fill it only on this site. A code the transport did not deliver is voided.
+- **Phone number.** An administrator sets it (`/users/new`, or in place on `/users/{id}`). Changing it is the step-up operation `core.user.phone_number.set` (on by default) because it redirects the account's codes; it clears `phone_verified_at` and voids outstanding codes. The first correct code sent to a number records `phone_verified_at`.
 - **Impersonation.** An impersonated session cannot enroll, change or check two-factor.
-- **Audit.** Each write is a `MutationBoundary` transaction: `user.two_factor.enrollment_started`, `.enabled`, `.verified`, `.recovery_code_used`, `.recovery_codes_regenerated`, `.disabled`, `.failed` and `.locked`. A code spent for an agent records the purpose's operation key and channel (`for`, `channel`). A check refused while locked is the action `user.two_factor.refused`. No code, secret or recovery code is ever in a change, payload or log.
+- **Audit.** Each write is a `MutationBoundary` transaction: `user.two_factor.enrollment_started`, `.enabled`, `.verified`, `.recovery_code_used`, `.recovery_codes_regenerated`, `.disabled`, `.failed` and `.locked`, and for text messages `.code_sent` (with the masked number), `.code_failed` (its status turns `invalidated` on the fifth) and `.code_undelivered`. A code spent for an agent records the purpose's operation key and channel (`for`, `channel`). A check refused while locked is the action `user.two_factor.refused`. No code, secret or recovery code is ever in a change, payload or log.
 
 | Setting | Default | Use |
 |---|---|---|
 | `two_factor.issuer` (global, `admin.system.session.manage`) | `Bilibi` | The name apps list the account under (company or deployment name). No `:`; applies to new setups |
 
 The step-up window, cap and per-operation policy belong to Base Step-up, not here.
+
+### Sign in at 2FA
+
+Signing in is the step-up operation `core.user.sign_in`, off by default: a tenant turns it on at `/authz/step-up` like any other.
+
+1. `identity::login` checks the password and inserts the session **pending** (`Sessions::pending`, 10 minutes). Every guard refuses a pending session.
+2. `UserService::login` asks Base Step-up on that session. Policy off: the session completes at once. Policy on: `Login::second_factor` is set and the host sends the browser to `/login/verify`.
+3. The code completes the session (`Sessions::step_up`) and opens its step-up window, so the next protected action does not ask again within the window.
+4. An account that cannot get a code (no app, and no phone number, or no transport to text it) is refused with `CredentialError::NoSecondFactor`, which says to ask an administrator, and its pending session is removed. Nobody is locked out silently.
+
+| Declared here | Default |
+|---|---|
+| `core.user.sign_in` "Sign in" | Off |
+| `core.user.phone_number.set` "Change a user's phone number for 2FA" | On |
 
 ## Audit
 

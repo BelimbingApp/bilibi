@@ -116,6 +116,8 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .login("admin@example.test", bilibi_walkthrough_fixture::PASSWORD)
         .await?;
     let admin = app.security.guard(&login.token).await?;
+    // Base Step-up enforces everywhere; nobody is at this console to give a code.
+    bilibi_walkthrough_fixture::console_grants(&app.services, &admin).await?;
     let other = app.security.guard(&other_login.token).await?;
     let browser = Browser {
         app: &app,

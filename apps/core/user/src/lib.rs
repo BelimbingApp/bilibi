@@ -16,6 +16,7 @@ pub mod password;
 mod preferences;
 mod query_ui;
 mod reset;
+mod step_up;
 mod two_factor;
 mod two_factor_ui;
 mod verification;
@@ -38,8 +39,8 @@ pub use preferences::{
     MAX_PINS, THEMES, THEME_KEY,
 };
 pub use two_factor::{
-    safe_return, Enrollment, TwoFactorError, TwoFactorStatus, CONFIRM_PATH, ISSUER_KEY,
-    SETTINGS_PATH as TWO_FACTOR_PATH,
+    safe_return, CodeSent, Enrollment, Method, TwoFactorError, TwoFactorStatus, CONFIRM_PATH,
+    ISSUER_KEY, SETTINGS_PATH as TWO_FACTOR_PATH,
 };
 pub use verification::{Signer, Verification};
 
@@ -80,6 +81,10 @@ pub const TWO_FACTOR_MIGRATION: (&str, &str) = (
     "core-user-012-two-factor",
     include_str!("../migrations/012-two-factor.sql"),
 );
+pub const PHONE_MIGRATION: (&str, &str) = (
+    "core-user-013-phone",
+    include_str!("../migrations/013-phone.sql"),
+);
 pub const ACCOUNTS_MIGRATION: (&str, &str) = (
     "core-user-008-accounts",
     include_str!("../migrations/008-accounts.sql"),
@@ -117,6 +122,10 @@ pub enum CredentialError {
     VerificationUnavailable,
     #[error("The email could not be sent")]
     Delivery,
+    /// Sign-in: the credential is right and the tenant asks for a second
+    /// factor at sign-in, but the account has none to check.
+    #[error("Your organisation asks for 2FA at sign-in, and this account cannot get a code: it has no authenticator app, and no phone number this server can send text messages to. Ask an administrator.")]
+    NoSecondFactor,
     #[error(transparent)]
     Other(#[from] Error),
 }
@@ -129,10 +138,13 @@ impl From<tokio_postgres::Error> for CredentialError {
 pub struct Login {
     pub token: String,
     pub csrf: String,
+    /// The session waits for the holder's second factor (the code page,
+    /// `Sessions::pending`); until then every guard refuses it.
+    pub second_factor: bool,
 }
 
 /// Bilimbi's global sign-in: email alone names the account (`identity::login`).
-pub async fn login(
+async fn login(
     db: &Db,
     email: &str,
     password: &str,
@@ -166,11 +178,12 @@ pub struct UserService {
     /// Public origin that emailed links point at (`APP_ORIGIN`).
     origin: String,
     pub(crate) step_up: std::sync::Arc<bilibi_step_up::StepUp>,
+    pub(crate) sms: std::sync::Arc<bilibi_sms::Sms>,
 }
 inventory::submit! {
     bilibi_module_registry::Module {
         id:"core/user",layer:bilibi_module_registry::Layer::Core,
-        dependencies:&["base/database","base/security","base/step_up","base/notifications","base/tenancy","base/session","base/principal_directory","base/mail","base/settings","base/datetime","base/locale","base/ui","base/audit","base/authz","base/menu","base/grid","base/dashboard","base/party_ids","core/company","core/person","core/affiliation"],migrations:&[MIGRATION,CREDENTIALS_MIGRATION,PINS_MIGRATION,NOTIFICATIONS_MIGRATION,database_queries::MIGRATION,BOOTSTRAP_MIGRATION,IDENTITY_MIGRATION,ACCOUNTS_MIGRATION,IMPERSONATION_MIGRATION,BOOTSTRAP_AFFILIATION_MIGRATION,MOVED_PINS_MIGRATION,TWO_FACTOR_MIGRATION],
+        dependencies:&["base/database","base/security","base/step_up","base/sms","base/notifications","base/tenancy","base/session","base/principal_directory","base/mail","base/settings","base/datetime","base/locale","base/ui","base/audit","base/authz","base/menu","base/grid","base/dashboard","base/party_ids","core/company","core/person","core/affiliation"],migrations:&[MIGRATION,CREDENTIALS_MIGRATION,PINS_MIGRATION,NOTIFICATIONS_MIGRATION,database_queries::MIGRATION,BOOTSTRAP_MIGRATION,IDENTITY_MIGRATION,ACCOUNTS_MIGRATION,IMPERSONATION_MIGRATION,BOOTSTRAP_AFFILIATION_MIGRATION,MOVED_PINS_MIGRATION,TWO_FACTOR_MIGRATION,PHONE_MIGRATION],
         services:&[bilibi_module_registry::Service {id:"core/user.database_queries",factory:|services| {
             Ok(std::sync::Arc::new(database_queries::QueryService::new(services.get::<Db>("base/database.pool")?.as_ref().clone(), services.get("base/database.mutations")?, services.get("base/tenancy.authentication")?)))
         }},bilibi_module_registry::Service {id:"core/user.query-pages",factory:|services| {
@@ -183,7 +196,7 @@ inventory::submit! {
             services.get::<bilibi_security::Authentication>("base/tenancy.authentication")?.bind(std::sync::Arc::new(AccountVerifier))?;
             services.get::<bilibi_notifications::NotificationBoundary>("base/notifications.sink")?.bind(std::sync::Arc::new(notifications.clone()))?;
             services.get::<bilibi_principal_directory::PrincipalDirectory>("base/principal_directory.directory")?.bind("core/user", std::sync::Arc::new(directory::UserDirectory))?;
-            let users = std::sync::Arc::new(UserService {sessions:services.get("base/session.sessions")?,mutations:services.get("base/database.mutations")?,authentication:services.get("base/tenancy.authentication")?,persons:services.get(bilibi_person::SERVICE)?,affiliations:services.get(bilibi_affiliation::SERVICE)?,db:services.get::<Db>("base/database.pool")?.as_ref().clone(),notifications,mailer:services.get("base/mail.mailer")?,settings:services.get("base/settings.store")?,display:services.get("base/datetime.display")?,locales:services.get("base/locale.locales")?,signer:Signer::from_hex(std::env::var("BILIBI_USER_SIGNING_KEY").ok().as_deref()),origin:std::env::var("APP_ORIGIN").unwrap_or_else(|_| "http://localhost:3000".into()).trim_end_matches('/').to_owned(),step_up:services.get(bilibi_step_up::SERVICE)?});
+            let users = std::sync::Arc::new(UserService {sessions:services.get("base/session.sessions")?,mutations:services.get("base/database.mutations")?,authentication:services.get("base/tenancy.authentication")?,persons:services.get(bilibi_person::SERVICE)?,affiliations:services.get(bilibi_affiliation::SERVICE)?,db:services.get::<Db>("base/database.pool")?.as_ref().clone(),notifications,mailer:services.get("base/mail.mailer")?,settings:services.get("base/settings.store")?,display:services.get("base/datetime.display")?,locales:services.get("base/locale.locales")?,signer:Signer::from_hex(std::env::var("BILIBI_USER_SIGNING_KEY").ok().as_deref()),origin:std::env::var("APP_ORIGIN").unwrap_or_else(|_| "http://localhost:3000".into()).trim_end_matches('/').to_owned(),step_up:services.get(bilibi_step_up::SERVICE)?,sms:services.get(bilibi_sms::SERVICE)?});
             services.get::<bilibi_step_up::StepUp>(bilibi_step_up::SERVICE)?.bind(std::sync::Arc::new(two_factor::Authenticator(users.clone())))?;
             Ok(users)
         }},
@@ -194,12 +207,55 @@ inventory::submit! {
 }
 
 impl UserService {
+    /// Sign-in: the password first (`identity::login`), on a session that
+    /// stays pending until the tenant's sign-in policy is met (Base Step-up,
+    /// `core.user.sign_in`): at once when it asks nothing, else after the
+    /// holder's code (`Login::second_factor`). An account the policy asks a
+    /// code of but that has no second factor is refused, and its pending
+    /// session removed.
     pub async fn login(
         &self,
         email: &str,
         password: &str,
     ) -> std::result::Result<Login, CredentialError> {
-        login(&self.db, email, password).await
+        let mut login = login(&self.db, email, password).await?;
+        let client = self.db.get().await.map_err(Error::from)?;
+        let scope = self.sessions.pending(&**client, &login.token).await?;
+        drop(client);
+        let required = self
+            .step_up
+            .require(&scope, step_up::SIGN_IN, "session")
+            .await;
+        let client = self.db.get().await.map_err(Error::from)?;
+        match required {
+            Ok(()) => self.sessions.complete_sign_in(&**client, &scope).await?,
+            Err(Error::StepUpRequired { reason, .. })
+                if !matches!(reason, "not_enrolled" | "unavailable" | "impersonating") =>
+            {
+                login.second_factor = true;
+            }
+            Err(error) => {
+                self.sessions
+                    .delete(&**client, &scope, &login.token)
+                    .await?;
+                return Err(match error {
+                    Error::StepUpRequired { .. } => CredentialError::NoSecondFactor,
+                    other => other.into(),
+                });
+            }
+        }
+        Ok(login)
+    }
+    /// The scope of a sign-in waiting for its second factor, for the code page.
+    pub async fn pending_sign_in(&self, token: &str) -> Result<bilibi_security::Scope> {
+        let client = self.db.get().await?;
+        self.sessions.pending(&**client, token).await
+    }
+    /// Abandons a sign-in waiting for its second factor ("Back to sign in").
+    pub async fn cancel_sign_in(&self, token: &str) -> Result<()> {
+        let client = self.db.get().await?;
+        let scope = self.sessions.pending(&**client, token).await?;
+        self.sessions.delete(&**client, &scope, token).await
     }
     pub async fn logout(&self, token: &str, csrf: &str) -> Result<()> {
         logout(&self.db, token, csrf, &self.sessions).await

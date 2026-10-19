@@ -358,6 +358,28 @@ pub struct Button<'a> {
     pub body: Html,
 }
 
+/// A button usable again only after a wait, such as asking for another
+/// one-time code. The server renders it usable and refuses an early use; the
+/// `Countdown` hook (`assets/hooks.js`) disables it meanwhile and shows the
+/// seconds left after its label, so it still works without the script.
+#[derive(Template, Debug, Default)]
+#[template(
+    source = r#"{% import "components.html" as ui %}<span id="{{ id }}-countdown" data-hook="Countdown" data-seconds="{{ seconds }}" class="inline-flex">{% call ui::button(variant=variant, id=id, button_type=button_type, name=name, value=value, event=event, working=working) %}{{ label }}<span data-countdown-text class="tabular-nums"></span>{% endcall %}</span>"#,
+    ext = "html"
+)]
+pub struct CountdownButton<'a> {
+    pub variant: ButtonVariant,
+    pub id: &'a str,
+    pub label: &'a str,
+    /// Seconds before it may be used; 0 is now.
+    pub seconds: i64,
+    pub button_type: &'a str,
+    pub name: &'a str,
+    pub value: &'a str,
+    pub event: &'a str,
+    pub working: &'a str,
+}
+
 /// A compact icon-only action with an accessible label.
 #[derive(Template, Debug)]
 #[template(

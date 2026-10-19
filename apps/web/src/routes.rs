@@ -34,9 +34,11 @@ pub struct BoundDownload {
 }
 
 /// The host paths no discovered route, download or moved path may overlap.
-const HOST_PATHS: [&str; 17] = [
+const HOST_PATHS: [&str; 19] = [
     "/",
     "/login",
+    crate::auth::VERIFY_PATH,
+    bilibi_base::sms::INBOX_PATH,
     "/logout",
     "/preferences",
     "/forgot-password",

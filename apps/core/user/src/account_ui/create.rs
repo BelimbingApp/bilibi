@@ -22,6 +22,7 @@ struct Form {
     affiliation: Html,
     name: Html,
     email: Html,
+    phone_number: Html,
     password: Html,
     submit: Html,
     cancel: Html,
@@ -158,6 +159,14 @@ impl Create {
                 .placeholder("Enter email address")
                 .required(),
         )?;
+        let phone_number = render(
+            &field("phone_number", "Phone number for 2FA")
+                .kind(InputKind::Tel)
+                .value(&self.input.phone_number)
+                .autocomplete("tel")
+                .placeholder("+94771234567")
+                .hint("Optional. Codes for 2FA are sent here by text message. International format, starting with +."),
+        )?;
         let mut password = SecretInput::in_form("user", "password", "password")
             .id("user-password")
             .label("Password")
@@ -188,6 +197,7 @@ impl Create {
             affiliation,
             name,
             email,
+            phone_number,
             password,
             submit: render(&Button {
                 id: "user-save",
@@ -262,6 +272,7 @@ impl LiveState<Scope, Error> for Create {
                 self.input = AccountInput {
                     name: fields.get("name").cloned().unwrap_or_default(),
                     email: fields.get("email").cloned().unwrap_or_default(),
+                    phone_number: fields.get("phone_number").cloned().unwrap_or_default(),
                     password: fields.get("password").cloned().unwrap_or_default(),
                     person,
                     affiliation,

@@ -6,6 +6,11 @@
 //! account, as in Bilimbi; a right credential on a frozen account (archived
 //! company, no live workspace identity) is told so above the form, as
 //! Bilimbi's `complete_login` does. Sign-in has no attempt throttle yet.
+//! When the tenant asks a second factor at sign-in (Core User's
+//! `core.user.sign_in` step-up operation), the right password only opens a
+//! pending session, held in its own short cookie, and `/login/verify` asks
+//! for the code; the session cookie is set once the code is right. In
+//! development the SMS simulator's inbox is served here too.
 use crate::{api, document_titled, origin, token, App, HttpError};
 use askama::Template;
 use axum::{
@@ -16,10 +21,11 @@ use axum::{
 use bilibi_database::Error;
 use bilibi_ui::{
     AuthLayout, FlashMap, ForgotForm, ForgotPasswordPage, Html, LoginForm, LoginPage,
-    LoginWorkspace, ResetForm, ResetPasswordPage, COMPANY_ARCHIVED, CREDENTIALS_REJECTED,
-    PASSWORD_RESET, RESET_LINK_INVALID, RESET_REQUESTED, WORKSPACE_UNAVAILABLE,
+    LoginWorkspace, ResetForm, ResetPasswordPage, VerifyCodeForm, VerifyCodePage, COMPANY_ARCHIVED,
+    CREDENTIALS_REJECTED, PASSWORD_RESET, RESET_LINK_INVALID, RESET_REQUESTED,
+    WORKSPACE_UNAVAILABLE,
 };
-use bilibi_user::{password::check_policy, CredentialError};
+use bilibi_user::{password::check_policy, CredentialError, Method, TwoFactorError};
 use serde::Deserialize;
 use std::{collections::HashMap, net::SocketAddr};
 
@@ -29,6 +35,12 @@ const CONFIRMATION_MISMATCH: &str = "does not match confirmation";
 /// Where a signed-in visitor to a credential page is sent: the dashboard, as
 /// Bilimbi's `UserAuth` signs every account in.
 const WORKSPACE: &str = "/dashboard";
+
+/// The sign-in code page.
+pub const VERIFY_PATH: &str = "/login/verify";
+/// Holds a pending sign-in's session id, only for the code page and only as
+/// long as the pending session lives; the session cookie replaces it.
+const PENDING_COOKIE: &str = "bilibi_sign_in";
 
 /// The one-shot flash cookie carries one of these keys; the sign-in page maps
 /// the key to its copy and clears the cookie. Free text never travels in it.
@@ -401,24 +413,12 @@ pub async fn login(
                         .and_then(|value| value.to_str().ok()),
                 )
                 .await?;
-            let cookie = format!(
-                "bilibi_session={}; HttpOnly; SameSite=Lax; Path=/; Max-Age=86400{}",
-                session.token,
-                secure(&app)
-            );
-            // The account's chosen landing page (Bilimbi `ui.landing_menu_id`),
-            // when it still may open it; else the workspace.
-            let destination = app
-                .user
-                .landing_route(&session.token)
-                .await?
-                .unwrap_or_else(|| WORKSPACE.to_owned());
-            let mut response = Redirect::to(&destination).into_response();
-            response.headers_mut().insert(
-                header::SET_COOKIE,
-                HeaderValue::from_str(&cookie).map_err(|_| Error::Internal)?,
-            );
-            Ok(response)
+            if session.second_factor {
+                let mut response = Redirect::to(VERIFY_PATH).into_response();
+                set_pending(&app, &mut response, &session.token)?;
+                return Ok(response);
+            }
+            signed_in_response(&app, &session.token).await
         }
         Err(CredentialError::Rejected) => {
             // Reported twice over, as Bilimbi does: the announced alert for
@@ -437,9 +437,234 @@ pub async fn login(
             form.form_error = WORKSPACE_UNAVAILABLE.into();
             login_card(&app, form, FlashMap::default(), StatusCode::FORBIDDEN).await
         }
+        // A right credential, a tenant that asks a second factor at sign-in
+        // and an account without one: told so, and who can fix it.
+        Err(error @ CredentialError::NoSecondFactor) => {
+            form.form_error = error.to_string();
+            login_card(&app, form, FlashMap::default(), StatusCode::FORBIDDEN).await
+        }
         Err(CredentialError::Other(error)) => Err(error.into()),
         Err(_) => Err(Error::Internal.into()),
     }
+}
+
+/// The session cookie for a completed sign-in and the redirect to the
+/// account's chosen landing page (Bilimbi `ui.landing_menu_id`), when it
+/// still may open it; else the workspace.
+async fn signed_in_response(app: &App, token: &str) -> std::result::Result<Response, HttpError> {
+    let cookie = format!(
+        "bilibi_session={token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=86400{}",
+        secure(app)
+    );
+    let destination = app
+        .user
+        .landing_route(token)
+        .await?
+        .unwrap_or_else(|| WORKSPACE.to_owned());
+    let mut response = Redirect::to(&destination).into_response();
+    response.headers_mut().insert(
+        header::SET_COOKIE,
+        HeaderValue::from_str(&cookie).map_err(|_| Error::Internal)?,
+    );
+    Ok(response)
+}
+
+// ---- sign-in code ---------------------------------------------------------------
+
+fn set_pending(
+    app: &App,
+    response: &mut Response,
+    token: &str,
+) -> std::result::Result<(), HttpError> {
+    let cookie = format!(
+        "{PENDING_COOKIE}={token}; HttpOnly; SameSite=Lax; Path={VERIFY_PATH}; Max-Age=600{}",
+        secure(app)
+    );
+    response.headers_mut().append(
+        header::SET_COOKIE,
+        HeaderValue::from_str(&cookie).map_err(|_| Error::Internal)?,
+    );
+    Ok(())
+}
+fn clear_pending(response: &mut Response) {
+    response.headers_mut().append(
+        header::SET_COOKIE,
+        HeaderValue::from_static(
+            "bilibi_sign_in=; HttpOnly; SameSite=Lax; Path=/login/verify; Max-Age=0",
+        ),
+    );
+}
+fn pending_token(headers: &HeaderMap) -> Option<&str> {
+    cookie(headers, PENDING_COOKIE)
+        .filter(|token| token.len() == 32 && token.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+/// Back to the sign-in card, forgetting a pending sign-in that is gone.
+fn restart_sign_in(app: &App) -> Response {
+    let mut response = Redirect::to("/").into_response();
+    clear_pending(&mut response);
+    set_flash(app, &mut response, FLASH_EXPIRED);
+    response
+}
+
+async fn verify_card(
+    app: &App,
+    form: VerifyCodeForm,
+    status: StatusCode,
+) -> std::result::Result<Response, HttpError> {
+    card(
+        app,
+        "Enter verification code",
+        VerifyCodePage::new(&form).map_err(|_| Error::Internal)?,
+        FlashMap::default(),
+        status,
+    )
+    .await
+}
+
+/// What the code card does about a text message before it shows.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum Texting {
+    /// Send one, unless one the holder can still enter is out.
+    IfNone,
+    /// Send another ("Resend code"), when the wait allows.
+    Again,
+    /// Send nothing: after a refused code the holder decides.
+    Never,
+}
+
+/// Fills the card for the account's method: for a text-message account,
+/// where the code went and the wait before another, sending as `texting` says.
+async fn prepare_code(
+    app: &App,
+    scope: &bilibi_security::Scope,
+    form: &mut VerifyCodeForm,
+    texting: Texting,
+) -> std::result::Result<(), HttpError> {
+    let status = app.user.two_factor_status(scope).await?;
+    if status.method() != Method::TextMessage {
+        return Ok(());
+    }
+    form.phone = status.phone.unwrap_or_default();
+    let outcome = match texting {
+        Texting::Never => app.user.text_code_status(scope).await,
+        _ => {
+            app.user
+                .send_two_factor_code(scope, texting == Texting::Again)
+                .await
+        }
+    };
+    match outcome {
+        Ok(sent) => {
+            form.phone = sent.phone;
+            form.resend_in = sent.resend_in;
+            if texting == Texting::Again {
+                form.notice = "A new code is on its way. The earlier one no longer works.".into();
+            }
+        }
+        Err(TwoFactorError::Other(error)) => return Err(error.into()),
+        Err(error) => {
+            if let TwoFactorError::ResendTooSoon { seconds } = error {
+                form.resend_in = seconds;
+            }
+            form.form_error = error.to_string();
+        }
+    }
+    Ok(())
+}
+
+/// `/login/verify`: the code card of a sign-in waiting for its second factor.
+pub async fn verify_page(
+    State(app): State<App>,
+    headers: HeaderMap,
+) -> std::result::Result<Response, HttpError> {
+    let Some(token) = pending_token(&headers) else {
+        return Ok(Redirect::to("/").into_response());
+    };
+    let Ok(scope) = app.user.pending_sign_in(token).await else {
+        return Ok(restart_sign_in(&app));
+    };
+    let mut form = VerifyCodeForm::default();
+    prepare_code(&app, &scope, &mut form, Texting::IfNone).await?;
+    verify_card(&app, form, StatusCode::OK).await
+}
+
+#[derive(Deserialize)]
+pub struct VerifySubmission {
+    #[serde(default)]
+    action: String,
+    #[serde(rename = "verify[code]", default)]
+    code: String,
+}
+
+/// The code card's three forms: `verify` the code, `resend` one, `cancel`.
+pub async fn verify(
+    State(app): State<App>,
+    headers: HeaderMap,
+    Form(submission): Form<VerifySubmission>,
+) -> std::result::Result<Response, HttpError> {
+    origin(&app, &headers)?;
+    let Some(token) = pending_token(&headers) else {
+        return Ok(Redirect::to("/").into_response());
+    };
+    let Ok(scope) = app.user.pending_sign_in(token).await else {
+        return Ok(restart_sign_in(&app));
+    };
+    let mut form = VerifyCodeForm::default();
+    match submission.action.as_str() {
+        "cancel" => {
+            app.user.cancel_sign_in(token).await?;
+            let mut response = Redirect::to("/").into_response();
+            clear_pending(&mut response);
+            Ok(response)
+        }
+        "resend" => {
+            prepare_code(&app, &scope, &mut form, Texting::Again).await?;
+            let status = if form.form_error.is_empty() {
+                StatusCode::OK
+            } else {
+                StatusCode::TOO_MANY_REQUESTS
+            };
+            verify_card(&app, form, status).await
+        }
+        "verify" if submission.code.trim().is_empty() => {
+            prepare_code(&app, &scope, &mut form, Texting::Never).await?;
+            form.form_error = "Enter the code.".into();
+            verify_card(&app, form, StatusCode::UNPROCESSABLE_ENTITY).await
+        }
+        "verify" => match app.user.step_up(&scope, &submission.code).await {
+            // The check completed the pending session (`Sessions::step_up`).
+            Ok(()) => {
+                let mut response = signed_in_response(&app, token).await?;
+                clear_pending(&mut response);
+                Ok(response)
+            }
+            Err(TwoFactorError::Other(error)) => Err(error.into()),
+            Err(refusal) => {
+                let message = match refusal {
+                    TwoFactorError::InvalidCode => {
+                        "That code is not right. Check it and try again.".into()
+                    }
+                    TwoFactorError::WrongTextCode => {
+                        "That is not the code in the text message. Check it and try again.".into()
+                    }
+                    other => other.to_string(),
+                };
+                prepare_code(&app, &scope, &mut form, Texting::Never).await?;
+                form.form_error = message;
+                verify_card(&app, form, StatusCode::UNAUTHORIZED).await
+            }
+        },
+        _ => Err(Error::Invalid.into()),
+    }
+}
+
+/// `/dev/sms-inbox`: the SMS simulator's messages. Bound only in
+/// development (`Environment::simulates_sms`); nowhere else does the path exist.
+pub async fn sms_inbox(State(app): State<App>) -> std::result::Result<Response, HttpError> {
+    let page = bilibi_base::sms::InboxPage::new(&app.sms)
+        .map_err(|_| Error::Internal)?
+        .ok_or(Error::NotFound)?;
+    card(&app, "SMS inbox", page, FlashMap::default(), StatusCode::OK).await
 }
 
 // ---- forgotten password ---------------------------------------------------------

@@ -147,6 +147,8 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let viewer = auth.authenticate(client, 1, 2, String::new()).await?;
     let admin = auth.authenticate(client, 1, 4, String::new()).await?;
     let other = auth.authenticate(client, 2, 5, String::new()).await?;
+    // Base Step-up enforces everywhere; nobody is at this console to give a code.
+    bilibi_walkthrough_fixture::console_grants(&app.services, &admin).await?;
 
     println!("== Scoped catalogs: the capability decides which tables exist for an account");
     let for_manager = Catalog::for_scope(client, &manager).await?;

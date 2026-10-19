@@ -4,7 +4,7 @@ Ask the human account holder to prove it is them again before an operation goes 
 
 - **This module names no consumer** (no page, table, sign-in or role) and no second-factor method.
 - Each owner declares its own operations and calls the facade from its own module.
-- The second factor is a bound `Provider`. Today that is Core User's authenticator app (TOTP).
+- The second factor is a bound `Provider`. Today that is Core User's two-factor: an authenticator app (TOTP), or a code by text message for an account with a phone number and no app (`apps/core/user/README.md`).
 
 ## Require step-up for an operation
 
@@ -52,7 +52,7 @@ Tenants decide per operation on **Administration › Authorization › Step-up 2
 
 - Changing any of these is itself a step-up operation (`base.step_up.policy.update`, on the floor). Settings audits it.
 - The installation owner sees the floor and the maxima on the same page.
-- `BILIBI_ENV=development` turns enforcement off (the host calls `set_enforced`). Anything else enforces. An operation declared `.always()` is enforced everywhere, as "ask every time", and the policy page shows it as fixed.
+- Every deployment enforces the policy, development included. An operation declared `.always()` is "ask every time" whatever the policy says, and the policy page shows it as fixed.
 
 ## Proofs per channel
 
@@ -75,7 +75,7 @@ Tenants decide per operation on **Administration › Authorization › Step-up 2
    {"error":"step_up_required","operation":"domain.module.thing.approve","reason":"code_required","message":"…"}
    ```
 
-2. The agent asks its human for the current code from their authenticator app.
+2. The agent asks its human for the code: the current one from their authenticator app, or, for a text-message account, the one Bilibi just sent with the refusal (`code_sent`).
 3. It commits the same plan again with `"step_up_code": "123456"`. A failed commit leaves the plan code usable until it expires.
 4. That opens the agent's window: later protected commits on that connection pass without a code until the window or cap ends, unless an operation asks every time.
 
@@ -84,6 +84,8 @@ Tenants decide per operation on **Administration › Authorization › Step-up 2
 | Reason | Meaning |
 |---|---|
 | `code_required` | No code was sent |
+| `code_sent` | No code was sent, and a text-message code is on its way to the holder's phone (or one sent moments ago still holds) |
+| `throttled` | No code was sent, and no text message can go now: too many were sent recently |
 | `invalid_code` | Wrong, expired or already used |
 | `locked` | Too many failed codes |
 | `not_enrolled` | The holder has no second factor yet |
@@ -120,11 +122,12 @@ Every check that applies writes one action:
 | `session` | The browser session's window (`SessionProof::Window`), or one fresh check (`SessionProof::Fresh`) |
 | `spend` | Verify a code and use it, for the `Purpose` (operation, target, channel) |
 | `prompt` | Where a browser checks in, or enrolls first, and comes back to `back` |
+| `challenge` | For an agent that owes a code: deliver one now when the factor delivers codes (`Challenge::Sent`), or `None` for an app. `holds` never calls it; a browser's prompt page sends its own |
 
 ## Try it
 
-On a migrated disposable database with `BILIBI_ENV=staging`:
+On a migrated disposable database with `BILIBI_ENV=development` (the walkthrough fixture gives its tenant 1 people phone numbers):
 
-- Enroll at `/settings/two-factor`.
+- Enroll at `/settings/two-factor`, or use an account with a phone number and read its codes at `/dev/sms-inbox`.
 - Open `/authz/step-up` and turn an operation on.
 - `cargo run -p bilibi-web --example step-up-reference -- <user id> auditor assign` with `BILIBI_SESSION_TOKEN` set to a browser session's cookie. It prints `ok` or the `step_up_required` answer.

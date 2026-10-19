@@ -15,10 +15,7 @@ use bilibi_tenancy::{Channel, ProofFuture, Scope};
 use serde_json::{json, Map, Value};
 use std::{
     collections::BTreeMap,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, OnceLock,
-    },
+    sync::{Arc, OnceLock},
 };
 
 /// What a presented code is being spent on; the provider may record it.
@@ -39,6 +36,19 @@ pub enum Spent {
     Locked,
     /// The holder has no confirmed second factor.
     NotEnrolled,
+}
+
+/// What a provider did when an agent's holder owes a code and sent none.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Challenge {
+    /// Nothing to deliver: the holder reads codes from an app.
+    None,
+    /// A code is on its way to the holder, or one sent moments ago still holds.
+    Sent,
+    /// No code can be sent now: too many were sent recently.
+    Throttled,
+    /// The holder's checks are locked after repeated failures.
+    Locked,
 }
 
 /// The browser session's own proof (the session row is the provider's to
@@ -96,6 +106,13 @@ pub trait Provider: Send + Sync {
     ) -> ProofFuture<'a, Spent>;
     /// Where a browser checks in (or enrolls first) and returns to `back`.
     fn prompt<'a>(&'a self, scope: &'a Scope, back: &'a str) -> ProofFuture<'a, String>;
+    /// Delivers a code to the holder when the factor needs one delivered
+    /// (a text message), for an agent that must ask its human for it.
+    fn challenge<'a>(
+        &'a self,
+        scope: &'a Scope,
+        purpose: Purpose<'a>,
+    ) -> ProofFuture<'a, Challenge>;
 }
 
 /// One declared operation with its owner module.
@@ -131,8 +148,6 @@ pub struct StepUp {
     settings: Arc<Settings>,
     operations: BTreeMap<&'static str, Declared>,
     provider: OnceLock<Arc<dyn Provider>>,
-    /// Off only in development (`BILIBI_ENV`), set once by the host.
-    enforced: AtomicBool,
 }
 
 enum Outcome {
@@ -163,7 +178,6 @@ impl StepUp {
             settings,
             operations,
             provider: OnceLock::new(),
-            enforced: AtomicBool::new(true),
         })
     }
     /// The second-factor owner binds itself once at boot.
@@ -171,13 +185,6 @@ impl StepUp {
         self.provider.set(provider).map_err(|_| {
             bilibi_module_registry::RegistryError::Service("duplicate step-up provider".into())
         })
-    }
-    /// The host turns enforcement off for a development deployment only.
-    pub fn set_enforced(&self, enforced: bool) {
-        self.enforced.store(enforced, Ordering::SeqCst);
-    }
-    pub fn enforced(&self) -> bool {
-        self.enforced.load(Ordering::SeqCst)
     }
     pub fn declared(&self, key: &str) -> Option<&Declared> {
         self.operations.get(key)
@@ -196,22 +203,19 @@ impl StepUp {
     }
 
     /// The step-up check of one operation on one target. `Ok` when the
-    /// tenant's policy leaves it off, enforcement is off (development), or a
-    /// proof for this channel holds; otherwise `Error::StepUpRequired`. An
-    /// operation declared `always` skips the first two: it needs a fresh
-    /// check on every action, on every deployment. Every
+    /// tenant's policy leaves it off or a proof for this channel holds;
+    /// otherwise `Error::StepUpRequired`. Every deployment enforces it,
+    /// development included. An operation declared `always` ignores the
+    /// policy: it needs a fresh check on every action. Every
     /// check that applies is audited (`step_up.passed`, `.refused`, `.failed`)
     /// with the operation, target, channel and actor, never a code.
     pub async fn require(&self, scope: &Scope, key: &str, target: &str) -> Result<()> {
         let declared = self.declared(key).ok_or(Error::Internal)?;
         let mode = if declared.operation.always {
-            // Declared `always`: a fresh code on every action, even where
-            // enforcement is off (development) and whatever the tenant chose.
+            // Declared `always`: a fresh code on every action, whatever the
+            // tenant chose.
             Mode::EveryTime
         } else {
-            if !self.enforced() {
-                return Ok(());
-            }
             let mode = self.mode(scope, declared).await?;
             if mode == Mode::Off {
                 return Ok(());
@@ -236,7 +240,7 @@ impl StepUp {
         let mode = if declared.operation.always {
             Mode::EveryTime
         } else {
-            if !self.enforced() || self.mode(scope, declared).await? == Mode::Off {
+            if self.mode(scope, declared).await? == Mode::Off {
                 return Ok(true);
             }
             Mode::On
@@ -330,7 +334,7 @@ impl StepUp {
                     .await?
             }
         };
-        Ok(match state {
+        let outcome = match state {
             WindowState::Holds => Outcome::Passed(if mode == Mode::EveryTime {
                 "fresh_check"
             } else {
@@ -345,7 +349,27 @@ impl StepUp {
             } else {
                 "required"
             }),
-        })
+        };
+        // An agent that owes a code cannot read the holder's phone: when the
+        // factor delivers codes (a text message), one goes out now and the
+        // answer says so. A browser's prompt page sends its own; `holds`
+        // (no `extend`) never sends.
+        if let (Outcome::Refused(reason), Some(_), true) = (&outcome, scope.agent(), extend) {
+            if *reason != "not_enrolled" {
+                let purpose = Purpose {
+                    operation: declared.operation.key,
+                    target,
+                    channel: scope.channel(),
+                };
+                match provider.challenge(scope, purpose).await? {
+                    Challenge::None => {}
+                    Challenge::Sent => return Ok(Outcome::Refused("code_sent")),
+                    Challenge::Throttled => return Ok(Outcome::Refused("throttled")),
+                    Challenge::Locked => return Ok(Outcome::Refused("locked")),
+                }
+            }
+        }
+        Ok(outcome)
     }
 
     /// Opens (or restarts) the window of this agent connection for its
