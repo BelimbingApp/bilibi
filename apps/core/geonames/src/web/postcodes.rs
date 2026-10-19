@@ -675,6 +675,7 @@ impl Postcodes {
         let mut done: Vec<String> = Vec::new();
         let mut rows = 0;
         let mut kept: Vec<String> = Vec::new();
+        let mut cached: Vec<String> = Vec::new();
         let mut failed: Vec<String> = Vec::new();
         for outcome in &outcomes {
             let Target::Postcodes(iso) = &outcome.target else {
@@ -683,12 +684,25 @@ impl Postcodes {
             let label = self.country_label(iso);
             match &outcome.result {
                 Ok(report) => match &report.download {
-                    DownloadStatus::Fallback(cause) => kept.push(format!(
-                        "{label} ({}{}; kept the existing {} rows)",
-                        update::fallback_cause(cause),
-                        update::as_of(report.cached_at),
-                        format_integer(report.imported as i64)
-                    )),
+                    DownloadStatus::Fallback(cause) if self.run_kind == RunKind::Update => kept
+                        .push(format!(
+                            "{label} ({}{}; kept the existing {} rows)",
+                            update::fallback_cause(cause),
+                            update::as_of(report.cached_at),
+                            format_integer(report.imported as i64)
+                        )),
+                    DownloadStatus::Fallback(cause) => {
+                        rows += report.imported;
+                        done.push(format!(
+                            "{label}: {} rows",
+                            format_integer(report.imported as i64)
+                        ));
+                        cached.push(format!(
+                            "{label} ({}{})",
+                            update::fallback_cause(cause),
+                            update::as_of(report.cached_at)
+                        ));
+                    }
                     _ => {
                         rows += report.imported;
                         done.push(format!(
@@ -717,6 +731,12 @@ impl Postcodes {
                 named(&done)
             )),
         }
+        if !cached.is_empty() {
+            sentences.push(format!(
+                "Imported from the local GeoNames download, because the download failed: {}. Try Update later for current data.",
+                named(&cached)
+            ));
+        }
         if !kept.is_empty() {
             sentences.push(format!(
                 "Not {verb}, because the download failed: {}. Try Update again later.",
@@ -726,7 +746,7 @@ impl Postcodes {
         if !failed.is_empty() {
             sentences.push(format!("Not {verb}: {}", failed.join(" ")));
         }
-        let kind = if done.len() == total {
+        let kind = if done.len() == total && cached.is_empty() {
             StatusKind::Success
         } else if done.is_empty() && kept.is_empty() {
             StatusKind::Error
