@@ -3,10 +3,7 @@
 `PersonService` (`core/person.persons`) and the transaction APIs in
 `src/identity.rs` own `persons`. They use K0's `PersonInput`, `PersonKind` and
 `PersonId`; an identity is never an employee or login account. Core works with
-People absent. `/contacts`, `/contacts/new` and `/contacts/{id}` (Bilimbi's
-Contacts) provide the capability-gated directory, create form and inline
-record/contact editor; the earlier `/persons` addresses answer with a
-permanent redirect to them (`Moved` contributions in `src/contributions.rs`).
+People absent. `/contacts` and `/contacts/{id}` (Bilimbi's Contacts) provide the capability-gated directory and inline record/contact editor. Creating a contact opens a dialog on the list; `/contacts/new` redirects there with that dialog open. The earlier `/persons` addresses answer with a permanent redirect to the Contacts addresses (`Moved` contributions in `src/contributions.rs`).
 
 The additive module migration creates tenant-scoped bigint identities, personal
 email/phone, explicit human/agent kind, version and creation/change metadata.
@@ -122,8 +119,7 @@ Retirement preserves history and is independent of HR employment.
 
 The directory composes shared `ListState` and Grid `PageColumns`, with bounded 25/50/100/300 row pages, search through visible contacts, kind and retired filters, name sorting, accepted kind/identity/creation-date URL sorts and stable ID ties. Search, filters, sort, pagination and Grid `cols/lens/z/since` state survive reload and Back; column arrangements use shared per-account Grid persistence. The default columns mirror Bilimbi Contacts: Name, Email and Phone. Personal contacts come from the redacted Person read model, without an implicit work-contact fallback. Fresh restrictions prune both built-in and walked contact columns and suggestions, including on empty pages.
 
-Creation uses the owner validator, shared form errors, non-binding duplicate
-suggestions, and creates no login. Detail fields use shared inline text/choice
+Creation opens a dialog on the Contacts list, the same shared modal that legal entity types use. The fields are the shared floating-label controls. It uses the owner validator, shared form errors and non-binding duplicate suggestions, and creates no login. A refused save stays in the dialog. A saved contact opens its page. Detail fields use shared inline text/choice
 editors and per-fact commit states. Enter/blur commits, Escape cancels, nullable
 contacts can clear, stale versions refuse, and lost write access keeps the page
 with readonly facts and an explanatory outcome. Retirement uses a held record

@@ -431,6 +431,8 @@ impl Detail {
                 };
                 }
             }
+            // The host's success flash (a created contact) dismisses with this event.
+            "clear-flash" => {}
             _ => return Err(Error::Invalid),
         }
         Ok(())

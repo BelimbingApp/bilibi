@@ -53,6 +53,8 @@ pub(super) struct Index {
     columns: PageColumns,
     masked: std::collections::HashSet<String>,
     framed: bool,
+    /// Set while the new-contact dialog is open, including after `/contacts/new`.
+    draft: Option<super::create::Draft>,
 }
 // Bilimbi Person.IndexLive: personal contact columns by default. Identity
 // filters and URL sorts remain the approved Person model's additional controls.
@@ -82,12 +84,15 @@ impl Index {
         let masked = bilibi_authz::restrictions_for(&**client, scope, "persons").await?;
         let mut columns = columns(&pages, &masked)?;
         columns.from_params(scope, query).await?;
+        let open = query.get("new").map(String::as_str) == Some("1")
+            && pages.allowed(scope, CREATE).await?;
         Ok(Self {
             pages,
             list: ListState::parse(query, SPEC.clone()).map_err(|_| Error::Internal)?,
             columns,
             masked,
             framed,
+            draft: open.then(super::create::Draft::new),
         })
     }
     async fn view(&mut self, scope: &Scope) -> Result<LiveBody> {
@@ -145,8 +150,10 @@ impl Index {
         if self.pages.allowed(scope, CREATE).await? {
             actions.push(&render(CreateButton {
                 noun: "Contact",
-                href: "/contacts/new",
                 id: "person-new",
+                class: "text-xs",
+                event: "new",
+                button_type: "button",
                 ..CreateButton::default()
             })?);
         }
@@ -240,6 +247,19 @@ impl Index {
             body: card,
             ..Card::default()
         })?);
+        if self.draft.is_some() && !self.pages.allowed(scope, CREATE).await? {
+            self.draft = None;
+        }
+        let pages = self.pages.clone();
+        if let Some(draft) = &mut self.draft {
+            body.push(&render(bilibi_ui::Modal {
+                id: "person-create-modal",
+                title: "New contact",
+                cancel_event: "close_modal",
+                body: draft.form(&pages, scope).await?,
+                ..bilibi_ui::Modal::default()
+            })?);
+        }
         let html = render(bilibi_ui::Page {
             id: "persons-index",
             body,
@@ -248,6 +268,9 @@ impl Index {
         .to_string();
         let mut query = self.list.to_params();
         query.extend(self.columns.params());
+        if self.draft.is_some() {
+            query.insert("new".into(), "1".into());
+        }
         Ok(LiveBody {
             html,
             query,
@@ -265,6 +288,12 @@ impl LiveState<Scope, Error> for Index {
                     self.list =
                         ListState::parse(query, SPEC.clone()).map_err(|_| Error::Internal)?;
                     self.columns.from_params(request.scope, query).await?;
+                    if query.get("new").map(String::as_str) == Some("1")
+                        && self.draft.is_none()
+                        && self.pages.allowed(request.scope, CREATE).await?
+                    {
+                        self.draft = Some(super::create::Draft::new());
+                    }
                 }
                 LiveInput::Event(value) => match event(value)? {
                     "filters" => {
@@ -288,6 +317,38 @@ impl LiveState<Scope, Error> for Index {
                             self.list.next_sort(&key);
                         }
                     }
+                    "new" => {
+                        if self.pages.allowed(request.scope, CREATE).await? {
+                            self.draft = Some(super::create::Draft::new());
+                        }
+                    }
+                    "close_modal" => self.draft = None,
+                    "validate" | "create" => {
+                        let pages = self.pages.clone();
+                        let Some(draft) = &mut self.draft else {
+                            return Err(Error::Invalid);
+                        };
+                        if let Some(id) = draft
+                            .submit(
+                                &pages,
+                                request.scope,
+                                request.credential,
+                                event(value)? == "create",
+                                value,
+                            )
+                            .await?
+                        {
+                            return Ok(LiveBody {
+                                redirect: Some(format!("/contacts/{}", id.get())),
+                                flash: Some((
+                                    bilibi_ui::StatusKind::Success,
+                                    "Contact created.".into(),
+                                )),
+                                ..LiveBody::default()
+                            });
+                        }
+                    }
+                    "clear-flash" => {}
                     _ => return Err(Error::Invalid),
                 },
             }
