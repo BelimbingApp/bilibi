@@ -23,7 +23,7 @@ macro_rules! setting {
     ($key:literal,$kind:ident,$default:expr,$nullable:expr,$min:expr,$max:expr,$validator:expr,$label:literal,$help:literal) => {
         inventory::submit! { Contribution::new(DEFINITIONS,$key,provenance!(),&Setting::Definition(Definition {
             value_type:ValueType::$kind,scopes:&[ScopeKind::Global],default:||$default,nullable:$nullable,encrypted:false,minimum:$min,maximum:$max,validator:$validator,
-            editor:Some(Editor {group:"Artifacts",label:$label,help:$help,capability:Some(MANAGE),reveal_duration_ms:5000}),
+            editor:Some(Editor {group:"Artifacts",label:$label,help:$help,capability:Some(MANAGE),reveal_duration_ms: 5000, change_needs_step_up: false}),
         })) }
     };
 }

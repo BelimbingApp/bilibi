@@ -315,14 +315,14 @@ pub(crate) fn valid_call(call: &Call) -> bool {
 pub struct Integration {
     db: Db,
     boundary: Arc<MutationBoundary>,
-    http: reqwest::Client,
+    clients: transport::Clients,
 }
 impl Integration {
     pub fn new(db: Db, boundary: Arc<MutationBoundary>) -> Result<Self> {
         Ok(Self {
             db,
             boundary,
-            http: transport::client()?,
+            clients: transport::Clients::new()?,
         })
     }
 

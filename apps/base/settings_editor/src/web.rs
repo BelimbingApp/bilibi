@@ -18,7 +18,7 @@
 //! archived company is never offered, since a write into it would be refused.
 use crate::{
     form::{self, Field, Plan, Step},
-    reveal::{self, Refusal, Reveal},
+    reveal::{self, Refusal, Reveal, CHANGE_STEP_UP},
     COMPANY_MANAGE, GLOBAL_MANAGE,
 };
 use askama::Template;
@@ -274,6 +274,11 @@ impl Editor {
                 }
             }
         }
+        for (field, _) in &steps {
+            if let Err(error) = self.require_change_step_up(scope, field).await {
+                return self.step_up_refused(error, field);
+            }
+        }
         let (mut written, mut cleared) = (0, 0);
         if !steps.is_empty() {
             let target = self.target();
@@ -339,6 +344,11 @@ impl Editor {
             .iter()
             .filter(|field| field.overridden && held.iter().any(|key| key == field.key))
             .collect();
+        for field in &fields {
+            if let Err(error) = self.require_change_step_up(scope, field).await {
+                return self.step_up_refused(error, field);
+            }
+        }
         if !fields.is_empty() {
             let target = self.target();
             let action = if self.company.is_some() {
@@ -373,6 +383,25 @@ impl Editor {
         };
         self.flash(kind, form::restored_message(fields.len()));
         Ok(())
+    }
+
+    /// A protected field asks for the holder's code before any write; a check
+    /// the session owes goes up to the host, which sends the browser to
+    /// confirm and back to this page, where the person saves again.
+    async fn require_change_step_up(&self, scope: &Scope, field: &Field) -> Result<()> {
+        if !field.editor.change_needs_step_up {
+            return Ok(());
+        }
+        self.core
+            .step_up
+            .require(scope, CHANGE_STEP_UP, &format!("setting:{}", field.key))
+            .await
+    }
+    fn step_up_refused(&mut self, error: Error, field: &Field) -> Result<()> {
+        match error {
+            Error::StepUpRequired { .. } | Error::Unauthorized => Err(error),
+            error => self.refused(error, Some(field.editor.label)),
+        }
     }
 
     /// A refused or failed write is a flash, never a page-clearing error; only

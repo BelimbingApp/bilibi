@@ -197,7 +197,9 @@ impl Software {
                     .header(transport::PAIRING_HEADER, key)
                     .header("accept", "application/json")
                     .timeout(LISTING_TIMEOUT)
-                    .max_body_bytes(LISTING_MAX_BYTES);
+                    .max_body_bytes(LISTING_MAX_BYTES)
+                    .no_redirects()
+                    .trust_system_roots();
                 let reply = self
                     .integration
                     .send(Origin::User(scope), &call, outgoing)
@@ -518,7 +520,9 @@ impl Software {
                     .header(transport::PAIRING_HEADER, key.clone())
                     .header("accept", "application/json")
                     .timeout(LISTING_TIMEOUT)
-                    .max_body_bytes(LISTING_MAX_BYTES),
+                    .max_body_bytes(LISTING_MAX_BYTES)
+                    .no_redirects()
+                    .trust_system_roots(),
             )
             .await;
         let listing = listing_from_reply(&address, reply)?;
@@ -614,7 +618,9 @@ impl Software {
         ))
         .header(transport::PAIRING_HEADER, key)
         .timeout(DOWNLOAD_TIMEOUT)
-        .max_body_bytes(transport::MAX_BUNDLE_BYTES);
+        .max_body_bytes(transport::MAX_BUNDLE_BYTES)
+        .no_redirects()
+        .trust_system_roots();
         let download = self
             .integration
             .stream(Origin::User(&scope), &call, request, &mut sink);
@@ -787,6 +793,7 @@ fn refusal_sentence(address: &str, status: u16) -> String {
     match status {
         403 => format!("{address} refused the pairing key. Set the same pairing key on both instances, then ask again."),
         404 => format!("{address} has no such release any more."),
+        300..=399 => format!("{address} sent the request elsewhere instead of answering. Check the address under Instance in the settings."),
         503 => format!("{address} is updating right now. Try again when it is back."),
         status => format!("{address} answered with status {status} instead of the release."),
     }

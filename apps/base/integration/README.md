@@ -38,9 +38,12 @@ timeout defaults to 30 s. `Failure::Invalid` (bad metadata, URL, non-HTTP
 scheme or header) sends and records nothing. `Failure::Unrecorded` means the
 remote system may have acted but the row could not be written: never treat it
 as permission to repeat a consequential command. HTTPS trusts the public roots
-and the server's own trust store (`/etc/ssl/certs`, where `update-ca-certificates`
-puts a private authority), so an instance on a private name is reachable once
-its authority is installed.
+only. `Outgoing::trust_system_roots()` also trusts the server's own store
+(`/etc/ssl/certs`, where `update-ca-certificates` puts a private authority), for
+a call to an address the operator chose; the release transport uses it so an
+instance on a private name is reachable. Redirects are followed unless
+`Outgoing::no_redirects()` is set, which returns a 3xx answer as the reply so a
+credential header is never sent on to another address.
 
 ## Incoming calls
 

@@ -34,6 +34,12 @@ override. Messages say what happened ("1 setting updated, 1 override
 cleared."). Restore confirms through the shared dialog and deletes only the
 overrides the dialog counted that are still overridden.
 
+A definition whose editor sets `change_needs_step_up` (the Software pairing key)
+asks for the holder's authenticator code every time before Save or Restore
+touches it: the Base Step-up operation `base.settings_editor.protected.change`
+("Change a protected setting"), declared `.always()`. The host sends the browser
+to confirm and back, and the person saves again. Other fields set it to `false`.
+
 ## Stored-secret reveal
 
 "Show stored value" appears only for an actor holding

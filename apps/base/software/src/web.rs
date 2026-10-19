@@ -216,6 +216,7 @@ struct View {
     /// ticked when the picks start, chosen by nobody until Build is pressed.
     propose: Vec<String>,
     release: String,
+    bundle: String,
     dialog: Option<Dialog>,
     flash: Option<(StatusKind, String)>,
     pick_error: Option<String>,
@@ -262,6 +263,7 @@ impl View {
             picks_started: false,
             propose,
             release: String::new(),
+            bundle: String::new(),
             dialog: None,
             flash: None,
             pick_error: None,
@@ -397,17 +399,26 @@ impl View {
             }
             "request_install" => {
                 self.release = values.get("release").cloned().unwrap_or_default();
-                match self.release.trim().parse::<i64>() {
-                    Ok(release) if release >= 1 => {
-                        self.install_error = None;
-                        let input = json!({"release": release, "switch": "auto"});
-                        self.preview(scope, credential, Kind::Install, input)
-                            .await?
+                self.bundle = values.get("bundle").cloned().unwrap_or_default();
+                let bundle = self.bundle.trim().to_owned();
+                if !bundle.is_empty() {
+                    self.install_error = None;
+                    let input = json!({"bundle": bundle, "switch": "auto"});
+                    self.preview(scope, credential, Kind::Install, input)
+                        .await?
+                } else {
+                    match self.release.trim().parse::<i64>() {
+                        Ok(release) if release >= 1 => {
+                            self.install_error = None;
+                            let input = json!({"release": release, "switch": "auto"});
+                            self.preview(scope, credential, Kind::Install, input)
+                                .await?
+                        }
+                        _ => self.install_error = Some(
+                            "Enter the release number the source instance reports as tested, like 42, or pick a release file uploaded here."
+                                .into(),
+                        ),
                     }
-                    _ => self.install_error = Some(
-                        "Enter the release number the source instance reports as tested, like 42."
-                            .into(),
-                    ),
                 }
             }
             "request_undo" => {
@@ -1458,6 +1469,12 @@ impl View {
             }
             s => Some(text(&s["address"]).to_owned()),
         };
+        let uploads: Vec<&Value> = status["uploads"]
+            .as_array()
+            .map(|list| list.iter().collect())
+            .unwrap_or_default();
+        let usable = source_text.is_some() || !uploads.is_empty();
+        let file_chosen = !self.bundle.trim().is_empty();
         let release = Field::named("release")
             .id("software-release")
             .label("Release number tested on the source")
@@ -1466,20 +1483,49 @@ impl View {
             .hint("The build number the source instance's Software page shows as finished.")
             .wrapper_class("mb-0 w-full sm:w-72")
             .attr("min", "1");
-        let release = match &self.install_error {
-            Some(message) => release.error(message.clone()),
-            None => release,
+        let release = match (&self.install_error, file_chosen) {
+            (Some(message), false) => release.error(message.clone()),
+            _ => release,
         };
         let release = if busy || source_text.is_none() {
             release.disabled()
         } else {
             release
         };
+        let file = if uploads.is_empty() {
+            None
+        } else {
+            let mut options = vec![Choice::new("No file: use the release number", "")];
+            options.extend(uploads.iter().map(|upload| {
+                let bundle = text(&upload["bundle"]);
+                let what = match upload["release"].as_u64() {
+                    Some(n) => format!("release {n}"),
+                    None => "a release".to_owned(),
+                };
+                Choice::new(
+                    format!("{bundle}: {what} from {}", text(&upload["from"])),
+                    bundle,
+                )
+            }));
+            let file = Field::named("bundle")
+                .id("software-bundle")
+                .label("Or a release file uploaded here")
+                .kind(InputKind::Select)
+                .options(options)
+                .value(self.bundle.clone())
+                .hint("Uploaded on the Release files page. A file picked here is installed instead of the release number.")
+                .wrapper_class("mb-0 w-full sm:w-72");
+            let file = match (&self.install_error, file_chosen) {
+                (Some(message), true) => file.error(message.clone()),
+                _ => file,
+            };
+            Some(if busy { file.disabled() } else { file })
+        };
         let review = render(Button {
             id: "software-review-install",
             button_type: "submit",
             variant: ButtonVariant::Primary,
-            disabled: busy || source_text.is_none(),
+            disabled: busy || !usable,
             working: "Reviewing…",
             body: Html::text("Review the install"),
             ..Button::default()
@@ -1488,6 +1534,8 @@ impl View {
             label: &instance.label,
             source: source_text.as_deref(),
             release,
+            file,
+            usable,
             review,
             busy,
             production: instance.role == bilibi_system::Role::Production,
@@ -1990,6 +2038,8 @@ struct InstallForm<'a> {
     label: &'a str,
     source: Option<&'a str>,
     release: Field,
+    file: Option<Field>,
+    usable: bool,
     review: Html,
     busy: bool,
     production: bool,

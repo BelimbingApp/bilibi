@@ -41,7 +41,7 @@ inventory::submit! { Contribution::new(DEFINITIONS, RETENTION_DAYS, provenance!(
     value_type: ValueType::Integer, scopes: &[ScopeKind::Global], default: || json!(RETENTION_DEFAULT), nullable: false, encrypted: false,
     minimum: Some(1.0), maximum: Some(RETENTION_MAX as f64), validator: None,
     editor: Some(Editor { group: "Integration", label: "API exchange payload retention",
-        help: "Days to keep the saved content of API calls; the call summary stays.", capability: Some(DELETE), reveal_duration_ms: 5_000 }),
+        help: "Days to keep the saved content of API calls; the call summary stays.", capability: Some(DELETE), reveal_duration_ms: 5_000, change_needs_step_up: false }),
 })) }
 // Deleting an exchange is audited with metadata only; these names never carry
 // a second copy of a payload or a raw endpoint into the audit ledger.
@@ -75,7 +75,7 @@ macro_rules! webhook_setting {
         inventory::submit! { Contribution::new(DEFINITIONS, $key, provenance!(), &Setting::Definition(Definition {
             value_type: ValueType::Integer, scopes: &[ScopeKind::Global], default: || json!($default), nullable: false, encrypted: false,
             minimum: Some(1.0), maximum: Some($max), validator: None,
-            editor: Some(Editor { group: "Webhooks", label: $label, help: $help, capability: None, reveal_duration_ms: 5_000 }),
+            editor: Some(Editor { group: "Webhooks", label: $label, help: $help, capability: None, reveal_duration_ms: 5_000, change_needs_step_up: false }),
         })) }
     };
 }

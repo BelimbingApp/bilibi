@@ -5,22 +5,20 @@ use crate::{redaction, valid_call, Call, Direction, Integration, Origin, Record}
 use bilibi_database::{Error, Result};
 use reqwest::{header::HeaderMap, Method};
 use serde_json::{Map, Value};
-use std::{sync::Arc, time::Duration, time::Instant};
+use std::{sync::Arc, sync::OnceLock, time::Duration, time::Instant};
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 
 /// Default response bound for buffered calls; raise it per call when needed.
 pub const DEFAULT_MAX_BODY_BYTES: u64 = 10 * 1024 * 1024;
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// The public roots, plus the server's own trust store (`/etc/ssl/certs`,
-/// where `update-ca-certificates` puts a private authority), so an instance
-/// on a private name with a certificate from its own authority can be
-/// called. A store that cannot be read adds nothing.
-pub(crate) fn client() -> Result<reqwest::Client> {
+fn build_client(system_roots: bool, follow_redirects: bool) -> Result<reqwest::Client> {
     let mut roots = rustls::RootCertStore::empty();
     roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-    for certificate in rustls_native_certs::load_native_certs().certs {
-        let _ = roots.add(certificate);
+    if system_roots {
+        for certificate in rustls_native_certs::load_native_certs().certs {
+            let _ = roots.add(certificate);
+        }
     }
     let tls = rustls::ClientConfig::builder_with_provider(Arc::new(
         rustls::crypto::ring::default_provider(),
@@ -29,11 +27,37 @@ pub(crate) fn client() -> Result<reqwest::Client> {
     .map_err(|_| Error::Internal)?
     .with_root_certificates(roots)
     .with_no_client_auth();
-    reqwest::Client::builder()
+    let mut builder = reqwest::Client::builder()
         .tls_backend_preconfigured(tls)
-        .connect_timeout(Duration::from_secs(10))
-        .build()
-        .map_err(|_| Error::Internal)
+        .connect_timeout(Duration::from_secs(10));
+    if !follow_redirects {
+        builder = builder.redirect(reqwest::redirect::Policy::none());
+    }
+    builder.build().map_err(|_| Error::Internal)
+}
+
+/// One client per combination of the per-call options. The default trusts
+/// only the public roots and follows redirects; the others are built the first
+/// time a call asks for them (the system roots are read from disk once).
+pub(crate) struct Clients {
+    cells: [OnceLock<reqwest::Client>; 4],
+}
+impl Clients {
+    pub(crate) fn new() -> Result<Self> {
+        let clients = Self {
+            cells: Default::default(),
+        };
+        clients.get(false, true)?;
+        Ok(clients)
+    }
+    fn get(&self, system_roots: bool, follow_redirects: bool) -> Result<reqwest::Client> {
+        let cell = &self.cells[usize::from(system_roots) * 2 + usize::from(follow_redirects)];
+        if let Some(client) = cell.get() {
+            return Ok(client.clone());
+        }
+        let client = build_client(system_roots, follow_redirects)?;
+        Ok(cell.get_or_init(|| client).clone())
+    }
 }
 
 /// An outgoing request. The URL may carry credentials or a query string; the
@@ -47,6 +71,8 @@ pub struct Outgoing {
     body: Option<Vec<u8>>,
     timeout: Duration,
     max_body_bytes: u64,
+    follow_redirects: bool,
+    system_roots: bool,
 }
 impl Outgoing {
     pub fn new(method: Method, url: impl Into<String>) -> Self {
@@ -58,6 +84,8 @@ impl Outgoing {
             body: None,
             timeout: DEFAULT_TIMEOUT,
             max_body_bytes: DEFAULT_MAX_BODY_BYTES,
+            follow_redirects: true,
+            system_roots: false,
         }
     }
     pub fn get(url: impl Into<String>) -> Self {
@@ -85,6 +113,20 @@ impl Outgoing {
     /// Whole-call limit, including reading or streaming the body.
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
+        self
+    }
+    /// Do not follow redirects: a 3xx answer is returned as the reply, so a
+    /// header such as a pairing key is never sent on to another address.
+    pub fn no_redirects(mut self) -> Self {
+        self.follow_redirects = false;
+        self
+    }
+    /// Also trust the server's own certificate store (`/etc/ssl/certs`, where
+    /// `update-ca-certificates` puts a private authority). Only for a call to
+    /// an address the operator chose; every other call trusts the public
+    /// roots alone.
+    pub fn trust_system_roots(mut self) -> Self {
+        self.system_roots = true;
         self
     }
     /// The call fails with `body_limit` once the response grows past this.
@@ -253,8 +295,11 @@ impl Integration {
         if !matches!(url.scheme(), "http" | "https") {
             return Err(Failure::Invalid);
         }
-        let mut builder = self
-            .http
+        let http = self
+            .clients
+            .get(outgoing.system_roots, outgoing.follow_redirects)
+            .map_err(|_| Failure::Invalid)?;
+        let mut builder = http
             .request(outgoing.method.clone(), url)
             .timeout(outgoing.timeout);
         for (name, value) in &outgoing.headers {
@@ -282,7 +327,7 @@ impl Integration {
             error: None,
             response_body: None,
         };
-        match self.http.execute(request).await {
+        match http.execute(request).await {
             Err(error) => observed.error = Some(class(&error)),
             Ok(mut response) => {
                 observed.status = Some(response.status().as_u16());

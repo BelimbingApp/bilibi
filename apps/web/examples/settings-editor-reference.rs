@@ -34,6 +34,7 @@ macro_rules! editor {
             help: $help,
             capability: $capability,
             reveal_duration_ms: 10_000,
+            change_needs_step_up: false,
         })
     };
 }

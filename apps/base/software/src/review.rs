@@ -773,7 +773,17 @@ pub fn install(
     if let Chosen::Uploaded { bundle, .. } = &chosen {
         request["bundle"] = json!(bundle);
     }
-    let checks = if downloads {
+    let source_check = match (&chosen, &instance.installs_from) {
+        (Chosen::Uploaded { bundle, .. }, _) => format!("From the uploaded file {bundle}"),
+        (Chosen::FromSource { .. }, Some(Source::SameMachine(name))) => {
+            format!("Copied from {name} on this machine")
+        }
+        (Chosen::FromSource { .. }, Some(Source::Https(address))) => {
+            format!("Downloads from {address} (answered just now)")
+        }
+        (Chosen::FromSource { .. }, None) => return Err(bilibi_database::Error::Internal.into()),
+    };
+    let rest = if downloads {
         vec![
             "The source still runs and reports this release healthy",
             "The download's checksum matches",
@@ -794,6 +804,9 @@ pub fn install(
             "Enough disk for the program and a backup",
         ]
     };
+    let checks: Vec<String> = std::iter::once(source_check)
+        .chain(rest.into_iter().map(str::to_owned))
+        .collect();
     let facts_json = json!({
         "summary": summary,
         "instance": instance_json(instance),
