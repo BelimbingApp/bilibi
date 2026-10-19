@@ -434,7 +434,7 @@ fixture functions/triggers. Never run it against normal data.
 The operator's saved-query screens live at `/admin/system/database-queries`
 (and `/{slug}`, with `/_new` for creation). They compose the shared list,
 form, confirmation and FlexTable components in `src/query_ui`; all storage and
-execution go through `database_queries::QueryService`. Both routes require
+execution go through `database_queries::QueryService`. The list's column labels come from the detail's `query_ui::fields`; the prompt and SQL text stay on the detail page. Both routes require
 explicit operator identity plus `admin.system.database-table.list`; saving,
 duplicating and deleting additionally require `admin.system.database-table.edit`.
 Every live action and refresh checks these requirements again. Queries remain

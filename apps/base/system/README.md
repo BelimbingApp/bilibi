@@ -86,7 +86,7 @@ shows Data, Schema (columns, indexes, constraints, migration source) and
 Relationships (outgoing and incoming foreign keys) as `tab` patch links. Every
 list is a FlexTable through `ListColumns`; Data sorts, pages (25/50/100) and
 searches text columns through `ListState`, and a referenced value links to the
-other table filtered by `col`/`eq`.
+other table filtered by `col`/`eq`. The tables list also offers the table's column count as an optional column (`database_tables::fields`); Table, Module, Migration and Rows stay the defaults.
 
 Controls:
 
