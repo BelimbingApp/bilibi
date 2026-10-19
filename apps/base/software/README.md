@@ -81,11 +81,12 @@ Install requires the source to answer and the selected release to be the one it 
 
 ## Page and ChatGPT card
 
-The **Software** page (`/system/software`) has one menu entry and two shared tabs: **Domains and Extensions** and **Releases**. Each catalogue item is one compact card with its description, installed version, and **Compatibility: Yes / No** with a short reason. **Developer commands** folds away the repository, exact test evidence and local build commands.
+The **Software** page (`/system/software`) has one menu entry and two shared tabs: **Domains and Extensions** and **Releases**. Each catalogue item is one compact card with its description, installed version, and **Compatibility** in one line: **Yes · tested with Bilibi X** when the exact pair has a test record, **Yes, not tested yet** when the version only fits, or **No · needs Bilibi X**. **Developer commands** folds away the repository, exact test evidence and local build commands.
 
-**Releases** (`?tab=releases`) shows the installed version, the current or last install with folded steps, a short backup table with folded backup details, and **Get an update**. Backup file locations are folded and only available to accounts that can manage software. Upload, review, download, stored releases, and the folded **Update server and pairing key** share the same mounted page; switching tabs preserves pending uploads and reviews. The old `/system/software/releases` page redirects to the Releases tab, and its authenticated download addresses remain valid.
+**Releases** (`?tab=releases`) shows the installed version, the current or last install (its **Install steps** stay open while the job is active, failed or interrupted, and fold when it completes), a short backup table with folded backup details, and **Get an update**. Backup file locations are folded and only available to accounts that can manage software. Upload, review, download, stored releases, and the folded **Update server and pairing key** share the same mounted page; switching tabs preserves pending uploads and reviews. The old `/system/software/releases` page redirects to the Releases tab, and its authenticated download addresses remain valid.
 
 The MCP App (`ui://bilibi/software-v1.html`, `card/software-v1.html`) keeps its **Manage domains and extensions** title and uses the same software contracts.
+
 - `?propose=finance,factory` highlights requested page entries; `open_software` accepts catalogue IDs in `propose` for the card.
 - A view-only account sees discovery and status. The facade refuses writes without manage permission.
 - Install, undo and go-ahead show the shared instance banner and a review, then commit that exact plan with the person’s authenticator code. The install headline uses the operation's summary to name an uploaded file, sibling instance or HTTPS source. A wrong code stays in the review.
