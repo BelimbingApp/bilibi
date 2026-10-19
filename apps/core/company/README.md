@@ -425,12 +425,6 @@ the archived company, the missing person and the other tenant. In the running
 app, Administration → System → Settings offers the company picker and
 Administration → Authorization → Roles → Create asks for the owning company.
 
-## Companies in a newly created tenant
-
-`CompanyService::preview_tenant_companies` and `provision_new_tenant_in` compose tenant provisioning with [Core Tenant Administration](../tenant_administration/README.md). Names use ordinary Company validation, generated codes and the person's field restrictions; duplicate generated codes are refused. The first company becomes primary.
-
-The write requires Tenancy's sealed `CreatedTenant` receipt, bound to the current transaction and original actor. It accepts no arbitrary target tenant id and never changes the caller's scope. Tenant-create capability and live operator standing authorize the complete provisioning action; its contract enforces Base Step-up. Every company and primary assignment is a `Change` on that same transaction. Existing tenant business data remains behind its ordinary scoped facade.
-
 Company scalar facts share a record-field schema with Grid. Optional columns include Legal Entity Type, Parent Company, Website and the other visible scalar facts. Related columns project readable names; business activities and metadata remain nested or long content on the record. Default column order is unchanged.
 
 ## Companies in a newly created tenant
