@@ -325,7 +325,16 @@ pub fn router(app: App) -> Router {
         .layer(DefaultBodyLimit::max(16 * 1024))
         .layer(middleware::from_fn_with_state(app.clone(), errors::pages))
         .layer(middleware::from_fn(response_headers))
-        .layer(tower_http::compression::CompressionLayer::new())
+        .layer(
+            tower_http::compression::CompressionLayer::new()
+                .quality(tower_http::CompressionLevel::Precise(4))
+                .compress_when(tower_http::compression::predicate::Predicate::and(
+                    tower_http::compression::DefaultPredicate::new(),
+                    tower_http::compression::predicate::NotForContentType::const_new(
+                        "application/gzip",
+                    ),
+                )),
+        )
         .layer(middleware::from_fn_with_state(perf, perf::requests))
         .with_state(app)
 }

@@ -235,6 +235,7 @@ delivery whose audit row cannot be written is refused.
 
 The host compresses eligible responses with gzip or Brotli according to `Accept-Encoding`, including CSS, JavaScript, HTML, JSON and SVG.
 
+- Compression runs at a fixed balanced quality (level 4) so a cold stylesheet request does not spend seconds of CPU, and skips `application/gzip` release bundles that are already compressed.
 - Compression adds `Vary: Accept-Encoding`; already encoded responses and streams such as server-sent events retain their existing handling.
 - Pages and API responses default to `cache-control: no-store`. Private downloads retain `private, no-store` and their sandboxing policy.
 - Only an embedded asset served with its matching content version receives `public, max-age=31536000, immutable`. Unversioned assets keep `no-store`; an unknown asset or incorrect version returns 404 with `no-store`.
