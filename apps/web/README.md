@@ -230,3 +230,15 @@ delivery whose audit row cannot be written is refused.
 # Release transport (`src/transport.rs`)
 
 `GET /transport/releases` lists the releases kept on this instance and `GET /transport/releases/{n}` streams one release file, for a paired instance that installs from this one. GET only: the target pulls, so nothing is ever pushed to an instance. The request carries the pairing key in `X-Bilibi-Pairing-Key` and nothing else (no cookie, CSRF or Origin); `base/software` decides admission and compares the key in constant time. The host throttles per sender, answers with fixed JSON errors and records one system incoming exchange per request, never the key. The contract, the checks and the pairing key: `apps/base/software/README.md`, "Release transport".
+
+# Response compression and caching
+
+The host compresses eligible responses with gzip or Brotli according to `Accept-Encoding`, including CSS, JavaScript, HTML, JSON and SVG.
+
+- Compression adds `Vary: Accept-Encoding`; already encoded responses and streams such as server-sent events retain their existing handling.
+- Pages and API responses default to `cache-control: no-store`. Private downloads retain `private, no-store` and their sandboxing policy.
+- Only an embedded asset served with its matching content version receives `public, max-age=31536000, immutable`. Unversioned assets keep `no-store`; an unknown asset or incorrect version returns 404 with `no-store`.
+- HTML specimens remain pages with `no-store`, including the embedded specimen.
+- CSP, `nosniff` and the referrer policy still apply to every response. A handler's stricter policy is preserved.
+
+Shared templates use `bilibi_ui::Assets::url` for CSS, scripts and icons; CSS also links versioned fonts. See [the UI asset contract](../base/ui/assets/README.md#urls-and-browser-caching) for the catalogue and hashing rules.
