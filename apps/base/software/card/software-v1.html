@@ -117,13 +117,20 @@ pre { white-space: pre-wrap; font-size: 11px; background: var(--surface-sunken);
 // The host bridge: JSON-RPC 2.0 over postMessage (MCP Apps 2026-01-26).
 // ---------------------------------------------------------------------------
 const PROTOCOL = '2026-01-26';
+// Messages are accepted only from the parent window, and after the
+// ui/initialize reply only from the origin that sent it ('null' is the opaque
+// origin of a sandboxed host). Request ids carry a random prefix so a forged
+// reply cannot match a pending request. Before the handshake the host's origin
+// is unknown, so post() targets '*', as the MCP Apps SDK transport does.
 const pending = new Map();
+const idPrefix = Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => b.toString(16).padStart(2, '0')).join('');
 let nextId = 1;
+let hostOrigin = null;
 let host = { theme: 'light', displayMode: 'inline', capabilities: {} };
-function post(message) { window.parent.postMessage(message, '*'); }
+function post(message) { window.parent.postMessage(message, hostOrigin && hostOrigin !== 'null' ? hostOrigin : '*'); }
 function request(method, params) {
   return new Promise((resolve, reject) => {
-    const id = nextId++;
+    const id = idPrefix + '-' + nextId++;
     pending.set(id, { resolve, reject });
     post({ jsonrpc: '2.0', id, method, params });
   });
@@ -131,12 +138,15 @@ function request(method, params) {
 function notify(method, params) { post({ jsonrpc: '2.0', method, params }); }
 function reply(id, result) { post({ jsonrpc: '2.0', id, result }); }
 window.addEventListener('message', (event) => {
+  if (event.source !== window.parent) return;
+  if (hostOrigin !== null && event.origin !== hostOrigin) return;
   const message = event.data;
   if (!message || message.jsonrpc !== '2.0') return;
   if (message.id !== undefined && message.method === undefined) {
     const waiter = pending.get(message.id);
     if (!waiter) return;
     pending.delete(message.id);
+    if (hostOrigin === null) hostOrigin = event.origin;
     if (message.error) waiter.reject(message.error); else waiter.resolve(message.result);
     return;
   }
