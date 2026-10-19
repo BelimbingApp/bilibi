@@ -195,8 +195,8 @@ fn initialize(id: Value, params: &Map<String, Value>, instance: &Instance) -> Ou
             "capabilities": {"tools": {"listChanged": false}, "resources": {"subscribe": false, "listChanged": false}},
             // The name is the plugin package's (`core/agent_plugins`), so a
             // host that lists servers by name tells Dev from Production.
-            "serverInfo": {"name": format!("bilibi-{}", instance.slug()), "title": format!("Bilibi {}", instance.label), "version": env!("CARGO_PKG_VERSION")},
-            "instructions": format!("{INSTRUCTIONS} {} Name this Bilibi at the top of every plan review and confirmation you show; plan and commit results carry it as `instance`.", instance.notice()),
+            "serverInfo": {"name": format!("bilibi-{}", instance.slug()), "title": format!("Bilibi {} ({}) at {}", instance.label, instance.role.label(), instance.origin), "version": env!("CARGO_PKG_VERSION")},
+            "instructions": format!("{} {INSTRUCTIONS} {} {}", crate::BUSINESS_CONTEXT, instance.agent_notice(), crate::INSTANCE_INSTRUCTIONS),
         }),
     )
 }

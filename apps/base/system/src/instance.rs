@@ -152,6 +152,8 @@ pub fn valid_instance_name(name: &str) -> bool {
 /// This instance as it should be announced.
 #[derive(Clone, Debug)]
 pub struct Instance {
+    /// Canonical public address from APP_ORIGIN, never the request Host.
+    pub origin: String,
     pub role: Role,
     pub label: String,
     pub colour: Colour,
@@ -184,6 +186,10 @@ impl Instance {
             .as_str()
             .and_then(Source::parse);
         Ok(Self {
+            origin: std::env::var("APP_ORIGIN")
+                .unwrap_or_else(|_| "http://localhost:3000".into())
+                .trim_end_matches('/')
+                .to_owned(),
             role,
             label,
             colour,
@@ -220,14 +226,27 @@ impl Instance {
     pub fn notice(&self) -> String {
         format!("You are on {}. {}", self.label, self.role.consequence())
     }
+    /// Agent connection identity includes the role even when the operator's
+    /// label is ambiguous, and the canonical address rather than request data.
+    pub fn agent_notice(&self) -> String {
+        format!(
+            "You are on {} ({}), at {}. {}",
+            self.label,
+            self.role.label(),
+            self.origin,
+            self.role.consequence()
+        )
+    }
     /// What the Agent API and MCP send, so an agent can tell its person
     /// "this will create the order on Staging".
     pub fn agent_json(&self) -> Value {
         json!({
             "environment": self.role.env_value(),
+            "role": self.role.label(),
+            "origin": self.origin,
             "label": self.label,
             "production": self.role == Role::Production,
-            "notice": self.notice(),
+            "notice": self.agent_notice(),
         })
     }
     /// The shell's top-bar badge. Production shows none: it is the normal

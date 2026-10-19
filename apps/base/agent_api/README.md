@@ -236,6 +236,10 @@ Each gap is a `Pending` declaration in the owning module, with its reason. Remov
 | `core/user.pages`, `core/user.query-pages` | Accounts, passwords, two-factor, notifications, saved queries |
 | `core/user_administration.pages` | Account administration |
 
+## Agent connection context
+
+MCP initialization and generated plugin workflow skills use `BUSINESS_CONTEXT` from [src/lib.rs](src/lib.rs): Bilibi is the person's business system, and agents search its operations and guides before answering or claiming a field or action is missing. `INSTANCE_INSTRUCTIONS` tells agents to announce the label, role and canonical address in their first answer and every plan review and confirmation. MCP `serverInfo.title` names all three; plan and commit results carry them in `instance` through `bilibi_system::Instance::agent_json`.
+
 ## Tenant provisioning
 
 [Core Tenant Administration](../../core/tenant_administration/README.md) registers `core.tenant_administration.tenant.list`, `.get` and `.create`. The Tenants page uses `PageContracts` for its directory reads and create event, with no pending write allowance. Search and describe discover these contracts through the same registry as the ChatGPT plugin; the plugin contains no tenant-specific logic.

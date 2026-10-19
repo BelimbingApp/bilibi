@@ -75,6 +75,8 @@ Production), `banner` (every review and confirmation, Production included) and
 operator's `instance.label` and `instance.colour` show in all of them. The
 server layout that writes `BILIBI_ENV` is `docs/server-install.md`.
 
+Agent connection identity also includes `APP_ORIGIN` (the canonical public address, with the host's default when unset). `Instance::agent_notice` names the label, role and address; `agent_json` includes `role` and `origin` alongside the existing fields, so discovery and plan/commit results identify the same destination even when an operator gives two environments the same label.
+
 ## Database Tables (`src/database_tables/`)
 
 Port of Belimbing `admin/system/database-tables`. `/system/database-tables`
