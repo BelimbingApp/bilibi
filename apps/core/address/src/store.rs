@@ -665,6 +665,7 @@ pub(crate) async fn preview_address(
     deleting: bool,
 ) -> WriteResult<Address> {
     authorize_key(client, scope, if deleting { DELETE } else { UPDATE }).await?;
+    authorize_key(client, scope, VIEW).await?;
     let old = raw(client, scope, id, false).await.map_err(not_found)?;
     if old.version != version || version < 1 {
         return Err(WriteError::Stale);
@@ -726,6 +727,7 @@ pub(crate) async fn preview_attach(
     owner: PartyId,
     version: i64,
 ) -> WriteResult<Address> {
+    authorize_key(client, scope, VIEW).await?;
     let address = raw(client, scope, id, false).await.map_err(not_found)?;
     if address.version != version {
         return Err(WriteError::Stale);
