@@ -75,7 +75,12 @@ if [[ -n $(ss -H -ltn "sport = :${instance[1]}") ]]; then
     echo "This checkout already has a listener at $APP_ORIGIN. Stop its dev command before starting another." >&2
     exit 1
 fi
-echo "Open $APP_ORIGIN — sign in as ai@agent.my / bilibi-dev (the platform operator's administrator)."
+# Colour only on a terminal without NO_COLOR, matching the app's own "listening" line.
+if [[ -t 1 && -z ${NO_COLOR-} ]]; then
+    printf '\e[1;32mOpen \e[4m%s\e[0m — sign in as ai@agent.my / bilibi-dev (the platform operator'"'"'s administrator).\n' "$APP_ORIGIN"
+else
+    echo "Open $APP_ORIGIN — sign in as ai@agent.my / bilibi-dev (the platform operator's administrator)."
+fi
 # dev-run.sh explains each restart from the state the previous run left here.
 rm -f "$root/.local/dev-run.state"
 echo 'Cargo output stays visible. Edit Rust/templates/assets to rebuild; Ctrl-C stops this app, leaving shared Caddy running.'
