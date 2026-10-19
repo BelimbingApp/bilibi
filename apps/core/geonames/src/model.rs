@@ -1,4 +1,4 @@
-//! Mirrors Bilimbi Core.Geonames read models. Stable read models. They carry only what callers of the lookup API need;
+//! Stable read models, mirroring Bilimbi's Core.Geonames. They carry only what callers of the lookup API need;
 //! table layout and SQL stay private to this module.
 use crate::corrections::{override_revision, source_revision, Provenance};
 use std::time::SystemTime;
