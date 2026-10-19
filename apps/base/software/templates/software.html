@@ -7,16 +7,16 @@
 <div data-shared-ui>
 {% call feedback::flash_group(messages=flash) %}{% endcall %}
 {% call ui::page(id="software-page", variant=bilibi_ui::PageVariant::Detail) %}
-{{ header }}
-{{ banner }}
+{{ header|safe }}
+{{ banner|safe }}
 <div class="grid gap-4">
-{{ instance_card }}
-{{ job_card }}
-{{ backups_card }}
-{{ discovery_card }}
-{{ install_card }}
-{{ history_card }}
+{{ instance_card|safe }}
+{{ job_card|safe }}
+{{ backups_card|safe }}
+{{ discovery_card|safe }}
+{{ install_card|safe }}
+{{ history_card|safe }}
 </div>
-{{ dialog }}
+{{ dialog|safe }}
 {% endcall %}
 </div>

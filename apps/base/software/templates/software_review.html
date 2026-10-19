@@ -2,18 +2,18 @@
     banner first, so no one confirms a change on the wrong Bilibi, then what
     changes, the warnings, what will happen, the steps, and the code. -#}
 {%- import "forms.html" as form -%}
-{{ banner }}
+{{ banner|safe }}
 <p class="text-sm text-ink">{{ lead }}</p>
 <ul id="software-review-changes" class="mt-3 grid gap-1 text-sm">
 {% for line in lines %}<li class="{{ line.tone }}">{{ line.text }}{% if let Some(note) = line.note %}<span class="block text-xs font-normal text-ink-muted">{{ note }}</span>{% endif %}</li>{% endfor %}
 </ul>
 {% if !checks.is_empty() %}<p class="mt-3 text-xs font-semibold uppercase tracking-wider text-ink-subtle">Checked before anything changes</p><ul class="mt-1 grid gap-0.5 text-sm text-ink-muted">{% for check in checks %}<li>{{ check }}</li>{% endfor %}</ul>{% endif %}
-{% if !warnings.is_empty() %}<div class="mt-3 grid gap-2">{% for warning in warnings %}{{ warning }}{% endfor %}</div>{% endif %}
+{% if !warnings.is_empty() %}<div class="mt-3 grid gap-2">{% for warning in warnings %}{{ warning|safe }}{% endfor %}</div>{% endif %}
 <p class="mt-3 text-xs font-semibold uppercase tracking-wider text-ink-subtle">Steps</p>
 <p class="mt-1 text-sm text-ink">{{ what_happens }}</p>
 <ol id="software-review-steps" class="mt-1 list-decimal pl-5 text-sm text-ink-muted">{% for step in steps %}<li>{{ step }}</li>{% endfor %}</ol>
 <form id="software-confirm" data-event="{{ event }}" class="mt-4 border-t border-line pt-3">
-{{ error }}
+{{ error|safe }}
 {% call form::code_input(code=code) %}{% endcall %}
-<div class="flex flex-wrap justify-end gap-2">{{ cancel }}{{ confirm }}</div>
+<div class="flex flex-wrap justify-end gap-2">{{ cancel|safe }}{{ confirm|safe }}</div>
 </form>
