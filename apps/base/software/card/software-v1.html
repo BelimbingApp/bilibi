@@ -627,7 +627,8 @@ function renderJob() {
     : job.state + ' on ' + inst.label;
   const progress = el('progress', { max: String(steps.length || 1), value: String(doneCount + (running ? 0.5 : 0)) });
   const buttons = [];
-  if (active && job.cancel === 'available') buttons.push(el('button', { class: 'danger', id: 'cancel', text: 'Stop', onclick: () => cancelJob(job.id) }));
+  const stopHint = 'Cancel this job before the pause. Nothing changes on ' + inst.label + '.';
+  if (active && job.cancel === 'available') buttons.push(el('button', { class: 'danger', id: 'cancel', text: 'Stop', title: stopHint, 'aria-description': stopHint, onclick: () => cancelJob(job.id) }));
   if (active && job.cancel === 'requested') buttons.push(el('span', { class: 'small muted', text: 'Stop requested…' }));
   if (active && job.cancel === 'too_late') buttons.push(el('span', { class: 'small muted', text: 'Too late to stop: the pause has started.' }));
   if (!active) buttons.push(el('button', { onclick: refreshHome, text: inst.builds ? 'Choose Domains' : 'Back' }));
@@ -641,7 +642,7 @@ function renderJob() {
     !active && result.message ? alertBox(tone, result.message, 'job-result') : null,
     !active && job.state === 'failed' && failedDetails(steps) ? el('details', {}, [el('summary', { text: 'Developer details' }), el('pre', { text: failedDetails(steps) })]) : null,
     !active && job.state === 'done' && inst.builds ? el('p', { class: 'small muted', text: 'Next: try it here, then install it on Staging.' }) : null,
-    active ? el('p', { class: 'small muted', text: 'You can close this card. The work keeps going; the result appears here and in your Bilibi notifications.' }) : null,
+    active ? el('p', { class: 'small muted', text: 'You can leave this chat. The work keeps going, and the result appears here and in your Bilibi notifications.' }) : null,
     el('div', { class: 'row' }, buttons),
   );
   if (!active && state.lastReported !== job.id + ':' + job.state) {
