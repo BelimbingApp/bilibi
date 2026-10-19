@@ -235,7 +235,7 @@ delivery whose audit row cannot be written is refused.
 
 The host compresses textual responses (`text/*`, JSON, JavaScript, XML and `+json`/`+xml` types such as SVG) with gzip or Brotli according to `Accept-Encoding`.
 
-- Compression runs at a fixed balanced quality (level 4) so a cold stylesheet request does not spend seconds of CPU. Binary and download bodies (PDF, archives, release bundles, media, fonts, images, octet-stream) are never recompressed and keep `Content-Length`.
+- Compression runs at a fixed balanced quality (level 4) so a cold stylesheet request does not spend seconds of CPU. Any response with a `Content-Disposition` (private attachments, signed media, release bundles) and any non-text body (PDF, archives, fonts, images, octet-stream) is never recompressed and keeps its bytes and `Content-Length`, whatever its MIME type.
 - Compression adds `Vary: Accept-Encoding`; already encoded responses and streams such as server-sent events retain their existing handling.
 - Pages and API responses default to `cache-control: no-store`. Private downloads retain `private, no-store` and their sandboxing policy.
 - Only an embedded asset served with its matching content version receives `public, max-age=31536000, immutable`. Unversioned assets keep `no-store`; an unknown asset or incorrect version returns 404 with `no-store`.

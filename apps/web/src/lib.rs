@@ -337,14 +337,18 @@ pub fn router(app: App) -> Router {
         .with_state(app)
 }
 
-/// Only text compresses usefully; downloads, media and archives keep their
-/// bytes and `Content-Length`.
+/// Only text pages and assets compress; any response with a
+/// `Content-Disposition` (attachments, inline media, release bundles) and any
+/// non-text body keeps its bytes and `Content-Length`.
 fn is_textual(
     _status: StatusCode,
     _version: axum::http::Version,
     headers: &HeaderMap,
     _extensions: &axum::http::Extensions,
 ) -> bool {
+    if headers.contains_key(header::CONTENT_DISPOSITION) {
+        return false;
+    }
     let Some(value) = headers.get(header::CONTENT_TYPE) else {
         return false;
     };
