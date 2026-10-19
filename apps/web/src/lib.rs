@@ -330,13 +330,40 @@ pub fn router(app: App) -> Router {
                 .quality(tower_http::CompressionLevel::Precise(4))
                 .compress_when(tower_http::compression::predicate::Predicate::and(
                     tower_http::compression::DefaultPredicate::new(),
-                    tower_http::compression::predicate::NotForContentType::const_new(
-                        "application/gzip",
-                    ),
+                    is_textual,
                 )),
         )
         .layer(middleware::from_fn_with_state(perf, perf::requests))
         .with_state(app)
+}
+
+/// Only text compresses usefully; downloads, media and archives keep their
+/// bytes and `Content-Length`.
+fn is_textual(
+    _status: StatusCode,
+    _version: axum::http::Version,
+    headers: &HeaderMap,
+    _extensions: &axum::http::Extensions,
+) -> bool {
+    let Some(value) = headers.get(header::CONTENT_TYPE) else {
+        return false;
+    };
+    let Ok(value) = value.to_str() else {
+        return false;
+    };
+    let essence = value
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    essence.starts_with("text/")
+        || matches!(
+            essence.as_str(),
+            "application/json" | "application/javascript" | "application/xml"
+        )
+        || essence.ends_with("+json")
+        || essence.ends_with("+xml")
 }
 
 /// The shared component specimen: the screenshot baseline for the primitives
