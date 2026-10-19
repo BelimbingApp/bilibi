@@ -1,9 +1,9 @@
 //! Which instance this server is: Dev, Staging or Production, and how it
 //! announces itself. The role is the deployment's `BILIBI_ENV` (the host
 //! validates it at boot and refuses any other value, `apps/web/src/environment.rs`);
-//! it is a bootstrap fact, never a setting, so a page or setting cannot change the deployment role. The label, the colour and the
-//! instance it installs releases from are operator settings whose defaults
-//! follow the role. `scripts/install-server.sh` writes `BILIBI_ENV` into each
+//! it is a bootstrap fact, never a setting, so a page or setting cannot change
+//! the deployment role. The label, the colour and the instance it installs
+//! releases from are operator settings whose defaults follow the role. `scripts/install-server.sh` writes `BILIBI_ENV` into each
 //! instance's `env` file; `docs/server-install.md` describes the layout.
 //! The instance banner, the Software page and the agent confirm pages all
 //! read `Instance::resolve`, so they cannot disagree.
