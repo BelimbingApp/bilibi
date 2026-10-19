@@ -296,6 +296,9 @@ pub fn write_bundle(dir: &Path, release: u64, from: &Value, sink: impl Write) ->
     let encoder = GzEncoder::new(sink, Compression::fast());
     let mut tar = tar::Builder::new(encoder);
     tar.mode(tar::HeaderMode::Deterministic);
+    // A program with holes must still travel as a plain file: the receiver
+    // refuses GNU-sparse entries.
+    tar.sparse(false);
     for name in RELEASE_FILES {
         if name == "bundle.json" {
             continue;
