@@ -697,10 +697,12 @@ impl View {
                 });
             }
             Err(ContractError::Backend(Error::Conflict)) => {
-                review.error = Some(
+                review.error = Some(if kind == Kind::Go {
+                    "The job changed in the meantime (it was stopped, or already has its go-ahead). Close this and look at the page again.".into()
+                } else {
                     "Another job was queued in the meantime. Close this and look at the page again."
-                        .into(),
-                );
+                        .into()
+                });
             }
             Err(
                 ContractError::PlanExpired
