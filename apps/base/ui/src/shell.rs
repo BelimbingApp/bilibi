@@ -126,16 +126,12 @@ pub struct ShellContext<'a> {
     /// The account's pins as JSON (`[{id,label,url,icon,sort_order}]`), already
     /// limited to pages this deployment serves.
     pub pins: String,
-    /// Which installation this is (`bilibi_system::Instance`): the top-bar badge for
-    /// every instance but production, empty for production. A debug build
-    /// leaves it to the status bar's `dev` marker and the shell omits it.
+    /// The shared role-based top-bar reminder (Staging only).
     pub instance: Html,
-    /// The same in words for the account panel, production included
-    /// ("Staging").
     pub instance_title: String,
-    pub development: bool,
-    /// The host the development server listens on, shown after "dev" in the
-    /// status bar as Bilimbi's `listen_address`; `None` outside development.
+    /// The shared status-bar role and label, linked for a Core Administrator.
+    pub instance_status: Html,
+    /// The bind address of this server, when available.
     pub listen_address: Option<&'a str>,
     /// The Platform version first, then each mounted Domain or Extension, from
     /// `version_badges`.

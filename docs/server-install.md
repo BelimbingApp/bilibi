@@ -66,21 +66,25 @@ Two systemd unit templates serve every instance: `bilibi@<instance>` runs `curre
 
 Each instance has its own PostgreSQL role and database (`bilibi_production`, `bilibi_dev`) on the server's PostgreSQL 18 cluster, with a generated password kept only in `env`. Dev cannot read Production's data.
 
+The offline waiting page identifies the instance folder and address; it does not cache a server role.
+
 Caddy has one site per instance in `/etc/caddy/sites/bilibi-<instance>.caddy`, imported by `/etc/caddy/Caddyfile`. The site proxies to the instance's local port and serves the waiting page while the backend is down. For a public name Caddy fetches a certificate on its own; for a private name pass `--tls internal` and Caddy signs one itself.
 
 ## How an instance knows which one it is
 
-The role comes from one place: **`BILIBI_ENV` in the instance's `env` file**, written at creation and fixed from then on. `development` is Dev, `staging` is Staging, `production` is Production. The program already boots on this value to decide whether 2FA step-up is enforced (`README.md`, Configuration), so there is no second source to keep in step.
+The role comes from **`instance.role` in the settings table**. The explicit install seed takes its first value from `BILIBI_ENV` in the instance's `env` file: `development`, `staging` or `production` (unset means Production). After that, the saved setting wins, including after a restart or repeat install. Editing `BILIBI_ENV` does not change an installed server's role.
 
-| Role | `BILIBI_ENV` | Purpose | 2FA step-up |
+| Role | Install value | Purpose | 2FA step-up |
 | --- | --- | --- | --- |
-| Dev | `development` | Try a locally built composition | Off, except software installation, undo, go-ahead and pairing changes |
+| Dev | `development` | Try a locally built composition | Off, except role changes and other actions that always require a fresh code |
 | Staging | `staging` | Test a release before Production | On |
 | Production | `production` | Run the tested release | On |
 
 All builds happen in a local Bilibi checkout. The role identifies the instance; it never enables a server build.
 
-Three operator settings, under **Instance** on the settings page (`/system/settings`), say how the instance announces itself. Their defaults follow the role, so a fresh instance needs none of them:
+Click the role in the status bar to open **Instance settings** (`/system/instance`). A Core Administrator in the platform-operator organisation can change the role, name, colour and update source. Every role change needs a fresh 2FA code, even on Dev, and is audited. The page warns before moving to or from Production: this changes warnings and 2FA rules without moving any data. Other accounts cannot change the role.
+
+The name, colour and source also remain available in the generic operator settings. Empty name and colour follow the current role:
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
@@ -230,7 +234,7 @@ Script commands:
 
 | Command | What it does |
 | --- | --- |
-| `create <instance> --role dev\|staging\|production --site <host> [--port <n>] [--tls internal]` | Packages, users, folders, database, `env`, service, Caddy site. Rerun to change the site; the role and port are fixed |
+| `create <instance> --role dev\|staging\|production --site <host> [--port <n>] [--tls internal]` | Packages, users, folders, database, `env`, service, Caddy site. Rerun to change the site; the saved role is preserved and the port stays fixed. Change the role in Instance settings with 2FA |
 | `release <instance> <bilibi-web or folder>` | Copy into `releases/<n>`, migrate, switch, check |
 | `create-owner <instance> [--email <address>] [--name <name>] [--password-stdin] [--company-name <name> --company-code <code>]` | The first account, the server owner; asks for anything not given, refuses once an owner exists (it then only finishes an unfinished company link) |
 | `installer <bilibi-installer>` | Copy the installer program to `/opt/bilibi/build/bin` and start `bilibi-installer@<instance>` for every instance; rerun to update it |
@@ -241,7 +245,7 @@ Keys in `env` (the service's environment; `README.md` explains each):
 
 | Key | Set to |
 | --- | --- |
-| `BILIBI_ENV` | the role: `development`, `staging` or `production` |
+| `BILIBI_ENV` | Initial role for the install seed: `development`, `staging` or `production`; later changes use Instance settings |
 | `APP_ORIGIN` | `https://<site>`, the exact address people browse |
 | `BIND_ADDR` | `127.0.0.1:<port>`, where Caddy forwards to; the first free port from 4300 unless you pass `--port` |
 | `DATABASE_URL` | the instance's own database and role on the local cluster |

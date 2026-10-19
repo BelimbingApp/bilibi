@@ -42,11 +42,29 @@ instance_dir() { printf '%s/%s' "$root" "$1"; }
 instance_exists() { [[ -f $(instance_dir "$1")/env ]]; }
 # env_value <instance> <KEY>: one value from the instance's env file.
 env_value() { sed -n "s/^$2=//p" "$(instance_dir "$1")/env" | head -n1; }
+# Installed roles live in settings. Only a database without a settings table
+# still uses the install input. An unavailable database cannot announce Dev.
 role_of() {
-    case $(env_value "$1" BILIBI_ENV) in
+    local saved port has_settings
+    port=$(pg_lsclusters -h | awk -v v="$pg" '$1 == v {print $3; exit}')
+    if [[ -z $port ]] || ! has_settings=$(runuser -u postgres -- psql -p "$port" -d "$(database_name "$1")" -Atq -c "SELECT to_regclass('public.base_settings') IS NOT NULL" 2>/dev/null); then
+        echo unavailable
+        return
+    fi
+    if [[ $has_settings == t ]]; then
+        if ! saved=$(runuser -u postgres -- psql -p "$port" -d "$(database_name "$1")" -Atq -c "SELECT value #>> '{}' FROM base_settings WHERE key='instance.role' AND tenant_id=0 AND scope_type='global' AND scope_id=0" 2>/dev/null); then
+            echo unavailable
+            return
+        fi
+        saved=${saved:-production}
+    else
+        saved=$(env_value "$1" BILIBI_ENV)
+    fi
+    case $saved in
         development) echo dev ;;
         staging) echo staging ;;
-        *) echo production ;;
+        production|'') echo production ;;
+        *) echo unavailable ;;
     esac
 }
 # These three print what exists and succeed when nothing does, so a caller's
@@ -194,16 +212,12 @@ free_port() {
 }
 
 # ---------------------------------------------------------------- files
-render_waiting_page() { # <instance> <role> <site> <out>
-    local label colour
-    case $2 in
-        dev) label=Dev colour=info ;;
-        staging) label=Staging colour=warning ;;
-        *) label=Production colour=danger ;;
-    esac
-    python3 - "$here/waiting-page.html" "$4" "$label" "$colour" "$3" "$1" <<'PY'
+render_waiting_page() { # <instance> <site> <out>
+    # This file is static while the app is offline. Identify its address and
+    # folder, never cache a server role that an operator can change in settings.
+    python3 - "$here/waiting-page.html" "$3" "$2" "$1" <<'PY'
 import html, sys
-source, out, label, colour, site, instance = sys.argv[1:]
+source, out, site, instance = sys.argv[1:]
 page = open(source, encoding="utf-8").read()
 def swap(old, new):
     global page
@@ -211,13 +225,12 @@ def swap(old, new):
         sys.exit(f"waiting-page.html no longer has exactly one {old[:40]!r}; update install-server.sh")
     page = page.replace(old, new)
 swap('<title>Bilibi is starting · Business application platform</title>',
-     f'<title>{html.escape(label)} is updating · Bilibi</title>')
-swap('<html lang="en">', f'<html lang="en" data-role="{colour}">')
+     '<title>Bilibi is updating</title>')
 swap('<p class="instance" id="waiting-instance" hidden><span class="role" id="waiting-role"></span><span id="waiting-site"></span></p>',
-     f'<p class="instance" id="waiting-instance"><span class="role" id="waiting-role">{html.escape(label.upper())}</span><span id="waiting-site">{html.escape(site)}</span></p>')
-swap('<h1 id="waiting-heading">Bilibi is starting</h1>', f'<h1 id="waiting-heading">{html.escape(label)} is updating</h1>')
+     f'<p class="instance" id="waiting-instance"><span class="role" id="waiting-role">{html.escape(instance)}</span><span id="waiting-site">{html.escape(site)}</span></p>')
+swap('<h1 id="waiting-heading">Bilibi is starting</h1>', f'<h1 id="waiting-heading">Bilibi is updating</h1>')
 swap('<p id="waiting-text">The app is restarting or rebuilding. This page reloads on its own as soon as it is ready, so you will land back on what you asked for.</p>',
-     f'<p id="waiting-text">Bilibi {html.escape(label)} is switching to a new release or restarting. Back in about a minute. This page reloads on its own, so you will land back on what you asked for.</p>')
+     f'<p id="waiting-text">Bilibi is switching to a new release or restarting. Back in about a minute. This page reloads on its own, so you will land back on what you asked for.</p>')
 swap('<p class="hint" id="waiting-hint">Taking longer than usual. If you started the app yourself, check the terminal running <code>scripts/start-app.sh</code> for a build error.</p>',
      f'<p class="hint" id="waiting-hint">Taking longer than usual. The server owner can check the service with <code>systemctl status bilibi@{html.escape(instance)}</code> and <code>journalctl -u bilibi@{html.escape(instance)}</code>.</p>')
 open(out, "w", encoding="utf-8").write(page)
@@ -311,8 +324,8 @@ create() {
         umask 027
         cat >"$env" <<EOF
 # Bilibi instance "$instance". Read by bilibi@$instance.service and the release commands.
-# BILIBI_ENV identifies Dev, Staging or Production. Build software locally.
-# Only development skips ordinary 2FA step-up; software actions always ask.
+# BILIBI_ENV initializes the role at install. Later changes use Instance settings.
+# The saved Dev role skips ordinary 2FA checks; role and software changes always ask.
 BILIBI_ENV=$bilibi_env
 APP_ORIGIN=https://$site
 BIND_ADDR=127.0.0.1:$port
@@ -327,7 +340,8 @@ EOF
         umask 022
     else
         local kept_role; kept_role=$(role_of "$instance")
-        [[ $kept_role == "$role" ]] || fail "$instance already exists with role $kept_role; the role is fixed at creation" "create another instance, or remove $dir and its database first"
+        [[ $kept_role == "$role" ]] || say "$instance keeps its saved role ($kept_role). Change the role in Instance settings with 2FA."
+        role=$kept_role
         [[ -z $port || $(env_value "$instance" BIND_ADDR) == "127.0.0.1:$port" ]] || fail "$instance already listens on $(env_value "$instance" BIND_ADDR); the port is fixed at creation"
         port=${port:-$(env_value "$instance" BIND_ADDR | sed 's/.*://')}
         sed -i "s|^APP_ORIGIN=.*|APP_ORIGIN=https://$site|" "$env"
@@ -336,7 +350,7 @@ EOF
     fi
     chown root:bilibi "$env"; chmod 0640 "$env"
 
-    render_waiting_page "$instance" "$role" "$site" "$dir/site/waiting.html"
+    render_waiting_page "$instance" "$site" "$dir/site/waiting.html"
     chmod 0644 "$dir/site/waiting.html"
     write_caddy_site "$instance" "$site" "$port" "$tls"
     systemctl enable "$unit_name$instance" >/dev/null 2>&1

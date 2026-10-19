@@ -69,6 +69,7 @@ sections! {
 pub struct FormControls {
     pub code: CodeInput,
     pub authenticator: CodeInput,
+    pub optional_authenticator: CodeInput,
     pub invalid_authenticator: CodeInput,
     pub text: Field,
     pub search: Field,
@@ -145,6 +146,14 @@ impl FormControls {
                 .group_size(4),
             authenticator: CodeInput::new("specimen_otp", "specimen[otp]", "Authenticator code", 6)
                 .numeric(),
+            optional_authenticator: CodeInput::new(
+                "specimen_optional_otp",
+                "specimen[optional_otp]",
+                "2FA code (role changes only)",
+                6,
+            )
+            .numeric()
+            .optional(),
             invalid_authenticator: CodeInput::new(
                 "specimen_otp_error",
                 "specimen[otp_error]",

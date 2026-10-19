@@ -4,7 +4,6 @@ mod api;
 mod auth;
 mod composition;
 mod create_owner;
-mod environment;
 mod errors;
 mod impersonation;
 mod landing;
@@ -32,7 +31,6 @@ use serde::Deserialize;
 use std::{collections::HashMap, sync::Arc};
 
 pub use create_owner::create_owner;
-pub use environment::Environment;
 
 #[derive(Clone)]
 pub struct App {
@@ -41,11 +39,9 @@ pub struct App {
     moved: Arc<Vec<&'static bilibi_module_registry::contributions::Moved>>,
     pub db: Db,
     pub origin: Arc<str>,
-    /// `BILIBI_ENV`: development turns Base Step-up enforcement off, nothing else.
-    pub environment: Environment,
     settings: Arc<bilibi_base::settings::Settings>,
     pub step_up: Arc<bilibi_base::step_up::StepUp>,
-    /// The host the server listens on, for the development status bar only;
+    /// The host the server listens on, shown in the status bar;
     /// the serving command sets it from `BIND_ADDR`.
     pub listen_address: Option<Arc<str>>,
     pub services: Arc<bilibi_module_registry::Services>,
@@ -72,7 +68,6 @@ impl App {
         bilibi_base::system::Instance::resolve(&self.settings, &**client).await
     }
     pub fn new(db: Db, origin: &str) -> Result<Self> {
-        let environment = Environment::from_env()?;
         let modules = modules()?;
         let mut services = bilibi_module_registry::Services::default();
         services.provide("bootstrap.database", Arc::new(db))?;
@@ -85,7 +80,6 @@ impl App {
         let security = services.get("base/security.guard")?;
         let step_up: Arc<bilibi_base::step_up::StepUp> =
             services.get(bilibi_base::step_up::SERVICE)?;
-        step_up.set_enforced(environment.requires_step_up());
         let settings = services.get("base/settings.store")?;
         let renderer = services.get("base/ui.renderer")?;
         let menu = bilibi_base::menu::Menu::from_catalog(services.catalog()?)?;
@@ -107,7 +101,6 @@ impl App {
             moved,
             db,
             origin: origin.into(),
-            environment,
             settings,
             step_up,
             listen_address: None,

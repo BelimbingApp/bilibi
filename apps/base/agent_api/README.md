@@ -131,7 +131,7 @@ Every preview and every successful commit carries `instance` (`bilibi_system::In
 "instance": {"environment": "staging", "role": "Staging", "origin": "https://staging.example.com", "label": "Staging", "production": false, "notice": "You are on Staging (Staging), at https://staging.example.com. This is a test copy. Changes here do not affect production."}
 ```
 
-- `environment` is `development`, `staging` or `production` (`BILIBI_ENV`); `role` is its display word (Dev, Staging or Production); `origin` is the canonical `APP_ORIGIN`; `label` is the operator's `instance.label` setting, which defaults to the role word.
+- `environment` is `development`, `staging` or `production` (the saved `instance.role` setting); `role` is its display word (Dev, Staging or Production); `origin` is the canonical `APP_ORIGIN`; `label` is the operator's `instance.label` setting, which defaults to the role word.
 - MCP names it too: `initialize` (`serverInfo.title` and the instructions) and the `plan` and `commit` tool descriptions in `tools/list`. `GET /.well-known/bilibi` carries the same object.
 - The plugin skill (`core/agent_plugins`) tells the agent to open every review and confirmation with it, as a full-width banner in an HTML review. Bilibi draws no plan review page itself; the harness does.
 

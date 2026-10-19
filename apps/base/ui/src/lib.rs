@@ -79,7 +79,7 @@ pub use inline::{
     InlineLongText,
 };
 pub use inline_specimen::{inline_specimen_values, InlineSpecimen};
-pub use instance::{InstanceBadge, InstanceBanner};
+pub use instance::{InstanceBadge, InstanceBanner, InstanceStatus};
 pub use list_columns::{BuiltinColumn, ColumnsOutcome, ListColumns};
 pub use list_state::{Filter, ListSpec, ListState, PageCounts, SortDir};
 pub use lists::{

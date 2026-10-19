@@ -965,6 +965,7 @@ pub struct CodeInput {
     pub length: usize,
     pub group_size: Option<usize>,
     pub numeric: bool,
+    pub optional: bool,
     pub errors: Vec<String>,
 }
 
@@ -983,8 +984,16 @@ impl CodeInput {
             length,
             group_size: None,
             numeric: false,
+            optional: false,
             errors: Vec::new(),
         }
+    }
+
+    /// Leave the code blank when only some submitted changes need it.
+    /// The owning facade still enforces its operation's 2FA requirement.
+    pub fn optional(mut self) -> Self {
+        self.optional = true;
+        self
     }
 
     /// Authenticator codes keep leading zeroes and request the phone keypad.

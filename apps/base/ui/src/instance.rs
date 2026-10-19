@@ -38,3 +38,20 @@ pub struct InstanceBanner<'a> {
     pub message: &'a str,
     pub class: &'a str,
 }
+
+/// The role and optional operator label in the status bar. A Core Administrator gets a
+/// settings link; other accounts see the same identity without a control.
+#[derive(Template, Debug, Default)]
+#[template(
+    source = r#"{% import "feedback.html" as ui %}{% call ui::instance_status(status=self) %}{% endcall %}"#,
+    ext = "html"
+)]
+pub struct InstanceStatus<'a> {
+    pub id: &'a str,
+    pub tone: StatusKind,
+    pub role: &'a str,
+    pub role_label: &'a str,
+    pub label: &'a str,
+    pub title: &'a str,
+    pub editable: bool,
+}

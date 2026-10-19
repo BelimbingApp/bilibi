@@ -1,9 +1,9 @@
 //! Running-app authorization walkthrough. Use only a disposable migrated
-//! database: this command changes demo grants and temporarily appoints tenant 1
-//! operator. No test runner or mock services. Run with DATABASE_URL,
-//! BILIBI_ENV=development (its grant changes are step-up operations, which
-//! a console has no authenticator to satisfy) and
-//! BILIBI_AUTHZ_DEMO=disposable cargo run -p bilibi-web --example p6-authz.
+//! database whose saved instance role is Dev. The console has no authenticator
+//! for the grant changes' 2FA checks. This changes fixture grants and
+//! temporarily appoints tenant 1 operator. No test runner or mock services.
+//! Run with DATABASE_URL and BILIBI_AUTHZ_DEMO=disposable:
+//! cargo run -p bilibi-web --example p6-authz.
 use bilibi_base::{
     authz::{
         self, fields, grants::Grants, CapabilityDefinition as C, RoleDefinition,

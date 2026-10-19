@@ -36,6 +36,7 @@ Two lines in the owning module, nothing anywhere else.
 - An operation may also guard one setting (`.guards_setting("key")`): the settings editor then asks for it before changing, clearing or restoring that setting.
 - A module that is not mounted declares nothing, so its rows leave the policy page.
 - Never decide in code whether step-up applies. That is the tenant's policy.
+- A confirmation form that takes a code itself calls `require_code` for its `.always()` operation. A recent browser check, including enrollment, cannot replace a code on that submission. Missing codes are audited refusals; an account without 2FA receives the usual enrollment prompt.
 - Call `require` as often as the action needs: a presented code is spent by the first call and covers the rest of the request.
 
 ## Policy
@@ -52,7 +53,7 @@ Tenants decide per operation on **Administration › Authorization › Step-up 2
 
 - Changing any of these is itself a step-up operation (`base.step_up.policy.update`, on the floor). Settings audits it.
 - The installation owner sees the floor and the maxima on the same page.
-- `BILIBI_ENV=development` turns enforcement off (the host calls `set_enforced`). Anything else enforces. An operation declared `.always()` is enforced everywhere, as "ask every time", and the policy page shows it as fixed.
+- The stored Dev role turns ordinary enforcement off. Base System binds the live `Enforcement` policy, which reads `instance.role` on each check; changing the role takes effect without restarting. A missing binding enforces. An operation declared `.always()` is enforced everywhere, as "ask every time", and the policy page shows it as fixed.
 
 ## Proofs per channel
 
@@ -123,7 +124,7 @@ Every check that applies writes one action:
 
 ## Try it
 
-On a migrated disposable database with `BILIBI_ENV=staging`:
+On a migrated disposable database, select Staging in Instance settings (`BILIBI_ENV=staging` supplies it only during the first install seed):
 
 - Enroll at `/settings/two-factor`.
 - Open `/authz/step-up` and turn an operation on.

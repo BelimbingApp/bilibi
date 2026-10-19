@@ -130,7 +130,7 @@ Authz is a Base Step-up consumer (`src/step_up.rs`, `apps/base/step_up/README.md
   - Settings: the tenant's window ("Minutes before asking again") and cap ("Hours before always asking again") as inline facts that save when committed; for the installation owner, the installation maxima ("Longest time any organisation may choose").
   - Actions: one FlexTable row per declared operation, with module, label, default, this tenant's state and the floor lock. Confirmed changes: off, on, ask every time, back to default; for the installation owner, the floor.
   - Every change rechecks the capability in its audited transaction and first passes step-up itself (`base.step_up.policy.update`).
-- `examples/p6-authz.rs` changes grants from a console, so run it with `BILIBI_ENV=development`.
+- `examples/p6-authz.rs` changes grants from a console. Run it only on a disposable database whose saved instance role is Dev; `BILIBI_ENV=development` supplies that role during its first install seed.
 - Agents reach the same writes: `base/authz_agent` adds reviewed-plan agent operations over the `*_in` variants (`assign_role_in`, `set_direct_in`, `set_role_capability_in`), which run inside the plan's transaction. See `apps/base/authz_agent/README.md`.
 - The account page (`core/user`) passes `Error::StepUpRequired` up, so the host sends the browser to confirm and back.
 
@@ -139,7 +139,7 @@ Authz is a Base Step-up consumer (`src/step_up.rs`, `apps/base/step_up/README.md
 No unit tests. Use a private migrated database and run:
 
 ```sh
-BILIBI_ENV=development BILIBI_AUTHZ_DEMO=disposable cargo run -p bilibi-web --example p6-authz
+BILIBI_AUTHZ_DEMO=disposable cargo run -p bilibi-web --example p6-authz
 ```
 
 This explicit runtime walkthrough prints role/direct grant decisions, live

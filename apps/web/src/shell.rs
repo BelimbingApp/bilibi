@@ -180,14 +180,21 @@ async fn context<'a>(
         home,
         served_routes: serde_json::to_string(&served).map_err(|_| Error::Internal)?,
         pins: serde_json::to_string(&pins).map_err(|_| Error::Internal)?,
-        instance: instance.badge().map_err(|_| Error::Internal)?,
-        instance_title: instance.label,
-        development: cfg!(debug_assertions),
-        listen_address: if cfg!(debug_assertions) {
-            app.listen_address.as_deref()
+        instance: if instance.role == bilibi_base::system::Role::Dev {
+            Html::EMPTY
         } else {
-            None
+            instance.badge().map_err(|_| Error::Internal)?
         },
+        instance_status: instance
+            .status(
+                app.services
+                    .get::<bilibi_base::system::Instances>(bilibi_base::system::SERVICE)?
+                    .can_manage(scope)
+                    .await?,
+            )
+            .map_err(|_| Error::Internal)?,
+        instance_title: instance.label,
+        listen_address: app.listen_address.as_deref(),
         versions: bilibi_ui::version_badges(&crate::composition()),
         topbar_actions,
     })

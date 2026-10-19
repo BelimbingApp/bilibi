@@ -15,10 +15,7 @@ use bilibi_tenancy::{Channel, ProofFuture, Scope};
 use serde_json::{json, Map, Value};
 use std::{
     collections::BTreeMap,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, OnceLock,
-    },
+    sync::{Arc, OnceLock},
 };
 
 /// What a presented code is being spent on; the provider may record it.
@@ -126,13 +123,17 @@ pub struct Window {
     pub tenant_cap_hours: i64,
 }
 
+/// The installation owner supplies current enforcement policy. Missing binding fails closed.
+pub trait Enforcement: Send + Sync {
+    fn enforced(&self) -> ProofFuture<'_, bool>;
+}
+
 pub struct StepUp {
     db: Db,
     settings: Arc<Settings>,
     operations: BTreeMap<&'static str, Declared>,
     provider: OnceLock<Arc<dyn Provider>>,
-    /// Off only in development (`BILIBI_ENV`), set once by the host.
-    enforced: AtomicBool,
+    enforcement: OnceLock<Arc<dyn Enforcement>>,
 }
 
 enum Outcome {
@@ -163,7 +164,7 @@ impl StepUp {
             settings,
             operations,
             provider: OnceLock::new(),
-            enforced: AtomicBool::new(true),
+            enforcement: OnceLock::new(),
         })
     }
     /// The second-factor owner binds itself once at boot.
@@ -172,12 +173,22 @@ impl StepUp {
             bilibi_module_registry::RegistryError::Service("duplicate step-up provider".into())
         })
     }
-    /// The host turns enforcement off for a development deployment only.
-    pub fn set_enforced(&self, enforced: bool) {
-        self.enforced.store(enforced, Ordering::SeqCst);
+    /// Bind once to the installation's live policy, never a process-local role cache.
+    pub fn bind_enforcement(
+        &self,
+        policy: Arc<dyn Enforcement>,
+    ) -> bilibi_module_registry::Result<()> {
+        self.enforcement.set(policy).map_err(|_| {
+            bilibi_module_registry::RegistryError::Service(
+                "duplicate step-up enforcement policy".into(),
+            )
+        })
     }
-    pub fn enforced(&self) -> bool {
-        self.enforced.load(Ordering::SeqCst)
+    async fn enforced(&self) -> Result<bool> {
+        match self.enforcement.get() {
+            Some(policy) => policy.enforced().await,
+            None => Ok(true),
+        }
     }
     pub fn declared(&self, key: &str) -> Option<&Declared> {
         self.operations.get(key)
@@ -209,7 +220,7 @@ impl StepUp {
             // enforcement is off (development) and whatever the tenant chose.
             Mode::EveryTime
         } else {
-            if !self.enforced() {
+            if !self.enforced().await? {
                 return Ok(());
             }
             let mode = self.mode(scope, declared).await?;
@@ -229,6 +240,42 @@ impl StepUp {
         }
     }
 
+    /// For an `always` operation whose confirmation form takes a code itself.
+    /// A recent browser check (including enrollment) cannot replace that code.
+    /// Missing codes are audited refusals; presented codes use the normal gate.
+    pub async fn require_code(&self, scope: &Scope, key: &str, target: &str) -> Result<()> {
+        let declared = self.declared(key).ok_or(Error::Internal)?;
+        if !declared.operation.always {
+            return Err(Error::Invalid);
+        }
+        if scope.step_up_code().is_none() {
+            let reason = if scope.impersonator().is_some() {
+                "impersonating"
+            } else if let Some(provider) = self.provider.get() {
+                if provider.enrolled(scope).await? {
+                    "code_required"
+                } else {
+                    "not_enrolled"
+                }
+            } else {
+                "unavailable"
+            };
+            self.audit(
+                scope,
+                declared,
+                target,
+                Mode::EveryTime,
+                &Outcome::Refused(reason),
+            )
+            .await?;
+            return Err(Error::StepUpRequired {
+                operation: declared.operation.key,
+                reason,
+            });
+        }
+        self.require(scope, key, target).await
+    }
+
     /// Whether the web session's proof still covers `key`, without using it
     /// or recording anything: for a page that rechecks while open.
     pub async fn holds(&self, scope: &Scope, key: &str) -> Result<bool> {
@@ -236,7 +283,7 @@ impl StepUp {
         let mode = if declared.operation.always {
             Mode::EveryTime
         } else {
-            if !self.enforced() || self.mode(scope, declared).await? == Mode::Off {
+            if !self.enforced().await? || self.mode(scope, declared).await? == Mode::Off {
                 return Ok(true);
             }
             Mode::On

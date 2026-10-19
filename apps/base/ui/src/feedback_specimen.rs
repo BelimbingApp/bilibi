@@ -5,7 +5,7 @@
 //! fragments rendered by the same macros; `static/ui-feedback-driver.js` stands in
 //! for the server by inserting and removing them.
 use crate::section::sections;
-use crate::{FlashMap, InstanceBadge, InstanceBanner, StatusKind, Tab};
+use crate::{FlashMap, InstanceBadge, InstanceBanner, InstanceStatus, StatusKind, Tab};
 use askama::Template;
 
 /// The page is cut into sections, each its own template; see `section`.
@@ -18,6 +18,7 @@ pub struct FeedbackSpecimen {
     tabs_single: Vec<Tab<'static>>,
     long_paragraphs: Vec<usize>,
     flash_in_dialog: FlashMap<'static>,
+    instance_statuses: Vec<InstanceStatus<'static>>,
     instance_badges: Vec<InstanceBadge<'static>>,
     instance_banners: Vec<InstanceBanner<'static>>,
 }
@@ -71,6 +72,11 @@ impl FeedbackSpecimen {
                 info: "Nothing else changed.",
                 ..FlashMap::default()
             },
+            instance_statuses: vec![
+                InstanceStatus { id: "", tone: StatusKind::Info, role: "development", role_label: "Dev", label: "Dev", title: "You are on Dev.", editable: true },
+                InstanceStatus { id: "", tone: StatusKind::Warning, role: "staging", role_label: "Staging", label: "Training", title: "You are on Training (Staging).", editable: false },
+                InstanceStatus { id: "", tone: StatusKind::Error, role: "production", role_label: "Production", label: "Production", title: "You are on Production.", editable: false },
+            ],
             instance_badges: vec![
                 InstanceBadge {
                     tone: StatusKind::Info,
