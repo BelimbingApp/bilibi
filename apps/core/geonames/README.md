@@ -215,3 +215,5 @@ To try the command itself offline, zip `sample/cities15000.txt` as
 `cities15000.zip` and `sample/MY.txt` as `MY.zip` beside the other two files,
 serve that directory over HTTP and pass it as both `--base-url` and
 `--postcodes-url`.
+
+The Postcodes column picker also offers **Admin1 Division**, **Latitude**, **Longitude** and **Accuracy** from the Edit Postcode dialog. Shared record fields keep the labels together. The default columns, including Admin1 Code, stay the same.

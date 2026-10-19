@@ -170,3 +170,5 @@ Each failed check is a plain sentence that says what to do next: "This release w
 - [Versions and CI evidence](../../../docs/versions.md).
 - [Installer checks and recovery](../../installer/README.md).
 - [Step-up](../step_up/README.md) and [Agent API plans](../agent_api/README.md).
+
+The History column picker also offers **Worker**, matching the job panel. Its optional columns use shared record fields; the default columns stay the same. Steps and long result messages stay on the panel.

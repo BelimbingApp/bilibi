@@ -200,16 +200,42 @@ struct View {
     catalogue: Option<(std::time::Instant, Value)>,
 }
 
+// No Bilimbi Software counterpart; the job panel and history use one schema.
+bilibi_ui::record_fields! { mod job_fields {
+    ID: bilibi_ui::RecordField::new("id", "Job"),
+    KIND: bilibi_ui::RecordField::new("kind", "What"),
+    STATE: bilibi_ui::RecordField::new("state", "Outcome"),
+    SUMMARY: bilibi_ui::RecordField::new("summary", "Change"),
+    REQUESTED_AT: bilibi_ui::RecordField::new("requested_at", "Requested"),
+    FINISHED_AT: bilibi_ui::RecordField::new("finished_at", "Finished"),
+    WORKER: bilibi_ui::RecordField::new("worker", "Worker"),
+    STEPS: bilibi_ui::RecordField::new("steps", "Steps").excluded("Nested progress and developer details stay on the job panel"),
+    RESULT: bilibi_ui::RecordField::new("result", "Result").excluded("Long outcome messages stay on the job panel"),
+} }
+
 fn history_columns() -> Vec<BuiltinColumn> {
-    let mut requested = BuiltinColumn::new("requested_at", "Requested");
+    let mut requested = job_fields::get("requested_at")
+        .builtin()
+        .expect("job scalar column");
     requested.kind = ColumnType::Datetime;
-    let mut finished = BuiltinColumn::new("finished_at", "Finished");
+    let mut finished = job_fields::get("finished_at")
+        .builtin()
+        .expect("job scalar column");
     finished.kind = ColumnType::Datetime;
     vec![
-        BuiltinColumn::new("id", "Job").right(),
-        BuiltinColumn::new("kind", "What"),
-        BuiltinColumn::new("state", "Outcome"),
-        BuiltinColumn::new("summary", "Change"),
+        job_fields::get("id")
+            .builtin()
+            .expect("job scalar column")
+            .right(),
+        job_fields::get("kind")
+            .builtin()
+            .expect("job scalar column"),
+        job_fields::get("state")
+            .builtin()
+            .expect("job scalar column"),
+        job_fields::get("summary")
+            .builtin()
+            .expect("job scalar column"),
         requested,
         finished,
     ]
@@ -237,6 +263,7 @@ impl View {
             flash: None,
             install_error: None,
             columns: ListColumns::mount("software-jobs", history_columns())
+                .map(|columns| columns.with_record_fields(job_fields::ALL.iter().copied()))
                 .map_err(|_| Error::Internal)?,
             rows_changed: true,
             catalogue: None,
@@ -1177,6 +1204,7 @@ impl View {
                 .slot("kind", Html::text(kind))
                 .slot("state", render(badge)?)
                 .slot("summary", Html::text(text(&job["summary"])))
+                .slot("worker", Html::text(job["worker"].as_str().unwrap_or("—")))
                 .slot("requested_at", when("requested_at", "requested")?)
                 .slot("finished_at", when("finished_at", "finished")?);
             row.dom_id = Some(format!("software-history-{id}"));
