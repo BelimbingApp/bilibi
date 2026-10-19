@@ -33,6 +33,7 @@ Two lines in the owning module, nothing anywhere else.
    - A refusal is `Error::StepUpRequired { operation, reason }`. Return it unchanged: every channel already knows what to do with it.
    - A page route can wrap its access instead: `Access::StepUp { operation: KEY, inner: &Access::Owner }`.
 
+- An operation may also guard one setting (`.guards_setting("key")`): the settings editor then asks for it before changing, clearing or restoring that setting.
 - A module that is not mounted declares nothing, so its rows leave the policy page.
 - Never decide in code whether step-up applies. That is the tenant's policy.
 - Call `require` as often as the action needs: a presented code is spent by the first call and covers the rest of the request.

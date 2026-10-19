@@ -117,6 +117,18 @@ bilibi_step_up::declare!(
     )
     .always()
 );
+/// Saving the pairing key in the settings editor: whoever holds the key can
+/// download the whole program, so it asks for a fresh code like `pair` does.
+pub const PAIRING_KEY_STEP_UP: &str = "base.software.pairing_key.change";
+bilibi_step_up::declare!(
+    "base/software",
+    bilibi_step_up::Operation::new(
+        PAIRING_KEY_STEP_UP,
+        "Change the pairing key in the settings"
+    )
+    .always()
+    .guards_setting(pairing::KEY)
+);
 
 /// The facade: reviews a request without writing, and records it inside the
 /// caller's audited transaction (an agent plan's commit, or a page through
@@ -798,7 +810,7 @@ inventory::submit! { Contribution::new(DEFINITIONS, CATALOGUE_URL_KEY, provenanc
     validator: Some(Validator { accepts: |value: &Value| value.as_str().is_some_and(|url| { let url = url.trim(); url.starts_with("https://") && url.len() <= 2048 && !url.chars().any(char::is_whitespace) }), message: "The catalogue address must start with https://, like https://raw.githubusercontent.com/BelimbingApp/bilibi/catalogue/catalogue.json." }),
     editor: Some(Editor { group: "Software", label: "Catalogue address: where the list of Domains and releases is read from",
         help: "The published catalogue.json that lists the Platform and Domain releases and which were tested together. Change it only to read a catalogue you publish yourself (server owner only).",
-        capability: Some(MANAGE), reveal_duration_ms: 5_000, change_needs_step_up: false }),
+        capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
 })) }
 inventory::submit! { Contribution::new(DEFINITIONS, pairing::KEY, provenance!(), &Setting::Definition(Definition {
     value_type: ValueType::String, scopes: &[ScopeKind::Global], default: || json!(null), nullable: true, encrypted: true,
@@ -806,14 +818,14 @@ inventory::submit! { Contribution::new(DEFINITIONS, pairing::KEY, provenance!(),
     validator: Some(Validator { accepts: pairing::accepts_value, message: "The pairing key must be 16 to 128 characters with no spaces, like the output of: openssl rand -hex 24" }),
     editor: Some(Editor { group: "Software", label: "Pairing key other instances use to download releases from this one",
         help: "Set the same key on every instance that shares releases: the one that installs presents it, the one it installs from checks it. Stored encrypted and never shown back. Changing or clearing it asks for your authenticator code every time (server owner only).",
-        capability: Some(MANAGE), reveal_duration_ms: 5_000, change_needs_step_up: true }),
+        capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
 })) }
 inventory::submit! { Contribution::new(DEFINITIONS, BUILD_JOBS_KEY, provenance!(), &Setting::Definition(Definition {
     value_type: ValueType::Integer, scopes: &[ScopeKind::Global], default: || json!(2), nullable: false, encrypted: false,
     minimum: Some(0.0), maximum: Some(64.0), validator: None,
     editor: Some(Editor { group: "Software", label: "Compilers at a time: how many parts a build compiles at once",
         help: "How many parts the build compiles at the same time. 2 keeps a Dev that shares its machine with Production responsive and takes about 10 to 15 minutes for a first build. Use 1 on a small server, or a higher number on a machine of its own. 0 means use every processor, which is fastest but slows everything else on the server. Builds always run at the lowest CPU priority (server owner only).",
-        capability: Some(MANAGE), reveal_duration_ms: 5_000, change_needs_step_up: false }),
+        capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
 })) }
 // The Software page: server owners' view of what runs and the way to change
 // it. Seeing it needs the platform `view` capability; the owner's facade

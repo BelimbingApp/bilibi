@@ -18,7 +18,7 @@
 //! archived company is never offered, since a write into it would be refused.
 use crate::{
     form::{self, Field, Plan, Step},
-    reveal::{self, Refusal, Reveal, CHANGE_STEP_UP},
+    reveal::{self, Refusal, Reveal},
     COMPANY_MANAGE, GLOBAL_MANAGE,
 };
 use askama::Template;
@@ -389,12 +389,16 @@ impl Editor {
     /// the session owes goes up to the host, which sends the browser to
     /// confirm and back to this page, where the person saves again.
     async fn require_change_step_up(&self, scope: &Scope, field: &Field) -> Result<()> {
-        if !field.editor.change_needs_step_up {
+        let Some(guard) = self.core.step_up.guarding_setting(field.key) else {
             return Ok(());
-        }
+        };
         self.core
             .step_up
-            .require(scope, CHANGE_STEP_UP, &format!("setting:{}", field.key))
+            .require(
+                scope,
+                guard.operation.key,
+                &format!("setting:{}", field.key),
+            )
             .await
     }
     fn step_up_refused(&mut self, error: Error, field: &Field) -> Result<()> {

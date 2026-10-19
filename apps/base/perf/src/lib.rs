@@ -55,14 +55,14 @@ macro_rules! setting {
         inventory::submit! { Contribution::new(DEFINITIONS, $key, provenance!(), &Setting::Definition(Definition {
             value_type: $type, scopes: &[ScopeKind::Global], default: || $default, nullable: false, encrypted: false,
             minimum: Some($min), maximum: Some($max), validator: None,
-            editor: Some(Editor { group: "Performance", label: $label, help: $help, capability: Some(MANAGE), reveal_duration_ms: 5_000, change_needs_step_up: false }),
+            editor: Some(Editor { group: "Performance", label: $label, help: $help, capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
         })) }
     };
 }
 inventory::submit! { Contribution::new(DEFINITIONS, ENABLED, provenance!(), &Setting::Definition(Definition {
     value_type: ValueType::Boolean, scopes: &[ScopeKind::Global], default: || json!(true), nullable: false, encrypted: false,
     minimum: None, maximum: None, validator: None,
-    editor: Some(Editor { group: "Performance", label: "Performance history", help: "Keep a history of how fast pages and jobs run.", capability: Some(MANAGE), reveal_duration_ms: 5_000, change_needs_step_up: false }),
+    editor: Some(Editor { group: "Performance", label: "Performance history", help: "Keep a history of how fast pages and jobs run.", capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
 })) }
 setting!(
     MINIMUM_DURATION_MS,

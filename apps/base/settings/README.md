@@ -7,9 +7,7 @@ pattern (lexical order breaks equal lengths). Definitions and runtime claims
 share one ownership namespace, so duplicate ownership fails at discovery.
 
 `Definition` owns JSON type, allowed scopes, default, nullable/encrypted flags,
-numeric bounds, custom validator, and optional P3 editor metadata (including
-`change_needs_step_up`, which makes the settings editor ask for the holder's
-authenticator code every time the setting is changed). Defaults are
+numeric bounds, custom validator, and optional P3 editor metadata. Defaults are
 validated at discovery, and every write validates again. `RuntimeClaim` permits
 operational JSON at any scope, has no default, rejects null writes, and is never
 a secret: use an encrypted definition for secrets. Undeclared keys, wildcard

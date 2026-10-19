@@ -290,7 +290,7 @@ inventory::submit! {
                 label: "Timezone",
                 help: "Default timezone for this company.",
                 capability: Some("admin.company.update"),
-                reveal_duration_ms: 5_000, change_needs_step_up: false,
+                reveal_duration_ms: 5_000,
             }),
         }))
 }

@@ -34,11 +34,10 @@ override. Messages say what happened ("1 setting updated, 1 override
 cleared."). Restore confirms through the shared dialog and deletes only the
 overrides the dialog counted that are still overridden.
 
-A definition whose editor sets `change_needs_step_up` (the Software pairing key)
+A setting that a Base Step-up operation guards (`Operation::guards_setting`, declared `.always()`; today the Software pairing key, `base.software.pairing_key.change`)
 asks for the holder's authenticator code every time before Save or Restore
-touches it: the Base Step-up operation `base.settings_editor.protected.change`
-("Change a protected setting"), declared `.always()`. The host sends the browser
-to confirm and back, and the person saves again. Other fields set it to `false`.
+touches it. The host sends the browser to confirm and back, and the person
+saves again. Other fields ask for nothing.
 
 ## Stored-secret reveal
 

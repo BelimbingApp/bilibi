@@ -25,7 +25,7 @@ inventory::submit! { Contribution::new(DEFINITIONS, RETENTION_DAYS, Provenance {
     value_type: ValueType::Integer, scopes: &[ScopeKind::Global], default: || json!(RETENTION_DEFAULT), nullable: false, encrypted: false,
     minimum: Some(1.0), maximum: Some(RETENTION_MAX as f64), validator: None,
     editor: Some(Editor { group: "Authorization", label: "Authorization log retention",
-        help: "Days to keep decision logs.", capability: Some(LIST), reveal_duration_ms: 5_000, change_needs_step_up: false }),
+        help: "Days to keep decision logs.", capability: Some(LIST), reveal_duration_ms: 5_000 }),
 })) }
 
 /// Deletes every tenant's decisions older than `days` and returns how many

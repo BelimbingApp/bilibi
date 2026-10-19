@@ -542,5 +542,5 @@ use bilibi_module_registry::{Contribution, Provenance};
 use bilibi_settings::{Definition, Editor, ScopeKind, Setting, ValueType};
 inventory::submit! { Contribution::new(bilibi_settings::DEFINITIONS, REQUESTS_PER_MINUTE, Provenance {module:"base/agent_api",source:file!(),line:line!()}, &Setting::Definition(Definition {
     value_type: ValueType::Integer, scopes: &[ScopeKind::Global], default: || json!(120), nullable: false, encrypted: false, minimum: Some(1.0), maximum: Some(10_000.0), validator: None,
-    editor: Some(Editor { group: "Agent API", label: "MCP requests per minute", help: "Most MCP requests one sender can make per minute, on each server.", capability: None, reveal_duration_ms: 5_000, change_needs_step_up: false }),
+    editor: Some(Editor { group: "Agent API", label: "MCP requests per minute", help: "Most MCP requests one sender can make per minute, on each server.", capability: None, reveal_duration_ms: 5_000 }),
 })) }

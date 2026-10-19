@@ -182,6 +182,12 @@ impl StepUp {
     pub fn declared(&self, key: &str) -> Option<&Declared> {
         self.operations.get(key)
     }
+    /// The operation declared to guard changes to setting `key`, if any.
+    pub fn guarding_setting(&self, key: &str) -> Option<&Declared> {
+        self.operations
+            .values()
+            .find(|declared| declared.operation.setting == Some(key))
+    }
     /// Every declared operation, ordered by module then label.
     pub fn catalog(&self) -> Vec<&Declared> {
         let mut all: Vec<_> = self.operations.values().collect();

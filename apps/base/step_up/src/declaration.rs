@@ -23,6 +23,9 @@ pub struct Operation {
     /// choice, not on the floor's terms, and not turned off in development.
     /// For an action that changes the server itself (its software).
     pub always: bool,
+    /// The setting this operation guards: the settings editor asks for it
+    /// before it changes, clears or restores that setting.
+    pub setting: Option<&'static str>,
 }
 impl Operation {
     /// On by default, not part of the floor.
@@ -33,6 +36,15 @@ impl Operation {
             default_on: true,
             floor: false,
             always: false,
+            setting: None,
+        }
+    }
+    /// Guards changing one setting in the settings editor (use with
+    /// `.always()` for a value that opens something beyond the settings page).
+    pub const fn guards_setting(self, key: &'static str) -> Self {
+        Self {
+            setting: Some(key),
+            ..self
         }
     }
     pub const fn off_by_default(self) -> Self {

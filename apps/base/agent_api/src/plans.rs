@@ -373,7 +373,7 @@ macro_rules! plan_setting {
     ($key:literal,$default:literal,$min:literal,$max:literal,$label:literal,$help:literal) => {
         inventory::submit! { Contribution::new(bilibi_settings::DEFINITIONS,$key,Provenance {module:"base/agent_api",source:file!(),line:line!()}, &Setting::Definition(Definition {
             value_type:ValueType::Integer,scopes:&[ScopeKind::Global],default:||json!($default),nullable:false,encrypted:false,minimum:Some($min),maximum:Some($max),validator:None,
-            editor:Some(Editor { group:"Agent API", label:$label, help:$help, capability:None, reveal_duration_ms: 5_000, change_needs_step_up: false }),
+            editor:Some(Editor { group:"Agent API", label:$label, help:$help, capability:None, reveal_duration_ms: 5_000 }),
         })) }
     };
 }

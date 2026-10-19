@@ -21,14 +21,6 @@ bilibi_step_up::declare!(
     bilibi_step_up::Operation::new(STEP_UP, "Show a stored secret setting").floor()
 );
 
-/// Changing a setting whose editor says `change_needs_step_up` asks for a
-/// fresh code every time, on every server.
-pub const CHANGE_STEP_UP: &str = "base.settings_editor.protected.change";
-bilibi_step_up::declare!(
-    "base/settings_editor",
-    bilibi_step_up::Operation::new(CHANGE_STEP_UP, "Change a protected setting").always()
-);
-
 pub enum Refusal {
     /// The step-up check refused (`Error::StepUpRequired`): the host sends
     /// the browser to confirm and back.

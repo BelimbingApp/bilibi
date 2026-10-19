@@ -40,10 +40,6 @@ pub struct Editor {
     pub help: &'static str,
     pub capability: Option<&'static str>,
     pub reveal_duration_ms: u32,
-    /// Changing, clearing or restoring this setting in the editor asks for
-    /// the holder's authenticator code every time (`false` for almost every
-    /// setting). For a value that opens something beyond the settings page.
-    pub change_needs_step_up: bool,
 }
 pub struct Definition {
     pub value_type: ValueType,

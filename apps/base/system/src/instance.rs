@@ -282,7 +282,7 @@ inventory::submit! { Contribution::new(DEFINITIONS, INSTANCE_LABEL_KEY, provenan
     validator: Some(Validator { accepts: |value: &Value| value.as_str().is_some_and(|label| { let label = label.trim(); !label.is_empty() && label.len() <= 40 }), message: "The instance name must be 1 to 40 characters, like Production or Dev (laptop)." }),
     editor: Some(Editor { group: "Instance", label: "Instance name shown on every page",
         help: "Shown in the banner and in every confirm page so people know which server they are on. The default follows the server's role: Dev, Staging or Production (server owner only).",
-        capability: Some(INSTANCE_MANAGE), reveal_duration_ms: 5_000, change_needs_step_up: false }),
+        capability: Some(INSTANCE_MANAGE), reveal_duration_ms: 5_000 }),
 })) }
 inventory::submit! { Contribution::new(DEFINITIONS, INSTANCE_COLOUR_KEY, provenance!(), &Setting::Definition(Definition {
     value_type: ValueType::String, scopes: GLOBAL, default: || json!(Role::from_env().colour().as_str()), nullable: false, encrypted: false,
@@ -290,7 +290,7 @@ inventory::submit! { Contribution::new(DEFINITIONS, INSTANCE_COLOUR_KEY, provena
     validator: Some(Validator { accepts: |value: &Value| value.as_str().is_some_and(|colour| Colour::parse(colour).is_some()), message: "The colour must be info (blue), success (green), warning (amber) or danger (red)." }),
     editor: Some(Editor { group: "Instance", label: "Banner colour",
         help: "info (blue), success (green), warning (amber) or danger (red). The default follows the role: Dev is info, Staging is warning, Production is danger (server owner only).",
-        capability: Some(INSTANCE_MANAGE), reveal_duration_ms: 5_000, change_needs_step_up: false }),
+        capability: Some(INSTANCE_MANAGE), reveal_duration_ms: 5_000 }),
 })) }
 inventory::submit! { Contribution::new(DEFINITIONS, INSTANCE_INSTALLS_FROM_KEY, provenance!(), &Setting::Definition(Definition {
     value_type: ValueType::String, scopes: GLOBAL, default: || json!(null), nullable: true, encrypted: false,
@@ -298,5 +298,5 @@ inventory::submit! { Contribution::new(DEFINITIONS, INSTANCE_INSTALLS_FROM_KEY, 
     validator: Some(Validator { accepts: |value: &Value| value.is_null() || value.as_str().is_some_and(|source| Source::parse(source).is_some()), message: "Name an instance on this machine, like dev, or an address, like https://dev.erp.example.com." }),
     editor: Some(Editor { group: "Instance", label: "Install releases tested on",
         help: "The instance whose tested release this one installs: a name on this machine, like dev, or an address, like https://staging.erp.example.com. Leave empty on Dev, which builds its own (server owner only).",
-        capability: Some(INSTANCE_MANAGE), reveal_duration_ms: 5_000, change_needs_step_up: false }),
+        capability: Some(INSTANCE_MANAGE), reveal_duration_ms: 5_000 }),
 })) }
