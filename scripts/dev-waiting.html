@@ -17,7 +17,7 @@
 (function () {
   var labels = {prepare:'Preparing', discovery:'Discovering modules', css:'Building CSS', build:'Building', migrate:'Migrating the database', seed:'Preparing the development account', start:'Starting', serve:'Starting'};
   var failures = {discovery:'Module discovery failed', css:'CSS build failed', build:'Rust build failed', migrate:'Database migration failed', seed:'Development account setup failed', start:'App failed to start', serve:'App stopped'};
-  var latest = null, unavailable = false, busy = false;
+  var latest = null, received = 0, unavailable = false, busy = false;
   var waiting = document.documentElement;
   var template = document.getElementById('dev-status-template');
   // The shared waiting page still owns backend polling and automatic reload.
@@ -29,12 +29,19 @@
   document.querySelector('.card').removeAttribute('role');
   document.querySelector('.card').removeAttribute('aria-live');
   function render() {
-    if (!latest) return;
+    if (!latest && !unavailable) return;
     waiting.classList.add('dev-status');
-    var elapsed = Math.max(0, Math.floor(((latest.finished_at || Date.now() / 1000) - latest.started_at)));
+    if (unavailable) {
+      progress.textContent = 'The dev launcher is not running. Run ./scripts/start-app.sh to start it.';
+      progress.setAttribute('role', 'alert');
+      progress.setAttribute('aria-live', 'assertive');
+      next.hidden = true;
+      return;
+    }
+    var elapsed = Math.max(0, Math.floor(latest.elapsed + (latest.finished_at ? 0 : (performance.now() - received) / 1000)));
     var duration = (elapsed >= 60 ? Math.floor(elapsed / 60) + 'm ' : '') + elapsed % 60 + 's';
     var label = labels[latest.phase] || 'Starting';
-    progress.textContent = unavailable ? 'The dev launcher is not running. Run ./scripts/start-app.sh to start it.' : latest.failed ? (failures[latest.phase] || label + ' failed') + ' (' + duration + ').' : label + ' (' + duration + ')…';
+    progress.textContent = latest.failed ? (failures[latest.phase] || label + ' failed') + ' (' + duration + ').' : label + ' (' + duration + ')…';
     progress.setAttribute('role', latest.failed ? 'alert' : 'status');
     progress.setAttribute('aria-live', latest.failed ? 'assertive' : 'polite');
     document.getElementById('waiting-heading').textContent = latest.failed ? 'Bilibi could not start' : 'Bilibi is starting';
@@ -53,7 +60,7 @@
     busy = true;
     fetch('/__bilibi_dev/status', {cache:'no-store', credentials:'omit', signal:AbortSignal.timeout(4000)})
       .then(function (response) { if (!response.ok) throw new Error('unavailable'); return response.json(); })
-      .then(function (data) { latest = data; unavailable = false; render(); })
+      .then(function (data) { latest = data; received = performance.now(); unavailable = false; render(); })
       .catch(function () { unavailable = true; render(); })
       .finally(function () { busy = false; });
   }

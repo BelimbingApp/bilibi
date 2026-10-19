@@ -16,6 +16,7 @@ import socket
 import subprocess
 import sys
 import threading
+import time
 
 
 spec = importlib.util.spec_from_file_location('dev_status', Path(__file__).with_name('dev-status.py'))
@@ -33,7 +34,9 @@ class StatusHandler(BaseHTTPRequestHandler):
         if self.path != '/__bilibi_dev/status':
             self.send_error(404)
             return
-        body = json.dumps(status.read()).encode()
+        current = status.read()
+        current['elapsed'] = (current.get('finished_at') or time.time()) - current['started_at']
+        body = json.dumps(current).encode()
         self.send_response(200)
         self.send_header('Content-Type', 'application/json')
         self.send_header('Cache-Control', 'no-store')
