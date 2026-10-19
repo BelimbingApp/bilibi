@@ -1,5 +1,5 @@
 {#- The sign-in card (Bilimbi `LoginLive`): the notices above the form, the
-    credential fields, the forgot link over the password field, the full-width
+    credential fields, the forgot link below the password field, the full-width
     primary action and the workspace strip. Email and password only: the
     address is unique platform-wide, as in Bilimbi, so no tenant is asked. A
     credential failure is reported twice over, as Bilimbi
@@ -14,7 +14,10 @@
 {% if !form_error.is_empty() %}<div id="login-form-error">{% call feedback::alert(kind=bilibi_ui::StatusKind::Error, id="login-form-error-1") %}{{ form_error }}{% endcall %}</div>{% endif %}
 <form id="login-form" method="post" class="flex flex-col gap-4">
 {{ email }}
-<div class="relative">{{ password }}<a href="/forgot-password" id="login-forgot-password" class="absolute inset-x-0 -top-0.5 text-right text-xs text-ink-subtle">Forgot your password?</a></div>
+<div class="flex flex-col gap-1">
+{{ password }}
+<div class="flex justify-end">{% call ui::action_link(id="login-forgot-password", icon="", href="/forgot-password", title="Forgot your password?") %}Forgot your password?{% endcall %}</div>
+</div>
 {% call ui::button(variant=bilibi_ui::ButtonVariant::Primary, id="login-submit", class="w-full", button_type="submit", working="Signing in…") %}Log in{% endcall %}
 </form>
 <div id="login-workspace" data-state="{{ workspace.state() }}" class="flex items-center justify-center gap-2 border-t border-low-contrast-line pt-4 text-xs text-ink-subtle">{% if let bilibi_ui::LoginWorkspace::Ready(company) = workspace %}<span class="size-1.5 rounded-full bg-success"></span><span class="truncate font-medium text-ink-muted">{{ company }}</span>{% else %}<span class="size-1.5 rounded-full bg-warning"></span><span>Platform workspace not provisioned</span>{% endif %}</div>
