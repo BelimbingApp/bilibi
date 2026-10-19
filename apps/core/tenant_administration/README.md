@@ -22,6 +22,8 @@ An agent previews, shows the review to its person and commits the single-use pla
 
 Administration → Tenancy → Tenants (`/tenancy/tenants`) keeps Bilimbi `TenantsLive`'s list, sorting, parent picker and Add Tenant dialog. The dialog also collects the primary company and one additional company per line. The page calls the bounded directory contract through `PageContracts::read` and calls the create contract through `PageContracts::submit`. Its only business write event is `create`; `PageWrites` has no pending allowance. Edit, suspend and provision-existing actions do not exist on this page.
 
+The column picker offers every scalar tenant field the page shows under its dialog label: ID, Name, **Parent tenant**, Sub-tenants and Status. Primary company and Additional companies are entered only when a tenant is created and no tenant view reads them back, so they are not columns. The default columns stay the same.
+
 ## Identity and atomic writes
 
 - [Base Tenancy](../../base/tenancy/README.md) owns tenant data and proves the person's live operator standing. Creation preserves today's operator-plus-capability permission; installation ownership is not required.

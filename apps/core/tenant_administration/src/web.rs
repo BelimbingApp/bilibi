@@ -53,23 +53,32 @@ static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
     .expect("tenants list spec")
 });
 
+// The Add Tenant dialog is the only tenant view; the list and dialog share these labels.
+bilibi_ui::record_fields! { mod fields {
+    ID: bilibi_ui::RecordField::new("id", "ID"),
+    NAME: bilibi_ui::RecordField::new("name", "Name"),
+    PARENT: bilibi_ui::RecordField::new("parent", "Parent tenant"),
+    SUB_TENANTS: bilibi_ui::RecordField::new("sub_tenants", "Sub-tenants"),
+    STATUS: bilibi_ui::RecordField::new("status", "Status"),
+    PRIMARY_COMPANY: bilibi_ui::RecordField::new("primary_company", "Primary company").excluded("Entered when the tenant is created; no tenant view reads it back"),
+    ADDITIONAL_COMPANIES: bilibi_ui::RecordField::new("additional_companies", "Additional companies").excluded("A list of companies, not a scalar tenant field"),
+} }
+
+fn builtin(field: bilibi_ui::RecordField) -> BuiltinColumn {
+    field.builtin().expect("tenant scalar column")
+}
+
 fn builtins() -> Vec<BuiltinColumn> {
-    let mut id = BuiltinColumn::new("id", "ID").sortable("id").right();
+    let mut id = builtin(fields::ID).sortable("id").right();
     id.kind = ColumnType::Integer;
     id.sort_id = Some("tenants-sort-id".into());
-    let mut name = BuiltinColumn::new("name", "Name").sortable("name");
+    let mut name = builtin(fields::NAME).sortable("name");
     name.sort_id = Some("tenants-sort-name".into());
-    let mut sub_tenants = BuiltinColumn::new("sub_tenants", "Sub-tenants").right();
+    let mut sub_tenants = builtin(fields::SUB_TENANTS).right();
     sub_tenants.kind = ColumnType::Integer;
-    let mut status = BuiltinColumn::new("status", "Status").sortable("status");
+    let mut status = builtin(fields::STATUS).sortable("status");
     status.sort_id = Some("tenants-sort-status".into());
-    vec![
-        id,
-        name,
-        BuiltinColumn::new("parent", "Parent"),
-        sub_tenants,
-        status,
-    ]
+    vec![id, name, builtin(fields::PARENT), sub_tenants, status]
 }
 
 /// The module's page adapter; every field is shared by mounted states.
@@ -324,16 +333,20 @@ impl TenantsPage {
         parents.sort_by_key(|identity| identity.id);
         let mut summary = bilibi_ui::ErrorSummary::new("tenant-create-errors");
         for (id, label, errors) in [
-            ("tenant-name", "Name", draft.errors.name.clone()),
+            ("tenant-name", fields::NAME.label, draft.errors.name.clone()),
             (
                 "tenant-parent",
-                "Parent tenant",
+                fields::PARENT.label,
                 draft.errors.parent_id.clone(),
             ),
-            ("tenant-status", "Status", draft.errors.status.clone()),
+            (
+                "tenant-status",
+                fields::STATUS.label,
+                draft.errors.status.clone(),
+            ),
             (
                 "tenant-primary-company",
-                "Primary company",
+                fields::PRIMARY_COMPANY.label,
                 draft
                     .company_errors
                     .get("primary_company")
@@ -342,7 +355,7 @@ impl TenantsPage {
             ),
             (
                 "tenant-additional-companies",
-                "Additional companies",
+                fields::ADDITIONAL_COMPANIES.label,
                 draft
                     .company_errors
                     .iter()
@@ -359,7 +372,7 @@ impl TenantsPage {
             summary,
             primary_company: Field::in_form("tenant", "primary_company")
                 .id("tenant-primary-company")
-                .label("Primary company")
+                .label(fields::PRIMARY_COMPANY.label)
                 .required()
                 .attr("maxlength", "160")
                 .value(draft.primary_company.clone())
@@ -372,7 +385,7 @@ impl TenantsPage {
                 ),
             additional_companies: Field::in_form("tenant", "additional_companies")
                 .id("tenant-additional-companies")
-                .label("Additional companies")
+                .label(fields::ADDITIONAL_COMPANIES.label)
                 .kind(InputKind::Textarea)
                 .hint("One company name per line, up to 99.")
                 .value(draft.additional_companies.clone())
@@ -386,7 +399,7 @@ impl TenantsPage {
                 ),
             name: Field::in_form("tenant", "name")
                 .id("tenant-name")
-                .label("Name")
+                .label(fields::NAME.label)
                 .placeholder("e.g. Acme Sdn Bhd")
                 .required()
                 .attr("maxlength", "255")
@@ -395,7 +408,7 @@ impl TenantsPage {
             parent: Field::in_form("tenant", "parent_id")
                 .id("tenant-parent")
                 .kind(InputKind::Select)
-                .label("Parent tenant")
+                .label(fields::PARENT.label)
                 .prompt("None (top-level tenant)")
                 .options(
                     parents
@@ -408,7 +421,7 @@ impl TenantsPage {
             status: Field::in_form("tenant", "status")
                 .id("tenant-status")
                 .kind(InputKind::Select)
-                .label("Status")
+                .label(fields::STATUS.label)
                 .required()
                 .options(choices(
                     &TenantStatus::ALL
