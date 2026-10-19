@@ -75,6 +75,7 @@ struct Index {
     list: ListState,
     tab: &'static str,
     regressions: ListColumns,
+    slowest: ListColumns,
     samples: ListColumns,
     data: Option<view::Data>,
 }
@@ -102,6 +103,16 @@ impl Index {
                     builtin("baseline", "Baseline avg", ColumnType::Float, true),
                     builtin("current", "Current p95", ColumnType::Float, true),
                     builtin("change", "Change", ColumnType::Float, true),
+                ],
+            )
+            .map_err(|_| Error::Internal)?,
+            slowest: ListColumns::mount(
+                "performance-slowest-table",
+                vec![
+                    BuiltinColumn::new("identity", "Page or job"),
+                    builtin("samples", "Samples", ColumnType::Integer, true),
+                    builtin("average", "Average", ColumnType::Float, true),
+                    builtin("p95", "p95", ColumnType::Float, true),
                 ],
             )
             .map_err(|_| Error::Internal)?,
@@ -135,29 +146,42 @@ impl Index {
     async fn load(&mut self, scope: &Scope) -> Result<()> {
         let now = SystemTime::now();
         let hour = Duration::from_secs(3600);
-        let windows = Windows {
-            baseline_from: now - hour * 2,
-            baseline_to: now - hour,
-            current_from: now - hour,
-            current_to: now,
-            min_samples: 5,
-            limit: 10,
-        };
         let recorder = &self.pages.recorder;
-        let filter = self.filter();
-        let (diagnostics, mut samples, regressions) = tokio::join!(
-            recorder.diagnostics(),
-            recorder.list_samples(&filter),
-            recorder.regressions(&windows),
-        );
-        if let Ok(page) = &samples {
-            if self
-                .list
-                .clamp_to_last_page((page.total as u64).div_ceil(self.list.page_size), true)
-            {
-                samples = recorder.list_samples(&self.filter()).await;
+        let (diagnostics, views) = if self.tab == TABS[1].0 {
+            let filter = self.filter();
+            let (diagnostics, mut samples) =
+                tokio::join!(recorder.diagnostics(), recorder.list_samples(&filter));
+            if let Ok(page) = &samples {
+                if self
+                    .list
+                    .clamp_to_last_page((page.total as u64).div_ceil(self.list.page_size), true)
+                {
+                    samples = recorder.list_samples(&self.filter()).await;
+                }
             }
-        }
+            (diagnostics, view::Views::Samples(samples))
+        } else {
+            let windows = Windows {
+                baseline_from: now - hour * 2,
+                baseline_to: now - hour,
+                current_from: now - hour,
+                current_to: now,
+                min_samples: 5,
+                limit: 10,
+            };
+            let (diagnostics, regressions, slowest) = tokio::join!(
+                recorder.diagnostics(),
+                recorder.regressions(&windows),
+                recorder.slowest(now - hour * 24, now, 10),
+            );
+            (
+                diagnostics,
+                view::Views::Slowdowns {
+                    regressions,
+                    slowest,
+                },
+            )
+        };
         let client = self.pages.db.get().await?;
         let locale = self
             .pages
@@ -172,8 +196,7 @@ impl Index {
             .await?;
         self.data = Some(view::Data {
             diagnostics,
-            samples,
-            regressions,
+            views,
             display,
         });
         Ok(())
@@ -190,6 +213,7 @@ impl Index {
             &self.list,
             &self.samples,
             &self.regressions,
+            &self.slowest,
             self.data.as_ref().ok_or(Error::Internal)?,
             self.tab,
         )
@@ -265,7 +289,7 @@ impl LiveState<Scope, Error> for Index {
                     Some("page") => self
                         .list
                         .put_page(value.get("page").and_then(|v| v.as_str())),
-                    Some(event @ ("regressions_grid" | "samples_grid")) => {
+                    Some(event @ ("regressions_grid" | "slowest_grid" | "samples_grid")) => {
                         let values = value
                             .as_object()
                             .into_iter()
@@ -279,10 +303,16 @@ impl LiveState<Scope, Error> for Index {
                                 Some((key.clone(), text))
                             })
                             .collect();
-                        if event == "samples_grid" {
-                            self.samples.handle(&values);
-                        } else {
-                            self.regressions.handle(&values);
+                        match event {
+                            "samples_grid" => {
+                                self.samples.handle(&values);
+                            }
+                            "slowest_grid" => {
+                                self.slowest.handle(&values);
+                            }
+                            _ => {
+                                self.regressions.handle(&values);
+                            }
                         }
                         reload = false;
                     }

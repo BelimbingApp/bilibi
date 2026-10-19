@@ -1,5 +1,5 @@
 //! Presentation composes the shared primitives; all stored strings are escaped.
-use crate::{Diagnostics, Health, Recorded, Regression, Store};
+use crate::{Diagnostics, Health, Recorded, Regression, Slowest, Store};
 use askama::Template;
 use bilibi_database::{Error, Result};
 use bilibi_datetime::{DisplayContext, Format, Precision};
@@ -9,10 +9,17 @@ use bilibi_ui::{
     ToolbarControl,
 };
 
+/// Only the selected tab's history is read.
+pub(super) enum Views {
+    Slowdowns {
+        regressions: Result<Vec<Regression>>,
+        slowest: Result<Vec<Slowest>>,
+    },
+    Samples(Result<crate::Page>),
+}
 pub(super) struct Data {
     pub diagnostics: Diagnostics,
-    pub samples: Result<crate::Page>,
-    pub regressions: Result<Vec<Regression>>,
+    pub views: Views,
     pub display: DisplayContext,
 }
 pub(super) fn render(template: impl Template) -> Result<Html> {
@@ -253,6 +260,15 @@ fn regression_row(regression: &Regression) -> Result<FlexRow> {
         number(format!("{:.1}%", regression.delta_percent))?,
     ))
 }
+fn slowest_row(slowest: &Slowest) -> Result<FlexRow> {
+    Ok(
+        FlexRow::new(format!("{}:{}", slowest.kind.as_str(), slowest.identity))
+            .slot("identity", Html::text(&slowest.identity))
+            .slot("samples", number(slowest.samples.to_string())?)
+            .slot("average", number(format!("{:.1} ms", slowest.average_ms))?)
+            .slot("p95", number(format!("{:.1} ms", slowest.p95_ms))?),
+    )
+}
 fn table<'a>(
     columns: &'a ListColumns,
     rows: Vec<FlexRow>,
@@ -291,6 +307,7 @@ pub(super) fn page(
     list: &ListState,
     samples: &ListColumns,
     regressions: &ListColumns,
+    slowest: &ListColumns,
     data: &Data,
     tab: &str,
 ) -> Result<String> {
@@ -307,7 +324,7 @@ pub(super) fn page(
     })?;
     body.push(&status(data)?);
     body.push(&tabs(list, tab)?);
-    if tab == super::TABS[1].0 {
+    if let Views::Samples(samples_page) = &data.views {
         body.push(&render(FilterToolbar::new(
             "performance-filters",
             vec![
@@ -347,14 +364,13 @@ pub(super) fn page(
                 ),
             ],
         ))?);
-        if data.samples.is_err() {
+        if samples_page.is_err() {
             body.push(&notice(
                 "performance-unavailable",
                 "Sample history is unavailable. It will retry on the next refresh.",
             )?);
         }
-        let sample_rows = data
-            .samples
+        let sample_rows = samples_page
             .as_ref()
             .map(|page| {
                 page.entries
@@ -368,9 +384,9 @@ pub(super) fn page(
             sample_rows,
             "samples_grid",
             "All samples",
-            samples_empty(list, data.samples.is_ok()),
+            samples_empty(list, samples_page.is_ok()),
         ))?;
-        if let Ok(page) = &data.samples {
+        if let Ok(page) = samples_page {
             history.push(&render(Pagination::new(
                 "performance-pagination",
                 PageCounts::new(list.page, list.page_size, page.total as u64),
@@ -383,9 +399,12 @@ pub(super) fn page(
             body: history,
             ..Card::default()
         })?);
-    } else {
-        let regression_rows = data
-            .regressions
+    } else if let Views::Slowdowns {
+        regressions: found,
+        slowest: ranked,
+    } = &data.views
+    {
+        let regression_rows = found
             .as_ref()
             .map(|rows| rows.iter().map(regression_row).collect())
             .unwrap_or_else(|_| Ok(vec![]))?;
@@ -394,7 +413,7 @@ pub(super) fn page(
             regression_rows,
             "regressions_grid",
             "Recent slowdowns",
-            if data.regressions.is_ok() {
+            if found.is_ok() {
                 "Nothing has slowed down recently."
             } else {
                 "Slowdown checks are unavailable."
@@ -405,6 +424,28 @@ pub(super) fn page(
             title: "Recent slowdowns",
             inner_class: "p-0",
             body: regression_body,
+            ..Card::default()
+        })?);
+        let slowest_rows = ranked
+            .as_ref()
+            .map(|rows| rows.iter().map(slowest_row).collect())
+            .unwrap_or_else(|_| Ok(vec![]))?;
+        let slowest_body = render(table(
+            slowest,
+            slowest_rows,
+            "slowest_grid",
+            "Slowest in the last 24 hours",
+            if ranked.is_ok() {
+                "No pages or jobs were recorded in the last 24 hours."
+            } else {
+                "The slowest list is unavailable."
+            },
+        ))?;
+        body.push(&render(Card {
+            id: "performance-slowest",
+            title: "Slowest in the last 24 hours",
+            inner_class: "p-0",
+            body: slowest_body,
             ..Card::default()
         })?);
     }

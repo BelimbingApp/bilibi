@@ -13,7 +13,7 @@ mod web;
 pub use bilibi_database::timing;
 pub use observe::Finish;
 pub use read::{
-    Diagnostics, Filter, Health, Page, Recorded, Regression, Store, Windows, PAGE_SIZES,
+    Diagnostics, Filter, Health, Page, Recorded, Regression, Slowest, Store, Windows, PAGE_SIZES,
 };
 pub use recorder::{
     Config, Recorder, Stats, Submit, ENABLED, KEEP_DAYS, MAX_ROWS, MINIMUM_DURATION_MS,
