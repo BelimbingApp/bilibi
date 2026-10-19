@@ -275,7 +275,6 @@ async fn render_inbox(
             id: "mark-all-read-btn",
             button_type: "button",
             event: "mark_all_read",
-            class: "text-xs px-3 py-1.5",
             body,
             ..Button::default()
         }))?

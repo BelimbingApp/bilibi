@@ -1059,7 +1059,6 @@ impl Detail {
                 id: "unlink-person-btn",
                 button_type: "button",
                 event: "request_unlink",
-                class: "text-xs",
                 body: Html::text("Unlink person"),
                 ..Button::default()
             })?

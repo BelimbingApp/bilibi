@@ -418,7 +418,6 @@ impl StepUpPolicy {
                 event: &format!("request_{}", mode.as_str()),
                 name: "key",
                 value: key,
-                class: "px-2 py-0.5 text-xs",
                 body: Html::text(label),
                 ..Button::default()
             })?);
@@ -430,7 +429,6 @@ impl StepUpPolicy {
                 event: "request_default",
                 name: "key",
                 value: key,
-                class: "px-2 py-0.5 text-xs",
                 body: Html::text("Use default"),
                 ..Button::default()
             })?);
@@ -447,7 +445,6 @@ impl StepUpPolicy {
                 event,
                 name: "key",
                 value: key,
-                class: "px-2 py-0.5 text-xs",
                 body: Html::text(label),
                 ..Button::default()
             })?);

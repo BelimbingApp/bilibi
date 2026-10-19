@@ -142,7 +142,6 @@ impl Update {
             button_type: "button",
             event: self.spec.event,
             disabled: self.updating,
-            class: "px-3 py-1.5",
             body: Html::raw(format!("{icon}<span>{label}</span>")),
             ..Button::default()
         })

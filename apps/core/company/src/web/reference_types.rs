@@ -656,7 +656,6 @@ impl ReferenceTypes {
             actions.push(&render(&CreateButton {
                 noun: spec.add_label,
                 id: spec.dom_new,
-                class: "text-xs",
                 event: "new",
                 button_type: "button",
                 ..CreateButton::default()
@@ -685,7 +684,6 @@ impl ReferenceTypes {
                     } else {
                         ButtonVariant::Secondary
                     },
-                    class: "text-xs py-1 px-2.5",
                     button_type: "button",
                     event: "filter_category",
                     name: "category",

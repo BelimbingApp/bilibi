@@ -664,7 +664,6 @@ impl RolesPage {
                 id: "new-relationship-role-btn",
                 event: "new",
                 button_type: "button",
-                class: "text-xs",
                 ..CreateButton::default()
             })?);
         }
@@ -683,7 +682,6 @@ impl RolesPage {
                 id: "relationship-types-retired",
                 event: "toggle_retired",
                 button_type: "button",
-                class: "text-xs py-1 px-2.5",
                 variant: if self.include_retired {
                     ButtonVariant::Primary
                 } else {
@@ -1297,7 +1295,6 @@ impl LinksPage {
             id: "relationships-history",
             event: "toggle_history",
             button_type: "button",
-            class: "text-xs",
             variant: if self.history {
                 ButtonVariant::Primary
             } else {
@@ -1312,7 +1309,6 @@ impl LinksPage {
                 event: "new",
                 button_type: "button",
                 variant: ButtonVariant::Primary,
-                class: "text-xs",
                 body: Html::text("Add Relationship"),
                 ..Button::default()
             })?);
