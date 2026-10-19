@@ -346,7 +346,7 @@ pub(crate) fn not_changed_advice(error: &ImportError) -> String {
         ImportError::Download(_, DownloadFailure::Request(_)) => {
             "Bilibi could not connect to download.geonames.org. Check internet, proxy, or firewall access, then try again. If it persists, contact your administrator.".into()
         }
-        ImportError::Download(_, DownloadFailure::HttpStatus(404)) => {
+        ImportError::Download(Target::Postcodes(_), DownloadFailure::HttpStatus(404)) => {
             "GeoNames has no postcode file for this country (HTTP 404).".into()
         }
         ImportError::Download(_, DownloadFailure::HttpStatus(status)) => format!(
