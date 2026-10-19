@@ -628,7 +628,7 @@ function renderJob() {
   const progress = el('progress', { max: String(steps.length || 1), value: String(doneCount + (running ? 0.5 : 0)) });
   const buttons = [];
   const stopHint = 'Cancel this job before the pause. Nothing changes on ' + inst.label + '.';
-  if (active && job.cancel === 'available') buttons.push(el('button', { class: 'danger', id: 'cancel', text: 'Stop', title: stopHint, 'aria-description': stopHint, onclick: () => cancelJob(job.id) }));
+  if (active && job.cancel === 'available') buttons.push(el('button', { class: 'danger', id: 'cancel', text: 'Stop', title: stopHint, 'aria-description': stopHint, onclick: () => cancelJob(job.id) }), el('span', { class: 'small muted', text: 'Stop cancels this job before the pause. Nothing changes on ' + inst.label + '.' }));
   if (active && job.cancel === 'requested') buttons.push(el('span', { class: 'small muted', text: 'Stop requested…' }));
   if (active && job.cancel === 'too_late') buttons.push(el('span', { class: 'small muted', text: 'Too late to stop: the pause has started.' }));
   if (!active) buttons.push(el('button', { onclick: refreshHome, text: inst.builds ? 'Choose Domains' : 'Back' }));
