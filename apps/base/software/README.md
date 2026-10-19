@@ -25,7 +25,7 @@ cargo build --release --locked -p bilibi-web
 ./target/release/bilibi-web status
 ```
 
-If it is already cloned, fetch and check out the chosen commit there instead. Extensions mount under `apps/extensions/<id>`. Run the composition locally with its own database and check its pages in the browser. Prepare a release using [`docs/server-install.md`](../../../docs/server-install.md), then upload it on **Release files**, or install it from an instance that has tested it.
+If it is already cloned, fetch and check out the chosen commit there instead. Extensions mount under `apps/extensions/<id>`. Run the composition locally with its own database and check its pages in the browser. Prepare a release using [`docs/server-install.md`](../../../docs/server-install.md), then upload it on **Software › Releases**, or install it from an instance that has tested it.
 
 ## Compatibility
 
@@ -81,8 +81,11 @@ Install requires the source to answer and the selected release to be the one it 
 
 ## Page and ChatGPT card
 
-The Software page (`/system/software`) and MCP App (`ui://bilibi/software-v1.html`, `card/software-v1.html`) use the title **Manage domains and extensions**, with **Installed version**, **Available domains**, **Available extensions**, **Compatibility** and **Backups**. Developer commands, installation reviews and job history remain available on every instance.
+The **Software** page (`/system/software`) has one menu entry and two shared tabs: **Domains and Extensions** and **Releases**. Each catalogue item is one compact card with its description, installed version, and **Compatibility: Yes / No** with a short reason. **Developer commands** folds away the repository, exact test evidence and local build commands.
 
+**Releases** (`?tab=releases`) shows the installed version, the current or last install with folded steps, a short backup table with folded backup details, and **Get an update**. Backup file locations are folded and only available to accounts that can manage software. Upload, review, download, stored releases, and the folded **Update server and pairing key** share the same mounted page; switching tabs preserves pending uploads and reviews. The old `/system/software/releases` page redirects to the Releases tab, and its authenticated download addresses remain valid.
+
+The MCP App (`ui://bilibi/software-v1.html`, `card/software-v1.html`) keeps its **Manage domains and extensions** title and uses the same software contracts.
 - `?propose=finance,factory` highlights requested page entries; `open_software` accepts catalogue IDs in `propose` for the card.
 - A view-only account sees discovery and status. The facade refuses writes without manage permission.
 - Install, undo and go-ahead show the shared instance banner and a review, then commit that exact plan with the person’s authenticator code. The install headline uses the operation's summary to name an uploaded file, sibling instance or HTTPS source. A wrong code stays in the review.
@@ -104,7 +107,7 @@ Migration `base-software-003-local-builds` cancels legacy queued or running `cha
 **Software shows each backup's time and size for installs and undos among the ten most recent jobs; only accounts that can manage software see the file.** The page and assistant card read the same `backups` evidence from completed backup steps, including jobs that later failed; missing older metadata is labelled as not recorded. A view-only account gets no file path from the page, `base.software.status` or `base.software.open`: the `backup` fields are dropped and job messages that name a file say "a backup file on this server" instead. A recorded file path does not prove that the file is still kept.
 
 - The installer writes a PostgreSQL dump under the instance folder at `backups/job-<n>/<database>.dump` before changing anything.
-- After a successful install or undo, it keeps the newest `KEEP_BACKUPS` backup folders (`apps/installer/src/flow.rs`, `prune`) and removes older ones. There is no fixed age in days. The backup step records the number as `keep_backups`; `status` carries the sentence once as `backup_rule`, and only the Backups card states it.
+- After a successful install or undo, it keeps the newest `KEEP_BACKUPS` backup folders (`apps/installer/src/flow.rs`, `prune`) and removes older ones. There is no fixed age in days. The backup step records the number as `keep_backups`; `status` carries the sentence once as `backup_rule`, and only the Backups section states it.
 - Undo restores the pre-install backup only when the install changed the database structure. It then loses data entered since that backup. Otherwise, Undo switches the program back and leaves data alone. Undo takes a new safety backup first.
 - If restoration fails, the service stays stopped and the job message names the file to restore by hand.
 
@@ -129,7 +132,7 @@ Servers install releases built in the operator’s local Bilibi copy and checked
 | --- | --- | --- |
 | Same machine | The installer copies the folder from the sibling instance's `releases/` | "Install releases tested on" names the instance, like `dev` |
 | Different machines that can reach each other | The target downloads the release file from its source over HTTPS, with a pairing key | "Install releases tested on" is the address, like `https://dev.erp.example.com`; the same pairing key on both |
-| A Dev the servers cannot reach (a laptop) | You download the release file on Dev's **Release files** page and upload it on the target's | nothing |
+| A Dev the servers cannot reach (a laptop) | You download the release file on Dev's **Software › Releases** tab and upload it on the target's | nothing |
 
 **The install review names its source first**: "Downloads from https://dev.example.com (answered just now)" for an https source, "Copied from dev on this machine" for a sibling, "From the uploaded file upload-3" for an uploaded file; the checks that follow are the checksum, the kind of server, the source's health and disk.
 
@@ -141,7 +144,7 @@ One release travels as one file, `bilibi-release-<n>.tar.gz`: the program (`bili
 
 ### Pairing
 
-A pairing key is a shared secret, set once on both instances: on the source, so it answers only to its target; on the target, so it can present it. **The same key on every instance that shares releases**, 16 to 128 characters, no spaces; make one with `openssl rand -hex 24`. Set it on the Release files page (`/system/software/releases`), in the settings editor or with `base.software.pair`; whichever way, the server owner's authenticator code is asked every time (the editor through the step-up operation `base.software.pairing_key.change`, which guards this setting, `apps/base/settings_editor/README.md`), because whoever holds the key can download the whole program. It is the secret setting **Software › Pairing key other instances use to download releases from this one** (`software.pairing_key`): encrypted like every other secret, global, server owner only, listed in the settings editor next to the other secrets, and never shown back. The source checks it on a request from a machine, which has no session for a setting to be released to, so that one read goes through this module's own system principal, `software-transport`, which may read exactly this one secret and nothing else (`SystemScope::read_own_secret`, `apps/base/authz/README.md`); the key is compared in constant time.
+A pairing key is a shared secret, set once on both instances: on the source, so it answers only to its target; on the target, so it can present it. **The same key on every instance that shares releases**, 16 to 128 characters, no spaces; make one with `openssl rand -hex 24`. Set it on **Software › Releases** (`/system/software?tab=releases`), in the settings editor or with `base.software.pair`; whichever way, the server owner's authenticator code is asked every time (the editor through the step-up operation `base.software.pairing_key.change`, which guards this setting, `apps/base/settings_editor/README.md`), because whoever holds the key can download the whole program. It is the secret setting **Software › Pairing key other instances use to download releases from this one** (`software.pairing_key`): encrypted like every other secret, global, server owner only, listed in the settings editor next to the other secrets, and never shown back. The source checks it on a request from a machine, which has no session for a setting to be released to, so that one read goes through this module's own system principal, `software-transport`, which may read exactly this one secret and nothing else (`SystemScope::read_own_secret`, `apps/base/authz/README.md`); the key is compared in constant time.
 
 With the key, a source answers two addresses, both reserved by the host (`apps/web/src/transport.rs`) and both read-only:
 
@@ -162,9 +165,11 @@ Each failed check is a plain sentence that says what to do next: "This release w
 
 `incoming/` is the one folder the program (user `bilibi`) and the installer (`bilibi-build`) both write: `scripts/install-server.sh create` and `installer` make it (`2770 bilibi:bilibi-build`), and the service unit allows the program to write there (the path has the `-` prefix, so an instance that has no `incoming/` yet still starts). A program run without `BILIBI_INSTANCE_DIR` keeps no releases, serves none, and refuses to receive one, each time with a sentence that says so.
 
-### The Release files page
+### Release controls
 
-`/system/software/releases` (`release_files.rs`, menu **Administration › System › Release files**) is the small UI of transport: the instance banner first, so you always know which instance you are moving a release to or from; the releases kept here, each with a **Download** link (server owners); what the source offers; the upload of a release file, which is unpacked and checked at once and then waits as `upload-<n>` until you install it (or remove it); and the pairing key (setting or clearing it asks for the owner's authenticator code; the box is hidden from anyone who may only view). The page asks the source once when it opens and keeps the answer, so showing it again, sorting or saving does not ask again; **Refresh releases** asks once more, and so does saving the pairing key. The source limits each sender to 30 requests a minute, which the install review and the download need too. Installing stays with the Software page (the pick of uploaded files on its install card) and `base.software.install`.
+The **Releases** tab (`release_files.rs`, embedded by `web.rs`) moves files through the existing transport contracts. Uploading unpacks and checks the file, then keeps it as `upload-<n>` until you install or remove it. Downloads and uploads require manage permission; setting or clearing the pairing key requires the owner's authenticator code every time. The update server choice stays in **Settings › Instance › Install releases tested on**, linked from the folded update-server section.
+
+The tab asks the source once when first opened and keeps the answer across renders and tab changes. **Refresh releases** and saving the pairing key ask again. The source limits each sender to 30 requests a minute, which install review and download also use. Installing uses the tab's install form and `base.software.install`.
 
 ## Caveats
 

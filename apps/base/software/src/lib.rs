@@ -766,43 +766,17 @@ bilibi_menu::contribute!(
 // plan for an install, undo or go-ahead, and a plain submit for cancel.
 inventory::submit! { Contribution::new(PAGE_WRITES, web::PAGES, provenance!(), &PageWrites {
     service: web::PAGES,
-    contracts: &[("install", "base.software.install"), ("undo", "base.software.undo"), ("go", "base.software.go"), ("cancel_job", "base.software.cancel")],
+    contracts: &[("install", "base.software.install"), ("undo", "base.software.undo"), ("go", "base.software.go"), ("cancel_job", "base.software.cancel"), ("pair", "base.software.pair"), ("clear_pairing", "base.software.pair")],
     pending: Pending::None,
 }) }
-// The Release files page (`release_files.rs`): the releases kept here with their
-// download links, the pairing key, and the upload of a release file. Seeing
-// it needs the platform `view` capability; the facade rechecks `manage` on
-// every write. The Software page (`web.rs`) is the place to install.
+// Keep existing bookmarks; the only page is Software with its Releases tab.
 inventory::submit! { Contribution::new(ROUTES, "base/software.releases", provenance!(), &Route {
-    method: Method::Get, path: release_files::PATH, service: release_files::PAGES, operation: "releases",
+    method: Method::Get, path: release_files::PATH, service: web::PAGES, operation: "legacy_releases",
     access: Access::OperatorCapability(VIEW), framed: true,
 }) }
 inventory::submit! { Contribution::new(DOWNLOADS, "base/software.release_file", provenance!(), &Download {
     path: release_files::DOWNLOAD_PATH, service: release_files::FILES, operation: "release_file",
     access: Access::OperatorCapability(MANAGE),
-}) }
-bilibi_menu::contribute!(
-    "base/software",
-    bilibi_menu::MenuItem::page(
-        "admin.system.release_files",
-        "Release files",
-        release_files::PATH
-    )
-    .under("admin.system")
-    .icon("hero-archive-box-arrow-down")
-    .requires(bilibi_menu::Requirement::Capability(VIEW))
-    .order(41)
-);
-// The page's only business write is the pairing key, through its contract
-// (ADR 01). Receiving an uploaded file writes the instance folder, not the
-// database.
-inventory::submit! { Contribution::new(PAGE_WRITES, release_files::PAGES, provenance!(), &PageWrites {
-    service: release_files::PAGES,
-    contracts: &[
-        ("pair", "base.software.pair"),
-        ("clear_pairing", "base.software.pair"),
-    ],
-    pending: Pending::None,
 }) }
 inventory::submit! {
     bilibi_module_registry::Module {
@@ -836,13 +810,6 @@ inventory::submit! {
                 contracts: services.get(bilibi_agent_api::page::SERVICE)?,
                 display: services.get("base/datetime.display")?,
                 locales: services.get("base/locale.locales")?,
-                software: services.get(SERVICE)?,
-            }))))
-        } }, bilibi_module_registry::Service { id: release_files::PAGES, factory: |services| {
-            Ok(Arc::new(bilibi_ui::page::PageService::<Scope, Error>(Arc::new(release_files::Pages {
-                db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
-                settings: services.get("base/settings.store")?,
-                contracts: services.get(bilibi_agent_api::page::SERVICE)?,
                 software: services.get(SERVICE)?,
             }))))
         } }, bilibi_module_registry::Service { id: release_files::FILES, factory: |services| {

@@ -189,7 +189,7 @@ elif cmd == 'install':
 elif cmd == 'refuse-install':
     plan_commit({'key': 'base.software.install', 'input': {'bundle': args[0], 'switch': 'auto'}}, refuse_first=True, refuse_only=True)
 elif cmd == 'review':
-    browser('open', ORIGIN + '/system/software')
+    browser('open', ORIGIN + '/system/software?tab=releases')
     fill('#software-bundle', args[0])
     click('#software-review-install')
     assert js('return document.querySelector("#software-review").open;')
@@ -233,7 +233,7 @@ elif cmd == 'wait':
     else:
         raise SystemExit('Job did not finish within 180 seconds')
 elif cmd == 'download':
-    browser('open', ORIGIN + '/system/software/releases')
+    browser('open', ORIGIN + '/system/software?tab=releases')
     result = js('const link=document.querySelector(\'a[href$="/1/download"]\'); if(!link) throw Error("No release download link"); const r=await fetch(link.href); const b=await r.blob(); window.proofBlob=b; return {status:r.status,bytes:b.size};', asynchronous=True)
     assert result['status'] == 200, result
     # DevTools evicts a large response body. Keep the Blob in the page and
@@ -249,7 +249,7 @@ elif cmd == 'download':
     assert target.stat().st_size == result['bytes'], 'Download body size differs'
     print('Downloaded through the browser:', result['bytes'], 'bytes, HTTP 200.')
 elif cmd == 'upload':
-    browser('open', ORIGIN + '/system/software/releases')
+    browser('open', ORIGIN + '/system/software?tab=releases')
     # AXI's native upload currently sends filePath; newer DevTools expects
     # filePaths. Populate the real input with a File through AXI instead.
     target = DATA / 'proof/finance-release.tar.gz'

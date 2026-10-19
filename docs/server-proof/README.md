@@ -99,7 +99,7 @@ Open Finance and use its Payroll page before downloading the release. An empty p
 
 ## Upload and install
 
-Download through Dev's Release files link and upload the resulting file on Production:
+Download through Dev's Software › Releases tab and upload the resulting file on Production:
 
 ```sh
 LAB_ORIGIN=https://dev.10.77.61.2.sslip.io docs/server-proof/drive.py download

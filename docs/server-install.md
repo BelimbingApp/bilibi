@@ -98,7 +98,7 @@ In code, `bilibi_base::system::Instance::resolve` returns the role, label, colou
 
 **Dev and Production on one machine** use separate databases, ports and addresses. Build in your local Bilibi checkout, install the release on Dev or Staging to check it, then promote the tested release to Production.
 
-**Dev and Production on two machines**: run `create` once on each machine with that machine's instance. Production's "Install releases tested on" setting then holds Dev's address, and the same pairing key is set on both (Administration › System › Release files). Production downloads the release from Dev when the owner installs it; nothing is pushed to Production. A Dev the servers cannot reach (a laptop): download the release file on Dev's Release files page and upload it on Production's. The three ways, the checks and the pairing key: [`apps/base/software/README.md`](../apps/base/software/README.md), "Release transport".
+**Dev and Production on two machines**: run `create` once on each machine with that machine's instance. Production's "Install releases tested on" setting then holds Dev's address, and the same pairing key is set on both (Administration › System › Software › Releases). Production downloads the release from Dev when the owner installs it; nothing is pushed to Production. A Dev the servers cannot reach (a laptop): download the release file on Dev's Software › Releases tab and upload it on Production's. The three ways, the checks and the pairing key: [`apps/base/software/README.md`](../apps/base/software/README.md), "Release transport".
 
 Staging is optional. Set Production to install from Staging when you have one, or straight from Dev when you do not.
 
@@ -222,7 +222,7 @@ cargo build --release --locked -p bilibi-web
 
 Keep other mounted Domains and Extensions. For an existing clone, fetch and check out the chosen commit instead. Run the composition locally against its own database and check its pages in the browser. Build for the server’s operating system, processor and system library version.
 
-Copy `target/release/bilibi-web`, `.local/composition/manifest.txt` and `.local/composition/Cargo.lock` into a release folder. Put the first release on a test instance with `scripts/install-server.sh release` and check it there. Its Release files page downloads the existing transport bundle; upload that on Staging or Production and install it from Software, or configure the source and let the target download it. Install and undo retain the same fresh 2FA check, backup, automatic switch-back and audit path. There is no new server build or packaging path.
+Copy `target/release/bilibi-web`, `.local/composition/manifest.txt` and `.local/composition/Cargo.lock` into a release folder. Put the first release on a test instance with `scripts/install-server.sh release` and check it there. Its Software › Releases tab downloads the existing transport bundle; upload that on Staging or Production and install it from Software, or configure the source and let the target download it. Install and undo retain the same fresh 2FA check, backup, automatic switch-back and audit path. There is no new server build or packaging path.
 
 A folder prepared this way has no `release.json`. An uploaded file's review therefore warns that its change list is known only once the installer reads the program. The installer records the pinned composition and changes in the job's result.
 

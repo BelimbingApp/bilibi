@@ -1,35 +1,24 @@
-//! The Release files page (`/system/software/releases`) and the release
-//! file download: the small UI of release transport (`README.md`, "Release
-//! transport"). It shows the releases kept on this instance with a download
-//! link for each, the pairing key, what the source offers, and takes an
-//! uploaded release file. Installing is the Software page's (`web.rs`) and the
-//! `base.software.install` contract's; this page only moves files. No
-//! Bilimbi counterpart: the Software page is Bilibi's own.
-use crate::{transport, Software, MANAGE, VIEW};
+//! Release controls embedded in the Software page’s Releases tab and the
+//! authenticated release download. No Bilimbi counterpart.
+use crate::{transport, web::PAGES, Software, MANAGE, VIEW};
 use askama::Template;
-use bilibi_agent_api::{page::PageContracts, Error as AgentError};
+use bilibi_agent_api::Error as AgentError;
 use bilibi_authz::authorize_operator;
-use bilibi_database::{Db, Error, Result};
-use bilibi_settings::Settings;
+use bilibi_database::{Error, Result};
 use bilibi_system::Instance;
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
     download::{Download, DownloadFuture, DownloadRequest, FileBody},
     forms::SecretInput,
-    page::{
-        LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, MountFuture, Page, PageBody,
-        PageFuture, PageRequest, Uploads,
-    },
-    ActionLink, BuiltinColumn, Button, ButtonVariant, Card, ColumnsOutcome, Fact, Facts,
-    FlashGroup, FlashMap, FlexRow, FlexTable, Form, Header, Html, ListColumns, PageVariant,
-    SectionHeading, StatusKind, TableEmpty, UploadSpec,
+    page::{LiveInput, LiveRequest, Uploads},
+    ActionLink, BuiltinColumn, Button, ButtonVariant, Card, ColumnsOutcome, Fact, Facts, FlexRow,
+    FlexTable, Fold, Form, Html, ListColumns, SectionHeading, StatusKind, TableEmpty, UploadSpec,
 };
 use serde_json::{json, Value};
 use std::sync::Arc;
 
 pub const PATH: &str = "/system/software/releases";
 pub const DOWNLOAD_PATH: &str = "/system/software/releases/{release}/download";
-pub(crate) const PAGES: &str = "base/software.release_pages";
 pub(crate) const FILES: &str = "base/software.release_files";
 /// The file input's name: the key the owner consumes by.
 const UPLOAD: &str = "release_file";
@@ -38,36 +27,6 @@ const UPLOAD_BYTES: u64 = bilibi_ui::upload::MAX_FILE_SIZE;
 
 fn render(template: impl Template) -> Result<Html> {
     Html::render(&template).map_err(|_| Error::Internal)
-}
-
-#[derive(Clone)]
-pub(crate) struct Pages {
-    pub db: Db,
-    pub settings: Arc<Settings>,
-    pub contracts: Arc<PageContracts>,
-    pub software: Arc<Software>,
-}
-impl Page<Scope, Error> for Pages {
-    fn title(&self, _operation: &str) -> Option<&'static str> {
-        Some("Release files")
-    }
-    fn render<'a>(&'a self, request: PageRequest<'a, Scope>) -> PageFuture<'a, Error> {
-        Box::pin(async move {
-            let scope = request.scope.ok_or(Error::Unauthorized)?;
-            let mut view = View::new(self.clone())?;
-            Ok(PageBody {
-                html: view.body(scope).await?,
-                live: true,
-                title: None,
-            })
-        })
-    }
-    fn mount<'a>(&'a self, _request: PageRequest<'a, Scope>) -> MountFuture<'a, Scope, Error> {
-        Box::pin(async move {
-            let view = View::new(self.clone())?;
-            Ok(Some(Box::new(view) as Box<dyn LiveState<Scope, Error>>))
-        })
-    }
 }
 
 /// The release file download: `/system/software/releases/{release}/download`.
@@ -95,9 +54,9 @@ impl Download<Scope, Error> for Files {
 
 /// The mounted page: the file input's state, the three tables' columns, the
 /// source's answer and the last message.
-struct View {
-    pages: Pages,
-    uploads: Uploads,
+pub(super) struct ReleaseFiles {
+    pages: crate::web::Pages,
+    pub(super) uploads: Uploads,
     here: ListColumns,
     source: ListColumns,
     waiting: ListColumns,
@@ -106,7 +65,7 @@ struct View {
     /// may); the person asks again with "Refresh releases", and saving
     /// the pairing key forgets it, since the answer then differs.
     asked: Option<Value>,
-    flash: Option<(StatusKind, String)>,
+    pub(super) flash: Option<(StatusKind, String)>,
     pair_error: Option<String>,
 }
 fn release_columns() -> Vec<BuiltinColumn> {
@@ -129,8 +88,8 @@ fn waiting_columns() -> Vec<BuiltinColumn> {
         BuiltinColumn::new("checksum", "File checksum"),
     ]
 }
-impl View {
-    fn new(pages: Pages) -> Result<Self> {
+impl ReleaseFiles {
+    pub(super) fn new(pages: crate::web::Pages) -> Result<Self> {
         Ok(Self {
             pages,
             uploads: Uploads::new([UploadSpec::new(UPLOAD, UPLOAD_BYTES).accept([
@@ -230,8 +189,8 @@ impl View {
                 self.say(
                     StatusKind::Success,
                     format!(
-                        "Received {release}{from} as {}. Install it from the Software page or through an assistant (base.software.install with bundle {}).",
-                        upload.bundle, upload.bundle
+                        "Received {release}{from} as {}. Choose it below to review and install it.",
+                        upload.bundle
                     ),
                 );
             }
@@ -247,7 +206,7 @@ impl View {
         Ok(())
     }
 
-    async fn body(&mut self, scope: &Scope) -> Result<String> {
+    pub(super) async fn body(&mut self, scope: &Scope, install: Html) -> Result<Html> {
         let client = self.pages.db.get().await?;
         authorize_operator(&**client, scope, VIEW).await?;
         let manages = authorize_operator(&**client, scope, MANAGE).await.is_ok();
@@ -261,45 +220,37 @@ impl View {
         if self.asked.is_none() {
             self.asked = Some(facts["source"].clone());
         }
-        let mut body = render(Header {
-            title: Html::text("Release files"),
-            subtitle:
-                "Download a tested Bilibi update or upload one to install from the Software page.",
-            ..Header::default()
-        })?;
-        body.push(
-            &instance
-                .banner("release-files-instance", "mb-2")
-                .map_err(|_| Error::Internal)?,
-        );
-        body.push(&self.here_section(&instance, &facts, manages)?);
-        body.push(&self.source_section(&instance, &facts)?);
+        let mut body = Html::EMPTY;
         if manages {
             body.push(&self.upload_section(&instance)?);
         }
-        body.push(&self.waiting_section(&facts, manages)?);
-        body.push(&self.pairing_section(&instance, &facts, manages)?);
-        let message = |kind| {
-            self.flash
-                .as_ref()
-                .filter(|(current, _)| *current == kind)
-                .map_or("", |(_, message)| message.as_str())
-        };
-        let mut page = render(FlashGroup {
-            id: "flash-group",
-            flash: FlashMap {
-                info: message(StatusKind::Info),
-                success: message(StatusKind::Success),
-                error: message(StatusKind::Error),
-                warning: message(StatusKind::Warning),
-            },
-        })?;
-        page.push(&render(bilibi_ui::Page {
-            variant: PageVariant::Form,
-            body,
-            ..bilibi_ui::Page::default()
+        if facts["uploads"]
+            .as_array()
+            .is_some_and(|uploads| !uploads.is_empty())
+        {
+            body.push(&self.waiting_section(&facts, manages)?);
+        }
+        body.push(&install);
+        body.push(&self.here_section(&instance, &facts, manages)?);
+        let mut source = self.source_section(&instance, &facts)?;
+        if manages {
+            source.push(&render(ActionLink {
+                id: "software-update-server-settings",
+                href: "/system/settings#setting-instance-installs_from",
+                title: "Choose the update server in Instance settings",
+                body: Html::text("Update server settings"),
+                ..ActionLink::default()
+            })?);
+        }
+        source.push(&self.pairing_section(&instance, &facts, manages)?);
+        body.push(&render(Fold {
+            id: "software-update-server",
+            title: "Update server and pairing key",
+            open: self.pair_error.is_some(),
+            body: source,
+            ..Fold::default()
         })?);
-        Ok(page.to_string())
+        Ok(body)
     }
     /// The releases kept on this instance, each with its download link.
     fn here_section(&self, instance: &Instance, facts: &Value, manages: bool) -> Result<Html> {
@@ -330,19 +281,42 @@ impl View {
                 instance.label
             ))));
         }
-        let description = if manages {
-            format!("{} keeps these updates. Download the one running now to install it on another Bilibi server.", instance.label)
+        let mut body = Html::EMPTY;
+        if manages {
+            if let Some(current) = here["current"].as_u64() {
+                body.push(&render(ActionLink {
+                    id: "software-download-current",
+                    icon: "export",
+                    title: "Download this server’s release file for another Bilibi server",
+                    href: &DOWNLOAD_PATH.replace("{release}", &current.to_string()),
+                    body: Html::text("Download this server’s release file"),
+                    ..ActionLink::default()
+                })?);
+            }
+        }
+        if here["releases"]
+            .as_array()
+            .is_some_and(|releases| !releases.is_empty())
+        {
+            body.push(&render(Fold {
+                id: "software-stored-releases",
+                title: "Stored releases",
+                body: render(table)?,
+                ..Fold::default()
+            })?);
         } else {
-            format!("{} keeps these releases.", instance.label)
-        };
-        section(
-            "release-files-here",
-            "Stored releases",
-            &description,
-            Html::default(),
-            true,
-            render(table)?,
-        )
+            body.push(&Html::text(
+                here["message"]
+                    .as_str()
+                    .unwrap_or("No release file is stored on this server yet."),
+            ));
+        }
+        render(Card {
+            id: "release-files-here",
+            title: "Release download",
+            body,
+            ..Card::default()
+        })
     }
     /// What the source offers, when the instance installs from one.
     fn source_section(&self, instance: &Instance, facts: &Value) -> Result<Html> {
@@ -372,7 +346,7 @@ impl View {
         };
         let mut description = match &instance.installs_from {
             Some(_) => format!("{} gets tested updates from {name}.", instance.label),
-            None => format!("{} has no update server chosen. Choose one in Settings › Instance › Install releases tested on, or upload a tested release file below.", instance.label),
+            None => format!("{} has no update server chosen. Choose one in Settings › Instance › Install releases tested on, or upload a tested release file.", instance.label),
         };
         if source["available"].as_bool() == Some(true) {
             match source["current"].as_u64() {
@@ -426,10 +400,13 @@ impl View {
             })?,
             ..Form::default()
         })?;
-        let description = format!("Upload a tested update for {}. Bilibi checks the file; you install it separately from the Software page.", instance.label);
+        let description = format!(
+            "Upload a tested update for {}, then review and install it below.",
+            instance.label
+        );
         section(
             "release-files-upload-card",
-            "Upload a release file",
+            "Release upload",
             &description,
             Html::default(),
             false,
@@ -505,7 +482,7 @@ impl View {
         section(
             "release-files-waiting-card",
             "Uploaded releases",
-            "Choose one of these files on the Software page to review and install it.",
+            "Choose a file below to review and install it.",
             Html::default(),
             true,
             render(table)?,
@@ -596,7 +573,7 @@ fn section(
     let mut section = render(SectionHeading {
         title,
         id: &heading,
-        class: "mt-6",
+
         description,
         actions,
         ..SectionHeading::default()
@@ -610,70 +587,58 @@ fn section(
     Ok(section)
 }
 
-impl LiveState<Scope, Error> for View {
-    fn update<'a>(&'a mut self, request: LiveRequest<'a, Scope>) -> LiveFuture<'a, Error> {
-        Box::pin(async move {
-            {
-                let client = self.pages.db.get().await?;
-                authorize_operator(&**client, request.scope, VIEW).await?;
-            }
-            let mut notice = String::new();
-            if let LiveInput::Event(value) = request.input {
-                let values = bilibi_ui::params::string_values(value);
-                let get = |key: &str| values.get(key).map(String::as_str).unwrap_or("");
-                match value["type"].as_str().unwrap_or("") {
-                    "pair" => {
-                        let key = get("pair[key]").trim().to_owned();
-                        self.pair(&request, "pair", json!({"key": key})).await?;
-                    }
-                    "clear_pairing" => {
-                        self.pair(&request, "clear_pairing", json!({"clear": true}))
-                            .await?
-                    }
-                    "refresh_source" => self.asked = None,
-                    "upload_release" => self.upload(request.scope).await?,
-                    "discard_upload" => {
-                        let bundle = get("value").to_owned();
-                        self.discard(request.scope, &bundle).await?;
-                    }
-                    "grid_here" => {
-                        if let ColumnsOutcome::Sort(_) = self.here.handle(&values) {
-                            return Err(Error::Invalid);
-                        }
-                    }
-                    "grid_source" => {
-                        if let ColumnsOutcome::Sort(_) = self.source.handle(&values) {
-                            return Err(Error::Invalid);
-                        }
-                    }
-                    "grid_waiting" => {
-                        if let ColumnsOutcome::Sort(_) = self.waiting.handle(&values) {
-                            return Err(Error::Invalid);
-                        }
-                    }
-                    "clear-flash"
-                        if self
-                            .flash
-                            .as_ref()
-                            .is_some_and(|(kind, _)| kind.name() == get("key")) =>
-                    {
-                        self.flash = None;
-                    }
-                    _ => {}
+impl ReleaseFiles {
+    /// Handles transport controls within the one mounted Software page.
+    pub(super) async fn event(&mut self, request: &LiveRequest<'_, Scope>) -> Result<bool> {
+        {
+            let client = self.pages.db.get().await?;
+            authorize_operator(&**client, request.scope, VIEW).await?;
+        }
+        if let LiveInput::Event(value) = request.input {
+            let values = bilibi_ui::params::string_values(value);
+            let get = |key: &str| values.get(key).map(String::as_str).unwrap_or("");
+            match value["type"].as_str().unwrap_or("") {
+                "pair" => {
+                    let key = get("pair[key]").trim().to_owned();
+                    self.pair(request, "pair", json!({"key": key})).await?;
                 }
-                if let Some((_, message)) = &self.flash {
-                    notice = message.clone();
+                "clear_pairing" => {
+                    self.pair(request, "clear_pairing", json!({"clear": true}))
+                        .await?
                 }
+                "refresh_source" => self.asked = None,
+                "upload_release" => self.upload(request.scope).await?,
+                "discard_upload" => {
+                    let bundle = get("value").to_owned();
+                    self.discard(request.scope, &bundle).await?;
+                }
+                "grid_here" => {
+                    if let ColumnsOutcome::Sort(_) = self.here.handle(&values) {
+                        return Err(Error::Invalid);
+                    }
+                }
+                "grid_source" => {
+                    if let ColumnsOutcome::Sort(_) = self.source.handle(&values) {
+                        return Err(Error::Invalid);
+                    }
+                }
+                "grid_waiting" => {
+                    if let ColumnsOutcome::Sort(_) = self.waiting.handle(&values) {
+                        return Err(Error::Invalid);
+                    }
+                }
+                "clear-flash"
+                    if self
+                        .flash
+                        .as_ref()
+                        .is_some_and(|(kind, _)| kind.name() == get("key")) =>
+                {
+                    self.flash = None;
+                }
+                _ => return Ok(false),
             }
-            Ok(LiveBody {
-                html: self.body(request.scope).await?,
-                notice,
-                ..LiveBody::default()
-            })
-        })
-    }
-    fn uploads(&mut self) -> Option<&mut Uploads> {
-        Some(&mut self.uploads)
+        }
+        Ok(true)
     }
 }
 

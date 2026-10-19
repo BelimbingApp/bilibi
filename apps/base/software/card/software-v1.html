@@ -416,7 +416,7 @@ function installView() {
     el('p', { class: 'small muted', text: 'Bilibi checks and copies the update, then backs up and installs it. This server pauses for about a minute.' }),
     source
       ? el('div', { class: 'card stack' }, [el('h2', { text: 'Update server: ' + source }), el('p', { class: 'small muted', text: 'Enter the release number currently running on ' + source + '. Its Software page shows the number.' }), el('div', { class: 'row' }, [release, go])])
-      : alertBox('warning', 'No update server is chosen. Choose one in Settings › Instance › Install releases tested on. You can also upload a tested file on the Release files page and install it from the Software page.', 'no-source'),
+      : alertBox('warning', 'No update server is chosen. Choose one in Settings › Instance › Install releases tested on. You can also upload a tested file on Software’s Releases tab and install it from the Software page.', 'no-source'),
   ]);
 }
 function renderHomeButton() { return el('button', { onclick: renderHome, text: 'Back' }); }
