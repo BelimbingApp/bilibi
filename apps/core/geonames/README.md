@@ -34,8 +34,8 @@ before the transaction commits. `ReferenceImport` (registry service
 `core/geonames.import`) is the API: `run` for the operator command, `run_as`
 for a screen, which checks `admin.geonames.update` on the sealed scope first;
 `import_as` does the same for one `Target`, so a screen can report each
-country as it runs. A run reports one `DatasetReport` per `Target` (a dataset or one country's
-postcodes), in that order.
+country as it runs. A run reports one `DatasetReport` per `Target` (a dataset
+or one country's postcodes), in that order.
 
 - **Streaming, atomic per dataset.** Files are read line by line and written in
   500-row `unnest` upserts inside one transaction. A database failure in any
