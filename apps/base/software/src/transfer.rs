@@ -7,7 +7,7 @@ use crate::{
     jobs, pairing,
     review::{self, Review},
     transport::{self, Paths},
-    Software, SoftwareError, SoftwareResult, MANAGE, VIEW,
+    Software, SoftwareError, SoftwareResult, MANAGE, STEP_UP, VIEW,
 };
 use bilibi_authz::authorize_operator;
 use bilibi_database::{Error, MutationTransaction, Result};
@@ -74,6 +74,14 @@ impl Software {
             )
         })
     }
+    /// Removes what a cancelled job's download left in `incoming/`: the
+    /// folder it was unpacked into, or the file still on its way.
+    pub(crate) fn drop_download(&self, job: &jobs::Job) {
+        let Ok(paths) = self.paths() else { return };
+        let folder = format!("{}{}", transport::JOB_PREFIX, job.id);
+        let _ = fs::remove_dir_all(paths.incoming_folder(&folder));
+        let _ = fs::remove_file(paths.incoming().join(format!("{folder}.tar.gz.part")));
+    }
     /// The worker name a download runs under in the job rows.
     fn transport_worker(&self) -> String {
         match &self.paths {
@@ -87,11 +95,18 @@ impl Software {
     /// whether a pairing key is set, and the releases kept here that another
     /// instance may download.
     pub async fn releases(&self, scope: &Scope) -> Result<Value> {
+        self.releases_with(scope, None).await
+    }
+    /// `releases` with the source's answer already in hand (a page that read
+    /// it once and keeps it), so showing the page again does not ask the
+    /// source again. Left out, the source is asked now.
+    pub async fn releases_with(&self, scope: &Scope, source: Option<Value>) -> Result<Value> {
         let client = self.db.get().await?;
         authorize_operator(&**client, scope, VIEW).await?;
         let tenant = scope.tenant();
         let instance = Instance::resolve(&self.settings, &**client).await?;
         let pairing = pairing::state(&**client, tenant).await?;
+        drop(client);
         let (here, uploads) = match self.paths() {
             Ok(paths) => (
                 transport::listing(paths, &instance, &self.composition),
@@ -107,24 +122,9 @@ impl Software {
             ),
             Err(why) => (json!({"available": false, "message": why}), Vec::new()),
         };
-        let source = match (&instance.installs_from, instance.role.builds()) {
-            (_, true) => {
-                json!({"available": false, "message": format!("{} builds its own software and installs from no other instance.", instance.label)})
-            }
-            (None, false) => {
-                json!({"available": false, "message": format!("{} has no source yet. A server owner sets \"Install releases tested on\" under Instance in the settings, or uploads a release file here.", instance.label)})
-            }
-            (Some(from), false) => match self.source_listing(scope, tenant, from).await? {
-                Ok(listing) => {
-                    let mut listing = listing;
-                    listing["available"] = json!(true);
-                    listing["source"] = review::instance_json(&instance)["installs_from"].clone();
-                    listing
-                }
-                Err(why) => {
-                    json!({"available": false, "source": review::instance_json(&instance)["installs_from"], "message": why})
-                }
-            },
+        let source = match source {
+            Some(source) => source,
+            None => self.source_facts(scope, &instance).await?,
         };
         Ok(json!({
             "instance": review::instance_json(&instance),
@@ -133,6 +133,28 @@ impl Software {
             "pairing": pairing.json(),
             "here": here,
         }))
+    }
+    /// What the instance's source reports, or why it cannot be asked: the
+    /// part of `releases` that makes a call to another instance.
+    pub async fn source_facts(&self, scope: &Scope, instance: &Instance) -> Result<Value> {
+        Ok(match (&instance.installs_from, instance.role.builds()) {
+            (_, true) => {
+                json!({"available": false, "message": format!("{} builds its own software and installs from no other instance.", instance.label)})
+            }
+            (None, false) => {
+                json!({"available": false, "message": format!("{} has no source yet. A server owner sets \"Install releases tested on\" under Instance in the settings, or uploads a release file here.", instance.label)})
+            }
+            (Some(from), false) => match self.source_listing(scope, scope.tenant(), from).await? {
+                Ok(mut listing) => {
+                    listing["available"] = json!(true);
+                    listing["source"] = review::instance_json(instance)["installs_from"].clone();
+                    listing
+                }
+                Err(why) => {
+                    json!({"available": false, "source": review::instance_json(instance)["installs_from"], "message": why})
+                }
+            },
+        })
     }
 
     /// The source's listing: a sibling's folders read directly, or the
@@ -202,6 +224,7 @@ impl Software {
     ) -> SoftwareResult<Value> {
         authorize_operator(tx.sql(), scope, MANAGE).await?;
         let review = review::pair(input)?;
+        self.step_up.require(scope, STEP_UP, &review.target).await?;
         if !self.settings.encryption_available() {
             return Err(SoftwareError::field("key", "This server has no settings key (BILIBI_SETTINGS_KEY), so it cannot keep a pairing key. Set one in the instance's env file first."));
         }

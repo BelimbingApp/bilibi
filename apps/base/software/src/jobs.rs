@@ -265,6 +265,36 @@ pub async fn enabled_plugins(client: &impl GenericClient, tenant: i64) -> Result
     Ok(rows.iter().map(|row| row.get(0)).collect())
 }
 
+/// The plug-ins a server has switched on once a change job's build is in
+/// service: those switched on now, with the change the owner reviewed
+/// (`plugins` in the job's review) applied, as `{id, name, publisher,
+/// version, source}`.
+pub async fn planned_plugins(
+    client: &impl GenericClient,
+    tenant: i64,
+    review: &Value,
+) -> Result<Vec<Value>> {
+    let mut plugins: Vec<Value> = plugins_json(client, tenant)
+        .await?
+        .into_iter()
+        .filter(|plugin| plugin["enabled"].as_bool() == Some(true))
+        .map(|plugin| {
+            json!({"id": plugin["id"], "name": plugin["name"], "publisher": plugin["publisher"], "version": plugin["version"], "source": plugin["source"]})
+        })
+        .collect();
+    for change in review["plugins"].as_array().into_iter().flatten() {
+        let Some(id) = change["id"].as_str() else {
+            continue;
+        };
+        plugins.retain(|plugin| plugin["id"].as_str() != Some(id));
+        if change["enabled"].as_bool() == Some(true) {
+            plugins.push(json!({"id": id, "name": change["name"], "publisher": change["publisher"], "version": null, "source": "catalogue"}));
+        }
+    }
+    plugins.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
+    Ok(plugins)
+}
+
 /// What a new job is made of.
 pub struct NewJob {
     pub kind: &'static str,
@@ -435,7 +465,7 @@ pub async fn cancel(
             let after = Job::from_row(&row);
             if after.state == "cancelled" {
                 sql.execute(
-                    "UPDATE base_software_steps SET state='skipped' WHERE tenant_id=$1 AND job_id=$2 AND state='pending'",
+                    "UPDATE base_software_steps SET state='skipped' WHERE tenant_id=$1 AND job_id=$2 AND state IN ('pending','running')",
                     &[&tenant, &id],
                 )
                 .await?;
@@ -479,8 +509,8 @@ pub async fn download_step(
     detail: &Value,
 ) -> Result<()> {
     let sql = match state {
-        "running" => "UPDATE base_software_steps SET state='running', started_at=coalesce(started_at, now()), detail=$3 WHERE tenant_id=$1 AND job_id=$2 AND key='download'",
-        _ => "UPDATE base_software_steps SET state=$4, finished_at=now(), detail=$3 WHERE tenant_id=$1 AND job_id=$2 AND key='download'",
+        "running" => "UPDATE base_software_steps SET state='running', started_at=coalesce(started_at, now()), detail=$3 WHERE tenant_id=$1 AND job_id=$2 AND key='download' AND EXISTS (SELECT 1 FROM base_software_jobs j WHERE j.tenant_id=$1 AND j.id=$2 AND j.state='queued')",
+        _ => "UPDATE base_software_steps SET state=$4, finished_at=now(), detail=$3 WHERE tenant_id=$1 AND job_id=$2 AND key='download' AND EXISTS (SELECT 1 FROM base_software_jobs j WHERE j.tenant_id=$1 AND j.id=$2 AND j.state='queued')",
     };
     if state == "running" {
         client.execute(sql, &[&tenant, &job, detail]).await?;

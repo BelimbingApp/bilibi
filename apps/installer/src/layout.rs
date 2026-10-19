@@ -20,6 +20,9 @@ const RELEASE_FILES: [&str; 6] = [
     "bundle.json",
 ];
 const PLUGINS_DIR: &str = "plugins";
+/// The plug-ins a release switches on, written by the builder into the
+/// release's `plugins/` folder.
+const PLUGINS_ENABLED: &str = "enabled.json";
 
 #[derive(Clone, Debug)]
 pub struct Layout {
@@ -229,6 +232,55 @@ pub fn copy_release(src: &Path, dst: &Path) -> io::Result<u64> {
     }
     Ok(bytes)
 }
+/// The plug-ins the release at `dir` switches on (`plugins/enabled.json`), as
+/// `{id, name, publisher, version, source}`; `None` when the release does not
+/// say (one made before plug-ins travelled), which leaves the server's own
+/// list as it is. A file that cannot be read as a list is an error: the
+/// release was damaged on the way.
+pub fn read_plugins(dir: &Path) -> Result<Option<Vec<serde_json::Value>>, String> {
+    use serde_json::{json, Value};
+    let path = dir.join(PLUGINS_DIR).join(PLUGINS_ENABLED);
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("could not read {}: {error}", path.display())),
+    };
+    let damaged = || {
+        format!(
+            "{PLUGINS_DIR}/{PLUGINS_ENABLED} is not a list of plug-ins. Make the release file again on the source."
+        )
+    };
+    let list: Vec<Value> = serde_json::from_str(&text).map_err(|_| damaged())?;
+    let text_of = |value: &Value, most: usize| {
+        value
+            .as_str()
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .map(|text| text.chars().take(most).collect::<String>())
+    };
+    let mut plugins: Vec<Value> = Vec::new();
+    for entry in list {
+        let id = text_of(&entry["id"], 64)
+            .filter(|id| {
+                id.bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"_-.".contains(&b))
+            })
+            .ok_or_else(damaged)?;
+        if plugins.iter().any(|plugin| plugin["id"] == id.as_str()) {
+            return Err(damaged());
+        }
+        plugins.push(json!({
+            "id": id,
+            "name": text_of(&entry["name"], 120).unwrap_or_else(|| id.clone()),
+            "publisher": text_of(&entry["publisher"], 120),
+            "version": text_of(&entry["version"], 32),
+            "source": text_of(&entry["source"], 255).unwrap_or_else(|| "catalogue".to_owned()),
+        }));
+    }
+    plugins.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
+    Ok(Some(plugins))
+}
+
 /// Copies the plain files under `src` (and its folders) into `dst`; links
 /// and anything else are left out.
 fn copy_plain_files(src: &Path, dst: &Path) -> io::Result<()> {

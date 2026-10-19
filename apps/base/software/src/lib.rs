@@ -104,7 +104,7 @@ bilibi_step_up::declare!(
     "base/software",
     bilibi_step_up::Operation::new(
         STEP_UP,
-        "Change the server's software (build, install, undo)"
+        "Change the server's software (build, install, undo, pairing key)"
     )
     .always()
 );
@@ -426,6 +426,9 @@ impl Software {
                     .body(review.facts["summary"].as_str().unwrap_or_default()),
             )
             .await?;
+        if job.state == "cancelled" {
+            self.drop_download(&job);
+        }
         let mut value = job.json();
         value["review"] = review.facts;
         Ok(value)
@@ -528,8 +531,11 @@ impl Software {
             active.as_ref(),
             input,
             source.as_ref(),
-            &uploads,
-            running_sha256.as_deref(),
+            &review::Held {
+                uploads: &uploads,
+                running_sha256: running_sha256.as_deref(),
+                enabled_plugins: &jobs::enabled_plugins(client, scope.tenant()).await?,
+            },
         )
     }
     async fn undo_review(
@@ -666,7 +672,10 @@ bilibi_menu::contribute!(
 // database.
 inventory::submit! { Contribution::new(PAGE_WRITES, web::PAGES, provenance!(), &PageWrites {
     service: web::PAGES,
-    contracts: &[("pair", "base.software.pair")],
+    contracts: &[
+        ("pair", "base.software.pair"),
+        ("clear_pairing", "base.software.pair"),
+    ],
     pending: Pending::None,
 }) }
 inventory::submit! {

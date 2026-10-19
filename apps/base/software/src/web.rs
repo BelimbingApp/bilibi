@@ -20,8 +20,9 @@ use bilibi_ui::{
         LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, MountFuture, Page, PageBody,
         PageFuture, PageRequest, Uploads,
     },
-    ActionLink, BuiltinColumn, Button, ButtonVariant, Card, ColumnsOutcome, FlashMap, FlexRow,
-    FlexTable, Header, Html, ListColumns, PageVariant, StatusKind, TableEmpty, UploadSpec,
+    ActionLink, BuiltinColumn, Button, ButtonVariant, Card, ColumnsOutcome, Fact, Facts,
+    FlashGroup, FlashMap, FlexRow, FlexTable, Form, Header, Html, ListColumns, PageVariant,
+    SectionHeading, StatusKind, TableEmpty, UploadSpec,
 };
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -53,7 +54,7 @@ impl Page<Scope, Error> for Pages {
     fn render<'a>(&'a self, request: PageRequest<'a, Scope>) -> PageFuture<'a, Error> {
         Box::pin(async move {
             let scope = request.scope.ok_or(Error::Unauthorized)?;
-            let view = View::new(self.clone())?;
+            let mut view = View::new(self.clone())?;
             Ok(PageBody {
                 html: view.body(scope).await?,
                 live: true,
@@ -92,13 +93,19 @@ impl Download<Scope, Error> for Files {
     }
 }
 
-/// The mounted page: the file input's state, the two tables' columns and
-/// the last message.
+/// The mounted page: the file input's state, the three tables' columns, the
+/// source's answer and the last message.
 struct View {
     pages: Pages,
     uploads: Uploads,
     here: ListColumns,
     source: ListColumns,
+    waiting: ListColumns,
+    /// What the source reported when this page was mounted. Showing the page
+    /// again does not ask it again (the source limits how often one sender
+    /// may); the person asks again with "Ask the source again", and saving
+    /// the pairing key forgets it, since the answer then differs.
+    asked: Option<Value>,
     flash: Option<(StatusKind, String)>,
     pair_error: Option<String>,
 }
@@ -110,6 +117,16 @@ fn release_columns() -> Vec<BuiltinColumn> {
         BuiltinColumn::new("domains", "Domains"),
         BuiltinColumn::new("checksum", "Checksum"),
         BuiltinColumn::new("file", "File"),
+    ]
+}
+fn waiting_columns() -> Vec<BuiltinColumn> {
+    vec![
+        BuiltinColumn::new("bundle", "File"),
+        BuiltinColumn::new("release", "Release").right(),
+        BuiltinColumn::new("from", "Made on"),
+        BuiltinColumn::new("platform", "Bilibi"),
+        BuiltinColumn::new("domains", "Domains"),
+        BuiltinColumn::new("checksum", "Checksum"),
     ]
 }
 impl View {
@@ -126,6 +143,9 @@ impl View {
                 .map_err(|_| Error::Internal)?,
             source: ListColumns::mount("release-files-source", release_columns())
                 .map_err(|_| Error::Internal)?,
+            waiting: ListColumns::mount("release-files-waiting", waiting_columns())
+                .map_err(|_| Error::Internal)?,
+            asked: None,
             flash: None,
             pair_error: None,
         })
@@ -134,27 +154,35 @@ impl View {
         self.flash = Some((kind, message.into()));
     }
     /// The page's own answer to a refused contract call.
-    fn refused(&mut self, error: Error, field: &str) {
+    fn refused(&mut self, error: Error) {
         let message = match error {
             Error::Forbidden => "You do not have permission to change the pairing key.".to_owned(),
             Error::Invalid => "The pairing key was not accepted.".to_owned(),
             other => format!("The pairing key could not be saved ({other:?})."),
         };
         self.pair_error = Some(message.clone());
-        let _ = field;
         self.say(StatusKind::Error, message);
     }
-    async fn pair(&mut self, request: &LiveRequest<'_, Scope>, input: Value) {
+    /// Sets or clears the pairing key. A step-up the owner asks for ends the
+    /// event: the host takes the person to confirm and back, and nothing was
+    /// changed.
+    async fn pair(
+        &mut self,
+        request: &LiveRequest<'_, Scope>,
+        event: &str,
+        input: Value,
+    ) -> Result<()> {
         let call = bilibi_agent_api::page::Call {
             scope: request.scope,
             credential: request.credential,
             service: PAGES,
-            event: "pair",
+            event,
             contract: "base.software.pair",
         };
         self.pair_error = None;
         match self.pages.contracts.submit(&call, input.clone()).await {
             Ok(_) => {
+                self.asked = None;
                 let message = if input["clear"].as_bool() == Some(true) {
                     "Pairing key cleared. This instance shares no releases until a key is set again."
                 } else {
@@ -172,10 +200,12 @@ impl View {
                 self.pair_error = Some(message.clone());
                 self.say(StatusKind::Error, message);
             }
-            Err(AgentError::Forbidden) => self.refused(Error::Forbidden, "key"),
-            Err(AgentError::Backend(error)) => self.refused(error, "key"),
-            Err(other) => self.refused(Error::Internal, &other.to_string()),
+            Err(AgentError::Backend(error @ Error::StepUpRequired { .. })) => return Err(error),
+            Err(AgentError::Forbidden) => self.refused(Error::Forbidden),
+            Err(AgentError::Backend(error)) => self.refused(error),
+            Err(_) => self.refused(Error::Internal),
         }
+        Ok(())
     }
     async fn upload(&mut self, scope: &Scope) -> Result<()> {
         let files = self.uploads.consume(UPLOAD);
@@ -217,49 +247,63 @@ impl View {
         Ok(())
     }
 
-    async fn body(&self, scope: &Scope) -> Result<String> {
+    async fn body(&mut self, scope: &Scope) -> Result<String> {
         let client = self.pages.db.get().await?;
         authorize_operator(&**client, scope, VIEW).await?;
         let manages = authorize_operator(&**client, scope, MANAGE).await.is_ok();
         let instance = Instance::resolve(&self.pages.settings, &**client).await?;
         drop(client);
-        let facts = self.pages.software.releases(scope).await?;
-        let banner = instance
-            .banner("release-files-instance", "mb-4")
-            .map_err(|_| Error::Internal)?;
-        let mut cards = Html::default();
-        cards.push(&self.here_card(&instance, &facts, manages)?);
-        if !instance.role.builds() {
-            cards.push(&self.source_card(&instance, &facts)?);
-            cards.push(&self.upload_card(&instance, &facts, manages)?);
+        let facts = self
+            .pages
+            .software
+            .releases_with(scope, self.asked.clone())
+            .await?;
+        if self.asked.is_none() {
+            self.asked = Some(facts["source"].clone());
         }
-        cards.push(&self.pairing_card(&instance, &facts, manages)?);
+        let mut body = render(Header {
+            title: Html::text("Release files"),
+            subtitle: "Move a tested release between instances: download its file here, upload it on the instance that installs it.",
+            ..Header::default()
+        })?;
+        body.push(
+            &instance
+                .banner("release-files-instance", "mb-2")
+                .map_err(|_| Error::Internal)?,
+        );
+        body.push(&self.here_section(&instance, &facts, manages)?);
+        if !instance.role.builds() {
+            body.push(&self.source_section(&instance, &facts)?);
+            if manages {
+                body.push(&self.upload_section(&instance)?);
+            }
+            body.push(&self.waiting_section(&facts, manages)?);
+        }
+        body.push(&self.pairing_section(&instance, &facts, manages)?);
         let message = |kind| {
             self.flash
                 .as_ref()
                 .filter(|(current, _)| *current == kind)
                 .map_or("", |(_, message)| message.as_str())
         };
-        Ok(render(ReleaseFilesPage {
-            header: render(Header {
-                title: Html::text("Release files"),
-                subtitle: "Move a tested release between instances: download its file here, upload it on the instance that installs it.",
-                ..Header::default()
-            })?,
-            banner,
-            cards,
+        let mut page = render(FlashGroup {
+            id: "flash-group",
             flash: FlashMap {
                 info: message(StatusKind::Info),
                 success: message(StatusKind::Success),
                 error: message(StatusKind::Error),
                 warning: message(StatusKind::Warning),
             },
+        })?;
+        page.push(&render(bilibi_ui::Page {
             variant: PageVariant::Form,
-        })?
-        .to_string())
+            body,
+            ..bilibi_ui::Page::default()
+        })?);
+        Ok(page.to_string())
     }
     /// The releases kept on this instance, each with its download link.
-    fn here_card(&self, instance: &Instance, facts: &Value, manages: bool) -> Result<Html> {
+    fn here_section(&self, instance: &Instance, facts: &Value, manages: bool) -> Result<Html> {
         let here = &facts["here"];
         let mut table = release_table(
             &self.here,
@@ -287,21 +331,22 @@ impl View {
                 instance.label
             ))));
         }
-        let body = render(HereBody {
-            label: &instance.label,
-            manages,
-            table: render(table)?,
-        })?;
-        render(Card {
-            id: "release-files-here",
-            title: "Releases kept here",
-            inner_class: "p-0",
-            body,
-            ..Card::default()
-        })
+        let description = if manages {
+            format!("{} keeps these releases. Download the file of the one in service to install it on an instance this one cannot reach, or let that instance download it with the pairing key.", instance.label)
+        } else {
+            format!("{} keeps these releases.", instance.label)
+        };
+        section(
+            "release-files-here",
+            "Releases kept here",
+            &description,
+            Html::default(),
+            true,
+            render(table)?,
+        )
     }
     /// What the source offers, when the instance installs from one.
-    fn source_card(&self, instance: &Instance, facts: &Value) -> Result<Html> {
+    fn source_section(&self, instance: &Instance, facts: &Value) -> Result<Html> {
         let source = &facts["source"];
         let mut table = release_table(
             &self.source,
@@ -326,137 +371,248 @@ impl View {
             Some(from) => crate::review::source_name(from),
             None => "no source".to_owned(),
         };
-        let healthy = source["available"].as_bool() == Some(true);
-        let current = source["current"].as_u64();
-        let body = render(SourceBody {
-            label: &instance.label,
-            name: &name,
-            healthy,
-            answers: source["healthy"].as_bool() == Some(true),
-            current,
-            table: render(table)?,
+        let mut description = match &instance.installs_from {
+            Some(_) => format!("{} installs releases tested on {name}.", instance.label),
+            None => format!("{} has no source to install from.", instance.label),
+        };
+        if source["available"].as_bool() == Some(true) {
+            match source["current"].as_u64() {
+                Some(n) => description.push_str(&format!(
+                    " It runs release {n} now{}.",
+                    if source["healthy"].as_bool() == Some(true) {
+                        " and answers"
+                    } else {
+                        ", but its program does not answer"
+                    }
+                )),
+                None => description.push_str(" It has no release in service."),
+            }
+            description.push_str(
+                " Install one from the Software page or through an assistant (base.software.install).",
+            );
+        }
+        let ask = render(Button {
+            id: "release-files-source-refresh",
+            button_type: "button",
+            event: "refresh_source",
+            working: "Asking…",
+            body: Html::text("Ask the source again"),
+            ..Button::default()
         })?;
-        render(Card {
-            id: "release-files-source",
-            title: "Install from the source",
-            inner_class: "p-0",
-            body,
-            ..Card::default()
-        })
+        section(
+            "release-files-source",
+            "Install from the source",
+            &description,
+            ask,
+            true,
+            render(table)?,
+        )
     }
-    /// The file input and the uploaded files waiting.
-    fn upload_card(&self, instance: &Instance, facts: &Value, manages: bool) -> Result<Html> {
+    /// The file input for a release file, for a server owner.
+    fn upload_section(&self, instance: &Instance) -> Result<Html> {
         let input = self
             .uploads
             .input(UPLOAD, "release-files-upload")
             .label("Release file")
             .hint("A bilibi-release-<n>.tar.gz downloaded from the instance that tested it, up to 64 MB.");
-        let waiting: Vec<Waiting> = facts["uploads"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .map(|upload| {
-                let bundle = upload["bundle"].as_str().unwrap_or("").to_owned();
-                let release = upload["release"].as_u64();
-                let from = upload["from"]["label"].as_str().map(str::to_owned);
-                let sha = upload["sha256"].as_str().unwrap_or("").to_owned();
-                Waiting {
-                    id: format!("release-files-waiting-{}", bundle.replace('_', "-")),
-                    heading: match (release, &from) {
-                        (Some(n), Some(from)) => format!("{bundle}: release {n} from {from}"),
-                        (Some(n), None) => format!("{bundle}: release {n}"),
-                        _ => format!("{bundle}: a release file"),
-                    },
-                    detail: format!(
-                        "{}{} · checksum {}…",
-                        describe_platform(&upload["platform"]),
-                        describe_domains(&upload["domains"]),
-                        sha.chars().take(12).collect::<String>()
-                    ),
-                    bundle,
-                }
-            })
-            .collect();
-        let body = render(UploadBody {
-            label: &instance.label,
-            manages,
-            input: render(input)?,
-            submit: render(Button {
+        let form = render(Form {
+            id: "release-files-upload-form",
+            event: "upload_release",
+            body: render(input)?,
+            actions: render(Button {
                 id: "release-files-upload-submit",
                 button_type: "submit",
                 variant: ButtonVariant::Primary,
                 working: "Receiving…",
-                disabled: !manages,
                 body: Html::text("Receive the file"),
                 ..Button::default()
             })?,
-            waiting,
+            ..Form::default()
         })?;
-        render(Card {
-            id: "release-files-upload-card",
-            title: "Upload a release file",
-            body,
-            ..Card::default()
-        })
+        let description = format!("For a source {} cannot reach: download the release file there, then choose it here. It is unpacked and checked, and waits until you install it.", instance.label);
+        section(
+            "release-files-upload-card",
+            "Upload a release file",
+            &description,
+            Html::default(),
+            false,
+            form,
+        )
+    }
+    /// The uploaded release files waiting for an install.
+    fn waiting_section(&self, facts: &Value, manages: bool) -> Result<Html> {
+        let mut rows = Vec::new();
+        for upload in facts["uploads"].as_array().into_iter().flatten() {
+            let bundle = upload["bundle"].as_str().unwrap_or("").to_owned();
+            let sha = upload["sha256"].as_str().unwrap_or("");
+            let id = format!("release-files-waiting-{}", bundle.replace('_', "-"));
+            let remove = if manages {
+                render(Button {
+                    id: &format!("{id}-remove"),
+                    button_type: "button",
+                    event: "discard_upload",
+                    name: "value",
+                    value: &bundle,
+                    working: "Removing…",
+                    body: Html::text("Remove"),
+                    ..Button::default()
+                })?
+            } else {
+                Html::default()
+            };
+            let mut row = FlexRow::new(bundle.clone())
+                .slot("bundle", Html::text(&bundle))
+                .slot(
+                    "release",
+                    Html::text(
+                        &upload["release"]
+                            .as_u64()
+                            .map_or(String::new(), |n| n.to_string()),
+                    ),
+                )
+                .slot(
+                    "from",
+                    Html::text(upload["from"]["label"].as_str().unwrap_or("")),
+                )
+                .slot(
+                    "platform",
+                    Html::text(&describe_platform(&upload["platform"])),
+                )
+                .slot(
+                    "domains",
+                    Html::text(describe_domains(&upload["domains"]).trim_start_matches(" with ")),
+                )
+                .slot(
+                    "checksum",
+                    Html::text(&sha.chars().take(12).collect::<String>()),
+                );
+            row.dom_id = Some(id);
+            row.actions = remove;
+            rows.push(row);
+        }
+        let mut table = FlexTable::new(
+            "release-files-waiting-table",
+            self.waiting.flex_columns(),
+            rows,
+        );
+        table.event = "grid_waiting";
+        table.zoom = self.waiting.zoom;
+        table.suggestions = self.waiting.flex_suggestions();
+        table.add_query = &self.waiting.add_query;
+        table.framed = false;
+        table.actions = manages;
+        table.caption = "Release files waiting here";
+        table.empty = Some(TableEmpty::Content(Html::text(
+            "No release file is waiting here.",
+        )));
+        section(
+            "release-files-waiting-card",
+            "Release files waiting here",
+            "Install one from the Software page or through an assistant (base.software.install with its file name as bundle).",
+            Html::default(),
+            true,
+            render(table)?,
+        )
     }
     /// The pairing key: set, cleared, never shown.
-    fn pairing_card(&self, instance: &Instance, facts: &Value, manages: bool) -> Result<Html> {
+    fn pairing_section(&self, instance: &Instance, facts: &Value, manages: bool) -> Result<Html> {
         let pairing = &facts["pairing"];
         let set = pairing["set"].as_bool() == Some(true);
-        let mut secret = SecretInput::in_form("pair", "key", "pairing key")
-            .id("release-files-pairing-key")
-            .label("Pairing key")
-            .hint("The same key on every instance that shares releases: 16 to 128 characters, no spaces. Make one with: openssl rand -hex 24");
-        if set {
-            secret = secret.stored();
-        }
-        if let Some(error) = &self.pair_error {
-            secret = secret.errors(vec![error.clone()]);
-        }
         let status = match (set, pairing["set_at"].as_str()) {
-            (true, Some(at)) => format!(
-                "A pairing key is set (since {}).",
-                crate::review::utc_text(at)
-            ),
-            (true, None) => "A pairing key is set.".to_owned(),
-            (false, _) => format!(
-                "No pairing key is set: {} shares no releases and downloads none.",
-                instance.label
-            ),
+            (true, Some(at)) => format!("Set (since {})", crate::review::utc_text(at)),
+            (true, None) => "Set".to_owned(),
+            (false, _) => "Not set".to_owned(),
         };
-        let body = render(PairingBody {
-            label: &instance.label,
-            status: &status,
-            set,
-            manages,
-            secret: render(secret)?,
-            save: render(Button {
+        let mut body = render(Facts {
+            id: "release-files-pairing-facts",
+            items: vec![Fact {
+                title: "Status",
+                id: "release-files-pairing-status",
+                value: Html::text(&status),
+            }],
+        })?;
+        if manages {
+            let mut secret = SecretInput::in_form("pair", "key", "pairing key")
+                .id("release-files-pairing-key")
+                .label("Pairing key")
+                .hint("The same key on every instance that shares releases: 16 to 128 characters, no spaces. Make one with: openssl rand -hex 24. Saving or clearing it asks for your authenticator code.");
+            if set {
+                secret = secret.stored();
+            }
+            if let Some(error) = &self.pair_error {
+                secret = secret.errors(vec![error.clone()]);
+            }
+            let mut actions = render(Button {
                 id: "release-files-pairing-save",
                 button_type: "submit",
                 variant: ButtonVariant::Primary,
                 working: "Saving…",
-                disabled: !manages,
                 body: Html::text("Save pairing key"),
                 ..Button::default()
-            })?,
-            clear: render(Button {
-                id: "release-files-pairing-clear",
-                button_type: "button",
-                event: "clear_pairing",
-                working: "Clearing…",
-                disabled: !manages,
-                body: Html::text("Clear the key"),
-                ..Button::default()
-            })?,
-        })?;
-        render(Card {
-            id: "release-files-pairing",
-            title: "Pairing key",
+            })?;
+            if set {
+                actions.push(&render(Button {
+                    id: "release-files-pairing-clear",
+                    button_type: "button",
+                    event: "clear_pairing",
+                    working: "Clearing…",
+                    body: Html::text("Clear the key"),
+                    ..Button::default()
+                })?);
+            }
+            body.push(&render(Form {
+                id: "release-files-pairing-form",
+                event: "pair",
+                class: "mt-3",
+                body: render(secret)?,
+                actions,
+                ..Form::default()
+            })?);
+        }
+        let mut description = format!("With the same key on both, an instance downloads releases from the one it installs from, and the other way round never: {} accepts no program pushed to it.", instance.label);
+        if !set {
+            description.push_str(&format!(
+                " With no key set, {} shares no releases and downloads none.",
+                instance.label
+            ));
+        }
+        section(
+            "release-files-pairing",
+            "Pairing key",
+            &description,
+            Html::default(),
+            false,
             body,
-            ..Card::default()
-        })
+        )
     }
 }
+/// One section: its heading with a short description, then its card.
+fn section(
+    id: &str,
+    title: &str,
+    description: &str,
+    actions: Html,
+    flat: bool,
+    body: Html,
+) -> Result<Html> {
+    let heading = format!("{id}-heading");
+    let mut section = render(SectionHeading {
+        title,
+        id: &heading,
+        class: "mt-6",
+        description,
+        actions,
+        ..SectionHeading::default()
+    })?;
+    section.push(&render(Card {
+        id,
+        inner_class: if flat { "p-0" } else { "" },
+        body,
+        ..Card::default()
+    })?);
+    Ok(section)
+}
+
 impl LiveState<Scope, Error> for View {
     fn update<'a>(&'a mut self, request: LiveRequest<'a, Scope>) -> LiveFuture<'a, Error> {
         Box::pin(async move {
@@ -471,9 +627,13 @@ impl LiveState<Scope, Error> for View {
                 match value["type"].as_str().unwrap_or("") {
                     "pair" => {
                         let key = get("pair[key]").trim().to_owned();
-                        self.pair(&request, json!({"key": key})).await;
+                        self.pair(&request, "pair", json!({"key": key})).await?;
                     }
-                    "clear_pairing" => self.pair(&request, json!({"clear": true})).await,
+                    "clear_pairing" => {
+                        self.pair(&request, "clear_pairing", json!({"clear": true}))
+                            .await?
+                    }
+                    "refresh_source" => self.asked = None,
                     "upload_release" => self.upload(request.scope).await?,
                     "discard_upload" => {
                         let bundle = get("value").to_owned();
@@ -486,6 +646,11 @@ impl LiveState<Scope, Error> for View {
                     }
                     "grid_source" => {
                         if let ColumnsOutcome::Sort(_) = self.source.handle(&values) {
+                            return Err(Error::Invalid);
+                        }
+                    }
+                    "grid_waiting" => {
+                        if let ColumnsOutcome::Sort(_) = self.waiting.handle(&values) {
                             return Err(Error::Invalid);
                         }
                     }
@@ -596,57 +761,4 @@ fn describe_domains(domains: &Value) -> String {
     } else {
         format!(" with {}", list.join(", "))
     }
-}
-
-#[derive(Template)]
-#[template(path = "release_files.html")]
-struct ReleaseFilesPage<'a> {
-    header: Html,
-    banner: Html,
-    cards: Html,
-    flash: FlashMap<'a>,
-    variant: PageVariant,
-}
-#[derive(Template)]
-#[template(path = "release_files_here.html")]
-struct HereBody<'a> {
-    label: &'a str,
-    manages: bool,
-    table: Html,
-}
-#[derive(Template)]
-#[template(path = "release_files_source.html")]
-struct SourceBody<'a> {
-    label: &'a str,
-    name: &'a str,
-    healthy: bool,
-    answers: bool,
-    current: Option<u64>,
-    table: Html,
-}
-struct Waiting {
-    id: String,
-    bundle: String,
-    heading: String,
-    detail: String,
-}
-#[derive(Template)]
-#[template(path = "release_files_upload.html")]
-struct UploadBody<'a> {
-    label: &'a str,
-    manages: bool,
-    input: Html,
-    submit: Html,
-    waiting: Vec<Waiting>,
-}
-#[derive(Template)]
-#[template(path = "release_files_pairing.html")]
-struct PairingBody<'a> {
-    label: &'a str,
-    status: &'a str,
-    set: bool,
-    manages: bool,
-    secret: Html,
-    save: Html,
-    clear: Html,
 }

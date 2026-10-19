@@ -300,7 +300,11 @@ impl Worker {
             return self.refuse(tenant, &job, &instance).await;
         }
         let plan = match Plan::from_request(&job.request) {
-            Ok(plan) => plan,
+            Ok(mut plan) => {
+                let client = self.db.get().await?;
+                plan.plugins = crate::jobs::planned_plugins(&**client, tenant, &job.review).await?;
+                plan
+            }
             Err(why) => {
                 let client = self.db.get().await?;
                 if self.claim(&**client, tenant, job.id).await? == 0 {

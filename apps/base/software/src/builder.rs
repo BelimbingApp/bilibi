@@ -93,6 +93,11 @@ pub struct Plan {
     pub platform_commit: String,
     pub platform_version: String,
     pub domains: Vec<PlannedDomain>,
+    /// The plug-ins the server has switched on once this release is in
+    /// service, as `{id, name, publisher, version, source}`: the worker sets
+    /// them from the server's list and the change under review, and they
+    /// travel in the release (`plugins/enabled.json`).
+    pub plugins: Vec<Value>,
 }
 #[derive(Clone, Debug)]
 pub struct PlannedDomain {
@@ -184,6 +189,7 @@ impl Plan {
             platform_commit,
             platform_version,
             domains,
+            plugins: Vec::new(),
         })
     }
     /// "Bilibi 0.1.0 with finance 0.1.0 and factory 0.1.0", or "with no Domains".
@@ -806,7 +812,8 @@ impl Build<'_> {
             }
         }
     }
-    /// The program, its recipe (`manifest.txt`, `Cargo.lock`), `SHA256SUMS`
+    /// The program, its recipe (`manifest.txt`, `Cargo.lock`), the plug-ins
+    /// switched on (`plugins/enabled.json`), `SHA256SUMS`
     /// and `release.json` into `dir`; then the new program's own `status`,
     /// which proves it starts. A release older than that command (before
     /// 0.1.1) answers with an error and is kept, with no status recorded;
@@ -824,6 +831,28 @@ impl Build<'_> {
                 &dir.join(recipe),
                 0o644,
             )?;
+        }
+        let plugins = dir.join(crate::transport::PLUGINS_DIR);
+        std::fs::create_dir(&plugins)
+            .map_err(|e| Failure::failed(format!("could not create {}: {e}", plugins.display())))?;
+        let enabled = plugins.join(crate::transport::PLUGINS_ENABLED);
+        std::fs::write(
+            &enabled,
+            serde_json::to_vec_pretty(&self.plan.plugins).unwrap_or_default(),
+        )
+        .map_err(|e| Failure::failed(format!("could not write {}: {e}", enabled.display())))?;
+        {
+            use std::os::unix::fs::PermissionsExt;
+            for (path, mode) in [(&plugins, 0o755), (&enabled, 0o644)] {
+                std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).map_err(
+                    |e| {
+                        Failure::failed(format!(
+                            "could not set permissions on {}: {e}",
+                            path.display()
+                        ))
+                    },
+                )?;
+            }
         }
         let mut checksum = self.command("sha256sum");
         checksum.current_dir(dir).arg("bilibi-web");

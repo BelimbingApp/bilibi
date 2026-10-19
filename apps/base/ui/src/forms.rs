@@ -1600,3 +1600,20 @@ impl AddMore {
         }
     }
 }
+
+/// A live form: raises `event` on submit, spaces its fields and puts the
+/// `actions` buttons on one row after them (no Bilimbi counterpart). `body`
+/// holds the rendered fields.
+#[derive(Template, Debug, Default)]
+#[template(
+    source = r#"{% import "forms.html" as forms %}{% call forms::form(id=id, event=event, change=change, class=class, actions=actions) %}{{ body|safe }}{% endcall %}"#,
+    ext = "html"
+)]
+pub struct Form<'a> {
+    pub id: &'a str,
+    pub event: &'a str,
+    pub change: bool,
+    pub class: &'a str,
+    pub body: Html,
+    pub actions: Html,
+}

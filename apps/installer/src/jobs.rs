@@ -213,6 +213,81 @@ pub async fn finish(
         .await?;
     Ok(())
 }
+/// The job's final state and result, with the plug-in list the release
+/// switches on put in `base_software_plugins` in the same transaction: the
+/// list and the outcome are recorded together or not at all.
+pub async fn finish_with_plugins(
+    client: &mut Client,
+    job: &Job,
+    state: &str,
+    result: &Value,
+    plugins: Option<&[Value]>,
+) -> Result<(), tokio_postgres::Error> {
+    let tx = client.transaction().await?;
+    if let Some(plugins) = plugins {
+        set_plugins(&tx, job, plugins).await?;
+    }
+    finish(&tx, job, state, result).await?;
+    tx.commit().await
+}
+/// The plug-ins switched on for the job's tenant, as `{id, name, publisher,
+/// version, source}`.
+pub async fn enabled_plugins(
+    client: &impl GenericClient,
+    job: &Job,
+) -> Result<Vec<Value>, tokio_postgres::Error> {
+    let rows = client
+        .query(
+            "SELECT plugin_id, name, publisher, version, source FROM base_software_plugins WHERE tenant_id=$1 AND enabled ORDER BY plugin_id",
+            &[&job.tenant],
+        )
+        .await?;
+    Ok(rows
+        .iter()
+        .map(|row| {
+            json!({
+                "id": row.get::<_, String>(0), "name": row.get::<_, String>(1),
+                "publisher": row.get::<_, Option<String>>(2), "version": row.get::<_, Option<String>>(3),
+                "source": row.get::<_, String>(4),
+            })
+        })
+        .collect())
+}
+/// Makes the plug-ins switched on exactly `plugins`: those listed are on,
+/// every other one is off.
+async fn set_plugins(
+    client: &impl GenericClient,
+    job: &Job,
+    plugins: &[Value],
+) -> Result<(), tokio_postgres::Error> {
+    let ids: Vec<String> = plugins
+        .iter()
+        .filter_map(|plugin| plugin["id"].as_str().map(str::to_owned))
+        .collect();
+    client
+        .execute(
+            "UPDATE base_software_plugins SET enabled=false, job_id=$3, updated_at=now() WHERE tenant_id=$1 AND enabled AND NOT (plugin_id = ANY($2))",
+            &[&job.tenant, &ids, &job.id],
+        )
+        .await?;
+    for plugin in plugins {
+        client
+            .execute(
+                "INSERT INTO base_software_plugins (tenant_id, plugin_id, name, publisher, version, source, enabled, job_id) VALUES ($1,$2,$3,$4,$5,$6,true,$7) ON CONFLICT (tenant_id, plugin_id) DO UPDATE SET name=EXCLUDED.name, publisher=EXCLUDED.publisher, version=EXCLUDED.version, source=EXCLUDED.source, enabled=true, job_id=EXCLUDED.job_id, updated_at=now()",
+                &[
+                    &job.tenant,
+                    &plugin["id"].as_str().unwrap_or_default(),
+                    &plugin["name"].as_str().unwrap_or_default(),
+                    &plugin["publisher"].as_str(),
+                    &plugin["version"].as_str(),
+                    &plugin["source"].as_str().unwrap_or("catalogue"),
+                    &job.id,
+                ],
+            )
+            .await?;
+    }
+    Ok(())
+}
 /// Starts the step that begins the pause, unless a cancel landed first. In
 /// one transaction with the job row locked: a cancel either arrives before
 /// this and stops the job here, or the app refuses it as too late.

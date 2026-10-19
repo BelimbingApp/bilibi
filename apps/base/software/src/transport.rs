@@ -48,6 +48,9 @@ pub const RELEASE_FILES: [&str; 6] = [
 ];
 /// Plug-ins that travel with the release live here, inside the folder.
 pub const PLUGINS_DIR: &str = "plugins";
+/// The plug-ins the release switches on, a list of `{id, name, publisher,
+/// version, source}` the builder writes in `PLUGINS_DIR`.
+pub const PLUGINS_ENABLED: &str = "enabled.json";
 /// A release file larger than this is refused unread: a program is tens of
 /// megabytes, never gigabytes.
 pub const MAX_BUNDLE_BYTES: u64 = 1024 * 1024 * 1024;
@@ -222,16 +225,11 @@ pub fn folder_facts(dir: &Path) -> Value {
     let bytes = fs::metadata(dir.join("bilibi-web"))
         .map(|meta| meta.len())
         .unwrap_or(0);
-    let plugins: Vec<String> = fs::read_dir(dir.join(PLUGINS_DIR))
-        .map(|entries| {
-            let mut names: Vec<String> = entries
-                .flatten()
-                .filter_map(|entry| entry.file_name().to_str().map(str::to_owned))
-                .collect();
-            names.sort();
-            names
-        })
-        .unwrap_or_default();
+    let plugins = fs::read_to_string(dir.join(PLUGINS_DIR).join(PLUGINS_ENABLED))
+        .ok()
+        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+        .filter(Value::is_array)
+        .unwrap_or(Value::Null);
     json!({
         "sha256": expected_checksum(dir).ok(),
         "bytes": bytes,

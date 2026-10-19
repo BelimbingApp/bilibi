@@ -141,3 +141,12 @@
 {% macro section(labelledby, heading="") %}
 <section class="rounded-xl border border-line bg-surface p-panel" aria-labelledby="{{ labelledby }}">{% if !heading.is_empty() %}<h2 id="{{ labelledby }}" class="mb-3 text-sm font-semibold text-ink">{{ heading }}</h2>{% endif %}{{ caller() }}</section>
 {% endmacro %}
+
+{#- A live form (no Bilimbi counterpart; its pages write the tag by hand): it
+    raises event on submit, spaces its fields one compact step apart and puts
+    its actions (an Html fragment of buttons) on one wrapping row after them.
+    The body is the fields. A form that must also react as values change adds
+    change=true (data-change). -#}
+{% macro form(id, event, change=false, class="", actions=bilibi_ui::Html::EMPTY) %}
+<form id="{{ id }}" data-event="{{ event }}"{% if change %} data-change{% endif %} class="space-y-3{% if !class.is_empty() %} {{ class }}{% endif %}">{{ caller() }}{% if !actions.is_empty() %}<div class="flex flex-wrap items-center gap-2">{{ actions|safe }}</div>{% endif %}</form>
+{% endmacro %}

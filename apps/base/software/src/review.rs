@@ -559,6 +559,15 @@ enum Chosen {
     Uploaded { bundle: String, facts: Value },
 }
 
+/// What this server already has that an install is checked against: the
+/// release files uploaded here, the checksum of the program in service and
+/// the plug-ins switched on.
+pub struct Held<'a> {
+    pub uploads: &'a [(String, Value)],
+    pub running_sha256: Option<&'a str>,
+    pub enabled_plugins: &'a [String],
+}
+
 /// An install on Staging or Production of a release the source instance
 /// tested (`release`), or of a release file uploaded here (`bundle`).
 pub fn install(
@@ -567,9 +576,13 @@ pub fn install(
     active: Option<&Job>,
     input: &Value,
     source: Option<&SourceFacts>,
-    uploads: &[(String, Value)],
-    running_sha256: Option<&str>,
+    held: &Held<'_>,
 ) -> Result<Review> {
+    let Held {
+        uploads,
+        running_sha256,
+        enabled_plugins,
+    } = *held;
     if instance.role.builds() {
         return Err(SoftwareError::field("instance", &format!("{} builds its own software; use base.software.change here. Installing a tested release is for Staging and Production.", instance.label)));
     }
@@ -706,6 +719,17 @@ pub fn install(
                 .into(),
         );
     }
+    if let (Chosen::Uploaded { .. }, Some(installs_from)) = (&chosen, &instance.installs_from) {
+        if !made_by(&facts, installs_from) {
+            warnings.push(format!(
+                "This file was made on {}, not on {}, which this server normally installs from.",
+                facts["from"]["label"]
+                    .as_str()
+                    .unwrap_or("another instance"),
+                source_short(installs_from)
+            ));
+        }
+    }
     let changes = changes_between(made, &facts);
     if changes.is_null() {
         warnings.push("What this release holds is not recorded, so the change list is known only once the installer reads it.".into());
@@ -724,6 +748,23 @@ pub fn install(
             ));
         }
     }
+    // The plug-ins the release switches on travel with it; a release that
+    // does not say leaves the server's own list as it is.
+    let plugins = facts["plugins"].as_array().map(|list| {
+        let wanted = plugin_ids(list);
+        let (on, off) = plugin_moves(enabled_plugins, &wanted);
+        json!({"enabled": wanted, "switch_on": on, "switch_off": off})
+    });
+    let plugin_words = plugins.as_ref().and_then(|plugins| {
+        plugin_words(
+            &strings(&plugins["switch_on"]),
+            &strings(&plugins["switch_off"]),
+        )
+    });
+    let change_list = match (describe_changes(&changes), plugin_words) {
+        (Some(list), Some(words)) => Some(format!("{list}; {words}")),
+        (list, words) => list.or(words),
+    };
     let mut request = json!({"release": release, "source": source_json_value, "switch": switch});
     if let Chosen::Uploaded { bundle, .. } = &chosen {
         request["bundle"] = json!(bundle);
@@ -757,7 +798,8 @@ pub fn install(
         "release_facts": {"sha256": facts["sha256"], "bytes": facts["bytes"], "platform": facts["platform"], "domains": facts["domains"], "built_for": facts["built_for"], "from": facts["from"]},
         "running": {"platform": made.version, "release": made.tag, "domains": made.containers.iter().filter(|c| c.layer == Layer::Domains).map(|c| json!({"id": c.id, "version": c.version})).collect::<Vec<_>>()},
         "changes": changes,
-        "change_list": describe_changes(&changes),
+        "plugins": plugins,
+        "change_list": change_list,
         "checks": checks,
         "warnings": warnings,
         "pause_minutes": PAUSE_MINUTES,
@@ -774,6 +816,64 @@ pub fn install(
         facts: facts_json,
         switch,
     })
+}
+/// The ids in a list of `{id, ...}` plug-in entries.
+fn plugin_ids(list: &[Value]) -> Vec<String> {
+    list.iter()
+        .filter_map(|plugin| plugin["id"].as_str().map(str::to_owned))
+        .collect()
+}
+fn strings(list: &Value) -> Vec<String> {
+    list.as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|id| id.as_str().map(str::to_owned))
+        .collect()
+}
+/// Going from the plug-ins switched on `now` to `wanted`: (to switch on, to switch off).
+fn plugin_moves(now: &[String], wanted: &[String]) -> (Vec<String>, Vec<String>) {
+    (
+        wanted
+            .iter()
+            .filter(|id| !now.contains(id))
+            .cloned()
+            .collect(),
+        now.iter()
+            .filter(|id| !wanted.contains(id))
+            .cloned()
+            .collect(),
+    )
+}
+/// "switch on a, b; switch off c", or nothing when the list stays.
+fn plugin_words(on: &[String], off: &[String]) -> Option<String> {
+    let mut parts = Vec::new();
+    if !on.is_empty() {
+        parts.push(format!("switch on plug-in {}", on.join(", ")));
+    }
+    if !off.is_empty() {
+        parts.push(format!("switch off plug-in {}", off.join(", ")));
+    }
+    (!parts.is_empty()).then(|| parts.join("; "))
+}
+/// Whether a release file says it was made by the instance this one installs
+/// from. The file's `bundle.json` is the only record and nobody signs it, so
+/// a mismatch is a warning on the review, never a refusal.
+fn made_by(file: &Value, source: &Source) -> bool {
+    match source {
+        Source::SameMachine(name) => file["from"]["name"].as_str() == Some(name.as_str()),
+        Source::Https(address) => file["from"]["origin"].as_str().is_some_and(|origin| {
+            origin
+                .trim_end_matches('/')
+                .eq_ignore_ascii_case(address.trim_end_matches('/'))
+        }),
+    }
+}
+/// The source as a short name inside a sentence: the instance name or the address.
+fn source_short(source: &Source) -> &str {
+    match source {
+        Source::SameMachine(name) => name,
+        Source::Https(address) => address,
+    }
 }
 /// How the owner reads the source in a sentence.
 pub fn source_name(source: &Source) -> String {
@@ -882,7 +982,7 @@ pub fn pair(input: &Value) -> Result<Review> {
     Ok(Review {
         target: format!("pair: {summary}"),
         request,
-        facts: json!({"summary": summary, "clear": clear, "step_up": []}),
+        facts: json!({"summary": summary, "clear": clear, "step_up": [STEP_UP]}),
         switch: "auto".into(),
     })
 }
@@ -899,6 +999,8 @@ pub struct UndoFacts {
     pub backup: Option<String>,
     /// When the backup was taken (UTC), so what would be lost can be counted.
     pub backup_at: Option<String>,
+    /// The plug-ins switched on after it and before it, when it recorded them.
+    pub plugins: Option<(Vec<String>, Vec<String>)>,
 }
 /// Undo needs the facts the worker wrote at the end: which release it put
 /// in service, which one it replaced, and whether the database was changed
@@ -939,6 +1041,15 @@ pub fn undo_facts(job: &Job) -> std::result::Result<UndoFacts, String> {
         restores_backup: migrated,
         backup: result["backup"].as_str().map(str::to_owned),
         backup_at: result["backup_at"].as_str().map(str::to_owned),
+        plugins: result["plugins"]["before"].as_array().map(|before| {
+            (
+                plugin_ids(before),
+                result["plugins"]["after"]
+                    .as_array()
+                    .map(|after| plugin_ids(after))
+                    .unwrap_or_default(),
+            )
+        }),
     })
 }
 /// Taking back the newest finished change or install. `lost` is what the
@@ -993,6 +1104,20 @@ pub fn undo(
     } else {
         "Your data stays as it is.".into()
     };
+    let plugins = facts.plugins.as_ref().map(|(before, after)| {
+        let (on, off) = plugin_moves(after, before);
+        json!({"enabled": before, "switch_on": on, "switch_off": off})
+    });
+    let plugin_note = facts
+        .plugins
+        .as_ref()
+        .and_then(|(before, after)| {
+            let (on, off) = plugin_moves(after, before);
+            plugin_words(&on, &off)
+        })
+        .map_or(String::new(), |words| {
+            format!(" The plug-ins go back too: {words}.")
+        });
     let summary = format!(
         "{}: undo job {} (back to release {} from {})",
         instance.label, last.id, facts.previous_release, facts.release
@@ -1010,8 +1135,9 @@ pub fn undo(
         "backup_at": facts.backup_at,
         "lost": lost,
         "loss": loss,
+        "plugins": plugins,
         "pause_minutes": PAUSE_MINUTES,
-        "what_happens": format!("{} pauses for about {PAUSE_MINUTES} minute, switches back to release {} and checks that it works. {loss}", instance.label, facts.previous_release),
+        "what_happens": format!("{} pauses for about {PAUSE_MINUTES} minute, switches back to release {} and checks that it works. {loss}{plugin_note}", instance.label, facts.previous_release),
         "steps": jobs::undo_steps(facts.restores_backup).iter().map(|s| json!({"seq": s.seq, "key": s.key, "label": s.label, "pauses": s.pauses})).collect::<Vec<_>>(),
         "step_up": [STEP_UP],
     });

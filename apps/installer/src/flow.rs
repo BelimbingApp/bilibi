@@ -51,6 +51,8 @@ struct Undone {
     migrated: bool,
     original: Option<PathBuf>,
     since: String,
+    /// The plug-ins that were switched on before it, when it recorded them.
+    plugins: Option<Vec<Value>>,
 }
 /// Where the release the owner asked for was found, and how to name it.
 struct Found {
@@ -59,8 +61,9 @@ struct Found {
     name: String,
     /// "dev release 3", "https://dev.example.com release 3", "the uploaded file upload-2 (…)".
     text: String,
-    /// The folder under `incoming/` it came in, removed once copied.
-    incoming: Option<PathBuf>,
+    /// The folder under `incoming/` an uploaded file was unpacked into; it
+    /// stays for another try unless the file is spent or cannot be installed.
+    uploaded: Option<PathBuf>,
 }
 /// Where a failed install or undo goes back to, and what it says about it.
 struct Back {
@@ -170,9 +173,19 @@ impl<'a> Run<'a> {
         self.set(key, "failed", detail).await
     }
     async fn finish(&mut self, state: &str, result: Value) -> Db<()> {
+        self.finish_with_plugins(state, result, None).await
+    }
+    /// `finish`, with the plug-ins that are to be switched on after it put
+    /// in the same transaction as the outcome.
+    async fn finish_with_plugins(
+        &mut self,
+        state: &str,
+        result: Value,
+        plugins: Option<&[Value]>,
+    ) -> Db<()> {
         self.forget_history();
         jobs::skip_pending(&*self.client, &self.job).await?;
-        jobs::finish(&*self.client, &self.job, state, &result).await?;
+        jobs::finish_with_plugins(&mut *self.client, &self.job, state, &result, plugins).await?;
         self.log(&format!(
             "{state}: {}",
             result["message"].as_str().unwrap_or("")
@@ -279,12 +292,7 @@ impl<'a> Run<'a> {
             }
             // A release downloaded for this job is downloaded again when the
             // owner starts again; an uploaded file stays for it.
-            if let Some(dir) = self.detail("download")["folder"]
-                .as_str()
-                .and_then(|folder| self.layout.incoming(folder))
-            {
-                let _ = fs::remove_dir_all(dir);
-            }
+            self.drop_download();
             self.interrupted(
                 "The installer was interrupted before the pause. Nothing changed. Start again.",
             )
@@ -487,23 +495,30 @@ impl<'a> Run<'a> {
                 fetched["source_release"]
             ),
         };
+        let after = fetched["plugins"].as_array().cloned();
+        let before = match &after {
+            Some(_) => Some(jobs::enabled_plugins(&*self.client, &self.job).await?),
+            None => None,
+        };
         let message = format!(
-            "Release {release} is in service, installed from {from}.{database} {}",
+            "Release {release} is in service, installed from {from}.{database} {}{}",
             composition::describe(&fetched["changes"]),
+            plugin_sentence(before.as_deref(), after.as_deref()),
         );
-        self.finish(
-            "done",
-            json!({
-                "release": release, "previous_release": previous, "migrated": migrated,
-                "backup": backup["backup"], "backup_at": backup["backup_at"],
-                "source": fetched["source"], "source_release": fetched["source_release"],
-                "sha256": fetched["sha256"], "program": fetched["program"],
-                "platform": fetched["platform"], "domains": fetched["domains"],
-                "extensions": fetched["extensions"], "changes": fetched["changes"],
-                "pause_seconds": seconds, "message": with_pause(message.trim_end(), seconds),
-            }),
-        )
-        .await?;
+        let mut result = json!({
+            "release": release, "previous_release": previous, "migrated": migrated,
+            "backup": backup["backup"], "backup_at": backup["backup_at"],
+            "source": fetched["source"], "source_release": fetched["source_release"],
+            "sha256": fetched["sha256"], "program": fetched["program"],
+            "platform": fetched["platform"], "domains": fetched["domains"],
+            "extensions": fetched["extensions"], "changes": fetched["changes"],
+            "pause_seconds": seconds, "message": with_pause(message.trim_end(), seconds),
+        });
+        if let Some(before) = &before {
+            result["plugins"] = json!({"before": before, "after": after});
+        }
+        self.finish_with_plugins("done", result, after.as_deref())
+            .await?;
         self.prune(&[release, previous]);
         Ok(())
     }
@@ -512,8 +527,24 @@ impl<'a> Run<'a> {
     /// checked and tried. It comes from a sibling instance's folder, from
     /// the folder the program downloaded it into (`incoming/job-<id>/`),
     /// or from an uploaded file (`incoming/upload-<n>/`); the checks are
-    /// the same whichever way it came.
+    /// the same whichever way it came. A downloaded release is never reused
+    /// (a new try downloads again under a new job), so its folder goes
+    /// whatever the outcome.
     async fn fetch(&mut self) -> Result<Value, String> {
+        let fetched = self.fetch_release().await;
+        self.drop_download();
+        fetched
+    }
+    /// Removes the folder the program downloaded this job's release into.
+    fn drop_download(&self) {
+        if let Some(dir) = self.detail("download")["folder"]
+            .as_str()
+            .and_then(|folder| self.layout.incoming(folder))
+        {
+            let _ = fs::remove_dir_all(dir);
+        }
+    }
+    async fn fetch_release(&mut self) -> Result<Value, String> {
         if !self.layout.converted() {
             return Err(self.layout.conversion_advice());
         }
@@ -568,7 +599,7 @@ impl<'a> Run<'a> {
                     from,
                     name: name.clone(),
                     text: format!("{name} release {wanted}"),
-                    incoming: None,
+                    uploaded: None,
                 }
             }
             Some("https") => {
@@ -590,7 +621,7 @@ impl<'a> Run<'a> {
                     from: from.clone(),
                     name: address.clone(),
                     text: format!("{address} release {wanted}"),
-                    incoming: Some(from),
+                    uploaded: None,
                 }
             }
             Some("upload") => {
@@ -617,15 +648,15 @@ impl<'a> Run<'a> {
                     from: from.clone(),
                     name: bundle.clone(),
                     text: format!("the uploaded file {bundle}{detail}"),
-                    incoming: Some(from),
+                    uploaded: Some(from),
                 }
             }
             _ => return Err("the request names no source".into()),
         };
         let checked = self.copy_checked(&source, wanted).await;
-        if let Some(dir) = &source.incoming {
-            // A release that failed its checks, or that is now copied into
-            // place, has no reason to wait in incoming/ any longer.
+        if let Some(dir) = &source.uploaded {
+            // An uploaded file waits for another try, unless it is now copied
+            // into place or failed its checks.
             if checked.is_ok()
                 || matches!(&checked, Err(reason) if reason.contains("checksum") || reason.contains("built for") || reason.contains("does not run"))
             {
@@ -697,6 +728,9 @@ impl<'a> Run<'a> {
         let status = program_status(&dst).inspect_err(|_| {
             let _ = fs::remove_dir_all(&dst);
         })?;
+        let plugins = layout::read_plugins(&dst).inspect_err(|_| {
+            let _ = fs::remove_dir_all(&dst);
+        })?;
         let program: String = status
             .lines()
             .next()
@@ -711,7 +745,7 @@ impl<'a> Run<'a> {
             "release": n, "previous": current, "source_release": wanted, "source": source.name, "source_text": source.text,
             "sha256": sha, "bytes": bytes, "program": program,
             "platform": now["platform"], "domains": now["domains"], "extensions": now["extensions"],
-            "changes": changes,
+            "changes": changes, "plugins": plugins,
         }))
     }
     /// With `switch: ask`, the instance keeps running until the owner says
@@ -1082,22 +1116,28 @@ impl<'a> Run<'a> {
         let changes =
             composition::diff(&composition_of(&self.layout.release(undone.release)), &now);
         let seconds = self.pause_seconds().await?;
+        let before = match &undone.plugins {
+            Some(_) => Some(jobs::enabled_plugins(&*self.client, &self.job).await?),
+            None => None,
+        };
         let message = format!(
-            "Back on release {previous}. {data} {}",
-            composition::describe(&changes)
+            "Back on release {previous}. {data} {}{}",
+            composition::describe(&changes),
+            plugin_sentence(before.as_deref(), undone.plugins.as_deref()),
         );
-        self.finish(
-            "done",
-            json!({
-                "release": previous, "previous_release": undone.release, "migrated": restores && undone.migrated,
-                "backup": safety["backup"], "backup_at": safety["backup_at"], "restored": restores,
-                "lost": self.detail("restore")["lost"],
-                "platform": now["platform"], "domains": now["domains"], "extensions": now["extensions"],
-                "changes": changes,
-                "pause_seconds": seconds, "message": with_pause(message.trim_end(), seconds),
-            }),
-        )
-        .await?;
+        let mut result = json!({
+            "release": previous, "previous_release": undone.release, "migrated": restores && undone.migrated,
+            "backup": safety["backup"], "backup_at": safety["backup_at"], "restored": restores,
+            "lost": self.detail("restore")["lost"],
+            "platform": now["platform"], "domains": now["domains"], "extensions": now["extensions"],
+            "changes": changes,
+            "pause_seconds": seconds, "message": with_pause(message.trim_end(), seconds),
+        });
+        if let Some(before) = &before {
+            result["plugins"] = json!({"before": before, "after": undone.plugins});
+        }
+        self.finish_with_plugins("done", result, undone.plugins.as_deref())
+            .await?;
         self.prune(&[previous, undone.release]);
         Ok(())
     }
@@ -1130,6 +1170,7 @@ impl<'a> Run<'a> {
             migrated: facts["migrated"].as_bool().unwrap_or(false),
             original: facts["backup"].as_str().map(PathBuf::from),
             since: facts["backup_at"].as_str().unwrap_or("").to_owned(),
+            plugins: facts["plugins"]["before"].as_array().cloned(),
         }))
     }
 
@@ -1191,6 +1232,45 @@ fn program_status(dir: &std::path::Path) -> Result<String, String> {
 /// run.
 fn composition_of(dir: &std::path::Path) -> Value {
     program_status(dir).map_or(Value::Null, |status| composition::parse(&status))
+}
+/// What changes in the plug-ins switched on, in words, or nothing when the
+/// release does not say or the list stays the same.
+fn plugin_sentence(before: Option<&[Value]>, after: Option<&[Value]>) -> String {
+    let (Some(before), Some(after)) = (before, after) else {
+        return String::new();
+    };
+    let ids = |list: &[Value]| -> Vec<String> {
+        list.iter()
+            .filter_map(|plugin| plugin["id"].as_str().map(str::to_owned))
+            .collect()
+    };
+    let (was, now) = (ids(before), ids(after));
+    let on: Vec<&String> = now.iter().filter(|id| !was.contains(id)).collect();
+    let off: Vec<&String> = was.iter().filter(|id| !now.contains(id)).collect();
+    let mut parts = Vec::new();
+    if !on.is_empty() {
+        parts.push(format!(
+            "switched on {}",
+            on.iter()
+                .map(|id| id.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    if !off.is_empty() {
+        parts.push(format!(
+            "switched off {}",
+            off.iter()
+                .map(|id| id.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    if parts.is_empty() {
+        String::new()
+    } else {
+        format!(" Plug-ins: {}.", parts.join("; "))
+    }
 }
 fn pause_sentence(seconds: i64) -> String {
     format!(

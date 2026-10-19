@@ -15,4 +15,8 @@
 <p class="text-xs text-ink-muted">Each bordered part of a form is a section with one compact padding and heading, so no page sets its own.</p>
 {% call form::section(labelledby="specimen-form-section-heading", heading="Address details") %}<p class="text-sm text-ink-muted">The part's fields sit here, 12 px apart.</p>{% endcall %}
 </div>
+<div id="specimen-form-shell" class="space-y-2 rounded-xl border border-line bg-surface p-4 shadow-xs">
+<p class="text-xs text-ink-muted">A live form raises its event on submit, keeps its fields one compact step apart.</p>
+{% call form::form(id="specimen-form-shell-form", event="specimen_save") %}<p class="text-sm text-ink-muted">The form's fields sit here, 12 px apart.</p>{% endcall %}
+</div>
 </div>
