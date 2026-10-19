@@ -34,8 +34,6 @@ pub const PAIRING_HEADER: &str = "x-bilibi-pairing-key";
 pub const LISTING_PATH: &str = "/transport/releases";
 /// The media type of a release file.
 pub const BUNDLE_TYPE: &str = "application/gzip";
-/// The owner `seal_owned` binds the pairing key to.
-pub const OWNER: &str = "base/software";
 /// The files of a release folder, in the order the file carries them. A
 /// release put in by `install-server.sh release` has only the first two.
 pub const RELEASE_FILES: [&str; 6] = [

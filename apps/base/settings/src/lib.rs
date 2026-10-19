@@ -329,6 +329,40 @@ impl Settings {
         }
         Ok(value)
     }
+    /// The one read of a secret with no session behind it: a module's own
+    /// encrypted, global-scope setting, for a request that comes from a
+    /// machine (another Bilibi instance presenting its pairing key). `owner`
+    /// must be the module that contributed the definition, and the
+    /// definition must be encrypted and hold a global value; anything else
+    /// refuses. The intended caller is `bilibi_authz::SystemScope::read_own_secret`,
+    /// which proves the caller is a system principal that module declared;
+    /// nothing else should name a module here. Never log the result.
+    pub async fn get_own_global_secret(
+        &self,
+        client: &(impl GenericClient + Sync),
+        owner: &str,
+        key: &str,
+    ) -> Result<Value> {
+        let owned = self.definitions.lookup(key)?;
+        let definition = match owned.setting {
+            Setting::Definition(d)
+                if d.encrypted && d.scopes.contains(&ScopeKind::Global) && owned.owner == owner =>
+            {
+                d
+            }
+            _ => return Err(Error::Forbidden),
+        };
+        let row = client.query_opt("SELECT value,is_encrypted FROM base_settings WHERE key=$1 AND tenant_id=0 AND scope_type='global' AND scope_id=0", &[&key]).await?;
+        let Some(row) = row else {
+            return Ok((definition.default)());
+        };
+        let global = StorageScope {
+            kind: ScopeKind::Global,
+            tenant: 0,
+            id: 0,
+        };
+        self.decode(key, global, &row, true)
+    }
     /// The caller owns the surrounding transaction. Missing/invalid encryption
     /// keys refuse the write before SQL; secret values never enter audit data.
     pub async fn put(

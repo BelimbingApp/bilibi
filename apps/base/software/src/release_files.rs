@@ -518,10 +518,10 @@ impl View {
     fn pairing_section(&self, instance: &Instance, facts: &Value, manages: bool) -> Result<Html> {
         let pairing = &facts["pairing"];
         let set = pairing["set"].as_bool() == Some(true);
-        let status = match (set, pairing["set_at"].as_str()) {
-            (true, Some(at)) => format!("Set (since {})", crate::review::utc_text(at)),
-            (true, None) => "Set".to_owned(),
-            (false, _) => "Not set".to_owned(),
+        let status = if set {
+            "Set (stored encrypted; the settings editor lists it under Software)".to_owned()
+        } else {
+            "Not set".to_owned()
         };
         let mut body = render(Facts {
             id: "release-files-pairing-facts",

@@ -25,6 +25,13 @@ Bulk reads use one uncached SQL snapshot and only the requested scope identities
 for consumers with no session (signed links, workers). Encrypted definitions,
 runtime claims and keys without a global scope refuse; a secret needs an
 explicit, authorized `get`.
+The one exception is `Settings::get_own_global_secret(client, owner, key)`:
+a module's own encrypted, global definition (the definition's contributing
+module must be `owner`), for a request that comes from a machine and so has
+no session. Its intended caller is `bilibi_authz::SystemScope::read_own_secret`,
+which proves the caller is a system principal that module declared; nothing
+else should name a module there, and no other key, scope or module is readable
+that way.
 
 `Target` is a request, not permission. The actor is a sealed Tenancy `Scope`.
 User means the actor's own account; tenant means their tenant. Each company read,

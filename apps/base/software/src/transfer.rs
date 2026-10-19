@@ -103,9 +103,8 @@ impl Software {
     pub async fn releases_with(&self, scope: &Scope, source: Option<Value>) -> Result<Value> {
         let client = self.db.get().await?;
         authorize_operator(&**client, scope, VIEW).await?;
-        let tenant = scope.tenant();
         let instance = Instance::resolve(&self.settings, &**client).await?;
-        let pairing = pairing::state(&**client, tenant).await?;
+        let pairing = pairing::state_json(pairing::is_set(&**client, &self.settings, scope).await?);
         drop(client);
         let (here, uploads) = match self.paths() {
             Ok(paths) => (
@@ -130,7 +129,7 @@ impl Software {
             "instance": review::instance_json(&instance),
             "source": source,
             "uploads": uploads,
-            "pairing": pairing.json(),
+            "pairing": pairing,
             "here": here,
         }))
     }
@@ -144,7 +143,7 @@ impl Software {
             (None, false) => {
                 json!({"available": false, "message": format!("{} has no source yet. A server owner sets \"Install releases tested on\" under Instance in the settings, or uploads a release file here.", instance.label)})
             }
-            (Some(from), false) => match self.source_listing(scope, scope.tenant(), from).await? {
+            (Some(from), false) => match self.source_listing(scope, from).await? {
                 Ok(mut listing) => {
                     listing["available"] = json!(true);
                     listing["source"] = review::instance_json(instance)["installs_from"].clone();
@@ -163,7 +162,6 @@ impl Software {
     pub(crate) async fn source_listing(
         &self,
         scope: &Scope,
-        tenant: i64,
         source: &Source,
     ) -> Result<std::result::Result<Value, String>> {
         match source {
@@ -180,7 +178,7 @@ impl Software {
             }
             Source::Https(address) => {
                 let client = self.db.get().await?;
-                let Some(key) = pairing::key(&**client, &self.settings, tenant).await? else {
+                let Some(key) = pairing::key(&**client, &self.settings, scope).await? else {
                     return Ok(Err(format!(
                         "No pairing key is set here. Set the same pairing key on this instance and on {address} first."
                     )));
@@ -233,8 +231,8 @@ impl Software {
         } else {
             input["key"].as_str().map(str::trim)
         };
-        let state = pairing::put(tx, &self.settings, scope.tenant(), scope.user(), key).await?;
-        Ok(json!({"pairing": state.json(), "review": review.facts}))
+        let set = pairing::put(tx, &self.settings, scope, key).await?;
+        Ok(json!({"pairing": pairing::state_json(set), "review": review.facts}))
     }
 
     /// Release `n`'s file, for the owner to download here and upload on
@@ -468,7 +466,7 @@ impl Software {
             )
             .await
             .map_err(|_| "The account that asked for this install is no longer active, so the download was not made in its name. Ask again.".to_owned())?;
-        let key = pairing::key(&**client, &self.settings, tenant)
+        let key = pairing::key(&**client, &self.settings, &scope)
             .await
             .map_err(db)?
             .ok_or_else(|| format!("No pairing key is set here. Set the same pairing key on this instance and on {address}, then ask again."))?;

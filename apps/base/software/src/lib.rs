@@ -24,7 +24,10 @@ mod transport;
 mod web;
 mod worker;
 
-use bilibi_authz::{authorize_operator, CapabilityDefinition, VocabularyContribution, VOCABULARY};
+use bilibi_authz::{
+    authorize_operator, CapabilityDefinition, SystemPrincipalDefinition, VocabularyContribution,
+    VOCABULARY,
+};
 use bilibi_database::{Context, Db, Error, MutationBoundary, MutationTransaction, Result};
 use bilibi_integration::Integration;
 use bilibi_module_registry::{
@@ -190,7 +193,7 @@ impl Software {
             "instance": review::instance_json(&instance),
             "installed": review::installed_json(&self.composition),
             "plugins": jobs::plugins_json(&**client, tenant).await?,
-            "pairing": pairing::state(&**client, tenant).await?.json(),
+            "pairing": pairing::state_json(pairing::is_set(&**client, &self.settings, scope).await?),
             "job": job,
             "undo": undo,
             "jobs": recent.iter().map(|job| json!({"id": job.id, "kind": job.kind, "state": job.state,
@@ -645,7 +648,7 @@ impl Software {
         // file needs no source.
         let source = match (&instance.installs_from, input["bundle"].as_str()) {
             (Some(from), None) if !instance.role.builds() => Some(review::SourceFacts {
-                listing: self.source_listing(scope, scope.tenant(), from).await?,
+                listing: self.source_listing(scope, from).await?,
             }),
             _ => None,
         };
@@ -781,7 +784,10 @@ macro_rules! provenance {
 inventory::submit! { Contribution::new(VOCABULARY, "base/software", provenance!(), &VocabularyContribution {
     domains: &[], verbs: &[],
     capabilities: &[CapabilityDefinition::platform(VIEW), CapabilityDefinition::platform(MANAGE)],
-    roles: &[], system_principals: &[],
+    roles: &[],
+    // The source reads its own pairing key as this principal on a request from
+    // another instance, which has no session (`pairing.rs`).
+    system_principals: &[SystemPrincipalDefinition { name: pairing::PRINCIPAL, capabilities: &[] }],
 }) }
 inventory::submit! { Contribution::new(DEFINITIONS, CATALOGUE_URL_KEY, provenance!(), &Setting::Definition(Definition {
     value_type: ValueType::String, scopes: &[ScopeKind::Global], default: || json!(DEFAULT_CATALOGUE_URL), nullable: false, encrypted: false,
@@ -789,6 +795,14 @@ inventory::submit! { Contribution::new(DEFINITIONS, CATALOGUE_URL_KEY, provenanc
     validator: Some(Validator { accepts: |value: &Value| value.as_str().is_some_and(|url| { let url = url.trim(); url.starts_with("https://") && url.len() <= 2048 && !url.chars().any(char::is_whitespace) }), message: "The catalogue address must start with https://, like https://raw.githubusercontent.com/BelimbingApp/bilibi/catalogue/catalogue.json." }),
     editor: Some(Editor { group: "Software", label: "Catalogue address: where the list of Domains and releases is read from",
         help: "The published catalogue.json that lists the Platform and Domain releases and which were tested together. Change it only to read a catalogue you publish yourself (server owner only).",
+        capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
+})) }
+inventory::submit! { Contribution::new(DEFINITIONS, pairing::KEY, provenance!(), &Setting::Definition(Definition {
+    value_type: ValueType::String, scopes: &[ScopeKind::Global], default: || json!(null), nullable: true, encrypted: true,
+    minimum: None, maximum: None,
+    validator: Some(Validator { accepts: pairing::accepts_value, message: "The pairing key must be 16 to 128 characters with no spaces, like the output of: openssl rand -hex 24" }),
+    editor: Some(Editor { group: "Software", label: "Pairing key other instances use to download releases from this one",
+        help: "Set the same key on every instance that shares releases: the one that installs presents it, the one it installs from checks it. Stored encrypted and never shown back. Saving it from the Release files page or an assistant asks for your authenticator code (server owner only).",
         capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
 })) }
 inventory::submit! { Contribution::new(DEFINITIONS, BUILD_JOBS_KEY, provenance!(), &Setting::Definition(Definition {
@@ -861,7 +875,7 @@ inventory::submit! {
     bilibi_module_registry::Module {
         id: "base/software", layer: bilibi_module_registry::Layer::Base,
         dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/agent_api", "base/settings", "base/step_up", "base/system", "base/notifications", "base/integration", "base/audit", "base/ui", "base/menu", "base/datetime", "base/locale"],
-        migrations: &[("base-software-001-jobs", include_str!("../migrations/001-jobs.sql")), ("base-software-002-settled", include_str!("../migrations/002-settled.sql")), ("base-software-003-pairing", include_str!("../migrations/003-pairing.sql"))],
+        migrations: &[("base-software-001-jobs", include_str!("../migrations/001-jobs.sql")), ("base-software-002-settled", include_str!("../migrations/002-settled.sql"))],
         // Declaration order is build order: the page service reads this one.
         services: &[bilibi_module_registry::Service { id: SERVICE, factory: |services| {
             let software = Arc::new(Software {

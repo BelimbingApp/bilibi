@@ -1,38 +1,29 @@
 //! The pairing key: what an instance presents when it downloads releases
 //! from its source, and what the source compares it with. One key per
 //! server, set once on both sides by the server owner (`README.md`,
-//! "Pairing"). It is kept sealed in this module's own table with the
-//! installation's settings key (`Settings::seal_owned`), not as a setting,
-//! because the source checks it on a request from a machine, which has no
-//! session to release a setting to. It is never shown back and never logged.
-use crate::transport::OWNER;
-use bilibi_database::{Change, Error, MutationTransaction, Result};
-use bilibi_settings::Settings;
+//! "Pairing"). It is a secret setting like the other secrets
+//! (`software.pairing_key`: encrypted, global, server owner only, shown in
+//! the settings editor and never shown back), set from the Release files
+//! page or `base.software.pair` with the owner's authenticator code. The
+//! source checks it on a request from a machine, which has no session, so
+//! that one read goes through this module's own system principal
+//! (`SystemScope::read_own_secret`): the narrowest read Settings allows.
+use bilibi_authz::SystemScope;
+use bilibi_database::{MutationTransaction, Result};
+use bilibi_settings::{Settings, Target};
+use bilibi_tenancy::Scope;
 use serde_json::{json, Value};
 use subtle::ConstantTimeEq;
 use tokio_postgres::GenericClient;
 
-/// The record kind the audit trail shows for a key set or cleared.
-pub const RECORD: &str = "base/software.pairing";
-/// The row the key is sealed to (one per tenant).
-const RECORD_ID: i64 = 0;
-const TIME: &str = "'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'";
+/// The setting that holds the key (`lib.rs` contributes its definition).
+pub const KEY: &str = "software.pairing_key";
+/// The system principal the source reads the key as, declared in this
+/// module's vocabulary (`lib.rs`).
+pub const PRINCIPAL: &str = "software-transport";
 /// A key is long enough to be a secret and short enough to paste.
 pub const MIN_KEY_CHARS: usize = 16;
 pub const MAX_KEY_CHARS: usize = 128;
-
-/// Whether a key is set, and by whom; never the key.
-#[derive(Clone, Debug)]
-pub struct State {
-    pub set: bool,
-    pub set_by: Option<i64>,
-    pub set_at: Option<String>,
-}
-impl State {
-    pub fn json(&self) -> Value {
-        json!({"set": self.set, "set_by": self.set_by, "set_at": self.set_at})
-    }
-}
 
 /// What a key must look like: printable, no spaces, 16 to 128 characters.
 pub fn check(key: &str) -> std::result::Result<(), String> {
@@ -49,54 +40,40 @@ pub fn check(key: &str) -> std::result::Result<(), String> {
     }
     Ok(())
 }
+/// The setting's validator: null (no key) or a key that passes `check`.
+pub fn accepts_value(value: &Value) -> bool {
+    value.is_null() || value.as_str().is_some_and(|key| check(key).is_ok())
+}
 
-pub async fn state(client: &impl GenericClient, tenant: i64) -> Result<State> {
-    let row = client
-        .query_opt(
-            &format!("SELECT set_by, to_char(set_at AT TIME ZONE 'UTC', {TIME}) FROM base_software_pairing WHERE tenant_id=$1"),
-            &[&tenant],
-        )
-        .await?;
-    Ok(match row {
-        Some(row) => State {
-            set: true,
-            set_by: Some(row.get(0)),
-            set_at: Some(row.get(1)),
-        },
-        None => State {
-            set: false,
-            set_by: None,
-            set_at: None,
-        },
-    })
-}
-/// The key of one tenant, opened. Never log it.
-pub async fn key(
-    client: &impl GenericClient,
+/// Whether a key is set, as the page and `status` say it; never the key.
+pub async fn is_set(
+    client: &(impl GenericClient + Sync),
     settings: &Settings,
-    tenant: i64,
-) -> Result<Option<String>> {
-    let row = client
-        .query_opt(
-            "SELECT sealed FROM base_software_pairing WHERE tenant_id=$1",
-            &[&tenant],
-        )
+    scope: &Scope,
+) -> Result<bool> {
+    let resolved = settings
+        .resolve_masked(client, scope, Target::Global, &[KEY])
         .await?;
-    let Some(row) = row else {
-        return Ok(None);
-    };
-    let sealed: Value = row.get(0);
-    let opened = settings.open_owned(OWNER, tenant, RECORD_ID, &sealed)?;
-    opened
-        .as_str()
-        .map(|key| Some(key.to_owned()))
-        .ok_or(Error::Invalid)
+    Ok(resolved.get(KEY).is_some_and(|r| r.source.is_some()))
 }
-/// The server's key: the platform operator's, since only its administrators
-/// may set one. Read on a request from another instance, which has no
-/// session. Never log it.
+pub fn state_json(set: bool) -> Value {
+    json!({"set": set})
+}
+/// The key, read as the person asking (the review, the download made in
+/// their name). Never log it.
+pub async fn key(
+    client: &(impl GenericClient + Sync),
+    settings: &Settings,
+    scope: &Scope,
+) -> Result<Option<String>> {
+    let resolved = settings.get(client, scope, Target::Global, KEY).await?;
+    Ok(resolved.value.as_str().map(str::to_owned))
+}
+/// The server's key, read on a request from another instance, which has
+/// no session: as this module's own system principal in the platform
+/// operator's tenant, the only secret that principal may read. Never log it.
 pub async fn server_key(
-    client: &impl GenericClient,
+    client: &(impl GenericClient + Sync),
     settings: &Settings,
 ) -> Result<Option<String>> {
     let row = client
@@ -105,62 +82,35 @@ pub async fn server_key(
             &[],
         )
         .await?;
-    match row {
-        Some(row) => key(client, settings, row.get(0)).await,
-        None => Ok(None),
-    }
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let principal = SystemScope::rehydrate(client, row.get(0), Some(PRINCIPAL)).await?;
+    let value = principal.read_own_secret(client, settings, KEY).await?;
+    Ok(value.as_str().map(str::to_owned))
 }
 /// Whether a presented key is the stored one, compared in constant time.
 pub fn accepts(stored: &str, presented: &str) -> bool {
     stored.len() == presented.len() && stored.as_bytes().ct_eq(presented.as_bytes()).into()
 }
-/// Sets the key (sealed) or clears it, recording that a key was set or
-/// cleared and by whom, never the key.
+/// Sets the key or clears it, through Settings: the write is audited as a
+/// settings change with its value redacted, like every other secret.
 pub async fn put(
     tx: &mut MutationTransaction<'_>,
     settings: &Settings,
-    tenant: i64,
-    user: i64,
+    scope: &Scope,
     key: Option<&str>,
-) -> Result<State> {
-    let before = state(tx.sql(), tenant).await?;
-    let sealed = match key {
-        Some(key) => Some(settings.seal_owned(OWNER, tenant, RECORD_ID, &json!(key))?),
-        None => None,
-    };
-    let old = before.json();
-    tx.mutate(move |sql| {
-        Box::pin(async move {
-            let after = match sealed {
-                Some(sealed) => {
-                    sql.execute(
-                        "INSERT INTO base_software_pairing(tenant_id, sealed, set_by, set_at) VALUES($1,$2,$3,now()) ON CONFLICT (tenant_id) DO UPDATE SET sealed=EXCLUDED.sealed, set_by=EXCLUDED.set_by, set_at=now()",
-                        &[&tenant, &sealed, &user],
-                    )
-                    .await?;
-                    state(sql, tenant).await?
-                }
-                None => {
-                    sql.execute(
-                        "DELETE FROM base_software_pairing WHERE tenant_id=$1",
-                        &[&tenant],
-                    )
-                    .await?;
-                    State {
-                        set: false,
-                        set_by: None,
-                        set_at: None,
-                    }
-                }
-            };
-            let change = Change {
-                kind: RECORD.into(),
-                id: tenant,
-                old,
-                new: after.json(),
-            };
-            Ok((after, vec![change]))
-        })
-    })
-    .await
+) -> Result<bool> {
+    match key {
+        Some(key) => {
+            settings
+                .put(tx, scope, Target::Global, KEY, json!(key))
+                .await?;
+            Ok(true)
+        }
+        None => {
+            settings.delete(tx, scope, Target::Global, KEY).await?;
+            Ok(false)
+        }
+    }
 }

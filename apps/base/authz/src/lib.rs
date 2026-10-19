@@ -223,6 +223,27 @@ impl SystemScope {
         };
         context
     }
+    /// The one secret a system principal may read with no session: an
+    /// encrypted, global setting that its own module contributed (the
+    /// module's name is the one that declared the principal). Made for a
+    /// request from a machine, such as another instance presenting its
+    /// pairing key at the release transport boundary. Any other key, module
+    /// or an unnamed principal refuses; this grants no other read. Never log
+    /// the result.
+    pub async fn read_own_secret(
+        &self,
+        client: &(impl GenericClient + Sync),
+        settings: &bilibi_settings::Settings,
+        key: &str,
+    ) -> Result<serde_json::Value> {
+        let principal = self.principal.as_deref().ok_or(Error::Forbidden)?;
+        let owner = vocabulary()?
+            .system_principal_owners
+            .get(principal)
+            .copied()
+            .ok_or(Error::Forbidden)?;
+        settings.get_own_global_secret(client, owner, key).await
+    }
     /// Rehydrate persisted worker metadata at the trusted execution edge. Every
     /// decision still checks the live tenant, declaration and durable grant.
     pub async fn rehydrate(
