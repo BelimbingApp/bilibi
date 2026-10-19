@@ -101,7 +101,6 @@ progress { width: 100%; height: 8px; accent-color: var(--action); }
 details summary { cursor: pointer; color: var(--ink-muted); font-size: 12px; }
 pre { white-space: pre-wrap; font-size: 11px; background: var(--surface-sunken); padding: 8px; border-radius: 6px; margin: 6px 0 0; max-height: 200px; overflow: auto; }
 .action-add { color: var(--success-ink); } .action-remove, .action-downgrade { color: var(--danger-ink); } .action-update { color: var(--info-ink); }
-.twofa input { width: 9ch; letter-spacing: .15em; font-family: ui-monospace, monospace; text-align: center; }
 .tabs { display: flex; gap: 4px; }
 .tabs button { padding: 4px 10px; font-weight: 500; }
 .tabs button[aria-selected="true"] { background: var(--surface-muted); border-color: var(--line-strong); font-weight: 600; }
@@ -508,7 +507,9 @@ async function review(key, input, verb) {
   }
   const facts = unwrap(first.preview) || {};
   const needsCode = Array.isArray(facts.step_up) && facts.step_up.length > 0;
-  const code = el('input', { type: 'text', inputmode: 'numeric', autocomplete: 'one-time-code', maxlength: '8', id: 'step-up-code', 'aria-label': 'Authenticator code', placeholder: '000000' });
+  // Every code-bearing review uses the card's standard text input. A narrow
+  // character width plus letter spacing clipped the code and its native caret.
+  const code = el('input', { type: 'text', inputmode: 'numeric', autocomplete: 'one-time-code', maxlength: '8', size: '12', id: 'step-up-code', 'aria-describedby': 'step-up-code-hint', placeholder: '123456', spellcheck: 'false' });
   const confirm = el('button', { class: key === 'base.software.undo' ? 'danger' : 'primary', id: 'confirm', text: verb, onclick: () => commit(key, verb, code.value.trim(), facts) });
   const switchRow = (key === 'base.software.change' || key === 'base.software.install') ? el('div', { class: 'row small', id: 'switch-row' }, [
     el('span', { class: 'muted', text: 'When the new version is ready:' }),
@@ -532,8 +533,8 @@ async function review(key, input, verb) {
     ]),
     productionNote,
     needsCode ? el('div', { class: 'twofa stack', id: 'twofa' }, [
-      el('label', { class: 'row' }, [el('span', { text: 'Your authenticator code' }), code]),
-      el('p', { class: 'small muted', text: 'Asked every time, on every instance, because this changes the server itself.' }),
+      el('div', { class: 'row' }, [el('label', { for: code.id, text: 'Your authenticator code' }), code]),
+      el('p', { class: 'small muted', id: 'step-up-code-hint', text: 'Asked every time, on every instance, because this changes the server itself.' }),
     ]) : null,
     el('div', { class: 'row' }, [confirm, el('button', { class: 'quiet', onclick: renderHome, text: 'Back' }), el('span', { class: 'grow' }), plan.expires_at ? el('span', { class: 'small muted', text: 'Review valid until ' + plan.expires_at.replace('T', ' ').slice(0, 16) + ' UTC' }) : null]),
   );
