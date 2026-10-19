@@ -241,25 +241,51 @@ pub fn backup_rule(keep: Option<u64>) -> String {
     format!("Bilibi backs up the database before every install and undo. After a successful install or undo it {kept}, so a listed file may no longer exist. Undo switches back to the previous program. Only if the install changed the database structure does Undo also restore its backup, which loses data entered since. Undo takes a new backup first.")
 }
 /// Hides where a backup file is from anyone who cannot manage software:
-/// they see that the backup exists, when it was taken and its size.
+/// they see that the backup exists, when it was taken and its size. The
+/// path goes from the `backup` fields and from every message that names it.
 pub fn hide_backup_files(job: &mut Value, backups: &mut [Value]) {
-    for backup in backups {
+    let mut paths = Vec::new();
+    collect_backup_paths(job, &mut paths);
+    for backup in backups.iter_mut() {
+        if let Some(file) = backup["file"].as_str() {
+            paths.push(file.to_owned());
+        }
         backup["file"] = Value::Null;
     }
-    if !job.is_object() {
-        return;
+    paths.sort_unstable_by_key(|path| std::cmp::Reverse(path.len()));
+    scrub_backup_paths(job, &paths);
+}
+fn collect_backup_paths(value: &Value, paths: &mut Vec<String>) {
+    match value {
+        Value::Object(map) => {
+            if let Some(path) = map.get("backup").and_then(Value::as_str) {
+                paths.push(path.to_owned());
+            }
+            map.values()
+                .for_each(|item| collect_backup_paths(item, paths));
+        }
+        Value::Array(list) => list
+            .iter()
+            .for_each(|item| collect_backup_paths(item, paths)),
+        _ => {}
     }
-    if let Some(steps) = job["steps"].as_array_mut() {
-        for step in steps {
-            if let Some(detail) = step["detail"].as_object_mut() {
-                detail.remove("backup");
+}
+fn scrub_backup_paths(value: &mut Value, paths: &[String]) {
+    match value {
+        Value::String(text) => {
+            for path in paths {
+                *text = text.replace(path.as_str(), "a backup file on this server");
             }
         }
-    }
-    for part in ["result", "review"] {
-        if let Some(object) = job[part].as_object_mut() {
-            object.remove("backup");
+        Value::Object(map) => {
+            map.remove("backup");
+            map.values_mut()
+                .for_each(|item| scrub_backup_paths(item, paths));
         }
+        Value::Array(list) => list
+            .iter_mut()
+            .for_each(|item| scrub_backup_paths(item, paths)),
+        _ => {}
     }
 }
 

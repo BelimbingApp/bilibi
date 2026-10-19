@@ -100,7 +100,7 @@ Migration `base-software-003-local-builds` cancels legacy queued or running `cha
 
 ## Database backups
 
-**Software shows each backup's time and size for installs and undos among the ten most recent jobs; only accounts that can manage software see the file.** The page and assistant card read the same `backups` evidence from completed backup steps, including jobs that later failed; missing older metadata is labelled as not recorded. A view-only account gets no file path from the page, `base.software.status` or `base.software.open`. A recorded file path does not prove that the file is still kept.
+**Software shows each backup's time and size for installs and undos among the ten most recent jobs; only accounts that can manage software see the file.** The page and assistant card read the same `backups` evidence from completed backup steps, including jobs that later failed; missing older metadata is labelled as not recorded. A view-only account gets no file path from the page, `base.software.status` or `base.software.open`: the `backup` fields are dropped and job messages that name a file say "a backup file on this server" instead. A recorded file path does not prove that the file is still kept.
 
 - The installer writes a PostgreSQL dump under the instance folder at `backups/job-<n>/<database>.dump` before changing anything.
 - After a successful install or undo, it keeps the newest `KEEP_BACKUPS` backup folders (`apps/installer/src/flow.rs`, `prune`) and removes older ones. There is no fixed age in days. The backup step records the number as `keep_backups`; `status` carries the sentence once as `backup_rule`, and only the Backups card states it.
