@@ -737,6 +737,56 @@ pub fn undo(
     })
 }
 
+/// The go-ahead for a built change that waits before the pause. `built` is
+/// the release it built while no later step has started, else `None`.
+pub fn go(instance: &Instance, job: &Job, built: Option<i64>) -> Result<Review> {
+    let refuse = |message: String| Err(SoftwareError::field("job", &message));
+    if job.kind != "change" || job.state != "running" {
+        return refuse(format!(
+            "Job {} is {}; only a build that is running and waiting for your go-ahead can be given one.",
+            job.id, job.state
+        ));
+    }
+    if job.cancel_requested_at.is_some() {
+        return refuse(format!(
+            "Job {} was asked to stop, so it cannot be given a go-ahead.",
+            job.id
+        ));
+    }
+    if job.switch != "ask" {
+        return refuse(format!(
+            "Job {} already has your go-ahead; nothing more to do.",
+            job.id
+        ));
+    }
+    let Some(release) = built else {
+        return refuse(format!(
+            "Job {} is not waiting for your go-ahead: it is still building, or the pause has already started.",
+            job.id
+        ));
+    };
+    let summary = format!(
+        "{}: go ahead with the pause for job {} (release {release})",
+        instance.label, job.id
+    );
+    let facts = json!({
+        "summary": summary,
+        "instance": instance_json(instance),
+        "job": job.id,
+        "release": release,
+        "pause_minutes": PAUSE_MINUTES,
+        "what_happens": format!("{} pauses for about {PAUSE_MINUTES} minute to back up the database, update it, switch and check.", instance.label),
+        "steps": jobs::change_steps().iter().skip_while(|s| s.key != "backup").map(|s| json!({"seq": s.seq, "key": s.key, "label": s.label, "pauses": s.pauses})).collect::<Vec<_>>(),
+        "step_up": [STEP_UP],
+    });
+    Ok(Review {
+        target: format!("go: {summary}"),
+        request: json!({"job": job.id}),
+        facts,
+        switch: "auto".into(),
+    })
+}
+
 /// Stopping the job waiting or running.
 pub fn cancel(job: &Job, past_pause: bool) -> Result<Review> {
     let (summary, effect) = match job.state.as_str() {

@@ -149,6 +149,7 @@ enum Kind {
     Change,
     Install,
     Undo,
+    Go,
 }
 impl Kind {
     /// The page event the write is declared under (`PageWrites`).
@@ -157,6 +158,7 @@ impl Kind {
             Self::Change => "build",
             Self::Install => "install",
             Self::Undo => "undo",
+            Self::Go => "go",
         }
     }
     fn contract(self) -> &'static str {
@@ -164,6 +166,7 @@ impl Kind {
             Self::Change => "base.software.change",
             Self::Install => "base.software.install",
             Self::Undo => "base.software.undo",
+            Self::Go => "base.software.go",
         }
     }
     fn parse(event: &str) -> Option<Self> {
@@ -171,6 +174,7 @@ impl Kind {
             "build" => Some(Self::Change),
             "install" => Some(Self::Install),
             "undo" => Some(Self::Undo),
+            "go" => Some(Self::Go),
             _ => None,
         }
     }
@@ -410,8 +414,17 @@ impl View {
                 self.preview(scope, credential, Kind::Undo, json!({}))
                     .await?
             }
+            "request_go" => {
+                let job = &status["job"];
+                if let Some(id) = job["id"].as_i64() {
+                    if job["kind"] == "change" && job["switch"] == "ask" {
+                        self.preview(scope, credential, Kind::Go, json!({"job": id}))
+                            .await?
+                    }
+                }
+            }
             "cancel_dialog" => self.dialog = None,
-            "build" | "install" | "undo" => {
+            "build" | "install" | "undo" | "go" => {
                 let code = values.get("code").cloned().unwrap_or_default();
                 self.commit(scope, credential, get("type").unwrap_or_default(), &code)
                     .await?
@@ -547,7 +560,7 @@ impl View {
         let refused = |this: &mut Self, message: String| match kind {
             Kind::Change => this.pick_error = Some(message),
             Kind::Install => this.install_error = Some(message),
-            Kind::Undo => this.flash(StatusKind::Error, message),
+            Kind::Undo | Kind::Go => this.flash(StatusKind::Error, message),
         };
         match self.pages.contracts.preview(&call, input.clone()).await {
             Ok(reply) => {
@@ -639,10 +652,13 @@ impl View {
                     Kind::Change => "The build",
                     Kind::Install => "The install",
                     Kind::Undo => "The undo",
+                    Kind::Go => "",
                 };
-                let message = match job {
-                    Some(id) => format!("{what} is queued as job {id} on {label}. Its progress shows below, and the result also reaches your notifications."),
-                    None => format!("{what} is queued on {label}."),
+                let message = match (kind, job) {
+                    (Kind::Go, Some(id)) => format!("Job {id} has your go-ahead. {label} pauses for about a minute, then switches. Its progress shows below."),
+                    (Kind::Go, None) => format!("The go-ahead is given on {label}."),
+                    (_, Some(id)) => format!("{what} is queued as job {id} on {label}. Its progress shows below, and the result also reaches your notifications."),
+                    (_, None) => format!("{what} is queued on {label}."),
                 };
                 self.dialog = None;
                 self.flash(StatusKind::Success, message);
@@ -974,6 +990,7 @@ impl View {
             .any(|s| s["state"] != "pending");
         let building_done = kind == "change" && state == "running" && built.is_some();
         let handed_over = building_done && !installer_started;
+        let awaiting_go = handed_over && job["switch"] == "ask";
         let label = job["review"]["instance"]["label"]
             .as_str()
             .unwrap_or(&instance.label);
@@ -1071,7 +1088,12 @@ impl View {
         if active && !handed_over {
             notes.push("You can close this page. The work keeps going, and the result appears here and in your notifications.".to_owned());
         }
-        if handed_over {
+        if awaiting_go {
+            notes.push(format!(
+                "Release {} is built and waits for your go-ahead: Install now, or Stop to throw the build away.",
+                built.unwrap_or_default()
+            ));
+        } else if handed_over {
             notes.push(format!(
                 "The new program is in releases/{} on {}. Installing it (back up, update the database, switch, check) is the installer's part; until it is in service, the job can still be cancelled.",
                 built.unwrap_or_default(),
@@ -1109,7 +1131,7 @@ impl View {
         }
         let mut actions = Html::EMPTY;
         if can_manage && job["cancel"] == "available" {
-            let label = if state == "running" && kind == "change" && !handed_over {
+            let label = if awaiting_go || (state == "running" && kind == "change" && !handed_over) {
                 "Stop the build"
             } else if state == "running" && !handed_over {
                 "Stop"
@@ -1121,6 +1143,16 @@ impl View {
                 button_type: "button",
                 event: "request_cancel",
                 body: Html::text(label),
+                ..Button::default()
+            })?);
+        }
+        if can_manage && awaiting_go {
+            actions.push(&render(Button {
+                id: "software-go",
+                button_type: "button",
+                event: "request_go",
+                variant: ButtonVariant::Primary,
+                body: Html::text("Install now (pauses about 1 minute)"),
                 ..Button::default()
             })?);
         }
@@ -1645,6 +1677,22 @@ impl View {
                         minutes_text(pause)
                     ),
                     format!("Install on {label}"),
+                    ButtonVariant::Primary,
+                )
+            }
+            Kind::Go => {
+                let release = facts["release"].as_i64().unwrap_or_default();
+                lines.push(ChangeLine::change(format!(
+                    "Put release {release} into service on {label}"
+                )));
+                let pause = facts["pause_minutes"].as_u64().unwrap_or(1);
+                (
+                    "Go ahead with the pause".to_owned(),
+                    format!(
+                        "Release {release} is built. {label} pauses for {} once you go ahead.",
+                        minutes_text(pause)
+                    ),
+                    format!("Install now on {label}"),
                     ButtonVariant::Primary,
                 )
             }

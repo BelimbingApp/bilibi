@@ -448,6 +448,40 @@ impl Software {
         Ok(value)
     }
 
+    /// What giving a built change its go-ahead would do.
+    pub async fn review_go(&self, scope: &Scope, input: &Value) -> SoftwareResult<Review> {
+        let client = self.db.get().await?;
+        authorize_operator(&**client, scope, MANAGE).await?;
+        self.go_review(&**client, scope, input).await
+    }
+    /// Turns a parked job's `switch` to `auto` inside the caller's
+    /// transaction, after the owner's fresh 2FA check.
+    pub async fn go_in(
+        &self,
+        tx: &mut MutationTransaction<'_>,
+        scope: &Scope,
+        input: &Value,
+    ) -> SoftwareResult<Value> {
+        authorize_operator(tx.sql(), scope, MANAGE).await?;
+        let review = self.go_review(tx.sql(), scope, input).await?;
+        self.step_up.require(scope, STEP_UP, &review.target).await?;
+        let id = review.facts["job"].as_i64().ok_or(Error::Internal)?;
+        let job = jobs::go(tx, scope.tenant(), id).await?;
+        self.notifications
+            .notify(
+                tx,
+                scope,
+                &[scope.user()],
+                &Notice::new(format!("Software job {}: go-ahead given", job.id))
+                    .kind("software.job")
+                    .body(review.facts["summary"].as_str().unwrap_or_default()),
+            )
+            .await?;
+        let mut value = job.json();
+        value["review"] = review.facts;
+        Ok(value)
+    }
+
     async fn queue(
         &self,
         tx: &mut MutationTransaction<'_>,
@@ -552,6 +586,25 @@ impl Software {
             input,
         )
     }
+    async fn go_review(
+        &self,
+        client: &(impl tokio_postgres::GenericClient + Sync),
+        scope: &Scope,
+        input: &Value,
+    ) -> SoftwareResult<Review> {
+        let tenant = scope.tenant();
+        let instance = Instance::resolve(&self.settings, client).await?;
+        let active = jobs::active(client, tenant).await?;
+        let named = match input["job"].as_i64() {
+            Some(id) => jobs::get(client, tenant, id).await?,
+            None => None,
+        };
+        let job = named.or(active).ok_or_else(|| {
+            SoftwareError::field("job", "No job is waiting or running on this instance.")
+        })?;
+        let built = jobs::built_release(client, tenant, job.id).await?;
+        review::go(&instance, &job, built)
+    }
     async fn cancel_review(
         &self,
         client: &(impl tokio_postgres::GenericClient + Sync),
@@ -648,10 +701,10 @@ bilibi_menu::contribute!(
         .order(40)
 );
 // The page's writes are this module's own contracts (ADR 01): a reviewed
-// plan for a change, install or undo, and a plain submit for cancel.
+// plan for a change, install, undo or go-ahead, and a plain submit for cancel.
 inventory::submit! { Contribution::new(PAGE_WRITES, web::PAGES, provenance!(), &PageWrites {
     service: web::PAGES,
-    contracts: &[("build", "base.software.change"), ("install", "base.software.install"), ("undo", "base.software.undo"), ("cancel_job", "base.software.cancel")],
+    contracts: &[("build", "base.software.change"), ("install", "base.software.install"), ("undo", "base.software.undo"), ("go", "base.software.go"), ("cancel_job", "base.software.cancel")],
     pending: Pending::None,
 }) }
 inventory::submit! {

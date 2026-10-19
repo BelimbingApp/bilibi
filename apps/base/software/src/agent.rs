@@ -1,6 +1,6 @@
-//! The six software contracts, reached through Agent API: two reads and
-//! four reviewed writes (plan, then commit). A commit of change, install or
-//! undo asks for the server owner's authenticator code every time, on every
+//! The seven software contracts, reached through Agent API: two reads and
+//! five reviewed writes (plan, then commit). A commit of change, install,
+//! undo or go asks for the server owner's authenticator code every time, on every
 //! instance (`STEP_UP`); cancel does not change the software and asks none.
 use crate::{bound, SoftwareError, MANAGE, STEP_UP, VIEW};
 use bilibi_agent_api::{
@@ -53,6 +53,7 @@ enum Write {
     Change,
     Install,
     Undo,
+    Go,
     Cancel,
 }
 impl WriteHandler for Write {
@@ -71,6 +72,7 @@ impl WriteHandler for Write {
                 Self::Change => software.review_change(scope, input).await?,
                 Self::Install => software.review_install(scope, input).await?,
                 Self::Undo => software.review_undo(scope, input).await?,
+                Self::Go => software.review_go(scope, input).await?,
                 Self::Cancel => software.review_cancel(scope, input).await?,
             };
             Ok(review.facts.into())
@@ -88,6 +90,7 @@ impl WriteHandler for Write {
                 Self::Change => software.change_in(tx, scope, input).await?,
                 Self::Install => software.install_in(tx, scope, input).await?,
                 Self::Undo => software.undo_in(tx, scope, input).await?,
+                Self::Go => software.go_in(tx, scope, input).await?,
                 Self::Cancel => software.cancel_in(tx, scope, input).await?,
             };
             Ok(value.into())
@@ -140,8 +143,9 @@ inventory::submit! { Contribution::new(DEFINITIONS, "base/software", Provenance 
         Operation { key:"base.software.change", title:"Change the software (build on Dev)", summary:"Queue a build of a new program with the chosen Domains and versions. Dev only. The review lists what changes, whether the set was tested together and the estimate; the commit asks for the server owner's authenticator code every time.", keywords:&["software","build","domain","add","remove","update","version"], capability:MANAGE, input:change_schema, output:review_output, handler:Handler::SafeWrite(&Write::Change), channels:Channels::Every, step_up:&[STEP_UP] },
         Operation { key:"base.software.install", title:"Install a tested release", summary:"Queue an install of a release the source instance tested, on Staging or Production. The commit asks for the server owner's authenticator code every time.", keywords:&["software","install","release","staging","production"], capability:MANAGE, input:install_schema, output:review_output, handler:Handler::SafeWrite(&Write::Install), channels:Channels::Every, step_up:&[STEP_UP] },
         Operation { key:"base.software.undo", title:"Undo the last software change", summary:"Queue a switch back to the previous program. The review says whether the backup is restored and what would be lost. The commit asks for the server owner's authenticator code every time.", keywords:&["software","undo","rollback","previous","restore"], capability:MANAGE, input:job_schema, output:review_output, handler:Handler::SafeWrite(&Write::Undo), channels:Channels::Every, step_up:&[STEP_UP] },
+        Operation { key:"base.software.go", title:"Go ahead with the pause", summary:"Let a built change on Dev go ahead when it was started with switch ask: the instance then pauses for about a minute to back up, update, switch and check. The commit asks for the server owner's authenticator code every time.", keywords:&["software","go","ahead","switch","pause","install","ask"], capability:MANAGE, input:job_schema, output:review_output, handler:Handler::SafeWrite(&Write::Go), channels:Channels::Every, step_up:&[STEP_UP] },
         Operation { key:"base.software.cancel", title:"Cancel the software job", summary:"Stop the job waiting or running. A waiting job is removed; a running one stops before the pause. Too late once the pause has started.", keywords:&["software","cancel","stop","job"], capability:MANAGE, input:job_schema, output:review_output, handler:Handler::SafeWrite(&Write::Cancel), channels:Channels::Every, step_up:&[] },
     ],
     guides: &[Guide { key:"base.software", title:"Changing the server's software", summary:"How to see what is installed, choose Domains from the catalogue, build on Dev, install a tested release elsewhere, undo and cancel.", keywords:&["software","domain","build","install","catalogue","undo"], capability:VIEW,
-        body:"Start with base.software.status: it says which instance this is (Dev builds; Staging and Production install what another instance tested), what is installed, and whether a job is running. Read base.software.catalogue for the Domains and releases. On Dev, plan base.software.change with the full list of Domains the server should have afterwards (a mounted Domain left out is removed); the review shows the change list, whether the versions were tested together, a rough time and the steps. Show it to the person, then commit. Every change, install or undo asks for the server owner's own authenticator code on every commit, on every instance: answer step_up_required by asking the person for the current code and committing the same plan again with step_up_code. The job then waits for the builder or installer; follow it with base.software.status. Cancel is possible until the pause starts. Only a server owner (the platform operator's administrators) may change the software, because one build changes every company on the server." }],
+        body:"Start with base.software.status: it says which instance this is (Dev builds; Staging and Production install what another instance tested), what is installed, and whether a job is running. Read base.software.catalogue for the Domains and releases. On Dev, plan base.software.change with the full list of Domains the server should have afterwards (a mounted Domain left out is removed); the review shows the change list, whether the versions were tested together, a rough time and the steps. Show it to the person, then commit. Every change, install or undo asks for the server owner's own authenticator code on every commit, on every instance: answer step_up_required by asking the person for the current code and committing the same plan again with step_up_code. The job then waits for the builder or installer; follow it with base.software.status. A change started with switch ask waits once it is built: plan base.software.go and commit it, with the owner's code, to let it pause and switch. Cancel is possible until the pause starts. Only a server owner (the platform operator's administrators) may change the software, because one build changes every company on the server." }],
 }) }

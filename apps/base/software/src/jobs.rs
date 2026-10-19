@@ -228,6 +228,25 @@ pub async fn past_pause(client: &impl GenericClient, tenant: i64, job: i64) -> R
         .await?
         .get(0))
 }
+/// The release a running change built, when the build is done and no later
+/// step has started: the job is parked for the installer. `None` otherwise.
+pub async fn built_release(
+    client: &impl GenericClient,
+    tenant: i64,
+    job: i64,
+) -> Result<Option<i64>> {
+    let steps = steps_json(client, tenant, job).await?;
+    let built = steps
+        .iter()
+        .find(|s| s["key"] == "build" && s["state"] == "done")
+        .and_then(|s| s["detail"]["release"].as_i64());
+    let later_started = steps
+        .iter()
+        .skip_while(|s| s["key"] != "build")
+        .skip(1)
+        .any(|s| s["state"] != "pending");
+    Ok(built.filter(|_| !later_started))
+}
 /// When the backup that Undo would restore was taken: the job's result
 /// names it (`backup_at`); otherwise the backup step's start is it. `None`
 /// when no time is known.
@@ -404,6 +423,45 @@ pub async fn changes_since(client: &impl GenericClient, since: &str) -> Result<V
         .collect();
     let total: i64 = rows.iter().map(|row| row.get::<_, i64>(1)).sum();
     Ok(json!({"since": since, "changes": total, "by_kind": by_kind}))
+}
+/// Gives a parked job its go-ahead: `switch` turns `auto`, which is the
+/// signal the installer waits for. The caller has checked the job is parked.
+pub async fn go(tx: &mut MutationTransaction<'_>, tenant: i64, id: i64) -> Result<Job> {
+    tx.mutate(move |sql| {
+        Box::pin(async move {
+            let before = sql
+                .query_opt(
+                    &format!("SELECT {JOB_COLUMNS} FROM base_software_jobs WHERE tenant_id=$1 AND id=$2 FOR UPDATE"),
+                    &[&tenant, &id],
+                )
+                .await?
+                .map(|row| Job::from_row(&row))
+                .ok_or(Error::NotFound)?;
+            if before.state != "running"
+                || before.switch != "ask"
+                || before.cancel_requested_at.is_some()
+            {
+                return Err(Error::Conflict);
+            }
+            let row = sql
+                .query_one(
+                    &format!("UPDATE base_software_jobs SET switch='auto' WHERE tenant_id=$1 AND id=$2 RETURNING {JOB_COLUMNS}"),
+                    &[&tenant, &id],
+                )
+                .await?;
+            let after = Job::from_row(&row);
+            sql.execute("SELECT pg_notify($1, $2)", &[&CHANNEL, &id.to_string()])
+                .await?;
+            let change = Change {
+                kind: RECORD.into(),
+                id,
+                old: before.json(),
+                new: after.json(),
+            };
+            Ok((after, vec![change]))
+        })
+    })
+    .await
 }
 /// Cancels a job: one still waiting is cancelled at once; one running is
 /// asked to stop, and the worker stops before the pause. The caller has

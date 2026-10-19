@@ -47,7 +47,7 @@ An administrator of another organisation is refused with `denied_platform_scope`
 
 ## The contracts
 
-All six go through Agent API (`apps/base/agent_api/README.md`): reads are called, writes are planned, reviewed by the person, then committed. The Software page calls the same contracts through `PageContracts` (below).
+All seven go through Agent API (`apps/base/agent_api/README.md`): reads are called, writes are planned, reviewed by the person, then committed. The Software page calls the same contracts through `PageContracts` (below).
 
 | Contract | Kind | Input | What the review or answer says |
 | --- | --- | --- | --- |
@@ -56,6 +56,7 @@ All six go through Agent API (`apps/base/agent_api/README.md`): reads are called
 | `base.software.change` | write, Dev only | `domains` (the full wanted set; a mounted Domain left out is removed), optional `platform`, `plugins`, `switch` | the change list (add, update, downgrade, remove, keep; plug-ins switched on or off), whether every version was tested together on that Platform, warnings, a rough estimate, what happens, the steps |
 | `base.software.install` | write, Staging and Production | `release` (a number the source reports as tested), optional `switch` | the source, the checks the installer makes, the pause |
 | `base.software.undo` | write | optional `job` | which release it goes back to, and whether the backup is restored and later entries lost. `loss` names the backup's `backup_at` (the job result's, or the `backup` step's start) and carries no count: a count changes with every write, and a confirmation is bound to the review. The Software page counts the audited changes since `backup_at` with `Software::undo_loss`, only while an Undo review is open. The committed job's review records the count at commit as `lost_at_commit`, the same server-wide counts the undo result carries |
+| `base.software.go` | write, 2FA | optional `job` | refused unless the job is a running change whose build is done, with no later step started, and whose `switch` is `ask`. The review names the instance, the release built, the pause and the steps that follow. The commit turns `switch` to `auto` in the audited transaction (the installer's `wait_for_go` sees it), sends `NOTIFY`, and notifies the requester |
 | `base.software.cancel` | write, no 2FA | optional `job` | removed from the queue, or asked to stop before the pause; refused once the pause started |
 
 Rules the reviews enforce, each as a field error that says what to do:
@@ -70,11 +71,11 @@ Rules the reviews enforce, each as a field error that says what to do:
 - A request that changes nothing is refused and says what already runs.
 - `undo` takes only the newest finished job, and only when the worker recorded its result (below); a finished undo cannot be undone again.
 
-`switch` is `auto` (switch as soon as the build is ready) or `ask` (build now, wait for the owner before the one-minute pause). The worker reads it; this module only records it. **The signal to go ahead is the job's `switch` turning `auto`**: the worker polls the row while it waits with the instance running. The contract that flips it from the page is a later piece.
+`switch` is `auto` (switch as soon as the build is ready) or `ask` (build now, wait for the owner before the one-minute pause). The worker reads it; this module only records it. **The signal to go ahead is the job's `switch` turning `auto`**: the worker polls the row while it waits with the instance running. The Software page's **Install now** button and the `base.software.go` contract give it: they turn `switch` to `auto` for a built change that waits.
 
 ## The Software page
 
-**Administration › System › Software** (`/system/software`, `src/web.rs`) is the same six contracts with a face: it reads `status` and `catalogue`, and every write is a plan the person reviews and then commits with their authenticator code typed into the review. Server owners see and change; a person with only `admin.system.software.view` sees what runs and the history, with no controls.
+**Administration › System › Software** (`/system/software`, `src/web.rs`) is the same seven contracts with a face: it reads `status` and `catalogue`, and every write is a plan the person reviews and then commits with their authenticator code typed into the review. Server owners see and change; a person with only `admin.system.software.view` sees what runs and the history, with no controls.
 
 | Part | What it shows | Where it comes from |
 | --- | --- | --- |
@@ -85,7 +86,7 @@ Rules the reviews enforce, each as a field error that says what to do:
 | Install a tested release (Staging, Production) | The source this instance installs from, the release number to install, **Review the install**. There is no Build here: only Dev builds | `status.instance.installs_from`; the review is `install`'s plan preview |
 | History | The recent jobs with outcome and times | `status.jobs` |
 
-- **The review is the plan.** `PageContracts::preview` stores the owner's review under a plan code bound to this browser session; **Build on Dev**, **Install on …** or **Undo on …** commits that exact plan with the typed code presented on the request (`Scope::presenting_step_up`), so the owner's facade spends it the way it spends an agent's `step_up_code`. A wrong code is an error inside the review, not a trip through the browser prompt; a person not yet enrolled is sent to enrol and comes back.
+- **The review is the plan.** `PageContracts::preview` stores the owner's review under a plan code bound to this browser session; **Build on Dev**, **Install on …**, **Install now on …** (the go-ahead) or **Undo on …** commits that exact plan with the typed code presented on the request (`Scope::presenting_step_up`), so the owner's facade spends it the way it spends an agent's `step_up_code`. A wrong code is an error inside the review, not a trip through the browser prompt; a person not yet enrolled is sent to enrol and comes back.
 - **Nothing is chosen for the person.** `?propose=finance,factory` (an assistant's link) ticks those Domains when the page opens; the review and the code are still theirs.
 - **Live progress.** Every step write by a worker announces the job on `NOTIFY bilibi_software_jobs`; one connection per web process listens (`src/follow.rs`) and refreshes each mounted page, so a build's "Compiled 214 of about 488 parts" line moves every two seconds. Without that connection the page still follows on the host's 15-second refresh.
 
