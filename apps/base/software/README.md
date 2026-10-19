@@ -47,7 +47,7 @@ An administrator of another organisation is refused with `denied_platform_scope`
 
 ## The contracts
 
-All seven go through Agent API (`apps/base/agent_api/README.md`): reads are called, writes are planned, reviewed by the person, then committed. The Software page calls the same contracts through `PageContracts` (below).
+Every contract here goes through Agent API (`apps/base/agent_api/README.md`): reads are called, writes are planned, reviewed by the person, then committed. The Software page calls the same contracts through `PageContracts` (below).
 
 | Contract | Kind | Input | What the review or answer says |
 | --- | --- | --- | --- |
@@ -175,7 +175,7 @@ One answer: `open_software` shows the same page as a card in ChatGPT (or any MCP
 - **Staging and Production.** No Build. "Install the version tested on <source>" takes the release number the source reports, then `plan` `base.software.install`: the checks, the pause, the code, Install. Without an `installs_from` setting the card says what the owner must set.
 - **The job.** After a commit the card shows the steps and the builder's progress line, reading `base.software.status` every 4 seconds while the job is queued or running, with Stop while a cancel is still honoured. When it ends, the result sentence, Undo when `status` offers it, and "You can close this card" while it runs. The card reports the queued job and the outcome to the model with `ui/update-model-context`, so the conversation can carry on ("Release 4 is built on Dev").
 - **Ask the assistant.** A question typed in the card is posted into the chat with `ui/message`, prefixed with the instance and what is ticked.
-- **What it never does.** Hold a credential, fetch an address of its own, frame the live page, or decide a permission: every fact and every write goes through the host's `tools/call` bridge to `read`, `plan` and `commit`, so the owner's capability and the `.always()` code apply exactly as on the page.
+- **What it never does.** Hold a credential, fetch an address of its own, frame the live page, trust a message that did not come from the host, or decide a permission: every fact and every write goes through the host's `tools/call` bridge to `read`, `plan` and `commit`, so the owner's capability and the `.always()` code apply exactly as on the page. The bridge accepts messages only from the parent window and, after the handshake, only from the origin that answered `ui/initialize`; request ids carry a random prefix, so another frame cannot forge a reply or a tool result.
 - **The plugin package** (`core/agent_plugins`) lists `open_software` in its workflow skill and writes the card's own skill, `bilibi-<instance>-software`, from `CARD_SKILL` here.
 
 ## Caveats
