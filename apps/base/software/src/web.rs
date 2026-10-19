@@ -1065,6 +1065,7 @@ impl View {
         let steps = render(Fold {
             id: "software-job-details",
             title: "Install steps",
+            open: active || state == "failed" || state == "interrupted",
             body: render(JobSteps { steps })?,
             ..Fold::default()
         })?;
