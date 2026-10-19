@@ -21,8 +21,9 @@ use bilibi_ui::{
         LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, MountFuture, Page, PageBody,
         PageFuture, PageRequest,
     },
-    params, Badge, BadgeKind, BuiltinColumn, Button, CodeInput, EmptyState, FlashMap, FlexRow,
-    FlexTable, Html, IconButton, ListColumns, StatusKind, TableEmpty, NO_FLASH,
+    params, ActionLink, Badge, BadgeKind, BuiltinColumn, Button, ButtonVariant, CodeInput,
+    EmptyState, FlashMap, FlexRow, FlexTable, Html, IconButton, ListColumns, StatusKind,
+    TableEmpty, NO_FLASH,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -441,6 +442,9 @@ enum AuthorizeEvent {
 #[template(path = "authorize.html")]
 struct AuthorizeView<'a> {
     instance: Html,
+    origin: &'a str,
+    connections: Html,
+    actions: Html,
     error: Option<&'static str>,
     request: Option<&'a AuthorizationRequest>,
     expiry: Option<Instant>,
@@ -524,6 +528,37 @@ impl AuthorizePage {
                 .pages
                 .instance_banner(&**client, "oauth-instance")
                 .await?,
+            origin: &self.pages.origin,
+            connections: Html::render(&ActionLink {
+                id: "oauth-connections",
+                title: "Your connections",
+                href: "/settings/agent-connections",
+                body: Html::text("Your connections"),
+                ..ActionLink::default()
+            })
+            .map_err(|_| Error::Internal)?,
+            actions: {
+                let mut actions = Html::render(&Button {
+                    variant: ButtonVariant::Primary,
+                    id: "oauth-consent-approve",
+                    button_type: "submit",
+                    working: "Connecting…",
+                    body: Html::text("Approve connection"),
+                    ..Button::default()
+                })
+                .map_err(|_| Error::Internal)?;
+                actions.push(
+                    &Html::render(&Button {
+                        id: "oauth-consent-deny",
+                        button_type: "button",
+                        event: "deny",
+                        body: Html::text("Refuse"),
+                        ..Button::default()
+                    })
+                    .map_err(|_| Error::Internal)?,
+                );
+                actions
+            },
             error: self.error,
             request: self.request.as_ref(),
             expiry,

@@ -11,7 +11,7 @@ mod contributions;
 mod oauth_client;
 mod secrets;
 mod throttle;
-pub mod web;
+mod web;
 pub use contributions::MANAGE;
 pub use oauth_client::{proof, valid_clients, AuthorizationRequest, AuthorizeParams, PublicClient};
 /// `code_challenge` is the S256 form a public client sends for its verifier.

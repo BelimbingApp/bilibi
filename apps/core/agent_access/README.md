@@ -58,25 +58,11 @@ compare a credential yourself.
 
 ## Pages
 
-`core/agent_access.pages` serves the three signed-in routes through the
-discovered page contract; `src/web.rs` mirrors Bilimbi's `device_live.ex`,
-`authorize_live.ex` and `connections_live.ex` and the templates compose the
-shared Base UI macros in place (`askama.toml` adds `base/ui/templates` to the
-template path). Both consent pages open with the instance banner
-(`bilibi_system::Instance::banner`, `apps/base/system/README.md`), so the
-person sees which Bilibi they connect the agent to. Opening
-`/oauth/device?user_code=…` only fills the code; the
-person checks it, reviews the stated agent and the server-computed end time,
-then approves or refuses. `/oauth/authorize` validates the registered client
-and exact callback before consent renders, and an approve or refuse answers
-through the live page's `redirect` with `code` or `error=access_denied`, the
-client's `state` and `iss` (the configured `APP_ORIGIN`, never the Host
-header). Both consent forms submit no fields: an approve carrying any field is
-refused as a changed end time. `/settings/agent-connections` lists the
-person's grants newest first with status, "Also seen as" and "Self-reported
-agent", and revokes one
-only through the shared confirm dialog. Audit sees each decision as the
-signed-in `user`.
+`core/agent_access.pages` serves the three signed-in routes through the discovered page contract; `src/web.rs` mirrors Bilimbi's `device_live.ex`, `authorize_live.ex` and `connections_live.ex` and the templates compose the shared Base UI macros in place (`askama.toml` adds `base/ui/templates` to the template path).
+
+Both consent pages open with the instance banner (`bilibi_system::Instance::banner`, `apps/base/system/README.md`), so the person sees which Bilibi they connect the agent to. The authorization review also shows the configured public origin (`APP_ORIGIN`) as the Bilibi address, separately from the client's return address. Its shared form groups the connection facts, access explanation and primary approval action; Your connections stays available in the page header.
+
+Opening `/oauth/device?user_code=…` only fills the code; the person checks it, reviews the stated agent and the server-computed end time, then approves or refuses. `/oauth/authorize` validates the registered client and exact callback before consent renders, and an approve or refuse answers through the live page's `redirect` with `code` or `error=access_denied`, the client's `state` and `iss` (the configured `APP_ORIGIN`, never the Host header). Both consent forms submit no fields: an approve carrying any field is refused as a changed end time. `/settings/agent-connections` lists the person's grants newest first with status, "Also seen as" and "Self-reported agent", and revokes one only through the shared confirm dialog. Audit sees each decision as the signed-in `user`.
 
 The pages render instants through `templates/datetime.html`, the Bilimbi
 `<.datetime>` markup fed by `base/datetime`'s `DisplayContext`; it belongs in

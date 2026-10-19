@@ -2,44 +2,44 @@
     Opening the URL does nothing; only an explicit submit issues a code, and
     an invalid callback renders an error and never redirects. -#}
 {%- import "components.html" as ui -%}
+{%- import "forms.html" as forms -%}
 {%- import "feedback.html" as feedback -%}
+{%- import "lists.html" as lists -%}
 {%- import "datetime.html" as time -%}
 <div data-shared-ui>
 {% call feedback::flash_group() %}{% endcall %}
 {% call ui::page(variant=bilibi_ui::PageVariant::Form) %}
-{% call ui::header() %}Connect an app{% endcall %}
+{% if let Some(request) = request %}
+{% let summary = "{} wants to connect to Bilibi."|format(request.client_name) %}
+{% call ui::header(subtitle=summary, actions=connections) %}Connect an app{% endcall %}
+{% else %}
+{% call ui::header(actions=connections) %}Connect an app{% endcall %}
+{% endif %}
 {{ instance|safe }}
 {% if let Some(error) = error %}
 {% if let Some(_request) = request %}
 {% call feedback::panel_notice(id="oauth-consent-error", kind=bilibi_ui::NoticeKind::Error, dismiss_event="dismiss") %}{{ error }}{% endcall %}
 {% else %}
-{#- Bilimbi lists.ex `empty_state` with a title and a reason; the shared list
-    primitives arrive with U6. -#}
-<div id="oauth-consent-error" class="text-center text-sm">
-  <p class="font-medium text-ink">Connection unavailable</p>
-  <p class="mt-1 text-ink-muted">{{ error }}</p>
-</div>
+{% let unavailable = bilibi_ui::EmptyState::missing("Connection unavailable", error.to_string()).id("oauth-consent-error") %}
+{% call lists::empty_state(e=unavailable) %}{% endcall %}
 {% endif %}
 {% endif %}
 {% if let Some(request) = request %}
-{% call ui::card(id="oauth-consent") %}
-{% call ui::section_heading(title="Review connection") %}{% endcall %}
+{% call ui::card(id="oauth-consent", title="Review connection", inner_class="wrap-anywhere") %}
+{% call forms::form(id="oauth-consent-form", event="approve", actions=actions) %}
 {% call ui::facts(id="oauth-client-details") %}
 {% call ui::fact(title="App") %}{{ request.client_name }}{% endcall %}
-{% call ui::fact(title="Returns to") %}{{ request.redirect_uri }}{% endcall %}
+{% call ui::fact(title="Bilibi address", id="oauth-bilibi-address") %}{{ origin }}{% endcall %}
 {% endcall %}
-<p class="text-sm text-muted">
-  This app works as you in your current company: it can read what you can read and suggest changes you approve one by one. You can revoke it in Your connections.
-</p>
-<p id="oauth-connection-end" class="text-sm text-muted">
-  Connection ends {% if let Some(end) = expiry %}{% call time::datetime(instant=end) %}{% endcall %}{% endif %}.
-</p>
-<form id="oauth-consent-form" data-event="approve">
-{% call ui::button(id="oauth-consent-approve", button_type="submit", working="Connecting…") %}Approve connection{% endcall %}
-{% call ui::button(id="oauth-consent-deny", button_type="button", event="deny") %}Refuse{% endcall %}
-</form>
+{% call ui::facts() %}
+{% call ui::fact(title="Returns to") %}{{ request.redirect_uri }}{% endcall %}
+{% call ui::fact(title="Connection ends", id="oauth-connection-end") %}
+{% if let Some(end) = expiry %}{% call time::datetime(instant=end) %}{% endcall %}{% endif %}
+{% endcall %}
+{% endcall %}
+{% call ui::section_heading(title="What this app can do", description="This app works as you in your current company: it can read what you can read and suggest changes you approve one by one. You can revoke access at any time in Your connections.") %}{% endcall %}
+{% endcall %}
 {% endcall %}
 {% endif %}
-<a href="/settings/agent-connections">Your connections</a>
 {% endcall %}
 </div>
