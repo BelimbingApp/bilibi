@@ -102,25 +102,6 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        // The software builder, a service of its own beside the instance
-        // (`docs/server-install.md`); it uses the host's services, not its routes.
-        Some("software-worker") => {
-            use bilibi_base::software::{Worker, WORKER_USAGE};
-            let args: Vec<String> = std::env::args().skip(2).collect();
-            let origin =
-                std::env::var("APP_ORIGIN").unwrap_or_else(|_| "http://localhost:3000".into());
-            let app = bilibi_web::App::new(db.clone(), &origin)?;
-            let worker = Worker::new(&app.services, url.clone())?;
-            match args.iter().map(String::as_str).collect::<Vec<_>>()[..] {
-                [] => worker.run(false).await?,
-                ["--once"] => worker.run(true).await?,
-                ["--prepare"] => worker.prepare().await?,
-                _ => {
-                    eprintln!("{WORKER_USAGE}");
-                    return Err(Error::Invalid);
-                }
-            }
-        }
         Some("seed-production") => bilibi_web::seed::production(&db).await?,
         Some("seed") => {
             let at_startup = match std::env::args().nth(2).as_deref() {
@@ -173,7 +154,7 @@ async fn main() -> Result<()> {
                 &app.services,
                 bilibi_base::schedule::scheduler::Config::default(),
             )?;
-            // The outcomes the installer and builder write land in the audit
+            // The outcomes the installer write land in the audit
             // trail through the owning module, not through the workers.
             let software: Arc<bilibi_base::software::Software> =
                 app.services.get(bilibi_base::software::SERVICE)?;

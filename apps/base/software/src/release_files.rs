@@ -272,13 +272,11 @@ impl View {
                 .map_err(|_| Error::Internal)?,
         );
         body.push(&self.here_section(&instance, &facts, manages)?);
-        if !instance.role.builds() {
-            body.push(&self.source_section(&instance, &facts)?);
-            if manages {
-                body.push(&self.upload_section(&instance)?);
-            }
-            body.push(&self.waiting_section(&facts, manages)?);
+        body.push(&self.source_section(&instance, &facts)?);
+        if manages {
+            body.push(&self.upload_section(&instance)?);
         }
+        body.push(&self.waiting_section(&facts, manages)?);
         body.push(&self.pairing_section(&instance, &facts, manages)?);
         let message = |kind| {
             self.flash

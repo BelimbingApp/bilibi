@@ -65,8 +65,7 @@ pub async fn mine_running(
     Ok(row.as_ref().map(Job::from_row))
 }
 /// The oldest job waiting that an installer carries out: an install or an
-/// undo. A change (a build) waits for the builder, and an install whose
-/// release is still being downloaded by the program (its `download` step is
+/// undo. An install whose release is still being downloaded by the program (its `download` step is
 /// not done) waits for that.
 pub async fn next_waiting(
     client: &impl GenericClient,

@@ -20,12 +20,11 @@ bilibi-notifications.workspace = true
 bilibi-settings.workspace = true
 bilibi-step-up.workspace = true
 bilibi-system.workspace = true
-bilibi-tenancy = { path = "../tenancy" }
+bilibi-tenancy.workspace = true
 bilibi-ui.workspace = true
 flate2.workspace = true
 inventory.workspace = true
 jiff.workspace = true
-libc.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

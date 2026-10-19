@@ -1,5 +1,5 @@
 {#- The Software page: the instance first, then what runs, the job, the
-    change (Domains on Dev, a tested release elsewhere) and the history. The
+    discovery, local build guidance, a tested release and the history. The
     cards are rendered by src/web.rs through the shared models; this file
     lays them out. No Bilimbi counterpart. -#}
 {%- import "components.html" as ui -%}
@@ -12,6 +12,7 @@
 <div class="grid gap-4">
 {{ instance_card|safe }}
 {{ job_card|safe }}
+{{ discovery_card|safe }}
 {{ change_card|safe }}
 {{ history_card|safe }}
 </div>

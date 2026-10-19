@@ -59,8 +59,7 @@ role (Dev, Staging or Production), the label and colour it announces itself
 with, and the instance it installs releases from. **The role is `BILIBI_ENV`**,
 the same bootstrap value the host boots on and validates
 (`apps/web/src/environment.rs` delegates its parse to `Role::parse`); it is
-deliberately not a setting, so nothing editable can make an installing server
-build. The label (`instance.label`), colour (`instance.colour`, a `DESIGN.md`
+deliberately not a setting. Servers install tested releases; builds happen in the operator’s local Bilibi checkout. The label (`instance.label`), colour (`instance.colour`, a `DESIGN.md`
 status role) and source (`instance.installs_from`, a sibling instance name or
 an `https://` address, parsed by `Source`) are global settings under the
 **Instance** group of the settings editor, gated by the platform capability

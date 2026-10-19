@@ -104,8 +104,9 @@ def check_tested(entry, index, domains):
 def check(catalogue):
     expect(isinstance(catalogue, dict), 'the catalogue is one JSON object')
     expect(catalogue.get('format') == FORMAT, f'format must be {FORMAT}')
-    expect(set(catalogue) == {'format', 'platform', 'domains', 'plugins', 'tested'},
-           'the catalogue has exactly format, platform, domains, plugins and tested')
+    expect({'format', 'platform', 'domains', 'plugins', 'tested'} <= set(catalogue)
+           and set(catalogue) <= {'format', 'platform', 'domains', 'extensions', 'plugins', 'tested'},
+           'the catalogue has format, platform, domains, plugins, tested and optional extensions')
     platform = catalogue['platform']
     expect(isinstance(platform, dict) and set(platform) == {'name', 'repository', 'versions'},
            'platform has name, repository and versions')
@@ -114,16 +115,19 @@ def check(catalogue):
     platform_versions = list(platform['versions'])
     domains = catalogue['domains']
     expect(isinstance(domains, dict), 'domains is an object keyed by Domain ID')
-    for domain, facts in domains.items():
-        where = f'domains.{domain}'
-        expect(SNAKE.fullmatch(domain), f'{where}: a Domain ID is snake_case, the folder it mounts at')
-        expect(isinstance(facts, dict) and set(facts) == {'name', 'description', 'repository', 'modules', 'versions'},
-               f'{where}: needs name, description, repository, modules and versions')
-        expect(URL.fullmatch(str(facts['repository'])), f'{where}: repository is an https:// address')
-        expect(isinstance(facts['modules'], list) and facts['modules']
-               and all(isinstance(m, str) and SNAKE.fullmatch(m) for m in facts['modules']),
-               f'{where}: modules lists the module folders, snake_case')
-        check_versions(facts['versions'], where, platform_versions)
+    for kind in ('domains', 'extensions'):
+        containers = catalogue.get(kind, {})
+        expect(isinstance(containers, dict), f'{kind} is an object keyed by container ID')
+        for domain, facts in containers.items():
+            where = f'{kind}.{domain}'
+            expect(SNAKE.fullmatch(domain), f'{where}: a Domain ID is snake_case, the folder it mounts at')
+            expect(isinstance(facts, dict) and set(facts) == {'name', 'description', 'repository', 'modules', 'versions'},
+                   f'{where}: needs name, description, repository, modules and versions')
+            expect(URL.fullmatch(str(facts['repository'])), f'{where}: repository is an https:// address')
+            expect(isinstance(facts['modules'], list) and facts['modules']
+                   and all(isinstance(m, str) and SNAKE.fullmatch(m) for m in facts['modules']),
+                   f'{where}: modules lists the module folders, snake_case')
+            check_versions(facts['versions'], where, platform_versions)
     plugins = catalogue['plugins']
     expect(isinstance(plugins, dict), 'plugins is an object keyed by plug-in ID')
     for plugin, facts in plugins.items():

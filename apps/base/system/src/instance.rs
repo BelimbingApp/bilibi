@@ -1,8 +1,7 @@
 //! Which instance this server is: Dev, Staging or Production, and how it
 //! announces itself. The role is the deployment's `BILIBI_ENV` (the host
 //! validates it at boot and refuses any other value, `apps/web/src/environment.rs`);
-//! it is a bootstrap fact, never a setting, so no page or setting can turn a
-//! Production server into one that builds. The label, the colour and the
+//! it is a bootstrap fact, never a setting, so a page or setting cannot change the deployment role. The label, the colour and the
 //! instance it installs releases from are operator settings whose defaults
 //! follow the role. `scripts/install-server.sh` writes `BILIBI_ENV` into each
 //! instance's `env` file; `docs/server-install.md` describes the layout.
@@ -22,8 +21,7 @@ pub const INSTANCE_INSTALLS_FROM_KEY: &str = "instance.installs_from";
 /// Changing how the instance announces itself and where it installs from.
 pub const INSTANCE_MANAGE: &str = "admin.system.instance.manage";
 
-/// What this server is for. Only Dev builds software; the others install a
-/// release that another instance tested.
+/// What this server is for. Software is built locally; servers install tested releases.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Role {
     Dev,
@@ -80,11 +78,6 @@ impl Role {
             Self::Staging => Colour::Warning,
             Self::Production => Colour::Danger,
         }
-    }
-    /// Only Dev compiles software. Staging and Production install what another
-    /// instance tested (`docs/server-install.md`).
-    pub fn builds(self) -> bool {
-        self == Self::Dev
     }
 }
 

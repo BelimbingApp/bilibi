@@ -18,7 +18,6 @@
 <div class="min-w-0 flex-1">
 <p class="{{ step.label_class() }}">{{ step.label }}{% if let Some(took) = step.took %} <span class="text-xs tabular-nums text-ink-subtle">· {{ took }}</span>{% endif %}</p>
 {% if !step.message.is_empty() %}<p class="text-xs text-ink-muted">{{ step.message }}</p>{% endif %}
-{% if let Some(percent) = step.percent %}<progress id="{{ step.id }}-progress" class="mt-1 block h-1.5 w-full max-w-md accent-action" value="{{ percent }}" max="100" aria-label="{{ percent }}% of the parts compiled"></progress>{% endif %}
 {% if let Some(developer) = step.developer %}{% call ui::fold(id="{}-details"|format(step.id), title="Developer details") %}<pre class="max-h-64 overflow-auto rounded-md bg-surface-sunken p-2 text-xs text-ink">{{ developer }}</pre>{% endcall %}{% endif %}
 </div>
 </li>

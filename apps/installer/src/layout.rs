@@ -20,7 +20,7 @@ const RELEASE_FILES: [&str; 6] = [
     "bundle.json",
 ];
 const PLUGINS_DIR: &str = "plugins";
-/// The plug-ins a release switches on, written by the builder into the
+/// The plug-ins a release switches on, included by the local build in the
 /// release's `plugins/` folder.
 const PLUGINS_ENABLED: &str = "enabled.json";
 
@@ -302,7 +302,7 @@ fn copy_plain_files(src: &Path, dst: &Path) -> io::Result<()> {
 
 /// Whether the program in `dir` was built for this kind of server: a Linux
 /// program for this processor (read from the program itself) that needs a
-/// system library this server has (`release.json`, when the builder
+/// system library this server has (`release.json`, when the local build
 /// recorded it). Each refusal says what to do. The same check the program
 /// makes when it receives a release (`base/software`, `transport.rs`).
 pub fn built_for_this_server(dir: &Path) -> Result<(), String> {
@@ -325,14 +325,15 @@ pub fn built_for_this_server(dir: &Path) -> Result<(), String> {
     let here = std::env::consts::ARCH;
     if built_arch != here {
         return Err(format!(
-            "This release was built for {} computers, and this server is {}. Build it on a Dev of the same kind as this server.",
+            "This release was built for {} computers, and this server is {}. Build it locally for the same kind of server.",
             describe_arch(built_arch),
             describe_arch(here)
         ));
     }
     if !matches!(head[7], 0 | 3) || std::env::consts::OS != "linux" {
         return Err(
-            "This release was built for another operating system. Build it on a Linux Dev.".into(),
+            "This release was built for another operating system. Build it locally for Linux."
+                .into(),
         );
     }
     let recipe: serde_json::Value = fs::read_to_string(dir.join("release.json"))
@@ -344,7 +345,7 @@ pub fn built_for_this_server(dir: &Path) -> Result<(), String> {
             if let Some(have) = library_version(&have_text) {
                 if have < need {
                     return Err(format!(
-                        "This release needs the system library {needed}, and this server has {have_text}. Update this server, or build on a Dev whose system library is not newer than this server's."
+                        "This release needs the system library {needed}, and this server has {have_text}. Update this server, or build locally with a system library no newer than this server's."
                     ));
                 }
             }

@@ -1106,7 +1106,6 @@ dependencies = [
  "flate2",
  "inventory",
  "jiff",
- "libc",
  "serde",
  "serde_json",
  "sha2",

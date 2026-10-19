@@ -4,7 +4,7 @@ use bilibi_database::{Change, Error, MutationTransaction, Result};
 use serde_json::{json, Value};
 use tokio_postgres::GenericClient;
 
-/// The PostgreSQL channel a builder or installer listens on; the payload is
+/// The PostgreSQL channel the installer listens on; the payload is
 /// the job id. Sent inside the commit, so it arrives only once the row is
 /// visible.
 pub const CHANNEL: &str = "bilibi_software_jobs";
@@ -85,29 +85,6 @@ pub struct Step {
     pub label: &'static str,
     pub pauses: bool,
 }
-/// The steps a change (a build on Dev) goes through.
-pub fn change_steps() -> Vec<Step> {
-    steps(&[
-        ("check", "Check the server", false),
-        ("fetch", "Download the Platform and the Domains", false),
-        (
-            "build",
-            "Build the new program (the instance keeps working)",
-            false,
-        ),
-        (
-            "backup",
-            "Back up the database (the instance pauses from here)",
-            true,
-        ),
-        ("migrate", "Update the database", false),
-        ("switch", "Switch to the new program", false),
-        ("verify", "Check that it works", false),
-    ])
-}
-/// The steps an install of a tested release goes through. A release that
-/// comes from another machine is downloaded by this program first
-/// (`transfer.rs`); the installer takes the rest from `fetch`.
 pub fn install_steps(downloads: bool) -> Vec<Step> {
     let mut list: Vec<(&'static str, &'static str, bool)> = Vec::new();
     if downloads {
@@ -185,7 +162,7 @@ pub async fn recent(client: &impl GenericClient, tenant: i64, limit: i64) -> Res
         .await?;
     Ok(rows.iter().map(Job::from_row).collect())
 }
-/// The newest job that finished well (a change or an install), which Undo
+/// The newest job that finished well (an install), which Undo
 /// can take back.
 pub async fn last_done(client: &impl GenericClient, tenant: i64) -> Result<Option<Job>> {
     let row = client
@@ -236,7 +213,7 @@ pub async fn past_pause(client: &impl GenericClient, tenant: i64, job: i64) -> R
         .get(0))
 }
 /// The release a job's first part made, when that part is done and no later
-/// step has started: a change's build, an install's copy. The job is then
+/// step has started: an install's copy. The job is then
 /// parked for the pause. `None` for any other job or moment.
 pub async fn parked_release(
     client: &impl GenericClient,
@@ -244,7 +221,6 @@ pub async fn parked_release(
     job: &Job,
 ) -> Result<Option<i64>> {
     let first = match job.kind.as_str() {
-        "change" => "build",
         "install" => "fetch",
         _ => return Ok(None),
     };
@@ -252,11 +228,7 @@ pub async fn parked_release(
     let part = steps
         .iter()
         .find(|s| s["key"] == first && s["state"] == "done");
-    let made = if job.kind == "install" {
-        part.and(job.request["release"].as_i64())
-    } else {
-        part.and_then(|s| s["detail"]["release"].as_i64())
-    };
+    let made = part.and(job.request["release"].as_i64());
     let later_started = steps
         .iter()
         .skip_while(|s| s["key"] != first)
@@ -313,37 +285,6 @@ pub async fn enabled_plugins(client: &impl GenericClient, tenant: i64) -> Result
     Ok(rows.iter().map(|row| row.get(0)).collect())
 }
 
-/// The plug-ins a server has switched on once a change job's build is in
-/// service: those switched on now, with the change the owner reviewed
-/// (`plugins` in the job's review) applied, as `{id, name, publisher,
-/// version, source}`.
-pub async fn planned_plugins(
-    client: &impl GenericClient,
-    tenant: i64,
-    review: &Value,
-) -> Result<Vec<Value>> {
-    let mut plugins: Vec<Value> = plugins_json(client, tenant)
-        .await?
-        .into_iter()
-        .filter(|plugin| plugin["enabled"].as_bool() == Some(true))
-        .map(|plugin| {
-            json!({"id": plugin["id"], "name": plugin["name"], "publisher": plugin["publisher"], "version": plugin["version"], "source": plugin["source"]})
-        })
-        .collect();
-    for change in review["plugins"].as_array().into_iter().flatten() {
-        let Some(id) = change["id"].as_str() else {
-            continue;
-        };
-        plugins.retain(|plugin| plugin["id"].as_str() != Some(id));
-        if change["enabled"].as_bool() == Some(true) {
-            plugins.push(json!({"id": id, "name": change["name"], "publisher": change["publisher"], "version": null, "source": "catalogue"}));
-        }
-    }
-    plugins.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
-    Ok(plugins)
-}
-
-/// What a new job is made of.
 pub struct NewJob {
     pub kind: &'static str,
     pub request: Value,

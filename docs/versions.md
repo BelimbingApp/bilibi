@@ -73,13 +73,14 @@ https://raw.githubusercontent.com/BelimbingApp/bilibi/catalogue/catalogue.json
 
 Read the published copy, never `main`'s: `main`'s `tested` list may hold sets recorded by hand, each with the run that proved it, but only the published copy has the sets CI recorded. CI rebuilds the published copy from `main`'s file plus every set recorded so far, so a hand edit on `main` reaches the published copy at the next recorded run.
 
-The file has five parts:
+The file has five required parts and an optional extension list:
 
 | Part | What it holds | Who writes it |
 | --- | --- | --- |
 | `format` | `1` | nobody; it changes only with this document |
 | `platform` | name, repository, and each released version with its date and commit | a person, when a Platform release is tagged |
 | `domains` | per Domain ID (the folder it mounts at): name, one-line description, repository, module folders, and each released version with its date, commit and the Platform versions it needs (`">=0.1.0, <0.2.0"`) | a person, when a Domain release is tagged |
+| `extensions` (optional) | Extension IDs with descriptions, repositories, modules and release requirements, shaped like `domains`; no tested pair is inferred from a requirement | a person, when an Extension release is published |
 | `plugins` | per plug-in ID: name, publisher, repository, the Domain it belongs to (`null` for a Platform plug-in) and its versions, in the same shape | a person; empty until the plug-in runtime ships |
 | `tested` | one entry per Platform commit and Domain commit that passed the gates together, with both versions, the time and the CI run | CI, through the `catalogue` branch; a person may also record a set by hand on `main` with the run that proved it, and CI merges those with its own |
 

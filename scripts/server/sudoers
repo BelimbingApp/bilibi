@@ -1,5 +1,4 @@
 # Installed by scripts/install-server.sh as /etc/sudoers.d/bilibi-build.
 # bilibi-build puts releases into service, so it may only start, stop and
-# restart Bilibi instances, restart its own worker (to run the release it just
-# put in service) and reload the proxy. Nothing else.
-bilibi-build ALL=(root) NOPASSWD: /usr/bin/systemctl start bilibi@*, /usr/bin/systemctl stop bilibi@*, /usr/bin/systemctl restart bilibi@*, /usr/bin/systemctl restart bilibi-worker@*, /usr/bin/systemctl reload caddy
+# restart Bilibi instances and reload the proxy. Nothing else.
+bilibi-build ALL=(root) NOPASSWD: /usr/bin/systemctl start bilibi@*, /usr/bin/systemctl stop bilibi@*, /usr/bin/systemctl restart bilibi@*, /usr/bin/systemctl reload caddy

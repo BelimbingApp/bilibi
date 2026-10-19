@@ -136,14 +136,11 @@ impl Software {
     /// What the instance's source reports, or why it cannot be asked: the
     /// part of `releases` that makes a call to another instance.
     pub async fn source_facts(&self, scope: &Scope, instance: &Instance) -> Result<Value> {
-        Ok(match (&instance.installs_from, instance.role.builds()) {
-            (_, true) => {
-                json!({"available": false, "message": format!("{} builds its own software and installs from no other instance.", instance.label)})
-            }
-            (None, false) => {
+        Ok(match &instance.installs_from {
+            None => {
                 json!({"available": false, "message": format!("{} has no source yet. A server owner sets \"Install releases tested on\" under Instance in the settings, or uploads a release file here.", instance.label)})
             }
-            (Some(from), false) => match self.source_listing(scope, from).await? {
+            Some(from) => match self.source_listing(scope, from).await? {
                 Ok(mut listing) => {
                     listing["available"] = json!(true);
                     listing["source"] = review::instance_json(instance)["installs_from"].clone();
@@ -271,13 +268,6 @@ impl Software {
     ) -> Result<std::result::Result<Upload, String>> {
         let client = self.db.get().await?;
         authorize_operator(&**client, scope, MANAGE).await?;
-        let instance = Instance::resolve(&self.settings, &**client).await?;
-        if instance.role.builds() {
-            return Ok(Err(format!(
-                "{} builds its own software; a release file is installed on Staging or Production.",
-                instance.label
-            )));
-        }
         let paths = match self.paths() {
             Ok(paths) => paths.clone(),
             Err(why) => return Ok(Err(why)),

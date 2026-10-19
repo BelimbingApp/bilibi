@@ -226,21 +226,16 @@ fn app_skills(package: &str, registry: &Registry, instance: &Instance) -> Vec<Sk
         .map(|app| {
             let name = skill_name(package, &app.tool.replace("open_", ""));
             let body = format!(
-                "{skill}\n## This connection\n\nThis `{package}` connection reaches **{label}**. {consequence} {builds} The card says the same at the top of every screen; if the person meant another instance, use that instance's own connection.\n\nOpen the card with the `{tool}` tool of this connection. Read the `{package}` skill for the tools, the self-report and the review rules.\n",
+                "{skill}\n## This connection\n\nThis `{package}` connection reaches **{label}**. {consequence} Software is built in the operator’s local Bilibi copy; the card offers discovery and installation of tested releases. The card says the same at the top of every screen; if the person meant another instance, use that instance's own connection.\n\nOpen the card with the `{tool}` tool of this connection. Read the `{package}` skill for the tools, the self-report and the review rules.\n",
                 skill = app.skill,
                 label = instance.label,
                 consequence = instance.role.consequence(),
-                builds = if instance.role.builds() {
-                    "It builds software, so the card offers Build here."
-                } else {
-                    "It never builds: the card offers only to install a release that another instance tested."
-                },
                 tool = app.tool,
             );
             Skill {
                 name,
                 description: format!(
-                    "{} on {}: {} Use for tasks about the server's software, Domains, versions, plug-ins, builds, installs and undo.",
+                    "{} on {}: {} Use for tasks about the server's software, Domains, versions, extensions, local builds, installs and undo.",
                     app.title, instance.label, app.description
                 ),
                 body,

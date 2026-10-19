@@ -90,7 +90,7 @@ A step that was running when the restart came says so in its detail: "(the insta
 
 ## How it talks to the page
 
-The installer never goes through the app. It follows the worker contract in `apps/base/software/README.md` ("How a worker plugs in"): it `LISTEN`s on the `bilibi_software_jobs` channel, claims the oldest waiting `install` or `undo` job (a `change`, a build, waits for the builder), marks each step `running`, `done`, `failed` or `skipped` with a plain `detail`, and writes the job's final `state` and `result`. The page and the `base.software.status` contract read those rows.
+The installer never goes through the app. It follows the worker contract in `apps/base/software/README.md` ("How a worker plugs in"): it `LISTEN`s on the `bilibi_software_jobs` channel, claims the oldest waiting `install` or `undo` job, marks each step `running`, `done`, `failed` or `skipped` with a plain `detail`, and writes the job's final `state` and `result`. The page and the `base.software.status` contract read those rows.
 
 The result carries what Undo and the page need:
 

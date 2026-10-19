@@ -2,14 +2,13 @@
 //! shows the server owner, compared again at commit. Each refusal names the
 //! field and says what to do in plain words.
 use crate::{
-    catalogue::{requirement_holds, Catalogue, Version},
+    catalogue::Version,
     jobs::{self, Job},
     SoftwareError, STEP_UP,
 };
 use bilibi_module_registry::{Composition, Layer, PinState};
 use bilibi_system::{Instance, Source};
 use serde_json::{json, Value};
-use std::collections::BTreeSet;
 
 /// A reviewed request: what is stored, what the person reads, and the
 /// step-up target that names the change in the audit trail.
@@ -22,16 +21,11 @@ pub struct Review {
 }
 type Result<T> = std::result::Result<T, SoftwareError>;
 
-/// Rough minutes a build takes on a small server (docs: report section 3).
-const BASE_MINUTES: u64 = 4;
-const PLATFORM_MINUTES: u64 = 2;
-const DOMAIN_MINUTES: u64 = 1;
 const PAUSE_MINUTES: u64 = 1;
 
 pub fn instance_json(instance: &Instance) -> Value {
     json!({
         "role": instance.role.env_value(), "label": instance.label, "colour": instance.colour.as_str(),
-        "builds": instance.role.builds(),
         "installs_from": instance.installs_from.as_ref().map(source_json),
     })
 }
@@ -68,7 +62,7 @@ fn switch_of(input: &Value) -> Result<String> {
         Some("ask") => Ok("ask".into()),
         Some(_) => Err(SoftwareError::field(
             "switch",
-            "Choose auto (switch as soon as the build is ready) or ask (build now, ask before the pause).",
+            "Choose auto (install as soon as the copy is ready) or ask (copy now, ask before the pause).",
         )),
     }
 }
@@ -94,27 +88,6 @@ fn production_warnings(instance: &Instance) -> Vec<String> {
         Vec::new()
     }
 }
-fn valid_id(id: &str) -> bool {
-    (1..=64).contains(&id.len())
-        && id.bytes().next().is_some_and(|b| b.is_ascii_lowercase())
-        && id
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
-}
-
-struct Wanted {
-    id: String,
-    version: String,
-    name: String,
-    source: String,
-    /// The Git address the builder clones; the catalogue's for its Domains.
-    repository: String,
-    /// The commit the catalogue names for a release; none outside it.
-    commit: Option<String>,
-    tested: bool,
-    external: bool,
-}
-
 /// `update` when `to` is not older than `from`, `downgrade` when it is.
 fn movement(from: Option<&str>, to: &str) -> &'static str {
     match (from.and_then(Version::parse), Version::parse(to)) {
@@ -123,441 +96,7 @@ fn movement(from: Option<&str>, to: &str) -> &'static str {
     }
 }
 
-/// A change on Dev: the wanted set of Domains and versions, the plug-ins and
-/// when to switch, against what runs now and what the catalogue offers.
-pub fn change(
-    instance: &Instance,
-    made: &Composition,
-    catalogue: std::result::Result<&Catalogue, String>,
-    enabled_plugins: &[String],
-    active: Option<&Job>,
-    input: &Value,
-) -> Result<Review> {
-    if !instance.role.builds() {
-        return Err(SoftwareError::field(
-            "instance",
-            &format!(
-                "{} does not build software; it installs a release tested on another instance. Use base.software.install here, or ask on Dev.",
-                instance.label
-            ),
-        ));
-    }
-    busy(active)?;
-    let switch = switch_of(input)?;
-    let catalogue = catalogue.map_err(|message| {
-        SoftwareError::field(
-            "domains",
-            &format!("The catalogue could not be read, so no version can be checked: {message}"),
-        )
-    })?;
-    let entries = input["domains"].as_array().ok_or_else(|| {
-        SoftwareError::field(
-            "domains",
-            "List the Domains the server should have after the change.",
-        )
-    })?;
-    // The Domains wanted after the change.
-    let mut wanted: Vec<Wanted> = Vec::new();
-    let mut seen = BTreeSet::new();
-    for (index, entry) in entries.iter().enumerate() {
-        let field = format!("domains.{index}.id");
-        let id = entry["id"].as_str().unwrap_or_default();
-        if !valid_id(id) {
-            return Err(SoftwareError::field(
-                &field,
-                "A Domain id is lower-case letters, digits and underscores, like supply_chain.",
-            ));
-        }
-        if id == "src" {
-            return Err(SoftwareError::field(
-                &field,
-                "src is the folder that composes the Domains, so no Domain can use it as its id.",
-            ));
-        }
-        if !seen.insert(id.to_owned()) {
-            return Err(SoftwareError::field(
-                &field,
-                &format!("{id} is listed twice."),
-            ));
-        }
-        let repository = entry["repository"]
-            .as_str()
-            .map(str::trim)
-            .filter(|r| !r.is_empty());
-        if let Some(domain) = catalogue.domains.get(id) {
-            if repository.is_some() {
-                return Err(SoftwareError::field(
-                    &format!("domains.{index}.repository"),
-                    &format!("{id} is in the catalogue; leave repository out and pick a version."),
-                ));
-            }
-            let version = match entry["version"].as_str() {
-                Some(version) => {
-                    if !domain.versions.contains_key(version) {
-                        let known: Vec<&String> = domain.versions.keys().collect();
-                        return Err(SoftwareError::field(
-                            &format!("domains.{index}.version"),
-                            &format!(
-                                "{} has no release {version}. Released: {}.",
-                                domain.name,
-                                join(&known)
-                            ),
-                        ));
-                    }
-                    version.to_owned()
-                }
-                None => domain
-                    .versions
-                    .keys()
-                    .filter_map(|v| Version::parse(v).map(|parsed| (parsed, v.clone())))
-                    .max()
-                    .map(|(_, v)| v)
-                    .ok_or_else(|| {
-                        SoftwareError::field(
-                            &format!("domains.{index}.version"),
-                            &format!("{} has no release yet.", domain.name),
-                        )
-                    })?,
-            };
-            let commit = domain.versions[&version].commit.clone();
-            wanted.push(Wanted {
-                id: id.into(),
-                version,
-                name: domain.name.clone(),
-                source: "catalogue".into(),
-                repository: domain.repository.clone(),
-                commit: Some(commit),
-                tested: false,
-                external: false,
-            });
-        } else {
-            // Outside the catalogue: allowed, and said so (captain decision 6).
-            let Some(repository) = repository else {
-                let known: Vec<&String> = catalogue.domains.keys().collect();
-                return Err(SoftwareError::field(&field, &format!("{id} is not in the catalogue ({}). To build a Domain from elsewhere, give its repository (https://…) and ref.", join(&known))));
-            };
-            let host = repository
-                .strip_prefix("https://")
-                .map(|rest| rest.split('/').next().unwrap_or_default());
-            if host.is_none_or(|host| host.is_empty() || host.contains('@'))
-                || repository.contains(['?', '#'])
-                || repository.len() > 512
-                || repository.chars().any(char::is_whitespace)
-            {
-                return Err(SoftwareError::field(
-                    &format!("domains.{index}.repository"),
-                    "A repository is an https:// Git address with no user name, token, query or fragment in it.",
-                ));
-            }
-            let reference = entry["ref"].as_str().map(str::trim).filter(|r| {
-                !r.is_empty()
-                    && r.len() <= 128
-                    && !r.starts_with('-')
-                    && !r.chars().any(char::is_whitespace)
-            });
-            let Some(reference) = reference else {
-                return Err(SoftwareError::field(
-                    &format!("domains.{index}.ref"),
-                    "Give the tag or commit to build, like v0.3.0.",
-                ));
-            };
-            wanted.push(Wanted {
-                id: id.into(),
-                version: reference.to_owned(),
-                name: id.to_owned(),
-                source: repository.to_owned(),
-                repository: repository.to_owned(),
-                commit: None,
-                tested: false,
-                external: true,
-            });
-        }
-    }
-    // The Platform: asked for, or the newest release every chosen Domain accepts.
-    let platform_versions = catalogue.platform_versions();
-    let accepts = |candidate: Version| -> std::result::Result<(), String> {
-        for w in wanted.iter().filter(|w| !w.external) {
-            let requirement = catalogue.domains[&w.id].versions[&w.version]
-                .platform
-                .clone()
-                .unwrap_or_default();
-            if !requirement.is_empty() && requirement_holds(&requirement, candidate) != Some(true) {
-                return Err(format!(
-                    "{} {} needs Platform {requirement}",
-                    w.name, w.version
-                ));
-            }
-        }
-        Ok(())
-    };
-    let mut platform_because = None;
-    let platform = match input["platform"].as_str() {
-        Some(asked) => {
-            let version = Version::parse(asked)
-                .filter(|v| platform_versions.contains(v))
-                .ok_or_else(|| {
-                    SoftwareError::field(
-                        "platform",
-                        &format!(
-                            "Bilibi has no release {asked}. Released: {}.",
-                            join(
-                                &platform_versions
-                                    .iter()
-                                    .map(|v| v.to_string())
-                                    .collect::<Vec<_>>()
-                            )
-                        ),
-                    )
-                })?;
-            accepts(version).map_err(|why| {
-                SoftwareError::field("platform", &format!("Bilibi {asked} does not fit: {why}."))
-            })?;
-            version
-        }
-        None => {
-            let running = Version::parse(made.version);
-            let mut last_reason = String::new();
-            let mut chosen = None;
-            if let Some(version) = running {
-                match accepts(version) {
-                    Ok(()) => chosen = Some(version),
-                    Err(why) => platform_because = Some(why),
-                }
-            }
-            if chosen.is_none() {
-                for candidate in &platform_versions {
-                    match accepts(*candidate) {
-                        Ok(()) => {
-                            chosen = Some(*candidate);
-                            break;
-                        }
-                        Err(why) => last_reason = why,
-                    }
-                }
-            }
-            chosen.ok_or_else(|| SoftwareError::field("platform", &format!("No Bilibi release fits every chosen Domain: {last_reason}. Pick other versions.")))?
-        }
-    };
-    let platform_text = platform.to_string();
-    if made.version == platform_text
-        && !platform_versions.contains(&platform)
-        && made.commit.is_none()
-    {
-        return Err(SoftwareError::field(
-            "platform",
-            &format!("The running program (Bilibi {platform_text}) was built without a pin, so it cannot be rebuilt. Pick a Bilibi release with \"platform\" (released: {}), or pin and rebuild first.", join(&platform_versions.iter().map(|v| v.to_string()).collect::<Vec<_>>())),
-        ));
-    }
-    for w in &mut wanted {
-        w.tested = !w.external && catalogue.tested(&w.id, &w.version, &platform_text);
-    }
-    // Plug-ins, by catalogue id; on or off after the change.
-    let mut plugins = Vec::new();
-    let mut plugin_seen = BTreeSet::new();
-    for (index, entry) in input["plugins"]
-        .as_array()
-        .map(Vec::as_slice)
-        .unwrap_or_default()
-        .iter()
-        .enumerate()
-    {
-        let id = entry["id"].as_str().unwrap_or_default();
-        let Some(plugin) = catalogue.plugins.get(id) else {
-            let known: Vec<&String> = catalogue.plugins.keys().collect();
-            return Err(SoftwareError::field(
-                &format!("plugins.{index}.id"),
-                &format!("{id} is not a plug-in in the catalogue ({}).", join(&known)),
-            ));
-        };
-        if !plugin_seen.insert(id.to_owned()) {
-            return Err(SoftwareError::field(
-                &format!("plugins.{index}.id"),
-                &format!("{id} is listed twice."),
-            ));
-        }
-        let enabled = entry["enabled"].as_bool().unwrap_or(true);
-        let now = enabled_plugins.iter().any(|e| e == id);
-        let action = match (now, enabled) {
-            (false, true) => "enable",
-            (true, false) => "disable",
-            _ => "keep",
-        };
-        plugins.push(json!({"id": id, "name": plugin.name, "publisher": plugin.publisher, "enabled": enabled, "action": action}));
-    }
-    // The change list against the running program.
-    let mounted: Vec<_> = made
-        .containers
-        .iter()
-        .filter(|c| c.layer == Layer::Domains)
-        .collect();
-    let mut domains = Vec::new();
-    let mut changes = 0;
-    let mut summary_parts = Vec::new();
-    for w in &wanted {
-        let current = mounted.iter().find(|c| c.id == w.id);
-        let (action, from) = match current {
-            None => ("add", None),
-            Some(c) if c.version == Some(w.version.as_str()) => ("keep", c.version),
-            Some(c) => (movement(c.version, &w.version), c.version),
-        };
-        if action != "keep" {
-            changes += 1;
-            summary_parts.push(match action {
-                "add" => format!("add {} {}", w.name, w.version),
-                _ => format!(
-                    "{action} {} {} → {}",
-                    w.name,
-                    from.unwrap_or("unknown"),
-                    w.version
-                ),
-            });
-        }
-        domains.push(json!({"id": w.id, "name": w.name, "version": w.version, "from_version": from, "action": action,
-            "source": w.source, "tested": w.tested}));
-    }
-    for c in &mounted {
-        if !wanted.iter().any(|w| w.id == c.id) {
-            changes += 1;
-            summary_parts.push(format!("remove {}", c.id));
-            domains.push(json!({"id": c.id, "name": c.id, "version": null, "from_version": c.version, "action": "remove",
-                "source": null, "tested": null,
-                "note": "Its pages leave the menu. Its data stays in the database and comes back if you add it again."}));
-        }
-    }
-    let platform_changes = made.version != platform_text;
-    let platform_action = if platform_changes {
-        movement(Some(made.version), &platform_text)
-    } else {
-        "keep"
-    };
-    if platform_changes {
-        changes += 1;
-        summary_parts.insert(
-            0,
-            format!(
-                "{platform_action} Bilibi {} → {platform_text}",
-                made.version
-            ),
-        );
-    }
-    for plugin in plugins.iter().filter(|p| p["action"] != "keep") {
-        changes += 1;
-        summary_parts.push(format!(
-            "switch {} {}",
-            plugin["name"].as_str().unwrap_or_default(),
-            if plugin["enabled"].as_bool() == Some(true) {
-                "on"
-            } else {
-                "off"
-            }
-        ));
-    }
-    if changes == 0 {
-        return Err(SoftwareError::field(
-            "domains",
-            &format!(
-                "Nothing would change: {} already runs Bilibi {platform_text} with {}.",
-                instance.label,
-                if mounted.is_empty() {
-                    "no Domains".to_owned()
-                } else {
-                    join(
-                        &mounted
-                            .iter()
-                            .map(|c| format!("{} {}", c.id, c.version.unwrap_or("unknown")))
-                            .collect::<Vec<_>>(),
-                    )
-                }
-            ),
-        ));
-    }
-    let untested: Vec<String> = wanted
-        .iter()
-        .filter(|w| !w.tested)
-        .map(|w| {
-            if w.external {
-                format!("{} (from {})", w.id, w.source)
-            } else {
-                format!("{} {}", w.name, w.version)
-            }
-        })
-        .collect();
-    let mut warnings = Vec::new();
-    if let Some(why) = &platform_because {
-        warnings.push(format!("Bilibi will also change from {} to {platform_text} because {why}. That adds about {PLATFORM_MINUTES} minutes and a database update.", made.version));
-    }
-    let downgrades: Vec<String> = domains
-        .iter()
-        .filter(|d| d["action"] == "downgrade")
-        .map(|d| {
-            format!(
-                "{} {} → {}",
-                d["name"].as_str().unwrap_or_default(),
-                d["from_version"].as_str().unwrap_or_default(),
-                d["version"].as_str().unwrap_or_default()
-            )
-        })
-        .chain(
-            (platform_action == "downgrade")
-                .then(|| format!("Bilibi {} → {platform_text}", made.version)),
-        )
-        .collect();
-    if !downgrades.is_empty() {
-        warnings.push(format!("This goes back to an older release: {}. The database keeps the changes the newer release made, and the older one may not expect them.", join(&downgrades)));
-    }
-    if !untested.is_empty() {
-        warnings.push(format!("Not recorded as tested together on Bilibi {platform_text}: {}. The build may fail; nothing changes if it does.", join(&untested)));
-    }
-    if matches!(made.pin, PinState::Unpinned | PinState::Stale(_)) {
-        warnings.push("The running program was built without a pin, so the versions it holds are not known exactly.".into());
-    }
-    let estimate = BASE_MINUTES
-        + if platform_changes {
-            PLATFORM_MINUTES
-        } else {
-            0
-        }
-        + DOMAIN_MINUTES * wanted.len() as u64;
-    let summary = format!("{}: {}", instance.label, join(&summary_parts));
-    let mut request = json!({
-        "platform": platform_text,
-        "domains": wanted.iter().map(|w| if w.external { json!({"id": w.id, "repository": w.repository, "ref": w.version}) } else { json!({"id": w.id, "version": w.version, "commit": w.commit, "repository": w.repository}) }).collect::<Vec<_>>(),
-        "plugins": plugins.iter().map(|p| json!({"id": p["id"], "enabled": p["enabled"]})).collect::<Vec<_>>(),
-        "switch": switch,
-    });
-    // The builder clones exactly what was reviewed: the release's commit from
-    // the catalogue, or the running program's own when it is between releases.
-    request["platform_repository"] = json!(catalogue.platform.repository);
-    request["platform_commit"] = match catalogue.platform.versions.get(&platform_text) {
-        Some(release) => json!(release.commit),
-        None => json!(made.commit),
-    };
-    let facts = json!({
-        "summary": summary,
-        "instance": instance_json(instance),
-        "platform": {"from": made.version, "to": platform_text, "action": platform_action, "because": platform_because},
-        "domains": domains,
-        "plugins": plugins,
-        "all_tested": untested.is_empty(),
-        "warnings": warnings,
-        "estimate_minutes": estimate,
-        "pause_minutes": PAUSE_MINUTES,
-        "switch": switch,
-        "what_happens": format!("The new program is built next to the running one; {} keeps working and nothing changes until the build works. Then it pauses for about {PAUSE_MINUTES} minute to back up the database, update it, switch and check. If the check fails it switches back by itself.", instance.label),
-        "steps": jobs::change_steps().iter().map(|s| json!({"seq": s.seq, "key": s.key, "label": s.label, "pauses": s.pauses})).collect::<Vec<_>>(),
-        "step_up": [STEP_UP],
-    });
-    Ok(Review {
-        target: format!("change: {summary}"),
-        request,
-        facts,
-        switch,
-    })
-}
-
-/// What the review learnt about the source before an install: its listing
-/// (what `transport::listing` answers, or a sibling folder's), or why it
-/// could not be read, in a plain sentence.
+/// The source listing, or the plain reason it could not be read.
 pub struct SourceFacts {
     pub listing: std::result::Result<Value, String>,
 }
@@ -578,7 +117,7 @@ pub struct Held<'a> {
     pub enabled_plugins: &'a [String],
 }
 
-/// An install on Staging or Production of a release the source instance
+/// An install of a release the source instance
 /// tested (`release`), or of a release file uploaded here (`bundle`).
 pub fn install(
     instance: &Instance,
@@ -593,9 +132,6 @@ pub fn install(
         running_sha256,
         enabled_plugins,
     } = *held;
-    if instance.role.builds() {
-        return Err(SoftwareError::field("instance", &format!("{} builds its own software; use base.software.change here. Installing a tested release is for Staging and Production.", instance.label)));
-    }
     busy(active)?;
     let switch = switch_of(input)?;
     let chosen = match (input["bundle"].as_str(), input["release"].as_i64()) {
@@ -1158,20 +694,18 @@ pub fn undo(
     })
 }
 
-/// The go-ahead for a job the installer parks before the pause: a built
-/// change, or an install whose copy is checked. `parked` is the release its
+/// The go-ahead for an install whose copy is checked before the pause. `parked` is the release its
 /// first part made while no later step has started, else `None`.
 pub fn go(instance: &Instance, job: &Job, parked: Option<i64>) -> Result<Review> {
     let refuse = |message: String| Err(SoftwareError::field("job", &message));
     let (what, steps) = match job.kind.as_str() {
-        "change" => ("build", jobs::change_steps()),
         "install" => (
             "copy",
             jobs::install_steps(job.request["source"]["kind"].as_str() == Some("https")),
         ),
         kind => {
             return refuse(format!(
-                "Job {} is {} {kind}; only a change or an install can be given a go-ahead.",
+                "Job {} is {} {kind}; only an install can be given a go-ahead.",
                 job.id,
                 if kind == "undo" { "an" } else { "a" }
             ))
@@ -1268,12 +802,4 @@ pub fn loss_sentence(lost: &Value) -> String {
         if total == 1 { "" } else { "s" },
         kinds.join(", ")
     )
-}
-
-fn join<T: std::fmt::Display>(items: &[T]) -> String {
-    items
-        .iter()
-        .map(ToString::to_string)
-        .collect::<Vec<_>>()
-        .join(", ")
 }
