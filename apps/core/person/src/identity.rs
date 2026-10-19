@@ -46,18 +46,22 @@ pub async fn search(client: &impl GenericClient, scope: &Scope, query: &Search) 
     let phone = !masked.contains("phone");
     // Bilimbi Contacts: work data follows owner-contributed Grid paths so
     // Person never reads affiliation/company tables or bypasses their masking.
-    let work = bilibi_grid::query::text_search_sql(
-        client,
-        scope,
-        "persons",
-        &[
-            "work.work_email:list",
-            "work.work_phone:list",
-            "work.title:list",
-            "work.company.name:list",
-        ],
-    )
-    .await?;
+    let work = if needle.is_empty() {
+        "SELECT NULL::bigint WHERE $2::bigint IS NULL".to_owned()
+    } else {
+        bilibi_grid::query::text_search_sql(
+            client,
+            scope,
+            "persons",
+            &[
+                "work.work_email:list",
+                "work.work_phone:list",
+                "work.title:list",
+                "work.company.name:list",
+            ],
+        )
+        .await?
+    };
     let predicate = format!("tenant_id=$1 AND ($4 OR retired_at IS NULL) AND ($5::text IS NULL OR kind=$5) AND ($3='' OR position($3 in lower(name))>0 OR ($6 AND position($3 in lower(email))>0) OR ($7 AND position($3 in lower(phone))>0) OR id IN ({work}))");
     let params: &[&(dyn tokio_postgres::types::ToSql + Sync)] = &[
         &scope.tenant(),

@@ -209,7 +209,7 @@ impl PageColumns {
         };
         let kept = self.split(&catalog);
         let builtins = &self.builtins;
-        let default_ids: Vec<&str> = self.defaults.iter().map(String::as_str).collect();
+        let default_ids = self.default_ids(&catalog);
         let extras: Vec<Column> = kept
             .iter()
             .filter_map(|kept| match kept {
@@ -227,11 +227,12 @@ impl PageColumns {
         // The page's own order with nothing walked is the default, and the
         // URL says nothing about a default. A lens belongs to a walked column
         // that is shown; one named for anything else is dropped, not carried.
-        self.view.columns = if kept_specs == default_ids {
-            Vec::new()
-        } else {
-            kept_specs.iter().map(|spec| (*spec).to_owned()).collect()
-        };
+        self.view.columns =
+            if kept_specs == default_ids.iter().map(String::as_str).collect::<Vec<_>>() {
+                Vec::new()
+            } else {
+                kept_specs.iter().map(|spec| (*spec).to_owned()).collect()
+            };
         let shown: Vec<&str> = extras.iter().map(|column| column.spec.as_str()).collect();
         self.view
             .lenses
@@ -311,12 +312,29 @@ impl PageColumns {
     /// page's order when the view names none of them. A spec the catalog
     /// refuses is left out; nothing kept shows the page's own columns.
     fn split(&self, catalog: &Catalog) -> Vec<Kept> {
-        let root = catalog.table(&self.table);
         let specs: Vec<&str> = if self.view.columns.is_empty() {
             self.defaults.iter().map(String::as_str).collect()
         } else {
             self.view.columns.iter().map(String::as_str).collect()
         };
+        self.keep(catalog, specs)
+    }
+
+    /// The page's default columns that the catalog lets this scope see, in
+    /// the page's order: what a view with no columns of its own shows.
+    fn default_ids(&self, catalog: &Catalog) -> Vec<String> {
+        let specs = self.defaults.iter().map(String::as_str).collect();
+        self.keep(catalog, specs)
+            .iter()
+            .map(|kept| match kept {
+                Kept::Builtin(index) => self.builtins[*index].id.clone(),
+                Kept::Walked(column) => column.spec.clone(),
+            })
+            .collect()
+    }
+
+    fn keep(&self, catalog: &Catalog, specs: Vec<&str>) -> Vec<Kept> {
+        let root = catalog.table(&self.table);
         let mut kept = Vec::new();
         let mut walked = 0;
         for spec in specs {
@@ -370,7 +388,10 @@ impl PageColumns {
         // An empty column list means the page default; an op that changes
         // columns starts from that default spelled out, so a built-in is
         // never lost.
-        let builtin_ids = self.defaults.clone();
+        let builtin_ids = self.catalog.as_ref().map_or_else(
+            || self.defaults.clone(),
+            |catalog| self.default_ids(catalog),
+        );
         if self.view.columns.is_empty() {
             self.view.columns.clone_from(&builtin_ids);
         }
