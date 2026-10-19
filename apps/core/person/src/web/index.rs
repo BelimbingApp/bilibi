@@ -326,7 +326,7 @@ impl LiveState<Scope, Error> for Index {
                     "validate" | "create" => {
                         let pages = self.pages.clone();
                         let Some(draft) = &mut self.draft else {
-                            return Err(Error::Invalid);
+                            return self.view(request.scope).await;
                         };
                         if let Some(id) = draft
                             .submit(
@@ -338,6 +338,7 @@ impl LiveState<Scope, Error> for Index {
                             )
                             .await?
                         {
+                            self.draft = None;
                             return Ok(LiveBody {
                                 redirect: Some(format!("/contacts/{}", id.get())),
                                 flash: Some((
