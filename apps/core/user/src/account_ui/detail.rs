@@ -10,8 +10,9 @@ use super::*;
 use crate::{
     accounts::AccountField,
     contributions::{DELETE, UPDATE},
-    Account, AccountError, LinkError,
+    two_factor, Account, AccountError, LinkError,
 };
+use bilibi_agent_api::{page::Call, Error as ContractError};
 use bilibi_authz::{roles::RoleSummary, Effective};
 use bilibi_company::eligibility::{account_eligibility, AccountEligibility};
 use bilibi_database::Error;
@@ -20,10 +21,12 @@ use bilibi_ui::{
     lists::RecordLink,
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, PanelSpec},
     ActionLink, Alert, BackLink, Badge, BadgeKind, BuiltinColumn, Button, ButtonVariant, Card,
-    Cell, Choice, CommitStates, CommitStatus, ConfirmDialog, EmptyState, Fact, Facts, Field,
-    FlashGroup, FlexRow, FlexTable, Header, InlineChoice, InlineEdit, InlineField, InputKind,
-    ListColumns, PageVariant, SecretInput, SectionHeading, SortDir, StatusKind, TableEmpty,
+    Cell, Choice, CodeInput, CommitStates, CommitStatus, ConfirmDialog, EmptyState, Fact, Facts,
+    Field, FlashGroup, FlexRow, FlexTable, Header, InlineChoice, InlineEdit, InlineField,
+    InputKind, ListColumns, Modal, ModalWidth, PageVariant, SecretInput, SectionHeading, SortDir,
+    StatusKind, StepUp, TableEmpty,
 };
+use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 
 const FORBIDDEN: &str = "You do not have permission to edit users.";
@@ -43,6 +46,7 @@ struct View {
     access: Html,
     password: Html,
     links: Html,
+    two_factor: Html,
     danger: Html,
     dialog: Html,
 }
@@ -81,6 +85,19 @@ struct PasswordCard {
     password: Html,
     confirmation: Html,
     submit: Html,
+}
+#[derive(Template)]
+#[template(path = "account_two_factor.html")]
+struct TwoFactorCard {
+    description: String,
+    button: Html,
+}
+#[derive(Template)]
+#[template(path = "account_reset_two_factor.html")]
+struct ResetBody {
+    event: &'static str,
+    step_up: StepUp,
+    error: Html,
 }
 #[derive(Template)]
 #[template(path = "account_danger.html")]
@@ -173,9 +190,10 @@ fn dom_id(key: &str) -> String {
 /// A held, not yet applied, destructive request; the dialog names it.
 enum Pending {
     Delete,
-    ResetTwoFactor,
     Unlink(String),
     Authz(AuthzRule),
+    /// Reset 2FA, waiting for the admin's own authenticator code.
+    ResetTwoFactor,
 }
 #[derive(Clone)]
 enum AuthzRule {
@@ -247,9 +265,6 @@ struct Loaded {
     phone: Option<crate::PhoneStatus>,
 }
 impl Loaded {
-    fn two_factor_on(&self) -> bool {
-        self.app_two_factor || self.phone.as_ref().is_some_and(|phone| phone.verified)
-    }
     fn can_edit(&self) -> bool {
         self.can_manage && !self.archived
     }
@@ -268,6 +283,8 @@ pub(crate) struct Detail {
     sort: (String, SortDir),
     access: AccessUi,
     history: bool,
+    /// The last authenticator-code error on Reset 2FA. Other failures use the flash.
+    reset_error: String,
 }
 
 fn affiliation_builtins() -> Vec<BuiltinColumn> {
@@ -297,6 +314,7 @@ impl Detail {
             sort: ("company".into(), SortDir::Asc),
             access: AccessUi::default(),
             history: false,
+            reset_error: String::new(),
         })
     }
 
@@ -557,21 +575,21 @@ impl Detail {
         };
         let items = vec![
             Fact {
-                title: "Name",
+                title: crate::record_fields::get("name").label,
                 id: "user-view-name",
                 value: render(&InlineEdit {
                     field: self.inline(loaded, "name", "Name", &account.name),
                 })?,
             },
             Fact {
-                title: "Email",
+                title: crate::record_fields::EMAIL.label,
                 id: "user-view-email",
                 value: render(&InlineEdit {
                     field: self.inline(loaded, "email", "Email", &account.email),
                 })?,
             },
             Fact {
-                title: "Person",
+                title: crate::record_fields::PERSON_ID.label,
                 id: "user-view-person",
                 value: render(&InlineChoice {
                     field: person_field,
@@ -580,7 +598,7 @@ impl Detail {
                 })?,
             },
             Fact {
-                title: "Company",
+                title: crate::record_fields::COMPANY_ID.label,
                 id: "user-view-company",
                 value: render(&InlineChoice {
                     field: affiliation_field,
@@ -608,22 +626,22 @@ impl Detail {
             Fact {
                 title: "2FA",
                 id: "user-view-two-factor",
-                value: self.two_factor_fact(scope, loaded)?,
+                value: self.two_factor_fact(loaded)?,
             },
             Fact {
-                title: "Email Verified",
+                title: crate::record_fields::EMAIL_VERIFIED_AT.label,
                 id: "user-view-email-verified",
                 value: verified,
             },
             Fact {
-                title: "Created",
+                title: crate::record_fields::CREATED_AT.label,
                 id: "user-view-created",
                 value: render(&Stamp {
                     value: datetime(&display, "user-created-at", account.created_at)?,
                 })?,
             },
             Fact {
-                title: "Updated",
+                title: crate::record_fields::UPDATED_AT.label,
                 id: "user-view-updated",
                 value: render(&Stamp {
                     value: datetime(&display, "user-updated-at", account.updated_at)?,
@@ -649,8 +667,8 @@ impl Detail {
         })
     }
 
-    /// Which methods the account has, and the reset an editor may make.
-    fn two_factor_fact(&self, scope: &Scope, loaded: &Loaded) -> Result<Html> {
+    /// Which 2FA methods the account has (the reset is its own card).
+    fn two_factor_fact(&self, loaded: &Loaded) -> Result<Html> {
         let phone_verified = loaded.phone.as_ref().is_some_and(|phone| phone.verified);
         let (kind, text) = match (loaded.app_two_factor, phone_verified) {
             (true, true) => (BadgeKind::Success, "App and SMS"),
@@ -659,18 +677,7 @@ impl Detail {
             (false, false) if loaded.phone.is_some() => (BadgeKind::Warning, "Phone not verified"),
             (false, false) => (BadgeKind::Neutral, "Off"),
         };
-        let mut html = render(&Badge::status(kind, text))?;
-        if loaded.can_edit() && scope.user() != self.id && loaded.two_factor_on() {
-            html.push(&render(&Button {
-                id: "user-reset-two-factor",
-                button_type: "button",
-                event: "request_reset_two_factor",
-                class: "ml-2",
-                body: Html::text("Reset 2FA"),
-                ..Button::default()
-            })?);
-        }
-        Ok(html)
+        render(&Badge::status(kind, text))
     }
 
     async fn access(&self, scope: &Scope, loaded: &Loaded) -> Result<Html> {
@@ -1136,7 +1143,7 @@ impl Detail {
         })
     }
 
-    fn dialog(&self, loaded: &Loaded) -> Result<Html> {
+    fn dialog(&self, loaded: &Loaded, admin_enrolled: bool) -> Result<Html> {
         let name = &loaded.account.name;
         Ok(match &self.pending {
             None => Html::EMPTY,
@@ -1149,15 +1156,6 @@ impl Detail {
                 confirm_event: "delete",
                 cancel_event: "cancel_delete",
             })?,
-            Some(Pending::ResetTwoFactor) => render(&ConfirmDialog {
-                id: "reset-two-factor-confirm",
-                consequence: &format!("{name}'s 2FA will be reset."),
-                detail: "Their authenticator app and recovery codes are deleted, their phone must be verified again, and their open sessions end.",
-                confirm: "Reset 2FA",
-                working: "Resetting…",
-                confirm_event: "reset_two_factor",
-                cancel_event: "cancel_reset_two_factor",
-            })?,
             Some(Pending::Unlink(person)) => render(&ConfirmDialog {
                 id: "unlink-person-confirm",
                 consequence: &format!("{person} will be unlinked from {name}."),
@@ -1167,6 +1165,7 @@ impl Detail {
                 confirm_event: "unlink",
                 cancel_event: "cancel_unlink",
             })?,
+            Some(Pending::ResetTwoFactor) => self.reset_dialog(loaded, admin_enrolled)?,
             Some(Pending::Authz(rule)) => {
                 let (confirm, working, event) = rule.verb();
                 render(&ConfirmDialog {
@@ -1180,6 +1179,169 @@ impl Detail {
                 })?
             }
         })
+    }
+
+    /// The Reset 2FA card, for an admin looking at someone else's account
+    /// that has an authenticator on. Hidden otherwise, and when the account
+    /// is archived (read-only). Also answers whether the admin has 2FA set
+    /// up, which the confirmation needs.
+    async fn two_factor_card(&self, scope: &Scope, loaded: &Loaded) -> Result<(Html, bool)> {
+        if !loaded.can_edit()
+            || self.id == scope.user()
+            || scope.impersonator().is_some()
+            || !self
+                .pages
+                .users
+                .account_two_factor_on(scope, self.id)
+                .await?
+        {
+            return Ok((Html::EMPTY, false));
+        }
+        let enrolled = self.pages.users.two_factor_status(scope).await?.enabled;
+        let card = render(&TwoFactorCard {
+            description: format!(
+                "{} set up an authenticator app. If they lost their phone, reset it: they are signed out and set it up again.",
+                loaded.account.name
+            ),
+            button: render(&Button {
+                id: "user-reset-two-factor",
+                button_type: "button",
+                event: "request_reset_two_factor",
+                variant: ButtonVariant::Secondary,
+                body: Html::text("Reset 2FA"),
+                ..Button::default()
+            })?,
+        })?;
+        Ok((card, enrolled))
+    }
+
+    fn reset_dialog(&self, loaded: &Loaded, enrolled: bool) -> Result<Html> {
+        let name = &loaded.account.name;
+        let error = if self.reset_error.is_empty() {
+            Html::EMPTY
+        } else {
+            render(&Alert {
+                kind: StatusKind::Error,
+                id: "user-reset-two-factor-error",
+                class: "mb-3",
+                body: Html::text(&self.reset_error),
+            })?
+        };
+        let mut step_up = StepUp::new(enrolled, format!("/users/{}", self.id));
+        step_up.reason = "to reset someone else's 2FA.".into();
+        step_up.body = Html::text(&format!(
+            "{name} will be signed out everywhere, notified, and asked to set up their authenticator app again. Enter the 6-digit code from your own authenticator app to confirm."
+        ));
+        step_up.code = render(
+            &CodeInput::new(
+                "user-reset-two-factor-code",
+                "code",
+                "6-digit code from your authenticator app",
+                6,
+            )
+            .numeric(),
+        )?;
+        step_up.secondary_actions = render(&Button {
+            id: "user-reset-two-factor-cancel",
+            button_type: "button",
+            event: "cancel_reset_two_factor",
+            body: Html::text("Cancel"),
+            ..Button::default()
+        })?;
+        step_up.actions = render(&Button {
+            id: "user-reset-two-factor-confirm",
+            button_type: "submit",
+            variant: ButtonVariant::Danger,
+            working: "Resetting…",
+            body: Html::text("Reset 2FA"),
+            ..Button::default()
+        })?;
+        let body = render(&ResetBody {
+            event: two_factor::RESET_EVENT,
+            step_up,
+            error,
+        })?;
+        render(&Modal {
+            id: "user-reset-two-factor-dialog",
+            title: &format!("Reset 2FA for {name}?"),
+            cancel_event: "cancel_reset_two_factor",
+            width: ModalWidth::Narrow,
+            description: "Nothing changes until you confirm with your code.",
+            role: "",
+            flash: None,
+            body,
+        })
+    }
+
+    /// Runs the `core.user.two_factor.reset` contract with the admin's code
+    /// presented on the request, as an agent's `step_up_code` is.
+    async fn reset_two_factor(
+        &mut self,
+        scope: &Scope,
+        credential: &str,
+        value: &Value,
+    ) -> Result<()> {
+        if !matches!(self.pending, Some(Pending::ResetTwoFactor)) {
+            return Ok(());
+        }
+        let code = text(value, "code");
+        let code = code.trim();
+        if code.is_empty() {
+            self.reset_error = "Enter the 6-digit code from your authenticator app.".into();
+            return Ok(());
+        }
+        let name = self.load(scope).await?.account.name;
+        let presented = scope.clone().presenting_step_up(code);
+        let call = Call {
+            scope: &presented,
+            credential,
+            service: two_factor::PAGES,
+            event: two_factor::RESET_EVENT,
+            contract: two_factor::RESET_KEY,
+        };
+        match self
+            .pages
+            .contracts
+            .submit(&call, json!({"user_id": self.id}))
+            .await
+        {
+            Ok(_) => {
+                self.pending = None;
+                self.reset_error.clear();
+                self.flash.success(format!(
+                    "2FA was reset for {name}. They are signed out and notified, and set it up again in Settings."
+                ));
+            }
+            Err(ContractError::Backend(Error::StepUpRequired { reason, operation })) => {
+                self.reset_error = match reason {
+                    // Enrolment is the host's prompt: it enrols and comes back.
+                    "not_enrolled" => return Err(Error::StepUpRequired { reason, operation }),
+                    "invalid_code" => "That code was not accepted. Enter the current code from your authenticator app.",
+                    "locked" => "Too many wrong codes. Wait a while, then try again with a fresh code.",
+                    "impersonating" => "2FA cannot be reset while viewing as someone else.",
+                    _ => "Enter the current 6-digit code from your authenticator app.",
+                }
+                .into();
+            }
+            Err(ContractError::Backend(Error::Unauthorized)) => return Err(Error::Unauthorized),
+            Err(ContractError::Forbidden | ContractError::Backend(Error::Forbidden)) => {
+                self.pending = None;
+                self.flash.error("You do not have permission to reset 2FA.");
+            }
+            Err(ContractError::InvalidInput(fields)) => {
+                let message = fields
+                    .values()
+                    .flatten()
+                    .next()
+                    .cloned()
+                    .unwrap_or_else(|| "The reset was not accepted.".into());
+                self.pending = None;
+                self.flash.error(message);
+            }
+            Err(ContractError::Backend(error)) => return Err(error),
+            Err(_) => return Err(Error::Internal),
+        }
+        Ok(())
     }
 
     /// Bilimbi's guard, the users list's: the capability, never the signed-in
@@ -1251,6 +1413,7 @@ impl Detail {
             self.password_card()?
         };
         let links = self.links_card(&loaded)?;
+        let (two_factor, admin_enrolled) = self.two_factor_card(scope, &loaded).await?;
         let danger = if loaded.can_delete && !loaded.archived && scope.user() != self.id {
             render(&Danger {
                 button: render(&Button {
@@ -1277,8 +1440,9 @@ impl Detail {
             access,
             password,
             links,
+            two_factor,
             danger,
-            dialog: self.dialog(&loaded)?,
+            dialog: self.dialog(&loaded, admin_enrolled)?,
         })?;
         Ok(LiveBody {
             html: render(&bilibi_ui::Page {
@@ -1551,7 +1715,7 @@ impl Detail {
         Ok(true)
     }
 
-    async fn handle(&mut self, scope: &Scope, value: &Value) -> Result<()> {
+    async fn handle(&mut self, scope: &Scope, credential: &str, value: &Value) -> Result<()> {
         match event(value)? {
             "save_field" => self.save_field(scope, value).await?,
             "clear-flash" => self.flash.dismiss(value.get("key").and_then(Value::as_str)),
@@ -1577,36 +1741,27 @@ impl Detail {
                     self.pending = Some(Pending::Delete);
                 }
             }
-            "cancel_delete" | "cancel_unlink" | "cancel_authz" | "cancel_reset_two_factor" => {
-                self.pending = None
-            }
             "request_reset_two_factor" => {
-                if scope.user() == self.id {
-                    self.flash.error("Reset your own 2FA from My settings.");
-                } else if self.guard_write(scope, FORBIDDEN).await? {
+                let loaded = self.load(scope).await?;
+                if !self.pages.allowed(scope, UPDATE).await? {
+                    self.flash.error("You do not have permission to reset 2FA.");
+                } else if scope.user() == self.id {
+                    self.flash
+                        .error("You cannot reset your own 2FA. Ask another admin.");
+                } else if loaded.archived {
+                    self.flash.error(ARCHIVED_ACCOUNT);
+                } else {
                     self.flash.clear();
+                    self.reset_error.clear();
                     self.pending = Some(Pending::ResetTwoFactor);
                 }
             }
-            "reset_two_factor" => {
-                if matches!(self.pending, Some(Pending::ResetTwoFactor)) {
-                    self.pending = None;
-                    let name = self.load(scope).await?.account.name;
-                    match self.pages.users.reset_two_factor(scope, self.id).await {
-                        Ok(()) => self.flash.success(format!(
-                            "{name}'s 2FA was reset. They must set it up again."
-                        )),
-                        Err(AccountError::Access(
-                            error @ (Error::Unauthorized | Error::StepUpRequired { .. }),
-                        )) => return Err(error),
-                        Err(AccountError::Access(Error::Forbidden)) => self.flash.error(FORBIDDEN),
-                        Err(AccountError::Archived) => self.flash.error(ARCHIVED_ACCOUNT),
-                        Err(_) => self.flash.error(format!(
-                            "{name}'s 2FA was not reset. Reload the page and try again."
-                        )),
-                    }
-                }
+            "cancel_reset_two_factor" => {
+                self.pending = None;
+                self.reset_error.clear();
             }
+            "reset-two-factor" => self.reset_two_factor(scope, credential, value).await?,
+            "cancel_delete" | "cancel_unlink" | "cancel_authz" => self.pending = None,
             "delete" => {
                 if matches!(self.pending, Some(Pending::Delete)) {
                     self.pending = None;
@@ -1863,7 +2018,8 @@ impl LiveState<Scope, Error> for Detail {
         Box::pin(async move {
             if let LiveInput::Event(value) = request.input {
                 if event(value)? == "delete" {
-                    self.handle(request.scope, value).await?;
+                    self.handle(request.scope, request.credential, value)
+                        .await?;
                     if self
                         .pages
                         .users
@@ -1880,7 +2036,8 @@ impl LiveState<Scope, Error> for Detail {
                         });
                     }
                 } else {
-                    self.handle(request.scope, value).await?;
+                    self.handle(request.scope, request.credential, value)
+                        .await?;
                 }
             }
             self.view(request.scope).await

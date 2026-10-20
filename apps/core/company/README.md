@@ -5,8 +5,8 @@
 (legal entity types, department types), a company's departments, the tenant's
 primary company and the provisioning commands. The public API is the
 `core/company.companies` service (`CompanyService`) and the free functions of
-`organisation`, `reference_types`, `departments`, `primary`, `lifecycle`,
-`eligibility`, `relationship_roles` and `relationships`; table layout and
+`organisation`, `reference_types`, `departments`, `lifecycle`,
+`eligibility`, `relationship_roles` and `relationships`; primary-company functions and types are re-exported at the crate root. table layout and
 SQL stay private. The module-owned pages (`web.rs`, `web/views.rs`) serve
 `/companies`, `/companies/create` and `/companies/{id}`, and
 `web/relationships.rs` serves `/companies/relationship-types`,
@@ -120,7 +120,7 @@ or creates and marks it, and re-running creates neither a second operator
 nor a second company (`bilibi-web create-owner` calls it first when no
 operator company exists, then creates the first account). Both are deployment writes recorded as one retained
 `company.*.provisioned` audit action by the `provision` system principal,
-through Tenancy's `admin::provision_tenant` / `provision_platform_operator`
+through Tenancy's `provision_tenant` / `provision_platform_operator`
 seams. Ids come from PostgreSQL.
 
 ## Platform-operator setup and dashboard panels (K17)
@@ -279,6 +279,8 @@ carry the version of the row read when the dialog opened, so a concurrent
 change is refused as stale rather than overwritten. Rows keep the K5 order
 (other party, then label); none of these tables sorts, as in Bilimbi.
 
+The relationship table and its record panels also offer **Effective From** and **Effective To** as separate columns. Their labels come from the date editor’s shared record fields. The default Effective Period column stays in place.
+
 ## Lifecycle and account freeze (K2)
 
 Use `CompanyService::{activate_company,reactivate_company,suspend_company,
@@ -424,3 +426,15 @@ owners accepting an authorized upload or document and refusing the viewer,
 the archived company, the missing person and the other tenant. In the running
 app, Administration → System → Settings offers the company picker and
 Administration → Authorization → Roles → Create asks for the owning company.
+
+Company scalar facts share a record-field schema with Grid. Optional columns include Legal Entity Type, Parent Company, Website and the other visible scalar facts. Related columns project readable names; business activities and metadata remain nested or long content on the record. Default column order is unchanged.
+
+## Companies in a newly created tenant
+
+`CompanyService::preview_tenant_companies` and `provision_new_tenant_in` compose tenant provisioning with [Core Tenant Administration](../tenant_administration/README.md). Names use ordinary Company validation, generated codes and the person's field restrictions; duplicate generated codes are refused. The first company becomes primary.
+
+The write requires Tenancy's sealed `CreatedTenant` receipt, bound to the current transaction and original actor. It accepts no arbitrary target tenant id and never changes the caller's scope. Tenant-create capability and live operator standing authorize the complete provisioning action; its contract enforces Base Step-up. Every company and primary assignment is a `Change` on that same transaction. Existing tenant business data remains behind its ordinary scoped facade.
+
+## Postal addresses
+
+Companies and contacts have linked postal addresses, owned by [Core Address](../address/README.md). The `core.address` guide explains saving an office or billing address and attaching it to a company or person. Use `core.address.company.list` or `core.address.person.list` to read those links. Address creation and attachment are reviewed writes; a namecard contact can be created first, then linked to its office address. An affiliation holds a position and work email/phone, not a postal address.

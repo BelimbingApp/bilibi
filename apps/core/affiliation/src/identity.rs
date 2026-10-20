@@ -334,7 +334,7 @@ pub(crate) async fn lock_for_employment<'tx>(
     // Primary assignment also locks tenant before company: this fences transfers
     // and serializes proof+Employment writes with changing our own company.
     tx.sql().query_opt("SELECT id FROM tenants WHERE id=$1 AND status='active' AND deleted_at IS NULL FOR NO KEY UPDATE", &[&scope.tenant()]).await?.ok_or(Error::Unauthorized)?;
-    let primary = bilibi_company::primary::primary_company(tx.sql(), scope.tenant())
+    let primary = bilibi_company::primary_company(tx.sql(), scope.tenant())
         .await?
         .ok_or(Error::Forbidden)?;
     let affiliation = raw(tx.sql(), scope, id, false).await?;

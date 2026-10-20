@@ -28,6 +28,7 @@ pub struct ComponentsSpecimen {
     stats_unlinked: Vec<StatItem>,
     stats_three: Vec<StatItem>,
     controls: FormControls,
+    colours: Vec<crate::ColourInput>,
     /// The help, error and locked fields, rendered through the typed models.
     field_states: Html,
     radio_disabled: Html,
@@ -49,6 +50,7 @@ sections! {
         text_inputs_basic: "ui_components_specimen/text_inputs_basic.html",
         text_inputs_typed: "ui_components_specimen/text_inputs_typed.html",
         choices: "ui_components_specimen/choices.html",
+        colour_inputs: "ui_components_specimen/colour_inputs.html",
         multi_select: "ui_components_specimen/multi_select.html",
         date_secret: "ui_components_specimen/date_secret.html",
         date_inputs: "ui_components_specimen/date_inputs.html",
@@ -69,7 +71,10 @@ sections! {
 pub struct FormControls {
     pub code: CodeInput,
     pub authenticator: CodeInput,
+    pub optional_authenticator: CodeInput,
     pub invalid_authenticator: CodeInput,
+    pub enrollment_first: crate::StepUp,
+    pub enrolled_step_up: crate::StepUp,
     pub text: Field,
     pub search: Field,
     pub email: Field,
@@ -137,14 +142,38 @@ fn strings(values: &[&str]) -> Vec<String> {
 }
 
 impl FormControls {
+    fn step_up(enrolled: bool) -> crate::StepUp {
+        let mut step = crate::StepUp::new(enrolled, "/assets/ui-components.html");
+        step.code = Html::render(
+            &CodeInput::new("specimen-step-up", "specimen[step_up]", "2FA code", 6).numeric(),
+        )
+        .expect("shared code input");
+        step.actions = Html::render(&Button {
+            button_type: "submit",
+            body: Html::text("Save"),
+            ..Default::default()
+        })
+        .expect("shared button");
+        step
+    }
     fn new() -> Self {
         let sample = |key: &str, value: &str| Field::in_form("sample", key).value(value);
         Self {
+            enrollment_first: Self::step_up(false),
+            enrolled_step_up: Self::step_up(true),
             code: CodeInput::new("specimen_code", "specimen[code]", "Device code", 8)
                 .value("ABCD-EF23")
                 .group_size(4),
             authenticator: CodeInput::new("specimen_otp", "specimen[otp]", "Authenticator code", 6)
                 .numeric(),
+            optional_authenticator: CodeInput::new(
+                "specimen_optional_otp",
+                "specimen[optional_otp]",
+                "2FA code (role changes only)",
+                6,
+            )
+            .numeric()
+            .optional(),
             invalid_authenticator: CodeInput::new(
                 "specimen_otp_error",
                 "specimen[otp_error]",
@@ -452,6 +481,7 @@ impl ComponentsSpecimen {
                 StatItem::text("Current", "MY"),
             ],
             controls: FormControls::new(),
+            colours: colour_inputs(),
             field_states,
             radio_disabled,
             inline: InlineSamples::new()?,
@@ -528,4 +558,55 @@ fn specimen_uploads() -> Uploads {
         &mut ids,
     );
     uploads
+}
+
+// An extension of Bilimbi's form specimens for the theme-role colour input.
+fn colour_inputs() -> Vec<crate::ColourInput> {
+    use crate::{ColourChoice, ColourInput, ColourRole};
+    let options = || {
+        let mut choices = vec![ColourChoice::new("Use role colour", "", ColourRole::Info)];
+        choices.extend(
+            [
+                ("info", ColourRole::Info),
+                ("success", ColourRole::Success),
+                ("warning", ColourRole::Warning),
+                ("danger", ColourRole::Danger),
+            ]
+            .map(|(value, role)| ColourChoice::new(role.label(), value, role)),
+        );
+        choices
+    };
+    vec![
+        ColourInput::new(
+            Field::in_form("sample", "colour")
+                .label("Banner colour")
+                .hint("Choose a colour, or follow the server role."),
+            options(),
+        ),
+        ColourInput::new(
+            Field::in_form("sample", "colour_error")
+                .label("Colour")
+                .value("warning")
+                .error("Choose a colour that is available."),
+            options(),
+        ),
+        ColourInput::new(
+            Field::in_form("sample", "colour_disabled")
+                .label("Colour")
+                .value("success")
+                .disabled()
+                .hint("This colour is set by your administrator."),
+            options(),
+        ),
+        ColourInput::new(
+            Field::in_form("sample", "colour_required")
+                .label("Colour")
+                .value("danger")
+                .required(),
+            options()
+                .into_iter()
+                .filter(|option| !option.value.is_empty())
+                .collect(),
+        ),
+    ]
 }

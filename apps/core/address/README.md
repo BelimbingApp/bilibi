@@ -1,11 +1,30 @@
 # Core Address (K11)
 
 `AddressService` (`core/address.addresses`) owns `addresses` and
-`address_attachments`. Pages, panels and future headless adapters call its
+`address_attachments`. Pages, panels and agent operations call its
 APIs; no other module reads or writes these tables. Every call refreshes the
 actor's scope and rechecks contributed `admin.address.*` capabilities; no API
 accepts a client-selected tenant. The `/addresses` pages and the two owner
 panels (`src/web/`) are built on these APIs.
+
+## Operation contracts
+
+Agents can find, save and link the same addresses shown on company and contact pages. Read [the address guide](guide.md) for a business-card workflow.
+
+| Action | Contract |
+| --- | --- |
+| Search and read | `core.address.list`, `core.address.get` |
+| Owner addresses and attach picker | `core.address.company.list`, `.available`; `core.address.person.list`, `.available` |
+| Location choices and cascade | `core.address.location.options`, `.suggest` |
+| Address facts | `core.address.create`, `.update`, `.delete` |
+| Company links | `core.address.company.attach`, `.create_and_attach`, `.update_attachment`, `.detach` |
+| Person links | `core.address.person.attach`, `.create_and_attach`, `.update_attachment`, `.detach` |
+
+Write inputs nest facts under `address` or link settings under `attachment`. Owner writes name `company_id` or `person_id`; attaching an existing address requires its `address_version`, checked after locking; edits and deletion require the current record's `version`. Updates replace visible optional facts; omitted visible fields clear, while an omitted restricted phone stays stored. Timestamps in operation output are ISO UTC strings, and withheld phones use the restricted marker.
+
+All doors use [reviewed writes](../../base/agent_api/README.md#reviewed-safe-writes). The handler calls the Address facade on the plan's transaction; existing owner locks, version fences, field restrictions, audit changes and after-commit notifications apply. Attachment contracts use the owner's update capability, matching the panels; they cannot cross owner kinds. A review that shows an existing address (attach, update, delete) also needs `admin.address.view` and applies the same field restrictions as a read. A create-and-attach starts a manual, unverified address and its date default appears in the preview. No additional sensitive action or step-up policy is introduced.
+
+Page write events use `PageContracts`, with `Pending::None`. Delete and unlink retain a browser-bound preview code in their confirmation state. No address page or panel writes through a separate facade transaction.
 
 ## Address facts and normalization
 
@@ -131,3 +150,5 @@ attachments, primary resolution, the bootstrap facts before and after the
 operator's address, archived-company and retired-Person freezes, refused and
 soft delete, and audit counts. It marks tenant 1 as the platform operator when
 none exists, so use it only on a disposable database.
+
+The directory shares its detail-field vocabulary through `web::fields` and `ListColumns::with_record_fields`. Street lines, phone, location names and provenance scalars are optional columns; raw input remains long text on the record. The original five default columns stay in place. Phone restrictions refresh even when a search returns no rows.

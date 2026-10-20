@@ -53,8 +53,9 @@ impl Index {
                     ("created_at", "Created"),
                     ("updated_at", "Updated"),
                 ]
-                .map(|(key, label)| {
-                    let mut column = BuiltinColumn::new(key, label).sortable(key);
+                .map(|(key, _label)| {
+                    let mut column =
+                        BuiltinColumn::new(key, super::fields::get(key).label).sortable(key);
                     if key.ends_with("_at") {
                         column.kind = bilibi_ui::flex_table::ColumnType::Datetime;
                     }
@@ -62,6 +63,7 @@ impl Index {
                 })
                 .to_vec(),
             )
+            .map(|columns| columns.with_record_fields(super::fields::ALL.iter().copied()))
             .map_err(|_| Error::Internal)?,
             pending: None,
             success: String::new(),

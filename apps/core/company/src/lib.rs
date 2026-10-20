@@ -10,7 +10,9 @@ pub mod files;
 pub mod lifecycle;
 pub mod organisation;
 mod page_data;
-pub mod primary;
+mod tenant_provisioning;
+pub use tenant_provisioning::TenantCompanyErrors;
+mod primary;
 pub mod reference_types;
 mod relationship_operations;
 pub mod relationship_roles;
@@ -21,7 +23,11 @@ pub use contributions::{CAPABILITIES, CREATE, DELETE, LIST, TENANT_WIDE, UPDATE,
 pub use organisation::{
     CreateOutcome, Identity, NewCompany, SearchPage, SearchQuery, ValidCompany,
 };
-pub use primary::{AssignmentStatus, ProvisionOutcome, Provisioned};
+pub use primary::{
+    assign, is_primary, platform_operator_company, primary_company, provision_platform_operator,
+    provision_platform_operator_in, provision_tenant, AssignmentError, AssignmentStatus,
+    ProvisionOutcome, Provisioned,
+};
 
 use bilibi_database::{Change, Db, Error, MutationBoundary, Result};
 use bilibi_notifications::NotificationBoundary;

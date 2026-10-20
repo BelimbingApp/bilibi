@@ -3,5 +3,11 @@
 {% call ui::card(id="specimen-code-input", title="Code input", inner_class="p-4") %}
 {% call form::code_input(code=controls.code) %}{% endcall %}
 {% call form::code_input(code=controls.authenticator) %}{% endcall %}
+{% call form::code_input(code=controls.optional_authenticator) %}{% endcall %}
 {% call form::code_input(code=controls.invalid_authenticator) %}{% endcall %}
+{% endcall %}
+
+{% call ui::card(id="specimen-step-up-card", title="2FA before saving") %}
+{% call form::step_up(step=controls.enrollment_first) %}{% endcall %}
+{% call form::step_up(step=controls.enrolled_step_up) %}{% endcall %}
 {% endcall %}

@@ -31,7 +31,7 @@ carried their rows over once in `006-audit-evidence`. `begin_with` also supports
 explicit deployment adapters.
 
 `Context` carries tenant, actor `{kind,id}`, optional impersonator, action and one
-trace ID shared by all nested changes. Database validates its shape; it does not
+trace ID shared by all nested changes. `agent_connection` records the durable agent grant without replacing the person as actor. Database validates its shape; it does not
 prove authorization. F3's session/worker adapters supply trusted attribution.
 Use the Audit actor kinds (`user`, `agent`, `guest`, `console`, `scheduler`,
 `queue`, `system`, `unknown`); a `system` principal carries its name as the id and

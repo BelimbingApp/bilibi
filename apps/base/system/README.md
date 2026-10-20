@@ -54,26 +54,28 @@ from the repository root for disposable database and browser procedures.
 
 ## Instance identity (`src/instance.rs`)
 
-`Instance::resolve(settings, client)` says which instance this server is: the
-role (Dev, Staging or Production), the label and colour it announces itself
-with, and the instance it installs releases from. **The role is `BILIBI_ENV`**,
-the same bootstrap value the host boots on and validates
-(`apps/web/src/environment.rs` delegates its parse to `Role::parse`); it is
-deliberately not a setting, so nothing editable can make an installing server
-build. The label (`instance.label`), colour (`instance.colour`, a `DESIGN.md`
-status role) and source (`instance.installs_from`, a sibling instance name or
-an `https://` address, parsed by `Source`) are global settings under the
-**Instance** group of the settings editor, gated by the platform capability
-`admin.system.instance.manage`; their defaults follow the role. The instance
-banner, the Software page and the agent confirm pages read `Instance` and
-nothing else, so they cannot disagree. `Role::consequence` is the plain
-sentence for what a change does here ("This is a test copy. Changes here do
-not affect production."). `Instance::badge` (top bar and sign-in pages, none on
-Production), `banner` (every review and confirmation, Production included) and
-`agent_json` (the `instance` object of plans, commits, MCP and
-`/.well-known/bilibi`) are drawn from the same label, colour and role, so an
-operator's `instance.label` and `instance.colour` show in all of them. The
-server layout that writes `BILIBI_ENV` is `docs/server-install.md`.
+`Instance::resolve(settings, client)` reads the server role, label, colour and update source from global settings. **`instance.role` is the single source of the role**, shared by the status bar, banners, Software, agent discovery and MCP initialize.
+
+The explicit production seed initializes `instance.role` from `BILIBI_ENV`: `development`, `staging` or `production` (unset means Production). It refuses other values. `install-server.sh` supplies this first value for servers; `start-app.sh` supplies Development for local copies. Seeding again preserves the saved role. Boot never seeds, and changing the environment after install cannot override the setting.
+
+Click the status-bar role to open `/system/instance`. A **Core Administrator in the platform-operator organisation** can change the role, label, colour and update source, with `admin.system.instance.manage` and no impersonation. The page and the `Instances::save` facade recheck these rules; writes recheck inside the audited mutation transaction. Every role change requires a fresh 2FA code through `base.system.instance.role.change`, declared `.always()`, including on Dev. Its `require_code` check refuses a missing submitted code even immediately after enrollment or another browser confirmation. The page warns that changing to or from Production changes warnings and 2FA rules without moving any data. A stale page cannot overwrite a newer role. The shell chooses whether to link the role with the unlogged `Instances::is_core_administrator` read plus its own capability set, so ordinary page renders write no authorization decisions.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `instance.role` | Install input | Dev, Staging or Production; only the protected instance page changes it |
+| `instance.label` | Current role word | The name shown to people and agents |
+| `instance.colour` | Blue for Dev, amber for Staging, red for Production | A shared status colour |
+| `instance.installs_from` | Empty | A sibling instance name or HTTPS address to install tested releases from |
+
+The label, colour and source also remain in the generic settings editor behind `admin.system.instance.manage`. Empty label and colour follow the stored role. The role has no generic editor, so delegated operators cannot bypass its Core Administrator and 2FA checks.
+
+The Banner colour field uses the shared `ColourInput`: Blue, Green, Amber and Red each show their name inside that banner colour. “Use role colour (Blue)” (or Green, Amber or Red for the stored role) shows the role's default colour and clears the override when saved. `src/instance.rs` owns the role-to-colour rule.
+
+`Instance::status` always names the role, including when the label differs. Staging keeps an extra top-bar badge. Dev and Staging show a badge on sign-in; Production shows none there. Reviews and confirmations use `Instance::banner` in every role. `Instance::agent_json` identifies plans, commits, MCP and `/.well-known/bilibi`. All use the same resolved identity.
+
+Base Step-up binds an `Enforcement` policy supplied by `Instances`. It reads the saved role on every check across processes: ordinary operations skip 2FA on Dev; `.always()` operations never skip it. The policy holds no process-local role cache. The server layout is in [`docs/server-install.md`](../../../docs/server-install.md).
+
+Agent connection identity also includes `APP_ORIGIN` (the canonical public address, with the host's default when unset). `Instance::agent_notice` names the label, role and address; `agent_json` includes `role` and `origin` alongside the existing fields, so discovery and plan/commit results identify the same destination even when an operator gives two environments the same label.
 
 ## Database Tables (`src/database_tables/`)
 
@@ -86,7 +88,7 @@ shows Data, Schema (columns, indexes, constraints, migration source) and
 Relationships (outgoing and incoming foreign keys) as `tab` patch links. Every
 list is a FlexTable through `ListColumns`; Data sorts, pages (25/50/100) and
 searches text columns through `ListState`, and a referenced value links to the
-other table filtered by `col`/`eq`.
+other table filtered by `col`/`eq`. The tables list also offers the table's column count as an optional column (`database_tables::fields`); Table, Module, Migration and Rows stay the defaults.
 
 Controls:
 
@@ -101,7 +103,7 @@ Controls:
   `base.system.database_tables.view` ("Open the database tables pages"),
   declared here on the installation floor, so tenants cannot turn it off.
   The routes are `Access::StepUp { operation, inner: &Access::Owner }`: outside
-  development (`BILIBI_ENV`) the host sends the owner to confirm first unless
+  Dev (`instance.role`) the host sends the owner to confirm first unless
   the session's window holds, and an open page leaves for the prompt when the
   window runs out. The host re-admits the step-up on every live event. The
   page no longer asks for a password of its own.
@@ -120,3 +122,5 @@ Controls:
   read in a `READ ONLY` transaction with a 5 s statement timeout, at most 100 a
   page and 120 characters a cell; a count past the timeout leaves the total
   unknown rather than failing the page.
+
+Without 2FA, the shared `bilibi_ui::StepUp` form disables the role selector and links to setup with a return address. Name, colour and update-source changes can still be saved. After setup, the role selector and optional code input are available.

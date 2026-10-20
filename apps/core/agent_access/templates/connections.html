@@ -1,14 +1,40 @@
-{# Mirrors Bilimbi connections_live.ex; the standing list contract uses FlexTable. #}
+{# Mirrors Bilimbi connections_live.ex; the standing list contract uses FlexTable.
+   The paste-ready prompt sits under the table. Nothing here grants access. #}
 {% import "components.html" as ui %}
 {% import "settings.html" as settings %}
 {% import "feedback.html" as feedback %}
 {% import "dialog.html" as dialog %}
+{% import "forms.html" as forms %}
+{% import "lists.html" as lists %}
 {% call feedback::flash_group(messages=flash) %}{% endcall %}
-{% call ui::page(variant=bilibi_ui::PageVariant::List) %}
-{% call settings::layout(header=header, current=bilibi_ui::SettingsTab::AgentConnections) %}
+{% call ui::page(id="ai-connections-page", variant=bilibi_ui::PageVariant::List) %}
+{% call settings::layout(header=header, current=bilibi_ui::SettingsTab::AiConnections, heading="Connect Bilibi to AI", description_html=intro) %}
 {{ table }}
 {% if pending.is_some() %}
 {% call dialog::confirm_dialog(id="revoke-connection-dialog", consequence="Revoke connection?", detail="Access ends immediately. Connect again and approve a new connection to grant access again.", confirm="Revoke", working="Revoking…", confirm_event="confirm_revoke", cancel_event="cancel_revoke") %}{% endcall %}
+{% endif %}
+{% if show_setup %}
+<div id="ai-setup" class="mt-6 space-y-3">
+{% if let Some(field) = prompt %}
+{% call ui::section_heading(id="ai-setup-heading", title="Connect your AI app") %}{% endcall %}
+<div id="ai-copy-values" data-hook="ClipboardCopy" data-copy-event="connection_copied" class="space-y-2">
+{% call forms::input(field=field) %}{% endcall %}
+<div class="flex flex-wrap items-center gap-3">
+<span data-copy-text="{{ prompt_text }}">{% call ui::button(id="ai-copy-prompt", button_type="button") %}Copy prompt{% endcall %}</span>
+<p id="ai-setup-note" class="text-sm text-ink-muted">If your AI app can't add it by itself, it will tell you the steps.</p>
+</div>
+{% if let Some(copied) = copied %}
+{% if copied %}
+{% call feedback::alert(kind=bilibi_ui::StatusKind::Success, id="ai-copy-success", class="mt-2") %}Copied. Paste it into your AI app's chat.{% endcall %}
+{% else %}
+{% call feedback::alert(kind=bilibi_ui::StatusKind::Error, id="ai-copy-failed", class="mt-2") %}Your browser did not allow copying. Select the prompt and copy it yourself.{% endcall %}
+{% endif %}
+{% endif %}
+</div>
+{% else %}
+{% if !no_clients.is_empty() %}{{ no_clients }}{% endif %}
+{% endif %}
+</div>
 {% endif %}
 {% endcall %}
 {% endcall %}

@@ -108,7 +108,9 @@ Width is a shared decision. Every page uses `PageVariant`. All three share one c
 
 - **Text fields float the label.** Empty, it rests where the value goes. On focus, once filled, or when the browser autofills, it moves up small in muted ink. It never leaves the box.
 - **Selects, textareas, date-like inputs and the combobox pin it small at the top.** They always show something (a prompt, a mask, a selection) that a resting label would cover.
+- **Colour choices use `ColourInput`.** Each named choice and the selected value are one chip: that status role's banner surface, border and text colour, with the name inside, including the default choice. Chips follow the light and dark themes. The pinned label, keyboard controls and native select keep it usable with assistive technology and without JavaScript.
 - **Compact.** An inset box is 40 px with a 14 px value (`text-base`); the floated or pinned label is 11 px. Inset fields sit 12 px apart. Phones get a 16 px value so iOS does not zoom.
+- **2FA before saving:** use `StepUp` (`base/ui`) for the code and protected submit actions. Without 2FA, show a plain setup notice and link first. Keep unrelated changes available.
 - **Sections:** draw a bordered part of a form with `forms::section` (one shared 12 px box and heading), not page-owned box classes. Create Address uses it.
 - **Classic label above** stays for a field with no visible label (toolbars, `sr-only`), a field with its own `class` or `label_class`, checkboxes, radio groups and multi-selects.
 - Placeholder text shows only once the person is in the field, as an example, never as the label.
@@ -137,7 +139,8 @@ Width is a shared decision. Every page uses `PageVariant`. All three share one c
 - Many-links become rollup cells that expand in place.
 - Row height has two named zooms: Compact and Normal. A compact row is one line.
 - The arrangement is remembered per account and page (`PageColumns`). An address that carries it wins. "Reset to default columns" forgets it.
-- Catalog: `apps/base/grid/README.md`.
+- Every scalar detail field is available in the column picker under its detail label; shared `RecordField` definitions keep them together. Existing defaults stay unchanged. Long text, files and nested collections stay on the detail page. Restrictions apply to the picker and cells as they do to the record.
+- Catalog and field contract: `apps/base/grid/README.md`.
 
 ## Record pages
 
@@ -167,7 +170,7 @@ Width is a shared decision. Every page uses `PageVariant`. All three share one c
 | Panel notice | Where a panel cannot reach the page flash |
 | Connection | Banners announce a dropped socket. The page reconnects with backoff and remounts in place |
 | Error pages | One shell from `apps/web/src/errors.rs`. Debug detail only in debug builds |
-| Which Bilibi | Every instance but production shows a badge in the top bar and on sign-in; production shows none. A debug build leaves the top-bar badge to the status bar's `dev` marker. A review or confirmation opens with the instance banner on every instance, production included. The colour is the operator's `instance.colour` status role, and the label is the operator's `instance.label`, so the name is always in words |
+| Which Bilibi | The status bar always shows the stored server role, instance label and colour. A Core Administrator can click it to open Instance settings. Staging also shows the top-bar badge; Dev and Staging show a badge on sign-in. A review or confirmation opens with the instance banner on every instance, production included. The colour is the operator's `instance.colour` status role, and the label is the operator's `instance.label`, so the name is always in words |
 
 - A failure says what happened, what it cost, and what to do next.
 - Recover before reporting. Users are not an error channel.
@@ -180,7 +183,7 @@ Width is a shared decision. Every page uses `PageVariant`. All three share one c
 - **Workspace shell:** `h-7` top bar, sidebar menu, status bar.
   - Top bar: sidebar toggle, brand mark, notification bell, timezone and clock selector, theme selector.
   - Sidebar: the menu, pinned items, account entry at the bottom.
-  - Status bar: the Platform version, then each mounted Domain's version (`finance 0.1.0`), with commits in the tooltip (`docs/versions.md`). In development it also shows `dev` and the listen address.
+  - Status bar: the Platform version, then each mounted Domain's version (`finance 0.1.0`), with commits in the tooltip (`docs/versions.md`). It also shows the server role and instance label in the configured colour, plus the listen address when the role is Dev. The role comes from `instance.role`, never the build mode.
   - Below `lg` the menu is an off-canvas drawer.
 - Pages never render chrome. The host wraps them (`apps/web/src/shell.rs`).
 - The bell shows the unread count and follows new notifications live. It opens recent items.

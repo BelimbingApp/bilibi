@@ -9,11 +9,10 @@
 </ul>
 {% if !checks.is_empty() %}<p class="mt-3 text-xs font-semibold uppercase tracking-wider text-ink-subtle">Checked before anything changes</p><ul class="mt-1 grid gap-0.5 text-sm text-ink-muted">{% for check in checks %}<li>{{ check }}</li>{% endfor %}</ul>{% endif %}
 {% if !warnings.is_empty() %}<div class="mt-3 grid gap-2">{% for warning in warnings %}{{ warning|safe }}{% endfor %}</div>{% endif %}
-<p class="mt-3 text-xs font-semibold uppercase tracking-wider text-ink-subtle">What will happen</p>
+<p class="mt-3 text-xs font-semibold uppercase tracking-wider text-ink-subtle">Steps</p>
 <p class="mt-1 text-sm text-ink">{{ what_happens }}</p>
 <ol id="software-review-steps" class="mt-1 list-decimal pl-5 text-sm text-ink-muted">{% for step in steps %}<li>{{ step }}</li>{% endfor %}</ol>
 <form id="software-confirm" data-event="{{ event }}" class="mt-4 border-t border-line pt-3">
 {{ error|safe }}
-{% call form::code_input(code=code) %}{% endcall %}
-<div class="flex flex-wrap justify-end gap-2">{{ cancel|safe }}{{ confirm|safe }}</div>
+{% call form::step_up(step=step_up) %}{% endcall %}
 </form>

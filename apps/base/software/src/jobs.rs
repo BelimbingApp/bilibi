@@ -4,7 +4,7 @@ use bilibi_database::{Change, Error, MutationTransaction, Result};
 use serde_json::{json, Value};
 use tokio_postgres::GenericClient;
 
-/// The PostgreSQL channel a builder or installer listens on; the payload is
+/// The PostgreSQL channel the installer listens on; the payload is
 /// the job id. Sent inside the commit, so it arrives only once the row is
 /// visible.
 pub const CHANNEL: &str = "bilibi_software_jobs";
@@ -85,33 +85,15 @@ pub struct Step {
     pub label: &'static str,
     pub pauses: bool,
 }
-/// The steps a change (a build on Dev) goes through.
-pub fn change_steps() -> Vec<Step> {
-    steps(&[
-        ("check", "Check the server", false),
-        ("fetch", "Download the Platform and the Domains", false),
-        (
-            "build",
-            "Build the new program (the instance keeps working)",
-            false,
-        ),
-        (
-            "backup",
-            "Back up the database (the instance pauses from here)",
-            true,
-        ),
-        ("migrate", "Update the database", false),
-        ("switch", "Switch to the new program", false),
-        ("verify", "Check that it works", false),
-    ])
-}
-/// The steps an install of a tested release goes through. A release that
-/// comes from another machine is downloaded by this program first
-/// (`transfer.rs`); the installer takes the rest from `fetch`.
 pub fn install_steps(downloads: bool) -> Vec<Step> {
+    download_steps(downloads, "Download the update from the update server")
+}
+/// `label` is the download step's sentence. It is "Download the release from GitHub"
+/// for a GitHub file, and the update-server sentence for a paired instance.
+pub fn download_steps(downloads: bool, label: &'static str) -> Vec<Step> {
     let mut list: Vec<(&'static str, &'static str, bool)> = Vec::new();
     if downloads {
-        list.push(("download", "Download the release from the source", false));
+        list.push(("download", label, false));
     }
     list.extend([
         ("fetch", "Check the release and copy it into place", false),
@@ -185,7 +167,7 @@ pub async fn recent(client: &impl GenericClient, tenant: i64, limit: i64) -> Res
         .await?;
     Ok(rows.iter().map(Job::from_row).collect())
 }
-/// The newest job that finished well (a change or an install), which Undo
+/// The newest job that finished well (an install), which Undo
 /// can take back.
 pub async fn last_done(client: &impl GenericClient, tenant: i64) -> Result<Option<Job>> {
     let row = client
@@ -225,6 +207,114 @@ pub fn with_loss(value: Option<Value>) -> Option<Value> {
         value
     })
 }
+/// Backup evidence for the recent jobs, and how many backups the installer
+/// keeps (as the newest backup step recorded it). A path records where the
+/// installer wrote the file; it does not promise that retention has kept it.
+/// No Bilimbi counterpart.
+pub async fn backups_json(
+    client: &impl GenericClient,
+    tenant: i64,
+) -> Result<(Vec<Value>, Option<u64>)> {
+    let rows = client.query(
+        "SELECT j.id, j.kind, s.detail FROM (SELECT id, tenant_id, kind FROM base_software_jobs WHERE tenant_id=$1 ORDER BY id DESC LIMIT 10) j JOIN base_software_steps s ON s.tenant_id=j.tenant_id AND s.job_id=j.id WHERE s.tenant_id=$1 AND s.key='backup' AND s.state='done' ORDER BY j.id DESC",
+        &[&tenant],
+    ).await?;
+    let mut keep = None;
+    let list = rows
+        .iter()
+        .map(|row| {
+            let detail: Option<Value> = row.get(2);
+            let detail = detail.unwrap_or(Value::Null);
+            keep = keep.or(detail["keep_backups"].as_u64());
+            json!({"job": row.get::<_, i64>(0), "kind": row.get::<_, String>(1),
+            "file": detail["backup"], "at": detail["backup_at"], "bytes": detail["bytes"]})
+        })
+        .collect();
+    Ok((list, keep))
+}
+/// The one statement of the backup rules, for the page, the card and the
+/// assistant. The number kept is the installer's, as its backup step recorded it.
+pub fn backup_rule(keep: Option<u64>) -> String {
+    let kept = keep.map_or_else(
+        || "removes the oldest ones".to_owned(),
+        |keep| format!("keeps only the newest {keep} and removes the older ones"),
+    );
+    format!("Bilibi backs up the database before every install and undo. After a successful install or undo it {kept}, so a listed file may no longer exist. Undo switches back to the previous program. Only if the install changed the database structure does Undo also restore its backup, which loses data entered since. Undo takes a new backup first.")
+}
+/// Hides where a backup file is from anyone who cannot manage software:
+/// they see that the backup exists, when it was taken and its size. The
+/// path goes from the `backup` fields and from every message that names it.
+pub fn hide_backup_files(job: &mut Value, backups: &mut [Value]) {
+    let mut paths = Vec::new();
+    collect_backup_paths(job, &mut paths);
+    for backup in backups.iter_mut() {
+        if let Some(file) = backup["file"].as_str() {
+            paths.push(file.to_owned());
+        }
+        backup["file"] = Value::Null;
+    }
+    paths.sort_unstable_by_key(|path| std::cmp::Reverse(path.len()));
+    scrub_backup_paths(job, &paths);
+}
+const BACKUP_FILE_WORDS: &str = "a backup file on this server";
+/// Replaces every path under a `backups/job-<n>` folder in a message, whether
+/// or not the backup was recorded: a failure can name the folder or a file in it.
+fn hide_backup_locations(text: &str) -> String {
+    const MARKER: &str = "backups/job-";
+    let opens = |c: char| c.is_whitespace() || "\"'(".contains(c);
+    let closes = |c: char| c.is_whitespace() || "\"')`,;".contains(c);
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(MARKER) {
+        let start = rest[..at].rfind(opens).map_or(0, |i| {
+            i + rest[i..].chars().next().map_or(1, char::len_utf8)
+        });
+        let mut end = rest[at..].find(closes).map_or(rest.len(), |i| at + i);
+        while end > at && rest[..end].ends_with(['.', ':']) {
+            end -= 1;
+        }
+        out.push_str(&rest[..start]);
+        out.push_str(BACKUP_FILE_WORDS);
+        rest = &rest[end..];
+    }
+    out.push_str(rest);
+    out
+}
+fn collect_backup_paths(value: &Value, paths: &mut Vec<String>) {
+    match value {
+        Value::Object(map) => {
+            if let Some(path) = map.get("backup").and_then(Value::as_str) {
+                paths.push(path.to_owned());
+            }
+            map.values()
+                .for_each(|item| collect_backup_paths(item, paths));
+        }
+        Value::Array(list) => list
+            .iter()
+            .for_each(|item| collect_backup_paths(item, paths)),
+        _ => {}
+    }
+}
+fn scrub_backup_paths(value: &mut Value, paths: &[String]) {
+    match value {
+        Value::String(text) => {
+            for path in paths {
+                *text = text.replace(path.as_str(), BACKUP_FILE_WORDS);
+            }
+            *text = hide_backup_locations(text);
+        }
+        Value::Object(map) => {
+            map.remove("backup");
+            map.values_mut()
+                .for_each(|item| scrub_backup_paths(item, paths));
+        }
+        Value::Array(list) => list
+            .iter_mut()
+            .for_each(|item| scrub_backup_paths(item, paths)),
+        _ => {}
+    }
+}
+
 /// Whether a running job has reached its pause: a cancel is then too late.
 pub async fn past_pause(client: &impl GenericClient, tenant: i64, job: i64) -> Result<bool> {
     Ok(client
@@ -236,7 +326,7 @@ pub async fn past_pause(client: &impl GenericClient, tenant: i64, job: i64) -> R
         .get(0))
 }
 /// The release a job's first part made, when that part is done and no later
-/// step has started: a change's build, an install's copy. The job is then
+/// step has started: an install's copy. The job is then
 /// parked for the pause. `None` for any other job or moment.
 pub async fn parked_release(
     client: &impl GenericClient,
@@ -244,7 +334,6 @@ pub async fn parked_release(
     job: &Job,
 ) -> Result<Option<i64>> {
     let first = match job.kind.as_str() {
-        "change" => "build",
         "install" => "fetch",
         _ => return Ok(None),
     };
@@ -252,11 +341,7 @@ pub async fn parked_release(
     let part = steps
         .iter()
         .find(|s| s["key"] == first && s["state"] == "done");
-    let made = if job.kind == "install" {
-        part.and(job.request["release"].as_i64())
-    } else {
-        part.and_then(|s| s["detail"]["release"].as_i64())
-    };
+    let made = part.and(job.request["release"].as_i64());
     let later_started = steps
         .iter()
         .skip_while(|s| s["key"] != first)
@@ -283,7 +368,7 @@ pub async fn backup_time(
         .await?
         .map(|row| row.get::<_, String>(0)))
 }
-/// The plug-ins switched on, as the status answer shows them.
+/// The add-ons switched on, as the status answer shows them.
 pub async fn plugins_json(client: &impl GenericClient, tenant: i64) -> Result<Vec<Value>> {
     let rows = client
         .query(
@@ -302,7 +387,7 @@ pub async fn plugins_json(client: &impl GenericClient, tenant: i64) -> Result<Ve
         })
         .collect())
 }
-/// The plug-in ids switched on now.
+/// The add-on ids switched on now.
 pub async fn enabled_plugins(client: &impl GenericClient, tenant: i64) -> Result<Vec<String>> {
     let rows = client
         .query(
@@ -313,37 +398,6 @@ pub async fn enabled_plugins(client: &impl GenericClient, tenant: i64) -> Result
     Ok(rows.iter().map(|row| row.get(0)).collect())
 }
 
-/// The plug-ins a server has switched on once a change job's build is in
-/// service: those switched on now, with the change the owner reviewed
-/// (`plugins` in the job's review) applied, as `{id, name, publisher,
-/// version, source}`.
-pub async fn planned_plugins(
-    client: &impl GenericClient,
-    tenant: i64,
-    review: &Value,
-) -> Result<Vec<Value>> {
-    let mut plugins: Vec<Value> = plugins_json(client, tenant)
-        .await?
-        .into_iter()
-        .filter(|plugin| plugin["enabled"].as_bool() == Some(true))
-        .map(|plugin| {
-            json!({"id": plugin["id"], "name": plugin["name"], "publisher": plugin["publisher"], "version": plugin["version"], "source": plugin["source"]})
-        })
-        .collect();
-    for change in review["plugins"].as_array().into_iter().flatten() {
-        let Some(id) = change["id"].as_str() else {
-            continue;
-        };
-        plugins.retain(|plugin| plugin["id"].as_str() != Some(id));
-        if change["enabled"].as_bool() == Some(true) {
-            plugins.push(json!({"id": id, "name": change["name"], "publisher": change["publisher"], "version": null, "source": "catalogue"}));
-        }
-    }
-    plugins.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
-    Ok(plugins)
-}
-
-/// What a new job is made of.
 pub struct NewJob {
     pub kind: &'static str,
     pub request: Value,

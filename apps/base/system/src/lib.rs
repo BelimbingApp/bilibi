@@ -4,6 +4,8 @@ mod database_tables;
 mod info;
 mod inspector;
 mod instance;
+mod instance_editor;
+pub use instance_editor::{InstanceSettings, Instances, SERVICE};
 mod localization;
 
 use bilibi_authz::{CapabilityDefinition, RoleDefinition, VocabularyContribution, VOCABULARY};
@@ -23,7 +25,7 @@ use std::sync::Arc;
 
 pub use instance::{
     valid_instance_name, Colour, Instance, Role, Source, INSTANCE_COLOUR_KEY,
-    INSTANCE_INSTALLS_FROM_KEY, INSTANCE_LABEL_KEY, INSTANCE_MANAGE,
+    INSTANCE_INSTALLS_FROM_KEY, INSTANCE_LABEL_KEY, INSTANCE_MANAGE, INSTANCE_ROLE_KEY,
 };
 
 pub const INFO_VIEW: &str = "admin.system.info.view";
@@ -40,6 +42,7 @@ struct Pages {
     routes: Arc<Vec<&'static Route>>,
     modules: Arc<Vec<&'static str>>,
     tables: database_tables::DatabaseTables,
+    instances: Arc<Instances>,
 }
 impl Pages {
     async fn authorize(&self, scope: &Scope, capability: &str) -> Result<()> {
@@ -54,6 +57,7 @@ fn render(template: impl askama::Template) -> Result<Html> {
 impl Page<Scope, Error> for Pages {
     fn title(&self, operation: &str) -> Option<&'static str> {
         Some(match operation {
+            "instance" => "Instance settings",
             "info" => "System Info",
             "localization" => "Language & Region",
             "inspector" => "Menu Inspector",
@@ -74,6 +78,12 @@ impl Page<Scope, Error> for Pages {
             }
             let scope = request.scope.ok_or(Error::Unauthorized)?;
             let html = match request.operation {
+                "instance" => {
+                    instance_editor::Editor::new(self.clone())
+                        .await?
+                        .body(scope)
+                        .await?
+                }
                 "info" => {
                     self.authorize(scope, INFO_VIEW).await?;
                     info::page(self, scope).await?
@@ -104,6 +114,7 @@ impl Page<Scope, Error> for Pages {
             }
             let scope = request.scope.ok_or(Error::Unauthorized)?;
             let state: Box<dyn LiveState<Scope, Error>> = match request.operation {
+                "instance" => Box::new(instance_editor::Editor::new(self.clone()).await?),
                 "localization" => {
                     self.authorize(scope, LOCALIZATION_MANAGE).await?;
                     Box::new(localization::Editor::new(self.clone()))
@@ -145,6 +156,7 @@ macro_rules! page {
         }) }
     };
 }
+inventory::submit! { Contribution::new(ROUTES, "base/system.instance", provenance!(), &Route { method: Method::Get, path: "/system/instance", service: "base/system.pages", operation: "instance", access: Access::OperatorCapability(INSTANCE_MANAGE), framed: true }) }
 page!("info", "/system/info", INFO_VIEW);
 page!("localization", "/system/localization", LOCALIZATION_MANAGE);
 page!("inspector", "/system/menu-inspector", MENU_VIEW);
@@ -213,11 +225,24 @@ bilibi_menu::contribute!(
 );
 inventory::submit! {
     Module { id: "base/system", layer: bilibi_module_registry::Layer::Base,
-        dependencies: &["base/module_registry", "base/database", "base/authz", "base/locale", "base/menu", "base/perf", "base/settings", "base/tenancy", "base/ui", "base/audit", "base/step_up"],
-        migrations: &[], services: &[Service { id: "base/system.pages", factory: |services| {
+        dependencies: &["base/module_registry", "base/database", "base/authz", "base/locale", "base/menu", "base/perf", "base/settings", "base/tenancy", "base/ui", "base/audit", "base/step_up", "base/queue"],
+        migrations: &[], services: &[
+        Service { id: "base/system.install-role", factory: |_| Ok(Arc::new(bilibi_database::seeds::SeedService(Arc::new(instance::InstallRole)))) },
+        Service { id: SERVICE, factory: |services| {
+            let instances = Arc::new(Instances {
+                db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
+                settings: services.get("base/settings.store")?,
+                boundary: services.get("base/database.mutations")?,
+                step_up: services.get(bilibi_step_up::SERVICE)?,
+            });
+            instances.step_up.bind_enforcement(Arc::new(instance_editor::EnforcementPolicy { db: instances.db.clone(), settings: instances.settings.clone() }))?;
+            Ok(instances)
+        } },
+        Service { id: "base/system.pages", factory: |services| {
             let modules = bilibi_module_registry::discover()?;
             let catalog = Catalog::discover(&modules)?;
             Ok(Arc::new(bilibi_ui::page::PageService::<Scope, Error>(Arc::new(Pages {
+                instances: services.get(SERVICE)?,
                 db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
                 boundary: services.get("base/database.mutations")?,
                 locales: services.get("base/locale.locales")?,
@@ -239,5 +264,5 @@ inventory::submit! {
 inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::PAGE_WRITES, "base/system.pages", bilibi_module_registry::Provenance { module: "base/system", source: file!(), line: line!() }, &bilibi_module_registry::contributions::PageWrites {
     service: "base/system.pages",
     contracts: &[],
-    pending: bilibi_module_registry::contributions::Pending::Every { reason: "Localization changes write through the System facade; no contract yet." },
+    pending: bilibi_module_registry::contributions::Pending::Every { reason: "Localization and instance settings write through the System facade; no contract yet." },
 }) }

@@ -10,7 +10,12 @@ pub mod page;
 // inside the crate and from every importing module alike.
 extern crate self as bilibi_ui;
 
+mod assets;
+pub use assets::{Assets, StaticAsset};
+
 mod auth;
+mod colour;
+pub use colour::{ColourChoice, ColourInput, ColourRole};
 mod components;
 mod error_page;
 mod feedback;
@@ -27,6 +32,8 @@ pub mod list_columns;
 pub mod list_state;
 pub mod lists;
 pub mod params;
+mod record_fields;
+pub use record_fields::RecordField;
 mod section;
 mod settings;
 mod shell;
@@ -67,7 +74,7 @@ pub use forms::{
     choices, described_by, error_sentence, field_base_class, field_class, field_inset_class,
     field_state_class, translate_error, AddMore, Attrs, Choice, CodeInput, Combobox, Field, Form,
     InputKind, LabelPlacement, MultiSelect, RadioGroup, Restricted, RestrictedField, Reveal,
-    SecretInput, StoredReveal, RESTRICTED_REASON, SECRET_MASK,
+    SecretInput, StepUp, StoredReveal, RESTRICTED_REASON, SECRET_MASK,
 };
 pub use html::Html;
 pub use inline::{
@@ -75,7 +82,7 @@ pub use inline::{
     InlineLongText,
 };
 pub use inline_specimen::{inline_specimen_values, InlineSpecimen};
-pub use instance::{InstanceBadge, InstanceBanner};
+pub use instance::{InstanceBadge, InstanceBanner, InstanceStatus};
 pub use list_columns::{BuiltinColumn, ColumnsOutcome, ListColumns};
 pub use list_state::{Filter, ListSpec, ListState, PageCounts, SortDir};
 pub use lists::{
@@ -99,77 +106,6 @@ pub struct Document<'a> {
     /// The account's explicit `light`/`dark` choice, stamped on `<html>` so the
     /// first paint is themed; anything else follows the device.
     pub theme: &'a str,
-}
-
-pub const CSS: &str = include_str!("../assets/app.css");
-pub const JS: &str = include_str!("../assets/live.js");
-/// The hook controllers of the feedback, dialog and tab components.
-pub const SHELL_JS: &str = include_str!("../assets/shell.js");
-pub const UI_JS: &str = include_str!("../assets/ui.js");
-/// The `data-hook` browser behaviour of the shared form controls, the inline
-/// editors, tiling, the flexible table, timestamp display (`DateTime`,
-/// `BrowserTimeZone`) and the live file input (`FileUpload`).
-pub const HOOKS_JS: &str = concat!(
-    include_str!("../assets/hooks.js"),
-    // Both files are semicolon-free IIFEs; without this the second calls the first.
-    "\n;\n",
-    include_str!("../assets/inline.js"),
-    "\n;\n",
-    include_str!("../assets/upload.js"),
-    "\n;\n",
-    include_str!("../assets/tiling.js"),
-    "\n;\n",
-    include_str!("../assets/flex_table.js"),
-    "\n;\n",
-    include_str!("../assets/datetime.js")
-);
-/// Bilimbi's vendored page-loading bar (MIT), shown by live.js for page-level round trips.
-pub const TOPBAR_JS: &str = include_str!("../assets/vendor/topbar.js");
-
-/// Vendored public assets. Keep this allowlist bounded: never resolve a
-/// request path on disk, and never make font loading depend on authentication.
-pub struct StaticAsset {
-    pub content_type: &'static str,
-    pub bytes: &'static [u8],
-}
-
-pub fn static_asset(name: &str) -> Option<StaticAsset> {
-    let (content_type, bytes): (&str, &[u8]) = match name {
-        "instrument-sans-variable.woff2" => (
-            "font/woff2",
-            include_bytes!("../assets/static/fonts/instrument-sans-variable.woff2"),
-        ),
-        "instrument-sans-variable-italic.woff2" => (
-            "font/woff2",
-            include_bytes!("../assets/static/fonts/instrument-sans-variable-italic.woff2"),
-        ),
-        "OFL.txt" => (
-            "text/plain; charset=utf-8",
-            include_bytes!("../assets/static/fonts/OFL.txt"),
-        ),
-        "ui-specimen.html" => (
-            "text/html; charset=utf-8",
-            include_bytes!("../assets/static/ui-specimen.html"),
-        ),
-        "ui-feedback-driver.js" => (
-            "text/javascript",
-            include_bytes!("../assets/static/ui-feedback-driver.js"),
-        ),
-        "logo.svg" => ("image/svg+xml", include_bytes!("../assets/static/logo.svg")),
-        "favicon.svg" => (
-            "image/svg+xml",
-            include_bytes!("../assets/static/favicon.svg"),
-        ),
-        "favicon.ico" => (
-            "image/x-icon",
-            include_bytes!("../assets/static/favicon.ico"),
-        ),
-        _ => return None,
-    };
-    Some(StaticAsset {
-        content_type,
-        bytes,
-    })
 }
 
 pub struct Renderer;

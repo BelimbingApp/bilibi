@@ -183,7 +183,7 @@ BILIBI_COMPANY_ACCOUNTS_DEMO=disposable cargo run -p bilibi-user --example compa
 
 ## Pages (`core/user.pages`)
 
-`/settings/profile`, `/settings/password` (`src/web.rs`, `templates/password.html`), `/settings/two-factor` (below) and `/settings/appearance` are the signed-in account's own settings inside the shell, on the settings layout of `base/ui/templates/settings.html` with the typed `bilibi_ui::SettingsTab` (Bilimbi `SettingsComponents.settings_layout`, adapted to the shared horizontal tabs). Open **My settings** in the account panel at the bottom of the sidebar to start at Profile. Plugin for ChatGPT and Agent connections use the same six-tab layout in their owning modules. The password page is live: the form submits as the `change-password` event carrying its field values, the state keeps the field errors of the last attempt (`can't be blank`, the password policy, `does not match password`, `is incorrect`), and a success or failure is a flash in the page until dismissed. The route needs a session and no capability; the current password proves the holder inside `change_password`.
+`/settings/profile`, `/settings/password` (`src/web.rs`, `templates/password.html`), `/settings/two-factor` (below) and `/settings/appearance` are the signed-in account's own settings inside the shell, on the settings layout of `base/ui/templates/settings.html` with the typed `bilibi_ui::SettingsTab` (Bilimbi `SettingsComponents.settings_layout`, adapted to the shared horizontal tabs). Open **My settings** in the account panel at the bottom of the sidebar to start at Profile. AI connections uses the same five-tab layout in `core/agent_access`. The password page is live: the form submits as the `change-password` event carrying its field values, the state keeps the field errors of the last attempt (`can't be blank`, the password policy, `does not match password`, `is incorrect`), and a success or failure is a flash in the page until dismissed. The route needs a session and no capability; the current password proves the holder inside `change_password`.
 
 `/settings/profile` (`src/account_ui/profile.rs`, Bilimbi `ProfileLive`) is
 the account's own name, email and landing page. The account is the
@@ -320,18 +320,19 @@ calls `settle_bootstrap_affiliation` for the company link. `operator_accounts(te
 
 ## Two-factor authentication (the step-up provider)
 
-Two methods for the signed-in account: authenticator-app codes (TOTP, RFC 6238: HMAC-SHA-1, 6 digits, 30 s) and codes sent by text message (SMS, [Base SMS](../../base/sms/README.md)). It is the second factor behind Base Step-up (`apps/base/step_up/README.md`). A six-digit code is accepted from either method the account has. Bilimbi has no counterpart yet. Decision: [ADR 02](../../../docs/architecture/decisions/02-sms-second-factor.md).
+Two methods for the signed-in account: authenticator-app codes (TOTP, RFC 6238: HMAC-SHA-1, 6 digits, 30 s) and codes sent by text message (SMS, [Base SMS](../../base/sms/README.md)). It is the second factor behind Base Step-up (`apps/base/step_up/README.md`). A six-digit code is accepted from either method the account has. Bilimbi has no counterpart yet. Decision: [ADR 03](../../../docs/architecture/decisions/03-sms-second-factor.md).
 
 - **Boundary:** this module checks the account holder and nothing else. It never names what step-up protects, and those owners never name it. They declare operations and call `StepUp::require`; tenant policy decides.
-- **Code:** `src/two_factor/` (facade on `UserService`, provider in `provider.rs`, text messages in `sms.rs`, sign-in in `sign_in.rs`), pages in `src/two_factor_ui.rs`, migrations `012-two-factor.sql` and `013-sms-two-factor.sql`.
+- **Code:** `src/two_factor/` (facade on `UserService`, provider in `provider.rs`, text messages in `sms.rs`, sign-in in `sign_in.rs`), pages in `src/two_factor_ui.rs`, reset doors in `src/two_factor/agent.rs`, migrations `012-two-factor.sql`, `013-drop-two-factor-recovery.sql` and `014-sms-two-factor.sql`.
 
 | Method | Purpose |
 |---|---|
-| `two_factor_status(scope)` | On or off, and unused recovery codes |
+| `two_factor_status(scope)` / `account_two_factor_on(scope, user)` | Whether the signed-in account, or one account of this tenant, has an authenticator |
 | `begin_two_factor(scope, password)` | Password again, then a fresh 160-bit secret (OS CSPRNG), sealed and stored pending. Returns the QR code and typed key, once |
-| `confirm_two_factor(scope, code)` | A current code turns it on, stores 10 new recovery codes (returned once) and opens the session's step-up window |
-| `step_up(scope, code)` | A current code or one recovery code opens the session's step-up window (the confirm page) |
-| `regenerate_recovery_codes(scope, code)` / `disable_two_factor(scope, code)` | Need a current code or a recovery code. The old set stops working / everything is deleted |
+| `confirm_two_factor(scope, code)` | A current code turns it on and opens the session's step-up window |
+| `step_up(scope, code)` | A current code opens the session's step-up window (the confirm page) |
+| `begin_move(scope, code)` / `confirm_move(scope, to, code)` | Move to a new phone: a current code from the old phone is spent and a new secret is made (kept only in the page's state). The new phone's first code replaces the old secret, so the old phone stops working |
+| `reset_two_factor_by_email(email)` | The server command's door (see below): turns one account's authenticator off, audited as the system principal `two-factor-reset` |
 | `two_factor::Authenticator` | The `bilibi_step_up::Provider`, bound at boot: enrolled? session window, spend an agent's code for a purpose, where to prompt |
 | `begin_phone(scope, password, number)` / `confirm_phone(scope, code)` | Password again, a code to the new number, then the code back: it becomes the verified phone and opens the session's step-up window |
 | `send_check_code(scope)` / `remove_phone(scope, code)` | A code to the verified phone (sign-in, step-up, an agent's human) / delete the phone after a current code |
@@ -341,31 +342,36 @@ Two methods for the signed-in account: authenticator-app codes (TOTP, RFC 6238: 
 
 Pages (signed in only, live, `Cache-Control: no-store` like every page):
 
-- `/settings/two-factor`: set up (password, QR code, setup key, first code), recovery codes with a text download, new codes, turn off.
+- `/settings/two-factor`: set up (password, QR code, setup key, first code), or move to a new phone (a code from the old phone, a new QR code, the new phone's first code). There is no turn-off: Bilibi asks everyone for 2FA. The description is two bullets; the second says to ask an admin to reset 2FA after a lost phone.
 - `/settings/two-factor/confirm?return=<path>`: the step-up prompt, with **Text me a code** for an account with a phone. Success returns to `return`, which must be a local path (`safe_return`).
-- The settings page's **Text message (SMS)** section: add a number (password, number, code), or remove it with a current code.
-- `/users/{id}` (administrators): the **Phone** fact (edited in place) and the **2FA** fact with **Reset 2FA**, behind a confirmation dialog.
+- The settings page's **Text message (SMS)** section: add a number (password, number, code), or remove it with a current code while the authenticator app stays on (2FA cannot be turned off).
+- `/users/{id}` (administrators): the **Phone** fact (edited in place, step-up `core.user.phone.update`) and the **2FA** fact (App, SMS, both or Off). A reset also unverifies the phone.
 - `/login/verify` (Web): the sign-in's code card. See `apps/web/README.md`.
 
-Authenticator entry uses the shared six-digit `CodeInput`: one native field, numeric keypad, OTP autocomplete and whole-code paste. Management and Confirm access offer **Use a recovery code**, which switches to an unrestricted text field without truncating the saved code; setup accepts only an authenticator code.
+Authenticator entry uses the shared six-digit `CodeInput`: one native field, numeric keypad, OTP autocomplete and whole-code paste. Every entry takes only an authenticator code.
 
 Security rules:
 
 - **Secret at rest.** `user_two_factor.secret` is the AES-256-GCM envelope of `Settings::seal_owned` (`BILIBI_SETTINGS_KEY`), bound to `core/user.two_factor`, tenant and account. Without the key, setup refuses.
-- **QR code.** The `otpauth://totp/<issuer>:<email>?secret=…&issuer=…&algorithm=SHA1&digits=6&period=30` URI is drawn on the server as one inline SVG path (`qrcode` crate, encoder only). It is sent only over the page's socket. No QR service, image URL or Bilibi URL carries it, and nothing logs it.
+- **QR code.** The `otpauth://totp/<entry name>:<email>?secret=…&issuer=<entry name>&algorithm=SHA1&digits=6&period=30` URI is drawn on the server as one inline SVG path (`qrcode` crate, encoder only). It is sent only over the page's socket. No QR service, image URL or Bilibi URL carries it, and nothing logs it.
 - **Pending until proved.** A secret is unconfirmed until a current code arrives. Leaving setup keeps the pending row; the next setup replaces it.
 - **Verification.** Steps −1, 0 and +1 are each computed and compared in constant time (`subtle`). `last_step` only moves forward, by compare-and-set in the spending transaction, so a code is never accepted twice, even by two racing requests.
-- **Recovery codes.** 10 per set, 50 bits each (`xxxxx-xxxxx`, base32), stored as Argon2id hashes through `password::hash`. Every unused hash is checked. A used code keeps `used_at`.
-- **Throttle.** Applies per account to every failed check: password, code, recovery code, and an agent's code too. The fifth failure within 15 minutes locks every check for 15 minutes (`user_two_factor_attempts`). A success resets the count.
-- **Text-message codes.** Six digits from the OS CSPRNG, stored only as Argon2id hashes in `user_sms_codes` with their purpose and number. Five minutes, used once, five wrong tries end a code, a new code ends the earlier ones. One code a minute and five an hour per account. The texts go through Base SMS; production refuses SMS until a real driver exists.
+- **No recovery codes.** People lose where they saved them, so there are none (migration `013-drop-two-factor-recovery.sql` drops the table). After a lost phone, another admin resets the account's 2FA, or the server owner runs the command below.
+- **Throttle.** Applies per account to every failed check: password, code, and an agent's code too. The fifth failure within 15 minutes locks every check for 15 minutes (`user_two_factor_attempts`). A success resets the count.
+- **Text-message codes.** Six digits from the OS CSPRNG, stored only as Argon2id hashes in `user_sms_codes` with their purpose and number. Five minutes, used once, five wrong tries end a code, a new code ends the earlier ones. One code a minute and five an hour per account. The texts go through Base SMS; Production refuses SMS until a real driver exists.
 - **Phone.** `user_phones`, E.164. A number an administrator sets is a second factor only after its holder accepts a code sent to it.
 - **Pending sign-in.** `user_pending_sign_ins` keeps only the SHA-256 of the browser's token, for ten minutes; it is spent when the session opens.
 - **Impersonation.** An impersonated session cannot enroll, change or check two-factor.
-- **Audit.** Each write is a `MutationBoundary` transaction: `user.two_factor.enrollment_started`, `.enabled`, `.verified`, `.recovery_code_used`, `.recovery_codes_regenerated`, `.disabled`, `.failed`, `.locked`, `.sms_sent` (masked number and purpose), `.phone_verified`, `.phone_removed` and `.reset`, and `user.phone.update` for an administrator's change. A code spent for an agent records the purpose's operation key and channel (`for`, `channel`). A check refused while locked is the action `user.two_factor.refused`. No code, secret or recovery code is ever in a change, payload or log.
+- **Audit.** Each write is a `MutationBoundary` transaction: `user.two_factor.enrollment_started`, `.enabled`, `.verified`, `.moved`, `.failed`, `.locked`, `.sms_sent` (masked number and purpose), `.phone_verified` and `.phone_removed`, and `user.phone.update` for an administrator's change. A reset is `core.user.two_factor.reset` (an admin; the change names both people) or `user.two_factor.reset` (the server command, system principal `two-factor-reset`). A code spent for an agent records the purpose's operation key and channel (`for`, `channel`). A check refused while locked is the action `user.two_factor.refused`. No code, secret or recovery code is ever in a change, payload or log.
 
-| Setting | Default | Use |
-|---|---|---|
-| `two_factor.issuer` (global, `admin.system.session.manage`) | `Bilibi` | The name apps list the account under (company or deployment name). No `:`; applies to new setups |
+**Authenticator entry name.** Each server lists itself differently, so several Bilibi servers stay apart in one app: `Bilibi <instance name> (<role>)` with the account's email, or `Bilibi <role>` when the instance still has its role's own name. Both come from Base System's instance identity (`Instance::resolve`); there is no separate setting or input box, and the app lets a person rename the entry.
+
+**Reset 2FA.** There are two ways back after a lost phone:
+
+- An admin with `core.user.update` opens the person's page and chooses **Reset 2FA** (contract `core.user.two_factor.reset`, `src/two_factor/agent.rs`; the page and every agent door share it). It needs the admin's own fresh authenticator code every time (`.always()`). The audit row names both people, the person is signed out, and gets a notification and a mail (when mail is set up). An admin cannot reset their own 2FA, and an impersonated session cannot reset anyone's.
+- The server owner runs `bilibi-web two-factor-reset --email <address>` (or `scripts/install-server.sh two-factor-reset <instance> --email <address>`) on the server. It is audited as **System · two-factor-reset**, signs the account out and notifies it. See `docs/server-install.md`.
+
+The person then signs in with their password and sets the app up again.
 
 The step-up window, cap and per-operation policy belong to Base Step-up, not here.
 
@@ -445,7 +451,7 @@ fixture functions/triggers. Never run it against normal data.
 The operator's saved-query screens live at `/admin/system/database-queries`
 (and `/{slug}`, with `/_new` for creation). They compose the shared list,
 form, confirmation and FlexTable components in `src/query_ui`; all storage and
-execution go through `database_queries::QueryService`. Both routes require
+execution go through `database_queries::QueryService`. The list's column labels come from the detail's `query_ui::fields`; the prompt and SQL text stay on the detail page. Both routes require
 explicit operator identity plus `admin.system.database-table.list`; saving,
 duplicating and deleting additionally require `admin.system.database-table.edit`.
 Every live action and refresh checks these requirements again. Queries remain

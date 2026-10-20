@@ -1,32 +1,28 @@
-//! The software of this server: what is installed, what the catalogue
-//! offers, and the server owner's requests to change it (build on Dev,
-//! install a tested release elsewhere, undo, cancel). This module records and
-//! validates those requests and shows their progress; a builder and an
-//! installer, separate services, pick the queued job up (`README.md`, "How a
-//! worker plugs in"). No Bilimbi counterpart: the Software page is Bilibi's.
+//! Software discovery, installed versions, and safe install and undo jobs.
+//! Operators build in their local Bilibi copy, then install a tested release
+//! through the separate installer. No Bilimbi counterpart.
 //!
 //! Facts come from one place each: the running program for the Domains and
 //! versions (`bilibi_module_registry::Composition`, handed in by the host as
 //! `bootstrap.composition`), `bilibi_system::Instance` for which instance
 //! this is, the published catalogue for what can be chosen, and the job
-//! tables here for history and plug-ins.
+//! tables here for history and add-ons.
 mod agent;
-mod builder;
 mod catalogue;
+mod discovery;
 mod follow;
+mod github;
 mod jobs;
 mod pairing;
 mod release_files;
 mod review;
-mod toolchain;
 mod transfer;
 mod transport;
 mod web;
-mod worker;
 
 use bilibi_authz::{
-    authorize_operator, CapabilityDefinition, SystemPrincipalDefinition, VocabularyContribution,
-    VOCABULARY,
+    authorize_operator, effective_capabilities, CapabilityDefinition, SystemPrincipalDefinition,
+    VocabularyContribution, VOCABULARY,
 };
 use bilibi_database::{Context, Db, Error, MutationBoundary, MutationTransaction, Result};
 use bilibi_integration::Integration;
@@ -53,7 +49,6 @@ pub use transfer::TransportRefusal;
 pub use transport::{
     bundle_filename, Paths as InstancePaths, BUNDLE_TYPE, LISTING_PATH, PAIRING_HEADER,
 };
-pub use worker::{Worker, PRINCIPAL as WORKER_PRINCIPAL, USAGE as WORKER_USAGE};
 
 /// The MCP App card (`card/software-v1.html`): the Software page as one
 /// self-contained document a chat host shows inline. `open_software` opens it.
@@ -84,17 +79,13 @@ pub const SERVICE: &str = "base/software.software";
 /// Seeing the installed software, the catalogue and the jobs (platform).
 pub const VIEW: &str = "admin.system.software.view";
 /// Changing the server's software (platform): a server owner's power, since
-/// one build changes every company on the server.
+/// one install changes every company on the server.
 pub const MANAGE: &str = "admin.system.software.manage";
 /// The step-up operation every change asks for: a fresh code every time, on
-/// every instance, Dev included, because a build changes the server itself.
+/// every instance, Dev included, because an install changes the server itself.
 pub const STEP_UP: &str = "base.software.change";
 /// Where the published catalogue is read from.
 pub const CATALOGUE_URL_KEY: &str = "software.catalogue_url";
-/// How many compiler processes a build may run at once; 0 lets Cargo decide.
-pub const BUILD_JOBS_KEY: &str = "software.build_jobs";
-/// The action names the audit trail shows.
-pub const ACTION_CHANGE: &str = "software.change";
 pub const ACTION_INSTALL: &str = "software.install";
 pub const ACTION_UNDO: &str = "software.undo";
 pub const ACTION_CANCEL: &str = "software.cancel";
@@ -113,7 +104,7 @@ bilibi_step_up::declare!(
     "base/software",
     bilibi_step_up::Operation::new(
         STEP_UP,
-        "Change the server's software (build, install, undo, pairing key)"
+        "Change the server's software (install, undo, pairing key, GitHub releases)"
     )
     .always()
 );
@@ -128,6 +119,17 @@ bilibi_step_up::declare!(
     )
     .always()
     .guards_setting(pairing::KEY)
+);
+// Saving the GitHub read token in the settings editor. The token can read
+// the setup repository, so changing it asks for a fresh code.
+bilibi_step_up::declare!(
+    "base/software",
+    bilibi_step_up::Operation::new(
+        github::STEP_UP_TOKEN,
+        "Change the GitHub read token in the settings"
+    )
+    .always()
+    .guards_setting(github::TOKEN)
 );
 
 /// The facade: reviews a request without writing, and records it inside the
@@ -156,8 +158,8 @@ fn bound() -> Result<&'static Arc<Software>> {
 }
 
 impl Software {
-    /// Whether this instance builds, what it announces itself as, what is
-    /// installed, the plug-ins, the job waiting or running (or the last
+    /// What this instance announces itself as, what is
+    /// installed, the add-ons, the job waiting or running (or the last
     /// one), whether Undo is available, and the recent jobs.
     pub async fn status(&self, scope: &Scope) -> Result<Value> {
         let client = self.db.get().await?;
@@ -170,7 +172,7 @@ impl Software {
             Some(job) => Some(job.clone()),
             None => recent.first().cloned(),
         };
-        let job = match shown {
+        let mut job = match shown {
             Some(job) => {
                 let mut value = job.json();
                 value["result"] = json!(jobs::with_loss(job.result.clone()));
@@ -201,6 +203,13 @@ impl Software {
                 json!({"available": false, "reason": "Nothing to undo: no change has finished on this instance."})
             }
         };
+        let (mut backups, keep) = jobs::backups_json(&**client, tenant).await?;
+        if !effective_capabilities(&**client, scope)
+            .await?
+            .contains(MANAGE)
+        {
+            jobs::hide_backup_files(&mut job, &mut backups);
+        }
         Ok(json!({
             "instance": review::instance_json(&instance),
             "installed": review::installed_json(&self.composition),
@@ -209,73 +218,51 @@ impl Software {
                 .map(|(bundle, facts)| json!({"bundle": bundle, "release": facts["release"], "from": facts["from"]["label"]}))
                 .collect::<Vec<_>>(),
             "pairing": pairing::state_json(pairing::is_set(&**client, &self.settings, scope).await?),
+            "backups": backups,
+            "backup_rule": jobs::backup_rule(keep),
             "job": job,
             "undo": undo,
             "jobs": recent.iter().map(|job| json!({"id": job.id, "kind": job.kind, "state": job.state,
-                "summary": job.review["summary"], "requested_at": job.requested_at, "finished_at": job.finished_at})).collect::<Vec<_>>(),
+                "summary": job.review["summary"], "worker": job.worker, "requested_at": job.requested_at, "finished_at": job.finished_at})).collect::<Vec<_>>(),
         }))
     }
 
-    /// What the card opens with: the status, and on an instance that builds
-    /// the catalogue too, with the agent's proposal (Domains and plug-ins to
-    /// pre-tick) checked against it. Nothing is chosen by a proposal: the
-    /// person ticks and confirms in the card. On an instance that installs,
-    /// a proposal is reported as ignored, so the agent can say so.
+    /// Discovery and local build instructions on every instance. Proposals
+    /// highlight catalogue entries; they never create a server job.
     pub async fn open(&self, scope: &Scope, input: &Value) -> Result<Value> {
         let mut value = self.status(scope).await?;
-        let builds = value["instance"]["builds"].as_bool().unwrap_or(false);
-        let proposed = input.get("propose").filter(|p| p.is_object());
-        if builds {
-            let catalogue = self.catalogue(scope).await?;
-            let ids = |kind: &str| -> Vec<String> {
+        let catalogue = self.catalogue(scope).await?;
+        let proposed = &input["propose"];
+        let wanted = |kind: &str| -> Vec<String> {
+            proposed[kind]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|v| v.as_str().map(str::to_owned))
+                .collect()
+        };
+        let mut unknown = Vec::new();
+        let mut proposal = json!({});
+        for kind in ["domains", "extensions", "plugins"] {
+            let (known, missing): (Vec<_>, Vec<_>) = wanted(kind).into_iter().partition(|id| {
                 catalogue[kind]
                     .as_array()
-                    .map(|items| {
-                        items
-                            .iter()
-                            .filter_map(|item| item["id"].as_str().map(str::to_owned))
-                            .collect()
-                    })
-                    .unwrap_or_default()
-            };
-            let (domains, plugins) = (ids("domains"), ids("plugins"));
-            let wanted = |kind: &str| -> Vec<String> {
-                proposed
-                    .and_then(|p| p[kind].as_array())
-                    .map(|items| {
-                        items
-                            .iter()
-                            .filter_map(|item| item.as_str().map(str::to_owned))
-                            .collect()
-                    })
-                    .unwrap_or_default()
-            };
-            let (wanted_domains, wanted_plugins) = (wanted("domains"), wanted("plugins"));
-            let unknown: Vec<&String> = wanted_domains
-                .iter()
-                .filter(|id| !domains.contains(id))
-                .chain(wanted_plugins.iter().filter(|id| !plugins.contains(id)))
-                .collect();
-            value["proposal"] = json!({
-                "domains": wanted_domains.iter().filter(|id| domains.contains(id)).collect::<Vec<_>>(),
-                "plugins": wanted_plugins.iter().filter(|id| plugins.contains(id)).collect::<Vec<_>>(),
-                "unknown": unknown,
+                    .into_iter()
+                    .flatten()
+                    .any(|item| item["id"] == *id)
             });
-            value["catalogue"] = catalogue;
-        } else {
-            value["catalogue"] = Value::Null;
-            value["proposal"] = match proposed {
-                Some(_) => {
-                    json!({"ignored": format!("{} does not build: it installs a release that another instance tested. Propose on Dev.", value["instance"]["label"].as_str().unwrap_or("This instance"))})
-                }
-                None => Value::Null,
-            };
+            proposal[kind] = json!(known);
+            unknown.extend(missing);
         }
+        proposal["unknown"] = json!(unknown);
+        value["proposal"] = proposal;
+        value["catalogue"] = catalogue;
+        value["next_step"] = json!(discovery::NEXT_STEP);
         value["card"] = json!({"resource": CARD_URI});
         Ok(value)
     }
 
-    /// Puts the outcomes the builder and the installer wrote into the audit
+    /// Puts the outcomes the installer wrote into the audit
     /// trail: each finished job becomes one audited change, from the job as
     /// queued to the job as the worker left it, attributed to that worker as
     /// a system principal. Returns how many were settled.
@@ -306,8 +293,8 @@ impl Software {
         }
         Ok(settled)
     }
-    /// Tells the person who asked how their job ended, as the builder does
-    /// for its own, after the outcome is recorded, so a notification that
+    /// Tells the person who asked how their job ended after the outcome is
+    /// recorded, so a notification that
     /// cannot be sent never keeps a job unsettled. Their account is
     /// re-proved live for the notification's scope; an account that is gone
     /// gets none.
@@ -417,41 +404,13 @@ impl Software {
         let url = self.catalogue_url(&**client).await?;
         Ok(match self.catalogue.read(scope, &url).await {
             Ok(catalogue) => {
-                let mut value = catalogue.json();
+                let mut value = discovery::catalogue(&catalogue, &self.composition);
                 value["available"] = json!(true);
                 value["url"] = json!(url);
                 value
             }
             Err(message) => json!({"available": false, "url": url, "message": message}),
         })
-    }
-
-    /// What a change (a build on Dev) would do, read without writing.
-    pub async fn review_change(&self, scope: &Scope, input: &Value) -> SoftwareResult<Review> {
-        let client = self.db.get().await?;
-        authorize_operator(&**client, scope, MANAGE).await?;
-        self.change_review(&**client, scope, input).await
-    }
-    /// Records the reviewed change as a queued job inside the caller's
-    /// transaction, after the owner's fresh 2FA check.
-    pub async fn change_in(
-        &self,
-        tx: &mut MutationTransaction<'_>,
-        scope: &Scope,
-        input: &Value,
-    ) -> SoftwareResult<Value> {
-        authorize_operator(tx.sql(), scope, MANAGE).await?;
-        let review = self.change_review(tx.sql(), scope, input).await?;
-        self.step_up.require(scope, STEP_UP, &review.target).await?;
-        let new = jobs::NewJob {
-            kind: "change",
-            request: review.request.clone(),
-            review: review.facts.clone(),
-            undo_of: None,
-            switch: review.switch.clone(),
-            steps: jobs::change_steps(),
-        };
-        self.queue(tx, scope, new, &review).await
     }
 
     /// What installing a release tested on the source instance would do.
@@ -469,14 +428,20 @@ impl Software {
         authorize_operator(tx.sql(), scope, MANAGE).await?;
         let review = self.install_review(tx.sql(), scope, input).await?;
         self.step_up.require(scope, STEP_UP, &review.target).await?;
-        let downloads = review.request["source"]["kind"].as_str() == Some("https");
+        let kind = review.request["source"]["kind"].as_str();
+        let downloads = kind == Some("https") || kind == Some("github");
+        let steps = if kind == Some("github") {
+            jobs::download_steps(true, "Download the release from GitHub")
+        } else {
+            jobs::install_steps(downloads)
+        };
         let new = jobs::NewJob {
             kind: "install",
             request: review.request.clone(),
             review: review.facts.clone(),
             undo_of: None,
             switch: review.switch.clone(),
-            steps: jobs::install_steps(downloads),
+            steps,
         };
         self.queue(tx, scope, new, &review).await
     }
@@ -552,7 +517,7 @@ impl Software {
         Ok(value)
     }
 
-    /// What giving a built change its go-ahead would do.
+    /// What giving a copied install its go-ahead would do.
     pub async fn review_go(&self, scope: &Scope, input: &Value) -> SoftwareResult<Review> {
         let client = self.db.get().await?;
         authorize_operator(&**client, scope, MANAGE).await?;
@@ -596,7 +561,6 @@ impl Software {
         let kind = new.kind;
         let job = jobs::queue(tx, scope.tenant(), scope.user(), new).await?;
         let title = match kind {
-            "change" => format!("Software change queued as job {}", job.id),
             "install" => format!("Software install queued as job {}", job.id),
             _ => format!("Software undo queued as job {}", job.id),
         };
@@ -630,27 +594,6 @@ impl Software {
             .to_owned())
     }
 
-    async fn change_review(
-        &self,
-        client: &(impl tokio_postgres::GenericClient + Sync),
-        scope: &Scope,
-        input: &Value,
-    ) -> SoftwareResult<Review> {
-        let tenant = scope.tenant();
-        let instance = Instance::resolve(&self.settings, client).await?;
-        let active = jobs::active(client, tenant).await?;
-        let url = self.catalogue_url(client).await?;
-        let catalogue = self.catalogue.read(scope, &url).await;
-        let enabled = jobs::enabled_plugins(client, tenant).await?;
-        review::change(
-            &instance,
-            &self.composition,
-            catalogue.as_deref().map_err(Clone::clone),
-            &enabled,
-            active.as_ref(),
-            input,
-        )
-    }
     async fn install_review(
         &self,
         client: &(impl tokio_postgres::GenericClient + Sync),
@@ -661,11 +604,24 @@ impl Software {
         let active = jobs::active(client, scope.tenant()).await?;
         // The source is asked only for a release of its own; an uploaded
         // file needs no source.
-        let source = match (&instance.installs_from, input["bundle"].as_str()) {
-            (Some(from), None) if !instance.role.builds() => Some(review::SourceFacts {
-                listing: self.source_listing(scope, from).await?,
-            }),
-            _ => None,
+        let github_install = input.get("asset").is_some();
+        let source = if github_install {
+            None
+        } else {
+            match (&instance.installs_from, input["bundle"].as_str()) {
+                (Some(from), None) => Some(review::SourceFacts {
+                    listing: self.source_listing(scope, from).await?,
+                }),
+                _ => None,
+            }
+        };
+        let github = if github_install {
+            // Ask GitHub now, including pre-releases, so a file replaced
+            // after review is refused here. A rate limit still serves the
+            // saved list; the download checks the file again.
+            Some(self.github_listing(scope, true, true).await?)
+        } else {
+            None
         };
         let uploads = self
             .paths
@@ -683,6 +639,7 @@ impl Software {
             active.as_ref(),
             input,
             source.as_ref(),
+            github.as_ref(),
             &review::Held {
                 uploads: &uploads,
                 running_sha256: running_sha256.as_deref(),
@@ -812,19 +769,48 @@ inventory::submit! { Contribution::new(DEFINITIONS, CATALOGUE_URL_KEY, provenanc
         help: "The published catalogue.json that lists the Platform and Domain releases and which were tested together. Change it only to read a catalogue you publish yourself (server owner only).",
         capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
 })) }
+inventory::submit! { Contribution::new(DEFINITIONS, github::REPOSITORY, provenance!(), &Setting::Definition(Definition {
+    value_type: ValueType::String, scopes: &[ScopeKind::Global], default: || json!(null), nullable: true, encrypted: false,
+    minimum: None, maximum: None,
+    validator: Some(Validator { accepts: github::accepts_repository, message: "Enter the repository as owner/name, like BelimbingApp/bilibi-setup-template." }),
+    editor: Some(Editor { group: "Software", label: "GitHub repository: owner and name of the setup repository",
+        help: "Example: BelimbingApp/bilibi-setup-template. Software reads releases from this repository. Server owner only.",
+        capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
+})) }
+inventory::submit! { Contribution::new(DEFINITIONS, github::REPOSITORY_ID, provenance!(), &Setting::Definition(Definition {
+    value_type: ValueType::Integer, scopes: &[ScopeKind::Global], default: || json!(null), nullable: true, encrypted: false,
+    minimum: Some(1.0), maximum: None,
+    validator: Some(Validator { accepts: github::accepts_id, message: "The GitHub repository number is recorded when you accept the repository." }),
+    editor: None,
+})) }
+inventory::submit! { Contribution::new(DEFINITIONS, github::REPOSITORY_BOUND, provenance!(), &Setting::Definition(Definition {
+    value_type: ValueType::String, scopes: &[ScopeKind::Global], default: || json!(null), nullable: true, encrypted: false,
+    minimum: None, maximum: None,
+    validator: Some(Validator { accepts: github::accepts_bound, message: "The remembered repository must be owner/name." }),
+    editor: None,
+})) }
+inventory::submit! { Contribution::new(DEFINITIONS, github::TOKEN, provenance!(), &Setting::Definition(Definition {
+    value_type: ValueType::String, scopes: &[ScopeKind::Global], default: || json!(null), nullable: true, encrypted: true,
+    minimum: None, maximum: None,
+    validator: Some(Validator { accepts: github::accepts_token, message: "The GitHub token must be 20 to 255 characters with no spaces." }),
+    editor: Some(Editor { group: "Software", label: "GitHub read token for a private setup repository",
+        help: "Leave empty for a public repository. For a private one, use a fine-grained token that can read this repository only. Stored encrypted and never shown back. Changing or clearing it asks for your authenticator code every time (server owner only).",
+        capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
+})) }
+inventory::submit! { Contribution::new(DEFINITIONS, github::REFRESH_MINUTES, provenance!(), &Setting::Definition(Definition {
+    value_type: ValueType::Integer, scopes: &[ScopeKind::Global], default: || json!(github::DEFAULT_REFRESH_MINUTES), nullable: false, encrypted: false,
+    minimum: Some(1.0), maximum: Some(1440.0),
+    validator: None,
+    editor: Some(Editor { group: "Software", label: "Check GitHub for new releases every this many minutes",
+        help: "15 means the release list is refreshed at most every 15 minutes, and again when you choose Refresh. Server owner only.",
+        capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
+})) }
 inventory::submit! { Contribution::new(DEFINITIONS, pairing::KEY, provenance!(), &Setting::Definition(Definition {
     value_type: ValueType::String, scopes: &[ScopeKind::Global], default: || json!(null), nullable: true, encrypted: true,
     minimum: None, maximum: None,
     validator: Some(Validator { accepts: pairing::accepts_value, message: "The pairing key must be 16 to 128 characters with no spaces, like the output of: openssl rand -hex 24" }),
     editor: Some(Editor { group: "Software", label: "Pairing key other instances use to download releases from this one",
         help: "Set the same key on every instance that shares releases: the one that installs presents it, the one it installs from checks it. Stored encrypted and never shown back. Changing or clearing it asks for your authenticator code every time (server owner only).",
-        capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
-})) }
-inventory::submit! { Contribution::new(DEFINITIONS, BUILD_JOBS_KEY, provenance!(), &Setting::Definition(Definition {
-    value_type: ValueType::Integer, scopes: &[ScopeKind::Global], default: || json!(2), nullable: false, encrypted: false,
-    minimum: Some(0.0), maximum: Some(64.0), validator: None,
-    editor: Some(Editor { group: "Software", label: "Compilers at a time: how many parts a build compiles at once",
-        help: "How many parts the build compiles at the same time. 2 keeps a Dev that shares its machine with Production responsive and takes about 10 to 15 minutes for a first build. Use 1 on a small server, or a higher number on a machine of its own. 0 means use every processor, which is fastest but slows everything else on the server. Builds always run at the lowest CPU priority (server owner only).",
         capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
 })) }
 // The Software page: server owners' view of what runs and the way to change
@@ -845,52 +831,26 @@ bilibi_menu::contribute!(
         .order(40)
 );
 // The page's writes are this module's own contracts (ADR 01): a reviewed
-// plan for a change, install, undo or go-ahead, and a plain submit for cancel.
+// plan for an install, undo or go-ahead, and a plain submit for cancel.
 inventory::submit! { Contribution::new(PAGE_WRITES, web::PAGES, provenance!(), &PageWrites {
     service: web::PAGES,
-    contracts: &[("build", "base.software.change"), ("install", "base.software.install"), ("undo", "base.software.undo"), ("go", "base.software.go"), ("cancel_job", "base.software.cancel")],
+    contracts: &[("install", "base.software.install"), ("undo", "base.software.undo"), ("go", "base.software.go"), ("cancel_job", "base.software.cancel"), ("pair", "base.software.pair"), ("clear_pairing", "base.software.pair"), ("github_source", "base.software.github"), ("github_accept", "base.software.github"), ("clear_github_token", "base.software.github")],
     pending: Pending::None,
 }) }
-// The Release files page (`release_files.rs`): the releases kept here with their
-// download links, the pairing key, and the upload of a release file. Seeing
-// it needs the platform `view` capability; the facade rechecks `manage` on
-// every write. The Software page (`web.rs`) is the place to install.
+// Keep existing bookmarks; the only page is Software with its Releases tab.
 inventory::submit! { Contribution::new(ROUTES, "base/software.releases", provenance!(), &Route {
-    method: Method::Get, path: release_files::PATH, service: release_files::PAGES, operation: "releases",
+    method: Method::Get, path: release_files::PATH, service: web::PAGES, operation: "legacy_releases",
     access: Access::OperatorCapability(VIEW), framed: true,
 }) }
 inventory::submit! { Contribution::new(DOWNLOADS, "base/software.release_file", provenance!(), &Download {
     path: release_files::DOWNLOAD_PATH, service: release_files::FILES, operation: "release_file",
     access: Access::OperatorCapability(MANAGE),
 }) }
-bilibi_menu::contribute!(
-    "base/software",
-    bilibi_menu::MenuItem::page(
-        "admin.system.release_files",
-        "Release files",
-        release_files::PATH
-    )
-    .under("admin.system")
-    .icon("hero-archive-box-arrow-down")
-    .requires(bilibi_menu::Requirement::Capability(VIEW))
-    .order(41)
-);
-// The page's only business write is the pairing key, through its contract
-// (ADR 01). Receiving an uploaded file writes the instance folder, not the
-// database.
-inventory::submit! { Contribution::new(PAGE_WRITES, release_files::PAGES, provenance!(), &PageWrites {
-    service: release_files::PAGES,
-    contracts: &[
-        ("pair", "base.software.pair"),
-        ("clear_pairing", "base.software.pair"),
-    ],
-    pending: Pending::None,
-}) }
 inventory::submit! {
     bilibi_module_registry::Module {
         id: "base/software", layer: bilibi_module_registry::Layer::Base,
         dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/agent_api", "base/settings", "base/step_up", "base/system", "base/notifications", "base/integration", "base/audit", "base/ui", "base/menu", "base/datetime", "base/locale"],
-        migrations: &[("base-software-001-jobs", include_str!("../migrations/001-jobs.sql")), ("base-software-002-settled", include_str!("../migrations/002-settled.sql"))],
+        migrations: &[("base-software-001-jobs", include_str!("../migrations/001-jobs.sql")), ("base-software-002-settled", include_str!("../migrations/002-settled.sql")), ("base-software-003-local-builds", include_str!("../migrations/003-local-builds.sql"))],
         // Declaration order is build order: the page service reads this one.
         services: &[bilibi_module_registry::Service { id: SERVICE, factory: |services| {
             let software = Arc::new(Software {
@@ -918,13 +878,6 @@ inventory::submit! {
                 contracts: services.get(bilibi_agent_api::page::SERVICE)?,
                 display: services.get("base/datetime.display")?,
                 locales: services.get("base/locale.locales")?,
-                software: services.get(SERVICE)?,
-            }))))
-        } }, bilibi_module_registry::Service { id: release_files::PAGES, factory: |services| {
-            Ok(Arc::new(bilibi_ui::page::PageService::<Scope, Error>(Arc::new(release_files::Pages {
-                db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
-                settings: services.get("base/settings.store")?,
-                contracts: services.get(bilibi_agent_api::page::SERVICE)?,
                 software: services.get(SERVICE)?,
             }))))
         } }, bilibi_module_registry::Service { id: release_files::FILES, factory: |services| {

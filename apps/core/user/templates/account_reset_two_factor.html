@@ -1,0 +1,6 @@
+{#- The code prompt inside the Reset 2FA dialog (account_ui/detail.rs ResetBody). -#}
+{%- import "forms.html" as form -%}
+<form id="user-reset-two-factor-form" data-event="{{ event }}" class="space-y-3">
+{{ error|safe }}
+{% call form::step_up(step=step_up) %}{% endcall %}
+</form>

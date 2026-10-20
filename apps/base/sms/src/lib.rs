@@ -4,25 +4,22 @@
 //!
 //! Today the only driver is the simulator ([`Outbox`]): each message becomes
 //! a private file the dev inbox page shows, so a tester reads a code without
-//! a phone. The host turns it on outside production (`enable_simulator`);
-//! until then, and always in production, the gateway is unavailable and
-//! callers refuse SMS rather than pretend to deliver. A real provider is a
-//! second [`Driver`] sent through Base Integration. Contract: `README.md`.
+//! a phone. It runs while the server's stored role (`instance.role`, Base
+//! System) is Dev or Staging, read on every use, so changing the role takes
+//! effect at once. On Production the gateway is unavailable and callers
+//! refuse SMS rather than pretend to deliver. A real provider is a second
+//! [`Driver`] sent through Base Integration. Contract: `README.md`.
 mod outbox;
 mod phone;
 
 pub use outbox::{Outbox, OutboxEntry};
 pub use phone::PhoneNumber;
 
+use bilibi_database::Db;
 use bilibi_module_registry::{Module, Service};
-use std::{
-    future::Future,
-    pin::Pin,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
-};
+use bilibi_settings::Settings;
+use bilibi_system::{Instance, Role};
+use std::{future::Future, pin::Pin, sync::Arc};
 
 pub const SERVICE: &str = "base/sms.gateway";
 /// The longest message a caller may send: one 160-character GSM segment.
@@ -51,41 +48,51 @@ pub trait Driver: Send + Sync {
 
 pub struct Gateway {
     outbox: Arc<Outbox>,
-    simulator: AtomicBool,
+    db: Db,
+    settings: Arc<Settings>,
 }
 
 impl Gateway {
-    pub fn new(outbox: Outbox) -> Self {
+    pub fn new(outbox: Outbox, db: Db, settings: Arc<Settings>) -> Self {
         Self {
             outbox: Arc::new(outbox),
-            simulator: AtomicBool::new(false),
+            db,
+            settings,
         }
     }
-    /// The host turns the simulator on for development and staging only.
-    pub fn enable_simulator(&self, enabled: bool) {
-        self.simulator.store(enabled, Ordering::SeqCst);
+    /// Whether a message can be sent now: the simulator runs while the
+    /// stored role is Dev or Staging. A failed role lookup counts as
+    /// Production (the safe side) and is logged.
+    pub async fn available(&self) -> bool {
+        let role = async {
+            let client = self.db.get().await?;
+            Instance::resolve(&self.settings, &**client).await
+        };
+        match role.await {
+            Ok(instance) => instance.role != Role::Production,
+            Err(error) => {
+                eprintln!("warning: sms: server role lookup failed: {error:?}");
+                false
+            }
+        }
     }
-    /// Whether a message can be sent at all; callers refuse SMS otherwise.
-    pub fn available(&self) -> bool {
-        self.simulator.load(Ordering::SeqCst)
+    /// The simulator's messages, for the dev inbox; `None` on Production.
+    pub async fn outbox(&self) -> Option<&Outbox> {
+        self.available().await.then_some(&*self.outbox)
     }
-    /// The simulator's messages, for the dev inbox; `None` when it is off.
-    pub fn outbox(&self) -> Option<&Outbox> {
-        self.available().then_some(&*self.outbox)
-    }
+    /// Secret-free description for the boot log.
     pub fn describe(&self) -> String {
-        if self.available() {
+        format!(
+            "{} while the server role is Dev or Staging; none on Production",
             self.outbox.describe()
-        } else {
-            "unavailable (no SMS driver; the simulator runs only in development and staging)".into()
-        }
+        )
     }
     pub async fn send(&self, to: &PhoneNumber, text: &str) -> Result<()> {
         if text.is_empty() || text.chars().count() > MAX_TEXT || text.chars().any(char::is_control)
         {
             return Err(Error::Invalid);
         }
-        if !self.available() {
+        if !self.available().await {
             return Err(Error::Unavailable);
         }
         self.outbox.send(to, text).await
@@ -95,11 +102,17 @@ impl Gateway {
 inventory::submit! {
     Module {
         id: "base/sms", layer: bilibi_module_registry::Layer::Base,
-        dependencies: &["base/module_registry"], migrations: &[],
-        services: &[Service { id: SERVICE, factory: |_| {
+        dependencies: &["base/module_registry", "base/database", "base/settings", "base/system"], migrations: &[],
+        services: &[Service { id: SERVICE, factory: |services| {
             let dir = std::env::var("BILIBI_SMS_DIR").ok().filter(|dir| !dir.trim().is_empty())
                 .unwrap_or_else(|| ".local/sms-outbox".into());
-            Ok(Arc::new(Gateway::new(Outbox::new(dir.into(), 100))))
+            let gateway = Gateway::new(
+                Outbox::new(dir.into(), 100),
+                services.get::<Db>("base/database.pool")?.as_ref().clone(),
+                services.get("base/settings.store")?,
+            );
+            eprintln!("sms: {}", gateway.describe());
+            Ok(Arc::new(gateway))
         }}],
     }
 }

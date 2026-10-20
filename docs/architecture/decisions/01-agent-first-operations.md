@@ -4,7 +4,7 @@
 **Status:** Accepted. The first Platform slice is built (contracts for every caller, page callers, the page-write check, step-up on the contract); the rest is in "Status of each door today".
 **Agents:** claude-cloud/sonnet-5.5-default (author), amp/gpt-6-luna-default (review), oracle amp/gpt-6-astra
 **Scope:** How a business action is defined once and reached from the GUI, a CLI, an HTTP API and MCP, with the same rules for a human and for an agent acting for a human
-**Last Updated:** 2026-10-18
+**Last Updated:** 2026-10-19
 
 > The `Agents` value is self-reporting: what the agent reports about itself.
 >
@@ -77,9 +77,10 @@ A contract declares:
 - **The agent also reports itself**: harness, model, version and effort, in the same `harness/model-version-effort` form the ADR headers use (for example `amp/gpt-6-astra-high`).
 - Report known values only. When the agent does not know a value of harness, model, version or effort, it **asks the user who is using the harness and reports what that user says**. That is the person who chose the model in the harness, normally the account the agent acts for. It never asks the installation owner or a Bilibi administrator. It still never guesses, and omits a part that user cannot give.
 - The value stays labelled self-reporting. A request is never rejected for missing metadata, and ordinary machine callers need not send it.
-- The harness plugins (the skills `core/agent_plugins` generates) instruct the agent to send the value and to ask the user of the harness for unknown parts.
+- MCP connect instructions, generic tool descriptions and the harness plugins (the skills `core/agent_plugins` generates) tell the agent to send the value and ask its user for unknown parts. No client configuration is needed.
 - That report is labelled **self-reporting**: what the agent reports about itself. It is recorded beside the harness/model-version-effort value for audit and support. It is **never used for authorization**.
-- The agent edge accepts it as `X-Bilibi-Agent-Self-Report` (or MCP `_meta` `bilibi/agent-self-report`), checks only its shape and records it on the exchange, on the audit of any write the request commits and on the connection, shown as "Self-reported agent" (`apps/web/README.md`). The self-reporting `X-Bilibi-Agent-Id` and `X-Bilibi-Run-Id` labels are recorded beside it.
+- The agent edge accepts it as `X-Bilibi-Agent-Self-Report` (or MCP `params._meta` `bilibi/agent-self-report`, or the optional `agent_self_report` argument on any of the six generic tools), checks only its shape and records it on the exchange, on the audit of any write the request commits and on the connection, shown as "Model (as reported)" (`apps/web/README.md`). The tool argument takes precedence over `_meta`, which takes precedence over the header; malformed values are dropped without refusing the call. The self-reporting `X-Bilibi-Agent-Id` and `X-Bilibi-Run-Id` labels are recorded beside it.
+- **Client identity is a separate observation**, labelled "Client identity", never a substitute for "Model (as reported)" or authority. The edge records the HTTP User-Agent on exchanges, write audits and observed connections; a missing or malformed MCP User-Agent is explicitly recorded as "MCP: client identity not supplied". MCP initialize additionally records its `clientInfo` name/version on that exchange. The stateless edge does not associate public initialize metadata with later bearer calls. OAuth code exchanges record their User-Agent when supplied; self-reports cannot retroactively fill earlier audit rows.
 
 ### 3. Plugins are thin adapters
 
@@ -101,15 +102,15 @@ Protection against hostile content in documents an agent reads is **deliberately
 
 ## Status of each door today
 
-Verified against the code on 2026-10-18.
+Verified against the code on 2026-10-19.
 
 | Door | State | Evidence |
 | --- | --- | --- |
-| GUI | Built. Core Person, Core Affiliation, Core Company's relationship screens and Base Events' replay page call their contracts for every write (`PageContracts`). Other pages still write through facades, each on a listed allowance the page-write check enforces | `apps/base/agent_api/README.md` (Pages as callers, Page writes declaration and check) |
-| API `/api/v1` | Built. Search, describe, guide, call, plans, commit. OAuth device grant, per-person grants, live proof on every request | `apps/web/src/api.rs`, `apps/web/README.md` |
-| MCP `/mcp` | Built. Stateless Streamable HTTP. Six tools: `search`, `describe`, `guide`, `read`, `plan`, `commit` | `apps/web/src/mcp.rs`, `apps/base/agent_api/src/mcp.rs` |
+| GUI | Built. Core Address, Core Person, Core Affiliation, Core Company's relationship screens, Core Tenant Administration and Base Events' replay page call their contracts for every write (`PageContracts`). Other pages still write through facades, each on a listed allowance the page-write check enforces | `apps/base/agent_api/README.md` (Pages as callers, Page writes declaration and check) |
+| API `/api/v1` | Built. Search, describe, guide, call, plans, commit. OAuth device grant, per-person grants, live proof on every request; tenant search/read and atomic tenant-and-companies creation | `apps/web/src/api.rs`, `apps/web/README.md` |
+| MCP `/mcp` | Built. Stateless Streamable HTTP. Six tools: `search`, `describe`, `guide`, `read`, `plan`, `commit`; the same tenant contracts are discovered without plugin changes | `apps/web/src/mcp.rs`, `apps/base/agent_api/src/mcp.rs` |
 | CLI | **Client not built.** `bilibi-web` has only operator commands (`migrate`, `seed`, `seed-production`, `create-owner`, `tenant-provision`, `platform-provision`, `authz-reconcile`, `geonames-import`, `media-cleanup`, `plugin-export`), none of which calls an operation contract | `apps/web/src/main.rs` |
-| Harness plugins | **Built for ChatGPT.** `core/agent_plugins` generates the downloadable package: a thin adapter over `/mcp`, with skills generated from the registry, including the agent self-report instruction. Other harnesses are added when needed | `apps/core/agent_plugins/README.md` |
+| Harness plugins | **Built for ChatGPT.** `core/agent_plugins` generates the downloadable package: a thin adapter over `/mcp`, with skills generated from the registry, including the agent self-report instruction. The settings page is AI connections (`/settings/ai-connections`) in `core/agent_access`. The tab shows one prompt for the person to paste into their AI app; the ChatGPT ZIP stays a download for administrators. Other harnesses are added when needed | `apps/core/agent_plugins/README.md` |
 
 The registry is `base/agent_api` (`apps/base/agent_api/README.md`):
 
@@ -117,8 +118,8 @@ The registry is `base/agent_api` (`apps/base/agent_api/README.md`):
 - **Page-write check.** Each page service declares its write events and the contract each calls (`PageWrites`, Module Registry). Boot refuses a declaration naming no registered write contract. During a live event the host refuses a business transaction the declaration does not cover, so a page not yet migrated is a listed `Pending` allowance with its reason (`apps/base/agent_api/README.md` lists them).
 - **Channels.** A contract may name the doors it can serve (`Channels::Only` with a reason), for technical reasons only. Every current contract serves every door.
 - **Step-up.** A contract lists the step-up operations its commit may ask for (`step_up`), checked at boot and shown by `describe`. The owner's write calls `StepUp::require`. The database tables pages and secret reveal use Base Step-up; their password prompts are gone.
-- **Agent reach** is the person's live capabilities, administration included. Impersonation stays refused (`apps/base/agent_api/src/reach.rs`).
-- Contracts exist for `core/company` (create, relationship roles and relationships), `core/person`, `core/affiliation`, `base/authz_agent` (role and capability grants) and `base/events` (event subscribers, deliveries and replay, `apps/base/events/README.md`). No Domain or Extension contributes yet. None is mounted in this repository.
+- **Agent reach** is the person's live capabilities and operator/owner standing, administration included. Tenancy re-reads the account, operator marker and grant on every proof; owner proof also re-reads the bootstrap receipt. Impersonated scopes never hold owner standing. Impersonation stays refused (`apps/base/agent_api/src/reach.rs`).
+- Contracts exist for `core/address` (address facts, location lookups, company/person links), `core/company` (create, relationship roles and relationships), `core/person`, `core/affiliation`, `base/authz_agent` (role and capability grants), `core/tenant_administration` (tenant search/read and tenant creation with primary and additional companies), and `base/events` (event subscribers, deliveries and replay, `apps/base/events/README.md`). No Domain or Extension contributes yet. None is mounted in this repository.
 - Writes use the plan service: preview, then a single-use code. Idempotency today is that code plus version fencing in each owner. There is no caller-supplied idempotency key.
 
 ## Consequences
@@ -130,14 +131,14 @@ The registry is `base/agent_api` (`apps/base/agent_api/README.md`):
 - A platform check (boot or CI) refuses a page write event that names no registered contract. This replaces any separate parity rule.
 - Step-up declarations become a property of the contract. 2FA, the tenant policy and the window rules in section 4 are built on that. The two existing password confirmations (database tables, secret reveal) move onto the same mechanism.
 - The CLI client is built over the same contracts, as a caller like `/api/v1`.
-- Design work, because lifting the refusals is not enough. **Platform-owner standing for agents:** `prove_owner` rejects agent scopes today (`apps/base/tenancy/src/lib.rs`), so an agent cannot reach platform-owner actions or owner-only pages even when its person is the owner. Define how an agent may hold the owner's standing, and any agent path to owner-only pages, with actor attribution and live revocation preserved. The existing scope fields alone do not provide this.
+- **Platform-owner standing for agents is built.** `prove_owner` re-reads the person's live bootstrap receipt, account eligibility and operator marker, and the grant's expiry, revocation and actor bindings. It refuses impersonation. No grant or input can confer owner standing. Reviewed writes hold the credential row on the mutation transaction; the audit names the person and records the agent connection. Owner-only contracts declare and enforce Base Step-up. The Tenants page's existing operator-plus-capability rule is retained for both callers; creation provisions its companies on the same transaction through a sealed fresh-tenant receipt, never a retargeted scope.
 - `base/agent_api` stops refusing authority-administration capabilities for agents, as part of this slice. Agent reach becomes the person's live capabilities. Step-up policies on those contracts must land first or together, so the refusal is not lifted before its replacement exists.
 
 **Open items:**
 
 | Item | State |
 | --- | --- |
-| Page actions without a contract | Many pages write through facades. They are migrated module by module. The platform check turns each gap into a visible failure |
+| Page actions without a contract | Tenant administration is migrated. Other pages write through facades. They are migrated module by module. The platform check turns each gap into a visible failure |
 | CLI client | Not built. Needs a design for login (device grant) and output for agents |
 | Prompt injection | Deferred to the agentic design |
 | Cost per document | Unmeasured. An agent that reads, searches and drafts per document spends model tokens on every call. The harness owner bears this. Bilibi can keep it down with small results, paging and clear guides. Measure it on a real document flow before promising anything |

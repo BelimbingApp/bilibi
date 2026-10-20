@@ -1,5 +1,5 @@
 // Browser behaviour for the shared form controls in templates/forms.html:
-// CodeInput, Combobox, SecretReveal, SecretClear, SecretStored and
+// CodeInput, ColourInput, Combobox, SecretReveal, SecretClear, SecretStored and
 // DisclosureDismiss (plus the dashboard's DashboardSort and the form Fold), adapted from Bilimbi's Phoenix hooks (apps/web/assets/js
 // at the pinned source) with the LiveView JS commands folded into the hooks.
 // Each registers with the shared `data-hook` runtime in ui.js
@@ -89,6 +89,133 @@
       for (const event of ["focus", "blur", "keyup", "select"]) this.input.removeEventListener(event, this.paint)
       this.el.removeEventListener("click", this.onClick)
     },
+  }
+
+  // Select-only colour combobox. The native select is the only submitted
+  // control, including when JavaScript is unavailable. The closed field and
+  // each option show the name inside that colour's banner chip. Unlike a
+  // searchable combobox, typing moves focus among named colours without
+  // editing the value.
+  const ColourInput = {
+    mounted() {
+      this.select = this.el.querySelector('[data-colour-select]')
+      this.trigger = this.el.querySelector('[data-colour-trigger]')
+      this.list = this.el.querySelector('[role="listbox"]')
+      this.label = this.el.querySelector('label')
+      this.open = false
+      this.active = 0
+      this.query = ''
+      this.options = () => Array.from(this.list.querySelectorAll('[role="option"]'))
+      this.sync = () => {
+        this.select.hidden = true
+        this.trigger.hidden = false
+        this.trigger.disabled = this.select.matches(':disabled') || this.select.hasAttribute('readonly')
+        if (this.trigger.disabled) this.open = false
+        this.label.htmlFor = this.trigger.id
+        const options = this.options()
+        const selected = options.find(option => option.dataset.value === this.select.value) || options[0]
+        // The shared observer calls updated after child changes. Keep this
+        // repaint idempotent or an unchanged preview would update forever.
+        const preview = this.el.querySelector('[data-colour-preview]')
+        const chip = selected.querySelector('[data-option-label]')
+        const text = chip.textContent
+        if (preview.textContent !== text) preview.textContent = text
+        if (preview.className !== chip.className) preview.className = chip.className
+        options.forEach(option => option.setAttribute('aria-selected', String(option === selected)))
+        if (!this.open) this.active = options.indexOf(selected)
+        this.active = Math.min(this.active, options.length - 1)
+        this.paint()
+      }
+      this.paint = () => {
+        this.trigger.setAttribute('aria-expanded', String(this.open))
+        this.list.hidden = !this.open
+        this.options().forEach((option, index) => option.toggleAttribute('data-active', this.open && index === this.active))
+        if (this.open) {
+          const option = this.options()[this.active]
+          this.trigger.setAttribute('aria-activedescendant', option.id)
+          option.scrollIntoView({block: 'nearest'})
+        } else this.trigger.removeAttribute('aria-activedescendant')
+      }
+      this.setOpen = open => {
+        this.open = open && !this.trigger.disabled
+        this.query = ''
+        this.active = Math.max(0, this.options().findIndex(option => option.dataset.value === this.select.value))
+        this.paint()
+      }
+      this.commit = option => {
+        if (this.trigger.disabled) return
+        this.select.value = option.dataset.value
+        this.setOpen(false)
+        this.sync()
+        this.select.dispatchEvent(new Event('input', {bubbles: true}))
+        this.select.dispatchEvent(new Event('change', {bubbles: true}))
+      }
+      this.onClick = () => this.setOpen(!this.open)
+      this.onKey = event => {
+        const count = this.options().length
+        if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+          event.preventDefault()
+          const wasOpen = this.open
+          if (!wasOpen) this.setOpen(true)
+          if (event.key === 'Home') this.active = 0
+          else if (event.key === 'End') this.active = count - 1
+          else if (wasOpen) this.active = (this.active + (event.key === 'ArrowDown' ? 1 : -1) + count) % count
+          this.paint()
+        } else if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault()
+          if (this.open) this.commit(this.options()[this.active])
+          else this.setOpen(true)
+        } else if (event.key === 'Escape' && this.open) {
+          event.preventDefault()
+          event.stopPropagation()
+          this.setOpen(false)
+        } else if (event.key === 'Tab') this.setOpen(false)
+        else if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
+          event.preventDefault()
+          if (!this.open) this.setOpen(true)
+          clearTimeout(this.queryTimer)
+          this.query += event.key.toLocaleLowerCase()
+          const match = this.options().findIndex(option => option.textContent.trim().toLocaleLowerCase().startsWith(this.query))
+          if (match >= 0) this.active = match
+          this.paint()
+          this.queryTimer = setTimeout(() => { this.query = '' }, 700)
+        }
+      }
+      this.onOption = event => {
+        const option = event.target.closest('[role="option"]')
+        if (option && this.list.contains(option)) this.commit(option)
+      }
+      this.onPointer = event => {
+        if (event.target.closest('[role="option"]')) event.preventDefault()
+      }
+      this.onOutside = event => { if (!this.el.contains(event.target)) this.setOpen(false) }
+      this.onBlur = event => { if (!this.el.contains(event.relatedTarget)) this.setOpen(false) }
+      this.onReset = () => { this.resetTimer = setTimeout(() => { this.setOpen(false); this.sync() }, 0) }
+      this.onChange = () => this.sync()
+      this.form = this.select.form
+      this.trigger.addEventListener('click', this.onClick)
+      this.trigger.addEventListener('keydown', this.onKey)
+      this.list.addEventListener('pointerdown', this.onPointer)
+      this.list.addEventListener('click', this.onOption)
+      this.el.addEventListener('focusout', this.onBlur)
+      this.select.addEventListener('change', this.onChange)
+      this.form?.addEventListener('reset', this.onReset)
+      document.addEventListener('pointerdown', this.onOutside)
+      this.sync()
+    },
+    updated() { this.sync() },
+    destroyed() {
+      clearTimeout(this.queryTimer)
+      clearTimeout(this.resetTimer)
+      this.trigger.removeEventListener('click', this.onClick)
+      this.trigger.removeEventListener('keydown', this.onKey)
+      this.list.removeEventListener('pointerdown', this.onPointer)
+      this.list.removeEventListener('click', this.onOption)
+      this.el.removeEventListener('focusout', this.onBlur)
+      this.select.removeEventListener('change', this.onChange)
+      this.form?.removeEventListener('reset', this.onReset)
+      document.removeEventListener('pointerdown', this.onOutside)
+    }
   }
 
   // Client-side filtering and keyboard interaction for the combobox.
@@ -617,7 +744,7 @@
 
   const registry = window.BilibiUI
   if (!registry) throw new Error("hooks.js needs ui.js loaded first")
-  for (const [name, hook] of Object.entries({CodeInput, Combobox, SecretReveal, SecretClear, SecretStored, DisclosureDismiss, DashboardSort, Fold})) {
+  for (const [name, hook] of Object.entries({CodeInput, ColourInput, Combobox, SecretReveal, SecretClear, SecretStored, DisclosureDismiss, DashboardSort, Fold})) {
     registry.registerHook(name, hook)
   }
 })()

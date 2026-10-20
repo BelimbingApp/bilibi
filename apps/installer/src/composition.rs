@@ -1,7 +1,7 @@
 //! What a release is made of, read from the text its own program prints for
 //! `bilibi-web status` (`bilibi_web::status`), and what differs between two
 //! releases. The installer cannot link the program it installs, so it reads
-//! the text; a line it does not understand is skipped.
+//! the text; a line it does not understand is skipped. No Bilimbi counterpart.
 use serde_json::{json, Value};
 
 /// `{"platform": {"version", "release", "commit"}, "domains": [...],
@@ -124,12 +124,12 @@ pub fn describe(changes: &Value) -> String {
         parts.push(match item["change"].as_str() {
             Some("moved") => match item["to"].as_str() {
                 Some(version) => format!(
-                    "{id} stays at {version}, new commit {} (was {})",
+                    "{id} stays at {version}, new build {} (was {})",
                     commit("to_commit"),
                     commit("from_commit")
                 ),
                 None => format!(
-                    "{id} (unreleased) moved from commit {} to {}",
+                    "{id} (unreleased) changed from build {} to {}",
                     commit("from_commit"),
                     commit("to_commit")
                 ),
@@ -141,7 +141,7 @@ pub fn describe(changes: &Value) -> String {
         });
     }
     if parts.is_empty() {
-        "No Domain or Platform version changed.".to_owned()
+        "The Bilibi and module versions stayed the same.".to_owned()
     } else {
         format!("Changed: {}.", parts.join("; "))
     }
@@ -156,7 +156,7 @@ fn label(platform: &Value) -> String {
 }
 
 fn with_commit(platform: &Value, label: &str) -> String {
-    format!("{label} (commit {})", short(&platform["commit"]))
+    format!("{label} (build {})", short(&platform["commit"]))
 }
 
 /// The first seven characters of a commit, or `unknown`.

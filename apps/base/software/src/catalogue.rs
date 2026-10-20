@@ -30,6 +30,8 @@ pub struct Catalogue {
     #[serde(default)]
     pub plugins: BTreeMap<String, Plugin>,
     #[serde(default)]
+    pub extensions: BTreeMap<String, Domain>,
+    #[serde(default)]
     pub tested: Vec<Tested>,
 }
 #[derive(Clone, Debug, Deserialize)]
@@ -144,26 +146,6 @@ impl Catalogue {
         }
         Ok(catalogue)
     }
-    /// The Platform versions, newest first.
-    pub fn platform_versions(&self) -> Vec<Version> {
-        let mut versions: Vec<Version> = self
-            .platform
-            .versions
-            .keys()
-            .filter_map(|key| Version::parse(key))
-            .collect();
-        versions.sort();
-        versions.reverse();
-        versions
-    }
-    /// Whether this Domain release was recorded as tested on this Platform release.
-    pub fn tested(&self, domain: &str, domain_version: &str, platform: &str) -> bool {
-        self.tested.iter().any(|set| {
-            set.domain.id == domain
-                && set.domain.version.as_deref() == Some(domain_version)
-                && set.platform.version.as_deref() == Some(platform)
-        })
-    }
     /// What an agent or the page reads: the catalogue as published, with
     /// each release's tested Platform versions worked out.
     pub fn json(&self) -> Value {
@@ -205,6 +187,7 @@ impl Catalogue {
             "platform": {"name": self.platform.name, "repository": self.platform.repository,
                          "versions": self.platform.versions.iter().map(|(v, r)| json!({"version": v, "released": r.released, "commit": r.commit})).collect::<Vec<_>>()},
             "domains": domains,
+            "extensions": self.extensions.iter().map(|(id, ext)| json!({"id": id, "name": ext.name, "description": ext.description, "repository": ext.repository, "modules": ext.modules, "versions": ext.versions.iter().map(|(v, r)| json!({"version":v, "commit":r.commit, "released":r.released, "platform":r.platform})).collect::<Vec<_>>() })).collect::<Vec<_>>(),
             "plugins": plugins,
             "tested": self.tested.iter().map(|set| json!({
                 "platform": {"version": set.platform.version, "commit": set.platform.commit},

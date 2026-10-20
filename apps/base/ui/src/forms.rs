@@ -965,6 +965,7 @@ pub struct CodeInput {
     pub length: usize,
     pub group_size: Option<usize>,
     pub numeric: bool,
+    pub optional: bool,
     pub errors: Vec<String>,
 }
 
@@ -983,8 +984,16 @@ impl CodeInput {
             length,
             group_size: None,
             numeric: false,
+            optional: false,
             errors: Vec::new(),
         }
+    }
+
+    /// Leave the code blank when only some submitted changes need it.
+    /// The owning facade still enforces its operation's 2FA requirement.
+    pub fn optional(mut self) -> Self {
+        self.optional = true;
+        self
     }
 
     /// Authenticator codes keep leading zeroes and request the phone keypad.
@@ -1023,6 +1032,46 @@ impl CodeInput {
     /// A separator precedes every box that starts a group after the first.
     pub fn separator_before(&self, index: &usize) -> bool {
         matches!(self.group_size, Some(size) if size > 0 && *index > 0 && index.is_multiple_of(size))
+    }
+}
+
+/// The shared 2FA part of a protected form. No Bilimbi counterpart.
+/// Callers supply the holder's live enrollment state, never a cached session
+/// flag. Without 2FA this replaces both the proof and protected submit actions
+/// with a plain setup link; unrelated actions stay outside this component.
+#[derive(Template, Clone, Debug)]
+#[template(
+    source = r#"{% import "forms.html" as forms %}{% call forms::step_up(step=self) %}{% endcall %}"#,
+    ext = "html"
+)]
+pub struct StepUp {
+    pub body: Html,
+    pub enrolled: bool,
+    pub code: Html,
+    pub actions: Html,
+    pub secondary_actions: Html,
+    pub return_to: String,
+    pub reason: String,
+}
+impl StepUp {
+    pub fn new(enrolled: bool, return_to: impl Into<String>) -> Self {
+        Self {
+            body: Html::EMPTY,
+            enrolled,
+            code: Html::EMPTY,
+            actions: Html::EMPTY,
+            secondary_actions: Html::EMPTY,
+            return_to: return_to.into(),
+            reason: "to make this change.".into(),
+        }
+    }
+    pub fn setup_href(&self) -> String {
+        let query = if self.return_to.is_empty() {
+            Default::default()
+        } else {
+            [("return".into(), self.return_to.clone())].into()
+        };
+        crate::params::address("/settings/two-factor", &query)
     }
 }
 

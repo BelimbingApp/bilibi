@@ -4,6 +4,9 @@
 # BelimbingApp/bilibi). The repository is not buildable alone: it mounts at
 # apps/<role>/<container> in a Platform checkout, and scripts/domain-ci.sh
 # runs the Platform's own gates over the composed workspace.
+# A release is a vX.Y.Z tag on a commit where the "Mounted in Bilibi" job below
+# passed. Bilibi's daily Catalogue workflow finds the tag and lists the release;
+# this repository holds no token and opens no pull request (docs/versions.md).
 name: CI
 
 on:
@@ -11,6 +14,10 @@ on:
   push:
     branches:
       - main
+    tags:
+      # A vX.Y.Z tag is a release. Bilibi lists it once the gates below pass
+      # on the tagged commit (docs/versions.md).
+      - 'v*'
   workflow_dispatch:
 
 permissions:
@@ -32,6 +39,10 @@ jobs:
 
     env:
       DATABASE_URL: postgres://bilibi:bilibi@localhost:5432/bilibi
+      # Pull requests lint and boot a debug build. Pushes to main do the
+      # locked release build. An older Platform script ignores this and
+      # always release-builds.
+      DOMAIN_CI_BUILD: ${{ github.event_name == 'pull_request' && 'check' || 'release' }}
 
     services:
       postgres:
@@ -83,9 +94,15 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      - name: Keep pull-request debug builds small
+        if: env.DOMAIN_CI_BUILD == 'check'
+        run: echo CARGO_PROFILE_DEV_DEBUG=0 >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@v2.9.2
         with:
           workspaces: bilibi
+          prefix-key: v1-workspace
+          cache-workspace-crates: true
+          cache-on-failure: true
       - uses: actions/setup-node@v6
         with:
           node-version: '24'
@@ -94,7 +111,8 @@ jobs:
       - run: npm ci --prefix apps/base/ui/assets --no-audit --no-fund
 
       # Discovery, committed CSS, Cargo.lock pinning, fmt, clippy -D warnings,
-      # the locked release build, migrate, seed-production, and GET /.
+      # a debug build on a pull request or the locked release build on main,
+      # migrate, seed-production, and GET /.
       - name: Run the mounted gates
         run: ./scripts/domain-ci.sh
 
@@ -102,3 +120,12 @@ jobs:
       # container repository itself must stay untouched.
       - name: Verify the gates left the container clean
         run: git -C "apps/$CONTAINER_ROLE/$CONTAINER_ID" diff --exit-code
+
+      # Saved with the cache, so a pull request starts from main's debug build.
+      - name: Warm the debug build for pull requests
+        if: env.DOMAIN_CI_BUILD == 'release'
+        env:
+          CARGO_PROFILE_DEV_DEBUG: '0'
+        run: |
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+          cargo build --locked -p bilibi-web

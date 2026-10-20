@@ -24,6 +24,7 @@ bilibi_walkthrough_fixture::walkthrough_module_roles!();
 // A table only managers may read, reached from the reference items through a
 // one-link: the viewer's catalog must not contain it, so no path reaches it.
 static VAULT: GridContribution = GridContribution {
+    record_fields: &[],
     tables: &[TableDecl::new(
         "example_vault",
         "Example vault",
@@ -61,6 +62,7 @@ static VAULT: GridContribution = GridContribution {
 // A table whose source does not select a field it declares. Nobody holds its
 // capability, so it only surfaces when the walkthrough grants it.
 static BROKEN: GridContribution = GridContribution {
+    record_fields: &[],
     tables: &[TableDecl::new(
         "example_broken",
         "Example broken",
@@ -452,6 +454,7 @@ fn defects() -> Result<(), Box<dyn std::error::Error>> {
     defect!(
         "duplicate table id",
         GridContribution {
+            record_fields: &[],
             tables: &DUP,
             links: &[]
         }
@@ -467,6 +470,7 @@ fn defects() -> Result<(), Box<dyn std::error::Error>> {
     defect!(
         "key is not a declared field",
         GridContribution {
+            record_fields: &[],
             tables: std::slice::from_ref(&NOKEY),
             links: &[]
         }
@@ -482,6 +486,7 @@ fn defects() -> Result<(), Box<dyn std::error::Error>> {
     defect!(
         "tenant-scoped source that ignores $1",
         GridContribution {
+            record_fields: &[],
             tables: std::slice::from_ref(&NOTENANT),
             links: &[]
         }
@@ -499,6 +504,7 @@ fn defects() -> Result<(), Box<dyn std::error::Error>> {
     defect!(
         "source with a second statement",
         GridContribution {
+            record_fields: &[],
             tables: std::slice::from_ref(&MULTI),
             links: &[]
         }
@@ -517,6 +523,7 @@ fn defects() -> Result<(), Box<dyn std::error::Error>> {
     defect!(
         "enum field without values",
         GridContribution {
+            record_fields: &[],
             tables: std::slice::from_ref(&BADENUM),
             links: &[]
         }
@@ -525,6 +532,7 @@ fn defects() -> Result<(), Box<dyn std::error::Error>> {
     defect!(
         "link to an undeclared table",
         GridContribution {
+            record_fields: &[],
             tables: std::slice::from_ref(&OK_TABLE),
             links: std::slice::from_ref(&MISSING)
         }
@@ -547,6 +555,7 @@ fn defects() -> Result<(), Box<dyn std::error::Error>> {
     defect!(
         "one-link that does not join on the target key",
         GridContribution {
+            record_fields: &[],
             tables: &TWO,
             links: std::slice::from_ref(&NOTKEY)
         }
@@ -555,6 +564,7 @@ fn defects() -> Result<(), Box<dyn std::error::Error>> {
     defect!(
         "link id shadows a field",
         GridContribution {
+            record_fields: &[],
             tables: &TWO,
             links: std::slice::from_ref(&CLASH)
         }
@@ -571,6 +581,7 @@ fn defects() -> Result<(), Box<dyn std::error::Error>> {
     defect!(
         "time field is not a date",
         GridContribution {
+            record_fields: &[],
             tables: std::slice::from_ref(&TIME),
             links: &[]
         }
@@ -598,6 +609,7 @@ fn defects() -> Result<(), Box<dyn std::error::Error>> {
     defect!(
         "audit record type claimed by two tables",
         GridContribution {
+            record_fields: &[],
             tables: &TYPES,
             links: &[]
         }
@@ -612,6 +624,7 @@ fn defects() -> Result<(), Box<dyn std::error::Error>> {
         &[Field::new("id", "ID", T::Integer)],
     );
     static GHOSTED: GridContribution = GridContribution {
+        record_fields: &[],
         tables: std::slice::from_ref(&GHOST),
         links: &[],
     };

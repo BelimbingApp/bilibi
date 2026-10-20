@@ -29,6 +29,8 @@ Authoritative contracts (point to them, do not copy them): `apps/base/module_reg
 - Run `python3 scripts/discover-modules.py` after adding, removing or moving a module, Domain or Extension. Never edit its generated files, and never commit a mounted composition or its `Cargo.lock` entries to the Platform.
 - **No dependencies between Domains.** Cross-domain flows use Base events (`apps/base/events/README.md`). Within one Domain, edges are minimal, declared, acyclic, and only where Bilimbi has the same edge. Optional calls into an unmounted module go through `base/ports`.
 - Domain and Extension code uses meta-terms (material, resource, operation, role). Industry and product names are configuration data, never identifiers, including agent operation keys.
+- A Platform change that breaks an official Domain or Extension (listed in `catalogue.json`) includes a companion PR in that repository, linked from the Platform PR; ones outside the catalogue are not changed from a Platform task. Keep companions green and merge together; see `docs/versions.md#platform-changes-and-companion-prs` for CI branch selection.
+- Every pull request fills in `Upgrade notes for agents` (what a Domain or Extension owner must change, or `None`). A Platform release gathers those notes into `docs/upgrade-notes/vX.Y.Z.md` and the GitHub release (`docs/versions.md`).
 
 ## Data, tenancy, audit, security
 
@@ -64,7 +66,7 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 - Stop only a server you started, by its process ID; never by name (`pkill`, `killall`, `pgrep -x`), which also kills the developer's running app.
 - `APP_ORIGIN` must equal the exact address you browse, or sign-in loops.
 - A change to a page, template or live behaviour is done only after you have used it in the browser at the exact `APP_ORIGIN`. Proof from rendered HTML alone is not done; if the browser cannot be used, report that you are blocked. A docs-only or non-UI change needs only the three checks above, with no app run.
-- CI also runs `./scripts/build-assets.sh --check` and `cargo build --workspace --release --locked`.
+- CI also runs `./scripts/build-assets.sh --check` and `cargo build --workspace --release --locked`. A pull request that cannot affect the build still runs the CSS check and passes the rest without compiling; see `docs/domain-ci/README.md`.
 
 ## Docs
 

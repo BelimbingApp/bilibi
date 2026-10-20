@@ -42,6 +42,7 @@ inventory::submit! { Contribution::new(VOCABULARY, "core/geonames", provenance!(
 // Global reference data: the source takes no tenant parameter. Rows are keyed
 // by ISO code, which is how other tables point at a country.
 static GRID: GridContribution = GridContribution {
+    record_fields: &[],
     tables: &[TableDecl::new(
         "countries",
         "Countries",

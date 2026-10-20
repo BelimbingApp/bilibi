@@ -117,7 +117,7 @@ impl Profile {
                 flash: self.flash.map(),
             })?,
             header: render(&Header {
-                title: Html::text("Settings"),
+                title: Html::text("My Settings"),
                 subtitle: "",
                 ..Header::default()
             })?,

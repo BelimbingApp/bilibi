@@ -43,7 +43,12 @@ only. `Outgoing::trust_system_roots()` also trusts the server's own store
 a call to an address the operator chose; the release transport uses it so an
 instance on a private name is reachable. Redirects are followed unless
 `Outgoing::no_redirects()` is set, which returns a 3xx answer as the reply so a
-credential header is never sent on to another address.
+credential header is never sent on to another address. When the next host is
+known and must not see the credential, use `Outgoing::redirects` with a
+`RedirectPolicy` instead of a private client: only the listed HTTPS hosts are
+contacted, private and local addresses are refused, credential headers are
+removed when the host changes, and the exchange row keeps the original URL.
+The `Location` target, including a signed download query, is not stored.
 
 ## Incoming calls
 
@@ -65,7 +70,7 @@ never authority. `agent_self_report` is the agent's shape-checked
 `harness/model-version-effort` (`bilibi_tenancy::SelfReport`), and
 `agent_self_report_malformed` records that the caller sent one that failed the
 check and was dropped; never set both. The exchange list and detail show it as
-"Self-reported agent" (or "Malformed, dropped"). An omitted method or duration stays unknown; no status and no
+"Model (as reported)" (or "Malformed, dropped"). An omitted method or duration stays unknown; no status and no
 error class records `unknown`; an operation key stands in for the endpoint when
 there is no HTTP path. Out-of-range status, negative duration or over-long
 fields refuse with `Error::Invalid`.
@@ -142,8 +147,9 @@ sizes 25/50/100/300 and the shared period filter; calendar days follow the
 actor's display mode and, in local mode, the zone the `BrowserTimeZone` hook
 reports, with an unresolvable range listing nothing and saying why. The
 operator scope sees every tenant and the system rows under the same caution
-as Bilimbi. The column arrangement lives with the mounted page until Grid
-`PageColumns` lands. The detail page inspects the retained payload only on an
+as Bilimbi. The column arrangement uses Grid `PageColumns` and is remembered per account. Scalar metadata shares the detail schema through `with_record_slots`; Endpoint, Outcome, Direction, Owner and the remaining facts are optional columns. Retained payloads are structured content and stay on the detail page. The detail page inspects the retained payload only on an
 explicit click behind `.payload.view`, deletes behind a confirm dialog and
 `.delete`, and returns to the list afterwards; a refusal is a flash. To see
 rows, run the walkthrough above against the app's database.
+
+`client_identity` records the edge-observed client label separately from the agent self-report. The host bounds it to 255 printable ASCII characters; Exchanges shows it as "Client identity". It is transport evidence, never authority.

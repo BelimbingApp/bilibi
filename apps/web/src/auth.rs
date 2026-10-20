@@ -12,7 +12,7 @@
 //! sign-in instead of a session: its token travels in its own cookie, scoped
 //! to `/login`, and `/login/verify` takes the code (GitHub's two-factor page;
 //! no Bilimbi counterpart). `/dev/sms-inbox` shows the SMS simulator's
-//! messages and is routed only outside production.
+//! messages while the server role is Dev or Staging (a 404 on Production).
 use crate::{api, document_titled, origin, token, App, HttpError};
 use askama::Template;
 use axum::{
@@ -352,7 +352,7 @@ async fn login_card(
 async fn login_workspace(app: &App) -> LoginWorkspace {
     let lookup = async {
         let client = app.db.get().await.map_err(Error::from)?;
-        bilibi_core::company::primary::platform_operator_company(&**client).await
+        bilibi_core::company::platform_operator_company(&**client).await
     };
     match lookup.await {
         Ok(Some(company)) => LoginWorkspace::Ready(company.display_name),
@@ -636,10 +636,10 @@ pub async fn cancel_verify(
     Ok(expired_sign_in())
 }
 
-/// `GET /dev/sms-inbox`, routed only outside production: the simulator's
-/// messages, newest first.
+/// `GET /dev/sms-inbox`: the simulator's messages, newest first, while the
+/// server role is Dev or Staging; a 404 on Production.
 pub async fn sms_inbox(State(app): State<App>) -> std::result::Result<Response, HttpError> {
-    let Some(outbox) = app.sms.outbox() else {
+    let Some(outbox) = app.sms.outbox().await else {
         return Err(Error::NotFound.into());
     };
     let now = std::time::SystemTime::now()

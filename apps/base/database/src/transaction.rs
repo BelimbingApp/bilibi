@@ -36,6 +36,10 @@ pub struct Context {
     /// The agent's self-reported `harness/model-version-effort`, already
     /// shape-checked by the agent edge. Evidence only, never authority.
     pub agent_self_report: Option<String>,
+    /// Transport-observed client identity; evidence only.
+    pub client_identity: Option<String>,
+    /// The durable agent connection; evidence, never authority.
+    pub agent_connection: Option<i64>,
 }
 impl Context {
     pub fn user(tenant: i64, user: i64, action: impl Into<String>) -> Self {
@@ -46,6 +50,8 @@ impl Context {
             action: action.into(),
             trace_id: uuid::Uuid::new_v4().to_string(),
             agent_self_report: None,
+            client_identity: None,
+            agent_connection: None,
         }
     }
     /// A deployment command acting in one tenant as a named system principal
@@ -62,10 +68,13 @@ impl Context {
             action: action.into(),
             trace_id: uuid::Uuid::new_v4().to_string(),
             agent_self_report: None,
+            client_identity: None,
+            agent_connection: None,
         }
     }
     fn validate(&self) -> Result<()> {
-        if self.tenant <= 0
+        if self.agent_connection.is_some_and(|id| id <= 0)
+            || self.tenant <= 0
             || self.actor.kind.is_empty()
             || self.actor.id.is_empty()
             || self.action.is_empty()

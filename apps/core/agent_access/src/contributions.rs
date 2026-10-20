@@ -3,7 +3,7 @@
 use bilibi_audit::{Redaction, REDACTIONS};
 use bilibi_authz::{CapabilityDefinition, VocabularyContribution, VOCABULARY};
 use bilibi_module_registry::{
-    contributions::{Access, Method, Route, ROUTES},
+    contributions::{Access, Method, Moved, Route, MOVED, ROUTES},
     Contribution, Provenance,
 };
 use bilibi_settings::{Definition, Editor, ScopeKind, Setting, Validator, ValueType, DEFINITIONS};
@@ -32,9 +32,15 @@ inventory::submit! { Contribution::new(DEFINITIONS, crate::CONNECTION_DAYS, prov
     editor: Some(Editor { group: "Agent access", label: "Agent connection length (days)", help: "How long new agent connections last; existing ones keep their end dates.", capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
 })) }
 inventory::submit! { Contribution::new(DEFINITIONS, crate::OAUTH_CLIENTS, provenance!(), &Setting::Definition(Definition {
-    value_type: ValueType::Array, scopes: GLOBAL, default: || json!({}), nullable: false, encrypted: false, minimum: None, maximum: None,
-    validator: Some(Validator { accepts: crate::valid_clients, message: "Use client IDs mapped to a name and non-empty HTTPS redirect_uris list." }),
-    editor: Some(Editor { group: "Agent access", label: "OAuth public clients", help: "Each client ID with its name and exact HTTPS callback addresses; add ChatGPT's here before connecting it.", capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
+    value_type: ValueType::Array, scopes: GLOBAL,
+    // Claude Code and Codex register out of the box so the AI connections prompt works on a fresh install; loopback callbacks only, PKCE, no secret. An operator can remove either by saving the setting without it.
+    default: || json!({
+        "bilibi-claude-code": {"name": "Claude Code", "redirect_uris": ["http://localhost/callback"]},
+        "bilibi-codex": {"name": "Codex", "redirect_uris": ["http://127.0.0.1/callback"]},
+    }),
+    nullable: false, encrypted: false, minimum: None, maximum: None,
+    validator: Some(Validator { accepts: crate::valid_clients, message: "Use client IDs mapped to a name and non-empty HTTPS or HTTP loopback redirect_uris list." }),
+    editor: Some(Editor { group: "Agent access", label: "OAuth public clients", help: "Claude Code and Codex are registered by default; remove them here to turn them off. Add each app's client ID, name and callback addresses. HTTPS must match exactly; HTTP localhost, 127.0.0.1 and [::1] callbacks may use any port.", capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
 })) }
 inventory::submit! { Contribution::new(DEFINITIONS, crate::AUTHORIZATION_CODE_SECONDS, provenance!(), &Setting::Definition(Definition {
     value_type: ValueType::Integer, scopes: GLOBAL, default: || json!(120), nullable: false, encrypted: false, minimum: Some(30.0), maximum: Some(600.0), validator: None,
@@ -60,5 +66,15 @@ inventory::submit! { Contribution::new(ROUTES, "core/agent_access.authorize", pr
     method: Method::Get, path: "/oauth/authorize", service: "core/agent_access.pages", operation: "authorize", access: Access::SignedIn, framed: false,
 }) }
 inventory::submit! { Contribution::new(ROUTES, "core/agent_access.connections", provenance!(), &Route {
-    method: Method::Get, path: "/settings/agent-connections", service: "core/agent_access.pages", operation: "connections", access: Access::SignedIn, framed: true,
+    method: Method::Get, path: "/settings/ai-connections", service: "core/agent_access.pages", operation: "connections", access: Access::SignedIn, framed: true,
+}) }
+// The MCP page and the connections list are one tab. Old addresses keep working.
+inventory::submit! { Contribution::new(MOVED, "core/agent_access.connections.moved", provenance!(), &Moved {
+    from: "/settings/agent-connections", to: "/settings/ai-connections",
+}) }
+inventory::submit! { Contribution::new(MOVED, "core/agent_access.mcp.moved", provenance!(), &Moved {
+    from: "/settings/mcp", to: "/settings/ai-connections",
+}) }
+inventory::submit! { Contribution::new(MOVED, "core/agent_access.chatgpt.moved", provenance!(), &Moved {
+    from: "/settings/chatgpt-plugin", to: "/settings/ai-connections",
 }) }

@@ -100,6 +100,7 @@ pub struct ActionEntry {
     pub trace_id: Option<String>,
     /// Self-reporting: the agent's claim about itself, never its identity.
     pub agent_self_report: Option<String>,
+    pub client_identity: Option<String>,
     pub is_retained: bool,
     pub occurred_at: SystemTime,
 }
@@ -159,7 +160,7 @@ pub async fn list_actions(
         params.push(&pattern);
         let n = params.len();
         filters.push(format!(
-            "(a.event ILIKE ${n} OR coalesce(a.actor_role,'') ILIKE ${n} OR coalesce(a.url,'') ILIKE ${n} OR coalesce(a.trace_id,'') ILIKE ${n} OR coalesce(a.agent_self_report,'') ILIKE ${n} OR a.actor_type ILIKE ${n} OR a.payload::text ILIKE ${n})"
+            "(a.event ILIKE ${n} OR coalesce(a.actor_role,'') ILIKE ${n} OR coalesce(a.url,'') ILIKE ${n} OR coalesce(a.trace_id,'') ILIKE ${n} OR coalesce(a.agent_self_report,'') ILIKE ${n} OR coalesce(a.client_identity,'') ILIKE ${n} OR a.actor_type ILIKE ${n} OR a.payload::text ILIKE ${n})"
         ));
     }
     if !query.actor_type.is_empty() {
@@ -213,7 +214,7 @@ pub async fn list_actions(
         .query(
             &format!(
                 "SELECT a.id,a.actor_type,a.actor_id,a.actor_role,a.impersonator_id,a.system_principal,a.url,a.event,\
-                        coalesce(a.payload,'{{}}'::jsonb),a.trace_id,coalesce(m.is_retained,a.is_retained),a.occurred_at,a.agent_self_report \
+                        coalesce(a.payload,'{{}}'::jsonb),a.trace_id,coalesce(m.is_retained,a.is_retained),a.occurred_at,a.agent_self_report,a.client_identity \
                  {from} WHERE {filter} ORDER BY {column} {direction}, a.id {direction} LIMIT ${l} OFFSET ${o}",
                 column = query.sort.column(),
                 l = params.len() - 1,
@@ -239,6 +240,7 @@ pub async fn list_actions(
                 is_retained: row.get(10),
                 occurred_at: row.get(11),
                 agent_self_report: row.get(12),
+                client_identity: row.get(13),
             })
             .collect(),
         total_entries: u64::try_from(total).unwrap_or(0),
@@ -383,6 +385,7 @@ pub struct MutationEntry {
     pub trace_id: Option<String>,
     /// Self-reporting: the agent's claim about itself, never its identity.
     pub agent_self_report: Option<String>,
+    pub client_identity: Option<String>,
     pub occurred_at: SystemTime,
     pub withheld: Vec<String>,
 }
@@ -412,6 +415,7 @@ impl MutationEntry {
             trace_id: row.get(15),
             occurred_at: row.get(16),
             agent_self_report: row.get(17),
+            client_identity: row.get(18),
             withheld: Vec::new(),
         }
     }
@@ -449,7 +453,7 @@ impl MutationEntry {
 const MUTATION_COLUMNS: &str =
     "m.id,m.actor_type,m.actor_id,m.actor_role,m.impersonator_id,m.system_principal,\
  m.auditable_type,m.auditable_id,m.subject_name,m.subject_id,m.subject_identifier,m.source,m.event,\
- coalesce(m.old_values,'{}'::jsonb),coalesce(m.new_values,'{}'::jsonb),m.trace_id,m.occurred_at,m.agent_self_report";
+ coalesce(m.old_values,'{}'::jsonb),coalesce(m.new_values,'{}'::jsonb),m.trace_id,m.occurred_at,m.agent_self_report,m.client_identity";
 
 /// One page of the tenant's mutations (Bilimbi `Audit.list_mutations/2`). An
 /// out-of-range page returns no entries with the real total.
@@ -476,7 +480,7 @@ pub async fn list_mutations(
         filters.push(format!(
             "(m.auditable_type ILIKE ${n} OR m.event ILIKE ${n} OR coalesce(m.subject_name,'') ILIKE ${n} \
               OR coalesce(m.subject_identifier,'') ILIKE ${n} OR m.auditable_id ILIKE ${n} \
-              OR coalesce(m.subject_id,'') ILIKE ${n} OR coalesce(m.trace_id,'') ILIKE ${n} OR coalesce(m.agent_self_report,'') ILIKE ${n} \
+              OR coalesce(m.subject_id,'') ILIKE ${n} OR coalesce(m.trace_id,'') ILIKE ${n} OR coalesce(m.agent_self_report,'') ILIKE ${n} OR coalesce(m.client_identity,'') ILIKE ${n} \
               OR coalesce(m.actor_role,'') ILIKE ${n} OR m.actor_type ILIKE ${n})"
         ));
     }

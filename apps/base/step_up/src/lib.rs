@@ -11,8 +11,8 @@ mod policy;
 
 pub use declaration::{Operation, OPERATIONS};
 pub use gate::{
-    end_agent_windows, Declared, Provider, Purpose, Rule, SessionProof, Spent, StepUp, Window,
-    WindowState,
+    end_agent_windows, Declared, Enforcement, Provider, Purpose, Rule, SessionProof, Spent, StepUp,
+    Window, WindowState,
 };
 pub use policy::{Mode, CAP_RANGE, WINDOW_RANGE};
 #[doc(hidden)]

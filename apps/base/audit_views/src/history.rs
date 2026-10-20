@@ -27,7 +27,7 @@ use bilibi_audit::MutationEntry;
 use bilibi_database::{Db, Error, Result};
 use bilibi_datetime::DisplayPolicy;
 use bilibi_locale::Locales;
-use bilibi_tenancy::{Scope, SelfReport};
+use bilibi_tenancy::{ClientIdentity, Scope, SelfReport};
 use bilibi_ui::{
     page::{
         LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, MountFuture, Page, PageFuture,
@@ -177,6 +177,9 @@ impl Panel {
                 present::actor_label(&entry.into()),
                 present::impersonated_suffix(&entry.into())
             );
+            if let Some(client) = &entry.client_identity {
+                actor.push_str(&format!(" · {}: {client}", ClientIdentity::LABEL));
+            }
             if let Some(report) = &entry.agent_self_report {
                 actor.push_str(&format!(" · {}: {report}", SelfReport::LABEL));
             }

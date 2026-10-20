@@ -15,7 +15,7 @@ bilibi-locale = { path = "../locale" }
 bilibi-menu.workspace = true
 bilibi-module-registry.workspace = true
 bilibi-perf = { path = "../perf" }
-bilibi-queue = { path = "../queue" }
+bilibi-queue.workspace = true
 bilibi-settings.workspace = true
 bilibi-tenancy = { path = "../tenancy" }
 bilibi-ui.workspace = true

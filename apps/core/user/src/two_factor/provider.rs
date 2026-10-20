@@ -60,7 +60,7 @@ impl Provider for Authenticator {
                 channel: purpose.channel.as_str(),
             };
             let outcome = match self.0.prove(scope, code).await {
-                Ok(proof) => self.0.consume(scope, proof, spend).await,
+                Ok(step) => self.0.consume(scope, step, spend).await,
                 Err(error) => Err(error),
             };
             match outcome {

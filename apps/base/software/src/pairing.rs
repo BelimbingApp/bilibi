@@ -3,8 +3,8 @@
 //! server, set once on both sides by the server owner (`README.md`,
 //! "Pairing"). It is a secret setting like the other secrets
 //! (`software.pairing_key`: encrypted, global, server owner only, shown in
-//! the settings editor and never shown back), set from the Release files
-//! page, the settings editor or `base.software.pair`, each with the owner's
+//! the settings editor and never shown back), set from Software’s Releases
+//! tab, the settings editor or `base.software.pair`, each with the owner's
 //! authenticator code every time. The
 //! source checks it on a request from a machine, which has no session, so
 //! that one read goes through this module's own system principal

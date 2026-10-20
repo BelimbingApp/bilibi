@@ -131,7 +131,7 @@ impl Driver for Outbox {
     }
     fn describe(&self) -> String {
         format!(
-            "simulator {} (newest {} messages; read them at /dev/sms-inbox)",
+            "simulator {} (newest {} messages, read at /dev/sms-inbox)",
             self.dir.display(),
             self.capacity
         )

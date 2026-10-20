@@ -1,6 +1,6 @@
 # Base SMS
 
-Send text messages through one gateway. No Bilimbi counterpart; the shape follows Base Mail. Decision: [ADR 02](../../../docs/architecture/decisions/02-sms-second-factor.md).
+Send text messages through one gateway. No Bilimbi counterpart; the shape follows Base Mail. Decision: [ADR 03](../../../docs/architecture/decisions/03-sms-second-factor.md).
 
 ## Use it
 
@@ -11,13 +11,13 @@ Send text messages through one gateway. No Bilimbi counterpart; the shape follow
 
 ## Drivers
 
-| Driver | Where | What it does |
+| Driver | Server role (`instance.role`) | What it does |
 |---|---|---|
-| Simulator (`Outbox`) | `BILIBI_ENV` development or staging | Writes each message to a private file in `BILIBI_SMS_DIR` (default `.local/sms-outbox`), newest 100 kept |
-| None | production | `available()` is false; `send` answers `Error::Unavailable` |
+| Simulator (`Outbox`) | Dev or Staging | Writes each message to a private file in `BILIBI_SMS_DIR` (default `.local/sms-outbox`), newest 100 kept |
+| None | Production | `available()` is false; `send` answers `Error::Unavailable` |
 
-- The host turns the simulator on (`enable_simulator`) from `BILIBI_ENV`. The boot log line `sms:` says which applies.
-- `/dev/sms-inbox` (Web) lists the simulator's messages with the code shown large. It is routed only where the simulator runs.
+- The gateway reads the stored role (Base System) on every use, so changing the role on `/system/instance` takes effect at once. A failed lookup counts as Production.
+- `/dev/sms-inbox` (Web) lists the simulator's messages with the code shown large, and answers 404 on Production.
 - A real provider is a new `Driver` that sends through `base/integration`, with its credentials as encrypted settings. None is built yet.
 
 ## Rules

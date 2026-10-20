@@ -1,5 +1,4 @@
-//! Owner reads and transaction writes shared by the service, pages and future
-//! headless adapters. Lock order (with Company/Person/Affiliation): Company
+//! Owner reads and transaction writes shared by the facade and operation contracts. Lock order (with Company/Person/Affiliation): Company
 //! (ascending IDs) → Person → Address → Attachment. A write never locks a
 //! company after its address.
 use crate::{contributions::*, model::*, publish};
@@ -507,12 +506,28 @@ pub async fn attach(
     owner: PartyId,
     input: &AttachmentInput,
 ) -> WriteResult<Attachment> {
+    attach_reviewed(tx, scope, address, owner, input, None).await
+}
+
+/// A reviewed attach fences the address facts after taking the normal owner
+/// and address locks. The facade's legacy callers need no review version.
+pub(crate) async fn attach_reviewed(
+    tx: &mut MutationTransaction<'_>,
+    scope: &Scope,
+    address: AddressId,
+    owner: PartyId,
+    input: &AttachmentInput,
+    expected_version: Option<i64>,
+) -> WriteResult<Attachment> {
     check_context(tx, scope)?;
     let input = attachment_input(input)?;
     lock_owner(tx, scope, owner).await?;
-    raw(tx.sql(), scope, address, true)
+    let current = raw(tx.sql(), scope, address, true)
         .await
         .map_err(not_found)?;
+    if expected_version.is_some_and(|version| version != current.version) {
+        return Err(WriteError::Stale);
+    }
     // Owner and address are both locked, so this check cannot race.
     if attachments_of(tx.sql(), scope, address)
         .await?
@@ -638,4 +653,119 @@ pub async fn detach(
     .await?;
     publish(tx, tenant, address, &[owner]);
     Ok(())
+}
+
+// Bilimbi Address's write guards, also used by operation previews. Commit
+// still uses the locking guards above; a review is never a concurrency guard.
+pub(crate) async fn preview_address(
+    client: &impl GenericClient,
+    scope: &Scope,
+    id: AddressId,
+    version: i64,
+    deleting: bool,
+) -> WriteResult<Address> {
+    authorize_key(client, scope, if deleting { DELETE } else { UPDATE }).await?;
+    authorize_key(client, scope, VIEW).await?;
+    let old = raw(client, scope, id, false).await.map_err(not_found)?;
+    if old.version != version || version < 1 {
+        return Err(WriteError::Stale);
+    }
+    if deleting {
+        if !attachments_of(client, scope, id).await?.is_empty() {
+            return Err(WriteError::InUse);
+        }
+    } else {
+        for company in owner_companies(client, scope, id).await? {
+            bilibi_company::organisation::require_writable(client, scope, company.get(), false)
+                .await
+                .map_err(company_error)?;
+        }
+    }
+    Ok(old.redact(&fields(client, scope).await?))
+}
+
+pub(crate) async fn preview_input(
+    client: &impl GenericClient,
+    scope: &Scope,
+    input: &ValidAddress,
+) -> WriteResult<()> {
+    restricted_input(&input.0, &fields(client, scope).await?)?;
+    Ok(())
+}
+
+pub(crate) async fn preview_owner(
+    client: &impl GenericClient,
+    scope: &Scope,
+    owner: PartyId,
+) -> WriteResult<Value> {
+    match owner {
+        PartyId::Organisation(id) => {
+            authorize_key(client, scope, bilibi_company::UPDATE).await?;
+            bilibi_company::organisation::require_writable(client, scope, id.get(), false)
+                .await
+                .map_err(company_error)?;
+            let company = bilibi_company::organisation::identity(client, scope, id.get())
+                .await?
+                .ok_or(WriteError::NotFound)?;
+            Ok(serde_json::json!({"company_id":id,"name":company.display_name,"code":company.code}))
+        }
+        PartyId::Person(id) => {
+            authorize_key(client, scope, bilibi_person::contributions::UPDATE).await?;
+            let person = bilibi_person::identity::read(client, scope, id).await?;
+            if person.retired_at.is_some() || person.system_key.is_some() {
+                return Err(WriteError::OwnerReadOnly);
+            }
+            Ok(serde_json::json!({"person_id":id,"name":person.name,"version":person.version}))
+        }
+    }
+}
+
+pub(crate) async fn preview_attach(
+    client: &impl GenericClient,
+    scope: &Scope,
+    id: AddressId,
+    owner: PartyId,
+    version: i64,
+) -> WriteResult<Address> {
+    authorize_key(client, scope, VIEW).await?;
+    let address = raw(client, scope, id, false).await.map_err(not_found)?;
+    if address.version != version {
+        return Err(WriteError::Stale);
+    }
+    if attachments_of(client, scope, id)
+        .await?
+        .iter()
+        .any(|a| a.owner == owner)
+    {
+        return Err(WriteError::AlreadyAttached);
+    }
+    Ok(address.redact(&fields(client, scope).await?))
+}
+
+// The owner of an attachment is immutable. Both the contract and its preview
+// check it so a company capability can never edit a person's attachment.
+pub(crate) async fn attachment_for(
+    client: &impl GenericClient,
+    scope: &Scope,
+    id: AttachmentId,
+    owner: PartyId,
+    version: i64,
+) -> WriteResult<Attachment> {
+    let row = client
+        .query_opt(
+            &format!(
+                "SELECT {ATTACHMENT_COLUMNS} FROM address_attachments WHERE tenant_id=$1 AND id=$2"
+            ),
+            &[&scope.tenant(), &id.get()],
+        )
+        .await?
+        .ok_or(WriteError::NotFound)?;
+    let attachment = Attachment::from_row(&row)?;
+    if attachment.owner != owner {
+        return Err(WriteError::NotFound);
+    }
+    if attachment.version != version || version < 1 {
+        return Err(WriteError::Stale);
+    }
+    Ok(attachment)
 }

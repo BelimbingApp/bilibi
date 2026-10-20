@@ -261,7 +261,15 @@ impl LinkDecl {
 
 /// The payload a module contributes to `base/grid.tables`.
 #[derive(Clone, Copy, Debug, Default)]
+pub struct RecordFields {
+    pub table: &'static str,
+    pub fields: &'static [bilibi_ui::RecordField],
+}
+
+#[derive(Clone, Copy, Debug, Default)]
 pub struct GridContribution {
+    /// The same schema used to label the owning detail page, including panels.
+    pub record_fields: &'static [RecordFields],
     pub tables: &'static [TableDecl],
     pub links: &'static [LinkDecl],
 }
@@ -293,6 +301,7 @@ pub struct Table {
     pub decl: &'static TableDecl,
     pub owner: &'static str,
     pub provenance: Provenance,
+    pub(crate) record_fields: Vec<bilibi_ui::RecordField>,
     fields: Vec<Field>,
     links: Vec<Link>,
     protected: BTreeSet<&'static str>,
@@ -431,6 +440,62 @@ impl Installed {
         for (link, provenance) in pending {
             link_into(&mut tables, link, &provenance)?;
         }
+        for entry in entries {
+            let contribution = entry.get::<GridContribution>()?;
+            for schema in contribution.record_fields {
+                let table = tables.get_mut(schema.table).ok_or_else(|| {
+                    invalid(format!("record fields name unknown table {}", schema.table))
+                })?;
+                if table.owner != entry.provenance.module
+                    && !contribution
+                        .links
+                        .iter()
+                        .any(|link| link.from == schema.table)
+                {
+                    return Err(invalid(format!(
+                        "record fields for {} must own the table or a panel link",
+                        schema.table
+                    )));
+                }
+                for field in schema.fields {
+                    if field.id.is_empty()
+                        || field.label.is_empty()
+                        || field.column.is_none() && field.exclusion.is_none()
+                    {
+                        return Err(invalid(format!(
+                            "invalid record field for {}",
+                            schema.table
+                        )));
+                    }
+                    if let Some(column) = field.column {
+                        if table
+                            .record_fields
+                            .iter()
+                            .any(|previous| previous.column == Some(column))
+                        {
+                            return Err(invalid(format!(
+                                "duplicate record column {column} on {}",
+                                schema.table
+                            )));
+                        }
+                    }
+                    table.record_fields.push(*field);
+                }
+            }
+        }
+        for table in tables.values() {
+            for field in &table.record_fields {
+                if let Some(path) = field.column {
+                    crate::column::resolve(path, table, &|id| tables.get(id)).map_err(|error| {
+                        invalid(format!(
+                            "record field {} on {}: {error}",
+                            field.id,
+                            table.id()
+                        ))
+                    })?;
+                }
+            }
+        }
         Ok(Self { tables })
     }
     pub fn from_inventory() -> Result<Self> {
@@ -531,6 +596,7 @@ impl Table {
         }
         Ok(Self {
             decl,
+            record_fields: Vec::new(),
             owner,
             provenance,
             fields: decl.fields.to_vec(),

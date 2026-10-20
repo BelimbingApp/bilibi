@@ -1,7 +1,10 @@
 //! Sealed identities for a single unit of work. No Base query of Core tables.
-//! `admin` is tenant administration; `web` the module-owned `/tenancy/tenants`.
-pub mod admin;
-mod web;
+//! Mirrors Bilimbi `Base.Tenancy`; Core Tenant Administration composes its pages.
+mod admin;
+pub use admin::{
+    platform_operator, provision_platform_operator, provision_tenant, CreateOutcome, CreatedTenant,
+    NewTenant, TenantErrors, TenantIdentity, TenantStatus, Tenants, CREATE, LIST, NAME_MAX,
+};
 use bilibi_database::{Context, Error, Result};
 use bilibi_party_ids::{AffiliationId, OrganisationId, PersonId};
 use std::{
@@ -148,6 +151,7 @@ pub struct AgentFacet {
     trace: String,
     channel: Channel,
     self_report: Option<SelfReport>,
+    client_identity: Option<ClientIdentity>,
 }
 impl AgentFacet {
     pub fn connection(&self) -> i64 {
@@ -157,6 +161,10 @@ impl AgentFacet {
     pub fn trace(&self) -> &str {
         &self.trace
     }
+    /// Client transport identity, distinct from the model's self-report.
+    pub fn client_identity(&self) -> Option<&ClientIdentity> {
+        self.client_identity.as_ref()
+    }
     /// What the agent said about itself on this request. Evidence only.
     pub fn self_report(&self) -> Option<&SelfReport> {
         self.self_report.as_ref()
@@ -164,7 +172,7 @@ impl AgentFacet {
 }
 /// An agent's self-reported `harness/model-version-effort` (ADR 01, "Agent
 /// identity at runtime"). It is what the agent says about itself: recorded
-/// and shown labelled "Self-reported agent", never used for authorization.
+/// and shown labelled "Model (as reported)", never used for authorization.
 /// Only the shape is checked: one `/` between the harness and the
 /// `model-version-effort` part, either side may be empty but not both, and
 /// each side holds only ASCII letters, digits, `.`, `_` and `-`, so the
@@ -175,9 +183,11 @@ pub struct SelfReport(String);
 impl SelfReport {
     pub const MAX_LEN: usize = 120;
     /// The one label every surface shows the value under.
-    pub const LABEL: &'static str = "Self-reported agent";
+    pub const LABEL: &'static str = "Model (as reported)";
     /// The request header the agent edge (`/api/v1`, `/mcp`) reads it from.
     pub const HEADER: &'static str = "x-bilibi-agent-self-report";
+    /// Model-accessible argument on the six generic MCP tools.
+    pub const MCP_ARGUMENT: &'static str = "agent_self_report";
     /// The MCP `params._meta` key, for clients that cannot set headers.
     pub const MCP_META: &'static str = "bilibi/agent-self-report";
     /// `None` for a malformed value; the caller drops it and says so.
@@ -191,6 +201,23 @@ impl SelfReport {
             && !(harness.is_empty() && rest.is_empty())
             && part(harness)
             && part(rest))
+        .then(|| Self(value.to_owned()))
+    }
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+/// Transport-observed client label for the MCP edge. This says
+/// what the client sent, not which model ran; never authentication or authority.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClientIdentity(String);
+impl ClientIdentity {
+    pub const LABEL: &'static str = "Client identity";
+    pub const MAX_LEN: usize = 255;
+    pub fn parse(value: &str) -> Option<Self> {
+        (!value.is_empty()
+            && value.len() <= Self::MAX_LEN
+            && value.bytes().all(|byte| (0x20..=0x7e).contains(&byte)))
         .then(|| Self(value.to_owned()))
     }
     pub fn as_str(&self) -> &str {
@@ -222,9 +249,8 @@ pub struct Scope {
     actor: Actor,
     agent: Option<AgentFacet>,
     impersonator: Option<Impersonator>,
-    /// The actor's live installation-owner standing, sealed by the verifier.
-    /// Read only through [`prove_owner`], which adds the operator proof.
-    owner: bool,
+    /// Re-read identity and grant standing on the caller's connection.
+    authentication: Authentication,
     /// A step-up code presented with this request, if any.
     step_up: Option<Box<PresentedCode>>,
     pub tenant_name: String,
@@ -268,10 +294,18 @@ impl Scope {
                 trace,
                 channel: Channel::Api,
                 self_report,
+                client_identity: None,
             }),
             csrf: uuid::Uuid::new_v4().simple().to_string(),
             ..self
         }
+    }
+    /// Adds transport evidence without changing the sealed actor or grant.
+    pub fn with_client_identity(mut self, client: Option<ClientIdentity>) -> Self {
+        if let Some(agent) = &mut self.agent {
+            agent.client_identity = client;
+        }
+        self
     }
     /// Web for a browser session; the agent edge it came through otherwise.
     pub fn channel(&self) -> Channel {
@@ -311,17 +345,41 @@ impl Scope {
             .map(|impersonator| bilibi_database::Principal::user(impersonator.user));
         if let Some(agent) = &self.agent {
             context.trace_id.clone_from(&agent.trace);
+            context.client_identity = agent
+                .client_identity
+                .as_ref()
+                .map(|client| client.0.clone());
+            context.agent_connection = Some(agent.connection);
             context.agent_self_report = agent.self_report.as_ref().map(|report| report.0.clone());
         }
         context
     }
 }
 
-#[derive(Default)]
+/// The credential owner rechecks an agent's live grant, bound by Core Agent
+/// Access. Missing bindings refuse agent reproofs, never confer standing.
+pub trait AgentVerifier: Send + Sync {
+    fn verify<'a>(&'a self, client: &'a dyn ProofClient, scope: &'a Scope) -> ProofFuture<'a, ()>;
+}
+#[derive(Clone, Default)]
 pub struct Authentication {
-    verifier: OnceLock<Arc<dyn ActorVerifier>>,
+    verifier: Arc<OnceLock<Arc<dyn ActorVerifier>>>,
+    agents: Arc<OnceLock<Arc<dyn AgentVerifier>>>,
+}
+impl std::fmt::Debug for Authentication {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Authentication").finish_non_exhaustive()
+    }
 }
 impl Authentication {
+    pub fn bind_agents(
+        &self,
+        verifier: Arc<dyn AgentVerifier>,
+    ) -> bilibi_module_registry::Result<()> {
+        self.agents.set(verifier).map_err(|_| {
+            bilibi_module_registry::RegistryError::Service("duplicate agent verifier".into())
+        })
+    }
     /// Trusted boot seam. Duplicate and missing providers fail closed.
     pub fn bind(&self, verifier: Arc<dyn ActorVerifier>) -> bilibi_module_registry::Result<()> {
         self.verifier.set(verifier).map_err(|_| {
@@ -410,7 +468,7 @@ impl Authentication {
             },
             agent: None,
             impersonator,
-            owner: identity.installation_owner,
+            authentication: self.clone(),
             step_up: None,
             tenant_name: row.get(0),
             user_name: identity.name,
@@ -438,6 +496,13 @@ impl Authentication {
         // The request's own facts stay: its agent grant and channel, and a
         // step-up code it presented. The CSRF value is the scope's already.
         fresh.agent.clone_from(&scope.agent);
+        if fresh.agent().is_some() {
+            self.agents
+                .get()
+                .ok_or(Error::Unauthorized)?
+                .verify(client, &fresh)
+                .await?;
+        }
         fresh.step_up.clone_from(&scope.step_up);
         Ok(fresh)
     }
@@ -459,6 +524,13 @@ impl OperatorProof {
 /// (`authorize_operator`: both requirements, each independently logged) and
 /// Tenancy never imports it. `Err(Forbidden)` is a refusal to show, not a fault.
 pub trait OperatorAuthorizer: Send + Sync {
+    fn authorize_operator_in<'a>(
+        &'a self,
+        tx: &'a tokio_postgres::Transaction<'_>,
+        scope: &'a Scope,
+        key: &'a str,
+    ) -> ProofFuture<'a, OperatorProof>;
+
     fn authorize_operator<'a>(
         &'a self,
         scope: &'a Scope,
@@ -485,6 +557,18 @@ impl Authorization {
             bilibi_module_registry::RegistryError::Service("missing operator authorizer".into())
         })
     }
+    pub async fn authorize_operator_in(
+        &self,
+        tx: &tokio_postgres::Transaction<'_>,
+        scope: &Scope,
+        key: &str,
+    ) -> Result<OperatorProof> {
+        self.authorizer
+            .get()
+            .ok_or(Error::Forbidden)?
+            .authorize_operator_in(tx, scope, key)
+            .await
+    }
     pub async fn authorize_operator(&self, scope: &Scope, key: &str) -> Result<OperatorProof> {
         self.authorizer
             .get()
@@ -493,17 +577,20 @@ impl Authorization {
             .await
     }
 }
+async fn require_operator_marker(client: &(impl GenericClient + Sync), tenant: i64) -> Result<()> {
+    client
+        .query_opt("SELECT t.id FROM tenants t JOIN platform_operator o ON o.tenant_id=t.id WHERE o.singleton=true AND t.id=$1 AND t.status='active' AND t.deleted_at IS NULL", &[&tenant])
+        .await?
+        .map(|_| ())
+        .ok_or(Error::Forbidden)
+}
 pub async fn prove_operator(
     client: &(impl GenericClient + Sync),
     scope: &Scope,
 ) -> Result<OperatorProof> {
-    let row = client.query_opt("SELECT t.id FROM tenants t JOIN platform_operator o ON o.tenant_id=t.id WHERE o.singleton=true AND t.id=$1 AND t.status='active' AND t.deleted_at IS NULL", &[&scope.tenant()]).await?;
-    if row.is_none() {
-        return Err(Error::Forbidden);
-    }
-    Ok(OperatorProof {
-        scope: scope.clone(),
-    })
+    require_operator_marker(client, scope.tenant()).await?;
+    let fresh = scope.authentication.reprove(client, scope).await?;
+    Ok(OperatorProof { scope: fresh })
 }
 
 /// The installation owner, proved for one unit of work: see [`prove_owner`].
@@ -516,21 +603,31 @@ impl OwnerProof {
         &self.scope
     }
 }
-/// Owner standing: the account the installation's one-time bootstrap receipt
-/// names, still live in the platform-operator tenant, acting for itself in a
-/// browser session. An impersonated session or an agent grant never carries
-/// it, and no role or capability confers it. The verifier re-reads the
-/// receipt on every authentication; this re-proves the operator marker.
+/// Owner standing belongs to the person named by the live bootstrap receipt,
+/// including an agent acting for that person. Impersonation never holds it.
+/// Reproof checks account eligibility and agent revocation on this connection;
+/// no cached flag, role or capability confers ownership.
 pub async fn prove_owner(
     client: &(impl GenericClient + Sync),
     scope: &Scope,
 ) -> Result<OwnerProof> {
-    if !scope.owner || scope.impersonator.is_some() || scope.agent.is_some() {
+    if scope.impersonator().is_some() {
         return Err(Error::Forbidden);
     }
-    prove_operator(client, scope).await?;
+    require_operator_marker(client, scope.tenant()).await?;
+    let fresh = &scope.authentication.reprove(client, scope).await?;
+    let identity = fresh
+        .authentication
+        .verifier
+        .get()
+        .ok_or(Error::Unauthorized)?
+        .verify(client, fresh.tenant(), fresh.user())
+        .await?;
+    if !identity.installation_owner {
+        return Err(Error::Forbidden);
+    }
     Ok(OwnerProof {
-        scope: scope.clone(),
+        scope: fresh.clone(),
     })
 }
 
@@ -657,7 +754,7 @@ pub async fn prove_person(
 inventory::submit! {
     bilibi_module_registry::Module {
         id: "base/tenancy", layer: bilibi_module_registry::Layer::Base,
-        dependencies: &["base/database", "base/party_ids", "base/menu", "base/ui"],
+        dependencies: &["base/database", "base/party_ids", "base/module_registry"],
         migrations: &[
             ("005-tenancy-operator", include_str!("../migrations/005-operator.sql")),
             ("009-tenancy-hierarchy", include_str!("../migrations/009-hierarchy.sql")),
@@ -668,13 +765,8 @@ inventory::submit! {
             bilibi_module_registry::Service { id: "base/tenancy.authorization", factory: |_| Ok(Arc::new(Authorization::default())) },
             bilibi_module_registry::Service { id: "base/tenancy.tenants", factory: |services| Ok(Arc::new(admin::Tenants::new(
                 services.get::<bilibi_database::Db>("base/database.pool")?.as_ref().clone(),
-                services.get("base/database.mutations")?,
+                services.get("base/tenancy.authorization")?,
             ))) },
-            bilibi_module_registry::Service { id: "base/tenancy.pages", factory: |services| Ok(Arc::new(bilibi_ui::page::PageService::<Scope, Error>(Arc::new(web::Pages {
-                db: services.get::<bilibi_database::Db>("base/database.pool")?.as_ref().clone(),
-                tenants: services.get("base/tenancy.tenants")?,
-                authorization: services.get("base/tenancy.authorization")?,
-            })))) },
         ],
     }
 }
@@ -684,30 +776,6 @@ inventory::submit! {
         services.get::<Authorization>("base/tenancy.authorization")?.ready()
     } }
 }
-inventory::submit! {
-    bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::ROUTES, "base/tenancy.tenants",
-        bilibi_module_registry::Provenance { module: "base/tenancy", source: file!(), line: line!() },
-        &bilibi_module_registry::contributions::Route { method: bilibi_module_registry::contributions::Method::Get, path: "/tenancy/tenants",
-            service: "base/tenancy.pages", operation: "tenants",
-            access: bilibi_module_registry::contributions::Access::OperatorCapability(admin::LIST), framed: true })
-}
-// Bilimbi's Tenancy menu (`contributions.ex`): the branch stays hidden until
-// the actor may list tenants, and the route enforces the same gate itself.
-bilibi_menu::contribute!(
-    "base/tenancy",
-    bilibi_menu::MenuItem::container("admin.tenancy", "Tenancy")
-        .icon("building-library")
-        .under("admin")
-        .order(80)
-);
-bilibi_menu::contribute!(
-    "base/tenancy",
-    bilibi_menu::MenuItem::page("admin.tenancy.tenant", "Tenants", "/tenancy/tenants")
-        .under("admin.tenancy")
-        .requires(bilibi_menu::Requirement::Capability(admin::LIST))
-        .order(10)
-);
-
 /// Optional owner bindings. Missing Company/Person adapters always refuse proof
 /// and name nothing; installing unrelated Core modules never implicitly makes
 /// targets trusted.
@@ -823,11 +891,3 @@ impl PartyProofs {
         .await
     }
 }
-
-// ADR 01 gap, listed so it stays visible: these pages still write through
-// the facade rather than an operation contract (`base/agent_api` page).
-inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::PAGE_WRITES, "base/tenancy.pages", bilibi_module_registry::Provenance { module: "base/tenancy", source: file!(), line: line!() }, &bilibi_module_registry::contributions::PageWrites {
-    service: "base/tenancy.pages",
-    contracts: &[],
-    pending: bilibi_module_registry::contributions::Pending::Every { reason: "Tenant administration writes through the Tenancy facade; no contract yet." },
-}) }

@@ -41,4 +41,15 @@ Every record carries these header lines: Document Type, Status, Agents, Scope, L
 | Record | Status |
 | --- | --- |
 | [01 Agent-first operations: one contract, four doors](./01-agent-first-operations.md) | Accepted |
-| [02 Text-message codes as a second 2FA method, and sign-in as a step-up consumer](./02-sms-second-factor.md) | Proposed |
+
+### Software delivery
+
+| Record | Status |
+| --- | --- |
+| [02 Build in development and keep everything in step](./02-build-in-development-keep-everything-in-step.md) | Accepted |
+
+### Identity and access
+
+| Record | Status |
+| --- | --- |
+| [03 Text-message codes as a second 2FA method, and sign-in as a step-up consumer](./03-sms-second-factor.md) | Proposed |

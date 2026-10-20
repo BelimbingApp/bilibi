@@ -1,9 +1,10 @@
 //! Agent plugins: the downloadable package that connects an agent harness to
 //! this installation's `/mcp` edge (Bilimbi `Core.AgentAccess.plugin_clients`,
-//! `plugin_files` and `plugin_download`). The harness-neutral builder is
-//! `package.rs`; each harness is a thin adapter (`chatgpt.rs`). Downloading
-//! software never creates or approves a grant: the OAuth consent in
-//! `core/agent_access` still names the person and the end date.
+//! `plugin_files` and `plugin_download`). The settings page is AI connections
+//! in `core/agent_access`. The harness-neutral builder is `package.rs`; each
+//! harness is a thin adapter (`chatgpt.rs`). Downloading software never
+//! creates or approves a grant: the OAuth consent in `core/agent_access`
+//! still names the person and the end date.
 mod archive;
 mod chatgpt;
 mod contributions;
@@ -168,9 +169,6 @@ inventory::submit! {
                 settings: services.get("base/settings.store")?,
                 origin: std::env::var("APP_ORIGIN").unwrap_or_else(|_| "http://localhost:3000".into()).trim_end_matches('/').to_owned(),
             })) },
-            bilibi_module_registry::Service { id: web::PAGES, factory: |services| Ok(Arc::new(bilibi_ui::page::PageService(Arc::new(web::Pages {
-                plugins: services.get(SERVICE)?,
-            })))) },
             bilibi_module_registry::Service { id: web::FILES, factory: |services| Ok(Arc::new(bilibi_ui::download::DownloadService(Arc::new(web::Pages {
                 plugins: services.get(SERVICE)?,
             })))) },

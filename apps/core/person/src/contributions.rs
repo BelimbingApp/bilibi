@@ -32,10 +32,12 @@ inventory::submit! { Contribution::new(VOCABULARY, "core/person", Provenance { m
 // Register contacts now so restrictions apply to every API and audit read.
 // K8 composes the page from this catalog instead of defining a second table.
 static GRID: GridContribution = GridContribution {
+    record_fields: &[bilibi_grid::RecordFields { table: "persons", fields: crate::web::fields::ALL }],
     tables: &[TableDecl::new("persons", "Contacts", LIST,
-        Source::tenant("SELECT id,name,kind,email,phone,system_key,retired_at,version,created_at,updated_at FROM persons WHERE tenant_id=$1"), "id", &[
+        Source::tenant("SELECT id,name,kind,CASE WHEN retired_at IS NULL THEN 'current' ELSE 'retired' END AS identity,email,phone,system_key,retired_at,version,created_at,updated_at FROM persons WHERE tenant_id=$1"), "id", &[
             Field::new("id", "ID", FieldType::Integer).protected(),
             Field::new("name", "Name", FieldType::String).protected(),
+            Field::new("identity", "Identity", FieldType::String).protected(),
             Field::choice("kind", "Kind", &["human", "agent"]).protected(),
             Field::new("email", "Personal email", FieldType::String),
             Field::new("phone", "Personal phone", FieldType::String),

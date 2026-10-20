@@ -78,6 +78,7 @@ struct Pending {
     id: AddressId,
     version: i64,
     label: Option<String>,
+    code: String,
 }
 
 pub(super) struct Index {
@@ -87,6 +88,7 @@ pub(super) struct Index {
     framed: bool,
     flash: Flash,
     entries: Vec<Address>,
+    names: HashMap<String, String>,
     total: u64,
     pending: Option<Pending>,
 }
@@ -96,10 +98,12 @@ impl Index {
             pages,
             list: ListState::parse(query, SPEC.clone()).map_err(|_| Error::Internal)?,
             columns: ListColumns::mount("addresses-table", builtins())
+                .map(|columns| columns.with_record_fields(super::fields::ALL.iter().copied()))
                 .map_err(|_| Error::Internal)?,
             framed,
             flash: Flash::default(),
             entries: Vec::new(),
+            names: HashMap::new(),
             total: 0,
             pending: None,
         })
@@ -138,16 +142,70 @@ impl Index {
         // The rows changed: ListColumns forgets an unfinished add box.
         self.columns.load(&page.entries, |a| a.id.to_string());
         self.total = page.total as u64;
+        self.names.clear();
         self.entries = page.entries;
+        self.admin1_names().await
+    }
+
+    async fn admin1_names(&mut self) -> Result<()> {
+        if !self.columns.visible_ids().contains(&"admin1_code") {
+            return Ok(());
+        }
+        for entry in &self.entries {
+            if let Some(code) = &entry.address.admin1_code {
+                if !self.names.contains_key(code) {
+                    let name = self
+                        .pages
+                        .addresses
+                        .geonames()
+                        .get_admin1(code)
+                        .await?
+                        .map(|division| division.name)
+                        .unwrap_or_else(|| code.clone());
+                    self.names.insert(code.clone(), name);
+                }
+            }
+        }
         Ok(())
     }
-    fn request_delete(&mut self, id: Option<&str>) {
+    async fn request_delete(
+        &mut self,
+        scope: &Scope,
+        credential: &str,
+        id: Option<&str>,
+    ) -> Result<()> {
         let listed = bilibi_ui::params::positive_id(id)
             .and_then(|id| self.entries.iter().find(|a| a.id.get() == id));
         match listed {
             Some(address) => {
+                let input = serde_json::json!({"address_id":address.id,"version":address.version});
+                let code = match self
+                    .pages
+                    .preview(
+                        scope,
+                        credential,
+                        "request_delete",
+                        "core.address.delete",
+                        input,
+                    )
+                    .await?
+                {
+                    Ok(code) => code,
+                    Err(error) => {
+                        let name = address_name(address.address.label.as_deref());
+                        let message = match error {
+                            WriteError::InUse => format!("{name} was not deleted: it is still attached to a company or person. Unlink it there first."),
+                            WriteError::NotFound => "That address no longer exists.".into(),
+                            WriteError::Access(Error::Forbidden) => "You do not have permission to delete addresses.".into(),
+                            _ => format!("{name} was not deleted. Reload the page and try again."),
+                        };
+                        self.flash.put(StatusKind::Error, message);
+                        return Ok(());
+                    }
+                };
                 self.flash.clear();
                 self.pending = Some(Pending {
+                    code,
                     id: address.id,
                     version: address.version,
                     label: address.address.label.clone(),
@@ -157,17 +215,17 @@ impl Index {
                 .flash
                 .put(StatusKind::Error, "That address no longer exists."),
         }
+        Ok(())
     }
-    async fn delete(&mut self, scope: &Scope) -> Result<()> {
+    async fn delete(&mut self, scope: &Scope, credential: &str) -> Result<()> {
         let Some(pending) = self.pending.take() else {
             return Ok(());
         };
         let name = address_name(pending.label.as_deref());
         match self
             .pages
-            .addresses
-            .delete(scope, pending.id, pending.version)
-            .await
+            .commit(scope,credential,"delete","core.address.delete",&pending.code,serde_json::json!({"address_id":pending.id,"version":pending.version}))
+            .await?
         {
             Ok(()) => self.flash.put(StatusKind::Success, "Address deleted."),
             Err(error) if fatal(&error) => return Err(Error::Unauthorized),
@@ -275,6 +333,36 @@ impl Index {
                         Html::text(a.country_iso.as_deref().unwrap_or("—"))
                     )),
                 );
+            for field in super::fields::ALL {
+                let Some(column) = field.column else { continue };
+                if ["label", "country_iso", "locality", "verification_status"].contains(&column) {
+                    continue;
+                }
+                let value = match field.id {
+                    "phone" => &a.phone,
+                    "line1" => &a.line1,
+                    "line2" => &a.line2,
+                    "line3" => &a.line3,
+                    "postcode" => &a.postcode,
+                    "admin1_code" => &a.admin1_code,
+                    "source" => &a.source,
+                    "source_ref" => &a.source_ref,
+                    "parser_version" => &a.parser_version,
+                    "parse_confidence" => &a.parse_confidence,
+                    _ => continue,
+                };
+                let shown = value
+                    .as_deref()
+                    .map(|value| {
+                        if field.id == "admin1_code" {
+                            self.names.get(value).map_or(value, String::as_str)
+                        } else {
+                            value
+                        }
+                    })
+                    .unwrap_or("—");
+                row = row.slot(column, Html::text(shown));
+            }
             let status = a.verification_status.as_deref().unwrap_or("unverified");
             row = row.slot(
                 "verification_status",
@@ -349,6 +437,11 @@ impl LiveState<Scope, Error> for Index {
     fn update<'a>(&'a mut self, request: LiveRequest<'a, Scope>) -> LiveFuture<'a, Error> {
         Box::pin(async move {
             let scope = request.scope;
+            let client = self.pages.db.get().await?;
+            let masked = bilibi_authz::restrictions_for(&**client, scope, "addresses").await?;
+            self.columns
+                .set_available(super::fields::ALL, |field| !masked.contains(field.id));
+
             let mut requery = true;
             match request.input {
                 LiveInput::Refresh => {}
@@ -374,7 +467,10 @@ impl LiveState<Scope, Error> for Index {
                                 return Err(Error::Invalid);
                             }
                         }
-                        ColumnsOutcome::Update | ColumnsOutcome::Noop => requery = false,
+                        ColumnsOutcome::Update | ColumnsOutcome::Noop => {
+                            requery = false;
+                            self.admin1_names().await?;
+                        }
                     },
                     "page" => self
                         .list
@@ -385,7 +481,12 @@ impl LiveState<Scope, Error> for Index {
                     "request_delete" => {
                         requery = false;
                         if self.pages.allowed(scope, DELETE).await? {
-                            self.request_delete(value.get("id").and_then(Value::as_str));
+                            self.request_delete(
+                                scope,
+                                request.credential,
+                                value.get("id").and_then(Value::as_str),
+                            )
+                            .await?;
                         } else {
                             self.flash.put(
                                 StatusKind::Error,
@@ -397,7 +498,7 @@ impl LiveState<Scope, Error> for Index {
                         requery = false;
                         self.pending = None;
                     }
-                    "delete" => self.delete(scope).await?,
+                    "delete" => self.delete(scope, request.credential).await?,
                     "clear-flash" => {
                         requery = false;
                         self.flash.dismiss(value.get("key").and_then(Value::as_str));

@@ -1,11 +1,12 @@
-//! The software contracts, reached through Agent API: four reads and six
-//! reviewed writes (plan, then commit). A commit of change, install, undo,
-//! go or pair asks for the server owner's authenticator code every time, on
-//! every instance (`STEP_UP`): the pairing key opens the program for
-//! download, so setting it changes the software's reach; cancel changes
-//! nothing and asks none. The `open` read answers the `open_software` MCP
-//! tool, which shows the card (`card/software-v1.html`) registered here as
-//! an MCP App; `releases` says what this instance can install.
+//! The software contracts, reached through Agent API: four reads and seven
+//! reviewed writes (plan, then commit). A commit of install, undo, go,
+//! pair or the GitHub source asks for the server owner's authenticator
+//! code every time, on every instance (`STEP_UP`): the pairing key opens
+//! the program for download, and the GitHub settings name where a setup
+//! file comes from, so setting either changes the software's reach; cancel
+//! changes nothing and asks none. The `open` read answers the `open_software`
+//! MCP tool, which shows the card (`card/software-v1.html`) registered here
+//! as an MCP App; `releases` says what this instance can install.
 use crate::{bound, SoftwareError, CARD_URI, MANAGE, STEP_UP, VIEW};
 use bilibi_agent_api::{
     App, Channels, Definitions, Error as AgentError, Guide, Handler, Operation, OperationClient,
@@ -49,7 +50,16 @@ impl ReadHandler for Read {
             let value = match self {
                 Self::Status => software.status(scope).await?,
                 Self::Catalogue => software.catalogue(scope).await?,
-                Self::Releases => software.releases(scope).await?,
+                Self::Releases => {
+                    software
+                        .releases_with(
+                            scope,
+                            None,
+                            input["refresh"].as_bool() == Some(true),
+                            input["prerelease"].as_bool() == Some(true),
+                        )
+                        .await?
+                }
                 Self::Open => software.open(scope, input).await?,
             };
             Ok(value.into())
@@ -58,12 +68,12 @@ impl ReadHandler for Read {
 }
 
 enum Write {
-    Change,
     Install,
     Undo,
     Go,
     Cancel,
     Pair,
+    Github,
 }
 impl WriteHandler for Write {
     fn owner(&self) -> &'static str {
@@ -77,14 +87,22 @@ impl WriteHandler for Write {
     ) -> OperationFuture<'a> {
         Box::pin(async move {
             let software = bound()?;
-            let review = match self {
-                Self::Change => software.review_change(scope, input).await?,
+            let mut review = match self {
                 Self::Install => software.review_install(scope, input).await?,
                 Self::Undo => software.review_undo(scope, input).await?,
                 Self::Go => software.review_go(scope, input).await?,
                 Self::Cancel => software.review_cancel(scope, input).await?,
                 Self::Pair => software.review_pair(scope, input).await?,
+                Self::Github => software.review_github(scope, input).await?,
             };
+            if !matches!(self, Self::Cancel) {
+                review.facts["two_factor_enabled"] = json!(software.step_up.enrolled(scope).await?);
+                review.facts["two_factor_setup_url"] = json!(format!(
+                    "{}{}",
+                    software.origin,
+                    bilibi_ui::StepUp::new(false, "/system/software?tab=releases").setup_href()
+                ));
+            }
             Ok(review.facts.into())
         })
     }
@@ -97,12 +115,12 @@ impl WriteHandler for Write {
         Box::pin(async move {
             let software = bound()?;
             let value = match self {
-                Self::Change => software.change_in(tx, scope, input).await?,
                 Self::Install => software.install_in(tx, scope, input).await?,
                 Self::Undo => software.undo_in(tx, scope, input).await?,
                 Self::Go => software.go_in(tx, scope, input).await?,
                 Self::Cancel => software.cancel_in(tx, scope, input).await?,
                 Self::Pair => software.pair_in(tx, scope, input).await?,
+                Self::Github => software.github_in(tx, scope, input).await?,
             };
             Ok(value.into())
         })
@@ -112,25 +130,33 @@ impl WriteHandler for Write {
 fn empty_schema() -> Value {
     json!({"type":"object","properties":{}})
 }
-fn change_schema() -> Value {
-    json!({"type":"object","required":["domains"],"properties":{
-        "platform":{"type":"string","maxLength":32,"description":"The Bilibi release to build on, like 0.1.0. Left out: the newest release every chosen Domain accepts."},
-        "domains":{"type":"array","description":"Every Domain the server should have after the change; a mounted Domain left out is removed.","items":{"type":"object","required":["id"],"properties":{
-            "id":{"type":"string","maxLength":64,"description":"The Domain id from the catalogue, like finance."},
-            "version":{"type":"string","maxLength":32,"description":"A release of that Domain, like 0.1.0. Left out: its newest release."},
-            "repository":{"type":"string","maxLength":512,"description":"For a Domain outside the catalogue: its https:// Git address."},
-            "ref":{"type":"string","maxLength":128,"description":"For a Domain outside the catalogue: the tag or commit to build."}}}},
-        "plugins":{"type":"array","items":{"type":"object","required":["id"],"properties":{
-            "id":{"type":"string","maxLength":64},
-            "enabled":{"type":"boolean"}}}},
-        "switch":{"type":"string","enum":["auto","ask"],"description":"auto: put the new program into service as soon as it is built. ask: build now, ask before the one-minute pause."}
-    }})
-}
 fn install_schema() -> Value {
     json!({"type":"object","properties":{
-        "release":{"type":"integer","minimum":1,"description":"The release number the source instance reports as tested (base.software.releases lists them)."},
+        "release":{"type":"integer","minimum":1,"description":"The release number currently running on the update server (base.software.releases lists it)."},
         "bundle":{"type":"string","maxLength":32,"description":"Instead of release: the name of a release file uploaded here, like upload-3 (base.software.releases lists them)."},
+        "asset":{"type":"integer","minimum":1,"description":"Instead of release or bundle: the GitHub file number from base.software.releases."},
+        "repository_id":{"type":"integer","minimum":1,"description":"The GitHub repository number listed with that file."},
+        "release_id":{"type":"integer","minimum":1,"description":"The GitHub release number listed with that file."},
+        "tag":{"type":"string","maxLength":200,"description":"The setup tag listed with that file."},
+        "target":{"type":"string","maxLength":80,"description":"The computer kind listed with that file, such as x86_64-unknown-linux-gnu."},
+        "digest":{"type":"string","maxLength":80,"description":"The file's check code from base.software.releases, 64 hex characters."},
         "switch":{"type":"string","enum":["auto","ask"]}
+    }})
+}
+fn github_schema() -> Value {
+    json!({"type":"object","properties":{
+        "repository":{"type":"string","maxLength":140,"description":"The GitHub repository as owner/name, like BelimbingApp/bilibi-setup-template."},
+        "repository_id":{"type":"integer","minimum":1,"description":"The GitHub repository number to accept. Leave it out to accept the number GitHub reports now."},
+        "token":{"type":"string","maxLength":255,"description":"A fine-grained token that can only read this repository. Leave it out to keep the saved token. Never shown back."},
+        "clear_token":{"type":"boolean","description":"true removes the saved read token."},
+        "refresh_minutes":{"type":"integer","minimum":1,"maximum":1440,"description":"How many minutes to wait between GitHub checks. 15 checks about four times an hour."},
+        "accept":{"type":"boolean","description":"true remembers the GitHub repository number and allows installs from it."}
+    }})
+}
+fn releases_schema() -> Value {
+    json!({"type":"object","properties":{
+        "refresh":{"type":"boolean","description":"true asks GitHub now, unless GitHub is limiting this server. Otherwise the saved list is used when it is still fresh."},
+        "prerelease":{"type":"boolean","description":"true includes files GitHub marks as a pre-release. Drafts are never listed."}
     }})
 }
 fn pair_schema() -> Value {
@@ -140,7 +166,7 @@ fn pair_schema() -> Value {
     }})
 }
 fn releases_output() -> Value {
-    json!({"type":"object","description":"instance; source (available, current, healthy, releases with release, in_service, sha256, platform, domains; or message); uploads (release files waiting here: bundle, release, from, platform, domains, sha256); pairing (set); here (the releases kept on this instance)."})
+    json!({"type":"object","description":"instance; source (available, current, healthy, releases with release, in_service, sha256, platform, domains; or message); uploads (release files waiting here: bundle, release, from, platform, domains, sha256); pairing (set); github (repository, repository_id, accepted, releases with tag, asset, digest, target; or message); here (the releases kept on this instance)."})
 }
 fn job_schema() -> Value {
     json!({"type":"object","properties":{
@@ -149,19 +175,19 @@ fn job_schema() -> Value {
 }
 fn open_schema() -> Value {
     json!({"type":"object","properties":{
-        "propose":{"type":"object","description":"Domains or plug-ins to pre-tick in the card, by catalogue id, when the person named them. Dev only; nothing is chosen until the person presses Build.","properties":{
+        "propose":{"type":"object","description":"Domains or Extensions to highlight in the catalogue, by id. The catalogue supplies commands for your developer; choosing entries does not start an install.","properties":{
             "domains":{"type":"array","items":{"type":"string","maxLength":64}},
-            "plugins":{"type":"array","items":{"type":"string","maxLength":64}}}}
+            "extensions":{"type":"array","items":{"type":"string","maxLength":64}}}}
     }})
 }
 fn open_output() -> Value {
-    json!({"type":"object","description":"Everything base.software.status answers, plus catalogue (on an instance that builds; null elsewhere), proposal (the proposed ids found in the catalogue, the unknown ones, or ignored with the reason on an instance that installs) and card.resource, the ui:// resource of the card."})
+    json!({"type":"object","description":"Everything base.software.status answers, plus catalogue on every instance, proposal (found and unknown ids), next_step (build locally, then install here), and card.resource."})
 }
 fn status_output() -> Value {
-    json!({"type":"object","description":"instance (role, label, builds, installs_from), installed (platform, domains, extensions from the running program), plugins, uploads (release files waiting here: bundle, release, from), job (the one waiting or running, or the last one, with its steps and whether cancel is available), undo (available, job, restores_backup, backup_at), jobs (recent)."})
+    json!({"type":"object","description":"instance (role, label, installs_from), installed (platform, domains, extensions from the running program), plugins, uploads (release files waiting here: bundle, release, from), job (the one waiting or running, or the last one, with its steps and whether cancel is available), undo (available, job, restores_backup, backup_at), jobs (recent), backups (at and bytes for recent jobs; file only for a server owner), backup_rule (how many backups are kept and what Undo restores)."})
 }
 fn catalogue_output() -> Value {
-    json!({"type":"object","description":"available, url, platform versions, domains with their releases and the Platform versions each was tested on, plugins, tested sets. When not available: message."})
+    json!({"type":"object","description":"available, url, running_platform, platform versions, domains and extensions with descriptions, repositories, versions, fits_running, tested_with_running, recommended_version, compatibility, official, status (installed, not_installed, update_available), latest_version, warning, local_steps and next_step; plugins and tested sets. When not available: message."})
 }
 fn review_output() -> Value {
     json!({"type":"object","description":"The review: summary, the change list, warnings, the estimate, what happens, the steps, and the step-up operation key (base.software.change). The commit answers the queued job with its id, state and steps."})
@@ -169,41 +195,29 @@ fn review_output() -> Value {
 
 inventory::submit! { Contribution::new(DEFINITIONS, "base/software", Provenance { module: "base/software", source: file!(), line: line!() }, &Definitions {
     operations: &[
-        Operation { key:"base.software.status", title:"Software status", summary:"Which instance this is, what is installed, the plug-ins, the job waiting or running with its steps, and whether Undo is available.", keywords:&["software","status","build","install","domain","version","job","undo"], capability:VIEW, input:empty_schema, output:status_output, handler:Handler::Read(&Read::Status), channels:Channels::Every, step_up:&[] },
-        Operation { key:"base.software.open", title:"Software card", summary:"What the Software card opens with: the instance, what is installed, the job and Undo state, and on Dev the catalogue with the agent's proposal checked against it. The same answer as base.software.status and base.software.catalogue together.", keywords:&["software","card","open","propose","domain","build"], capability:VIEW, input:open_schema, output:open_output, handler:Handler::Read(&Read::Open), channels:Channels::Every, step_up:&[] },
-        Operation { key:"base.software.catalogue", title:"Software catalogue", summary:"The Domains, releases, plug-ins and tested sets the server can be built from.", keywords:&["software","catalogue","domain","version","release","tested"], capability:VIEW, input:empty_schema, output:catalogue_output, handler:Handler::Read(&Read::Catalogue), channels:Channels::Every, step_up:&[] },
-        Operation { key:"base.software.releases", title:"Releases available to install", summary:"What this instance can install: the releases its source reports (the one in service is the tested one), the release files uploaded here, whether a pairing key is set, and the releases kept here.", keywords:&["software","release","install","source","download","upload","pairing"], capability:VIEW, input:empty_schema, output:releases_output, handler:Handler::Read(&Read::Releases), channels:Channels::Every, step_up:&[] },
-        Operation { key:"base.software.change", title:"Change the software (build on Dev)", summary:"Queue a build of a new program with the chosen Domains and versions. Dev only. The review lists what changes, whether the set was tested together and the estimate; the commit asks for the server owner's authenticator code every time.", keywords:&["software","build","domain","add","remove","update","version"], capability:MANAGE, input:change_schema, output:review_output, handler:Handler::SafeWrite(&Write::Change), channels:Channels::Every, step_up:&[STEP_UP] },
-        Operation { key:"base.software.install", title:"Install a tested release", summary:"Queue an install of a release the source instance tested (release), or of a release file uploaded here (bundle), on Staging or Production. The review names the source and the change list; the commit asks for the server owner's authenticator code every time.", keywords:&["software","install","release","staging","production","upload"], capability:MANAGE, input:install_schema, output:review_output, handler:Handler::SafeWrite(&Write::Install), channels:Channels::Every, step_up:&[STEP_UP] },
-        Operation { key:"base.software.undo", title:"Undo the last software change", summary:"Queue a switch back to the previous program. The review says whether the backup is restored and what would be lost. The commit asks for the server owner's authenticator code every time.", keywords:&["software","undo","rollback","previous","restore"], capability:MANAGE, input:job_schema, output:review_output, handler:Handler::SafeWrite(&Write::Undo), channels:Channels::Every, step_up:&[STEP_UP] },
-        Operation { key:"base.software.go", title:"Go ahead with the pause", summary:"Let a built change, or a copied install, go ahead when it was started with switch ask: the instance then pauses for about a minute to back up, update, switch and check. The commit asks for the server owner's authenticator code every time.", keywords:&["software","go","ahead","switch","pause","install","ask"], capability:MANAGE, input:job_schema, output:review_output, handler:Handler::SafeWrite(&Write::Go), channels:Channels::Every, step_up:&[STEP_UP] },
+        Operation { key:"base.software.status", title:"Software status", summary:"See what this server runs, follow an install or undo, and read backup times, sizes and the retention rule; owners also see the files.", keywords:&["software","status","build","install","domain","version","job","undo"], capability:VIEW, input:empty_schema, output:status_output, handler:Handler::Read(&Read::Status), channels:Channels::Every, step_up:&[] },
+        Operation { key:"base.software.open", title:"Manage domains and extensions", summary:"Open the Software card to see installed modules, find more modules, follow updates and backups, or undo an install. Includes developer commands for the requested modules.", keywords:&["software","card","open","propose","domain","build"], capability:VIEW, input:open_schema, output:open_output, handler:Handler::Read(&Read::Open), channels:Channels::Every, step_up:&[] },
+        Operation { key:"base.software.catalogue", title:"Available domains and extensions", summary:"Find business modules (Domains) and adaptations or connections (Extensions). See which versions support this Bilibi and whether checks covered the exact code running here. Includes commands for a developer to build and test on their computer.", keywords:&["software","catalogue","domain","version","release","tested"], capability:VIEW, input:empty_schema, output:catalogue_output, handler:Handler::Read(&Read::Catalogue), channels:Channels::Every, step_up:&[] },
+        Operation { key:"base.software.releases", title:"Releases available to install", summary:"List updates from the chosen update server, setup files from the configured GitHub repository, uploaded release files waiting to install, and releases kept here. Say whether the secret for sharing release files is set.", keywords:&["software","release","install","source","download","upload","pairing","github"], capability:VIEW, input:releases_schema, output:releases_output, handler:Handler::Read(&Read::Releases), channels:Channels::Every, step_up:&[] },
+        Operation { key:"base.software.install", title:"Install a tested release", summary:"Install a tested update from another Bilibi server (release), a GitHub setup file (asset), or an uploaded file (bundle). Review the changes first. Confirmation requires the server owner's authenticator code.", keywords:&["software","install","release","staging","production","upload","github"], capability:MANAGE, input:install_schema, output:review_output, handler:Handler::SafeWrite(&Write::Install), channels:Channels::Every, step_up:&[STEP_UP] },
+        Operation { key:"base.software.undo", title:"Undo the last software change", summary:"Return to the previous program. Review which backup Undo restores and what data would be lost. Confirmation requires the server owner's authenticator code.", keywords:&["software","undo","rollback","previous","restore"], capability:MANAGE, input:job_schema, output:review_output, handler:Handler::SafeWrite(&Write::Undo), channels:Channels::Every, step_up:&[STEP_UP] },
+        Operation { key:"base.software.go", title:"Confirm installation", summary:"Let a copied install go ahead when it was started with switch ask: the server then pauses for about a minute to back up, update, switch and check. Confirmation requires the server owner's authenticator code.", keywords:&["software","go","ahead","switch","pause","install","ask"], capability:MANAGE, input:job_schema, output:review_output, handler:Handler::SafeWrite(&Write::Go), channels:Channels::Every, step_up:&[STEP_UP] },
         Operation { key:"base.software.cancel", title:"Cancel the software job", summary:"Stop the job waiting or running. A waiting job is removed; a running one stops before the pause. Too late once the pause has started.", keywords:&["software","cancel","stop","job"], capability:MANAGE, input:job_schema, output:review_output, handler:Handler::SafeWrite(&Write::Cancel), channels:Channels::Every, step_up:&[] },
-        Operation { key:"base.software.pair", title:"Set the pairing key", summary:"Set or clear the key with which this instance downloads releases from its source, and lets the instance that installs from it download. Set the same key on both. The key is never shown back. The commit asks for the server owner's authenticator code every time.", keywords:&["software","pairing","key","release","download","source"], capability:MANAGE, input:pair_schema, output:review_output, handler:Handler::SafeWrite(&Write::Pair), channels:Channels::Every, step_up:&[STEP_UP] },
+        Operation { key:"base.software.pair", title:"Set the pairing key", summary:"Save or clear the secret that lets two Bilibi servers share release files. Use the same secret on both servers. It is never shown back. Confirmation requires the server owner's authenticator code.", keywords:&["software","pairing","key","release","download","source"], capability:MANAGE, input:pair_schema, output:review_output, handler:Handler::SafeWrite(&Write::Pair), channels:Channels::Every, step_up:&[STEP_UP] },
+        Operation { key:"base.software.github", title:"GitHub release source", summary:"Set the GitHub repository this server installs setup files from, the optional read token, and how often to check. Accept the repository before installing. Confirmation requires the server owner's authenticator code.", keywords:&["software","github","release","repository","token"], capability:MANAGE, input:github_schema, output:review_output, handler:Handler::SafeWrite(&Write::Github), channels:Channels::Every, step_up:&[STEP_UP] },
     ],
-    guides: &[Guide { key:"base.software", title:"Changing the server's software", summary:"How to see what is installed, choose Domains from the catalogue, build on Dev, install a tested release elsewhere, undo and cancel.", keywords:&["software","domain","build","install","catalogue","undo"], capability:VIEW,
-        body:"Start with base.software.status: it says which instance this is (Dev builds; Staging and Production install what another instance tested), what is installed, and whether a job is running. Read base.software.catalogue for the Domains and releases. On Dev, plan base.software.change with the full list of Domains the server should have afterwards (a mounted Domain left out is removed); the review shows the change list, whether the versions were tested together, a rough time and the steps. Show it to the person, then commit. On Staging or Production, read base.software.releases first: it lists what the source (the instance named in \"Install releases tested on\") runs now, and the release files uploaded here. Plan base.software.install with that release number, or with bundle for an uploaded file; the review names the source, the change list and the checks. A source on another machine is reached over HTTPS with a pairing key set on both instances (base.software.pair); the target downloads, and nothing is ever pushed to it. Every change, install, undo, go-ahead or pairing key asks for the server owner's own authenticator code on every commit, on every instance: answer step_up_required by asking the person for the current code and committing the same plan again with step_up_code. The job then waits for the builder or installer; follow it with base.software.status. A change or install started with switch ask waits once it is built or copied: plan base.software.go and commit it, with the owner's code, to let it pause and switch. Cancel is possible until the pause starts. Only a server owner (the platform operator's administrators) may change the software, because one build changes every company on the server." }],
+    guides: &[Guide { key:"base.software", title:"Discover and install software", summary:"Find modules, prepare tested updates on your computer, install them with backups, undo or cancel.", keywords:&["software","domain","extension","build","install","catalogue","undo"], capability:VIEW,
+        body:"Start with base.software.status to see what this server runs. Read base.software.catalogue or open the Software card with propose.domains or propose.extensions for what the person asked for. Each entry says what it does, which version supports this Bilibi, whether checks covered the exact code running here, and local_steps. Ask your developer to add the modules, build Bilibi on their computer, and test it before installing here. In that local checkout, clone the official repository into apps/domains/<id> or apps/extensions/<id>, check out the recommended commit, run python3 scripts/discover-modules.py, ./scripts/build-assets.sh --check, cargo metadata --format-version 1 > /dev/null to resolve the mounted Cargo.lock, python3 scripts/discover-modules.py --pin, cargo build --release --locked -p bilibi-web, and ./target/release/bilibi-web status. Run the composition locally and check it in the browser. Use docs/server-install.md to prepare its release file. Servers never build software. For installation read base.software.releases, then plan base.software.install with release (the source's running tested release), bundle (a file uploaded here), or asset (a setup file from the GitHub repository named in the settings, with repository_id, release_id, tag, target and digest from that same list). Uploading a release file still works. Install and undo back up, switch, check and switch back automatically on failure through the installer. Install, undo, go, pair and the GitHub source require the owner's current authenticator code every time. Follow jobs and recorded backups with status. Show each backup's time and size, the file when it is given, and the backup_rule sentence once. An install with switch ask waits after copying: plan base.software.go to proceed. Cancel is available until the pause starts. Only a server owner can change software, because an install affects every company on this server." }],
 }) }
 
 /// How an agent works with the card, for the plugin package's skill.
-const CARD_SKILL: &str = "# Changing the server's software from the chat\n\n\
-Call `open_software` when the person wants to see what this Bilibi runs, add or remove a Domain, change a version, switch a plug-in on or off, install a tested release, undo a change or follow a build. The host shows the Software card; the person does the rest inside it.\n\n\
-## What the card does\n\n\
-- Names the instance at the top of every screen, in its colour: Dev, Staging or Production, or the name the server owner gave it. Use the same name when you talk about it.\n\
-- On Dev: lets the person tick Domains, pick versions and plug-ins, review the change, enter their authenticator code and start the build. Staging and Production never build; the card offers \"Install the version tested on\" the source instance instead.\n\
-- Shows the job's steps while it runs, then the result, and offers Undo and Cancel where they apply.\n\
-- Tells you the outcome, so you can carry on the conversation (\"Release 4 is built on Dev\").\n\n\
-## Your part\n\n\
-- When the person named Domains or plug-ins (\"add Finance and Factory\"), pass them as `propose` with their catalogue ids: `{\"propose\": {\"domains\": [\"finance\", \"factory\"]}}`. The card pre-ticks them and nothing more; the person still presses Build. Unknown ids come back in `proposal.unknown`: say which ones.\n\
-- Do not plan or commit `base.software.change`, `install` or `undo` yourself while the card is open. The person confirms in the card, and only they can enter the authenticator code.\n\
-- If the host shows no cards, use the plain workflow instead: `read` `base.software.status`, `plan` the change, show the review with the instance name on top, ask for the current authenticator code, `commit` with `step_up_code`.\n\
-- Answer the questions that need judgment: which Domains fit the business (the catalogue describes each), why a build failed (`read` `base.software.status`: the job's steps carry the cause in plain words), whether to install on Production now.\n\
-- A build changes every company on the server, so only a server owner (an administrator of the platform operator) may do it. A refusal says so; there is no other way in.\n";
+const CARD_SKILL: &str = "# Software discovery and installation\n\nCall open_software to find business features (Domains) and adaptations or connections (Extensions), inspect this instance or install a tested release. Pass propose.domains or propose.extensions with the requested catalogue ids; they highlight entries, never request a server build. The card gives a description, compatible version, records of checks on the exact code and exact local_steps. Ask your developer to add the modules, build Bilibi on their computer, and test it before installing here. Follow those steps in a local checkout, run the result and check it in the browser. Servers never build. A server can install a setup file from the GitHub repository named in its settings. Uploading a release file still works. For a tested release, the person reviews and confirms install or undo in the card with their authenticator code. Do not plan or commit those writes yourself while the card is open. Follow the job and explain its outcome. If the host cannot show cards, read base.software.catalogue and status for discovery, then plan install or undo and show the full review before the person confirms. Every install, undo and go-ahead asks for a fresh code on every instance. Only a server owner may install software because it affects every company.\n";
 
 inventory::submit! { Contribution::new(APPS, "base/software", Provenance { module: "base/software", source: file!(), line: line!() }, &App {
     uri: CARD_URI,
     tool: "open_software",
-    title: "Bilibi Software",
-    description: "Open the Software card: which Bilibi instance this is, what it runs and, on Dev, the Domains and plug-ins it can be built with. The person picks, reviews and confirms inside the card with their authenticator code; you never commit for them. Pass propose to pre-tick Domains or plug-ins the person asked for (Dev only). Use it for: what is installed, add or remove a Domain, update a version, switch a plug-in, install a tested release on Staging or Production, undo, follow a build.",
+    title: "Manage domains and extensions",
+    description: "Open Software: find business features (Domains) and adaptations or connections (Extensions), compatible versions, records of checks on the exact code and local build steps; see what this server runs; install a tested release or undo with the owner's code. Pass propose.domains or propose.extensions to highlight requested entries. Servers never build software.",
     operation: "base.software.open",
     html: include_str!("../card/software-v1.html"),
     connect_domains: &[],

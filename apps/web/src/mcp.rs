@@ -22,7 +22,7 @@ use axum::{
 };
 use bilibi_base::agent_api::mcp::{self as protocol, Outcome, Session};
 use bilibi_database::Error;
-use bilibi_tenancy::{Scope, SelfReport};
+use bilibi_tenancy::{ClientIdentity, Scope, SelfReport};
 use serde_json::{json, Value};
 
 pub fn router() -> Router<App> {
@@ -92,6 +92,7 @@ async fn handle(State(app): State<App>, request: Request) -> Response {
             scope: None,
             operation: Some("mcp.invalid_request".into()),
             reported: None,
+            client_identity: None,
         });
         return response;
     };
@@ -103,11 +104,37 @@ async fn handle(State(app): State<App>, request: Request) -> Response {
         Reported::Absent => {}
         reported => trace.reported = reported,
     }
+    // Generic arguments are model-accessible; they override _meta and headers.
+    if message.get("method").and_then(Value::as_str) == Some("tools/call")
+        && message
+            .pointer("/params/name")
+            .and_then(Value::as_str)
+            .is_some_and(|name| protocol::GENERIC_TOOLS.contains(&name))
+    {
+        match Reported::from_meta(
+            message.pointer(&format!("/params/arguments/{}", SelfReport::MCP_ARGUMENT)),
+        ) {
+            Reported::Absent => {}
+            reported => trace.reported = reported,
+        }
+    }
+    // Stateless: initialize's clientInfo is evidence for that exchange only.
+    let initialize_client = (message.get("method").and_then(Value::as_str) == Some("initialize"))
+        .then(|| {
+            let name = message.pointer("/params/clientInfo/name")?.as_str()?;
+            let version = message.pointer("/params/clientInfo/version")?.as_str()?;
+            ClientIdentity::parse(&format!("MCP clientInfo: {name}/{version}"))
+        })
+        .flatten();
     let operation = protocol::operation(&message);
     let edge = &app.api;
     if protocol::public(&message) {
         let outcome = protocol::dispatch(&edge.registry, &edge.plans, None, &message).await;
-        return answer(&app, outcome, None, operation, &trace.reported);
+        let mut response = answer(&app, outcome, None, operation, &trace.reported);
+        if let Some(exchange) = response.extensions_mut().get_mut::<Exchange>() {
+            exchange.client_identity = initialize_client;
+        }
+        return response;
     }
     let agent =
         match api::authenticate(&app, &headers, &trace, Some(&api::mcp_resource(&app))).await {
@@ -121,6 +148,7 @@ async fn handle(State(app): State<App>, request: Request) -> Response {
                     scope: None,
                     operation: Some(operation),
                     reported: Some(trace.reported),
+                    client_identity: None,
                 });
                 return response;
             }
@@ -194,6 +222,7 @@ fn answer(
         scope,
         operation: Some(operation),
         reported: Some(reported.clone()),
+        client_identity: None,
     });
     response
 }

@@ -24,6 +24,52 @@
 @plugin "../vendor/heroicons.cjs";
 @import "./legacy-compat.css";
 
+/* Shared colour input. The chip is the banner's surface, border and ink,
+ * with the name inside, rather than a swatch beside a separate label. */
+.ui-colour-trigger:not([hidden]), .ui-colour-option {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  text-align: left;
+}
+/* The closed field borrows the select's right padding. The chevron sits where
+ * that select draws its own arrow: centred on the box. `right` is measured
+ * inside the 1px border, and the 16px icon's glyph is centred in the icon,
+ * so 0.5px puts the glyph on the arrow. */
+.ui-colour-trigger:not([hidden]) { position: relative; }
+.ui-colour-chevron {
+  position: absolute;
+  top: 50%;
+  right: 0.5px;
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+.ui-colour-chip {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+  flex: 0 1 auto;
+  border-width: 2px;
+  border-style: solid;
+  border-radius: 0.375rem;
+  padding: 0 0.375rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ui-colour-option[data-active] { background: var(--color-brand-surface); }
+.ui-colour-option[aria-selected="false"] .ui-colour-check { visibility: hidden; }
+@media (pointer: coarse) {
+  .ui-colour-option { min-height: 2.5rem; }
+}
+
 /* Instrument Sans is vendored under SIL OFL 1.1 in priv/static/fonts/OFL.txt
  * from Instrument/instrument-sans at 7fa22308a3d0c94ee2b3cd537a1196b65db34a3e.
  * Keep these font files local so production shells do not make third-party

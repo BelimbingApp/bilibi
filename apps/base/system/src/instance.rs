@@ -1,29 +1,23 @@
-//! Which instance this server is: Dev, Staging or Production, and how it
-//! announces itself. The role is the deployment's `BILIBI_ENV` (the host
-//! validates it at boot and refuses any other value, `apps/web/src/environment.rs`);
-//! it is a bootstrap fact, never a setting, so no page or setting can turn a
-//! Production server into one that builds. The label, the colour and the
-//! instance it installs releases from are operator settings whose defaults
-//! follow the role. `scripts/install-server.sh` writes `BILIBI_ENV` into each
-//! instance's `env` file; `docs/server-install.md` describes the layout.
-//! The instance banner, the Software page and the agent confirm pages all
-//! read `Instance::resolve`, so they cannot disagree.
+//! Instance identity, shared by the shell, banners, Software and agents.
+//! No Bilimbi counterpart beyond its development status-bar marker.
+//! `instance.role` is initialized by the explicit production seed from
+//! `BILIBI_ENV`; later environment changes cannot override the stored role.
 use bilibi_module_registry::{Contribution, Provenance};
 use bilibi_settings::{
     Definition, Editor, ScopeKind, Setting, Settings, Validator, ValueType, DEFINITIONS,
 };
-use bilibi_ui::{Html, InstanceBadge, InstanceBanner, StatusKind};
+use bilibi_ui::{Html, InstanceBadge, InstanceBanner, InstanceStatus, StatusKind};
 use serde_json::{json, Value};
 use tokio_postgres::GenericClient;
 
+pub const INSTANCE_ROLE_KEY: &str = "instance.role";
 pub const INSTANCE_LABEL_KEY: &str = "instance.label";
 pub const INSTANCE_COLOUR_KEY: &str = "instance.colour";
 pub const INSTANCE_INSTALLS_FROM_KEY: &str = "instance.installs_from";
 /// Changing how the instance announces itself and where it installs from.
 pub const INSTANCE_MANAGE: &str = "admin.system.instance.manage";
 
-/// What this server is for. Only Dev builds software; the others install a
-/// release that another instance tested.
+/// What this server is for. Software is built locally; servers install tested releases.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Role {
     Dev,
@@ -31,7 +25,7 @@ pub enum Role {
     Production,
 }
 impl Role {
-    /// The strict reading of `BILIBI_ENV` the host boots on: `development`,
+    /// The install seed's reading of `BILIBI_ENV`: `development`,
     /// `staging`, and `production` (an empty value means production).
     pub fn parse(value: &str) -> Option<Self> {
         match value.trim() {
@@ -41,14 +35,13 @@ impl Role {
             _ => None,
         }
     }
-    /// The role of the running process. Unset is Production, the safe side;
-    /// a value the host would refuse is not reachable here because the host
-    /// refused to boot on it.
-    pub fn from_env() -> Self {
-        std::env::var("BILIBI_ENV")
-            .ok()
-            .and_then(|value| Self::parse(&value))
-            .unwrap_or(Self::Production)
+    /// Installation input only, used by the explicit production seed.
+    pub fn from_env() -> bilibi_database::Result<Self> {
+        match std::env::var("BILIBI_ENV") {
+            Ok(value) => Self::parse(&value).ok_or(bilibi_database::Error::Invalid),
+            Err(std::env::VarError::NotPresent) => Ok(Self::Production),
+            Err(_) => Err(bilibi_database::Error::Invalid),
+        }
     }
     pub fn env_value(self) -> &'static str {
         match self {
@@ -81,11 +74,6 @@ impl Role {
             Self::Production => Colour::Danger,
         }
     }
-    /// Only Dev compiles software. Staging and Production install what another
-    /// instance tested (`docs/server-install.md`).
-    pub fn builds(self) -> bool {
-        self == Self::Dev
-    }
 }
 
 /// A `DESIGN.md` status role the banner is drawn in. Never an arbitrary colour.
@@ -96,6 +84,24 @@ pub enum Colour {
     Warning,
     Danger,
 }
+
+pub(super) fn colour_input(field: bilibi_ui::Field, role: &str) -> bilibi_ui::ColourInput {
+    use bilibi_ui::{ColourChoice, ColourInput, ColourRole};
+    let swatch = |colour| match colour {
+        Colour::Info => ColourRole::Info,
+        Colour::Success => ColourRole::Success,
+        Colour::Warning => ColourRole::Warning,
+        Colour::Danger => ColourRole::Danger,
+    };
+    let inherited = swatch(Role::parse(role).unwrap_or(Role::Production).colour());
+    let mut options = vec![ColourChoice::new("Use role colour", "", inherited)];
+    options.extend(Colour::ALL.map(|colour| {
+        let role = swatch(colour);
+        ColourChoice::new(role.label(), colour.as_str(), role)
+    }));
+    ColourInput::new(field, options)
+}
+
 impl Colour {
     pub const ALL: [Colour; 4] = [Self::Info, Self::Success, Self::Warning, Self::Danger];
     pub fn as_str(self) -> &'static str {
@@ -159,19 +165,25 @@ pub fn valid_instance_name(name: &str) -> bool {
 /// This instance as it should be announced.
 #[derive(Clone, Debug)]
 pub struct Instance {
+    /// Canonical public address from APP_ORIGIN, never the request Host.
+    pub origin: String,
     pub role: Role,
     pub label: String,
     pub colour: Colour,
     pub installs_from: Option<Source>,
 }
 impl Instance {
-    /// The role from the process environment and the three operator settings,
-    /// each falling back to the role's default when unset or unreadable.
+    /// Resolve identity from global settings. Unset label and colour follow the stored role.
     pub async fn resolve(
         settings: &Settings,
         client: &(impl GenericClient + Sync),
     ) -> bilibi_database::Result<Self> {
-        let role = Role::from_env();
+        let role = settings
+            .get_global(client, INSTANCE_ROLE_KEY)
+            .await?
+            .as_str()
+            .and_then(Role::parse)
+            .ok_or(bilibi_database::Error::Invalid)?;
         let label = settings
             .get_global(client, INSTANCE_LABEL_KEY)
             .await?
@@ -191,6 +203,10 @@ impl Instance {
             .as_str()
             .and_then(Source::parse);
         Ok(Self {
+            origin: std::env::var("APP_ORIGIN")
+                .unwrap_or_else(|_| "http://localhost:3000".into())
+                .trim_end_matches('/')
+                .to_owned(),
             role,
             label,
             colour,
@@ -227,19 +243,31 @@ impl Instance {
     pub fn notice(&self) -> String {
         format!("You are on {}. {}", self.label, self.role.consequence())
     }
+    /// Agent connection identity includes the role even when the operator's
+    /// label is ambiguous, and the canonical address rather than request data.
+    pub fn agent_notice(&self) -> String {
+        format!(
+            "You are on {} ({}), at {}. {}",
+            self.label,
+            self.role.label(),
+            self.origin,
+            self.role.consequence()
+        )
+    }
     /// What the Agent API and MCP send, so an agent can tell its person
     /// "this will create the order on Staging".
     pub fn agent_json(&self) -> Value {
         json!({
             "environment": self.role.env_value(),
+            "role": self.role.label(),
+            "origin": self.origin,
             "label": self.label,
             "production": self.role == Role::Production,
-            "notice": self.notice(),
+            "notice": self.agent_notice(),
         })
     }
-    /// The shell's top-bar badge. Production shows none: it is the normal
-    /// case, and a badge on every production page would teach people to stop
-    /// looking at it. The account panel still names it.
+    /// The shared badge for sign-in and the shell. Production needs no extra badge;
+    /// the workspace shell also suppresses Dev because its status bar names it.
     pub fn badge(&self) -> askama::Result<Html> {
         if self.role == Role::Production {
             return Ok(Html::default());
@@ -250,6 +278,18 @@ impl Instance {
             role: self.role.env_value(),
             label: &self.label,
             title: &title,
+        })
+    }
+    /// The status bar always names the role, including Production.
+    pub fn status(&self, editable: bool) -> askama::Result<Html> {
+        Html::render(&InstanceStatus {
+            id: "app-env",
+            tone: self.colour.status(),
+            role: self.role.env_value(),
+            role_label: self.role.label(),
+            label: &self.label,
+            title: &self.notice(),
+            editable,
         })
     }
     /// The banner at the top of a review or confirmation, in every role,
@@ -277,17 +317,17 @@ macro_rules! provenance {
 }
 const GLOBAL: &[ScopeKind] = &[ScopeKind::Global];
 inventory::submit! { Contribution::new(DEFINITIONS, INSTANCE_LABEL_KEY, provenance!(), &Setting::Definition(Definition {
-    value_type: ValueType::String, scopes: GLOBAL, default: || json!(Role::from_env().label()), nullable: false, encrypted: false,
+    value_type: ValueType::String, scopes: GLOBAL, default: || json!(null), nullable: true, encrypted: false,
     minimum: None, maximum: None,
-    validator: Some(Validator { accepts: |value: &Value| value.as_str().is_some_and(|label| { let label = label.trim(); !label.is_empty() && label.len() <= 40 }), message: "The instance name must be 1 to 40 characters, like Production or Dev (laptop)." }),
+    validator: Some(Validator { accepts: |value: &Value| value.is_null() || value.as_str().is_some_and(|label| { let label = label.trim(); !label.is_empty() && label.len() <= 40 }), message: "The instance name must be 1 to 40 characters, like Production or Dev (laptop)." }),
     editor: Some(Editor { group: "Instance", label: "Instance name shown on every page",
         help: "Shown in the banner and in every confirm page so people know which server they are on. The default follows the server's role: Dev, Staging or Production (server owner only).",
         capability: Some(INSTANCE_MANAGE), reveal_duration_ms: 5_000 }),
 })) }
 inventory::submit! { Contribution::new(DEFINITIONS, INSTANCE_COLOUR_KEY, provenance!(), &Setting::Definition(Definition {
-    value_type: ValueType::String, scopes: GLOBAL, default: || json!(Role::from_env().colour().as_str()), nullable: false, encrypted: false,
+    value_type: ValueType::String, scopes: GLOBAL, default: || json!(null), nullable: true, encrypted: false,
     minimum: None, maximum: None,
-    validator: Some(Validator { accepts: |value: &Value| value.as_str().is_some_and(|colour| Colour::parse(colour).is_some()), message: "The colour must be info (blue), success (green), warning (amber) or danger (red)." }),
+    validator: Some(Validator { accepts: |value: &Value| value.is_null() || value.as_str().is_some_and(|colour| Colour::parse(colour).is_some()), message: "The colour must be info (blue), success (green), warning (amber) or danger (red)." }),
     editor: Some(Editor { group: "Instance", label: "Banner colour",
         help: "info (blue), success (green), warning (amber) or danger (red). The default follows the role: Dev is info, Staging is warning, Production is danger (server owner only).",
         capability: Some(INSTANCE_MANAGE), reveal_duration_ms: 5_000 }),
@@ -297,6 +337,40 @@ inventory::submit! { Contribution::new(DEFINITIONS, INSTANCE_INSTALLS_FROM_KEY, 
     minimum: None, maximum: None,
     validator: Some(Validator { accepts: |value: &Value| value.is_null() || value.as_str().is_some_and(|source| Source::parse(source).is_some()), message: "Name an instance on this machine, like dev, or an address, like https://dev.erp.example.com." }),
     editor: Some(Editor { group: "Instance", label: "Install releases tested on",
-        help: "The instance whose tested release this one installs: a name on this machine, like dev, or an address, like https://staging.erp.example.com. Leave empty on Dev, which builds its own (server owner only).",
+        help: "The instance whose tested release this one installs: a name on this machine, like dev, or an address, like https://staging.erp.example.com. Leave empty to install only releases uploaded here (server owner only).",
         capability: Some(INSTANCE_MANAGE), reveal_duration_ms: 5_000 }),
 })) }
+
+// The dedicated Core Administrator page guards this setting; the generic editor cannot change it.
+inventory::submit! { Contribution::new(DEFINITIONS, INSTANCE_ROLE_KEY, provenance!(), &Setting::Definition(Definition {
+    value_type: ValueType::String, scopes: GLOBAL, default: || json!("production"), nullable: false, encrypted: false,
+    minimum: None, maximum: None,
+    validator: Some(Validator { accepts: |value: &Value| matches!(value.as_str(), Some("development" | "staging" | "production")), message: "Choose Dev, Staging or Production." }),
+    editor: None,
+})) }
+
+pub(super) struct InstallRole;
+impl bilibi_database::seeds::SeedExecutor for InstallRole {
+    fn execute<'a>(
+        &'a self,
+        tx: &'a tokio_postgres::Transaction<'_>,
+        operation: &'a str,
+    ) -> bilibi_database::seeds::SeedFuture<'a> {
+        Box::pin(async move {
+            if operation != "initialize" {
+                return Err(bilibi_database::Error::Invalid);
+            }
+            // Explicit install seed, on the seed runner's transaction. Never on boot.
+            // Repeated installation preserves an operator's saved role.
+            if tx.query_opt("SELECT id FROM base_settings WHERE key=$1 AND tenant_id=0 AND scope_type='global' AND scope_id=0", &[&INSTANCE_ROLE_KEY]).await?.is_none() {
+                let role = Role::from_env()?;
+                tx.execute("INSERT INTO base_settings(key,tenant_id,scope_type,scope_id,value,is_encrypted) VALUES($1,0,'global',0,$2,false) ON CONFLICT DO NOTHING", &[&INSTANCE_ROLE_KEY, &json!(role.env_value())]).await?;
+            }
+            Ok(())
+        })
+    }
+}
+inventory::submit! { Contribution::new(bilibi_module_registry::contributions::SEEDS, "base/system.instance-role", provenance!(), &bilibi_module_registry::contributions::Seed {
+    version: "system-instance-role-v1", mode: bilibi_module_registry::contributions::SeedMode::Production,
+    action: bilibi_module_registry::contributions::SeedAction::Service { service: "base/system.install-role", operation: "initialize" },
+}) }

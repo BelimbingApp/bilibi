@@ -170,9 +170,9 @@ impl UserService {
         Ok((app, phone(&**client, scope.tenant(), user).await?))
     }
 
-    /// Whether this installation can send text messages at all.
-    pub fn sms_available(&self) -> bool {
-        self.sms.available()
+    /// Whether this server can send text messages now (its role).
+    pub async fn sms_available(&self) -> bool {
+        self.sms.available().await
     }
 
     /// Seconds until another code may be sent to this account (0: now).
@@ -207,7 +207,7 @@ impl UserService {
     /// number. Nothing is stored about the number until the code comes back.
     pub async fn begin_phone(&self, scope: &Scope, current: &str, number: &str) -> Outcome<String> {
         refuse_impersonation(scope)?;
-        if !self.sms.available() {
+        if !self.sms.available().await {
             return Err(TwoFactorError::SmsUnavailable);
         }
         let number = PhoneNumber::parse(number).ok_or(TwoFactorError::InvalidPhone)?;
@@ -282,8 +282,12 @@ impl UserService {
         }
     }
 
-    /// Removes the holder's phone after a current code (either method).
+    /// Removes the holder's phone after a current code (either method),
+    /// only while the authenticator app stays on: 2FA is never turned off.
     pub async fn remove_phone(&self, scope: &Scope, code: &str) -> Outcome<()> {
+        if !self.two_factor_status(scope).await?.authenticator {
+            return Err(TwoFactorError::LastMethod);
+        }
         let proof = self.prove(scope, code).await?;
         self.consume(scope, proof, super::Spend::RemovePhone).await
     }
@@ -297,7 +301,7 @@ impl UserService {
         purpose: Purpose,
         number: &PhoneNumber,
     ) -> Outcome<()> {
-        if !self.sms.available() {
+        if !self.sms.available().await {
             return Err(TwoFactorError::SmsUnavailable);
         }
         self.unlocked(scope).await?;
@@ -367,12 +371,7 @@ impl UserService {
         tx.commit().await?;
         let issuer = {
             let client = self.db.get().await.map_err(Error::from)?;
-            self.settings
-                .get_global(&**client, super::ISSUER_KEY)
-                .await?
-                .as_str()
-                .unwrap_or("Bilibi")
-                .to_owned()
+            self.issuer(&**client).await?
         };
         let text =
             format!("{issuer} code: {code}. It expires in {CODE_MINUTES} minutes. Never share it.");
@@ -385,7 +384,7 @@ impl UserService {
     /// An administrator sets, changes or clears (`""`) an account's number.
     /// A set number is unverified: it is a second factor only after its
     /// holder accepts a code sent to it. Needs `admin.user.update` and the
-    /// step-up operation [`super::ADMIN_RESET`].
+    /// step-up operation [`super::PHONE_UPDATE`].
     pub async fn set_phone(
         &self,
         scope: &Scope,
@@ -403,7 +402,7 @@ impl UserService {
             })?)
         };
         self.step_up
-            .require(scope, super::ADMIN_RESET, &format!("user:{user}"))
+            .require(scope, super::PHONE_UPDATE, &format!("user:{user}"))
             .await?;
         let mut client = self.db.get().await.map_err(Error::from)?;
         let mut tx = self
@@ -456,69 +455,6 @@ impl UserService {
             })
         })
         .await?;
-        tx.commit().await?;
-        Ok(())
-    }
-
-    /// An administrator resets an account's 2FA: the authenticator and its
-    /// recovery codes are deleted and the phone must be verified again.
-    /// Every session of the account ends. Same guard as [`Self::set_phone`].
-    pub async fn reset_two_factor(
-        &self,
-        scope: &Scope,
-        user: i64,
-    ) -> std::result::Result<(), crate::AccountError> {
-        if scope.user() == user {
-            return Err(crate::AccountError::OwnAccount);
-        }
-        self.step_up
-            .require(scope, super::ADMIN_RESET, &format!("user:{user}"))
-            .await?;
-        let mut client = self.db.get().await.map_err(Error::from)?;
-        let mut tx = self
-            .mutations
-            .begin(&mut client, scope.mutation_context("user.two_factor.reset"))
-            .await?;
-        let scope = self.fresh(tx.sql(), scope).await?;
-        self.open_account_write(&tx, &scope, user, None, crate::contributions::UPDATE)
-            .await?;
-        let tenant = scope.tenant();
-        let ended = tx.mutate(move |sql| {
-            Box::pin(async move {
-                let app = sql
-                    .execute(
-                        "DELETE FROM user_two_factor WHERE tenant_id=$1 AND user_id=$2",
-                        &[&tenant, &user],
-                    )
-                    .await?;
-                let phone = sql
-                    .execute(
-                        "UPDATE user_phones SET verified_at=NULL,updated_at=now() WHERE tenant_id=$1 AND user_id=$2 AND verified_at IS NOT NULL",
-                        &[&tenant, &user],
-                    )
-                    .await?;
-                sql.execute(
-                    "UPDATE user_sms_codes SET expires_at=now() WHERE tenant_id=$1 AND user_id=$2 AND used_at IS NULL AND expires_at>now()",
-                    &[&tenant, &user],
-                )
-                .await?;
-                super::clear_failures(sql, tenant, user).await?;
-                let ended = bilibi_security::Sessions::end_user_sessions(sql, tenant, user, None).await?;
-                let count = ended.len();
-                Ok((
-                    ended,
-                    vec![Change {
-                        kind: "user_two_factor".into(),
-                        id: user,
-                        old: json!({"authenticator": app > 0, "phone_verified": phone > 0}),
-                        new: json!({"authenticator": false, "phone_verified": false, "sessions_ended": count}),
-                    }],
-                ))
-            })
-        })
-        .await?;
-        let sessions = self.sessions.clone();
-        tx.after_commit(move || sessions.announce(ended));
         tx.commit().await?;
         Ok(())
     }

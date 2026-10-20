@@ -36,6 +36,7 @@ Two lines in the owning module, nothing anywhere else.
 - An operation may also guard one setting (`.guards_setting("key")`): the settings editor then asks for it before changing, clearing or restoring that setting.
 - A module that is not mounted declares nothing, so its rows leave the policy page.
 - Never decide in code whether step-up applies. That is the tenant's policy.
+- A confirmation form that takes a code itself calls `require_code` for its `.always()` operation. A recent browser check, including enrollment, cannot replace a code on that submission. Missing codes are audited refusals; an account without 2FA receives the usual enrollment prompt.
 - Call `require` as often as the action needs: a presented code is spent by the first call and covers the rest of the request.
 
 ## Policy
@@ -52,7 +53,7 @@ Tenants decide per operation on **Administration › Authorization › Step-up 2
 
 - Changing any of these is itself a step-up operation (`base.step_up.policy.update`, on the floor). Settings audits it.
 - The installation owner sees the floor and the maxima on the same page.
-- `BILIBI_ENV=development` turns enforcement off (the host calls `set_enforced`). Anything else enforces. An operation declared `.always()` is enforced everywhere, as "ask every time", and the policy page shows it as fixed.
+- The stored Dev role turns ordinary enforcement off. Base System binds the live `Enforcement` policy, which reads `instance.role` on each check; changing the role takes effect without restarting. A missing binding enforces. A fixture binary with no authenticator may call `StepUp::set_enforced(false)` after installing its services; the host never does. An operation declared `.always()` is enforced everywhere, as "ask every time", and the policy page shows it as fixed.
 
 ## Proofs per channel
 
@@ -124,12 +125,14 @@ Every check that applies writes one action:
 
 ## Before a session exists
 
-`StepUp::applies(scope, key)` says whether the tenant's policy asks for `key`, reading only. Core User's sign-in uses it: when `core.user.sign_in` is on, the password leaves a pending sign-in, and the code then goes through `require` with `Scope::presenting_step_up(code)`, as an agent's does ([ADR 02](../../../docs/architecture/decisions/02-sms-second-factor.md)).
+`StepUp::applies(scope, key)` says whether the tenant's policy asks for `key`, reading only. Core User's sign-in uses it: when `core.user.sign_in` is on, the password leaves a pending sign-in, and the code then goes through `require` with `Scope::presenting_step_up(code)`, as an agent's does ([ADR 03](../../../docs/architecture/decisions/03-sms-second-factor.md)).
 
 ## Try it
 
-On a migrated disposable database with `BILIBI_ENV=staging`:
+On a migrated disposable database, select Staging in Instance settings (`BILIBI_ENV=staging` supplies it only during the first install seed):
 
-- Enroll at `/settings/two-factor`.
+- Enroll at `/settings/two-factor`. There are no recovery codes: after a lost phone another admin resets the account (`core.user.two_factor.reset`, `.always()`), or the server owner runs `bilibi-web two-factor-reset`.
 - Open `/authz/step-up` and turn an operation on.
 - `cargo run -p bilibi-web --example step-up-reference -- <user id> auditor assign` with `BILIBI_SESSION_TOKEN` set to a browser session's cookie. It prints `ok` or the `step_up_required` answer.
+
+`StepUp::enrolled(scope)` reads the holder’s live enrollment state for shared `bilibi_ui::StepUp` forms. `required(scope, key)` answers whether policy protects a field without spending proof. These reads do not authorize a write; the owner still calls `require` or `require_code`.

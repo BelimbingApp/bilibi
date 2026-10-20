@@ -36,7 +36,7 @@ or cache reach across requests.
 
 Search uses one fresh capability snapshot without per-candidate decision logs.
 Direct deny wins over grants and `grant_all`; platform capabilities additionally
-need explicit operator identity. An agent reaches every capability its person
+need explicit operator identity. Tenancy reproofs read the actor and agent grant live; owner standing additionally re-reads the installation bootstrap receipt and refuses impersonation. An agent holds only its own person's standing, and an owner-only write still requires its declared step-up policy. An agent reaches every capability its person
 holds, administration included, and never more. The one exception is
 impersonation (`*.impersonate`): an agent switching to another identity would
 break "the agent acts as its person" in the audit trail, so it is never agent
@@ -81,6 +81,19 @@ restricted results, malformed input, unavailable entries, direct-write refusal,
 live grant/revocation, cross-tenant denial, deny precedence and decision logs.
 Temporary grants and sessions are removed on successful completion. This is a
 manual runtime specimen, with no unit tests or assertions.
+
+## MCP agent and client labels
+
+A model can report itself directly through any generic tool, with no local client configuration:
+
+```json
+{"name":"search","arguments":{"query":"companies","agent_self_report":"claude-code/sonnet-4.5-default"}}
+```
+
+The optional `agent_self_report` argument is available on `search`, `describe`, `guide`, `read`, `plan` and `commit`. MCP connect instructions and tool descriptions ask agents to include it on every call, ask their user for unknown harness/model/version/effort parts, never guess, and omit parts nobody can give. The example is a shape example, not a value to copy.
+
+- The host consumes the argument before operation dispatch; it is never business input or part of plan identity, input or preview comparisons.
+- The argument is the highest-precedence source of the report. Precedence, the shape check, what is recorded and the separate **Client identity** transport evidence are owned by the [host contract](../../web/README.md).
 
 ## Reviewed safe writes
 
@@ -128,10 +141,10 @@ usable until expiry, subject to a fresh successful revalidation.
 Every preview and every successful commit carries `instance` (`bilibi_system::Instance`, `apps/base/system/README.md`), so the agent can tell its person "this will create the order on Staging":
 
 ```json
-"instance": {"environment": "staging", "label": "Staging", "production": false, "notice": "You are on Staging. This is a test copy. Changes here do not affect production."}
+"instance": {"environment": "staging", "role": "Staging", "origin": "https://staging.example.com", "label": "Staging", "production": false, "notice": "You are on Staging (Staging), at https://staging.example.com. This is a test copy. Changes here do not affect production."}
 ```
 
-- `environment` is `development`, `staging` or `production` (`BILIBI_ENV`); `label` is the operator's `instance.label` setting, which defaults to Dev, Staging or Production.
+- `environment` is `development`, `staging` or `production` (the saved `instance.role` setting); `role` is its display word (Dev, Staging or Production); `origin` is the canonical `APP_ORIGIN`; `label` is the operator's `instance.label` setting, which defaults to the role word.
 - MCP names it too: `initialize` (`serverInfo.title` and the instructions) and the `plan` and `commit` tool descriptions in `tools/list`. `GET /.well-known/bilibi` carries the same object.
 - The plugin skill (`core/agent_plugins`) tells the agent to open every review and confirmation with it, as a full-width banner in an HTML review. Bilibi draws no plan review page itself; the harness does.
 
@@ -194,7 +207,7 @@ A page's write event calls the contract the agent doors call, through `base/agen
 
 - `Call` names the live request's scope and credential (`LiveRequest::credential`), the page service, the event and the contract. The browser session is the plan's credential: proved and held (key-share lock) on the plan's own transaction, so a sign-out cannot race the write.
 - Owner refusals come back typed: `InvalidInput(fields)`, `Forbidden`, `NotFound`, `Backend(Conflict)`, … Return `Backend(Unauthorized)` and `Backend(StepUpRequired { .. })` from the page unchanged: the host signs the browser in again or sends it to confirm and back.
-- Core Person, Core Affiliation, Core Company's relationship screens and Base Events' replay page are the running examples.
+- Core Person, Core Affiliation, Core Company's relationship screens, Core Tenant Administration and Base Events' replay page are the running examples.
 
 ## Page writes declaration and check
 
@@ -227,12 +240,20 @@ Each gap is a `Pending` declaration in the owning module, with its reason. Remov
 | `base/session.pages` | Ending sessions |
 | `base/settings_editor.pages` | Saving and restoring settings |
 | `base/system.pages` | Localization changes |
-| `base/tenancy.pages` | Tenant administration |
 | `base/tiling.pages` | Workspace and shared layouts |
 | `base/workflow.pages` | The workflow reference page |
-| `core/address.pages` | Addresses (no `core.address` contract) |
 | `core/agent_access.pages` | Device approval and connection revocation |
 | `core/company.pages` | Company edits, lifecycle, activities, departments, reference types; the create form records activities `core.company.create` does not take |
 | `core/geonames.pages` | Postcode corrections |
 | `core/user.pages`, `core/user.query-pages` | Accounts, passwords, two-factor, notifications, saved queries |
 | `core/user_administration.pages` | Account administration |
+
+## Agent connection context
+
+MCP initialization and generated plugin workflow skills use `BUSINESS_CONTEXT` from [src/lib.rs](src/lib.rs): Bilibi is the person's business system, and agents search its operations and guides before answering or claiming a field or action is missing. `INSTANCE_INSTRUCTIONS` tells agents to announce the label, role and canonical address in their first answer and every plan review and confirmation. MCP `serverInfo.title` names all three; plan and commit results carry them in `instance` through `bilibi_system::Instance::agent_json`.
+
+## Tenant provisioning
+
+[Core Tenant Administration](../../core/tenant_administration/README.md) registers `core.tenant_administration.tenant.list`, `.get` and `.create`. The Tenants page uses `PageContracts` for its directory reads and create event, with no pending write allowance. Search and describe discover these contracts through the same registry as the ChatGPT plugin; the plugin contains no tenant-specific logic.
+
+The create input names the tenant, a `primary_company` and optional `additional_companies` names. One reviewed commit creates the tenant, companies and primary assignment on the plan transaction. Tenant-create permission requires the platform operator's standing and capability; its declared step-up policy applies to both doors. Company provisioning takes Tenancy's sealed receipt for a fresh insert, never an input tenant id or a retargeted scope. Creating a tenant does not switch the caller into it or grant access to its business data.

@@ -1,0 +1,68 @@
+# Tag vX.Y.Z and publish the GitHub release only after Official compatibility
+# has passed for this exact commit against every official Domain and Extension.
+# Run it from the Actions tab on main. Pushing a release tag by hand skips
+# this gate (docs/versions.md).
+name: Release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    name: This commit may be released
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.ready.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Require main and the upgrade notes
+        id: ready
+        run: python3 scripts/release.py ready
+
+  compatibility:
+    name: Official compatibility at the latest releases
+    needs: guard
+    permissions:
+      # The called workflow's record job publishes the catalogue branch.
+      contents: write
+    uses: ./.github/workflows/domains.yml
+    with:
+      domains_at: latest-release
+      platform_version: ${{ needs.guard.outputs.version }}
+
+  publish:
+    name: Publish the release
+    needs: [guard, compatibility]
+    if: needs.compatibility.outputs.compatible == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Tag and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/release.py publish
+
+  # The tag exists now. List it in the published catalogue, so adopters see it
+  # without waiting for the daily run.
+  catalogue:
+    name: List the release in the catalogue
+    needs: [guard, publish]
+    permissions:
+      contents: write
+    uses: ./.github/workflows/catalogue.yml
+    with:
+      platform_version: ${{ needs.guard.outputs.version }}

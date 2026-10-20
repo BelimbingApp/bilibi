@@ -985,6 +985,12 @@ impl LiveState<Scope, Error> for RolesPage {
 // ---------------------------------------------------------------------------
 // A company's relationships, and the Relationships card of a record page.
 
+// Bilimbi RelationshipsLive's date editor also supplies the panel's columns.
+bilibi_ui::record_fields! { mod link_fields {
+    EFFECTIVE_FROM: bilibi_ui::RecordField::new("effective_from", "Effective From"),
+    EFFECTIVE_TO: bilibi_ui::RecordField::new("effective_to", "Effective To"),
+} }
+
 /// Bilimbi's built-ins; the first names the related party, which the party
 /// model lets be a person.
 fn link_columns(id: &str, page: bool) -> Result<ListColumns> {
@@ -1005,7 +1011,9 @@ fn link_columns(id: &str, page: bool) -> Result<ListColumns> {
             BuiltinColumn::new("status", "Status"),
         ]
     };
-    ListColumns::mount(id, columns).map_err(|_| Error::Internal)
+    ListColumns::mount(id, columns)
+        .map(|columns| columns.with_record_fields(link_fields::ALL.iter().copied()))
+        .map_err(|_| Error::Internal)
 }
 /// The page header whose subtitle is the company's code, as the source sets
 /// it in monospace.
@@ -1061,6 +1069,18 @@ fn period(entry: &Entry) -> Result<Html> {
             .map_or("Present", CalendarDate::as_str),
     })
 }
+fn date_cell(date: Option<&CalendarDate>) -> Result<bilibi_ui::Cell> {
+    let Some(date) = date else {
+        return Ok(bilibi_ui::Cell::text("—"));
+    };
+    let iso = date.as_str();
+    let date = iso.parse().map_err(|_| Error::Internal)?;
+    Ok(bilibi_ui::Cell::date(
+        iso,
+        &bilibi_datetime::DisplayContext::anonymous().render_date(date),
+    ))
+}
+
 /// Bilimbi's active/inactive judgment, with the history states the party
 /// model keeps: an unlinked link and one whose dates are over or not yet.
 fn link_status(entry: &Entry) -> Result<Html> {
@@ -1130,6 +1150,11 @@ fn link_row(
             })?,
         )
         .slot("effective", period(entry)?)
+        .cell(
+            "effective_from",
+            date_cell(entry.relationship.dates.from())?,
+        )
+        .cell("effective_to", date_cell(entry.relationship.dates.to())?)
         .slot("status", link_status(entry)?);
     if actions && !entry.relationship.unlinked() {
         let value = id.to_string();
@@ -1440,10 +1465,8 @@ impl LinksPage {
                     .required(),
             )?);
         }
-        for (key, label) in [
-            ("effective_from", "Effective From"),
-            ("effective_to", "Effective To"),
-        ] {
+        for key in [link_fields::EFFECTIVE_FROM.id, link_fields::EFFECTIVE_TO.id] {
+            let label = link_fields::get(key).label;
             if modal.ending && key == "effective_from" {
                 continue;
             }

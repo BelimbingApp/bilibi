@@ -198,3 +198,11 @@ fn plural(value: usize, one: &str, many: &str) -> String {
         if value == 1 { one } else { many }
     )
 }
+
+// Belimbing DatabaseTables Show metadata; tab contents are nested collections.
+bilibi_ui::record_fields! { pub(super) mod fields {
+    TABLE: bilibi_ui::RecordField::new("table", "Table"),
+    MODULE: bilibi_ui::RecordField::new("module", "Module"),
+    MIGRATION: bilibi_ui::RecordField::new("migration", "Migration"),
+    COLUMNS: bilibi_ui::RecordField::new("column_count", "Columns"),
+} }

@@ -1,4 +1,4 @@
-# ADR 02: Text-message codes as a second 2FA method, and sign-in as a step-up consumer
+# ADR 03: Text-message codes as a second 2FA method, and sign-in as a step-up consumer
 
 **Document Type:** Architecture Decision Record
 **Status:** Proposed
@@ -8,7 +8,7 @@
 
 > The `Agents` value is self-reporting: what the agent reports about itself. Its effort level is unknown; ask the user who ran the harness before this record is accepted.
 >
-> Builds on [ADR 01](./01-agent-first-operations.md), which already records the four doors, step-up as a tenant policy, the 30-minute window with a 6-hour cap for humans and agents alike, and the deferred prompt-injection risk. This record does not restate them.
+> Builds on [ADR 01](./01-agent-first-operations.md) and on the 2FA design of #84 (no recovery codes, admin and server reset, move to a new phone), which already records the four doors, step-up as a tenant policy, the 30-minute window with a 6-hour cap for humans and agents alike, and the deferred prompt-injection risk. This record does not restate them.
 
 ## Context
 
@@ -25,7 +25,8 @@
 - Step-up still names no method. It gains two small, method-agnostic pieces:
   - **`Provider::challenge`**: a code is owed by a caller that cannot be sent to a prompt (an agent). A method that delivers codes sends one. A method the person carries (the app) does nothing. The default does nothing.
   - **`StepUp::applies(scope, key)`**: whether a tenant's policy asks for a check, readable before any session exists.
-- A person may have both methods. A six-digit code is tried against the app first, then against the latest text-message code. Recovery codes stay with the app.
+- A person may have both methods. A six-digit code is tried against the app first, then against the latest text-message code.
+- 2FA is never turned off: a phone can be removed only while the app stays on.
 
 ### 2. Text-message codes
 
@@ -39,14 +40,15 @@
 | Phone | One per account, E.164. A second factor only once its holder accepted a code sent to it |
 
 - **The holder adds a number** in My settings: password again, a code to the new number, then the code back.
-- **An administrator may set or change a number** on the user's page. It is then unverified until the holder confirms it. Changing a phone and **resetting 2FA** are a new step-up operation, `core.user.two_factor.reset` (on by default). A reset deletes the app and its recovery codes, unverifies the phone and ends the account's sessions.
+- **An administrator may set or change a number** on the user's page, behind step-up `core.user.phone.update` (on by default). It is then unverified until the holder confirms it.
+- The existing **2FA reset** (`core.user.two_factor.reset`: an admin's fresh code every time, or the server command) now also unverifies the phone and ends codes already sent.
 - A person with no verified method is told to contact an administrator. Nobody is locked out silently.
 
 ### 3. Sending: Base SMS, simulator first
 
 - New module `base/sms`: one validated `PhoneNumber` (E.164) and one `Gateway` with a `Driver` interface. Callers never talk to a provider.
 - **The only driver today is the simulator.** It writes each message to a private file. `/dev/sms-inbox` shows them like a phone screen, so testers can sign in without a phone.
-- The simulator runs in `development` and `staging` only. In `production` the gateway is unavailable and `/dev/sms-inbox` is not routed at all. SMS is refused rather than pretended.
+- The simulator runs while the stored server role (`instance.role`) is Dev or Staging, read on every use. On Production the gateway is unavailable and `/dev/sms-inbox` answers 404. SMS is refused rather than pretended.
 - A real provider is a second driver that sends through `base/integration`, with its credentials as encrypted operator settings. The provider (Twilio, Notify.lk, Dialog or other) is chosen when an account exists. Bilibi does not ship a placeholder driver.
 
 ### 4. Sign-in is one more consumer
@@ -62,7 +64,8 @@
 | Operation | Default |
 |---|---|
 | Sign in (`core.user.sign_in`) | Off |
-| Change a user's 2FA (`core.user.two_factor.reset`) | On |
+| Change a user's phone (`core.user.phone.update`) | On |
+| Reset a user's 2FA (`core.user.two_factor.reset`, existing) | Always asks |
 | Role and capability changes (existing, `base/authz`) | As declared there |
 | Finance operations | Declared by the Domain that adds them; none is mounted here |
 

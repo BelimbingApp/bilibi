@@ -1,6 +1,6 @@
 {#- Shared form controls: the one markup source for input (text and every
     native type, checkbox, select, textarea, hidden, password with reveal),
-    secret input, code input, combobox, multi-select, radio group, restricted
+    secret input, code input, colour input, combobox, multi-select, radio group, restricted
     value, restricted field and the live file input, with the field classes, described-by wiring
     and error lines they share. Classes, data attributes, ARIA and anatomy
     mirror Bilimbi apps/base/ui/lib/ui/components/forms.ex at the pinned
@@ -35,6 +35,26 @@
 {#- The error lines of a control, each addressable from aria-describedby. -#}
 {% macro errors(id, errors, numbered=true) %}
 {%- for message in errors %}{% call error(id=id, index=loop.index0, numbered=numbered) %}{{ message }}{% endcall %}{% endfor -%}
+{% endmacro %}
+
+{#- A theme-role colour select. The native select remains the form control;
+    the hook enhances it with a keyboard-operated list of banner chips. -#}
+{% macro colour_input(control) %}
+<div id="{{ control.field.id }}-wrapper" data-hook="ColourInput" class="relative floating-scope {{ control.field.wrapper() }}">
+<div class="relative floating-anchor">
+<select id="{{ control.field.id }}" name="{{ control.field.name }}" data-colour-select class="{{ control.field.control_class() }}"{% call aria(invalid=control.field.invalid(), described_by=control.field.described_by()) %}{% endcall %}{{ control.field.attrs.html() }}>
+{% for option in control.options %}<option value="{{ option.value }}"{% if option.value == control.field.value %} selected{% endif %}>{{ option.label }}</option>{% endfor %}
+</select>
+<button type="button" id="{{ control.field.id }}-trigger" data-colour-trigger hidden role="combobox"{% if control.field.attrs.required %} aria-required="true"{% endif %} aria-haspopup="listbox" aria-expanded="false" aria-controls="{{ control.field.id }}-options" aria-labelledby="{{ control.field.id }}-label {{ control.field.id }}-value"{% call aria(invalid=control.field.invalid(), described_by=control.field.described_by()) %}{% endcall %} class="ui-colour-trigger {{ control.field.control_class() }}"{% if control.field.attrs.disabled || control.field.attrs.readonly %} disabled{% endif %}>
+<span id="{{ control.field.id }}-value" data-colour-preview class="ui-colour-chip {{ control.selected().colour.class() }}">{{ control.selected().label }}</span>{% call ui::icon(name="hero-chevron-down", class="ui-colour-chevron size-4 shrink-0 text-ink-muted") %}{% endcall %}
+</button>
+<label id="{{ control.field.id }}-label" for="{{ control.field.id }}" class="{{ bilibi_ui::forms::PINNED_LABEL_CLASS }}">{{ control.field.label }}{% if control.field.attrs.required %}<span aria-hidden="true">*</span>{% endif %}</label>
+</div>
+<div id="{{ control.field.id }}-options" hidden role="listbox" tabindex="-1" aria-labelledby="{{ control.field.id }}-label" class="floating-list ui-colour-options z-30 mt-1 max-h-60 min-w-56 overflow-y-auto rounded-xl border border-line bg-surface p-1.5 shadow-lg">
+{% for option in control.options %}<div id="{{ control.field.id }}-option-{{ loop.index0 }}" role="option" tabindex="-1" data-value="{{ option.value }}" aria-selected="{% if option.value == control.field.value %}true{% else %}false{% endif %}" class="ui-colour-option cursor-pointer rounded-md px-2.5 py-1.5 text-base text-ink hover:bg-surface-sunken"><span data-option-label class="ui-colour-chip {{ option.colour.class() }}">{{ option.label }}</span>{% call ui::icon(name="hero-check", class="ui-colour-check ml-auto size-4 shrink-0") %}{% endcall %}</div>{% endfor %}
+</div>
+{% call hint(id=control.field.id, text=control.field.hint) %}{% endcall %}{% call errors(id=control.field.id, errors=control.field.errors) %}{% endcall %}
+</div>
 {% endmacro %}
 
 {#- The bare control of a select, textarea or single-line input; field is a
@@ -87,7 +107,7 @@
 {% macro code_input(code) %}
 <div id="{{ code.id }}-code" data-hook="CodeInput" data-code-length="{{ code.length }}"{% if code.numeric %} data-code-numeric{% endif %} class="mb-4">
 <label for="{{ code.id }}" class="mb-1.5 block text-sm font-medium text-ink">{{ code.label }}</label>
-<div class="relative w-fit"><input id="{{ code.id }}" name="{{ code.name }}" value="{{ code.value }}" type="text" required autocomplete="one-time-code" autocapitalize="{% if code.numeric %}off{% else %}characters{% endif %}" spellcheck="false"{% if code.numeric %} inputmode="numeric" pattern="[0-9]{ {{- code.length -}} }"{% endif %}{% call aria(invalid=code.invalid(), described_by=code.described_by()) %}{% endcall %} class="min-h-control rounded-md border border-line bg-surface px-2 py-1.5 text-base text-ink focus:border-brand-strong focus:outline-none focus:ring-1 focus:ring-brand-strong/30" />
+<div class="relative w-fit"><input id="{{ code.id }}" name="{{ code.name }}" value="{{ code.value }}" type="text"{% if !code.optional %} required{% endif %} autocomplete="one-time-code" autocapitalize="{% if code.numeric %}off{% else %}characters{% endif %}" spellcheck="false"{% if code.numeric %} inputmode="numeric" pattern="[0-9]{ {{- code.length -}} }"{% endif %}{% call aria(invalid=code.invalid(), described_by=code.described_by()) %}{% endcall %} class="min-h-control rounded-md border border-line bg-surface px-2 py-1.5 text-base text-ink focus:border-brand-strong focus:outline-none focus:ring-1 focus:ring-brand-strong/30" />
 <div id="{{ code.id }}-boxes" data-code-boxes data-live-ignore hidden aria-hidden="true" class="flex items-center gap-1">{% for index in code.boxes() %}{% if code.separator_before(index) %}<span class="text-muted">-</span>{% endif %}<span data-code-index="{{ index }}" class="flex h-control w-7 items-center justify-center rounded-md border border-line bg-surface font-mono text-sm text-ink data-[invalid]:border-danger data-[active]:border-brand-strong data-[active]:ring-1 data-[active]:ring-brand-strong/30"></span>{% endfor %}</div></div>
 <p id="{{ code.id }}-hint" class="mt-1 text-xs text-muted">Type or paste all {{ code.length }} {% if code.numeric %}digits{% else %}characters{% endif %}.{% if code.group_size.is_some() %} The separator is optional.{% endif %}</p>
 {% call errors(id=code.id, errors=code.errors) %}{% endcall %}</div>
@@ -154,4 +174,9 @@
     change=true (data-change). -#}
 {% macro form(id, event, change=false, class="", actions=bilibi_ui::Html::EMPTY) %}
 <form id="{{ id }}" data-event="{{ event }}"{% if change %} data-change{% endif %} class="space-y-3{% if !class.is_empty() %} {{ class }}{% endif %}">{{ caller() }}{% if !actions.is_empty() %}<div class="flex flex-wrap items-center gap-2">{{ actions|safe }}</div>{% endif %}</form>
+{% endmacro %}
+
+{#- Shared enrollment-first proof and submit actions; no Bilimbi counterpart. -#}
+{% macro step_up(step) %}
+{% if !step.body.is_empty() %}<fieldset{% if !step.enrolled %} disabled{% endif %}>{{ step.body|safe }}</fieldset>{% endif %}{% if step.enrolled %}{{ step.code|safe }}{% else %}<p class="mb-3 text-sm text-ink-muted"><a href="{{ step.setup_href() }}" class="text-link hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-strong/30">Set up 2FA</a> {{ step.reason }}</p>{% endif %}{% if !step.secondary_actions.is_empty() || (step.enrolled && !step.actions.is_empty()) %}<div class="flex flex-wrap justify-end gap-2">{{ step.secondary_actions|safe }}{% if step.enrolled %}{{ step.actions|safe }}{% endif %}</div>{% endif %}
 {% endmacro %}

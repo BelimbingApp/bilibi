@@ -84,7 +84,7 @@ impl Detail {
             ),
         ] {
             items.push(Fact {
-                title: label,
+                title: super::fields::get(key).label,
                 value: if person.restricted.iter().any(|r| r == key) {
                     render(Restricted::new(format!("{prefix}-{key}-restricted")))?
                 } else {
@@ -188,7 +188,7 @@ impl Detail {
         )?;
         let items = vec![
             Fact {
-                title: "Name",
+                title: super::fields::NAME.label,
                 value: render(InlineEdit {
                     field: self.inline(
                         &person,
@@ -202,7 +202,7 @@ impl Detail {
                 ..Fact::default()
             },
             Fact {
-                title: "Kind",
+                title: super::fields::KIND.label,
                 value: render(InlineChoice {
                     field: kind_field,
                     display: render(Badge {
@@ -214,7 +214,7 @@ impl Detail {
                 ..Fact::default()
             },
             Fact {
-                title: "Identity",
+                title: super::fields::IDENTITY.label,
                 value: render(Badge::status(
                     if person.retired_at.is_some() {
                         BadgeKind::Neutral

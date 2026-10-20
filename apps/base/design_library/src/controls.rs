@@ -166,6 +166,28 @@ fn field(c: &Value, state: &State) -> Field {
     field
 }
 impl View<'_> {
+    pub(crate) fn step_up_samples(&self) -> askama::Result<Html> {
+        let mut samples = Html::EMPTY;
+        for enrolled in [false, true] {
+            let mut step = bilibi_ui::StepUp::new(enrolled, "/system/design-library/components");
+            step.code = render(
+                CodeInput::new("library-step-up", "specimen[step_up]", "2FA code", 6).numeric(),
+            )?;
+            step.actions = render(bilibi_ui::Button {
+                button_type: "submit",
+                body: Html::text("Save"),
+                ..Default::default()
+            })?;
+            samples.push(&render(step)?);
+        }
+        render(bilibi_ui::Card {
+            id: "library-step-up-card",
+            title: "2FA before saving",
+            body: samples,
+            ..Default::default()
+        })
+    }
+
     pub(crate) fn control(&self, id: &str) -> askama::Result<Html> {
         let c = &CONTROLS[id];
         let kind = string(c, "kind");

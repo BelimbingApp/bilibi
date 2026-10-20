@@ -44,10 +44,10 @@ pub const RELEASE_FILES: [&str; 6] = [
     "release.json",
     "bundle.json",
 ];
-/// Plug-ins that travel with the release live here, inside the folder.
+/// Add-ons that travel with the release live here, inside the folder.
 pub const PLUGINS_DIR: &str = "plugins";
-/// The plug-ins the release switches on, a list of `{id, name, publisher,
-/// version, source}` the builder writes in `PLUGINS_DIR`.
+/// The add-ons the release switches on, a list of `{id, name, publisher,
+/// version, source}` the local build includes in `PLUGINS_DIR`.
 pub const PLUGINS_ENABLED: &str = "enabled.json";
 /// A release file larger than this is refused unread: a program is tens of
 /// megabytes, never gigabytes.
@@ -208,7 +208,7 @@ pub fn valid_incoming_name(name: &str) -> bool {
 }
 
 /// What a release folder says about itself: its program's checksum and
-/// size, and the recipe the builder wrote (`release.json`) with the
+/// size, and the recipe the local build included (`release.json`) with the
 /// `bundle.json` of a file that was unpacked here. Null fields mean the
 /// folder lacks that file.
 pub fn folder_facts(dir: &Path) -> Value {
@@ -507,14 +507,6 @@ pub fn sha256_of(path: &Path) -> io::Result<String> {
         .collect())
 }
 
-/// What this server is, as a release records what it was built for.
-pub fn this_server() -> Value {
-    json!({
-        "os": std::env::consts::OS,
-        "arch": std::env::consts::ARCH,
-        "system_library": system_library(),
-    })
-}
 /// `glibc 2.39`, from `getconf GNU_LIBC_VERSION`; null when unknown.
 pub fn system_library() -> Option<String> {
     let out = Command::new("getconf")
@@ -533,7 +525,7 @@ fn library_version(text: &str) -> Option<(u64, u64)> {
 }
 /// Whether the program in `dir` was built for this kind of server: a Linux
 /// program for this processor (read from the program itself), needing a
-/// system library this server has (from `release.json`, when the builder
+/// system library this server has (from `release.json`, when the local build
 /// recorded it). Each refusal says what to do.
 pub fn built_for_this_server(dir: &Path) -> Result<(), String> {
     let mut head = [0u8; 20];
@@ -554,14 +546,15 @@ pub fn built_for_this_server(dir: &Path) -> Result<(), String> {
     let here = std::env::consts::ARCH;
     if built_arch != here {
         return Err(format!(
-            "This release was built for {} computers, and this server is {}. Build it on a Dev of the same kind as this server.",
+            "This release was built for {} computers, and this server is {}. Build it locally for the same kind of server.",
             describe_arch(built_arch),
             describe_arch(here)
         ));
     }
     if !matches!(head[7], 0 | 3) || std::env::consts::OS != "linux" {
         return Err(
-            "This release was built for another operating system. Build it on a Linux Dev.".into(),
+            "This release was built for another operating system. Build it locally for Linux."
+                .into(),
         );
     }
     let recipe: Value = fs::read_to_string(dir.join("release.json"))
@@ -573,7 +566,7 @@ pub fn built_for_this_server(dir: &Path) -> Result<(), String> {
             if let Some(have) = library_version(&have_text) {
                 if have < need {
                     return Err(format!(
-                        "This release needs the system library {needed}, and this server has {have_text}. Update this server, or build on a Dev whose system library is not newer than this server's."
+                        "This release needs the system library {needed}, and this server has {have_text}. Update this server, or build locally with a system library no newer than this server's."
                     ));
                 }
             }

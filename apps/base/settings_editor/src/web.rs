@@ -467,11 +467,29 @@ impl Editor {
         let can_reveal = reveal::available(&**client, &plan, &self.core.settings, scope).await?;
         let keyed = self.core.settings.encryption_available();
         let company = self.company.is_some();
-        let fields = plan
-            .fields
-            .iter()
-            .map(|field| card(field, can_reveal, keyed, company))
-            .collect::<Result<Vec<_>>>()?;
+        let enrolled = self.core.step_up.enrolled(scope).await?;
+        let mut fields = Vec::new();
+        let mut protected_override = false;
+        for field in &plan.fields {
+            let needs_setup = if let Some(guard) = self.core.step_up.guarding_setting(field.key) {
+                !enrolled
+                    && self
+                        .core
+                        .step_up
+                        .required(scope, guard.operation.key)
+                        .await?
+            } else {
+                false
+            };
+            let mut view = card(field, can_reveal, keyed, company)?;
+            if needs_setup {
+                protected_override |= field.overridden;
+                let mut step = bilibi_ui::StepUp::new(false, "/system/settings");
+                step.body = view.control;
+                view.control = render(step)?;
+            }
+            fields.push(view);
+        }
         let empty = if fields.is_empty() {
             let state = if plan.withheld.is_empty() && company {
                 EmptyState::missing("There are no company settings to change.", "")
@@ -577,17 +595,21 @@ impl Editor {
             scopes,
             fields,
             empty,
-            restore: render(Button {
-                id: "settings-restore",
-                button_type: "button",
-                event: "request_restore",
-                body: Html::text(if company {
-                    "Clear overrides"
-                } else {
-                    "Restore Defaults"
-                }),
-                ..Button::default()
-            })?,
+            restore: if protected_override {
+                render(bilibi_ui::StepUp::new(false, "/system/settings"))?
+            } else {
+                render(Button {
+                    id: "settings-restore",
+                    button_type: "button",
+                    event: "request_restore",
+                    body: Html::text(if company {
+                        "Clear overrides"
+                    } else {
+                        "Restore Defaults"
+                    }),
+                    ..Button::default()
+                })?
+            },
             save: render(Button {
                 variant: ButtonVariant::Primary,
                 id: "settings-save",

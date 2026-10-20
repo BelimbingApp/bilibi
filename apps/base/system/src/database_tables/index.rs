@@ -47,6 +47,7 @@ struct Entry {
     migration: Option<&'static str>,
     rows: i64,
     partitioned: bool,
+    column_count: i64,
 }
 
 impl Index {
@@ -57,9 +58,12 @@ impl Index {
             columns: ListColumns::mount(
                 "database-tables",
                 vec![
-                    BuiltinColumn::new("table", "Table").sortable("table_name"),
-                    BuiltinColumn::new("module", "Module").sortable("module_name"),
-                    BuiltinColumn::new("migration", "Migration").sortable("migration_file"),
+                    BuiltinColumn::new("table", super::fields::get("table").label)
+                        .sortable("table_name"),
+                    BuiltinColumn::new("module", super::fields::get("module").label)
+                        .sortable("module_name"),
+                    BuiltinColumn::new("migration", super::fields::get("migration").label)
+                        .sortable("migration_file"),
                     {
                         let mut rows = BuiltinColumn::new("rows", "Rows (estimate)")
                             .sortable("rows")
@@ -69,6 +73,7 @@ impl Index {
                     },
                 ],
             )
+            .map(|columns| columns.with_record_fields(super::fields::ALL.iter().copied()))
             .map_err(|_| Error::Internal)?,
             framed: request.framed,
             recorded: None,
@@ -105,6 +110,7 @@ impl Index {
                     migration: owner.map(|owner| owner.version),
                     rows: table.estimated_rows,
                     partitioned: table.partitioned,
+                    column_count: table.column_count,
                     name: table.name,
                 }
             })
@@ -157,6 +163,7 @@ impl Index {
             rows.push(
                 FlexRow::new(entry.name.clone())
                     .slot("table", table)
+                    .slot("column_count", Html::text(&entry.column_count.to_string()))
                     .slot(
                         "module",
                         text(entry.module.unwrap_or("—"), "text-sm text-ink-muted")?,

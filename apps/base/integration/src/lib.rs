@@ -10,13 +10,15 @@
 //! deletion is an audited mutation. `web` is the API Exchanges list and
 //! detail (`/system/api-exchanges`).
 mod contributions;
-pub mod redaction;
+mod redaction;
+mod redirect;
 pub mod reference_webhook;
 mod retention;
 mod transport;
-pub mod web;
+mod web;
 pub mod webhooks;
 pub use contributions::{WebhookLimits, DELETE, LIST, PAYLOAD, RETENTION_DAYS, WEBHOOK_SETTINGS};
+pub use redirect::RedirectPolicy;
 pub use transport::{Failure, Outgoing, Reply, Streamed};
 
 use bilibi_authz::{authorize_key, SystemScope};
@@ -30,7 +32,7 @@ use tokio_postgres::{Client, GenericClient, Row};
 pub const SERVICE: &str = "base/integration.exchanges";
 const KIND: &str = "base/integration.exchange";
 const FAILED: &str = "Exchange failed; inspect the caller's operational outcome.";
-const SUMMARY: &str = "public_id,tenant_id,direction,system,provider,operation,endpoint,method,host,path,response_status,duration_ms,outcome,error_class,owner_type,owner_id,correlation_id,user_id,impersonator_id,connection_id,agent_id,run_id,agent_self_report,agent_self_report_malformed,occurred_at";
+const SUMMARY: &str = "public_id,tenant_id,direction,system,provider,operation,endpoint,method,host,path,response_status,duration_ms,outcome,error_class,owner_type,owner_id,correlation_id,user_id,impersonator_id,connection_id,agent_id,run_id,agent_self_report,agent_self_report_malformed,client_identity,occurred_at";
 
 /// Who an exchange belongs to. A tenant's rows are visible to that tenant; a
 /// `System` row has no tenant or person and only the platform operator sees it.
@@ -92,6 +94,7 @@ pub struct Incoming {
     pub run_id: Option<String>,
     /// The shape-checked self-reported `harness/model-version-effort`.
     pub agent_self_report: Option<String>,
+    pub client_identity: Option<String>,
     /// The caller sent a self-report that failed the shape check and was dropped.
     pub agent_self_report_malformed: bool,
     pub correlation_id: Option<String>,
@@ -182,6 +185,7 @@ pub struct Summary {
     pub run_id: Option<String>,
     /// Self-reporting: what the agent said it is, never who it is.
     pub agent_self_report: Option<String>,
+    pub client_identity: Option<String>,
     pub agent_self_report_malformed: bool,
     pub occurred_at: SystemTime,
 }
@@ -213,6 +217,7 @@ impl Summary {
             agent_id: row.get("agent_id"),
             run_id: row.get("run_id"),
             agent_self_report: row.get("agent_self_report"),
+            client_identity: row.get("client_identity"),
             agent_self_report_malformed: row.get("agent_self_report_malformed"),
             occurred_at: row.get("occurred_at"),
         }
@@ -293,6 +298,7 @@ struct Record<'a> {
     agent_id: Option<&'a str>,
     run_id: Option<&'a str>,
     agent_self_report: Option<&'a str>,
+    client_identity: Option<&'a str>,
     agent_self_report_malformed: bool,
     retain_payload: bool,
     request_headers: Option<&'a Value>,
@@ -360,6 +366,7 @@ impl Integration {
             agent_id: incoming.agent_id.as_deref(),
             run_id: incoming.run_id.as_deref(),
             agent_self_report: incoming.agent_self_report.as_deref(),
+            client_identity: incoming.client_identity.as_deref(),
             agent_self_report_malformed: incoming.agent_self_report_malformed,
             retain_payload: incoming.retain_payload,
             request_headers: incoming.request_headers.as_ref(),
@@ -389,6 +396,7 @@ impl Integration {
             && bounded(record.agent_id, 255)
             && bounded(record.run_id, 255)
             && bounded(record.agent_self_report, 120)
+            && bounded(record.client_identity, 255)
             && !(record.agent_self_report.is_some() && record.agent_self_report_malformed)
             && record.duration_ms.is_none_or(|ms| ms >= 0)
             && record
@@ -416,8 +424,8 @@ impl Integration {
                 "INSERT INTO base_integration_exchanges(public_id,tenant_id,direction,system,provider,operation,endpoint,method,host,path,\
                  response_status,duration_ms,outcome,error_class,error_message,owner_type,owner_id,correlation_id,user_id,\
                  connection_id,agent_id,run_id,request_headers,request_body,response_headers,response_body,\
-                 agent_self_report,agent_self_report_malformed) \
-                 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)",
+                 agent_self_report,agent_self_report_malformed,client_identity) \
+                 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29)",
                 &[
                     &public_id,
                     &record.tenant_id,
@@ -447,6 +455,7 @@ impl Integration {
                     &keep(record.response_body),
                     &record.agent_self_report,
                     &record.agent_self_report_malformed,
+                    &record.client_identity,
                 ],
             )
             .await?;
@@ -653,7 +662,8 @@ inventory::submit! {
         dependencies: &["base/module_registry", "base/database", "base/audit", "base/tenancy", "base/authz", "base/queue", "base/schedule", "base/settings", "base/ui", "base/datetime", "base/locale", "base/menu", "base/grid"],
         migrations: &[("base-integration-001", include_str!("../migrations/001-exchanges.sql")),
             ("base-integration-002", include_str!("../migrations/002-reference-webhook.sql")),
-            ("base-integration-003-agent-self-report", include_str!("../migrations/003-agent-self-report.sql"))],
+            ("base-integration-003-agent-self-report", include_str!("../migrations/003-agent-self-report.sql")),
+            ("base-integration-004-client-identity", include_str!("../migrations/004-client-identity.sql"))],
         services: &[Service { id: SERVICE, factory: |services| {
             let db = services.get::<Db>("base/database.pool")?.as_ref().clone();
             let boundary = services.get::<MutationBoundary>("base/database.mutations")?;

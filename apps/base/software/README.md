@@ -1,195 +1,153 @@
 # Base Software
 
-`base/software` is how a server owner changes what Bilibi is made of: which Domains it holds and at which versions. It shows what is installed, what the catalogue offers, and takes the owner's request as a job that a builder (on Dev) or an installer (on any instance) carries out. No Bilimbi counterpart: the Software page is Bilibi's own.
+`base/software` shows what this server runs, helps you find more modules, and installs tested updates with a database backup and undo. Build software in your local Bilibi checkout with a coding agent; servers never build it. No Bilimbi counterpart.
 
-## One example
+## Add a Domain
 
-An assistant, acting for the server owner, asks Dev to add Finance and Factory. Over the Agent API that is three calls:
+Ask the agent to find Finance, or open **Administration › System › Software**:
 
 ```
-read   base.software.status      → "Dev, builds, runs Bilibi 0.1.1 with no Domains, no job running"
-plan   base.software.change      { "domains": [{"id": "finance"}, {"id": "factory"}] }
-       → review: keep Bilibi 0.1.1, add Finance 0.1.0, add Factory 0.1.0,
-         not recorded as tested together on 0.1.1, about 6 minutes, then a 1-minute pause
-commit                           → step_up_required (every_time)
-commit  + step_up_code "123456"  → job 1 queued, seven steps pending
+read base.software.open {"propose":{"domains":["finance"]}}
 ```
 
-Notice what happened at the end: **the commit asked for the owner's authenticator code, on Dev, where 2FA is otherwise off**. A build changes the server itself, so this one check is never relaxed by the instance or by a policy. Notice also what did *not* happen: nothing was built. The job waits for the builder, and `status` shows its steps as the builder reports them. An `install` or an `undo` is picked up the same way by the installer service that runs beside every instance (`apps/installer/README.md`).
+The answer includes Finance’s description, official repository, a release that accepts this server’s Bilibi version, whether the exact commits were recorded as tested together, and `local_steps`. A proposal highlights entries; it creates no job.
 
-You may already have questions: where do the facts come from, who may do this, what exactly is a job, and how does a builder or installer pick one up? We cover each below.
+**Ask your developer to add the modules you need, build Bilibi on their computer, and test it before installing it here.** Follow the entry’s repository and commit, keeping any other mounted Domains and Extensions:
 
-## Where each fact comes from
+```sh
+git clone -- https://github.com/BelimbingApp/bilibi-dom-finance apps/domains/finance
+git -C apps/domains/finance checkout --detach <recommended-commit>
+python3 scripts/discover-modules.py
+./scripts/build-assets.sh --check
+cargo metadata --format-version 1 > /dev/null
+python3 scripts/discover-modules.py --pin
+cargo build --release --locked -p bilibi-web
+./target/release/bilibi-web status
+```
 
-| Fact | Source | Why that one |
-| --- | --- | --- |
-| Which instance this is (Dev, Staging, Production), its label, where it installs from | `bilibi_system::Instance::resolve` | One identity for the banner, the confirm pages and this module, so they cannot disagree |
-| What is installed: the Platform version and each Domain's version and commit | `bilibi_module_registry::Composition`, compiled into the program and handed in by the host as `bootstrap.composition` | The program cannot lie about what it contains |
-| What can be chosen: Domains, releases, plug-ins, tested sets | The published `catalogue.json`, read over HTTPS through `base/integration` | The published copy holds the sets CI recorded (`docs/versions.md`) |
-| Plug-ins switched on | `base_software_plugins` | Plug-ins load at run time, so the program cannot tell |
-| Jobs and their steps | `base_software_jobs`, `base_software_steps` | The history, who asked, and what the worker reported |
-| What an Undo would lose | `base_audit_mutations` since the backup, counted across every company | One database holds every company, so the loss is server-wide |
+If it is already cloned, fetch and check out the chosen commit there instead. Extensions mount under `apps/extensions/<id>`. Run the composition locally with its own database and check its pages in the browser. Prepare a release using [`docs/server-install.md`](../../../docs/server-install.md), then upload it on **Software › Releases**, or install it from an instance that has tested it.
 
-The catalogue address is a setting, **Software › Catalogue address**, for an adopter who publishes their own. A fetched copy is kept for five minutes.
+## Compatibility
 
-## Who may change the software
+Official modules (repositories under BelimbingApp) are checked against every Platform release before it ships, so they carry a plain `status` (`installed`, `not_installed`, `update_available`), `latest_version` and, only when no version fits, a `warning`. For modules from any other catalogue, **Compatibility** states whether a version supports the running Bilibi version and whether automated checks covered the exact code running on this server. The catalogue’s Platform requirement supplies version support; its CI record supplies the exact Platform and Domain commits checked.
 
-Only a **server owner**: an administrator of the platform operator (the organisation that runs the server). One build changes every company on the server, so the two capabilities are platform capabilities, which need the operator identity *and* a grant:
+- Prefer the newest release recorded as tested with this running commit, then the newest release whose requirements accept this version.
+- Each entry includes `recommended_version`, a plain `compatibility` sentence, `official`, `local_steps`, and `next_step`. Each release includes `fits_running` and `tested_with_running`.
+- No compatible release, no published release, or no exact tested pair is stated plainly. A development build or an unreleased commit does not inherit a released commit’s evidence.
+- Domains were tested individually; separate pairs do not prove a combined composition. Check your composition locally.
+- The published catalogue is read over HTTPS through `base/integration` as the requesting person and cached for five minutes. **Software › Catalogue address** can point to an operator’s catalogue. An unavailable catalogue returns `available: false` and a reason; installed status and installation remain available.
+- `domains` and optional `extensions` hold repository and release information; extensions without CI evidence are labelled as not recorded as tested. `plugins` retains the existing release add-on information.
 
-| Capability | Lets you |
+## Data sources
+
+| Fact | Source |
 | --- | --- |
-| `admin.system.software.view` | Read `status` and `catalogue` |
-| `admin.system.software.manage` | Plan and commit `change`, `install`, `undo`, `cancel` |
+| Instance role, label, colour and installation source | `bilibi_system::Instance::resolve` |
+| Installed Platform, Domains and Extensions | Host-supplied `bilibi_module_registry::Composition`, compiled into the program |
+| Available software and CI evidence | Published `catalogue.json` ([versions contract](../../../docs/versions.md)) |
+| Jobs, steps and enabled add-ons | `base_software_jobs`, `base_software_steps`, `base_software_plugins` |
+| What a backup restore loses | Server-wide `base_audit_mutations` since the backup |
 
-An administrator of another organisation is refused with `denied_platform_scope`; a person in the operator's organisation without the grant with `denied_missing_capability`. Both land in the decision log.
+## Access
 
-**Every change, install, undo and pairing key asks for the owner's own authenticator code on every commit, on every instance.** The step-up operation `base.software.change` is declared `.always()` (`apps/base/step_up/README.md`): not a tenant choice, not on the floor's terms, and not turned off by `BILIBI_ENV=development`. A code is spent once, so a second commit a minute later asks again. Cancel changes nothing on the server and asks for no code.
+Only a server owner with the appropriate platform capability can manage software, because installation affects every company.
 
-## The contracts
+| Capability | Allows |
+| --- | --- |
+| `admin.system.software.view` | Status, catalogue, release listings, Software page and card |
+| `admin.system.software.manage` | Install, undo, go-ahead, cancel, release upload/download, pairing key and GitHub release source |
 
-Every contract here goes through Agent API (`apps/base/agent_api/README.md`): reads are called, writes are planned, reviewed by the person, then committed. The Software page calls the same contracts through `PageContracts` (below).
+Install, undo, go-ahead and pairing changes require the owner’s own fresh authenticator code on every commit, including Dev. The existing step-up key `base.software.change` remains `.always()` to preserve its policy and audit identity; it is **not a build operation**. Cancel requires no code. The facade rechecks authorization inside the mutation transaction. Other organisations fail closed with `denied_platform_scope`; a missing grant is `denied_missing_capability`.
 
-| Contract | Kind | Input | What the review or answer says |
-| --- | --- | --- | --- |
-| `base.software.status` | read | none | instance; installed Platform, Domains and Extensions; plug-ins; the job waiting or running (or the last one) with its steps and whether cancel is available; whether Undo is available; recent jobs |
-| `base.software.catalogue` | read | none | the catalogue, with the Platform versions each Domain release was tested on; or `available: false` and why |
-| `base.software.releases` | read | none | what this instance can install: the releases its source runs and keeps (`source`), the release files uploaded here (`uploads`), whether a pairing key is set (`pairing`), and the releases kept here (`here`); a source that cannot be asked says why in `source.message` |
-| `base.software.open` | read | optional `propose` (`domains`, `plugins`: catalogue ids to pre-tick) | what the card opens with: everything `status` says, plus the catalogue on an instance that builds, the proposal checked against it (`proposal.domains`, `.plugins`, `.unknown`; or `proposal.ignored` with the reason on an instance that installs), and `card.resource`. This is the `open_software` MCP tool |
-| `base.software.change` | write, Dev only | `domains` (the full wanted set; a mounted Domain left out is removed), optional `platform`, `plugins`, `switch` | the change list (add, update, downgrade, remove, keep; plug-ins switched on or off), whether every version was tested together on that Platform, warnings, a rough estimate, what happens, the steps |
-| `base.software.install` | write, Staging and Production | `release` (the number the source runs now) or `bundle` (an uploaded release file, like `upload-3`), optional `switch` | the source, what changes (from the release's own recipe), the checks the installer makes, the pause |
-| `base.software.undo` | write | optional `job` | which release it goes back to, and whether the backup is restored and later entries lost. `loss` names the backup's `backup_at` (the job result's, or the `backup` step's start) and carries no count: a count changes with every write, and a confirmation is bound to the review. The Software page counts the audited changes since `backup_at` with `Software::undo_loss`, only while an Undo review is open. The committed job's review records the count at commit as `lost_at_commit`, the same server-wide counts the undo result carries |
-| `base.software.go` | write, 2FA | optional `job` | refused unless the job is a running change whose build is done, or a running install whose copy is done, with no later step started and `switch` `ask`. The review names the instance, the release, the pause and the steps that follow. The commit turns `switch` to `auto` in the audited transaction (the installer's `wait_for_go` sees it), sends `NOTIFY`, and notifies the requester |
-| `base.software.cancel` | write, no 2FA | optional `job` | removed from the queue, or asked to stop before the pause; refused once the pause started |
-| `base.software.pair` | write, 2FA every time | `key`, or `clear: true` | the pairing key is set (never shown back) or removed; see "Release transport" |
+## Agent contracts
 
-Rules the reviews enforce, each as a field error that says what to do:
+Reads and reviewed writes use the shared Agent API; the page uses the same contracts through `PageContracts`.
 
-- `change` on an instance that does not build, or `install` on Dev, names the right contract for that instance.
-- `install` asks the source first: the release must be the one the source runs now and the source must answer, so what you install is what was tested. A source that cannot be asked (no pairing key, a wrong key, unreachable) is refused with the reason and what to do. An uploaded file is installed as it is; `releases` lists what it holds. The review lists the plug-ins the release switches on or off, and, for an uploaded file, adds a warning when it was not made by the instance this one installs from ("This file was made on Dev, not on staging, which this server normally installs from."): the file's `bundle.json` is unsigned, so this warns and never refuses.
-- A Domain not in the catalogue needs a `repository` (https) and a `ref`; it is allowed and labelled with its source, and never counts as tested (captain decision 6).
-- `platform` left out keeps the running Bilibi when every chosen Domain accepts it, even when that version is not a catalogue release yet (like 0.1.1 on Dev before it is published): the request then records the running version and its commit so the builder builds from it (a program built without a pin has no commit, so the review refuses and asks for a release in `platform`), and the review warns that the set is not recorded as tested there. Only when a Domain needs another release does the review pick the newest one that fits, and then it says so in its own line: "Bilibi will also change from X to Y because Finance 0.2.0 needs Platform >=0.2.0", with the extra time and the database update. A release that fits none says which Domain needs what.
-- A move to an older version, of Bilibi or of a Domain, is labelled `downgrade`, never `update`, and the review warns that the database keeps what the newer release changed.
-- A Domain from outside the catalogue needs an `https://` repository with no user name, token, query or fragment in it, and a `ref` that does not start with `-`: the request is stored and shown as plain data.
-- A Domain id is snake_case, appears once in the request, and is never `src` (the folder that composes the Domains); the builder re-checks this before it touches a folder.
-- A second request while one job waits or runs is refused and names that job.
-- A request that changes nothing is refused and says what already runs.
-- `undo` takes only the newest finished job, and only when the worker recorded its result (below); a finished undo cannot be undone again.
-
-`switch` is `auto` (switch as soon as the build is ready) or `ask` (build now, wait for the owner before the one-minute pause). The worker reads it; this module only records it. **The signal to go ahead is the job's `switch` turning `auto`**: the worker polls the row while it waits with the instance running. The Software page's **Install now** button and the `base.software.go` contract give it: they turn `switch` to `auto` for a built change or a copied install that waits.
-
-## The Software page
-
-**Administration › System › Software** (`/system/software`, `src/web.rs`) is the same contracts with a face: it reads `status` and `catalogue`, and every write is a plan the person reviews and then commits with their authenticator code typed into the review. Server owners see and change; a person with only `admin.system.software.view` sees what runs and the history, with no controls.
-
-| Part | What it shows | Where it comes from |
+| Contract | Input | Answer or review |
 | --- | --- | --- |
-| Instance banner | Which Bilibi this is, in words and colour, on the page and again at the top of every review | `bilibi_system::Instance::banner`, the shared `base/ui` component the agent consent pages also use |
-| What runs here | Bilibi version, release and commit; the Domains and their versions; plug-ins on; whether the pin is exact | `status.installed`, `status.plugins` |
-| Now / Last job | The job waiting, running or last finished: its steps as the worker reports them, the running step's progress bar and time left, the result, Stop or Cancel while the contract allows it, Undo when `status.undo` says so | `status.job`, `status.undo`; the page is woken by every job write (`src/follow.rs`) |
-| Domains (Dev only) | One row per catalogue Domain: tick to add or remove, pick a release (marked when tested with the running Bilibi), plug-ins under it, when to switch; then **Review changes** | `catalogue`; the review is `change`'s plan preview |
-| Install a tested release (Staging, Production) | The source this instance installs from, the release number to install, a pick of the release files uploaded here (`upload-<n>: release N from <label>`; usable when no source is set), **Review the install**. There is no Build here: only Dev builds | `status.instance.installs_from`, `status.uploads`; the review is `install`'s plan preview (`{release}` or `{bundle}`) |
-| History | The recent jobs with outcome and times | `status.jobs` |
+| `base.software.status` | none | Instance, installed composition, add-ons, uploads, current or last job with steps and cancel state, Undo and recent history |
+| `base.software.catalogue` | none | Discovery, compatibility and local build instructions on every instance |
+| `base.software.open` | optional `propose.domains`, `propose.extensions` | Status plus catalogue, matching and unknown proposals, local next step and `card.resource` |
+| `base.software.releases` | optional `refresh`, `prerelease` | Source listing, GitHub setup files, uploads, pairing state and releases kept here |
+| `base.software.install` | `release`, uploaded `bundle`, or GitHub `asset` with `repository_id`, `release_id`, `tag`, `target` and `digest`; optional `switch` | Source, composition changes, add-on changes, checks, pause and installer steps |
+| `base.software.github` | `repository`, optional `repository_id`, `token`, `clear_token`, `refresh_minutes`, `accept` | Save the GitHub repository, the read token and how often to check; accept the repository number before installing. The token is never shown back |
+| `base.software.undo` | optional `job` | Previous release, backup restore and backup time; only the newest completed job can be undone |
+| `base.software.go` | optional `job` | Go-ahead for a running install copied and waiting with `switch: ask`, before any later step starts |
+| `base.software.cancel` | optional `job` | Remove a queued job, or request stop before the pause; refused after the pause starts |
+| `base.software.pair` | `key`, or `clear: true` | Set or clear the encrypted pairing key; never show it back |
 
-- **The review is the plan.** `PageContracts::preview` stores the owner's review under a plan code bound to this browser session; **Build on Dev**, **Install on …**, **Install now on …** (the go-ahead) or **Undo on …** commits that exact plan with the typed code presented on the request (`Scope::presenting_step_up`), so the owner's facade spends it the way it spends an agent's `step_up_code`. A wrong code is an error inside the review, not a trip through the browser prompt; a person not yet enrolled is sent to enrol and comes back.
-- **Nothing is chosen for the person.** `?propose=finance,factory` (an assistant's link) ticks those Domains when the page opens; the review and the code are still theirs.
-- **Live progress.** Every step write by a worker announces the job on `NOTIFY bilibi_software_jobs`; one connection per web process listens (`src/follow.rs`) and refreshes each mounted page, so a build's "Compiled 214 of about 488 parts" line moves every two seconds. Without that connection the page still follows on the host's 15-second refresh.
+The `base.software.change` agent operation is removed; only its step-up key stays (see Access). There is no server build operation, builder worker, compiler setting or builder service.
 
-## What a job is
+Install requires the source to answer and the selected release to be the one it runs now, or an uploaded bundle. Uploads use the same installer checks. A file made by a different instance than the configured source raises a warning; unsigned `bundle.json` is not proof of origin. Installing the program already in service or starting a second active job is refused. `switch: auto` proceeds after copying; `switch: ask` waits for `go` before the pause.
 
-A job is one row in `base_software_jobs`, with its ordered steps in `base_software_steps`:
+## Page and ChatGPT card
 
-| State | Meaning | Who sets it |
-| --- | --- | --- |
-| `queued` | Recorded, waiting for a worker | this module |
-| `running` | A worker claimed it | the worker |
-| `done`, `failed` | Finished; `result` says how | the worker |
-| `cancelled` | Removed from the queue, or stopped before the pause | this module (queued), the worker (running) |
-| `interrupted` | The worker was restarted before the change that cannot be taken back; nothing changed and the release that was in service is running. The page offers Start again | the worker, when it starts again |
+The **Software** page (`/system/software`) has one menu entry and two shared tabs: **Domains and Extensions** and **Releases**. Each catalogue item is one compact card with its description, installed version (when installed) and one **Status** line. Official modules show **Installed**, **Not installed** or **Update available: X**, plus a short warning such as **Needs Bilibi X** only when no listed version fits this server. Modules from an operator’s own catalogue are not kept in step with the Platform, so they keep a **Compatibility** line: **Yes · tested with Bilibi X**, **Yes, not tested yet** or **No · needs Bilibi X**. **Developer commands** folds away the repository, exact test evidence and local build commands.
 
-A worker that finds a job it was running asks whether the change that cannot be taken back has happened. The installer's rules (`apps/installer/README.md`, "If the server restarts mid-way"):
+**Releases** (`?tab=releases`) shows the installed version, the current or last install (its **Install steps** stay open while the job is active, failed or interrupted, and fold when it completes), a short backup table with folded backup details, and **Get an update**. Backup file locations are folded and only available to accounts that can manage software. GitHub releases, upload, review, download, stored releases, and the folded **Update server and pairing key** share the same mounted page; switching tabs preserves pending uploads and reviews. The old `/system/software/releases` page redirects to the Releases tab, and its authenticated download addresses remain valid.
 
-- **Before the pause**, or in the pause before the database update committed (the migration ledger did not grow): the job ends `interrupted`, the half-copied folder is removed, the previous release is running.
-- **After it committed**, or in a switch back or an Undo's restore: the job carries on, and the cut-off step's detail is marked `resumed`.
+The MCP App (`ui://bilibi/software-v1.html`, `card/software-v1.html`) keeps its **Manage domains and extensions** title and uses the same software contracts.
 
-A build has no such point, so the builder marks a cut-off build `interrupted`.
+- `?propose=finance,factory` highlights requested page entries; `open_software` accepts catalogue IDs in `propose` for the card.
+- A view-only account sees discovery and status. The facade refuses writes without manage permission.
+- Install, undo and go-ahead show the shared instance banner and a review, then commit that exact plan with the person’s authenticator code. The install headline uses the operation's summary to name an uploaded file, sibling instance or HTTPS source. A wrong code stays in the review.
+- The page follows `NOTIFY bilibi_software_jobs` through `follow.rs`; the card polls status every four seconds while a job is active. Closing either leaves the job running.
+- The card calls only the host’s read/plan/commit bridge, holds no credential and fetches no independent URL. It reports job outcomes to the model and can send the person’s question back to the chat.
+- Plugin packages obtain the card guidance from `CARD_SKILL` and identify the connected instance.
+- The History column picker also offers **Worker**, matching the job panel. Its optional columns use shared record fields; the default columns stay the same. Steps and long result messages stay on the panel.
 
-At most one job per server is `queued` or `running` (a unique index enforces it). The steps are created with the job as `pending`: for a change *check, fetch, build, backup, migrate, switch, verify*; for an install *fetch, backup, migrate, switch, verify*, with *download* first when the source is on another machine; for an undo *backup, restore (only when a backup is restored), switch, verify*. The `backup` step is marked `pauses`: from there the instance is stopped, and a cancel is no longer honoured.
+## Jobs and upgrades
 
-Each commit writes one audited record (`base/software.job`), a `software.change`, `software.install`, `software.undo` or `software.cancel` action, the step-up rows (`step_up.*`), and one notification to the person who asked. Nothing in a job is secret: the request, the review and the result are plain data.
+**Only install and undo jobs are queued.** One job per tenant can be queued or running. Jobs finish as `done`, `failed`, `cancelled` or `interrupted`; their result explains the outcome.
+
+Install steps are *fetch, backup, migrate, switch, verify*, with *download* first for a remote Bilibi server or a GitHub file. Undo uses *backup, restore* (when needed), *switch, verify*. The first `backup` pauses the instance; cancellation is refused after it starts. The installer backs up before updating, checks the new program, and automatically switches back on a failed check. Undo restores the earlier backup when migrations changed the database; its review names the backup time and the page separately refreshes the count of later audited changes. The committed review records `lost_at_commit`.
+
+Migration `base-software-003-local-builds` cancels legacy queued or running `change` jobs, skips unfinished steps, records the reason, gives never-claimed jobs the worker name `software-migration` and clears their settlement mark so the server audits and notifies the outcome. It preserves completed history and prior Undo information. A constraint prevents new active change jobs. The only builder setting, `software.build_jobs`, is removed. All existing tables and columns remain needed for install, undo, release add-ons or historical evidence; no applied migration is edited.
+
+## Database backups
+
+**Software shows each backup's time and size for installs and undos among the ten most recent jobs; only accounts that can manage software see the file.** The page and assistant card read the same `backups` evidence from completed backup steps, including jobs that later failed; missing older metadata is labelled as not recorded. A view-only account gets no file path from the page, `base.software.status` or `base.software.open`: the `backup` fields are dropped and job messages that name a file say "a backup file on this server" instead. A recorded file path does not prove that the file is still kept.
+
+- The installer writes a PostgreSQL dump under the instance folder at `backups/job-<n>/<database>.dump` before changing anything.
+- After a successful install or undo, it keeps the newest `KEEP_BACKUPS` backup folders (`apps/installer/src/flow.rs`, `prune`) and removes older ones. There is no fixed age in days. The backup step records the number as `keep_backups`; `status` carries the sentence once as `backup_rule`, and only the Backups section states it.
+- Undo restores the pre-install backup only when the install changed the database structure. It then loses data entered since that backup. Otherwise, Undo switches the program back and leaves data alone. Undo takes a new safety backup first.
+- If restoration fails, the service stays stopped and the job message names the file to restore by hand.
 
 ## How a worker plugs in
 
-The builder (below, Dev) runs under the `bilibi-build` user as the instance's worker service, `bilibi-worker@<instance>`, which is `bilibi-web software-worker` from the release in service (`docs/server-install.md`). The installer (`apps/installer`, every instance) is a separate service, `bilibi-installer@<instance>`, under the same user. Neither goes through this module's facade; they read and write the two tables with their own connection and follow this contract:
+The separate installer (`apps/installer`) reads and writes the durable job tables with its own connection. It never creates audit or notification rows itself.
 
-1. **Wake up.** `LISTEN bilibi_software_jobs`. Every queue and every cancel sends `NOTIFY bilibi_software_jobs, '<job id>'` inside the commit, so it arrives once the row is visible. Also poll on start-up: a notification sent while the worker was down is lost.
-2. **Claim.** `UPDATE base_software_jobs SET state='running', worker=$1, started_at=now() WHERE id=$2 AND state='queued'`. Zero rows means someone else has it, or it was cancelled.
-3. **Report each step.** Set `state='running', started_at=now()` when it starts, then `done` or `failed` with `finished_at` and a plain `detail` (`{"message": "Compiled 214 of 412 parts"}`), never a secret. Skip the rest after a failure (`skipped`). A worker may append a step the job was not made with when it goes back after a failure (the installer's `switch_back`), with the next `seq`. After each of these writes, and after each rewrite of a running step's `detail`, send `NOTIFY bilibi_software_jobs, '<job id>'` so the Software page follows live (the builder's `announce`).
-4. **Honour a cancel before the pause.** Before starting a step that `pauses`, in one transaction lock the job (`SELECT cancel_requested_at FROM base_software_jobs WHERE id=$1 FOR UPDATE`). If it is set, mark the remaining steps `skipped` and the job `cancelled`. If not, mark the pausing step `running` in the same transaction, so a cancel either lands before the pause or is refused as too late.
-5. **Finish.** Set `state`, `finished_at` and `result`. Undo needs these keys in `result`:
+1. Listen on `bilibi_software_jobs` and poll on startup. Claim the oldest queued install or undo with a conditional update; ignore installs whose download step has not finished.
+2. Mark each step running, then done, failed or skipped, with timestamps and a plain `detail.message`. Send `NOTIFY` after changes. A switch-back step may be appended after failure.
+3. Lock the job before starting the pausing step. Honour `cancel_requested_at` there, or start the pause under the same lock, so cancel cannot cross it.
+4. Finish with state, time and result. Result keys include `release`, `previous_release`, `migrated`, `backup`, `backup_at`, composition and `changes`, `pause_seconds`, and a plain `message`. An undo with a restore records `lost: {since, changes, by_kind}`; status adds its loss sentence.
+5. Apply `plugins/enabled.json` from the release in the transaction that finishes the job and record `plugins: {before, after}`. Undo restores `before`. An absent file preserves existing add-ons.
+6. The server settles finished outcomes every 15 seconds and at startup through `MutationBoundary` as a `base/software.job` change under `software.finished`, attributed to the recorded worker. After commit it re-proves the requester’s live account through `Authentication` and sends a `software.job` notice. Missing accounts get no notice; notification failure never prevents settlement. Notice bodies are bounded to 900 characters.
 
-   | Key | Meaning |
-   | --- | --- |
-   | `release` | the release number put in service |
-   | `previous_release` | the one it replaced, kept for Undo |
-   | `migrated` | `true` when the database changed shape; Undo then restores the backup and says what is lost |
-   | `backup`, `backup_at` | where the backup is and when (UTC, `YYYY-MM-DDTHH:MM:SSZ`) it was taken; `Software::undo_loss` counts what was entered since |
-   | `platform`, `domains`, `extensions`, `changes` | what the release in service is made of and what differs from the release it replaced; the installer reads them from the release's own `status`, so Done can list what changed (`apps/installer/README.md`, "How it talks to the page") |
-   | `pause_seconds` | how long the instance was paused; the message for the person names it |
-   | `lost` | an undo that restored a backup writes the counts only (`since`, `changes`, `by_kind`). `status` adds the sentence as `loss` (`review::loss_sentence`) |
-   | `message` | one plain sentence for the person |
-
-   A `change` job's result should also list the Domains and versions the new program holds, so `status` can show them before the program restarts. The installer's result also names the source and its checksum (`apps/installer/README.md`, "How it talks to the page").
-6. **Plug-ins.** Plug-ins travel with the release, so a server runs exactly what was tested. The builder writes the plug-ins that are to be switched on once the release is in service as `plugins/enabled.json` in the release folder (the server's `base_software_plugins` list with the reviewed change applied, a list of `{id, name, publisher, version, source}`; an empty list means none). The installer reads it when it copies the release and, in the same transaction as the final `done`, makes `base_software_plugins` match it (`enabled`, `version`, `job_id`: those listed on, every other one off) and records `plugins: {before, after}` in the result. An Undo puts `before` back the same way. A release without `plugins/enabled.json` (made before plug-ins travelled) leaves the server's list as it is.
-7. **Tell the person.** Record the outcome as a retained audited action by the worker's system principal (`software-builder`: `software.build.completed`, `.failed`, `.cancelled`, `.refused`, `.interrupted`) and a notification for `requested_by`. The builder does this in one `MutationBoundary` transaction with `Context::system`, recording the job's state change as a `base/software.job` mutation and re-proving the requester's account live through `Authentication::authenticate` for the notification's scope (`src/worker.rs`, `finish`). The installer has no host services, so it does neither itself: the server audits and notifies its outcome when it settles it (below). The installer creates no audit rows of its own, with one exception: it carries existing evidence rows (`software.*` and `step_up.*` actions, `base/software.job` changes) across a database restore unchanged, with their ids and times (`apps/installer/README.md`, "Caveats"). The server settles each finished job it ran as one audited change from the job as queued to the job as the worker left it, under the action `software.finished` with the worker's name as the system principal, every 15 seconds and right after it starts (`Software::settle`, run by `bilibi-web run`; a job the builder recorded itself is marked settled in that transaction). Right after settle commits, an installer-finished job also notifies `requested_by` (kind `software.job`, the result's `message` as the body), re-proving the account live as the builder does; an account that is gone gets none. The message is cut to 900 characters for the notice, and a notification that cannot be sent is logged and never keeps the job unsettled. A job the builder finished is never announced twice: it is already settled.
-8. **Leave a downloading install alone.** An install whose source is on another machine has a `download` step first, which this program carries out itself (below, "Release transport"): the job stays `queued` until the step is `done`, and the installer's "oldest waiting" query skips a job whose `download` step is not done. The step's `detail` then names the folder under `incoming/` the release waits in (`folder`), and the installer's `fetch` takes it from there.
-9. **Hand a built change to the installer.** A change job is two halves. The builder owns *check, fetch, build*; when `build` is `done` its `detail` holds the release number and folder (`{"release": 3, "path": "/opt/bilibi/dev/releases/3", …}`), the builder sends one more `NOTIFY` and leaves the job `running`. The installer takes a running change job whose `build` step is `done` from its first `pending` step (`backup`) and finishes it as rule 5 says. A cancel asked in between is honoured by whichever side sees it first, under the row lock of rule 4, so the two cannot cross.
-
-The job's `request` holds exactly what the owner reviewed: `platform`, `platform_commit` and `platform_repository` (the catalogue release's commit, or the running program's own when it is between releases), `domains` with a `version`, `commit` and `repository` (catalogue) or `repository` and `ref` (outside it), `plugins`, `switch` (change); `release` and `source` (install); `job` (undo). The worker trusts it as reviewed data and still checks the server (disk, memory, toolchain) itself, because those facts change between the review and the build.
-
-## The builder (Dev)
-
-The builder is the worker's building half: `bilibi-web software-worker`, run by `bilibi-worker@<instance>` as `bilibi-build`. **It builds only on Dev.** The role is `bilibi_system::Instance` (that is `BILIBI_ENV`): on Staging or Production the same program refuses a change job with the reason ("This instance is Production … only a Dev instance builds") and fails it before anything is claimed or touched. Nothing on an installing instance can turn this on.
-
-What one change job does on Dev, step by step:
-
-| Step | What happens | What the row says |
-| --- | --- | --- |
-| `check` | The Rust toolchain is present (installed into `bilibi-build`'s home on the first build, about 1.5 GB; or ahead of time with `--prepare`), `git`, `python3` and a C linker exist, 8 GB are free where the cache lives, 1 GB where releases go, and the machine has 4 GB of memory (swap counts) | "Disk 42 GB free, memory 8 GB, Rust 1.99.0, …" |
-| `fetch` | One kept checkout of the Platform (`BILIBI_BUILD_DIR/src`) is updated and set to the reviewed commit; each wanted Domain is cloned or updated into `apps/domains/<id>` at its commit (an outside Domain's `ref` is tried as `origin/<ref>` first, then as a tag or commit, so a kept clone never builds an old local branch); Domains not wanted are removed; the Platform's `rust-version` is checked, and the toolchain updated when it is older | "Fetched Bilibi v0.1.0 (e3fe31709a93) and finance v0.1.0 (24938fb69a4d)" |
-| `build` | `scripts/discover-modules.py`, `cargo metadata`, `discover-modules.py --pin`, then `cargo build --release --locked -p bilibi-web` into the kept cache, at the lowest CPU priority; the program, `manifest.txt`, `Cargo.lock`, `SHA256SUMS` and a `release.json` are copied into the next `releases/<n>`, and the new program's own `status` is run to prove it starts | "Compiled 214 of about 488 parts, about 7 minutes left", then "Built release 3 in 9 min 12 s" |
-
-- **Progress with a time estimate.** While `cargo` compiles, the `build` step's `detail` is rewritten every two seconds with `compiled`, `total`, `fresh` (parts taken from the cache), `seconds_left` and a plain `message`. The estimate uses the pace of the build so far once a fifth of the parts are done, before that the pace of the last build here (`BILIBI_BUILD_DIR/history.json`), and before any build a default of about a second and a half per part.
-- **The cache makes later builds faster.** The Platform checkout, the Domain checkouts and Cargo's target folder are kept under `BILIBI_BUILD_DIR`, so a second build of the same set compiles only what changed and reports most parts as `fresh`.
-- **Cancel.** The builder looks for `cancel_requested_at` every two seconds; a cancel stops the running command and its compilers (the whole process group), marks the current step `skipped`, the rest `skipped` and the job `cancelled`, and says "Stopped before anything changed. Dev still runs …". Nothing in the running instance was touched, because the builder never touches it.
-- **Failure.** A step that fails names the cause in plain words (a Domain commit that is not in its repository, a compile error, a compiler killed for memory with exit 137, a missing package with the `apt-get` line to run) and keeps the tail of the tool's output in `detail.details`; the full output is in `BILIBI_BUILD_DIR/logs/job-<id>.log`. The job's `result.message` starts with "Nothing changed."
-- **Stop and restart.** `systemctl stop bilibi-worker@dev` (Ctrl-C) during a build stops the compilers and marks the job `interrupted` at once ("Nothing changed. Start the change again; the parts already compiled are kept"); a crash leaves the same mark when the worker starts again. A job already handed to the installer is left alone.
-- **Settings.** *Software › Compilers at a time* (`software.build_jobs`, default 2; 0 = use every processor) caps the compiler processes of a build, so a Dev that shares its machine with Production stays responsive. Builds also run at the lowest CPU priority.
-- **Clean environment.** Every program the builder starts (Git, Python, Cargo and so a Domain's build scripts, `sha256sum`, rustup, the new `bilibi-web status`) runs with an empty environment plus `PATH` (toolchain first), `HOME`, `LANG`, `CARGO_TARGET_DIR`, `CARGO_TERM_COLOR`, `GIT_TERMINAL_PROMPT` and, when set, `CARGO_BUILD_JOBS`. The instance's `DATABASE_URL` and `BILIBI_*` keys never reach them.
-- **Paths.** `BILIBI_INSTANCE_DIR` (the instance folder, whose `releases/` receives the result) and `BILIBI_BUILD_DIR` (the builder's folder; default `/opt/bilibi/build`) come from the instance's `env` file; the toolchain lives in the worker user's `$HOME` (`~/.cargo`, `~/.rustup`), so an operator's own Cargo configuration there applies.
-
-`bilibi-web software-worker --once` handles the job waiting now and exits; `--prepare` installs the toolchain now (Dev only) and exits.
+Before a database update committed, a restarted install ends interrupted and restores the previous running release. After the update committed, or during restore/switch-back, the installer resumes. It carries existing software and step-up evidence unchanged across a restore; every other write since the backup is lost. See [`apps/installer/README.md`](../../installer/README.md).
 
 ## Release transport
 
-Staging and Production never build: they install a release that Dev, or Staging, tested. The release has to get there. Three ways in, all ending in the installer's same copy-and-check step:
+Servers install releases built in the operator’s local Bilibi copy and checked before installation. The release has to get there. Four ways in, all ending in the installer's same copy-and-check step:
 
 | Where the instances run | How the release gets there | What you set up |
 | --- | --- | --- |
 | Same machine | The installer copies the folder from the sibling instance's `releases/` | "Install releases tested on" names the instance, like `dev` |
 | Different machines that can reach each other | The target downloads the release file from its source over HTTPS, with a pairing key | "Install releases tested on" is the address, like `https://dev.erp.example.com`; the same pairing key on both |
-| A Dev the servers cannot reach (a laptop) | You download the release file on Dev's **Release files** page and upload it on the target's | nothing |
+| A Dev the servers cannot reach (a laptop) | You download the release file on Dev's **Software › Releases** tab and upload it on the target's | nothing |
+| A published setup file on GitHub | The server lists that repository's releases and installs one file | **Software › GitHub repository**, an optional read token, and **Accept this repository** |
 
-**The install review names its source first**: "Downloads from https://dev.example.com (answered just now)" for an https source, "Copied from dev on this machine" for a sibling, "From the uploaded file upload-3" for an uploaded file; the checks that follow are the checksum, the kind of server, the source's health and disk.
+**The install review names its source first**: "Downloads from https://dev.example.com (answered just now)" for an https source, "Copied from dev on this machine" for a sibling, "From the uploaded file upload-3" for an uploaded file, "Downloads bilibi-setup-….tar.gz from GitHub repository owner/name (tag v1, check code abcdef123456…)" for GitHub; the checks that follow are the checksum, the kind of server, the source's health and disk. A GitHub review also checks that the file is still the one you chose, and that the files inside match their own check codes.
 
 **The target pulls; nothing is ever pushed.** A Production instance accepts no program from anyone: it asks its source, checks the answer, downloads, checks again, and only then does the installer touch anything.
 
 ### The release file
 
-One release travels as one file, `bilibi-release-<n>.tar.gz`: the program (`bilibi-web`), its checksum list (`SHA256SUMS`), its pinned recipe (`manifest.txt`, `Cargo.lock`, `release.json`), the plug-ins that travel with it (`plugins/`, with `enabled.json`, the plug-ins switched on; any other file in the folder travels as it is), and `bundle.json`, which names the instance it came from (label, environment, address). The file is made on demand from the release folder (`transport.rs`), so there is nothing to keep in step.
+One release travels as one file, `bilibi-release-<n>.tar.gz`: the program (`bilibi-web`), its checksum list (`SHA256SUMS`), its pinned recipe (`manifest.txt`, `Cargo.lock`, `release.json`), the add-ons that travel with it (`plugins/`, with `enabled.json`, the add-ons switched on; any other file in the folder travels as it is), and `bundle.json`, which names the instance it came from (label, environment, address). The file is made on demand from the release folder (`transport.rs`), so there is nothing to keep in step.
 
 ### Pairing
 
-A pairing key is a shared secret, set once on both instances: on the source, so it answers only to its target; on the target, so it can present it. **The same key on every instance that shares releases**, 16 to 128 characters, no spaces; make one with `openssl rand -hex 24`. Set it on the Release files page (`/system/software/releases`), in the settings editor or with `base.software.pair`; whichever way, the server owner's authenticator code is asked every time (the editor through the step-up operation `base.software.pairing_key.change`, which guards this setting, `apps/base/settings_editor/README.md`), because whoever holds the key can download the whole program. It is the secret setting **Software › Pairing key other instances use to download releases from this one** (`software.pairing_key`): encrypted like every other secret, global, server owner only, listed in the settings editor next to the other secrets, and never shown back. The source checks it on a request from a machine, which has no session for a setting to be released to, so that one read goes through this module's own system principal, `software-transport`, which may read exactly this one secret and nothing else (`SystemScope::read_own_secret`, `apps/base/authz/README.md`); the key is compared in constant time.
+A pairing key is a shared secret, set once on both instances: on the source, so it answers only to its target; on the target, so it can present it. **The same key on every instance that shares releases**, 16 to 128 characters, no spaces; make one with `openssl rand -hex 24`. Set it on **Software › Releases** (`/system/software?tab=releases`), in the settings editor or with `base.software.pair`; whichever way, the server owner's authenticator code is asked every time (the editor through the step-up operation `base.software.pairing_key.change`, which guards this setting, `apps/base/settings_editor/README.md`), because whoever holds the key can download the whole program. It is the secret setting **Software › Pairing key other instances use to download releases from this one** (`software.pairing_key`): encrypted like every other secret, global, server owner only, listed in the settings editor next to the other secrets, and never shown back. The source checks it on a request from a machine, which has no session for a setting to be released to, so that one read goes through this module's own system principal, `software-transport`, which may read exactly this one secret and nothing else (`SystemScope::read_own_secret`, `apps/base/authz/README.md`); the key is compared in constant time.
 
 With the key, a source answers two addresses, both reserved by the host (`apps/web/src/transport.rs`) and both read-only:
 
@@ -200,51 +158,47 @@ With the key, a source answers two addresses, both reserved by the host (`apps/w
 
 The key goes in the `X-Bilibi-Pairing-Key` header. A missing or wrong key is `403` (`not_paired`, `pairing_key_refused`), a source without an instance folder or without that release is `404`, and a sender is limited to 30 attempts a minute. Every request is one system row in the exchange log; the key never reaches it.
 
+### Install from GitHub
+
+Name one repository on **Software › Releases**, as owner/name, for example BelimbingApp/bilibi-setup-template. A public repository needs no token, but GitHub then allows only 60 calls an hour from a server's address, and each install review uses about three. A token raises that to 5,000 an hour. A private repository needs a fine-grained token that can only read that repository. The token is stored encrypted and never shown again. Changing or clearing it asks for your authenticator code, including in the settings editor.
+
+The first time you save a repository, Bilibi asks GitHub for its number and remembers that number only when you choose **Accept this repository**. That also asks for your authenticator code. If GitHub later reports a different number for the same name, installs stop until you accept the new number. Bilibi does not replace a remembered number by itself.
+
+The list shows setup files for this server: names that start with `bilibi-setup-` and end with this computer's target, such as `-x86_64-unknown-linux-gnu.tar.gz`. Drafts stay hidden. Pre-releases stay hidden until you choose **Show pre-releases**. The list is kept on this server and refreshed at most as often as **Check GitHub every this many minutes** (15 by default), and again when you choose **Refresh**. The list is saved in the instance's `data/` folder. If GitHub is limiting this server, or cannot be reached, the saved list stays on the page, and a failed look is not repeated before the interval has passed; **Refresh** asks again. The running program, Undo and a file already downloaded do not call GitHub.
+
+Choose **Review** on a file. The install records the repository number, the release number, the file number, the tag, the target and the file's check code. Before the download, Bilibi reads that release from GitHub again and refuses when any of those differ. It then downloads the file through the shared outgoing calls, follows only GitHub's own file hosts, and drops the token when the host changes. The download address is not stored. The file's check code is compared before the archive is opened. The files inside are checked after they are copied, the same way as an upload. The job result keeps the GitHub identity. Undo does not call GitHub.
+
+Uploading a release file stays available, and the pairing key stays the way two Bilibi servers share a release with each other.
+
 ### What happens on the target
 
 1. The review (`base.software.install`) asks the source: a sibling's folders directly, or the source's listing over HTTPS as the person asking (the exchange log shows it under them). The release must be the one the source runs now, and the source must answer. The review then states the change list from the release's own recipe.
 2. The commit queues the job. For a source on another machine the first step is **Download the release from the source**, which this program carries out (`transfer.rs`, `run_transport`, every 5 seconds beside the server): it asks the source again, checks the disk, streams the file into `incoming/job-<id>/` with progress on the step, unpacks it, checks the checksum against the listing's and that the program was built for this kind of server, and marks the step done, waking the installer. A download that fails ends the job `failed` with "Nothing changed." and the reason; the folder is removed. Cancelling the job (while it waits or downloads) removes the folder too and marks the `download` step `skipped`, and a download in flight is stopped within about two seconds (the transfer loop checks the job while it streams) and logged as stopped because the job was cancelled, not as failed, so the next install's download is not held up.
 3. The installer's **Check the release and copy it into place** step takes the folder (a sibling's `releases/<n>`, `incoming/job-<id>/` or `incoming/upload-<n>/`), and makes the same checks whichever way it came: the checksum; built for this kind of server (a Linux program for this processor, read from the program itself, and a system library this server has, from `release.json`); the source still reports it healthy (same machine); not already the program in service; disk for the program and a backup. Then it copies, checks the copy, runs the copy's `status`, and removes the folder under `incoming/`. A downloaded `incoming/job-<id>/` is removed whatever the outcome, because a new try downloads again under a new job; an uploaded `incoming/upload-<n>/` stays for another try unless it was installed, failed its checks or the owner removes it. The rest is the ordinary install (`apps/installer/README.md`).
 
-Each failed check is a plain sentence that says what to do next: "This release was built for Linux ARM 64-bit computers, and this server is Linux x86-64. Build it on a Dev of the same kind as this server."
+Each failed check is a plain sentence that says what to do next: "This release was built for Linux ARM 64-bit computers, and this server is Linux x86-64. Build it locally for the same kind of server."
 
 `incoming/` is the one folder the program (user `bilibi`) and the installer (`bilibi-build`) both write: `scripts/install-server.sh create` and `installer` make it (`2770 bilibi:bilibi-build`), and the service unit allows the program to write there (the path has the `-` prefix, so an instance that has no `incoming/` yet still starts). A program run without `BILIBI_INSTANCE_DIR` keeps no releases, serves none, and refuses to receive one, each time with a sentence that says so.
 
-### The Release files page
+### Release controls
 
-`/system/software/releases` (`release_files.rs`, menu **Administration › System › Release files**) is the small UI of transport: the instance banner first, so you always know which instance you are moving a release to or from; the releases kept here, each with a **Download** link (server owners); what the source offers; the upload of a release file, which is unpacked and checked at once and then waits as `upload-<n>` until you install it (or remove it); and the pairing key (setting or clearing it asks for the owner's authenticator code; the box is hidden from anyone who may only view). The page asks the source once when it opens and keeps the answer, so showing it again, sorting or saving does not ask again; **Ask the source again** asks once more, and so does saving the pairing key. The source limits each sender to 30 requests a minute, which the install review and the download need too. Installing stays with the Software page (the pick of uploaded files on its install card) and `base.software.install`.
-## The card: the Software page inside a chat
+The **Releases** tab (`release_files.rs`, embedded by `web.rs`) moves files through the existing transport contracts. Uploading unpacks and checks the file, then keeps it as `upload-<n>` until you install or remove it. Downloads and uploads require manage permission; setting or clearing the pairing key, and saving or accepting the GitHub repository, require the owner's authenticator code every time. The update server choice stays in **Settings › Instance › Install releases tested on**, linked from the folded update-server section. GitHub settings are **Software › GitHub repository**, **Software › GitHub read token for a private setup repository** and **Software › Check GitHub for new releases every this many minutes**. The repository number is not typed by hand.
 
-One answer: `open_software` shows the same page as a card in ChatGPT (or any MCP Apps host); the person picks, reviews and confirms inside it, with the instance named on every screen.
-
-- **What it is.** `card/software-v1.html`, one self-contained document registered as an MCP App (`src/agent.rs`, `bilibi_agent_api::App`; the mechanism is in `apps/base/agent_api/README.md`, "MCP Apps"). `/mcp` serves it as `ui://bilibi/software-v1.html`; the `open_software` tool answers `base.software.open` and points the host at it. The agent may pass `propose` to pre-tick Domains or plug-ins the person named; nothing is chosen until the person presses Build.
-- **The instance first.** The banner at the top names the instance in its colour (Dev blue, Staging amber, Production red) on every screen, the review repeats it in its heading and its button ("Build on Dev?", "Install on Production?"), and Production adds a red "This changes Production. Pick a quiet time." note. The label and colour are `status`'s `instance`, which is `Instance::resolve`, so the card, the page and the agent answers cannot disagree.
-- **Dev.** A card per catalogue Domain (description, modules, installed badge, version picker, whether that version was tested on a Platform release), the plug-ins, a bar counting the changes, Review. The review is `plan` `base.software.change`: the change list, warnings, "tested together", the estimate and the pause, what happens, the steps, when to switch (`auto` or `ask`), then the authenticator code and Build. The commit is `commit` with `step_up_code`; a `step_up_required` answer asks for the code again in place.
-- **Staging and Production.** No Build. "Install the version tested on <source>" takes the release number the source reports (or `bundle`, an uploaded release file), then `plan` `base.software.install`: the checks, the pause, the code, Install. Without an `installs_from` setting the card says what the owner must set.
-- **The job.** After a commit the card shows the steps and the builder's progress line, reading `base.software.status` every 4 seconds while the job is queued or running, with Stop while a cancel is still honoured. While it runs, the card says "You can leave this chat". Beside Stop, a line says it cancels the job before the pause and changes nothing on the instance; Stop's tooltip and accessible description repeat it. When the job ends, the card shows the result and offers Undo when `status` allows it. The card reports the queued job and the outcome to the model with `ui/update-model-context`, so the conversation can carry on ("Release 4 is built on Dev").
-- **Ask the assistant.** A question typed in the card is posted into the chat with `ui/message`, prefixed with the instance and what is ticked.
-- **What it never does.** Hold a credential, fetch an address of its own, frame the live page, trust a message that did not come from the host, or decide a permission: every fact and every write goes through the host's `tools/call` bridge to `read`, `plan` and `commit`, so the owner's capability and the `.always()` code apply exactly as on the page. The bridge accepts messages only from the parent window and, after the handshake, only from the origin that answered `ui/initialize`; request ids carry a random prefix, so another frame cannot forge a reply or a tool result.
-- **The plugin package** (`core/agent_plugins`) lists `open_software` in its workflow skill and writes the card's own skill, `bilibi-<instance>-software`, from `CARD_SKILL` here.
+The tab asks the paired update server once when first opened and keeps the answer across renders and tab changes. **Refresh releases** and saving the pairing key ask again. The source limits each sender to 30 requests a minute, which install review and download also use. The GitHub list is separate: opening the tab uses the saved list, and only **Refresh**, a stale interval, or an install review asks GitHub. The four-second job poll does not. Installing uses the tab's install form, a GitHub row's **Review**, and `base.software.install`.
 
 ## Caveats
 
-- **A built release is not installed yet.** The installer carries out install and undo jobs; it does not yet take a built change job over from the builder (rule 9), so cancel is the way out of that state, and `scripts/install-server.sh switch <instance> <n>` puts the release in service by hand.
-- **An Undo that restores a backup keeps the software's audit trail.** The installer carries the `software.*` and `step_up.*` actions and the `base/software.job` changes written after the backup across the restore, and marks a carried job whose outcome is not in the restored audit trail as unsettled, so `settle` records it again. Every other row written after the backup is lost, and the undo review counts it.
-- **An unpinned program shows no Domain versions.** A developer build without `scripts/discover-modules.py --pin` reports `pin: unpinned`; the review warns that the running versions are not known exactly.
-- **The catalogue is read as the person asking.** The fetch is recorded in the exchange log under them, and a server that cannot reach the address gets `available: false` with the reason.
-- **A release file is held in memory once when a person downloads it** (tens of megabytes, through the download contract); a pulling instance gets it streamed. The live upload takes a file up to 64 MB: a compressed release is well under that.
-- **A private certificate authority works.** The transport's three calls (the two listings and the file download) alone trust the server's own trust store as well as the public roots (`Outgoing::trust_system_roots()`, `apps/base/integration/README.md`); every other outgoing call trusts the public roots only. A source on a private name with `--tls internal` is reachable once its authority is installed on the target with `update-ca-certificates`. The same calls use `Outgoing::no_redirects()`: a source that answers with a redirect is refused in plain words, so the pairing key never goes on to another address.
-
-## Try it
-
-On a migrated disposable database with the walkthrough fixture, `BILIBI_ENV=development` and `BILIBI_SETTINGS_KEY` set: sign in as `ai@agent.my`, enrol the authenticator at `/settings/two-factor`, get a bearer through the device flow, then drive the calls above through `/api/v1` or `/mcp`. A commit without `step_up_code` answers `step_up_required` with `reason: every_time`; with the current code it queues the job. `SELECT * FROM base_software_jobs` and the Actions audit log show the rest.
-
-To watch the job being built, run the worker beside the app with the same `DATABASE_URL` and `BILIBI_ENV=development`, plus `BILIBI_INSTANCE_DIR=<a scratch folder with releases/>` and `BILIBI_BUILD_DIR=<a scratch folder on a disk with 8 GB free>`: `bilibi-web software-worker --once`. `base.software.status` then shows the steps filling in, and `releases/1` appears when the build is done.
+- An unpinned program cannot prove its exact Domain versions or CI pair. Pin before building locally.
+- The documented local release folder has no `release.json`; an uploaded file's review says its change list is known only after the installer reads the program. The completed job records its pinned composition and changes.
+- Downloads by a person hold one bundle in memory; pulling instances stream it. Live uploads are limited to 64 MB.
+- Calls to another Bilibi server trust system certificate roots as well as public roots and refuse redirects, so a pairing key never goes to another address. Install a private authority on the receiving server when needed. A GitHub download trusts public roots, follows only GitHub's own file hosts, and drops the read token when the host changes.
 
 ## Where to go next
 
-- The design and the ten pieces: the Firstmate scout report `bilibi-domain-chooser`.
-- Versions, the catalogue and tested sets: [`docs/versions.md`](../../../docs/versions.md).
-- The server layout the workers run in: [`docs/server-install.md`](../../../docs/server-install.md).
-- Step-up and `.always()`: [`apps/base/step_up/README.md`](../step_up/README.md).
-- Plans, commits and `step_up_code`: [`apps/base/agent_api/README.md`](../agent_api/README.md).
+- [Local builds and server installation](../../../docs/server-install.md).
+- [Repeatable fresh-server proof](../../../docs/server-proof/README.md).
+- [Versions and CI evidence](../../../docs/versions.md).
+- [Installer checks and recovery](../../installer/README.md).
+- [Step-up](../step_up/README.md) and [Agent API plans](../agent_api/README.md).
+
+Software reviews and the pairing-key form use the shared `bilibi_ui::StepUp` form: an account without 2FA sees a setup link instead of the code and confirmation. Setup returns to Software; the person reviews again before confirming. Agent previews include `two_factor_enabled` and an absolute `two_factor_setup_url`; the ChatGPT card uses these to show the same setup-first flow through the host’s `ui/open-link` request. Cancellation needs no 2FA.

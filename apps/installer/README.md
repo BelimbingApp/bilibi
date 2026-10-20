@@ -38,6 +38,8 @@ If the backup cannot be restored, the job ends `failed` with the service **left 
 
 How a release reaches this machine from another one, with the pairing key and the release file, is the program's side: `apps/base/software/README.md`, "Release transport". An install from another machine has a **Download the release from the source** step before this one, which the program carries out; the installer leaves such a job alone until that step is done.
 
+A GitHub download is another folder under `incoming/job-<n>/`. The download step checks that the archive still matches the reviewed check code before it is opened. The installer then checks the files inside against their own check codes, the same way as an upload. The job result keeps the GitHub repository number, release, file, tag, target, archive check code and program check code. Undo does not call GitHub.
+
 ### "Switch as soon as it is ready" or "ask me first"
 
 The owner chooses at review time. With "ask me first" (`switch: ask`), the installer copies and checks the release, then **waits with the instance running** until the owner says go or stops the job. The waiting shows on the backup step: "Ready. Waiting for the owner to say when to switch."
@@ -61,6 +63,14 @@ Undo takes back the newest finished install. The steps:
 
 > [!WARNING]
 > Undo is not available for a job whose result was never recorded, and an Undo cannot be undone. Both are the Software page's rules (`apps/base/software/README.md`).
+
+## Backup files
+
+**Each install and undo records its backup file, UTC time, size and the number of backups kept (`keep_backups`) in the backup step.** The Software page and assistant card show those facts; the file only to accounts that can manage software.
+
+Backups are PostgreSQL dumps under `<instance>/backups/job-<n>/<database>.dump`. After a successful install or undo, the installer keeps the newest `KEEP_BACKUPS` (3) backup folders and removes older ones (`flow.rs`, `prune`). Retention is by job number, with no fixed age in days. A recorded path may therefore refer to a file already removed.
+
+Undo restores the pre-install backup when the install changed the database structure; it takes another backup before starting. If restoration fails, the job names the dump to restore by hand and leaves the service stopped.
 
 ## If the server restarts mid-way
 
@@ -90,7 +100,7 @@ A step that was running when the restart came says so in its detail: "(the insta
 
 ## How it talks to the page
 
-The installer never goes through the app. It follows the worker contract in `apps/base/software/README.md` ("How a worker plugs in"): it `LISTEN`s on the `bilibi_software_jobs` channel, claims the oldest waiting `install` or `undo` job (a `change`, a build, waits for the builder), marks each step `running`, `done`, `failed` or `skipped` with a plain `detail`, and writes the job's final `state` and `result`. The page and the `base.software.status` contract read those rows.
+The installer never goes through the app. It follows the worker contract in `apps/base/software/README.md` ("How a worker plugs in"): it `LISTEN`s on the `bilibi_software_jobs` channel, claims the oldest waiting `install` or `undo` job, marks each step `running`, `done`, `failed` or `skipped` with a plain `detail`, and writes the job's final `state` and `result`. The page and the `base.software.status` contract read those rows.
 
 The result carries what Undo and the page need:
 
@@ -100,6 +110,7 @@ The result carries what Undo and the page need:
 | `migrated` | whether the database changed shape; Undo then restores the backup |
 | `backup`, `backup_at` | where the backup is and when (UTC) it was taken |
 | `source`, `source_release`, `sha256`, `program` | where the release came from, its number there, its checksum and its first `status` line |
+| `github` | on a GitHub install: repository, repository number, release number, file number, tag, target, archive check code and program check code. Undo does not need GitHub |
 | `switched_back`, `restored`, `previous_healthy` | on a failure: what the installer did to put things back |
 | `platform`, `domains`, `extensions` | what the release in service is made of, read from its own `bilibi-web status`: the Platform `{"version", "release", "commit"}` and each Domain or Extension `{"id", "version", "commit"}`; null when the program could not say |
 | `changes` | what differs from the release it replaced (an install) or the release it left (an Undo): `{"platform": {"from", "to"} or null, "containers": [{"layer", "id", "change", "from", "to", "from_commit", "to_commit"}]}`, where `change` is `added`, `removed`, `updated`, `downgraded` or `moved` (same version or none, new commit; the commits are short); null when either release could not say |
@@ -113,11 +124,10 @@ The audit trail is the app's job, not the installer's: `base/software` records e
 
 ## Running it
 
-`scripts/install-server.sh` does this on a server:
+Build `bilibi-installer` on your own machine, then copy the finished program to the server ([local builds](../../docs/server-install.md#build-locally)). On the server, run:
 
 ```sh
-cargo build --release -p bilibi-installer
-sudo scripts/install-server.sh installer target/release/bilibi-installer
+sudo scripts/install-server.sh installer /path/to/bilibi-installer
 ```
 
 That copies the program to `/opt/bilibi/build/bin/bilibi-installer` and starts `bilibi-installer@<instance>` for every instance. A later `create` starts one for the new instance too. Rerun `installer` with a newer program to update it; the services restart and a job in progress is settled as in "If the server restarts mid-way".
@@ -134,7 +144,7 @@ It needs `DATABASE_URL` and `BIND_ADDR` from that file, the sudo rule from `scri
 ## Caveats
 
 - **The first release is not its job.** A fresh instance has no program to queue a job in; `install-server.sh release` puts the first release in service.
-- **Plug-ins travel with the release.** A `plugins/` folder in the release is copied with it, file by file; links are left out. Its `enabled.json` lists the plug-ins to switch on; when the job finishes `done`, the same transaction makes `base_software_plugins` match it and records `plugins: {before, after}` in the result, and the review (the program's side) lists what is switched on or off. An Undo puts `before` back, after the restore if there is one, so a restore of the database does not bring back the newer list. A release without `enabled.json` leaves the list alone.
+- **Add-ons travel with the release.** A `plugins/` folder in the release is copied with it, file by file; links are left out. Its `enabled.json` lists the add-ons to switch on; when the job finishes `done`, the same transaction makes `base_software_plugins` match it and records `plugins: {before, after}` in the result, and the review (the program's side) lists what is switched on or off. An Undo puts `before` back, after the restore if there is one, so a restore of the database does not bring back the newer list. A release without `enabled.json` leaves the list alone.
 - **The database tools must match the cluster.** `pg_dump` and `pg_restore` come with `postgresql-client-18`, which `install-server.sh create` installs.
 - **A restore keeps the software's own audit trail, and nothing else entered since.** The history file carries the `software.*` and `step_up.*` actions and the `base/software.job` changes written after the backup, so the owner's 2FA check and the Undo's own queue record survive. A carried job whose recorded outcome is not in the restored audit trail is marked unsettled, and the app records it again. Every other row written after the backup is the loss the Undo counts and states before the owner confirms.
 - **A restore puts back the `public` schema only.** Bilibi keeps everything there. The job history is carried across into whatever shape the restored release gives those tables; a column the older release lacks is dropped from the carried rows. The installer reads only the job columns that exist from the first `base/software` migration on, so an older dump does not break its queries.

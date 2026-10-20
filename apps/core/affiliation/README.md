@@ -174,3 +174,7 @@ a reviewer sees before anything is written. For the screens, run the app,
 open a person from `/contacts` or a company from `/companies` and use the
 Affiliations card; the person page's panel and the company page's panel show
 the same record from either side.
+
+## Postal addresses
+
+Companies and contacts have linked postal addresses, owned by [Core Address](../address/README.md). The `core.address` guide explains saving an office or billing address and attaching it to a company or person. Use `core.address.company.list` or `core.address.person.list` to read those links. Address creation and attachment are reviewed writes; a namecard contact can be created first, then linked to its office address. An affiliation holds a position and work email/phone, not a postal address.
