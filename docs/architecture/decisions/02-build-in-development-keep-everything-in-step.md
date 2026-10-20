@@ -1,7 +1,7 @@
 # ADR 02: Build in development and keep everything in step
 
 **Document Type:** Architecture Decision Record
-**Status:** Accepted. Local builds, discovery, release installation, the stored server role, the catalogue-wide compatibility check, the release gate, automatic catalogue entries and upgrade notes for agents are built. The Software page still needs the Update available state.
+**Status:** Accepted. Local builds, discovery, release installation, the stored server role, the catalogue-wide compatibility check, the release gate, automatic catalogue entries and upgrade notes for agents and the Software page status are built.
 **Agents:** codex/gpt-6 (author)
 **Scope:** Where Bilibi is built, how servers receive releases, and how the Platform, official Domains and official Extensions stay compatible
 **Last Updated:** 2026-10-20
@@ -31,7 +31,7 @@ Much industry practice supports independently evolving plugins through version r
 
 ### Server tools
 
-**MCP and the Software page discover software, install releases and report status.** They show official Domains and Extensions, compatibility with this server, and instructions for the local checkout.
+**MCP and the Software page discover software, install releases and report status.** They show official Domains and Extensions as Installed, Not installed or Update available, and give instructions for the local checkout.
 
 - Installation takes a tested release, with a review and a fresh 2FA code. It backs up the database before changing it, switches programs and checks the result.
 - A failed switch or health check triggers automatic switch-back. When the database changed, returning also needs its backup restored.
@@ -66,7 +66,7 @@ This table describes the checkout on 2026-10-20. Accepted direction does not mea
 | Versions, pins and tested pairs | **Built.** The exact commits are compiled into the program. [`versions.md`](../../versions.md) defines the records; [`domains.yml`](../../../.github/workflows/domains.yml) checks three named Domains individually and publishes tested pairs through [`catalogue.py`](../../../scripts/catalogue.py). Separate pairs do not prove a combined composition. |
 | Every official Domain and Extension checked on every Platform change | **Built.** [`.github/workflows/domains.yml`](../../../.github/workflows/domains.yml) mounts every `catalogue.json` entry. A pull request that cannot affect a mount passes **Official compatibility** without mounting. See [`docs/versions.md`](../../versions.md) and [`docs/domain-ci/README.md`](../../domain-ci/README.md). |
 | Coordinated releases and automatic catalogue updates | **Built.** The [Release](../../../.github/workflows/release.yml) workflow tags `vX.Y.Z` only after Official compatibility passes for that commit. A Domain or Extension tag opens the catalogue pull request from [`docs/domain-ci/ci.yml`](../../domain-ci/ci.yml). Each Platform release carries [`docs/upgrade-notes/vX.Y.Z.md`](../../upgrade-notes/README.md). |
-| Installed / Not installed / Update available | **Partly built.** [`web.rs`](../../../apps/base/software/src/web.rs) shows installed versions or Not installed, with compatibility and recommended releases. The complete Update available state is not yet built. |
+| Installed / Not installed / Update available | **Built.** Official modules show one status; modules from an operator's own catalogue keep the compatibility wording. See [`base/software`](../../../apps/base/software/README.md#page-and-chatgpt-card) and [`discovery.rs`](../../../apps/base/software/src/discovery.rs). |
 
 ## Consequences
 
