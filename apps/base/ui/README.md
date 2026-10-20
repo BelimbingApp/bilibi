@@ -16,7 +16,7 @@ use bilibi_ui::{ColourChoice, ColourInput, ColourRole, Field};
 let colour = ColourInput::new(
     Field::named("banner_colour").label("Banner colour").value("info"),
     vec![
-        ColourChoice::new(ColourRole::Info.inherited_label(), "", ColourRole::Info),
+        ColourChoice::new("Use role colour", "", ColourRole::Info),
         ColourChoice::new("Blue", "info", ColourRole::Info),
         ColourChoice::new("Amber", "warning", ColourRole::Warning),
     ],
@@ -25,7 +25,7 @@ let colour = ColourInput::new(
 
 The label is what people read; the value is what the form submits. The owner supplies the default choice's actual colour. Render with `Html::render(&colour)` or `forms::colour_input(control=colour)`.
 
-- `ColourRole` permits the status roles from `DESIGN.md`. The chip uses the same light and dark surface, border and text tokens as the banner, without inline styles or fixed colour values. `ColourRole::inherited_label` names a short role inside "Use role colour (Blue)".
+- `ColourRole` permits the status roles from `DESIGN.md`. The chip uses the same light and dark surface, border and text tokens as the banner, without inline styles or fixed colour values. `ColourInput` adds the default colour's name to the choice with an empty value, so "Use role colour" shows as "Use role colour (Blue)".
 - The field label stays small inside the field. `Field` supplies the hint, errors, required and disabled state.
 - Arrow keys, Home, End and typing a colour's name move through the list. Enter or Space selects; Escape cancels and Tab leaves the field. Each option keeps its plain name for screen readers.
 - A native select owns the form value and reset behaviour. Without JavaScript, the named select remains available.

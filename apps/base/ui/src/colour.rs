@@ -31,12 +31,6 @@ impl ColourRole {
             Self::Danger => StatusKind::Error.surface_class(),
         }
     }
-
-    /// The choice that follows the server role, drawn in this role's colour.
-    /// Blue, Green, Amber and Red are short enough to name in the chip.
-    pub fn inherited_label(self) -> String {
-        format!("Use role colour ({})", self.label())
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -67,11 +61,14 @@ pub struct ColourInput {
     pub options: Vec<ColourChoice>,
 }
 impl ColourInput {
-    pub fn new(field: Field, options: Vec<ColourChoice>) -> Self {
+    pub fn new(field: Field, mut options: Vec<ColourChoice>) -> Self {
         assert!(
             !options.is_empty(),
             "a colour input needs at least one choice"
         );
+        for option in options.iter_mut().filter(|option| option.value.is_empty()) {
+            option.label = format!("{} ({})", option.label, option.colour.label());
+        }
         Self {
             field: field.kind(InputKind::Select),
             options,

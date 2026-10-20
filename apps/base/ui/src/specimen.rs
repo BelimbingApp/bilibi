@@ -564,11 +564,7 @@ fn specimen_uploads() -> Uploads {
 fn colour_inputs() -> Vec<crate::ColourInput> {
     use crate::{ColourChoice, ColourInput, ColourRole};
     let options = || {
-        let mut choices = vec![ColourChoice::new(
-            ColourRole::Info.inherited_label(),
-            "",
-            ColourRole::Info,
-        )];
+        let mut choices = vec![ColourChoice::new("Use role colour", "", ColourRole::Info)];
         choices.extend(
             [
                 ("info", ColourRole::Info),
