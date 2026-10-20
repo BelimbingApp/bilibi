@@ -17,7 +17,7 @@ macro_rules! provenance {
 }
 
 // ChatGPT (`chatgpt.rs`): the operation is the harness key. The ZIP is not a
-// generic MCP download; `docs/mcp-setup.md` is the setup guide.
+// generic MCP download, and the settings page does not link it.
 inventory::submit! { Contribution::new(DOWNLOADS, "core/agent_plugins.chatgpt.download", provenance!(), &Download {
     path: "/settings/chatgpt-plugin/download", service: FILES, operation: "chatgpt", access: Access::SignedIn,
 }) }

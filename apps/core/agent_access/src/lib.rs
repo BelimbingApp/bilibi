@@ -10,6 +10,7 @@
 mod contributions;
 mod oauth_client;
 mod secrets;
+mod setup_prompt;
 mod throttle;
 mod web;
 pub use contributions::MANAGE;

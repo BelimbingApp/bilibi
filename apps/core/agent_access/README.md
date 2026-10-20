@@ -66,11 +66,11 @@ compare a credential yourself.
 
 Both consent pages open with the instance banner (`bilibi_system::Instance::banner`, `apps/base/system/README.md`), so the person sees which Bilibi they connect the agent to. The authorization review also shows the configured public origin (`APP_ORIGIN`) as the Bilibi address, separately from the client's return address. Its shared form groups the connection facts, access explanation and primary approval action; Your connections stays available in the page header.
 
-Opening `/oauth/device?user_code=…` only fills the code; the person checks it, reviews the stated agent and the server-computed end time, then approves or refuses. `/oauth/authorize` validates the registered client and callback before consent renders, and an approve or refuse answers through the live page's `redirect` with `code` or `error=access_denied`, the client's `state` and `iss` (the configured `APP_ORIGIN`, never the Host header). Both consent forms submit no fields: an approve carrying any field is refused as a changed end time. `/settings/ai-connections` is the AI connections tab on My settings (`SettingsTab::AiConnections`). It lists the person's grants newest first with "Harness", "Expires", status, "Also known as", "Model (as reported)" and "Client identity", and revokes one only through the shared confirm dialog. Under the table, "Set up MCP in your AI app" shows the server URL (`{origin}/mcp`) and the registered app's client ID, each with copy. The app is auto-selected when only one is registered. Authentication, scope, and the authorization and token URLs sit under Technical details. No registered app tells the person to ask an admin. Impersonation and an agent facet see only the connections refusal, not those details. `/settings/agent-connections`, `/settings/mcp` and `/settings/chatgpt-plugin` redirect here and keep the query string. The page works on an HTTP origin and does not offer a plugin download. Audit sees each decision as the signed-in `user`.
+Opening `/oauth/device?user_code=…` only fills the code; the person checks it, reviews the stated agent and the server-computed end time, then approves or refuses. `/oauth/authorize` validates the registered client and callback before consent renders, and an approve or refuse answers through the live page's `redirect` with `code` or `error=access_denied`, the client's `state` and `iss` (the configured `APP_ORIGIN`, never the Host header). Both consent forms submit no fields: an approve carrying any field is refused as a changed end time. `/settings/ai-connections` is the AI connections tab on My settings (`SettingsTab::AiConnections`). It lists the person's grants newest first with "Harness", "Expires", status, "Also known as", "Model (as reported)" and "Client identity", and revokes one only through the shared confirm dialog. Under the table, "Connect your AI app" shows one read-only prompt with a Copy button and one line saying the app will give the steps if it cannot add the server itself. `src/setup_prompt.rs` builds the prompt from the instance (name, role, `APP_ORIGIN`), the MCP URL (`{origin}/mcp`), the registered client IDs and the commands for the apps that can set themselves up. There is no served guide: the prompt is the whole guide, so it also works for a chat app that cannot reach a local address. It holds public facts only. A Claude Code or Codex command appears only when `bilibi-claude-code` or `bilibi-codex` is registered; the server name is `bilibi-<instance slug>`. No registered app shows an empty state telling the person to ask an admin, and no prompt. Impersonation and an agent facet see only the connections refusal. `/settings/agent-connections`, `/settings/mcp` and `/settings/chatgpt-plugin` redirect here; the tab ignores their query string. The page works on an HTTP origin and does not offer a plugin download. Audit sees each decision as the signed-in `user`.
 
 ## Connect a local agent
 
-Connect Claude Code or Codex directly to this Bilibi with your own sign-in; a local instance needs no tunnel.
+The AI connections prompt tells Claude Code or Codex to add this server itself. This section is for the server owner who registers the apps, and for the commands the prompt carries.
 
 1. As the server owner, open **Administration → Settings → OAuth public clients** (`/system/settings`) and merge these entries into the existing JSON object:
 
@@ -125,15 +125,14 @@ shares; none of them holds harness-specific code.
   person's own setup page. It refuses impersonation and agent facets.
 - Neither creates or approves a grant. The `/oauth/authorize` consent still
   names the person and the end date.
-- The package builder, the harness adapters (ChatGPT is the first) and the harness downloads live in `core/agent_plugins` ([README](../agent_plugins/README.md)). App-specific steps are in [docs/mcp-setup.md](../../../docs/mcp-setup.md). The settings page is this module's AI connections tab.
+- The package builder, the harness adapters (ChatGPT is the first) and the harness downloads live in `core/agent_plugins` ([README](../agent_plugins/README.md)). The settings page is this module's AI connections tab.
 
 ### How to add a harness
 
 1. Add `apps/core/agent_plugins/src/<harness>.rs` implementing `Harness`: name, archive name and `files(&Package)` (its manifest, MCP configuration and skill layout). Nothing else.
 2. Add it to `HARNESSES` in `src/harness.rs`.
 3. Submit its `Download` in `src/contributions.rs`, with the harness key as the operation. Do not add a settings tab.
-4. Add that app's steps to [docs/mcp-setup.md](../../../docs/mcp-setup.md).
-5. Run the exporter, unzip and check the files.
+4. Run the exporter, unzip and check the files.
 
 The builder, archive and exporter stay unchanged, and nothing in this module changes. The exporter (`bilibi-web plugin-export`) writes the same package. A general Bilibi CLI client over `/api/v1` does not exist yet.
 

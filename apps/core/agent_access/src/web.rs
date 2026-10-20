@@ -7,8 +7,8 @@
 //! expiry is refused. The host proves the session before any adapter call and
 //! `AgentAccess` keeps the self-service gate; this file owns only page state.
 use crate::{
-    AgentAccess, AuthorizationRequest, AuthorizeParams, Decision, DeviceReview, OAuthError,
-    PublicClient, OAUTH_SCOPE,
+    setup_prompt, AgentAccess, AuthorizationRequest, AuthorizeParams, Decision, DeviceReview,
+    OAuthError,
 };
 use askama::Template;
 use bilibi_database::{Db, Error, Result};
@@ -22,7 +22,7 @@ use bilibi_ui::{
         LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, MountFuture, Page, PageBody,
         PageFuture, PageRequest,
     },
-    params, ActionLink, Badge, BadgeKind, BuiltinColumn, Button, ButtonVariant, Choice, CodeInput,
+    params, ActionLink, Badge, BadgeKind, BuiltinColumn, Button, ButtonVariant, CodeInput,
     EmptyState, Field, FlashMap, FlexRow, FlexTable, Html, IconButton, InputKind, ListColumns,
     StatusKind, TableEmpty, NO_FLASH,
 };
@@ -93,11 +93,7 @@ impl Page<Scope, Error> for Pages {
                         .view(scope)
                         .await?
                 }
-                "connections" => {
-                    ConnectionsPage::new(self.clone(), request.query)?
-                        .view(scope)
-                        .await?
-                }
+                "connections" => ConnectionsPage::new(self.clone())?.view(scope).await?,
                 _ => return Err(Error::NotFound),
             };
             Ok(PageBody {
@@ -112,7 +108,7 @@ impl Page<Scope, Error> for Pages {
             let state: State = match request.operation {
                 "device" => Box::new(DevicePage::new(self.clone(), request.query)?),
                 "authorize" => Box::new(AuthorizePage::new(self.clone(), request.query).await?),
-                "connections" => Box::new(ConnectionsPage::new(self.clone(), request.query)?),
+                "connections" => Box::new(ConnectionsPage::new(self.clone())?),
                 _ => return Err(Error::NotFound),
             };
             Ok(Some(state))
@@ -190,16 +186,6 @@ fn only(query: &HashMap<String, String>, allowed: &[&str]) -> Result<()> {
         Err(Error::Invalid)
     }
 }
-/// Only `client_id`, bounded. Anything else is a malformed address.
-fn requested_client(query: &HashMap<String, String>) -> Result<Option<String>> {
-    only(query, &["client_id"])?;
-    match query.get("client_id") {
-        Some(id) if id.len() > CLIENT_ID_LIMIT => Err(Error::Invalid),
-        Some(id) if id.is_empty() => Ok(None),
-        id => Ok(id.cloned()),
-    }
-}
-
 // ---- /oauth/device -----------------------------------------------------------
 
 struct Completed {
@@ -668,18 +654,11 @@ impl LiveState<Scope, Error> for AuthorizePage {
 
 // ---- /settings/ai-connections -------------------------------------------------
 
-/// Client IDs are bounded by the OAuth client setting's validator.
-const CLIENT_ID_LIMIT: usize = 255;
-/// App-specific steps stay in the docs. The page only links there.
-const SETUP_GUIDES: &str = "https://github.com/BelimbingApp/bilibi/blob/main/docs/mcp-setup.md";
-
 struct ConnectionsPage {
     pages: Pages,
     columns: ListColumns,
     pending: Option<i64>,
     flash: Option<Flash>,
-    /// `?client_id=` when the person picked an app. Empty means none picked.
-    requested: Option<String>,
     copied: Option<Copied>,
 }
 /// What the browser reported after a copy click.
@@ -700,10 +679,6 @@ enum ConnectionsEvent {
     },
     CancelRevoke,
     ConfirmRevoke,
-    SelectClient {
-        #[serde(default)]
-        client_id: String,
-    },
     ConnectionCopied {
         text: String,
         copied: bool,
@@ -728,14 +703,9 @@ pub struct ConnectionRow {
     pub client_identity: String,
     pub revoked: bool,
 }
-/// One copyable value: the `ClipboardCopy` hook reads `data-copy-text`.
-struct CopyValue {
-    id: &'static str,
-    text: String,
-}
 #[derive(Template)]
 #[template(
-    source = r#"<p>MCP lets an AI agent act on your behalf in Bilibi, with your permissions and nothing more. Hand it routine tasks, and it shows you each change to check before it is saved. Risky changes also need your 2FA code.</p><ul class="mt-1 list-disc space-y-0.5 pl-4"><li>To connect, add this server's address in your AI app's MCP settings, then sign in to Bilibi and approve the connection.</li><li>To disconnect an AI app, choose Revoke connection in the table above. Access ends at once.</li></ul>"#,
+    source = r#"<p>MCP lets an AI agent act on your behalf in Bilibi, with your permissions and nothing more. Hand it routine tasks, and it shows you each change to check before it is saved. Risky changes also need your 2FA code.</p><ul class="mt-1 list-disc space-y-0.5 pl-4"><li>To connect, paste the prompt below into your AI app's chat. Then sign in to Bilibi in your browser and approve the connection.</li><li>To disconnect an AI app, choose Revoke connection in the table above. Access ends at once.</li></ul>"#,
     ext = "html"
 )]
 struct Intro;
@@ -748,20 +718,18 @@ struct ConnectionsView {
     intro: Html,
     table: Html,
     pending: Option<i64>,
-    /// Impersonation and an agent facet see the table's refusal, not setup details.
+    /// Impersonation and an agent facet see the table's refusal, not the prompt.
     show_setup: bool,
     no_clients: Html,
-    client_field: Option<Field>,
-    server: CopyValue,
-    client: Option<CopyValue>,
-    authorization_url: String,
-    token_url: String,
-    scope: &'static str,
+    /// The paste-ready text, shown whole so the person sees what the agent is told.
+    prompt: Option<Field>,
+    /// The same text for the Copy button's `data-copy-text`.
+    prompt_text: String,
     copied: Option<bool>,
-    guides_href: &'static str,
 }
 impl ConnectionsPage {
-    fn new(pages: Pages, query: &HashMap<String, String>) -> Result<Self> {
+    /// The address takes no query. Older links carried `?client_id=` and still open the tab.
+    fn new(pages: Pages) -> Result<Self> {
         Ok(Self {
             pages,
             columns: ListColumns::mount(
@@ -778,24 +746,25 @@ impl ConnectionsPage {
             .map_err(|_| Error::Internal)?,
             pending: None,
             flash: None,
-            requested: requested_client(query)?,
             copied: None,
         })
     }
-    /// The requested app when it is registered; the only app when none was requested.
-    fn selected<'c>(&self, clients: &'c [PublicClient]) -> Option<&'c PublicClient> {
-        match &self.requested {
-            Some(id) => clients.iter().find(|client| &client.id == id),
-            None if clients.len() == 1 => clients.first(),
-            None => None,
+    /// The prompt for this installation, or `None` when no app is registered
+    /// or the caller may not set one up (impersonation, an agent facet).
+    async fn prompt(&self, scope: &Scope) -> Result<Option<String>> {
+        let clients = match self.pages.access.clients_for(scope).await {
+            Ok(clients) => clients,
+            Err(error) => {
+                refusal(error)?;
+                return Ok(None);
+            }
+        };
+        if clients.is_empty() {
+            return Ok(None);
         }
-    }
-    fn query(&self) -> HashMap<String, String> {
-        let mut query = HashMap::new();
-        if let Some(id) = &self.requested {
-            query.insert("client_id".into(), id.clone());
-        }
-        query
+        let client = self.pages.db.get().await?;
+        let instance = Instance::resolve(&self.pages.settings, &**client).await?;
+        Ok(Some(setup_prompt::prompt(&instance, &clients)))
     }
     async fn view(&self, scope: &Scope) -> Result<String> {
         let client = self.pages.db.get().await?;
@@ -909,19 +878,22 @@ impl ConnectionsPage {
         table.empty = Some(TableEmpty::State(if let Some(error) = error {
             EmptyState::missing("Connections unavailable", error).id("connections-error")
         } else {
-            EmptyState::missing("No AI apps connected yet", "Follow the steps below.")
-                .id("connections-empty")
+            EmptyState::missing(
+                "No AI apps connected yet",
+                "Paste the prompt below into your AI app.",
+            )
+            .id("connections-empty")
         }));
         let render = |rendered: askama::Result<Html>| rendered.map_err(|_| Error::Internal);
-        let (show_setup, clients) = match self.pages.access.clients_for(scope).await {
-            Ok(clients) => (true, clients),
+        let show_setup = match self.pages.access.clients_for(scope).await {
+            Ok(_) => true,
             Err(error) => {
                 refusal(error)?;
-                (false, Vec::new())
+                false
             }
         };
-        let selected = self.selected(&clients);
-        let no_clients = if show_setup && clients.is_empty() {
+        let prompt = self.prompt(scope).await?;
+        let no_clients = if show_setup && prompt.is_none() {
             render(Html::render(
                 &EmptyState::missing(
                     "No app registered",
@@ -932,21 +904,6 @@ impl ConnectionsPage {
         } else {
             Html::EMPTY
         };
-        let client_field = (show_setup && !clients.is_empty()).then(|| {
-            Field::named("client_id")
-                .id("ai-app")
-                .kind(InputKind::Select)
-                .label("App")
-                .prompt("Choose an app")
-                .options(
-                    clients
-                        .iter()
-                        .map(|client| Choice::new(&client.name, &client.id))
-                        .collect(),
-                )
-                .value(selected.map_or("", |client| client.id.as_str()))
-        });
-        let origin = &self.pages.origin;
         html(ConnectionsView {
             flash: flash_map(self.flash),
             header: render(Html::render(&bilibi_ui::Header {
@@ -958,36 +915,26 @@ impl ConnectionsPage {
             pending: self.pending,
             show_setup,
             no_clients,
-            client_field,
-            server: CopyValue {
-                id: "ai-copy-server",
-                text: format!("{origin}/mcp"),
-            },
-            client: selected.map(|client| CopyValue {
-                id: "ai-copy-client",
-                text: client.id.clone(),
+            prompt: prompt.as_ref().map(|text| {
+                let mut field = Field::named("prompt")
+                    .id("ai-prompt")
+                    .kind(InputKind::Textarea)
+                    .label("Prompt for your AI app")
+                    .value(text)
+                    .readonly();
+                field.attrs.rows = Some("14".into());
+                field
             }),
-            authorization_url: format!("{origin}/oauth/authorize"),
-            token_url: format!("{origin}/oauth/token"),
-            scope: OAUTH_SCOPE,
+            prompt_text: prompt.unwrap_or_default(),
             copied: self.copied.map(|copied| copied == Copied::Yes),
-            guides_href: SETUP_GUIDES,
         })
     }
-    /// A copy report counts only for a value this page shows.
+    /// A copy report counts only for the prompt this page shows.
     async fn copied(&mut self, scope: &Scope, text: &str, copied: bool) -> Result<()> {
-        let clients = match self.pages.access.clients_for(scope).await {
-            Ok(clients) => clients,
-            Err(error) => {
-                refusal(error)?;
-                return Ok(());
-            }
-        };
-        let server = format!("{}/mcp", self.pages.origin);
-        let shown = text == server
-            || self
-                .selected(&clients)
-                .is_some_and(|client| client.id == text);
+        let shown = self
+            .prompt(scope)
+            .await?
+            .is_some_and(|prompt| prompt == text);
         self.copied = shown.then_some(if copied { Copied::Yes } else { Copied::Failed });
         Ok(())
     }
@@ -1016,8 +963,7 @@ impl LiveState<Scope, Error> for ConnectionsPage {
         Box::pin(async move {
             match request.input {
                 LiveInput::Refresh => {}
-                LiveInput::Params(values) => {
-                    self.requested = requested_client(values)?;
+                LiveInput::Params(_) => {
                     self.copied = None;
                 }
                 LiveInput::Event(value) => {
@@ -1038,13 +984,6 @@ impl LiveState<Scope, Error> for ConnectionsPage {
                         }
                         ConnectionsEvent::CancelRevoke => self.pending = None,
                         ConnectionsEvent::ConfirmRevoke => self.confirm(request.scope).await?,
-                        ConnectionsEvent::SelectClient { client_id } => {
-                            if client_id.len() > CLIENT_ID_LIMIT {
-                                return Err(Error::Invalid);
-                            }
-                            self.requested = (!client_id.is_empty()).then_some(client_id);
-                            self.copied = None;
-                        }
                         ConnectionsEvent::ConnectionCopied { text, copied } => {
                             self.copied(request.scope, &text, copied).await?
                         }
@@ -1054,7 +993,6 @@ impl LiveState<Scope, Error> for ConnectionsPage {
             }
             Ok(LiveBody {
                 html: self.view(request.scope).await?,
-                query: self.query(),
                 ..LiveBody::default()
             })
         })

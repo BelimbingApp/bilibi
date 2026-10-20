@@ -1,7 +1,7 @@
 //! ChatGPT, the first harness (Bilimbi `plugins/bilimbi/plugin.json` and the
 //! `mcp.json` that `PluginPackage` writes). Only the manifest format and file
-//! layout live here. Install steps are in `docs/mcp-setup.md`, not on the
-//! settings page.
+//! layout live here. The ZIP is for a ChatGPT administrator; the settings page
+//! offers the AI connections prompt instead (`core/agent_access`).
 use crate::{
     harness::{Harness, PackageFile},
     package::Package,

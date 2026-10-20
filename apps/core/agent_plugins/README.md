@@ -6,8 +6,8 @@ Ported from Bilimbi `apps/core/agent_access` (`plugin_package.ex`,
 `web/plugin_live.ex`, `web/plugin_controller.ex`, `mix bilimbi.mcp.plugin`),
 split so the harness format is a thin adapter over one harness-neutral builder.
 The settings page is AI connections in `core/agent_access` and does not name a
-harness. App-specific steps are in
-[docs/mcp-setup.md](../../../docs/mcp-setup.md).
+harness. Its prompt is how an agent connects itself; this ZIP is only for a
+ChatGPT administrator.
 
 ## Layers
 
@@ -61,15 +61,14 @@ are the base layer and stay where they are.
 
 - A `Harness` names itself (`key`, `name`), the archive's file name for a package (`archive_name(&Package)`) and `files(&Package)`: the manifest, MCP configuration and skill files in that harness's layout.
 - Adapters know formats only. They never read settings, scopes or the registry, and they do not own a settings tab.
-- ChatGPT (`src/chatgpt.rs`): `plugin.json` with the `com.openai` interface and onboarding skill, `mcp.json` with `com.openai` OAuth (`mode: provided`, `tokenEndpointAuthMethod: none`), `skills/<name>/SKILL.md`. The ZIP puts them under the package name (`bilibi-staging/`); the exporter writes them at the folder root. The install steps are in [docs/mcp-setup.md](../../../docs/mcp-setup.md).
+- ChatGPT (`src/chatgpt.rs`): `plugin.json` with the `com.openai` interface and onboarding skill, `mcp.json` with `com.openai` OAuth (`mode: provided`, `tokenEndpointAuthMethod: none`), `skills/<name>/SKILL.md`. The ZIP puts them under the package name (`bilibi-staging/`); the exporter writes them at the folder root.
 
 ### How to add a harness
 
 1. Add `src/<harness>.rs` implementing `Harness`: names, archive name, and the manifest, MCP configuration and skill layout. Nothing else.
 2. Add it to `HARNESSES` in `src/harness.rs`.
 3. Submit its `Download` contribution in `src/contributions.rs` (operation = the harness key). Do not add a settings tab.
-4. Add that app's steps to [docs/mcp-setup.md](../../../docs/mcp-setup.md).
-5. Run the exporter, unzip and check the files.
+4. Run the exporter, unzip and check the files.
 
 The builder, archive and exporter do not change.
 
@@ -86,6 +85,7 @@ The builder, archive and exporter do not change.
 | HTTP `APP_ORIGIN` | 409 |
 | Any other query parameter | 400 |
 
+- The ZIP is for a ChatGPT administrator. A public installation needs an HTTPS address ChatGPT can reach and the callback registered as an OAuth public client. A LAN or VPN installation also needs OpenAI's [Secure MCP Tunnel](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels), because a VPN on a person's computer does not let ChatGPT reach Bilibi; login and token exchange must work through it, not only MCP.
 - The download does not create or approve a grant. The archive
   holds public configuration and skills only: no token, credential, record or
   executable.
