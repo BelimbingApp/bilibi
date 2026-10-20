@@ -126,7 +126,7 @@ Every check that applies writes one action:
 
 On a migrated disposable database, select Staging in Instance settings (`BILIBI_ENV=staging` supplies it only during the first install seed):
 
-- Enroll at `/settings/two-factor`.
+- Enroll at `/settings/two-factor`. There are no recovery codes: after a lost phone another admin resets the account (`core.user.two_factor.reset`, `.always()`), or the server owner runs `bilibi-web two-factor-reset`.
 - Open `/authz/step-up` and turn an operation on.
 - `cargo run -p bilibi-web --example step-up-reference -- <user id> auditor assign` with `BILIBI_SESSION_TOKEN` set to a browser session's cookie. It prints `ok` or the `step_up_required` answer.
 

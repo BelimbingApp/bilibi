@@ -168,10 +168,8 @@ elif cmd == 'enrol':
     save(st)
     fill('input[name="two_factor[code]"]', code())
     click('#two-factor-confirm')
-    assert js('return !!document.querySelector("#two-factor-codes");')
-    click('#two-factor-done')
     assert js('return !!document.querySelector("#two-factor-on");')
-    print('2FA enrolled in the browser; key and recovery codes omitted from evidence.')
+    print('2FA enrolled in the browser; key omitted from evidence.')
 elif cmd == 'authorize':
     begin()
     browser('open', ORIGIN + '/oauth/device')

@@ -327,19 +327,20 @@ Authenticator-app codes (TOTP, RFC 6238: HMAC-SHA-1, 6 digits, 30 s) for the sig
 
 | Method | Purpose |
 |---|---|
-| `two_factor_status(scope)` | On or off, and unused recovery codes |
+| `two_factor_status(scope)` / `account_two_factor_on(scope, user)` | Whether the signed-in account, or one account of this tenant, has an authenticator |
 | `begin_two_factor(scope, password)` | Password again, then a fresh 160-bit secret (OS CSPRNG), sealed and stored pending. Returns the QR code and typed key, once |
-| `confirm_two_factor(scope, code)` | A current code turns it on, stores 10 new recovery codes (returned once) and opens the session's step-up window |
-| `step_up(scope, code)` | A current code or one recovery code opens the session's step-up window (the confirm page) |
-| `regenerate_recovery_codes(scope, code)` / `disable_two_factor(scope, code)` | Need a current code or a recovery code. The old set stops working / everything is deleted |
+| `confirm_two_factor(scope, code)` | A current code turns it on and opens the session's step-up window |
+| `step_up(scope, code)` | A current code opens the session's step-up window (the confirm page) |
+| `begin_move(scope, code)` / `confirm_move(scope, to, code)` | Move to a new phone: a current code from the old phone is spent and a new secret is made (kept only in the page's state). The new phone's first code replaces the old secret, so the old phone stops working |
+| `reset_two_factor_by_email(email)` | The server command's door (see below): turns one account's authenticator off, audited as the system principal `two-factor-reset` |
 | `two_factor::Authenticator` | The `bilibi_step_up::Provider`, bound at boot: enrolled? session window, spend an agent's code for a purpose, where to prompt |
 
 Pages (signed in only, live, `Cache-Control: no-store` like every page):
 
-- `/settings/two-factor`: set up (password, QR code, setup key, first code), recovery codes with a text download, new codes, turn off.
+- `/settings/two-factor`: set up (password, QR code, setup key, first code), or move to a new phone (a code from the old phone, a new QR code, the new phone's first code). There is no turn-off: Bilibi asks everyone for 2FA. The description is two bullets; the second says to ask an admin to reset 2FA after a lost phone.
 - `/settings/two-factor/confirm?return=<path>`: the step-up prompt. Success returns to `return`, which must be a local path (`safe_return`).
 
-Authenticator entry uses the shared six-digit `CodeInput`: one native field, numeric keypad, OTP autocomplete and whole-code paste. Management and Confirm access offer **Use a recovery code**, which switches to an unrestricted text field without truncating the saved code; setup accepts only an authenticator code.
+Authenticator entry uses the shared six-digit `CodeInput`: one native field, numeric keypad, OTP autocomplete and whole-code paste. Every entry takes only an authenticator code.
 
 Security rules:
 
@@ -347,14 +348,19 @@ Security rules:
 - **QR code.** The `otpauth://totp/<issuer>:<email>?secret=…&issuer=…&algorithm=SHA1&digits=6&period=30` URI is drawn on the server as one inline SVG path (`qrcode` crate, encoder only). It is sent only over the page's socket. No QR service, image URL or Bilibi URL carries it, and nothing logs it.
 - **Pending until proved.** A secret is unconfirmed until a current code arrives. Leaving setup keeps the pending row; the next setup replaces it.
 - **Verification.** Steps −1, 0 and +1 are each computed and compared in constant time (`subtle`). `last_step` only moves forward, by compare-and-set in the spending transaction, so a code is never accepted twice, even by two racing requests.
-- **Recovery codes.** 10 per set, 50 bits each (`xxxxx-xxxxx`, base32), stored as Argon2id hashes through `password::hash`. Every unused hash is checked. A used code keeps `used_at`.
-- **Throttle.** Applies per account to every failed check: password, code, recovery code, and an agent's code too. The fifth failure within 15 minutes locks every check for 15 minutes (`user_two_factor_attempts`). A success resets the count.
+- **No recovery codes.** People lose where they saved them, so there are none (migration `013-drop-two-factor-recovery.sql` drops the table). After a lost phone, another admin resets the account's 2FA, or the server owner runs the command below.
+- **Throttle.** Applies per account to every failed check: password, code, and an agent's code too. The fifth failure within 15 minutes locks every check for 15 minutes (`user_two_factor_attempts`). A success resets the count.
 - **Impersonation.** An impersonated session cannot enroll, change or check two-factor.
-- **Audit.** Each write is a `MutationBoundary` transaction: `user.two_factor.enrollment_started`, `.enabled`, `.verified`, `.recovery_code_used`, `.recovery_codes_regenerated`, `.disabled`, `.failed` and `.locked`. A code spent for an agent records the purpose's operation key and channel (`for`, `channel`). A check refused while locked is the action `user.two_factor.refused`. No code, secret or recovery code is ever in a change, payload or log.
+- **Audit.** Each write is a `MutationBoundary` transaction: `user.two_factor.enrollment_started`, `.enabled`, `.verified`, `.moved`, `.failed` and `.locked`. A reset is `core.user.two_factor.reset` (an admin; the change names both people) or `user.two_factor.reset` (the server command, system principal `two-factor-reset`). A code spent for an agent records the purpose's operation key and channel (`for`, `channel`). A check refused while locked is the action `user.two_factor.refused`. No code, secret or recovery code is ever in a change, payload or log.
 
-| Setting | Default | Use |
-|---|---|---|
-| `two_factor.issuer` (global, `admin.system.session.manage`) | `Bilibi` | The name apps list the account under (company or deployment name). No `:`; applies to new setups |
+**Authenticator entry name.** Each server lists itself differently, so several Bilibi servers stay apart in one app: `Bilibi <instance name> (<role>)` with the account's email, or `Bilibi <role>` when the instance still has its role's own name. Both come from Base System's instance identity (`Instance::resolve`); there is no separate setting or input box, and the app lets a person rename the entry.
+
+**Reset 2FA.** There are two ways back after a lost phone:
+
+- An admin with `core.user.update` opens the person's page and chooses **Reset 2FA** (contract `core.user.two_factor.reset`, `src/two_factor/agent.rs`; the page and every agent door share it). It needs the admin's own fresh authenticator code every time (`.always()`). The audit row names both people, the person is signed out, and gets a notification and a mail (when mail is set up). An admin cannot reset their own 2FA, and an impersonated session cannot reset anyone's.
+- The server owner runs `bilibi-web two-factor-reset --email <address>` (or `scripts/install-server.sh two-factor-reset <instance> --email <address>`) on the server. It is audited as **System · two-factor-reset**, signs the account out and notifies it. See `docs/server-install.md`.
+
+The person then signs in with their password and sets the app up again.
 
 The step-up window, cap and per-operation policy belong to Base Step-up, not here.
 

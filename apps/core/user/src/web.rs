@@ -119,6 +119,7 @@ pub struct Pages {
     pub locales: Arc<bilibi_locale::Locales>,
     pub db: bilibi_database::Db,
     pub grants: Arc<bilibi_authz::grants::Grants>,
+    pub contracts: Arc<bilibi_agent_api::page::PageContracts>,
 }
 
 impl Pages {

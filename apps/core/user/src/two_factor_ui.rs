@@ -1,9 +1,9 @@
 //! The authenticator pages over `crate::two_factor`: `/settings/two-factor`
 //! (setup and management, inside the settings shell) and
 //! `/settings/two-factor/confirm` (the step-up prompt). Both are live: the
-//! setup key, QR code and recovery codes exist only in the socket's state
-//! after the request that produced them and are dropped with it, so a reload
-//! never shows them again. Typed values are never echoed back.
+//! setup key and QR code exist only in the socket's state after the request
+//! that produced them and are dropped with it, so a reload never shows them
+//! again. Typed values are never echoed back.
 use crate::{
     two_factor::{Enrollment, TwoFactorError, TwoFactorStatus},
     UserService,
@@ -13,7 +13,7 @@ use bilibi_database::Error;
 use bilibi_security::Scope;
 use bilibi_ui::{
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
-    Attrs, Button, CodeInput, Field, FlashGroup, FlashMap, Header, Html, SecretInput, StatusKind,
+    Attrs, Button, CodeInput, FlashGroup, FlashMap, Header, Html, SecretInput, StatusKind,
 };
 use std::{collections::HashMap, sync::Arc};
 
@@ -32,45 +32,12 @@ fn fragment(rendered: askama::Result<Html>) -> Result<Html, Error> {
     rendered.map_err(|_| Error::Internal)
 }
 
-// Mirrors Bilimbi's shared CodeInput; recovery stays a separate native field
-// so six-digit normalization never truncates a recovery code.
-fn code_field(id: &str, recovery: Option<bool>, errors: &[String]) -> Result<Html, Error> {
-    let mut field = if recovery == Some(true) {
-        fragment(Html::render(
-            &Field::in_form("two_factor", "code")
-                .id(format!("{id}_recovery"))
-                .label("Recovery code")
-                .hint("One of the recovery codes you saved during setup")
-                .autocomplete("off")
-                .attr("spellcheck", "false")
-                .attr("autocapitalize", "off")
-                .attr("maxlength", "32")
-                .errors(errors.to_vec()),
-        ))?
-    } else {
-        fragment(Html::render(
-            &CodeInput::new(id, "two_factor[code]", "Authentication code", 6)
-                .numeric()
-                .errors(errors.to_vec()),
-        ))?
-    };
-    if let Some(recovery) = recovery {
-        field.push(&fragment(Html::render(&Button {
-            button_type: "button",
-            event: if recovery {
-                "use-authenticator"
-            } else {
-                "use-recovery"
-            },
-            body: Html::text(if recovery {
-                "Use authenticator code"
-            } else {
-                "Use a recovery code"
-            }),
-            ..Button::default()
-        }))?);
-    }
-    Ok(field)
+fn code_field(id: &str, errors: &[String]) -> Result<Html, Error> {
+    fragment(Html::render(
+        &CodeInput::new(id, "two_factor[code]", "Authentication code", 6)
+            .numeric()
+            .errors(errors.to_vec()),
+    ))
 }
 
 /// The browser's return address from the query, kept only when it is a
@@ -94,8 +61,10 @@ fn canonical(return_to: &Option<String>) -> HashMap<String, String> {
 enum Stage {
     Off,
     Setup(Enrollment),
-    Codes(Vec<String>),
     On,
+    /// Moving to a new phone: the old phone's code was accepted, the new
+    /// phone's first code is still to come.
+    Move(Enrollment),
 }
 
 /// `/settings/two-factor`.
@@ -107,10 +76,6 @@ pub struct TwoFactorPage {
     errors: Vec<String>,
     notice: String,
     success: &'static str,
-    /// Which managed-stage form the last intent came from, so its error
-    /// shows under that form only.
-    last_on: &'static str,
-    recovery: bool,
 }
 
 #[derive(serde::Deserialize)]
@@ -125,14 +90,8 @@ enum TwoFactorEvent {
         code: String,
     },
     Cancel {},
-    Done {},
-    UseRecovery {},
-    UseAuthenticator {},
-    Regenerate {
-        #[serde(rename = "two_factor[code]", default)]
-        code: String,
-    },
-    Disable {
+    /// A current code from the old phone, to get a QR code for the new one.
+    Move {
         #[serde(rename = "two_factor[code]", default)]
         code: String,
     },
@@ -150,7 +109,7 @@ struct TwoFactorView<'a> {
     header: Html,
     current: bilibi_ui::SettingsTab,
     heading: &'static str,
-    subheading: &'static str,
+    description: Html,
     stage: &'static str,
     notice: &'a str,
     password: Html,
@@ -159,12 +118,7 @@ struct TwoFactorView<'a> {
     issuer: &'a str,
     account: &'a str,
     code: Html,
-    codes: &'a [String],
-    download: Html,
-    returning: bool,
-    recovery_left: i64,
-    regenerate_code: Html,
-    disable_code: Html,
+    move_code: Html,
 }
 
 impl TwoFactorPage {
@@ -190,14 +144,11 @@ impl TwoFactorPage {
                 String::new()
             },
             success: "",
-            last_on: "",
-            recovery: false,
         })
     }
 
     async fn reload(&mut self, scope: &Scope) -> Result<(), Error> {
         self.status = self.users.two_factor_status(scope).await?;
-        self.recovery = false;
         self.stage = if self.status.enabled {
             Stage::On
         } else {
@@ -216,8 +167,6 @@ impl TwoFactorPage {
         self.errors.clear();
         self.success = "";
         match event {
-            TwoFactorEvent::UseRecovery {} => self.recovery = true,
-            TwoFactorEvent::UseAuthenticator {} => self.recovery = false,
             TwoFactorEvent::Start { password } => {
                 if password.is_empty() {
                     self.errors.push(BLANK.into());
@@ -225,6 +174,26 @@ impl TwoFactorPage {
                 }
                 match self.users.begin_two_factor(scope, &password).await {
                     Ok(enrollment) => self.stage = Stage::Setup(enrollment),
+                    Err(error) => self.errors.push(field_error(error)?),
+                }
+            }
+            TwoFactorEvent::Confirm { code } if matches!(self.stage, Stage::Move(_)) => {
+                if code.trim().is_empty() {
+                    self.errors.push(BLANK.into());
+                    return Ok(None);
+                }
+                let Stage::Move(to) = &self.stage else {
+                    return Err(Error::Invalid);
+                };
+                match self.users.confirm_move(scope, to, &code).await {
+                    Ok(()) => {
+                        self.reload(scope).await?;
+                        self.success = "Your new phone is set up. The old phone no longer works.";
+                    }
+                    Err(TwoFactorError::NotEnabled) => {
+                        self.reload(scope).await?;
+                        self.notice = TwoFactorError::NotEnabled.to_string();
+                    }
                     Err(error) => self.errors.push(field_error(error)?),
                 }
             }
@@ -237,10 +206,12 @@ impl TwoFactorPage {
                     return Ok(None);
                 }
                 match self.users.confirm_two_factor(scope, &code).await {
-                    Ok(codes) => {
-                        self.status = self.users.two_factor_status(scope).await?;
-                        self.stage = Stage::Codes(codes);
+                    Ok(()) => {
+                        self.reload(scope).await?;
                         self.success = "2FA is on.";
+                        if self.return_to.is_some() {
+                            return Ok(self.return_to.clone());
+                        }
                     }
                     Err(TwoFactorError::NoPendingEnrollment) => {
                         self.reload(scope).await?;
@@ -250,34 +221,15 @@ impl TwoFactorPage {
                 }
             }
             TwoFactorEvent::Cancel {} => self.reload(scope).await?,
-            TwoFactorEvent::Done {} => {
-                if !matches!(self.stage, Stage::Codes(_)) {
-                    return Err(Error::Invalid);
-                }
-                self.reload(scope).await?;
-                return Ok(self.return_to.clone());
-            }
-            TwoFactorEvent::Regenerate { code } | TwoFactorEvent::Disable { code }
-                if code.trim().is_empty() =>
-            {
+            TwoFactorEvent::Move { code } if code.trim().is_empty() => {
                 self.errors.push(BLANK.into());
             }
-            TwoFactorEvent::Regenerate { code } => {
-                match self.users.regenerate_recovery_codes(scope, &code).await {
-                    Ok(codes) => {
-                        self.status = self.users.two_factor_status(scope).await?;
-                        self.stage = Stage::Codes(codes);
-                        self.success = "New recovery codes generated. The old ones no longer work.";
-                    }
-                    Err(error) => self.errors.push(field_error(error)?),
+            TwoFactorEvent::Move { code } => {
+                if !matches!(self.stage, Stage::On) {
+                    return Err(Error::Invalid);
                 }
-            }
-            TwoFactorEvent::Disable { code } => {
-                match self.users.disable_two_factor(scope, &code).await {
-                    Ok(()) => {
-                        self.reload(scope).await?;
-                        self.success = "2FA is off.";
-                    }
+                match self.users.begin_move(scope, &code).await {
+                    Ok(enrollment) => self.stage = Stage::Move(enrollment),
                     Err(error) => self.errors.push(field_error(error)?),
                 }
             }
@@ -287,19 +239,22 @@ impl TwoFactorPage {
     }
 
     fn render(&self) -> Result<String, Error> {
-        let empty: Vec<String> = Vec::new();
-        let (stage, enrollment, codes) = match &self.stage {
-            Stage::Off => ("off", None, &empty),
-            Stage::Setup(enrollment) => ("setup", Some(enrollment), &empty),
-            Stage::Codes(codes) => ("codes", None, codes),
-            Stage::On => ("on", None, &empty),
+        let (stage, enrollment) = match &self.stage {
+            Stage::Off => ("off", None),
+            Stage::Setup(enrollment) => ("setup", Some(enrollment)),
+            Stage::On => ("on", None),
+            Stage::Move(enrollment) => ("move", Some(enrollment)),
         };
-        let (heading, subheading) = match self.stage {
+        let (heading, first) = match self.stage {
             Stage::Off | Stage::Setup(_) => (
                 "Set up your authenticator app",
                 "Link an authenticator app on your phone, such as Google Authenticator or Microsoft Authenticator. Before risky changes, Bilibi asks for the 6-digit code from the app.",
             ),
-            Stage::Codes(_) | Stage::On => (
+            Stage::Move(_) => (
+                "Move to a new phone",
+                "Link the authenticator app on your new phone. Once its first code is confirmed, the old phone stops working.",
+            ),
+            Stage::On => (
                 "Authenticator app",
                 "Your authenticator app is set up. Before risky changes, Bilibi asks for the 6-digit code from the app.",
             ),
@@ -317,31 +272,6 @@ impl TwoFactorPage {
                     ..Attrs::default()
                 }),
         ))?;
-        let errors_for = |which: &str| {
-            if stage == which {
-                self.errors.clone()
-            } else {
-                Vec::new()
-            }
-        };
-        let download_href = format!(
-            "data:text/plain;charset=utf-8,{}",
-            percent_encoding::utf8_percent_encode(
-                &recovery_text(codes),
-                percent_encoding::NON_ALPHANUMERIC
-            )
-        );
-        let download = if codes.is_empty() {
-            Html::default()
-        } else {
-            fragment(Html::render(&Button {
-                id: "two-factor-download",
-                href: &download_href,
-                download: "bilibi-recovery-codes.txt",
-                body: Html::text("Download as text"),
-                ..Button::default()
-            }))?
-        };
         let view = TwoFactorView {
             flash: fragment(Html::render(&FlashGroup {
                 id: "flash-group",
@@ -358,7 +288,7 @@ impl TwoFactorPage {
             }))?,
             current: bilibi_ui::SettingsTab::TwoFactor,
             heading,
-            subheading,
+            description: fragment(Html::render(&Bullets { first }))?,
             stage,
             notice: &self.notice,
             password,
@@ -366,46 +296,34 @@ impl TwoFactorPage {
             key: enrollment.map_or("", |e| e.key.as_str()),
             issuer: enrollment.map_or("", |e| e.issuer.as_str()),
             account: enrollment.map_or("", |e| e.account.as_str()),
-            code: code_field("two_factor_code", None, &errors_for("setup"))?,
-            codes,
-            download,
-            returning: self.return_to.is_some(),
-            recovery_left: self.status.recovery_codes_left,
-            regenerate_code: code_field(
-                "two_factor_regenerate_code",
-                Some(self.recovery),
-                &self.on_errors("regenerate"),
+            code: code_field(
+                "two_factor_code",
+                &if matches!(self.stage, Stage::Setup(_) | Stage::Move(_)) {
+                    self.errors.clone()
+                } else {
+                    Vec::new()
+                },
             )?,
-            disable_code: code_field(
-                "two_factor_disable_code",
-                Some(self.recovery),
-                &self.on_errors("disable"),
+            move_code: code_field(
+                "two_factor_move_code",
+                &if matches!(self.stage, Stage::On) {
+                    self.errors.clone()
+                } else {
+                    Vec::new()
+                },
             )?,
         };
         view.render().map_err(|_| Error::Internal)
     }
-
-    /// The managed stage has two forms; the last error belongs to the one
-    /// whose intent produced it.
-    fn on_errors(&self, form: &str) -> Vec<String> {
-        if matches!(self.stage, Stage::On) && self.last_on == form {
-            self.errors.clone()
-        } else {
-            Vec::new()
-        }
-    }
 }
 
-/// The downloadable text: one code per line, with what they are for.
-fn recovery_text(codes: &[String]) -> String {
-    let mut text = String::from(
-        "Bilibi recovery codes\nEach code works once, in place of an authenticator code.\n\n",
-    );
-    for code in codes {
-        text.push_str(code);
-        text.push('\n');
-    }
-    text
+#[derive(Template)]
+#[template(
+    source = r#"<ul class="mt-1 list-disc space-y-0.5 pl-4"><li>{{ first }}</li><li>Lost your phone? Ask an admin to reset your 2FA, then set it up again.</li></ul>"#,
+    ext = "html"
+)]
+struct Bullets<'a> {
+    first: &'a str,
 }
 
 impl LiveState<Scope, Error> for TwoFactorPage {
@@ -418,19 +336,22 @@ impl LiveState<Scope, Error> for TwoFactorPage {
                 LiveInput::Event(value) => {
                     let event = serde_json::from_value::<TwoFactorEvent>(value.clone())
                         .map_err(|_| Error::Invalid)?;
-                    self.last_on = match &event {
-                        TwoFactorEvent::Regenerate { .. } => "regenerate",
-                        TwoFactorEvent::Disable { .. } => "disable",
-                        _ => "",
-                    };
                     redirect = self.handle(request.scope, event).await?;
                 }
             }
+            let flash = redirect.as_ref().and_then(|_| {
+                if self.success.is_empty() {
+                    None
+                } else {
+                    Some((StatusKind::Success, self.success.to_owned()))
+                }
+            });
             Ok(LiveBody {
                 html: self.render()?,
                 query: canonical(&self.return_to),
                 rows: 1,
                 redirect,
+                flash,
                 ..LiveBody::default()
             })
         })
@@ -441,7 +362,6 @@ impl LiveState<Scope, Error> for TwoFactorPage {
 pub struct ConfirmPage {
     users: Arc<UserService>,
     enabled: bool,
-    recovery: bool,
     minutes: i64,
     hours: i64,
     return_to: Option<String>,
@@ -452,8 +372,6 @@ pub struct ConfirmPage {
 #[derive(serde::Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case", deny_unknown_fields)]
 enum ConfirmEvent {
-    UseRecovery {},
-    UseAuthenticator {},
     Verify {
         #[serde(rename = "two_factor[code]", default)]
         code: String,
@@ -482,7 +400,6 @@ impl ConfirmPage {
         Ok(Self {
             users,
             enabled,
-            recovery: false,
             minutes: window.window_minutes,
             hours: window.cap_hours,
             return_to: return_to(query),
@@ -498,7 +415,7 @@ impl ConfirmPage {
     fn render(&self) -> Result<String, Error> {
         let mut step =
             bilibi_ui::StepUp::new(self.enabled, self.return_to.as_deref().unwrap_or_default());
-        step.code = code_field("two_factor_code", Some(self.recovery), &self.errors)?;
+        step.code = code_field("two_factor_code", &self.errors)?;
         step.actions = fragment(Html::render(&Button {
             id: "confirm-access-verify",
             button_type: "submit",
@@ -540,8 +457,6 @@ impl LiveState<Scope, Error> for ConfirmPage {
                         .map_err(|_| Error::Invalid)?;
                     self.errors.clear();
                     match event {
-                        ConfirmEvent::UseRecovery {} => self.recovery = true,
-                        ConfirmEvent::UseAuthenticator {} => self.recovery = false,
                         ConfirmEvent::Verify { code } => {
                             if code.trim().is_empty() {
                                 self.errors.push(BLANK.into());

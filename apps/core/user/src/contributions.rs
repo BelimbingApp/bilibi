@@ -139,28 +139,6 @@ inventory::submit! {
         method: Method::Get, path: crate::CONFIRM_PATH, service: "core/user.pages", operation: "confirm_access", access: Access::SignedIn, framed: true,
     })
 }
-/// The issuer an authenticator app files the account under: one line, no
-/// `:` (the otpauth label's separator), bounded.
-fn issuer_accepts(value: &serde_json::Value) -> bool {
-    value.as_str().is_some_and(|issuer| {
-        let issuer = issuer.trim();
-        !issuer.is_empty()
-            && issuer.chars().count() <= 64
-            && !issuer.contains(':')
-            && !issuer.contains(char::is_control)
-    })
-}
-inventory::submit! {
-    Contribution::new(DEFINITIONS, crate::ISSUER_KEY, Provenance { module: "core/user", source: file!(), line: line!() }, &Setting::Definition(Definition {
-        value_type: bilibi_settings::ValueType::String, scopes: &[ScopeKind::Global], default: || serde_json::json!("Bilibi"),
-        nullable: false, encrypted: false, minimum: None, maximum: None,
-        validator: Some(Validator { accepts: issuer_accepts, message: "must be 1 to 64 characters without a colon" }),
-        editor: Some(bilibi_settings::Editor { group: "2FA", label: "Authenticator issuer",
-            help: "The name authenticator apps show for accounts here, such as your company name. Applies to new setups.",
-            capability: Some(bilibi_session::MANAGE), reveal_duration_ms: 5_000 }),
-    }))
-}
-
 inventory::submit! {
     Contribution::new(ROUTES, "core/user.settings.appearance", Provenance { module: "core/user", source: file!(), line: line!() }, &Route {
         method: Method::Get, path: "/settings/appearance", service: "core/user.pages", operation: "appearance", access: Access::SignedIn, framed: true,

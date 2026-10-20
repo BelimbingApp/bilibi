@@ -52,6 +52,10 @@ async fn main() -> Result<()> {
             let args: Vec<String> = std::env::args().skip(2).collect();
             bilibi_web::create_owner(&db, &args).await?;
         }
+        Some("two-factor-reset") => {
+            let args: Vec<String> = std::env::args().skip(2).collect();
+            bilibi_web::two_factor_reset(&db, &args).await?;
+        }
         Some(command @ ("tenant-provision" | "platform-provision")) => {
             let args: Vec<String> = std::env::args().skip(2).collect();
             bilibi_web::provision(&db, command, &args).await?;

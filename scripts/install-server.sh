@@ -7,6 +7,7 @@
 #   install-server.sh create <instance> --role dev|staging|production --site <host> [--port <n>] [--tls internal]
 #   install-server.sh release <instance> <bilibi-web binary, or a folder holding it>
 #   install-server.sh create-owner <instance> [bilibi-web create-owner flags]
+#   install-server.sh two-factor-reset <instance> --email <address>
 #   install-server.sh installer <bilibi-installer binary>
 #   install-server.sh switch <instance> <release number>
 #   install-server.sh status [<instance>]
@@ -485,6 +486,20 @@ create_owner() {
     [[ -x $dir/current/bilibi-web ]] || fail "$instance has no release in service" "put one in service first: $0 release $instance <path to bilibi-web>"
     with_env "$instance" bilibi-build "$dir/current/bilibi-web" create-owner "$@"
 }
+# ========================================================= two-factor-reset
+# Turns off one account's authenticator, for a person nobody else can reset
+# (the only admin lost their phone): `bilibi-web two-factor-reset` in the
+# instance's environment. Audited as the system principal.
+two_factor_reset() {
+    local instance=${1:-}
+    [[ -n $instance ]] || usage
+    need_root two-factor-reset "$@"
+    shift
+    instance_exists "$instance" || fail "no instance named $instance"
+    local dir; dir=$(instance_dir "$instance")
+    [[ -x $dir/current/bilibi-web ]] || fail "$instance has no release in service" "put one in service first: $0 release $instance <path to bilibi-web>"
+    with_env "$instance" bilibi-build "$dir/current/bilibi-web" two-factor-reset "$@"
+}
 switch() {
     local instance=${1:-} n=${2:-}
     [[ -n $instance && $n =~ ^[0-9]+$ ]] || usage
@@ -519,6 +534,7 @@ case ${1:-} in
     create) shift; create "$@" ;;
     release) shift; release "$@" ;;
     create-owner) shift; create_owner "$@" ;;
+    two-factor-reset) shift; two_factor_reset "$@" ;;
     installer) shift; installer "$@" ;;
     switch) shift; switch "$@" ;;
     status) shift; status "$@" ;;

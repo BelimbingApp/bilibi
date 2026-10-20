@@ -15,6 +15,7 @@ mod perf;
 mod routes;
 mod shell;
 mod transport;
+mod two_factor_reset;
 mod webhooks;
 use askama::Template;
 use axum::{
@@ -31,6 +32,7 @@ use serde::Deserialize;
 use std::{collections::HashMap, sync::Arc};
 
 pub use create_owner::create_owner;
+pub use two_factor_reset::two_factor_reset;
 
 #[derive(Clone)]
 pub struct App {

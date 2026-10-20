@@ -1,22 +1,27 @@
 //! Authenticator-app two-factor authentication (TOTP, RFC 6238), and the
 //! second-factor provider behind Base Step-up (`provider.rs`). Bilimbi has
 //! no counterpart yet; the flow follows GitHub's: re-enter the password, scan
-//! a QR code, confirm with a current code, keep ten one-time recovery codes.
-//! This module knows nothing of what step-up guards: it checks the account
-//! holder, opens the browser session's window ([`CONFIRM_PATH`]) and spends a
-//! code an agent carries, for whatever purpose the contract names.
+//! a QR code, confirm with a current code. There are no recovery codes. A
+//! person who loses their phone asks an admin to reset 2FA
+//! ([`RESET_KEY`], `agent.rs`), or the server owner runs
+//! `bilibi-web two-factor-reset`. This module knows nothing of what step-up
+//! guards: it checks the account holder, opens the browser session's window
+//! ([`CONFIRM_PATH`]) and spends a code an agent carries, for whatever
+//! purpose the contract names.
 //!
 //! Every account-level write is one `MutationBoundary` transaction whose
 //! action names what happened (`user.two_factor.enabled`, `.failed`,
-//! `.locked`, ...); no code, secret or recovery code is ever part of a
-//! `Change`, an action payload or a log line. The secret is sealed with the
-//! installation key (`Settings::seal_owned`) and never leaves the server
-//! except inside the enrollment page, once, after the password was re-entered.
+//! `.locked`, ...); no code or secret is ever part of a `Change`, an action
+//! payload or a log line. The secret is sealed with the installation key
+//! (`Settings::seal_owned`) and never leaves the server except inside the
+//! enrollment page, once, after the password was re-entered.
+mod agent;
 mod provider;
 mod qr;
-mod recovery;
 mod totp;
 
+pub(crate) use agent::bind;
+pub use agent::{TwoFactorEmailError, TwoFactorEmailReset};
 pub use provider::Authenticator;
 
 use crate::{password, UserService};
@@ -27,11 +32,17 @@ use bilibi_ui::Html;
 use serde_json::json;
 use tokio_postgres::GenericClient;
 
-pub const ISSUER_KEY: &str = "two_factor.issuer";
 /// The account's two-factor settings page (enrollment and management).
 pub const SETTINGS_PATH: &str = "/settings/two-factor";
 /// The step-up prompt a browser is sent to (Base Step-up's web proof).
 pub const CONFIRM_PATH: &str = "/settings/two-factor/confirm";
+/// An admin resets another person's 2FA. Declared `.always()`: their own
+/// current authenticator code, every time.
+pub(crate) const RESET_KEY: &str = "core.user.two_factor.reset";
+/// The account page event that calls [`RESET_KEY`].
+pub(crate) const RESET_EVENT: &str = "reset-two-factor";
+/// The page service that owns [`RESET_EVENT`].
+pub(crate) const PAGES: &str = "core/user.pages";
 /// The record the sealed secret is bound to (`Settings::seal_owned`).
 const OWNER: &str = "core/user.two_factor";
 const KIND: &str = "user_two_factor";
@@ -47,7 +58,7 @@ pub enum TwoFactorError {
     #[error("is incorrect")]
     IncorrectPassword,
     /// Wrong, malformed, expired or already used: one answer for all.
-    #[error("is not a valid authentication or recovery code")]
+    #[error("is not a valid authentication code")]
     InvalidCode,
     #[error("Too many failed attempts. Try again in {minutes} minute(s).")]
     Locked { minutes: i64 },
@@ -70,7 +81,6 @@ type Outcome<T> = std::result::Result<T, TwoFactorError>;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct TwoFactorStatus {
     pub enabled: bool,
-    pub recovery_codes_left: i64,
 }
 
 /// A pending enrollment's display: the QR code and the same key for typing.
@@ -81,6 +91,20 @@ pub struct Enrollment {
     pub key: String,
     pub issuer: String,
     pub account: String,
+    /// The base32 secret, for [`UserService::confirm_move`] only.
+    secret: String,
+}
+impl Enrollment {
+    fn new(issuer: String, account: String, secret: String) -> Result<Self> {
+        let uri = qr::key_uri(&issuer, &account, &secret);
+        Ok(Self {
+            qr: qr::svg(&uri, &format!("QR code for {issuer} ({account})"))?,
+            key: qr::grouped(&secret),
+            issuer,
+            account,
+            secret,
+        })
+    }
 }
 
 /// What a proven code is spent on.
@@ -92,13 +116,6 @@ enum Spend {
         operation: String,
         channel: &'static str,
     },
-    /// The new set's Argon2id hashes.
-    Regenerate(Vec<String>),
-    Disable,
-}
-enum Spent {
-    Kept,
-    Deleted,
 }
 
 async fn spent_for(
@@ -106,28 +123,11 @@ async fn spent_for(
     sessions: &bilibi_security::Sessions,
     scope: &Scope,
     spend: Spend,
-) -> Result<Spent> {
-    let (tenant, user) = (scope.tenant(), scope.user());
-    match spend {
-        Spend::StepUp => sessions.step_up(sql, scope).await?,
-        Spend::Purpose { .. } => {}
-        Spend::Regenerate(hashes) => replace_recovery_codes(sql, tenant, user, &hashes).await?,
-        Spend::Disable => {
-            sql.execute(
-                "DELETE FROM user_two_factor WHERE tenant_id=$1 AND user_id=$2",
-                &[&tenant, &user],
-            )
-            .await?;
-            return Ok(Spent::Deleted);
-        }
+) -> Result<()> {
+    if let Spend::StepUp = spend {
+        sessions.step_up(sql, scope).await?;
     }
-    Ok(Spent::Kept)
-}
-
-/// How a code proved the account's holder.
-enum Proof {
-    Authenticator(i64),
-    Recovery(i64),
+    Ok(())
 }
 
 /// A local path the browser may be sent back to after enrollment or step-up:
@@ -169,22 +169,26 @@ async fn now_unix(client: &impl GenericClient) -> Result<i64> {
 }
 
 impl UserService {
-    /// Whether the account has a confirmed authenticator, and how many
-    /// recovery codes are unused.
+    /// Whether the account has a confirmed authenticator.
     pub async fn two_factor_status(&self, scope: &Scope) -> Result<TwoFactorStatus> {
+        Ok(TwoFactorStatus {
+            enabled: self.account_two_factor_on(scope, scope.user()).await?,
+        })
+    }
+
+    /// Whether `user` in this tenant has a confirmed authenticator.
+    pub async fn account_two_factor_on(&self, scope: &Scope, user: i64) -> Result<bool> {
+        if user <= 0 {
+            return Err(Error::Invalid);
+        }
         let client = self.db.get().await?;
         let row = client
             .query_opt(
-                "SELECT t.confirmed_at IS NOT NULL, (SELECT count(*) FROM user_two_factor_recovery_codes c WHERE c.tenant_id=t.tenant_id AND c.user_id=t.user_id AND c.used_at IS NULL) FROM user_two_factor t WHERE t.tenant_id=$1 AND t.user_id=$2",
-                &[&scope.tenant(), &scope.user()],
+                "SELECT confirmed_at IS NOT NULL FROM user_two_factor WHERE tenant_id=$1 AND user_id=$2",
+                &[&scope.tenant(), &user],
             )
             .await?;
-        Ok(
-            row.map_or_else(TwoFactorStatus::default, |row| TwoFactorStatus {
-                enabled: row.get(0),
-                recovery_codes_left: row.get(1),
-            }),
-        )
+        Ok(row.is_some_and(|row| row.get(0)))
     }
 
     /// Where a step-up guard sends a browser that has not confirmed access:
@@ -222,13 +226,7 @@ impl UserService {
             self.failed(scope, "password").await?;
             return Err(TwoFactorError::IncorrectPassword);
         }
-        let issuer = self
-            .settings
-            .get_global(&**client, ISSUER_KEY)
-            .await?
-            .as_str()
-            .ok_or(Error::Internal)?
-            .to_owned();
+        let issuer = self.issuer(&**client).await?;
         drop(client);
         let secret = totp::generate_secret()?;
         let encoded = totp::encode_secret(&secret);
@@ -270,20 +268,12 @@ impl UserService {
             }
             Err(error) => return Err(error.into()),
         }
-        let uri = qr::key_uri(&issuer, &email, &encoded);
-        let qr = qr::svg(&uri, &format!("QR code for {issuer} ({email})"))?;
-        Ok(Enrollment {
-            qr,
-            key: qr::grouped(&encoded),
-            issuer,
-            account: email,
-        })
+        Ok(Enrollment::new(issuer, email, encoded)?)
     }
 
-    /// Step two: a current code from the app turns the pending secret on,
-    /// replaces any recovery codes with a fresh set (returned once, stored
-    /// hashed) and counts as this session's step-up.
-    pub async fn confirm_two_factor(&self, scope: &Scope, code: &str) -> Outcome<Vec<String>> {
+    /// Step two: a current code from the app turns the pending secret on
+    /// and counts as this session's step-up.
+    pub async fn confirm_two_factor(&self, scope: &Scope, code: &str) -> Outcome<()> {
         refuse_impersonation(scope)?;
         self.unlocked(scope).await?;
         let (tenant, user) = (scope.tenant(), scope.user());
@@ -306,7 +296,6 @@ impl UserService {
             self.failed(scope, "authenticator").await?;
             return Err(TwoFactorError::InvalidCode);
         };
-        let (codes, hashes) = fresh_recovery_codes().await?;
         let mut client = self.db.get().await.map_err(Error::from)?;
         let mut tx = self
             .mutations
@@ -329,7 +318,6 @@ impl UserService {
                     if confirmed != 1 {
                         return Err(Error::Conflict);
                     }
-                    replace_recovery_codes(sql, tenant, user, &hashes).await?;
                     clear_failures(sql, tenant, user).await?;
                     sessions.step_up(sql, &scope_for_tx).await?;
                     Ok((
@@ -337,7 +325,7 @@ impl UserService {
                         vec![change(
                             user,
                             json!({"status": "pending"}),
-                            json!({"status": "enabled", "recovery_codes": recovery::COUNT}),
+                            json!({"status": "enabled"}),
                         )],
                     ))
                 })
@@ -352,40 +340,125 @@ impl UserService {
             }
             Err(error) => return Err(error.into()),
         }
-        Ok(codes)
+        Ok(())
     }
 
-    /// Step-up: a current authenticator code (or one recovery code) marks
-    /// this session as having confirmed access just now.
+    /// Step-up: a current authenticator code marks this session as having
+    /// confirmed access just now.
     pub async fn step_up(&self, scope: &Scope, code: &str) -> Outcome<()> {
-        let proof = self.prove(scope, code).await?;
-        self.consume(scope, proof, Spend::StepUp).await
+        let step = self.prove(scope, code).await?;
+        self.consume(scope, step, Spend::StepUp).await
     }
 
-    /// Replaces the recovery codes (the old set stops working at once) after
-    /// a current code; returns the new set, shown once.
-    pub async fn regenerate_recovery_codes(
-        &self,
-        scope: &Scope,
-        code: &str,
-    ) -> Outcome<Vec<String>> {
-        let proof = self.prove(scope, code).await?;
-        let (codes, hashes) = fresh_recovery_codes().await?;
-        self.consume(scope, proof, Spend::Regenerate(hashes))
+    /// Step one of moving to a new phone: a current code from the old
+    /// phone (spent here), then a fresh secret for the new one. Nothing is
+    /// stored: the old secret keeps working until [`Self::confirm_move`]
+    /// proves the new phone's first code.
+    pub async fn begin_move(&self, scope: &Scope, code: &str) -> Outcome<Enrollment> {
+        if !self.settings.encryption_available() {
+            return Err(TwoFactorError::Unavailable);
+        }
+        let step = self.prove(scope, code).await?;
+        self.consume(
+            scope,
+            step,
+            Spend::Purpose {
+                operation: "core.user.two_factor.move".into(),
+                channel: "web",
+            },
+        )
+        .await?;
+        let client = self.db.get().await.map_err(Error::from)?;
+        let email: String = client
+            .query_opt(
+                "SELECT email FROM users WHERE tenant_id=$1 AND id=$2 AND status='active' AND deleted_at IS NULL",
+                &[&scope.tenant(), &scope.user()],
+            )
+            .await
+            .map_err(Error::from)?
+            .ok_or(Error::Unauthorized)?
+            .get(0);
+        let issuer = self.issuer(&**client).await?;
+        drop(client);
+        let encoded = totp::encode_secret(&totp::generate_secret()?);
+        Ok(Enrollment::new(issuer, email, encoded)?)
+    }
+
+    /// Step two of moving: the new phone's first code replaces the secret.
+    /// The old phone stops working. Audited as `user.two_factor.moved`.
+    pub async fn confirm_move(&self, scope: &Scope, to: &Enrollment, code: &str) -> Outcome<()> {
+        refuse_impersonation(scope)?;
+        self.unlocked(scope).await?;
+        let (tenant, user) = (scope.tenant(), scope.user());
+        let secret = data_encoding::BASE32_NOPAD
+            .decode(to.secret.as_bytes())
+            .map_err(|_| Error::Internal)?;
+        let client = self.db.get().await.map_err(Error::from)?;
+        let step = totp::verify(&secret, code, now_unix(&**client).await?, None)?;
+        drop(client);
+        let Some(step) = step else {
+            self.failed(scope, "authenticator").await?;
+            return Err(TwoFactorError::InvalidCode);
+        };
+        let sealed = self
+            .settings
+            .seal_owned(OWNER, tenant, user, &json!(to.secret))?;
+        let mut client = self.db.get().await.map_err(Error::from)?;
+        let mut tx = self
+            .mutations
+            .begin(&mut client, scope.mutation_context("user.two_factor.moved"))
             .await?;
-        Ok(codes)
+        let moved = tx
+            .mutate(move |sql| {
+                Box::pin(async move {
+                    let replaced = sql
+                        .execute(
+                            "UPDATE user_two_factor SET secret=$3,last_step=$4,updated_at=now() WHERE tenant_id=$1 AND user_id=$2 AND confirmed_at IS NOT NULL",
+                            &[&tenant, &user, &sealed, &step],
+                        )
+                        .await?;
+                    if replaced != 1 {
+                        return Err(Error::Conflict);
+                    }
+                    clear_failures(sql, tenant, user).await?;
+                    Ok((
+                        (),
+                        vec![change(
+                            user,
+                            json!({"status": "enabled"}),
+                            json!({"status": "enabled", "moved_to_new_phone": true}),
+                        )],
+                    ))
+                })
+            })
+            .await;
+        match moved {
+            Ok(()) => Ok(tx.commit().await?),
+            Err(Error::Conflict) => {
+                tx.rollback().await?;
+                Err(TwoFactorError::NotEnabled)
+            }
+            Err(error) => Err(error.into()),
+        }
     }
 
-    /// Turns two-factor off after a current code or recovery code: the
-    /// secret and every recovery code are deleted.
-    pub async fn disable_two_factor(&self, scope: &Scope, code: &str) -> Outcome<()> {
-        let proof = self.prove(scope, code).await?;
-        self.consume(scope, proof, Spend::Disable).await
+    /// The name the authenticator app lists this server under, from the
+    /// instance identity (Base System): `Bilibi <name> (<role>)`, or
+    /// `Bilibi <role>` when the instance still carries its role's own name.
+    async fn issuer(&self, client: &(impl GenericClient + Sync)) -> Result<String> {
+        let instance = bilibi_system::Instance::resolve(&self.settings, client).await?;
+        let role = instance.role.label();
+        let name = instance.label.replace(':', " ");
+        Ok(if name.trim().eq_ignore_ascii_case(role) {
+            format!("Bilibi {role}")
+        } else {
+            format!("Bilibi {} ({role})", name.trim())
+        })
     }
 
-    /// Checks a code against the confirmed authenticator, or the unused
-    /// recovery codes, without consuming it. A miss counts as a failure.
-    async fn prove(&self, scope: &Scope, code: &str) -> Outcome<Proof> {
+    /// Checks a code against the confirmed authenticator without consuming
+    /// it. A miss counts as a failure.
+    async fn prove(&self, scope: &Scope, code: &str) -> Outcome<i64> {
         refuse_impersonation(scope)?;
         self.unlocked(scope).await?;
         let (tenant, user) = (scope.tenant(), scope.user());
@@ -398,34 +471,11 @@ impl UserService {
             .await
             .map_err(Error::from)?
             .ok_or(TwoFactorError::NotEnabled)?;
-        let proof = if totp::normalize(code).is_some() {
-            let secret = self.open_secret(tenant, user, &row.get(0))?;
-            totp::verify(&secret, code, now_unix(&**client).await?, row.get(1))?
-                .map(Proof::Authenticator)
-        } else if let Some(code) = recovery::normalize(code) {
-            let rows = client
-                .query(
-                    "SELECT id,code_hash FROM user_two_factor_recovery_codes WHERE tenant_id=$1 AND user_id=$2 AND used_at IS NULL ORDER BY id",
-                    &[&tenant, &user],
-                )
-                .await
-                .map_err(Error::from)?;
-            // Every unused hash is checked, so the time taken does not say
-            // which position matched.
-            let mut matched = None;
-            for row in rows {
-                let hash: String = row.get(1);
-                if password::verify(&code, Some(&hash)).await? && matched.is_none() {
-                    matched = Some(Proof::Recovery(row.get(0)));
-                }
-            }
-            matched
-        } else {
-            None
-        };
+        let secret = self.open_secret(tenant, user, &row.get(0))?;
+        let step = totp::verify(&secret, code, now_unix(&**client).await?, row.get(1))?;
         drop(client);
-        match proof {
-            Some(proof) => Ok(proof),
+        match step {
+            Some(step) => Ok(step),
             None => {
                 self.failed(scope, "code").await?;
                 Err(TwoFactorError::InvalidCode)
@@ -433,27 +483,12 @@ impl UserService {
         }
     }
 
-    /// Spends a proof inside one audited transaction with what it was for:
-    /// the authenticator step moves forward (compare-and-set, so a racing
-    /// reuse of the same code loses) or the recovery code is marked used, and
-    /// failures reset. A step-up proved by a recovery code is audited as
-    /// `user.two_factor.recovery_code_used`.
-    async fn consume(&self, scope: &Scope, proof: Proof, spend: Spend) -> Outcome<()> {
+    /// Spends a proved step inside one audited transaction with what it was
+    /// for. The step moves forward by compare-and-set, so a racing reuse of
+    /// the same code loses, and failures reset.
+    async fn consume(&self, scope: &Scope, step: i64, spend: Spend) -> Outcome<()> {
         let (tenant, user) = (scope.tenant(), scope.user());
-        let method = match proof {
-            Proof::Authenticator(_) => "authenticator",
-            Proof::Recovery(_) => "recovery_code",
-        };
-        let event = match (&spend, &proof) {
-            (Spend::StepUp | Spend::Purpose { .. }, Proof::Recovery(_)) => {
-                "user.two_factor.recovery_code_used"
-            }
-            (Spend::StepUp | Spend::Purpose { .. }, Proof::Authenticator(_)) => {
-                "user.two_factor.verified"
-            }
-            (Spend::Regenerate(_), _) => "user.two_factor.recovery_codes_regenerated",
-            (Spend::Disable, _) => "user.two_factor.disabled",
-        };
+        let event = "user.two_factor.verified";
         let purpose = match &spend {
             Spend::Purpose { operation, channel } => json!({"for": operation, "channel": channel}),
             _ => json!({}),
@@ -468,36 +503,21 @@ impl UserService {
         let spent = tx
             .mutate(move |sql| {
                 Box::pin(async move {
-                    let spent = match proof {
-                        Proof::Authenticator(step) => sql
-                            .execute(
-                                "UPDATE user_two_factor SET last_step=$3,updated_at=now() WHERE tenant_id=$1 AND user_id=$2 AND confirmed_at IS NOT NULL AND (last_step IS NULL OR last_step<$3)",
-                                &[&tenant, &user, &step],
-                            )
-                            .await?,
-                        Proof::Recovery(id) => sql
-                            .execute(
-                                "UPDATE user_two_factor_recovery_codes SET used_at=now() WHERE id=$1 AND tenant_id=$2 AND user_id=$3 AND used_at IS NULL",
-                                &[&id, &tenant, &user],
-                            )
-                            .await?,
-                    };
+                    let spent = sql
+                        .execute(
+                            "UPDATE user_two_factor SET last_step=$3,updated_at=now() WHERE tenant_id=$1 AND user_id=$2 AND confirmed_at IS NOT NULL AND (last_step IS NULL OR last_step<$3)",
+                            &[&tenant, &user, &step],
+                        )
+                        .await?;
                     if spent != 1 {
                         return Err(Error::Conflict);
                     }
                     clear_failures(sql, tenant, user).await?;
-                    let new = match spent_for(sql, &sessions, &session, spend).await? {
-                        Spent::Kept => {
-                            let mut new = json!({"status": "enabled", "checked_with": method});
-                            if let (Some(new), Some(purpose)) =
-                                (new.as_object_mut(), purpose.as_object())
-                            {
-                                new.extend(purpose.clone());
-                            }
-                            new
-                        }
-                        Spent::Deleted => json!({}),
-                    };
+                    spent_for(sql, &sessions, &session, spend).await?;
+                    let mut new = json!({"status": "enabled", "checked_with": "authenticator"});
+                    if let (Some(new), Some(purpose)) = (new.as_object_mut(), purpose.as_object()) {
+                        new.extend(purpose.clone());
+                    }
                     Ok(((), vec![change(user, json!({"status": "enabled"}), new)]))
                 })
             })
@@ -541,8 +561,8 @@ impl UserService {
         })
     }
 
-    /// Counts one failed check (`check` names which: password, authenticator
-    /// or code), audited as `user.two_factor.failed`; the failure that
+    /// Counts one failed check (`check` names which: password or authenticator
+    /// code), audited as `user.two_factor.failed`; the failure that
     /// reaches the limit then locks the account's checks, audited as
     /// `user.two_factor.locked`.
     async fn failed(&self, scope: &Scope, check: &'static str) -> Result<()> {
@@ -632,37 +652,6 @@ async fn clear_failures(sql: &impl GenericClient, tenant: i64, user: i64) -> Res
     sql.execute(
         "UPDATE user_two_factor_attempts SET failures=0,window_started_at=now() WHERE tenant_id=$1 AND user_id=$2 AND failures>0",
         &[&tenant, &user],
-    )
-    .await?;
-    Ok(())
-}
-
-/// A new recovery set and its Argon2id hashes, computed before any
-/// transaction opens so no row lock waits on the hasher.
-async fn fresh_recovery_codes() -> Result<(Vec<String>, Vec<String>)> {
-    let codes = recovery::generate()?;
-    let mut hashes = Vec::with_capacity(codes.len());
-    for code in &codes {
-        let canonical = recovery::normalize(code).ok_or(Error::Internal)?;
-        hashes.push(password::hash(&canonical).await?);
-    }
-    Ok((codes, hashes))
-}
-
-async fn replace_recovery_codes(
-    sql: &impl GenericClient,
-    tenant: i64,
-    user: i64,
-    hashes: &[String],
-) -> Result<()> {
-    sql.execute(
-        "DELETE FROM user_two_factor_recovery_codes WHERE tenant_id=$1 AND user_id=$2",
-        &[&tenant, &user],
-    )
-    .await?;
-    sql.execute(
-        "INSERT INTO user_two_factor_recovery_codes(tenant_id,user_id,code_hash) SELECT $1,$2,unnest($3::text[])",
-        &[&tenant, &user, &hashes],
     )
     .await?;
     Ok(())

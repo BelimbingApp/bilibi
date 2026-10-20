@@ -181,7 +181,7 @@ Notice that the company questions come first only on a database that has no oper
 ```
 Not created: this install already has an owner. The platform operator holds 1 account(s); the first is owner@example.com.
 Sign in as one of them at https://erp.example.com/login. To add people, use Users > New user there.
-If nobody can sign in any more, that is account recovery, which this command does not do.
+If nobody can sign in any more, that is account recovery, which this command does not do. If an owner only lost their phone, see [Lost phone](#lost-phone).
 ```
 
 The command is the same `bilibi-web create-owner` the script runs for you, in the instance's environment. From a script with no terminal, give every answer as a flag and the password on standard input:
@@ -198,6 +198,23 @@ printf '%s\n' "$PASSWORD" | sudo scripts/install-server.sh create-owner producti
 Everything the command creates is written the way the app writes it, so it shows in the audit log under Administration → Audit Log → Actions as **System · create-owner**: the retained `user.bootstrap.completed` action with the account, email and role, and the data changes for the account, its Core Administrator role and the bootstrap receipt that marks the account as the server owner. The command works with any `BILIBI_ENV`; on Dev, the development seed's `ai@agent.my` already exists and the command refuses, which is the point.
 
 Behind the scenes this is the development seed's bootstrap with your details instead of the seed's, through the same owners: Company provisions the operator company, User creates the account and the receipt, Authz grants the role ([`apps/core/user/README.md`](../apps/core/user/README.md), Bootstrap administrator).
+
+## Lost phone
+
+Bilibi has no 2FA recovery codes. A person who loses their phone asks another admin to reset their 2FA (Users › the person › **Reset 2FA**, which needs the admin's own code). When the person is the only admin, the server owner resets it from the server:
+
+```sh
+sudo scripts/install-server.sh two-factor-reset production --email owner@example.com
+```
+
+```
+2FA is off for owner@example.com. The account was signed out and notified. Sign in at https://erp.example.com/login with the password, then set up the authenticator app again.
+```
+
+- It turns off one account's authenticator, signs the account out and notifies the person. Their password is untouched.
+- Already off is not an error: it says so and changes nothing.
+- It shows in the audit log as **System · two-factor-reset**.
+- The command is `bilibi-web two-factor-reset --email <address>` in the instance's environment.
 
 ## The waiting page
 
@@ -239,6 +256,7 @@ Script commands:
 | `create <instance> --role dev\|staging\|production --site <host> [--port <n>] [--tls internal]` | Packages, users, folders, database, `env`, service, Caddy site. Rerun to change the site; the saved role is preserved and the port stays fixed. Change the role in Instance settings with 2FA |
 | `release <instance> <bilibi-web or folder>` | Copy into `releases/<n>`, migrate, switch, check |
 | `create-owner <instance> [--email <address>] [--name <name>] [--password-stdin] [--company-name <name> --company-code <code>]` | The first account, the server owner; asks for anything not given, refuses once an owner exists (it then only finishes an unfinished company link) |
+| `two-factor-reset <instance> --email <address>` | Turn off one account's authenticator after a lost phone, sign the account out and notify it ([Lost phone](#lost-phone)) |
 | `installer <bilibi-installer>` | Copy the installer program to `/opt/bilibi/build/bin` and start `bilibi-installer@<instance>` for every instance; rerun to update it |
 | `switch <instance> <n>` | Put a kept release in service |
 | `status [<instance>]` | Roles, addresses, service and installer states, releases |

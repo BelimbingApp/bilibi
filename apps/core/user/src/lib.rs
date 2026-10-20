@@ -38,8 +38,8 @@ pub use preferences::{
     MAX_PINS, THEMES, THEME_KEY,
 };
 pub use two_factor::{
-    safe_return, Enrollment, TwoFactorError, TwoFactorStatus, CONFIRM_PATH, ISSUER_KEY,
-    SETTINGS_PATH as TWO_FACTOR_PATH,
+    safe_return, Enrollment, TwoFactorEmailError, TwoFactorEmailReset, TwoFactorError,
+    TwoFactorStatus, CONFIRM_PATH, SETTINGS_PATH as TWO_FACTOR_PATH,
 };
 pub use verification::{Signer, Verification};
 
@@ -79,6 +79,10 @@ pub const MOVED_PINS_MIGRATION: (&str, &str) = (
 pub const TWO_FACTOR_MIGRATION: (&str, &str) = (
     "core-user-012-two-factor",
     include_str!("../migrations/012-two-factor.sql"),
+);
+pub const TWO_FACTOR_RECOVERY_DROP: (&str, &str) = (
+    "core-user-013-drop-two-factor-recovery",
+    include_str!("../migrations/013-drop-two-factor-recovery.sql"),
 );
 pub const ACCOUNTS_MIGRATION: (&str, &str) = (
     "core-user-008-accounts",
@@ -170,7 +174,7 @@ pub struct UserService {
 inventory::submit! {
     bilibi_module_registry::Module {
         id:"core/user",layer:bilibi_module_registry::Layer::Core,
-        dependencies:&["base/database","base/security","base/step_up","base/notifications","base/tenancy","base/session","base/principal_directory","base/mail","base/settings","base/datetime","base/locale","base/ui","base/audit","base/authz","base/menu","base/grid","base/dashboard","base/party_ids","core/company","core/person","core/affiliation"],migrations:&[MIGRATION,CREDENTIALS_MIGRATION,PINS_MIGRATION,NOTIFICATIONS_MIGRATION,database_queries::MIGRATION,BOOTSTRAP_MIGRATION,IDENTITY_MIGRATION,ACCOUNTS_MIGRATION,IMPERSONATION_MIGRATION,BOOTSTRAP_AFFILIATION_MIGRATION,MOVED_PINS_MIGRATION,TWO_FACTOR_MIGRATION],
+        dependencies:&["base/agent_api","base/database","base/security","base/step_up","base/system","base/notifications","base/tenancy","base/session","base/principal_directory","base/mail","base/settings","base/datetime","base/locale","base/ui","base/audit","base/authz","base/menu","base/grid","base/dashboard","base/party_ids","core/company","core/person","core/affiliation"],migrations:&[MIGRATION,CREDENTIALS_MIGRATION,PINS_MIGRATION,NOTIFICATIONS_MIGRATION,database_queries::MIGRATION,BOOTSTRAP_MIGRATION,IDENTITY_MIGRATION,ACCOUNTS_MIGRATION,IMPERSONATION_MIGRATION,BOOTSTRAP_AFFILIATION_MIGRATION,MOVED_PINS_MIGRATION,TWO_FACTOR_MIGRATION,TWO_FACTOR_RECOVERY_DROP],
         services:&[bilibi_module_registry::Service {id:"core/user.database_queries",factory:|services| {
             Ok(std::sync::Arc::new(database_queries::QueryService::new(services.get::<Db>("base/database.pool")?.as_ref().clone(), services.get("base/database.mutations")?, services.get("base/tenancy.authentication")?)))
         }},bilibi_module_registry::Service {id:"core/user.query-pages",factory:|services| {
@@ -185,10 +189,11 @@ inventory::submit! {
             services.get::<bilibi_principal_directory::PrincipalDirectory>("base/principal_directory.directory")?.bind("core/user", std::sync::Arc::new(directory::UserDirectory))?;
             let users = std::sync::Arc::new(UserService {sessions:services.get("base/session.sessions")?,mutations:services.get("base/database.mutations")?,authentication:services.get("base/tenancy.authentication")?,persons:services.get(bilibi_person::SERVICE)?,affiliations:services.get(bilibi_affiliation::SERVICE)?,db:services.get::<Db>("base/database.pool")?.as_ref().clone(),notifications,mailer:services.get("base/mail.mailer")?,settings:services.get("base/settings.store")?,display:services.get("base/datetime.display")?,locales:services.get("base/locale.locales")?,signer:Signer::from_hex(std::env::var("BILIBI_USER_SIGNING_KEY").ok().as_deref()),origin:std::env::var("APP_ORIGIN").unwrap_or_else(|_| "http://localhost:3000".into()).trim_end_matches('/').to_owned(),step_up:services.get(bilibi_step_up::SERVICE)?});
             services.get::<bilibi_step_up::StepUp>(bilibi_step_up::SERVICE)?.bind(std::sync::Arc::new(two_factor::Authenticator(users.clone())))?;
+            two_factor::bind(users.clone())?;
             Ok(users)
         }},
         bilibi_module_registry::Service {id:"core/user.pages",factory:|services| {
-            Ok(std::sync::Arc::new(bilibi_ui::page::PageService(std::sync::Arc::new(web::Pages {users:services.get("core/user.accounts")?,display:services.get("base/datetime.display")?,locales:services.get("base/locale.locales")?,db:services.get::<Db>("base/database.pool")?.as_ref().clone(),grants:services.get("base/authz.grants")?}))))
+            Ok(std::sync::Arc::new(bilibi_ui::page::PageService(std::sync::Arc::new(web::Pages {users:services.get("core/user.accounts")?,display:services.get("base/datetime.display")?,locales:services.get("base/locale.locales")?,db:services.get::<Db>("base/database.pool")?.as_ref().clone(),grants:services.get("base/authz.grants")?,contracts:services.get(bilibi_agent_api::page::SERVICE)?}))))
         }}],
     }
 }
@@ -227,12 +232,13 @@ impl UserService {
     }
 }
 
-// ADR 01 gap, listed so it stays visible: these pages still write through
-// the facade rather than an operation contract (`base/agent_api` page).
+// Resetting another person's 2FA is a contract. The other account,
+// password, two-factor setup and notification events still write through
+// the facade (`base/agent_api` page).
 inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::PAGE_WRITES, "core/user.pages", bilibi_module_registry::Provenance { module: "core/user", source: file!(), line: line!() }, &bilibi_module_registry::contributions::PageWrites {
     service: "core/user.pages",
-    contracts: &[],
-    pending: bilibi_module_registry::contributions::Pending::Every { reason: "Accounts, passwords, two-factor and notifications write through the User facade; no contract yet." },
+    contracts: &[(two_factor::RESET_EVENT, two_factor::RESET_KEY)],
+    pending: bilibi_module_registry::contributions::Pending::Every { reason: "Accounts, passwords, two-factor setup and notifications write through the User facade. Resetting another person's 2FA is core.user.two_factor.reset." },
 }) }
 
 // ADR 01 gap, listed so it stays visible: these pages still write through
