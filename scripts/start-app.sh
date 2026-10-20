@@ -51,6 +51,7 @@ ensure_dev_key() {
         exit 1
     fi
     printf -v "$var" '%s' "$value"
+    # shellcheck disable=SC2163 # exports the variable named by $var
     export "$var"
 }
 ensure_dev_key BILIBI_SETTINGS_KEY "$root/.local/dev/settings.key"

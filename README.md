@@ -68,9 +68,9 @@ The launcher sets `BILIBI_ENV=development` unless you already set it, so the ins
 | `APP_ORIGIN` | The exact browser origin, no trailing slash |
 | `BIND_ADDR` | Listen address, default `127.0.0.1:3000` |
 | `MAIL_HOST` | SMTP relay. Unset: write mail to `.local/mailbox/` |
-| `BILIBI_USER_SIGNING_KEY` | 64 hex characters, for email verification links. Unset: `start-app.sh` reads `.local/dev/user-signing.key` |
-| `BILIBI_SETTINGS_KEY` | 64 hex characters. Encrypts secret settings and authenticator keys. 2FA setup refuses without it. Unset: `start-app.sh` reads `.local/dev/settings.key` and leaves an existing file as it is |
-| `BILIBI_MEDIA_SIGNING_KEY` | 64 hex characters, for signed file links. Unset: `start-app.sh` reads `.local/dev/media-signing.key` |
+| `BILIBI_USER_SIGNING_KEY` | 64 hex characters, for email verification links. Unset: `start-app.sh` supplies one |
+| `BILIBI_SETTINGS_KEY` | 64 hex characters. Encrypts secret settings and authenticator keys. 2FA setup refuses without it. Unset: `start-app.sh` supplies one |
+| `BILIBI_MEDIA_SIGNING_KEY` | 64 hex characters, for signed file links. Unset: `start-app.sh` supplies one |
 | `BILIBI_ENV` | `development`, `staging` or `production`. Initial role for the install seed. Unset means `production`; `start-app.sh` defaults to `development`. Later role changes use Instance settings. Other values refuse installation |
 
 Every page, consent page and agent answer says which Bilibi it is, so nobody mistakes a test copy for the live system. The status bar always shows the stored server role; Staging also shows a top-bar badge. Dev and Staging show a sign-in badge; reviews and agent plans name every instance, production included. The name and colour are the Instance settings (`instance.label`, `instance.colour`), read through `bilibi_base::system::Instance::resolve` ([Base System](apps/base/system/README.md)).
