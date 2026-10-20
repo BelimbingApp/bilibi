@@ -14,6 +14,7 @@ import re
 import subprocess
 import sys
 import tomllib
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from catalogue import REPO, Refused, expect, github, open_platform_release
@@ -132,13 +133,19 @@ def previous_tag(version):
     return tags[0]
 
 
+def utc(stamp):
+    return datetime.fromisoformat(stamp).astimezone(timezone.utc)
+
+
 def merged_pulls(after):
-    """Merged pull requests whose merge time is after `after` (ISO-8601)."""
+    """Merged pull requests whose merge time is after `after` (ISO-8601 with an offset)."""
+    since = utc(after)
+    day = (since - timedelta(days=1)).date().isoformat()
     raw = github([
         'pr', 'list', '--repo', REPO, '--state', 'merged', '--base', 'main', '--limit', '200',
-        '--search', f'merged:>={after[:10]}', '--json', 'number,title,body,mergedAt,url',
+        '--search', f'merged:>={day}', '--json', 'number,title,body,mergedAt,url',
     ], '')
-    pulls = [pull for pull in json.loads(raw) if pull.get('mergedAt') and pull['mergedAt'] > after]
+    pulls = [pull for pull in json.loads(raw) if pull.get('mergedAt') and utc(pull['mergedAt']) > since]
     pulls.sort(key=lambda pull: pull['number'])
     return pulls
 
