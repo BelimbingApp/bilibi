@@ -67,8 +67,3 @@ inventory::submit! { Contribution::new(MOVED, "core/agent_access.mcp.moved", pro
 inventory::submit! { Contribution::new(MOVED, "core/agent_access.chatgpt.moved", provenance!(), &Moved {
     from: "/settings/chatgpt-plugin", to: "/settings/ai-connections",
 }) }
-
-inventory::submit! { Contribution::new(DEFINITIONS, crate::UNUSED_CLIENT_DAYS, provenance!(), &Setting::Definition(Definition {
-    value_type: ValueType::Integer, scopes: GLOBAL, default: || json!(30), nullable: false, encrypted: false, minimum: Some(1.0), maximum: Some(365.0), validator: None,
-    editor: Some(Editor { group: "Agent access", label: "Keep unused OAuth registrations (days)", help: "Remove registrations unused for this many days. Apps with an active connection are kept.", capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
-})) }

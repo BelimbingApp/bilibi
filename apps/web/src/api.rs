@@ -530,15 +530,15 @@ fn query_value(value: &str) -> String {
 }
 
 async fn token(State(app): State<App>, request: Request) -> Response {
-    if let Err(error) = app.require_secure_origin().await {
-        return if matches!(error, Error::Invalid) {
-            reply(
+    match app.secure_origin().await {
+        Ok(true) => {}
+        Ok(false) => {
+            return reply(
                 StatusCode::BAD_REQUEST,
                 json!({"error":"invalid_request", "error_description":"APP_ORIGIN must use HTTPS. Only a Dev copy on this computer may use HTTP on a loopback address."}),
             )
-        } else {
-            unavailable(&error).into_response()
-        };
+        }
+        Err(error) => return unavailable(&error).into_response(),
     }
     let client_identity = client_identity(request.headers(), false);
     let sender = sender(&request);

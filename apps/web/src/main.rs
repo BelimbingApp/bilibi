@@ -136,9 +136,17 @@ async fn main() -> Result<()> {
                 std::env::var("APP_ORIGIN").unwrap_or_else(|_| "http://localhost:3000".into());
             let bind = std::env::var("BIND_ADDR").unwrap_or_else(|_| "127.0.0.1:3000".into());
             let mut app = bilibi_web::App::new(db, &origin)?;
-            app.require_secure_origin().await.inspect_err(|_| {
-                eprintln!("APP_ORIGIN must use HTTPS. Only a Dev copy on this computer may use HTTP on a loopback address.");
-            })?;
+            match app.secure_origin().await {
+                Ok(true) => {}
+                Ok(false) => {
+                    eprintln!("APP_ORIGIN must use HTTPS. Only a Dev copy on this computer may use HTTP on a loopback address.");
+                    return Err(Error::Invalid);
+                }
+                Err(error) => {
+                    eprintln!("Cannot read the instance settings ({error}). Run `bilibi-web migrate` and `bilibi-web seed-production` first; APP_ORIGIN must also be a valid address.");
+                    return Err(error);
+                }
+            }
             let listener = tokio::net::TcpListener::bind(&bind)
                 .await
                 .map_err(|_| Error::Internal)?;

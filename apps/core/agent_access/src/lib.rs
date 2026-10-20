@@ -42,8 +42,9 @@ pub const SLOW_DOWN_SECONDS: i32 = 5;
 pub const ACCESS_TOKEN_SECONDS: i64 = 3600;
 pub const SEEN_LIMIT: usize = 20;
 pub const UNSTATED: &str = "(not stated)";
+/// How long a registration outlives its last use or its last connection.
+pub const UNUSED_CLIENT_DAYS: i32 = 30;
 pub const CONNECTION_DAYS: &str = "agent_access.connection_days";
-pub const UNUSED_CLIENT_DAYS: &str = "agent_access.unused_client_days";
 pub const AUTHORIZATION_CODE_SECONDS: &str = "agent_access.authorization_code_seconds";
 pub const OAUTH_REQUESTS_PER_MINUTE: &str = "agent_access.oauth_requests_per_minute";
 pub const MIGRATION: (&str, &str) = (

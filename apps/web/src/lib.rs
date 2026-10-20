@@ -71,7 +71,9 @@ impl App {
     }
     /// Public OAuth origin policy. Rechecked at issuance so a live role change
     /// cannot keep issuing tokens on a development HTTP origin.
-    pub async fn require_secure_origin(&self) -> Result<()> {
+    /// `Ok(false)` is a policy refusal; instance settings that cannot be read
+    /// are an `Err`, so callers can report that separately.
+    pub async fn secure_origin(&self) -> Result<bool> {
         let instance = self.instance().await?;
         let uri: axum::http::Uri = self.origin.parse().map_err(|_| Error::Invalid)?;
         let host = uri.host().ok_or(Error::Invalid)?.trim_matches(['[', ']']);
@@ -83,16 +85,11 @@ impl App {
             .authority()
             .is_some_and(|authority| !authority.as_str().contains('@'))
             && uri.path_and_query().is_none_or(|path| path.as_str() == "/");
-        if bare
+        Ok(bare
             && (uri.scheme_str() == Some("https")
                 || (instance.role == bilibi_base::system::Role::Dev
                     && uri.scheme_str() == Some("http")
-                    && loopback))
-        {
-            Ok(())
-        } else {
-            Err(Error::Invalid)
-        }
+                    && loopback)))
     }
     pub fn new(db: Db, origin: &str) -> Result<Self> {
         let modules = modules()?;

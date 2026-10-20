@@ -17,15 +17,10 @@ impl AgentAccess {
     ) -> Result<Value, OAuthError> {
         let metadata = registration.metadata()?;
         let client = self.db.get().await?;
-        let days = self
-            .settings
-            .get_global(&**client, UNUSED_CLIENT_DAYS)
-            .await?
-            .as_i64()
-            .ok_or(Error::Invalid)? as i32;
-        // Keep every live grant's registration. Bound each cleanup batch; no
+        // An app may still hold its client ID for a live grant or for 30 days
+        // after the last one ended, so keep those. Bound each cleanup batch; no
         // historical connections or audit evidence are removed.
-        client.execute("DELETE FROM core_agent_oauth_clients WHERE client_id IN (SELECT r.client_id FROM core_agent_oauth_clients r WHERE last_used_at < now()-make_interval(days => $1) AND NOT EXISTS (SELECT 1 FROM core_agent_connections c WHERE c.client_id=r.client_id AND c.revoked_at IS NULL AND c.expires_at>now()) ORDER BY last_used_at LIMIT 100)", &[&days]).await?;
+        client.execute("DELETE FROM core_agent_oauth_clients WHERE client_id IN (SELECT r.client_id FROM core_agent_oauth_clients r WHERE last_used_at < now()-make_interval(days => $1) AND NOT EXISTS (SELECT 1 FROM core_agent_connections c WHERE c.client_id=r.client_id AND least(c.expires_at, coalesce(c.revoked_at, c.expires_at)) > now()-make_interval(days => $1)) ORDER BY last_used_at LIMIT 100)", &[&UNUSED_CLIENT_DAYS]).await?;
         let id = crate::secrets::secret()?;
         let issued: i64 = client.query_one("INSERT INTO core_agent_oauth_clients(client_id,metadata) VALUES($1,$2) RETURNING extract(epoch FROM created_at)::bigint", &[&id, &metadata]).await?.get(0);
         let mut reply = metadata;
