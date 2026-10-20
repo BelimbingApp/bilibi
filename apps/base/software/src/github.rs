@@ -539,7 +539,7 @@ impl Pin {
 /// answer leaves the comparison unknown and never blocks installation.
 pub(crate) async fn setup_commit(software: &Software, scope: &Scope, pin: &Pin) -> Option<String> {
     let token = software.github_token(scope).await.ok()?;
-    let mut url = url::Url::parse(&format!("{API}/repos/{}/commits/", pin.repository)).ok()?;
+    let mut url = url::Url::parse(&format!("{API}/repos/{}/commits", pin.repository)).ok()?;
     url.path_segments_mut()
         .ok()?
         .push(&format!("refs/tags/{}", pin.tag));
