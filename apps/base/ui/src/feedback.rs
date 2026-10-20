@@ -220,6 +220,18 @@ pub struct FlashGroup<'a> {
     pub flash: FlashMap<'a>,
 }
 
+/// The flash outlet that arrives after the app shell, outside any page body:
+/// pinned to the top right so a message that came with a redirect stays in view.
+#[derive(Template, Debug, Default)]
+#[template(
+    source = r#"{% import "feedback.html" as ui %}{% call ui::flash_group(id=id, messages=flash, floating=true) %}{% endcall %}"#,
+    ext = "html"
+)]
+pub struct FloatingFlashGroup<'a> {
+    pub id: &'a str,
+    pub flash: FlashMap<'a>,
+}
+
 /// An inline status alert.
 #[derive(Template, Debug, Default)]
 #[template(
