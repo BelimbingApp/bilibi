@@ -184,7 +184,7 @@ The optional report has this shape:
 }
 ```
 
-Replace `asset` with the object, including repository/release/asset IDs, tag, target, archive SHA-256, program SHA-256 and setup commit. The review and job retain the report; failed, incomplete or mismatched reports refuse promotion. The installer also compares the reported program SHA-256 before pausing. Reports are supplied by the agent, not signed or independently verified by Production. Manual installation does not require a report. Different targets mean the same recipe with different bytes; tags and local release numbers never establish an equal asset. Never give the agent an authenticator seed or GitHub token.
+Replace `asset` with the object, including repository/release/asset IDs, tag, target, archive SHA-256 and program SHA-256. Include `setup_commit` when recorded; omit it when null. The review and job retain the report; failed, incomplete or mismatched reports refuse promotion. The installer also compares the reported program SHA-256 before pausing. Reports are supplied by the agent, not signed or independently verified by Production. Manual installation does not require a report. Different targets mean the same recipe with different bytes; tags and local release numbers never establish an equal asset. Never give the agent an authenticator seed or GitHub token.
 
 ### Upgrade existing servers
 
