@@ -14,7 +14,7 @@ a secret: use an encrypted definition for secrets. Undeclared keys, wildcard
 requests, overlong keys, wrong types and forbidden scopes refuse before writing.
 Writes are bounded to 1 MiB of JSON.
 
-Resolve using `Settings::get` or `resolve_many` from `base/settings.store`.
+Resolve using `Settings::get` or `resolve_many` from `base/settings.store`. Reads accept `&dyn bilibi_tenancy::ReadClient`, including PostgreSQL clients and transactions and the operation handler's `&dyn OperationClient`. Pass the handed client so a plan sees its earlier writes and rollback keeps every change together.
 Resolution is user → selected company → tenant → global → declared default,
 filtering to the definition's allowed scopes. A stored JSON null is a real
 nullable override; missing runtime state resolves to null. `Resolved.source`

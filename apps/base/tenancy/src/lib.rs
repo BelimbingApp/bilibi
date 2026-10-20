@@ -33,6 +33,25 @@ impl<T: GenericClient + Sync> ProofClient for T {
     }
 }
 
+/// Object-safe reads for owners that need lists as well as party proofs.
+/// A borrowed transaction stays the transaction used for every query.
+pub trait ReadClient: ProofClient {
+    fn query<'a>(
+        &'a self,
+        sql: &'a str,
+        params: &'a [&'a (dyn ToSql + Sync)],
+    ) -> ProofFuture<'a, Vec<Row>>;
+}
+impl<T: GenericClient + Sync> ReadClient for T {
+    fn query<'a>(
+        &'a self,
+        sql: &'a str,
+        params: &'a [&'a (dyn ToSql + Sync)],
+    ) -> ProofFuture<'a, Vec<Row>> {
+        Box::pin(async move { Ok(GenericClient::query(self, sql, params).await?) })
+    }
+}
+
 /// Owner output, never deserialize from a browser/job. Core User proves account
 /// eligibility and each party facet through the owners' live reads
 /// (`bilibi_user::identity::standing`), on every authentication.

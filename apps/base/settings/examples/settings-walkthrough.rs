@@ -32,8 +32,9 @@ async fn show(
     target: Target,
     label: &str,
 ) -> Result<()> {
+    let reader: &dyn bilibi_tenancy::ReadClient = client;
     let resolved = settings
-        .get(client, actor, target, "walkthrough.preference")
+        .get(reader, actor, target, "walkthrough.preference")
         .await?;
     println!(
         "{label}: value={} source={:?} overridden={}",
@@ -169,10 +170,11 @@ async fn main() -> Result<()> {
             json!("rolled back"),
         )
         .await?;
+    let reader: &dyn bilibi_tenancy::ReadClient = tx.sql();
     println!(
-        "transaction own read: {}",
+        "transaction own read through ReadClient: {}",
         settings
-            .get(tx.sql(), &actor, user, "walkthrough.preference")
+            .get(reader, &actor, user, "walkthrough.preference")
             .await?
             .value
     );

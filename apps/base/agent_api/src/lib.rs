@@ -13,7 +13,7 @@ pub mod schema;
 mod search;
 
 use bilibi_module_registry::{Catalog, Consumer, Contribution, Entry, Provenance, RegistryError};
-use bilibi_tenancy::{Channel, ProofClient, ProofFuture, Scope};
+use bilibi_tenancy::{Channel, Scope};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, future::Future, pin::Pin, sync::Arc};
@@ -39,22 +39,8 @@ pub type OperationFuture<'a> = Pin<Box<dyn Future<Output = Result<json::Output>>
 
 /// Object-safe read adapter, including list queries. Owners can pass this same
 /// client to Tenancy proof providers without opening an unrelated connection.
-pub trait OperationClient: ProofClient {
-    fn query<'a>(
-        &'a self,
-        sql: &'a str,
-        params: &'a [&'a (dyn tokio_postgres::types::ToSql + Sync)],
-    ) -> ProofFuture<'a, Vec<tokio_postgres::Row>>;
-}
-impl<T: GenericClient + Sync> OperationClient for T {
-    fn query<'a>(
-        &'a self,
-        sql: &'a str,
-        params: &'a [&'a (dyn tokio_postgres::types::ToSql + Sync)],
-    ) -> ProofFuture<'a, Vec<tokio_postgres::Row>> {
-        Box::pin(async move { Ok(GenericClient::query(self, sql, params).await?) })
-    }
-}
+pub trait OperationClient: bilibi_tenancy::ReadClient {}
+impl<T: GenericClient + Sync> OperationClient for T {}
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

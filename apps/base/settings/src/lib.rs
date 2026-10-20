@@ -14,11 +14,11 @@ pub use encryption::Encryption;
 use bilibi_database::{Change, Error, MutationTransaction, Result};
 use bilibi_module_registry::{Catalog, Module, Service};
 use bilibi_party_ids::OrganisationId;
-use bilibi_tenancy::{PartyProofs, Scope};
+use bilibi_tenancy::{PartyProofs, ReadClient, Scope};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tokio::sync::broadcast;
-use tokio_postgres::{GenericClient, Row};
+use tokio_postgres::Row;
 
 /// IDs here are requests, never proofs. Each operation reproves company targets
 /// through the injected provider on the same connection/transaction as storage.
@@ -97,10 +97,9 @@ impl Settings {
 
     async fn chain(
         &self,
-        client: &(impl GenericClient + Sync),
+        client: &dyn ReadClient,
         actor: &Scope,
         target: Target,
-        writing: bool,
     ) -> Result<Vec<StorageScope>> {
         let global = StorageScope {
             kind: ScopeKind::Global,
@@ -113,12 +112,7 @@ impl Settings {
             id: actor.tenant(),
         };
         match target {
-            Target::Global => {
-                if writing {
-                    bilibi_tenancy::prove_operator(client, actor).await?;
-                }
-                Ok(vec![global])
-            }
+            Target::Global => Ok(vec![global]),
             Target::Tenant => Ok(vec![tenant, global]),
             Target::Company(id) => {
                 self.parties.organisation(client, actor, id).await?;
@@ -174,7 +168,7 @@ impl Settings {
     /// chain. Callers must mask encrypted fields before putting them in HTML.
     pub async fn resolve_many(
         &self,
-        client: &(impl GenericClient + Sync),
+        client: &dyn ReadClient,
         actor: &Scope,
         target: Target,
         keys: &[&str],
@@ -186,7 +180,7 @@ impl Settings {
     /// keep-current mask, even without the key, and no plaintext leaves here.
     pub async fn resolve_masked(
         &self,
-        client: &(impl GenericClient + Sync),
+        client: &dyn ReadClient,
         actor: &Scope,
         target: Target,
         keys: &[&str],
@@ -226,7 +220,7 @@ impl Settings {
     }
     async fn resolve(
         &self,
-        client: &(impl GenericClient + Sync),
+        client: &dyn ReadClient,
         actor: &Scope,
         target: Target,
         keys: &[&str],
@@ -238,7 +232,7 @@ impl Settings {
         for key in keys {
             self.plan(key)?;
         }
-        let chain = self.chain(client, actor, target, false).await?;
+        let chain = self.chain(client, actor, target).await?;
         let identities = Value::Array(chain.iter().map(|scope| json!({"tenant_id":scope.tenant,"scope_type":scope.kind.as_str(),"scope_id":scope.id})).collect());
         let rows = client.query("SELECT s.key,s.tenant_id,s.scope_type,s.scope_id,s.value,s.is_encrypted FROM base_settings s JOIN jsonb_to_recordset($2::jsonb) AS requested(tenant_id bigint,scope_type text,scope_id bigint) USING(tenant_id,scope_type,scope_id) WHERE s.key=ANY($1)", &[&keys,&identities]).await?;
         let mut result = std::collections::BTreeMap::new();
@@ -296,7 +290,7 @@ impl Settings {
     }
     pub async fn get(
         &self,
-        client: &(impl GenericClient + Sync),
+        client: &dyn ReadClient,
         actor: &Scope,
         target: Target,
         key: &str,
@@ -310,11 +304,7 @@ impl Settings {
     /// have no session, such as signed links and workers. Encrypted definitions,
     /// runtime claims and keys that cannot hold a global value refuse: a secret
     /// needs an explicit, authorized `get`.
-    pub async fn get_global(
-        &self,
-        client: &(impl GenericClient + Sync),
-        key: &str,
-    ) -> Result<Value> {
+    pub async fn get_global(&self, client: &dyn ReadClient, key: &str) -> Result<Value> {
         let definition = match self.definitions.lookup(key)?.setting {
             Setting::Definition(d) if !d.encrypted && d.scopes.contains(&ScopeKind::Global) => d,
             _ => return Err(Error::Invalid),
@@ -339,7 +329,7 @@ impl Settings {
     /// nothing else should name a module here. Never log the result.
     pub async fn get_own_global_secret(
         &self,
-        client: &(impl GenericClient + Sync),
+        client: &dyn ReadClient,
         owner: &str,
         key: &str,
     ) -> Result<Value> {
@@ -412,7 +402,10 @@ impl Settings {
         {
             return Err(Error::Forbidden);
         }
-        let scope = self.chain(tx.sql(), actor, target, true).await?[0];
+        if matches!(target, Target::Global) {
+            bilibi_tenancy::prove_operator(tx.sql(), actor).await?;
+        }
+        let scope = self.chain(tx.sql(), actor, target).await?[0];
         let (definition, _) = self.plan(key)?;
         if definition.is_some_and(|d| !d.scopes.contains(&scope.kind)) {
             return Err(Error::Invalid);
