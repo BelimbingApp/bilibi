@@ -426,7 +426,7 @@ impl Software {
         })
     }
 
-    /// What installing a release tested on the source instance would do.
+    /// What installing the chosen GitHub release asset or uploaded release would do.
     pub async fn review_install(&self, scope: &Scope, input: &Value) -> SoftwareResult<Review> {
         let client = self.db.get().await?;
         authorize_operator(&**client, scope, MANAGE).await?;
