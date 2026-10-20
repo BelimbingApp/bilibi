@@ -17,7 +17,7 @@ import tomllib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from catalogue import REPO, Refused, expect, github, open_platform_release
+from catalogue import REPO, Refused, expect, github
 
 ROOT = Path(__file__).resolve().parent.parent
 SEMVER = re.compile(r'\d+\.\d+\.\d+')
@@ -97,10 +97,6 @@ def ready():
     ref = os.environ.get('GITHUB_REF', '')
     if ref:
         expect(ref == 'refs/heads/main', 'Run the Release workflow from main (docs/versions.md).')
-    if os.environ.get('GITHUB_ACTIONS') == 'true':
-        expect(os.environ.get('BILIBI_CATALOGUE_TOKEN', '').strip(),
-               'BILIBI_CATALOGUE_TOKEN is not set. Add that Actions secret before releasing '
-               '(docs/versions.md#secret-the-owner-adds).')
     version = workspace_version()
     require_notes_file(version)
     assert_clean()
@@ -144,7 +140,7 @@ def merged_pulls(after):
     raw = github([
         'pr', 'list', '--repo', REPO, '--state', 'merged', '--base', 'main', '--limit', '200',
         '--search', f'merged:>={day}', '--json', 'number,title,body,mergedAt,url',
-    ], '')
+    ])
     pulls = [pull for pull in json.loads(raw) if pull.get('mergedAt') and utc(pull['mergedAt']) > since]
     pulls.sort(key=lambda pull: pull['number'])
     return pulls
@@ -191,7 +187,7 @@ def require_compatibility():
     raw = github([
         'api', f'repos/{repository}/actions/runs/{run_id}/jobs?per_page=100',
         '--jq', '[.jobs[] | {name,conclusion}]',
-    ], '')
+    ])
     jobs = json.loads(raw)
     matched = [job for job in jobs if 'Official compatibility' in (job.get('name') or '')]
     names = ', '.join(job.get('name') or '' for job in jobs) or '(none)'
@@ -204,9 +200,9 @@ def ensure_release(tag, sha, notes):
     view = subprocess.run(['gh', 'release', 'view', tag, '--repo', REPO], capture_output=True, text=True)
     if view.returncode != 0:
         github(['release', 'create', tag, '--repo', REPO, '--title', f'Bilibi {tag}',
-                '--notes-file', str(notes), '--target', sha, '--verify-tag'], '')
+                '--notes-file', str(notes), '--target', sha, '--verify-tag'])
         return
-    github(['release', 'edit', tag, '--repo', REPO, '--notes-file', str(notes)], '')
+    github(['release', 'edit', tag, '--repo', REPO, '--notes-file', str(notes)])
 
 
 def publish():
@@ -218,8 +214,6 @@ def publish():
     expected = os.environ.get('GITHUB_SHA', '')
     if expected:
         expect(sha == expected, 'HEAD is not the commit Official compatibility checked.')
-    released = git_out(['show', '-s', '--format=%cs', sha]).stdout.strip()
-    open_platform_release(version, sha, released)
     tag = f'v{version}'
     if not assert_tag_free(tag, sha):
         git_out(['-c', 'user.name=github-actions', '-c', 'user.email=github-actions@github.com',

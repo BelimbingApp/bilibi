@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""Check and publish `catalogue.json`, the list of Bilibi software (docs/versions.md).
+"""Check, refresh and publish `catalogue.json`, the list of Bilibi software (docs/versions.md).
 
 The catalogue names the Platform and each Domain, their released versions,
 the Platform versions a Domain version needs, plug-ins, and the tested sets:
 a Platform commit and a Domain commit that passed `scripts/domain-ci.sh`
-together. Release CI opens a pull request for a new version; the checks on
-that pull request accept the file, and publishing the tested sets copies it
-to the `catalogue` branch. A person does not edit `catalogue.json` by hand.
+together. Bilibi fetches releases itself: a scheduled workflow reads the
+`vX.Y.Z` tags of every repository the catalogue lists and writes the new
+versions to the `catalogue` branch with its own token. `main` keeps the list of
+official software and is only changed by pull request. A person does not edit
+the versions by hand.
 
   catalogue.py --check [FILE]      refuse a catalogue that is not well formed
   catalogue.py tested --run URL [--platform-version X.Y.Z]
@@ -15,23 +17,21 @@ to the `catalogue` branch. A person does not edit `catalogue.json` by hand.
                                    Pass the version when the Release workflow
                                    has not pushed the tag yet.
   catalogue.py publish --from SOURCE --into PUBLISHED [--record SET ...]
-                                   write PUBLISHED = SOURCE plus the tested
-                                   sets PUBLISHED already holds and each SET
-  catalogue.py open-release ...    open a pull request that adds one Domain
-                                   or Extension version (the Domain CI does this)
-  catalogue.py open-platform-release ...
-                                   open a pull request that adds one Platform version
+                                   write PUBLISHED = SOURCE plus the versions
+                                   and tested sets PUBLISHED already holds and
+                                   each SET
+  catalogue.py refresh --from SOURCE --into PUBLISHED [--platform-version X.Y.Z]
+                                   publish, then add every release tag of a
+                                   listed repository that is not listed yet
 """
 import argparse
 import base64
+import copy
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
-import tempfile
-import time
 import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
@@ -40,7 +40,6 @@ ROOT = Path(__file__).resolve().parent.parent
 CATALOGUE = ROOT / 'catalogue.json'
 PIN = ROOT / '.local/composition/manifest.txt'
 REPO = 'BelimbingApp/bilibi'
-REMOTE = f'https://github.com/{REPO}.git'
 FORMAT = 1
 SEMVER = re.compile(r'\d+\.\d+\.\d+')
 SNAKE = re.compile(r'[a-z][a-z0-9]*(_[a-z0-9]+)*')
@@ -49,10 +48,18 @@ COMMIT = re.compile(r'[0-9a-f]{40}')
 COMPARATOR = re.compile(r'(>=|<=|>|<|=)\s*(\d+\.\d+\.\d+)')
 DATE = re.compile(r'\d{4}-\d{2}-\d{2}')
 URL = re.compile(r'https://\S+')
+GITHUB_REPOSITORY = re.compile(r'https://github\.com/([\w.-]+/[\w.-]+?)(?:\.git)?/?')
+TAG_REF = re.compile(r'refs/tags/v(\d+\.\d+\.\d+)')
+# The job of the CI template (docs/domain-ci/ci.yml) that runs the mounted gates.
+GATES_CHECK = 'Mounted in Bilibi'
 
 
 class Refused(Exception):
     pass
+
+
+class Pending(Refused):
+    """Not an error: the release cannot be listed yet, so try again at the next run."""
 
 
 def expect(condition, message):
@@ -209,10 +216,39 @@ def tested_sets(run, platform_version=None):
     return sets
 
 
-def publish(source_path, published_path, records):
-    """The source catalogue plus every tested set already published and each record."""
-    source = load(source_path)
-    check(source)
+def normal_repository(url):
+    return str(url).rstrip('/')
+
+
+def keep_versions(source, earlier):
+    """List in `source` the versions `earlier` holds. A version `source` lists itself wins."""
+    for role in ('domains', 'extensions'):
+        for container, facts in source.get(role, {}).items():
+            before = earlier.get(role, {}).get(container)
+            if isinstance(before, dict) and isinstance(before.get('versions'), dict):
+                for version, release in before['versions'].items():
+                    facts['versions'].setdefault(version, release)
+    before = earlier.get('platform', {}).get('versions')
+    if isinstance(before, dict):
+        for version, release in before.items():
+            source['platform']['versions'].setdefault(version, release)
+
+
+def sort_versions(catalogue):
+    containers = [catalogue['platform']]
+    for role in ('domains', 'extensions', 'plugins'):
+        containers.extend(catalogue.get(role, {}).values())
+    for facts in containers:
+        facts['versions'] = dict(sorted(facts['versions'].items(), key=lambda item: version_tuple(item[0])))
+
+
+def combined(source_path, published_path, records):
+    """SOURCE plus the versions and tested sets PUBLISHED already holds and each record."""
+    catalogue = load(source_path)
+    check(catalogue)
+    earlier = load(published_path) if Path(published_path).is_file() else {}
+    expect(isinstance(earlier, dict), f'{published_path}: the catalogue is one JSON object')
+    keep_versions(catalogue, earlier)
     tested = {}
 
     def keep(entry):
@@ -221,122 +257,139 @@ def publish(source_path, published_path, records):
         if key not in tested or tested[key]['tested_at'] <= entry['tested_at']:
             tested[key] = entry
 
-    for entry in source['tested']:
+    for entry in catalogue['tested']:
         keep(entry)
-    if Path(published_path).is_file():
-        for entry in load(published_path).get('tested', []):
-            keep(entry)
+    for entry in earlier.get('tested', []):
+        keep(entry)
     for record in records:
         loaded = load(record)
         for entry in loaded if isinstance(loaded, list) else [loaded]:
             keep(entry)
-    published = dict(source)
-    published['tested'] = sorted(tested.values(), key=lambda e: (e['tested_at'], e['domain']['id']))
-    check(published)
-    Path(published_path).parent.mkdir(parents=True, exist_ok=True)
-    Path(published_path).write_text(dump(published))
+    catalogue['tested'] = sorted(tested.values(), key=lambda e: (e['tested_at'], e['domain']['id']))
+    check(catalogue)
+    sort_versions(catalogue)
+    return catalogue
+
+
+def write_published(path, catalogue):
+    """Write the published catalogue, leaving the file alone when nothing changed."""
+    text = dump(catalogue)
+    file = Path(path)
+    if file.is_file() and file.read_text() == text:
+        return
+    file.parent.mkdir(parents=True, exist_ok=True)
+    file.write_text(text)
+
+
+def publish(source_path, published_path, records):
+    """The source catalogue plus every version and tested set already published and each record."""
+    published = combined(source_path, published_path, records)
+    write_published(published_path, published)
     return len(published['tested'])
 
 
-def scrub(text, token):
-    if token and text:
-        return text.replace(token, '***')
-    return text or ''
-
-
-def catalogue_token():
-    """The fine-grained token that can open a catalogue pull request.
-
-    In Actions the secret is required, so a release cannot skip the catalogue.
-    Outside Actions the caller's own GitHub login is enough.
-    """
-    token = os.environ.get('BILIBI_CATALOGUE_TOKEN', '').strip()
-    if token:
-        return token
-    if os.environ.get('GITHUB_ACTIONS') == 'true':
-        raise Refused('BILIBI_CATALOGUE_TOKEN is not set. Add that Actions secret before the next release '
-                      '(docs/versions.md#secret-the-owner-adds).')
-    return ''
-
-
-def github(args, token):
-    env = os.environ.copy()
-    if token:
-        env['GH_TOKEN'] = token
-    result = subprocess.run(['gh', *args], capture_output=True, text=True, env=env)
+def github(args):
+    result = subprocess.run(['gh', *args], capture_output=True, text=True)
     if result.returncode != 0:
-        detail = scrub(result.stderr.strip() or result.stdout.strip(), token)
-        raise Refused(detail or 'gh failed')
+        raise Refused((result.stderr.strip() or result.stdout.strip()) or 'gh failed')
     return result.stdout
 
 
-def git(args, token, cwd):
-    env = os.environ.copy()
-    remote = REMOTE
-    if token:
-        # Same shape as the tested-set publish job. GitHub masks the secret in logs.
-        remote = f'https://x-access-token:{token}@github.com/{REPO}.git'
-        env['GIT_CONFIG_COUNT'] = '1'
-        env['GIT_CONFIG_KEY_0'] = 'credential.helper'
-        env['GIT_CONFIG_VALUE_0'] = ''
-    rewritten = [remote if arg == REMOTE else arg for arg in args]
-    result = subprocess.run(['git', *rewritten], cwd=cwd, capture_output=True, text=True, env=env)
+def repository_slug(url):
+    match = GITHUB_REPOSITORY.fullmatch(str(url))
+    expect(match, f'{url} is not a github.com repository address')
+    return match.group(1)
+
+
+def release_tags(slug):
+    """Each `vX.Y.Z` tag of a public repository as {version: (tag object, commit)}."""
+    env = {**os.environ, 'GIT_TERMINAL_PROMPT': '0'}
+    result = subprocess.run(['git', 'ls-remote', '--tags', f'https://github.com/{slug}.git'],
+                            capture_output=True, text=True, env=env)
     if result.returncode != 0:
-        detail = scrub(result.stderr.strip() or result.stdout.strip(), token)
-        raise Refused(detail or 'git failed')
-    return result.stdout
+        raise Refused(f'cannot list the tags of {slug}: {result.stderr.strip() or "git failed"}')
+    objects, peeled = {}, {}
+    for line in result.stdout.splitlines():
+        sha, ref = line.split('\t', 1)
+        if ref.endswith('^{}'):
+            peeled[ref[:-3]] = sha
+        else:
+            objects[ref] = sha
+    tags = {}
+    for ref, sha in objects.items():
+        match = TAG_REF.fullmatch(ref)
+        if match:
+            # An annotated tag has a tag object; the peeled line is the commit it points at.
+            tags[match.group(1)] = (sha, peeled.get(ref, sha))
+    return tags
 
 
-def normal_repository(url):
-    return str(url).rstrip('/')
+def remote_file(slug, path, ref):
+    """A text file of a public repository at one commit, or None when it is not there."""
+    result = subprocess.run(['gh', 'api', f'repos/{slug}/contents/{path}?ref={ref}', '--jq', '.content'],
+                            capture_output=True, text=True)
+    if result.returncode != 0:
+        if 'Not Found' in result.stderr or '404' in result.stderr:
+            return None
+        raise Refused(result.stderr.strip() or f'cannot read {path} of {slug}')
+    return base64.b64decode(result.stdout).decode()
 
 
-def locate(catalogue, repository):
-    """(role, id) entries whose repository URL is `repository`."""
-    found = []
-    wanted = normal_repository(repository)
-    for role in ('domains', 'extensions'):
-        for container, facts in catalogue.get(role, {}).items():
-            if isinstance(facts, dict) and normal_repository(facts.get('repository', '')) == wanted:
-                found.append((role, container))
-    return found
+def released_on(slug, tag_object, commit):
+    """The UTC date the tag was made, or the commit's date for a tag with no tag object."""
+    if tag_object != commit:
+        stamp = json.loads(github(['api', f'repos/{slug}/git/tags/{tag_object}']))['tagger']['date']
+    else:
+        stamp = json.loads(github(['api', f'repos/{slug}/commits/{commit}']))['commit']['committer']['date']
+    return datetime.fromisoformat(stamp.replace('Z', '+00:00')).astimezone(timezone.utc).date().isoformat()
 
 
-def cargo_version(revision, token):
+def require_gates(slug, commit):
+    """The repository's own CI passed the mounted gates on the tagged commit."""
+    runs = json.loads(github(['api', f'repos/{slug}/commits/{commit}/check-runs?per_page=100']))['check_runs']
+    gates = [run for run in runs if run['name'] == GATES_CHECK]
+    if any(run['conclusion'] == 'success' for run in gates):
+        return
+    if not gates or any(run['status'] != 'completed' for run in gates):
+        raise Pending(f'the "{GATES_CHECK}" check has not finished on {commit[:12]}; it is tried again at the next run')
+    raise Refused(f'the "{GATES_CHECK}" check did not pass on {commit[:12]}. Release a commit whose CI is green')
+
+
+def requirement_line(text, where):
+    """The one requirement line of `.github/bilibi-platform`."""
+    lines = [line.strip() for line in text.splitlines() if line.strip() and not line.strip().startswith('#')]
+    expect(len(lines) == 1, f'{where}: .github/bilibi-platform must be one requirement, like >=0.1.0, <0.2.0')
+    return lines[0]
+
+
+def cargo_version(revision):
     """The Platform version at one commit, from that commit's Cargo.toml."""
     expect(COMMIT.fullmatch(revision), 'the Platform revision must be the full 40-character SHA')
-    payload = json.loads(github(['api', f'repos/{REPO}/contents/Cargo.toml?ref={revision}'], token))
+    payload = json.loads(github(['api', f'repos/{REPO}/contents/Cargo.toml?ref={revision}']))
     text = base64.b64decode(payload['content']).decode()
     return tomllib.loads(text)['workspace']['package']['version']
 
 
-def read_requirement(path):
-    """One requirement line from `.github/bilibi-platform`, or empty when the file is absent."""
-    if not path:
-        return ''
-    file = Path(path)
-    if not file.is_file():
-        return ''
-    lines = [line.strip() for line in file.read_text().splitlines()
-             if line.strip() and not line.strip().startswith('#')]
-    expect(len(lines) == 1, f'{path} must be one requirement, like >=0.1.0, <0.2.0')
-    return lines[0]
+def requirement_at(facts, version, slug, commit, where):
+    """The requirement a release declares, checked against the Platform it was pinned to.
 
-
-def requirement_for(catalogue, role, container, platform_text, revision, token):
-    """The requirement this release declares, checked against the pinned Platform."""
-    if platform_text:
-        requirement = platform_text.strip()
+    `.github/bilibi-platform` at the tag, or the nearest earlier version's requirement.
+    """
+    text = remote_file(slug, '.github/bilibi-platform', commit)
+    if text is not None:
+        requirement = requirement_line(text, where)
     else:
-        versions = catalogue[role][container]['versions']
-        expect(versions, f'{role}.{container} has no version yet. Write the requirement in .github/bilibi-platform.')
-        latest = max(versions, key=version_tuple)
-        requirement = versions[latest]['platform']
-    parsed = parse_requirement(requirement, f'{role}.{container}')
-    pinned = cargo_version(revision, token)
+        earlier = [listed for listed in facts['versions'] if version_tuple(listed) < version_tuple(version)]
+        expect(earlier, f'{where} has no earlier version. Write the requirement in .github/bilibi-platform')
+        requirement = facts['versions'][max(earlier, key=version_tuple)]['platform']
+    parsed = parse_requirement(requirement, where)
+    revision = remote_file(slug, '.github/bilibi-revision', commit)
+    expect(revision is not None, f'{where}: .github/bilibi-revision is missing at {commit[:12]}')
+    revision = revision.strip()
+    pinned = cargo_version(revision)
     expect(satisfies(pinned, parsed),
            f'the pinned Platform {pinned} ({revision[:12]}) does not satisfy {requirement}. '
-           'Write the new requirement in .github/bilibi-platform.')
+           'Write the new requirement in .github/bilibi-platform')
     return requirement
 
 
@@ -363,6 +416,17 @@ def add_version(catalogue, role, container, version, commit, released, platform,
     return True
 
 
+def add_release(catalogue, role, container, version, tag_object, commit):
+    """List one release of a Domain or Extension that its own CI passed."""
+    facts = catalogue[role][container]
+    slug = repository_slug(facts['repository'])
+    where = f'{role}.{container} {version}'
+    require_gates(slug, commit)
+    requirement = requirement_at(facts, version, slug, commit, where)
+    released = released_on(slug, tag_object, commit)
+    return add_version(catalogue, role, container, version, commit, released, requirement, facts['repository'])
+
+
 def add_platform_version(catalogue, version, commit, released):
     """Add one Platform version. Return false when that commit is already listed."""
     expect(SEMVER.fullmatch(version), f'{version} is not X.Y.Z')
@@ -377,123 +441,67 @@ def add_platform_version(catalogue, version, commit, released):
     return True
 
 
-def catalogue_pr_body(summary, details):
-    lines = [summary, '', *details, '',
-             'The catalogue check on this pull request accepts the file. '
-             'Merging it lets the next catalogue publish include the version.',
-             '',
-             '## Upgrade notes for agents',
-             '',
-             'None.',
-             '']
-    return '\n'.join(lines)
+def add_platform_release(catalogue, version):
+    """List one Platform release. The Release workflow made the tag after Official compatibility passed."""
+    tags = release_tags(REPO)
+    expect(version in tags, f'{REPO} has no tag v{version}')
+    tag_object, commit = tags[version]
+    expect(cargo_version(commit) == version, f'Cargo.toml at v{version} does not say {version}')
+    return add_platform_version(catalogue, version, commit, released_on(REPO, tag_object, commit))
 
 
-def open_pull_request(branch, title, body, token):
-    """Open the pull request, or print the one already open for this branch.
+def refresh(source_path, published_path, platform_version):
+    """Publish, then list every release tag the catalogue does not hold yet.
 
-    GitHub can lag a moment behind the branch push, so a missing head is retried.
+    Returns (added, waiting, refused). A release that cannot be listed does not
+    stop the others.
     """
-    with tempfile.TemporaryDirectory() as directory:
-        body_file = Path(directory) / 'body.md'
-        body_file.write_text(body)
-        last_error = ''
-        for attempt in range(3):
-            found = json.loads(github(
-                ['pr', 'list', '--repo', REPO, '--head', branch, '--state', 'open', '--json', 'number,url'], token))
-            if found:
-                print(found[0]['url'])
-                return found[0]['url']
+    catalogue = combined(source_path, published_path, [])
+    added, waiting, refused = [], [], []
+
+    def attempt(label, change):
+        nonlocal catalogue
+        trial = copy.deepcopy(catalogue)
+        try:
+            listed = change(trial)
+        except Pending as pending:
+            waiting.append(f'{label}: {pending}')
+        except Refused as refusal:
+            refused.append(f'{label}: {refusal}')
+        else:
+            catalogue = trial
+            if listed:
+                added.append(label)
+
+    def moved(label, listed, tags):
+        for version, release in listed.items():
+            if version in tags and tags[version][1] != release['commit']:
+                refused.append(f'{label} {version}: the tag now points at {tags[version][1][:12]} '
+                               f'but the catalogue lists {release["commit"][:12]}. Release the next number instead of moving a tag')
+
+    if platform_version:
+        expect(SEMVER.fullmatch(platform_version), '--platform-version is X.Y.Z')
+        attempt(f'platform {platform_version}', lambda trial: add_platform_release(trial, platform_version))
+    try:
+        moved('platform', catalogue['platform']['versions'], release_tags(REPO))
+    except Refused as refusal:
+        refused.append(f'platform: {refusal}')
+    for role in ('domains', 'extensions'):
+        for container in list(catalogue.get(role, {})):
+            label = f'{role}.{container}'
             try:
-                url = github(
-                    ['pr', 'create', '--repo', REPO, '--base', 'main', '--head', branch,
-                     '--title', title, '--body-file', str(body_file)], token).strip()
+                tags = release_tags(repository_slug(catalogue[role][container]['repository']))
             except Refused as refusal:
-                last_error = str(refusal)
-                if attempt == 2 or 'not found' not in last_error.lower():
-                    raise
-                time.sleep(2)
+                refused.append(f'{label}: {refusal}')
                 continue
-            print(url)
-            return url
-    raise Refused(last_error or 'could not open the pull request')
-
-
-def clone_main(token):
-    work = Path(tempfile.mkdtemp(prefix='catalogue-release-'))
-    try:
-        git(['clone', '--quiet', '--branch', 'main', '--single-branch', '--depth', '1', REMOTE, str(work)], token, None)
-    except BaseException:
-        shutil.rmtree(work, ignore_errors=True)
-        raise
-    return work
-
-
-def push_catalogue(work, branch, message, body, token):
-    git(['add', 'catalogue.json'], token, work)
-    git(['-c', 'user.name=github-actions', '-c', 'user.email=github-actions@github.com',
-         'commit', '--quiet', '-m', message], token, work)
-    expect(branch.startswith('catalogue-entry/'), f'{branch} is not a catalogue-entry branch')
-    ref = f'refs/heads/{branch}'
-    earlier = git(['ls-remote', REMOTE, ref], token, work).split()
-    lease = [f'--force-with-lease={ref}:{earlier[0]}'] if earlier else []
-    git(['push', '--quiet', *lease, REMOTE, f'HEAD:{ref}'], token, work)
-    return open_pull_request(branch, message, body, token)
-
-
-def open_release(role, container, version, commit, repository, released, revision, platform_text):
-    """Open the catalogue pull request for one official Domain or Extension release."""
-    found = locate(load(CATALOGUE), repository)
-    if not found:
-        print(f'catalogue: {repository} is not listed, so no pull request was opened')
-        return None
-    expect(len(found) == 1, f'{repository} is listed more than once')
-    listed_role, listed_id = found[0]
-    expect((listed_role, listed_id) == (role, container),
-           f'{repository} is {listed_role}/{listed_id} in the catalogue, not {role}/{container}')
-    token = catalogue_token()
-    requirement = requirement_for(load(CATALOGUE), role, container, platform_text, revision, token)
-    work = clone_main(token)
-    try:
-        path = work / 'catalogue.json'
-        fresh = load(path)
-        if not add_version(fresh, role, container, version, commit, released, requirement, repository):
-            print(f'catalogue: {role}.{container} {version} is already listed')
-            return None
-        path.write_text(dump(fresh))
-        # `catalogue` is already the published branch, so a slash under it cannot be a ref.
-        branch = f'catalogue-entry/{role}/{container}-v{version}'
-        title = f'Add {container} {version} to the catalogue'
-        body = catalogue_pr_body(
-            f'This adds {container} {version} to the catalogue.',
-            [f'- Repository: {repository}',
-             f'- Commit: `{commit}`',
-             f'- Released: {released}',
-             f'- Platform requirement: `{requirement}`'])
-        return push_catalogue(work, branch, title, body, token)
-    finally:
-        shutil.rmtree(work, ignore_errors=True)
-
-
-def open_platform_release(version, commit, released):
-    """Open the catalogue pull request for one Platform release."""
-    token = catalogue_token()
-    work = clone_main(token)
-    try:
-        path = work / 'catalogue.json'
-        fresh = load(path)
-        if not add_platform_version(fresh, version, commit, released):
-            print(f'catalogue: platform {version} is already listed')
-            return None
-        path.write_text(dump(fresh))
-        branch = f'catalogue-entry/platform-v{version}'
-        title = f'Add Bilibi {version} to the catalogue'
-        body = catalogue_pr_body(
-            f'This adds Bilibi {version} to the catalogue.',
-            [f'- Commit: `{commit}`', f'- Released: {released}'])
-        return push_catalogue(work, branch, title, body, token)
-    finally:
-        shutil.rmtree(work, ignore_errors=True)
+            moved(label, catalogue[role][container]['versions'], tags)
+            for version in sorted(set(tags) - set(catalogue[role][container]['versions']), key=version_tuple):
+                tag_object, commit = tags[version]
+                attempt(f'{label} {version}',
+                        lambda trial: add_release(trial, role, container, version, tag_object, commit))
+    sort_versions(catalogue)
+    write_published(published_path, catalogue)
+    return added, waiting, refused
 
 
 def main():
@@ -508,19 +516,10 @@ def main():
     publishing.add_argument('--from', dest='source', required=True, help='the catalogue people edit (main)')
     publishing.add_argument('--into', dest='published', required=True, help='the published catalogue to write')
     publishing.add_argument('--record', nargs='*', default=[], help='tested-set files from `tested`')
-    opening = commands.add_parser('open-release', help='open a pull request for a Domain or Extension release')
-    opening.add_argument('--role', required=True, choices=('domains', 'extensions'))
-    opening.add_argument('--id', required=True, help='the catalogue id, the folder the container mounts at')
-    opening.add_argument('--version', required=True, help='X.Y.Z from the vX.Y.Z tag')
-    opening.add_argument('--commit', required=True, help='the full commit the tag points at')
-    opening.add_argument('--repository', required=True, help='https://github.com/org/name')
-    opening.add_argument('--released', required=True, help='YYYY-MM-DD')
-    opening.add_argument('--revision', required=True, help='the pinned Platform commit (.github/bilibi-revision)')
-    opening.add_argument('--platform-file', default='', help='a file with one requirement, usually .github/bilibi-platform; omit to reuse the previous one')
-    platform = commands.add_parser('open-platform-release', help='open a pull request for a Platform release')
-    platform.add_argument('--version', required=True)
-    platform.add_argument('--commit', required=True)
-    platform.add_argument('--released', required=True)
+    refreshing = commands.add_parser('refresh', help='publish, then list the release tags that are not listed yet')
+    refreshing.add_argument('--from', dest='source', required=True, help='the catalogue people edit (main)')
+    refreshing.add_argument('--into', dest='published', required=True, help='the published catalogue to write')
+    refreshing.add_argument('--platform-version', help='also list this Platform release, made by the Release workflow')
     args = parser.parse_args()
     try:
         if args.command == 'tested':
@@ -528,12 +527,18 @@ def main():
         elif args.command == 'publish':
             count = publish(args.source, args.published, args.record)
             print(f'published {args.published} with {count} tested set(s)')
-        elif args.command == 'open-release':
-            text = read_requirement(args.platform_file)
-            open_release(args.role, args.id, args.version, args.commit, args.repository,
-                         args.released, args.revision, text)
-        elif args.command == 'open-platform-release':
-            open_platform_release(args.version, args.commit, args.released)
+        elif args.command == 'refresh':
+            added, waiting, refused = refresh(args.source, args.published, args.platform_version)
+            actions = os.environ.get('GITHUB_ACTIONS') == 'true'
+            for label in added:
+                print(f'listed {label}')
+            for message in waiting:
+                print(f'::warning::{message}' if actions else f'waiting: {message}')
+            for message in refused:
+                print(f'::error::{message}' if actions else f'refused: {message}')
+            print(f'{args.published}: {len(added)} listed, {len(waiting)} waiting, {len(refused)} refused')
+            if refused:
+                sys.exit(1)
         elif args.check:
             check(load(args.check))
             print(f'{args.check} is well formed')

@@ -4,8 +4,9 @@
 # BelimbingApp/bilibi). The repository is not buildable alone: it mounts at
 # apps/<role>/<container> in a Platform checkout, and scripts/domain-ci.sh
 # runs the Platform's own gates over the composed workspace.
-# A vX.Y.Z tag also opens the catalogue pull request on Bilibi. Official
-# repositories need the BILIBI_CATALOGUE_TOKEN secret (docs/versions.md).
+# A release is a vX.Y.Z tag on a commit where the "Mounted in Bilibi" job below
+# passed. Bilibi's daily Catalogue workflow finds the tag and lists the release;
+# this repository holds no token and opens no pull request (docs/versions.md).
 name: CI
 
 on:
@@ -14,8 +15,8 @@ on:
     branches:
       - main
     tags:
-      # A vX.Y.Z tag is a release. The catalogue job below opens the Bilibi
-      # catalogue pull request after the gates pass (docs/versions.md).
+      # A vX.Y.Z tag is a release. Bilibi lists it once the gates below pass
+      # on the tagged commit (docs/versions.md).
       - 'v*'
   workflow_dispatch:
 
@@ -128,44 +129,3 @@ jobs:
         run: |
           cargo clippy --workspace --all-targets --locked -- -D warnings
           cargo build --locked -p bilibi-web
-
-  # A release tag of an official Domain or Extension opens a catalogue pull
-  # request on Bilibi. A repository that is not in catalogue.json does nothing.
-  # An official one fails here until BILIBI_CATALOGUE_TOKEN is set
-  # (docs/versions.md#secret-the-owner-adds). Copy this job with the rest of
-  # the file. Write .github/bilibi-platform (one line, for example
-  # ">=0.1.0, <0.2.0") only when the Platform requirement changes.
-  catalogue:
-    name: Propose the catalogue entry
-    needs: mounted
-    if: startsWith(github.ref, 'refs/tags/v') && needs.mounted.result == 'success'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Check out this release
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Check out the Bilibi catalogue tools
-        uses: actions/checkout@v7
-        with:
-          repository: BelimbingApp/bilibi
-          ref: main
-          path: bilibi
-          persist-credentials: false
-
-      - name: Open the catalogue pull request
-        env:
-          BILIBI_CATALOGUE_TOKEN: ${{ secrets.BILIBI_CATALOGUE_TOKEN }}
-        run: |
-          python3 bilibi/scripts/catalogue.py open-release \
-            --role "$CONTAINER_ROLE" \
-            --id "$CONTAINER_ID" \
-            --version "${GITHUB_REF_NAME#v}" \
-            --commit "$GITHUB_SHA" \
-            --repository "https://github.com/${GITHUB_REPOSITORY}" \
-            --released "$(git show -s --format=%cs "$GITHUB_SHA")" \
-            --revision "$(tr -d '[:space:]' < .github/bilibi-revision)" \
-            --platform-file .github/bilibi-platform

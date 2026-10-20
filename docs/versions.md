@@ -43,7 +43,7 @@ The numbers follow [semantic versioning](https://semver.org), read for software 
 
 ## How to release
 
-The Platform and every official Domain and Extension stay in step. [ADR 02](architecture/decisions/02-build-in-development-keep-everything-in-step.md) is the decision. A release tag is created only after **Official compatibility** has passed for that exact commit, against every catalogue entry at its latest release. The catalogue version is added by a pull request, not by editing `catalogue.json` by hand.
+The Platform and every official Domain and Extension stay in step. [ADR 02](architecture/decisions/02-build-in-development-keep-everything-in-step.md) is the decision. A release tag is created only after **Official compatibility** has passed for that exact commit, against every catalogue entry at its latest release. Nobody adds a version to the catalogue by hand: the Catalogue workflow lists each release from its tag.
 
 **The Platform.** `Cargo.toml` on `main` already says the version you are releasing, for example `0.1.1`. Every merged pull request since the previous tag has an `Upgrade notes for agents` section. Gather them and commit the file:
 
@@ -54,22 +54,22 @@ git commit -m "Document upgrade notes for v0.1.1"
 git push origin main
 ```
 
-Then run **Release** from the Actions tab, on `main`. The workflow refuses any other branch. It refuses when the notes file is missing, when `BILIBI_CATALOGUE_TOKEN` is missing, or when Official compatibility is not green for that commit. When the check passes, the workflow opens the catalogue pull request for the Platform version, pushes the tag `v0.1.1`, and publishes the GitHub release. The release body is `docs/upgrade-notes/v0.1.1.md`.
+Then run **Release** from the Actions tab, on `main`. The workflow refuses any other branch. It refuses when the notes file is missing or when Official compatibility is not green for that commit. When the check passes, the workflow pushes the tag `v0.1.1`, publishes the GitHub release and lists the version in the published catalogue. The release body is `docs/upgrade-notes/v0.1.1.md`.
 
 Do not run `git tag` and `git push` for a release tag yourself. A hand-pushed `v*` tag skips the gate. The tag push from the Release workflow uses the built-in token, which does not start a second run, so the tested sets are recorded in that same run.
 
 After the tag exists, open a pull request that bumps `Cargo.toml` to the next number, so `main` never claims a number that was released.
 
-**A Domain or Extension.** Copy [`docs/domain-ci/ci.yml`](domain-ci/ci.yml) to `.github/workflows/ci.yml` and add the secret below. From its green `main`:
+**A Domain or Extension.** Copy [`docs/domain-ci/ci.yml`](domain-ci/ci.yml) to `.github/workflows/ci.yml`. No secret is needed. From a commit whose CI is green:
 
 ```sh
 git tag v0.1.1 <commit>
 git push origin v0.1.1
 ```
 
-The tag runs the mounted gates. When they pass, CI opens a pull request on Bilibi that adds the version, the commit and the Platform requirement. Bilibi's catalogue check accepts the file. Merging the pull request lets the next catalogue publish include the version. A repository that is not listed in `catalogue.json` does not open a pull request.
+The tag runs the mounted gates. Bilibi's Catalogue workflow runs once a day and lists the release when the `Mounted in Bilibi` check passed on the tagged commit, so a new release can take up to a day to appear. Anyone with write access to Bilibi can run it sooner from the Actions tab. A repository that is not listed in `catalogue.json` is never fetched.
 
-Write `.github/bilibi-platform` as one line, for example `>=0.1.0, <0.2.0`, only when this release needs a different Platform than the previous one. Otherwise CI keeps the previous requirement and refuses the release if the pinned Platform commit in `.github/bilibi-revision` does not satisfy it.
+Write `.github/bilibi-platform` as one line, for example `>=0.1.0, <0.2.0`, only when this release needs a different Platform than the previous one. Otherwise the previous requirement is kept. The release is not listed when the Platform commit pinned in `.github/bilibi-revision` does not satisfy the requirement; the Catalogue run reports why.
 
 To record the pair as tested before the next Platform release, run `Domains on this change` by hand from the Actions tab on Bilibi `main` with `domains_at` left at `latest-release`.
 
@@ -81,50 +81,40 @@ Every pull request has a heading `Upgrade notes for agents`. Say what a Domain o
 
 `python3 scripts/release.py gather` writes `docs/upgrade-notes/vX.Y.Z.md` from the pull requests merged after the previous `vX.Y.Z` tag. The GitHub release body is that file. An agent updating a private Domain or Extension reads the file for the release it is moving to.
 
-## Secret the owner adds
-
-A Domain or Extension workflow cannot use its built-in token to open a pull request on Bilibi and still start Bilibi's checks. The owner creates one fine-grained personal access token and stores the same value as an Actions secret named `BILIBI_CATALOGUE_TOKEN` on:
-
-- `BelimbingApp/bilibi`, so the Platform Release workflow can open the Platform version pull request
-- each official Domain repository
-- each official Extension repository
-
-Create the token under GitHub → Settings → Developer settings → Fine-grained personal access tokens.
-
-| Setting | Value |
-| --- | --- |
-| Resource owner | BelimbingApp |
-| Repository access | Only `BelimbingApp/bilibi` |
-| Contents | Read and write |
-| Pull requests | Read and write |
-| Metadata | Read (GitHub adds this) |
-
-Do not grant Administration, Workflows or Actions. Do not add the token as a bypass on branch protection. `main` stays protected, so the token can push a `catalogue-entry/…` branch and open a pull request, and it cannot push to `main`. The published catalogue stays on the `catalogue` branch, which is why the pull request branch cannot start with `catalogue/`.
-
-A private Domain or Extension is not in the catalogue. Leave the secret unset and its release does not open a pull request. An official repository fails the release until the secret is set. This change does not create the secret. The owner adds it.
-
 ## The catalogue
 
-`catalogue.json` at the root of Bilibi is the list of software an adopter can choose from. Release CI opens a pull request that changes it on `main`. CI publishes it with the tested sets at:
+`catalogue.json` at the root of Bilibi lists the software an adopter can choose from. On `main` it names the official Domains and Extensions; a person adds or removes one by pull request. The published copy adds every released version and the tested sets, and CI writes it to the `catalogue` branch with its built-in token. It is at:
 
 ```
 https://raw.githubusercontent.com/BelimbingApp/bilibi/catalogue/catalogue.json
 ```
 
-Read the published copy, never `main`'s: `main`'s `tested` list may hold sets recorded by hand, each with the run that proved it, but only the published copy has the sets CI recorded. CI rebuilds the published copy from `main`'s file plus every set recorded so far, so a version merged to `main` reaches the published copy at the next recorded run.
+Read the published copy, never `main`'s: `main`'s `tested` list may hold sets recorded by hand, each with the run that proved it, but only the published copy has the sets CI recorded. CI rebuilds the published copy from `main`'s file plus every version and set recorded so far, so a change merged to `main` reaches the published copy at the next run. `main`'s own version lists are only a starting point and are not kept in step with the published copy.
 
 The file has five required parts and an optional extension list:
 
 | Part | What it holds | Who writes it |
 | --- | --- | --- |
 | `format` | `1` | nobody; it changes only with this document |
-| `platform` | name, repository, and each released version with its date and commit | the Release workflow, as a pull request, after Official compatibility passes |
-| `domains` | per Domain ID (the folder it mounts at): name, one-line description, repository, module folders, and each released version with its date, commit and the Platform versions it needs (`">=0.1.0, <0.2.0"`) | the Domain's release tag, as a pull request (`scripts/catalogue.py open-release`) |
-| `extensions` (optional) | Extension IDs with descriptions, repositories, modules and release requirements, shaped like `domains`; no tested pair is inferred from a requirement | the Extension's release tag, as a pull request, the same way as a Domain |
+| `platform` | name, repository, and each released version with its date and commit | the Release workflow, after Official compatibility passes and the tag exists |
+| `domains` | per Domain ID (the folder it mounts at): name, one-line description, repository, module folders, and each released version with its date, commit and the Platform versions it needs (`">=0.1.0, <0.2.0"`) | the Catalogue workflow, from the Domain's release tags |
+| `extensions` (optional) | Extension IDs with descriptions, repositories, modules and release requirements, shaped like `domains`; no tested pair is inferred from a requirement | the Catalogue workflow, from the Extension's release tags, the same way as a Domain |
 | `plugins` | per plug-in ID: name, publisher, repository, the Domain it belongs to (`null` for a Platform plug-in) and its versions, in the same shape | a person; empty until the plug-in runtime ships |
 | `tested` | one entry per Platform commit and Domain commit that passed the gates together, with both versions, the time and the CI run | CI, through the `catalogue` branch; a person may also record a set by hand on `main` with the run that proved it, and CI merges those with its own |
 
 A `platform` requirement is comparators joined by commas: `>=0.1.0, <0.2.0`. The operators are `>=`, `<=`, `>`, `<` and `=`. `python3 scripts/catalogue.py --check` refuses a catalogue that is not well formed, and CI runs it on every change, so a typo never reaches the published copy.
+
+## How releases reach the catalogue
+
+**Bilibi fetches; no Domain pushes.** A Domain repository holds no secret and cannot write to Bilibi. `.github/workflows/catalogue.yml` runs once a day and on demand, using only its own `GITHUB_TOKEN`:
+
+1. It reads `catalogue.json` from `main` for the list of official Domains and Extensions, and the `catalogue` branch for what is already published.
+2. For each listed repository it reads the `vX.Y.Z` tags (these repositories are public, so no token is needed to read them). A tag that is not listed yet becomes a version when its tagged commit has a passed `Mounted in Bilibi` check, its Platform requirement is valid (`.github/bilibi-platform` at the tag, else the previous version's), and the Platform commit in `.github/bilibi-revision` satisfies that requirement. The release date is the date the tag was made.
+3. It writes the result to the `catalogue` branch. Because the workflow pushes that branch itself and `main` is never written, `main` keeps its pull request rule and the required `Official compatibility` and `check` checks.
+
+A release whose check has not finished is retried at the next run. One that cannot be listed (a failed check, a requirement no listed Platform satisfies, a tag moved after it was listed) is reported as an error on the run and does not stop the other releases. The Release workflow calls the same workflow for the Platform version it just tagged, so a Platform release is listed at once.
+
+To list a release now, run **Catalogue** from the Actions tab. Tick `dry_run` to see the change in the run summary without writing it. GitHub stops scheduled workflows after 60 days without repository activity; running **Catalogue** by hand starts them again.
 
 ## Tested sets
 

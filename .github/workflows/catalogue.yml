@@ -1,0 +1,91 @@
+# Lists new releases in the published catalogue (docs/versions.md#the-catalogue).
+# Once a day, and when started by hand, this reads the vX.Y.Z tags of every
+# Domain and Extension repository that catalogue.json lists, and writes each
+# release whose own CI passed to the `catalogue` branch with the built-in token.
+# main is not touched: it stays behind its pull request rules. The Release
+# workflow calls this after it creates a Platform tag.
+# A dry run prints what would change and pushes nothing.
+name: Catalogue
+
+on:
+  schedule:
+    - cron: '23 3 * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Show what would change and push nothing
+        type: boolean
+        default: false
+      platform_version:
+        description: Also list this Platform release (X.Y.Z), when its tag exists
+        type: string
+        default: ''
+  workflow_call:
+    inputs:
+      dry_run:
+        type: boolean
+        default: false
+      platform_version:
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  refresh:
+    name: List new releases
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    # Shared with the tested-set recording in domains.yml: both rewrite the
+    # `catalogue` branch.
+    concurrency:
+      group: catalogue
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DRY_RUN: ${{ inputs.dry_run }}
+      PLATFORM_VERSION: ${{ inputs.platform_version }}
+    steps:
+      - name: Check out Bilibi
+        uses: actions/checkout@v7
+        with:
+          path: bilibi
+          persist-credentials: false
+      - name: List the releases that are not listed yet
+        run: |
+          set -euo pipefail
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          args=()
+          if [ -n "$PLATFORM_VERSION" ]; then
+            args+=(--platform-version "$PLATFORM_VERSION")
+          fi
+          for attempt in 1 2 3; do
+            rm -rf published
+            if git clone --quiet --branch catalogue --single-branch --depth 1 "$remote" published 2>/dev/null; then
+              :
+            else
+              git init --quiet --initial-branch catalogue published
+            fi
+            status=0
+            python3 bilibi/scripts/catalogue.py refresh --from bilibi/catalogue.json --into published/catalogue.json "${args[@]}" > refresh.log || status=$?
+            tee -a "$GITHUB_STEP_SUMMARY" < refresh.log
+            git -C published add catalogue.json
+            if git -C published diff --cached --quiet; then
+              echo "The published catalogue is unchanged." | tee -a "$GITHUB_STEP_SUMMARY"
+              exit "$status"
+            fi
+            if [ "$DRY_RUN" = true ]; then
+              git -C published diff --cached | tee -a "$GITHUB_STEP_SUMMARY"
+              exit "$status"
+            fi
+            git -C published -c user.name=github-actions -c user.email=github-actions@github.com \
+              commit --quiet -m "List new releases ($GITHUB_WORKFLOW run $GITHUB_RUN_ID)"
+            if git -C published push --quiet "$remote" HEAD:refs/heads/catalogue; then
+              echo "Published https://raw.githubusercontent.com/$GITHUB_REPOSITORY/catalogue/catalogue.json" | tee -a "$GITHUB_STEP_SUMMARY"
+              exit "$status"
+            fi
+            echo "Push rejected on attempt $attempt; another run wrote first, retrying"
+          done
+          exit 1

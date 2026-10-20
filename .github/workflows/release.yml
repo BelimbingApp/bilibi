@@ -22,10 +22,8 @@ jobs:
         with:
           fetch-depth: 0
           fetch-tags: true
-      - name: Require main, upgrade notes and the catalogue token
+      - name: Require main and the upgrade notes
         id: ready
-        env:
-          BILIBI_CATALOGUE_TOKEN: ${{ secrets.BILIBI_CATALOGUE_TOKEN }}
         run: python3 scripts/release.py ready
 
   compatibility:
@@ -53,8 +51,18 @@ jobs:
         with:
           fetch-depth: 0
           fetch-tags: true
-      - name: Open the catalogue pull request, then tag and publish
+      - name: Tag and publish
         env:
           GH_TOKEN: ${{ github.token }}
-          BILIBI_CATALOGUE_TOKEN: ${{ secrets.BILIBI_CATALOGUE_TOKEN }}
         run: python3 scripts/release.py publish
+
+  # The tag exists now. List it in the published catalogue, so adopters see it
+  # without waiting for the daily run.
+  catalogue:
+    name: List the release in the catalogue
+    needs: [guard, publish]
+    permissions:
+      contents: write
+    uses: ./.github/workflows/catalogue.yml
+    with:
+      platform_version: ${{ needs.guard.outputs.version }}
