@@ -1140,10 +1140,6 @@ impl Detail {
         })
     }
 
-    /// Bilimbi's guard, the users list's: the capability, never the signed-in
-    /// account, never while already impersonating, and never an
-    /// archived-company account, whose session cannot be opened. Hidden, not
-    /// disabled, when any of those fails, as on the source page.
     /// The Reset 2FA card, for an admin looking at someone else's account
     /// that has an authenticator on. Hidden otherwise, and when the account
     /// is archived (read-only). Also answers whether the admin has 2FA set
@@ -1307,6 +1303,10 @@ impl Detail {
         Ok(())
     }
 
+    /// Bilimbi's guard, the users list's: the capability, never the signed-in
+    /// account, never while already impersonating, and never an
+    /// archived-company account, whose session cannot be opened. Hidden, not
+    /// disabled, when any of those fails, as on the source page.
     async fn impersonate(&self, scope: &Scope, loaded: &Loaded) -> Result<Html> {
         if loaded.archived
             || self.id == scope.user()

@@ -345,39 +345,8 @@ impl UserService {
         };
         if account.active {
             let notice = reset_notice(SYSTEM_BODY)?;
-            let tenant = account.tenant;
-            let user = account.id;
-            tx.mutate(move |sql| {
-                Box::pin(async move {
-                    let kind = notice.kind.clone();
-                    let title = notice.title.clone();
-                    let rows = sql
-                        .query(
-                            "INSERT INTO notifications(tenant_id,user_id,type,title,body,url,icon) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id",
-                            &[
-                                &tenant,
-                                &user,
-                                &notice.kind,
-                                &notice.title,
-                                &notice.body,
-                                &notice.url,
-                                &notice.icon,
-                            ],
-                        )
-                        .await?;
-                    let changes = rows
-                        .iter()
-                        .map(|row| Change {
-                            kind: "notification".into(),
-                            id: row.get(0),
-                            old: json!({}),
-                            new: json!({"recipient": user, "type": &kind, "title": &title}),
-                        })
-                        .collect();
-                    Ok(((), changes))
-                })
-            })
-            .await?;
+            notifications::record_in_tenant(&mut tx, account.tenant, &[account.id], &notice)
+                .await?;
         }
         let mail = reset_mail(&self.origin, &account.name, &account.email, SYSTEM_BODY);
         let (tenant, user) = (account.tenant, account.id);
