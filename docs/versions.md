@@ -43,46 +43,84 @@ The numbers follow [semantic versioning](https://semver.org), read for software 
 
 ## How to release
 
-The agreed direction is to keep the Platform and every official Domain and Extension in step, with coordinated releases and AI upgrade notes. [ADR 02](architecture/decisions/02-build-in-development-keep-everything-in-step.md) explains that decision and the CI and release work still in progress; the steps below describe the current implementation.
+The Platform and every official Domain and Extension stay in step. [ADR 02](architecture/decisions/02-build-in-development-keep-everything-in-step.md) is the decision. A release tag is created only after **Official compatibility** has passed for that exact commit, against every catalogue entry at its latest release. The catalogue version is added by a pull request, not by editing `catalogue.json` by hand.
 
-**The Platform.** From a green `main`:
+**The Platform.** `Cargo.toml` on `main` already says the version you are releasing, for example `0.1.1`. Every merged pull request since the previous tag has an `Upgrade notes for agents` section. Gather them and commit the file:
 
 ```sh
-git tag v0.1.1 <commit>         # Cargo.toml at that commit must say 0.1.1
+python3 scripts/release.py gather
+git add docs/upgrade-notes/v0.1.1.md
+git commit -m "Document upgrade notes for v0.1.1"
+git push origin main
+```
+
+Then run **Release** from the Actions tab, on `main`. The workflow refuses any other branch. It refuses when the notes file is missing, when `BILIBI_CATALOGUE_TOKEN` is missing, or when Official compatibility is not green for that commit. When the check passes, the workflow opens the catalogue pull request for the Platform version, pushes the tag `v0.1.1`, and publishes the GitHub release. The release body is `docs/upgrade-notes/v0.1.1.md`.
+
+Do not run `git tag` and `git push` for a release tag yourself. A hand-pushed `v*` tag skips the gate. The tag push from the Release workflow uses the built-in token, which does not start a second run, so the tested sets are recorded in that same run.
+
+After the tag exists, open a pull request that bumps `Cargo.toml` to the next number, so `main` never claims a number that was released.
+
+**A Domain or Extension.** Copy [`docs/domain-ci/ci.yml`](domain-ci/ci.yml) to `.github/workflows/ci.yml` and add the secret below. From its green `main`:
+
+```sh
+git tag v0.1.1 <commit>
 git push origin v0.1.1
 ```
 
-The tag starts the `Domains on this change` workflow with each Domain at its latest release, and every pair that passes is recorded as a tested set (below). Then open a pull request that bumps `Cargo.toml` to the next number, so `main` never claims a number that was released.
+The tag runs the mounted gates. When they pass, CI opens a pull request on Bilibi that adds the version, the commit and the Platform requirement. Bilibi's catalogue check accepts the file. Merging the pull request lets the next catalogue publish include the version. A repository that is not listed in `catalogue.json` does not open a pull request.
 
-**A Domain.** From its green `main`:
+Write `.github/bilibi-platform` as one line, for example `>=0.1.0, <0.2.0`, only when this release needs a different Platform than the previous one. Otherwise CI keeps the previous requirement and refuses the release if the pinned Platform commit in `.github/bilibi-revision` does not satisfy it.
 
-```sh
-git -C bilibi-dom-finance tag v0.1.1 <commit>
-git -C bilibi-dom-finance push origin v0.1.1
-```
-
-Then add the version to `catalogue.json` under that Domain, with the Platform versions it needs, and open a pull request to Bilibi. To record it as tested, run `Domains on this change` by hand from the Actions tab on `main` with `domains_at` left at `latest-release`.
+To record the pair as tested before the next Platform release, run `Domains on this change` by hand from the Actions tab on Bilibi `main` with `domains_at` left at `latest-release`.
 
 **Fixing a tag.** A tag is a promise other people build from. If a release is wrong, release the next number instead of moving the tag.
 
+## Upgrade notes for agents
+
+Every pull request has a heading `Upgrade notes for agents`. Say what a Domain or Extension owner must change, and the exact steps for their agent. Write `None` when nothing of theirs changes. The pull request template carries the heading. `python3 scripts/release.py require-notes` refuses a pull request that leaves it empty, and the Rust workflow runs that on every pull request.
+
+`python3 scripts/release.py gather` writes `docs/upgrade-notes/vX.Y.Z.md` from the pull requests merged after the previous `vX.Y.Z` tag. The GitHub release body is that file. An agent updating a private Domain or Extension reads the file for the release it is moving to.
+
+## Secret the owner adds
+
+A Domain or Extension workflow cannot use its built-in token to open a pull request on Bilibi and still start Bilibi's checks. The owner creates one fine-grained personal access token and stores the same value as an Actions secret named `BILIBI_CATALOGUE_TOKEN` on:
+
+- `BelimbingApp/bilibi`, so the Platform Release workflow can open the Platform version pull request
+- each official Domain repository
+- each official Extension repository
+
+Create the token under GitHub → Settings → Developer settings → Fine-grained personal access tokens.
+
+| Setting | Value |
+| --- | --- |
+| Resource owner | BelimbingApp |
+| Repository access | Only `BelimbingApp/bilibi` |
+| Contents | Read and write |
+| Pull requests | Read and write |
+| Metadata | Read (GitHub adds this) |
+
+Do not grant Administration, Workflows or Actions. Do not add the token as a bypass on branch protection. `main` stays protected, so the token can push a `catalogue-entry/…` branch and open a pull request, and it cannot push to `main`. The published catalogue stays on the `catalogue` branch, which is why the pull request branch cannot start with `catalogue/`.
+
+A private Domain or Extension is not in the catalogue. Leave the secret unset and its release does not open a pull request. An official repository fails the release until the secret is set. This change does not create the secret. The owner adds it.
+
 ## The catalogue
 
-`catalogue.json` at the root of Bilibi is the list of software an adopter can choose from. People edit it on `main`; CI publishes it with the tested sets at:
+`catalogue.json` at the root of Bilibi is the list of software an adopter can choose from. Release CI opens a pull request that changes it on `main`. CI publishes it with the tested sets at:
 
 ```
 https://raw.githubusercontent.com/BelimbingApp/bilibi/catalogue/catalogue.json
 ```
 
-Read the published copy, never `main`'s: `main`'s `tested` list may hold sets recorded by hand, each with the run that proved it, but only the published copy has the sets CI recorded. CI rebuilds the published copy from `main`'s file plus every set recorded so far, so a hand edit on `main` reaches the published copy at the next recorded run.
+Read the published copy, never `main`'s: `main`'s `tested` list may hold sets recorded by hand, each with the run that proved it, but only the published copy has the sets CI recorded. CI rebuilds the published copy from `main`'s file plus every set recorded so far, so a version merged to `main` reaches the published copy at the next recorded run.
 
 The file has five required parts and an optional extension list:
 
 | Part | What it holds | Who writes it |
 | --- | --- | --- |
 | `format` | `1` | nobody; it changes only with this document |
-| `platform` | name, repository, and each released version with its date and commit | a person, when a Platform release is tagged |
-| `domains` | per Domain ID (the folder it mounts at): name, one-line description, repository, module folders, and each released version with its date, commit and the Platform versions it needs (`">=0.1.0, <0.2.0"`) | a person, when a Domain release is tagged |
-| `extensions` (optional) | Extension IDs with descriptions, repositories, modules and release requirements, shaped like `domains`; no tested pair is inferred from a requirement | a person, when an Extension release is published |
+| `platform` | name, repository, and each released version with its date and commit | the Release workflow, as a pull request, after Official compatibility passes |
+| `domains` | per Domain ID (the folder it mounts at): name, one-line description, repository, module folders, and each released version with its date, commit and the Platform versions it needs (`">=0.1.0, <0.2.0"`) | the Domain's release tag, as a pull request (`scripts/catalogue.py open-release`) |
+| `extensions` (optional) | Extension IDs with descriptions, repositories, modules and release requirements, shaped like `domains`; no tested pair is inferred from a requirement | the Extension's release tag, as a pull request, the same way as a Domain |
 | `plugins` | per plug-in ID: name, publisher, repository, the Domain it belongs to (`null` for a Platform plug-in) and its versions, in the same shape | a person; empty until the plug-in runtime ships |
 | `tested` | one entry per Platform commit and Domain commit that passed the gates together, with both versions, the time and the CI run | CI, through the `catalogue` branch; a person may also record a set by hand on `main` with the run that proved it, and CI merges those with its own |
 
@@ -108,9 +146,9 @@ How CI records a set (`.github/workflows/domains.yml`):
 
 1. On a push to `main`, and on a pull request that can affect a mounted Domain or Extension, every official entry in `catalogue.json` is mounted separately at its `main` HEAD and the gates run. A pull request can select companion branches as described below. Nothing is recorded: these runs protect `main`, they are not releases. A pull request lints and boots a debug build. A push to `main` does the locked release build, and also the debug build so that pull requests start from a warm cache.
 2. A pull request passes **Official compatibility** without mounting when every changed file cannot affect a Domain or Extension. The unmounted `Rust` workflow still checks the committed CSS on those pull requests, because Tailwind scans the whole repository. That is `docs/`, Markdown that no Rust source compiles in with `include_str!` or `include_bytes!`, `LICENSE`, `.gitignore`, `.editorconfig`, `.gitattributes`, `compose.yml`, `.agents/`, `.amp/`, `.claude/`, and `.github/` except `.github/workflows/domains.yml`. Anything else mounts. A `Bilibi-Companion:` line mounts even when the files would not. `scripts/compatibility.py` is the list.
-3. On a release tag `v*`, each Domain and Extension is mounted at its latest release tag instead, and the locked release build runs. On a hand-started run, `domains_at` chooses between the two. Companion branches never apply to tags, manual runs or pushes to `main`. The unmounted Rust workflow skips the same kind of docs-only pull request, except for the CSS check, and it skips `.github/` except `.github/workflows/ci.yml`.
-4. After the gates pass, `python3 scripts/catalogue.py tested` reads the pin the gates made (`.local/composition/manifest.txt`) and writes the set.
-5. The `Record the tested sets` job then runs `python3 scripts/catalogue.py publish`, which merges `catalogue.json` from the run's checkout, the sets already on the `catalogue` branch and the new ones, and pushes the result to that branch. The same pair recorded twice keeps the newer run.
+3. On a release tag `v*`, each Domain and Extension is mounted at its latest release tag instead, and the locked release build runs. On a hand-started run, `domains_at` chooses between the two. The Release workflow calls the same workflow with `domains_at` set to `latest-release` before the tag exists. Companion branches never apply to tags, manual runs, pushes to `main` or that call. The unmounted Rust workflow skips the same kind of docs-only pull request, except for the CSS check, and it skips `.github/` except `.github/workflows/ci.yml`. It also requires the pull request's `Upgrade notes for agents` section.
+4. After the gates pass, `python3 scripts/catalogue.py tested` reads the pin the gates made (`.local/composition/manifest.txt`) and writes the set. The Release workflow passes `--platform-version` from `Cargo.toml`, because the tag is created after this run.
+5. The `Record the tested sets` job then runs `python3 scripts/catalogue.py publish`, which merges `catalogue.json` from the run's checkout, the sets already on the `catalogue` branch and the new ones, and pushes the result to that branch. The same pair recorded twice keeps the newer run. A tag pushed by hand still records this way. The Release workflow's own call records when Official compatibility passed, which is the run that publishes a release, because the tag it pushes does not start a second workflow.
 
 Extension checks use the same gates. The existing tested-set format records Domain pairs only; Extension checks do not add records or change catalogue publishing.
 

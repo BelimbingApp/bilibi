@@ -25,6 +25,9 @@ jobs:
           # The base commit has to be present so a pull request can diff
           # against it. The repository is small.
           fetch-depth: 0
+      - name: Require upgrade notes for agents
+        if: github.event_name == 'pull_request'
+        run: python3 scripts/release.py require-notes
       - name: Decide whether this change affects the build
         id: decide
         run: python3 scripts/compatibility.py affected platform

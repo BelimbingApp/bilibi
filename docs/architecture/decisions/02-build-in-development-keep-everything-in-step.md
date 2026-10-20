@@ -1,7 +1,7 @@
 # ADR 02: Build in development and keep everything in step
 
 **Document Type:** Architecture Decision Record
-**Status:** Accepted. Local builds, discovery, release installation and the stored server role are built. The wider CI cross-check and coordinated release work are in progress, not yet built.
+**Status:** Accepted. Local builds, discovery, release installation, the stored server role, the catalogue-wide compatibility check, the release gate, automatic catalogue entries and upgrade notes for agents are built. The Software page still needs the Update available state.
 **Agents:** codex/gpt-6 (author)
 **Scope:** Where Bilibi is built, how servers receive releases, and how the Platform, official Domains and official Extensions stay compatible
 **Last Updated:** 2026-10-20
@@ -64,8 +64,8 @@ This table describes the checkout on 2026-10-20. Accepted direction does not mea
 | Tested release installation, fresh 2FA, backup, automatic switch-back and Undo | **Built.** Contracts and access rules are in [`base/software`](../../../apps/base/software/README.md); execution and restore rules are in the [`installer`](../../../apps/installer/README.md) and [`flow.rs`](../../../apps/installer/src/flow.rs). Fresh-server proof was added in https://github.com/BelimbingApp/bilibi/pull/64; the repeatable evidence is in [`server-proof`](../../server-proof/README.md). |
 | One editable, audited server role | **Built** in https://github.com/BelimbingApp/bilibi/pull/72. See [`base/system`](../../../apps/base/system/README.md), [`instance.rs`](../../../apps/base/system/src/instance.rs) and [`instance_editor.rs`](../../../apps/base/system/src/instance_editor.rs). |
 | Versions, pins and tested pairs | **Built.** The exact commits are compiled into the program. [`versions.md`](../../versions.md) defines the records; [`domains.yml`](../../../.github/workflows/domains.yml) checks three named Domains individually and publishes tested pairs through [`catalogue.py`](../../../scripts/catalogue.py). Separate pairs do not prove a combined composition. |
-| Every official Domain and Extension checked on every Platform change | **In progress, not yet built.** The current workflow names three Domains; it does not discover and check every catalogue entry, including Extensions. The CI cross-check work must close that gap. |
-| Coordinated releases and automatic catalogue updates | **In progress, not yet built.** Publishing tested Domain pairs exists, but the full release train does not: companion revisions, release gating for all official software, automatic release entries and AI upgrade notes still need that work. |
+| Every official Domain and Extension checked on every Platform change | **Built.** [`.github/workflows/domains.yml`](../../../.github/workflows/domains.yml) mounts every `catalogue.json` entry. A pull request that cannot affect a mount passes **Official compatibility** without mounting. See [`docs/versions.md`](../../versions.md) and [`docs/domain-ci/README.md`](../../domain-ci/README.md). |
+| Coordinated releases and automatic catalogue updates | **Built.** The [Release](../../../.github/workflows/release.yml) workflow tags `vX.Y.Z` only after Official compatibility passes for that commit. A Domain or Extension tag opens the catalogue pull request from [`docs/domain-ci/ci.yml`](../../domain-ci/ci.yml). Each Platform release carries [`docs/upgrade-notes/vX.Y.Z.md`](../../upgrade-notes/README.md). |
 | Installed / Not installed / Update available | **Partly built.** [`web.rs`](../../../apps/base/software/src/web.rs) shows installed versions or Not installed, with compatibility and recommended releases. The complete Update available state is not yet built. |
 
 ## Consequences
@@ -86,6 +86,6 @@ This table describes the checkout on 2026-10-20. Accepted direction does not mea
 
 | Item | State |
 | --- | --- |
-| Catalogue-wide CI cross-check | In progress, not yet built. Cover every official Domain and Extension and the companion changes needed for a Platform change. |
-| Coordinated release train | In progress, not yet built. Release only when the official set fits, update the catalogue automatically, and include AI upgrade notes and the full Software status states. |
+| Catalogue-wide CI cross-check | Built. Every official Domain and Extension is checked, and a breaking change still needs a companion pull request. |
+| Coordinated release train | Release gating, automatic catalogue entries and upgrade notes for agents are built. The Software page's Update available state is still open. |
 | GitHub Actions builds and GitHub release assets | Open direction, not decided. Building releases in Actions and installing its published assets needs a separate decision; this record does not select that delivery path. |

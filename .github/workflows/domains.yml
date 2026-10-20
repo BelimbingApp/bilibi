@@ -2,6 +2,8 @@
 # shared mounted gates. Companion branches are selected only on pull requests
 # (docs/versions.md); main pushes always check main HEADs. Tags and manual runs
 # retain the existing Domain tested-set recording and catalogue publishing.
+# The Release workflow calls this with domains at their latest release, and
+# records the sets, before it creates the tag.
 #
 # A pull request whose files cannot affect a mount passes Official compatibility
 # without mounting. Other pull requests lint and boot a debug build. main, tags
@@ -26,6 +28,20 @@ on:
           - latest-release
           - main
         default: latest-release
+  workflow_call:
+    inputs:
+      domains_at:
+        description: Take each Domain and Extension at its latest release tag, or at its main HEAD
+        type: string
+        default: latest-release
+      platform_version:
+        description: Cargo.toml version to record. Set by the Release workflow before the tag exists.
+        type: string
+        default: ''
+    outputs:
+      compatible:
+        description: true when every official Domain and Extension passed
+        value: ${{ jobs.compatibility.outputs.compatible }}
 
 permissions:
   contents: read
@@ -120,7 +136,9 @@ jobs:
           persist-credentials: false
 
       - name: Move the Domain or Extension to its latest release
-        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.domains_at == 'latest-release')
+        if: >-
+          startsWith(github.ref, 'refs/tags/v') ||
+          ((github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.domains_at == 'latest-release')
         working-directory: container
         run: |
           latest=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' | sort -V | tail -1)
@@ -176,7 +194,15 @@ jobs:
       # gates are equally required, without changing catalogue publishing.
       - name: Describe the tested set
         if: matrix.role == 'domains' && env.DOMAIN_CI_BUILD == 'release'
-        run: python3 scripts/catalogue.py tested --run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" | tee "$RUNNER_TEMP/tested-set.json"
+        env:
+          # Only the Release workflow's call records a version before the tag exists.
+          PLATFORM_VERSION: ${{ github.event_name == 'workflow_call' && inputs.platform_version || '' }}
+        run: |
+          args=(--run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID")
+          if [ -n "$PLATFORM_VERSION" ]; then
+            args+=(--platform-version "$PLATFORM_VERSION")
+          fi
+          python3 scripts/catalogue.py tested "${args[@]}" | tee "$RUNNER_TEMP/tested-set.json"
       - uses: actions/upload-artifact@v7
         if: matrix.role == 'domains' && env.DOMAIN_CI_BUILD == 'release'
         with:
@@ -198,32 +224,52 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    outputs:
+      compatible: ${{ steps.require.outputs.compatible }}
     steps:
       - name: Require every official Domain and Extension to pass
+        id: require
         env:
           SELECTION: ${{ needs.catalogue.result }}
           MOUNTED: ${{ needs.domain.result }}
           HAS_CONTAINERS: ${{ needs.catalogue.outputs.has_containers }}
           AFFECTED: ${{ needs.catalogue.outputs.affected }}
         run: |
+          pass() {
+            echo "compatible=true" >> "$GITHUB_OUTPUT"
+            echo "$1" | tee -a "$GITHUB_STEP_SUMMARY"
+          }
+          fail() {
+            echo "compatible=false" >> "$GITHUB_OUTPUT"
+            echo "::error::$1"
+            echo "$1" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          }
           if [ "$SELECTION" = success ] && [ "$AFFECTED" = false ]; then
-            echo 'No changed file can affect an official Domain or Extension. Official compatibility passes without mounting.' | tee -a "$GITHUB_STEP_SUMMARY"
+            pass 'No changed file can affect an official Domain or Extension. Official compatibility passes without mounting.'
             exit 0
           fi
           if [ "$SELECTION" = success ] && { [ "$MOUNTED" = success ] || { [ "$HAS_CONTAINERS" = false ] && [ "$MOUNTED" = skipped ]; }; }; then
-            echo 'Every official Domain and Extension passed.'
+            pass 'Every official Domain and Extension passed.'
           else
-            echo '::error::Official compatibility failed. Read the failing domains/<id> or extensions/<id> job. A break requires a companion PR in the same task, linked from the Platform PR (docs/versions.md#platform-changes-and-companion-prs).'
-            exit 1
+            fail 'Official compatibility failed. Read the failing domains/<id> or extensions/<id> job. A break requires a companion PR in the same task, linked from the Platform PR (docs/versions.md#platform-changes-and-companion-prs).'
           fi
 
   # Publishes catalogue.json from this change plus every tested set so far to
-  # the `catalogue` branch (docs/versions.md). Only release tags and hand runs
-  # record; a pull request or a push to main never writes anything.
+  # the `catalogue` branch (docs/versions.md). Release tags and hand runs
+  # record, and so does the Release workflow's call once compatibility has
+  # passed. A pull request or a push to main never writes anything.
+  # The Release workflow pushes the tag with the built-in token, which does
+  # not start a second run, so this call is the recording for that release.
   record:
     name: Record the tested sets
-    needs: domain
-    if: always() && (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
+    needs: [domain, compatibility]
+    if: >-
+      always() && (
+        startsWith(github.ref, 'refs/tags/v') ||
+        github.event_name == 'workflow_dispatch' ||
+        (github.event_name == 'workflow_call' && inputs.platform_version != '' && needs.compatibility.result == 'success')
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
