@@ -172,8 +172,8 @@ pub fn install(
     let (source_json_value, source_text, release, facts) = match &chosen {
         Chosen::Uploaded { bundle, facts } => {
             let text = match facts["from"]["label"].as_str() {
-                Some(from) => format!("the release file {bundle} uploaded here (from {from})"),
-                None => format!("the release file {bundle} you uploaded"),
+                Some(from) => format!("the file {bundle} uploaded here (from {from})"),
+                None => format!("the file {bundle} you uploaded"),
             };
             (
                 json!({"kind": "upload", "bundle": bundle, "from": facts["from"]}),
