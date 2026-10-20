@@ -43,6 +43,8 @@ The numbers follow [semantic versioning](https://semver.org), read for software 
 
 ## How to release
 
+The agreed direction is to keep the Platform and every official Domain and Extension in step, with coordinated releases and AI upgrade notes. [ADR 02](architecture/decisions/02-build-in-development-keep-everything-in-step.md) explains that decision and the CI and release work still in progress; the steps below describe the current implementation.
+
 **The Platform.** From a green `main`:
 
 ```sh

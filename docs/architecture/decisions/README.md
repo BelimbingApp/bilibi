@@ -3,7 +3,7 @@
 **Document Type:** Index of architecture decision records
 **Status:** Active
 **Scope:** Decisions that shape Bilibi's architecture
-**Last Updated:** 2026-10-18
+**Last Updated:** 2026-10-20
 
 Each record states one decision, its context and its consequences. The format follows [Bilimbi's records](https://github.com/BelimbingApp/bilimbi/tree/main/docs/architecture/decisions). The architecture overview is [`../README.md`](../README.md).
 
@@ -41,3 +41,9 @@ Every record carries these header lines: Document Type, Status, Agents, Scope, L
 | Record | Status |
 | --- | --- |
 | [01 Agent-first operations: one contract, four doors](./01-agent-first-operations.md) | Accepted |
+
+### Software delivery
+
+| Record | Status |
+| --- | --- |
+| [02 Build in development and keep everything in step](./02-build-in-development-keep-everything-in-step.md) | Accepted |

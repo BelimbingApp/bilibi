@@ -207,6 +207,8 @@ The page is rendered once per instance from `scripts/waiting-page.html` into `si
 
 ## Build locally
 
+[ADR 02](architecture/decisions/02-build-in-development-keep-everything-in-step.md) records why builds stay in development, servers only install tested releases, and official software is kept in step.
+
 A local Bilibi checkout and a coding agent are the operator’s build tools. Find a Domain or Extension in Software or through MCP, read which release accepts this server and which commits CI recorded as tested together, then follow its `local_steps` in that checkout. For example:
 
 ```sh
