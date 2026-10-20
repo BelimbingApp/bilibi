@@ -34,8 +34,8 @@ setting!(
     false,
     None,
     None,
-    "Private document directory",
-    "Defaults to the server's data/artifacts folder; missing folders are created with permission 0700 (server owner only)."
+    "Storage folder",
+    "Defaults to the server's data/artifacts folder, which is created on first use. A folder you choose must already exist, with permission 0700, outside any public web folder."
 );
 setting!(
     "artifacts.retention_days",

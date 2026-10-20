@@ -23,15 +23,45 @@ pub(crate) fn io<T>(work: impl FnOnce() -> Result<T>) -> Result<T> {
 }
 
 pub(crate) const MAX_BYTES: usize = 536_870_912;
-/// Only a new document creates missing folders. Reads and cleanup must never
+/// The built-in default under the instance's data folder: the only root this
+/// module ever creates.
+pub(crate) fn default_root() -> Result<String> {
+    let instance = match std::env::var_os("BILIBI_INSTANCE_DIR") {
+        Some(path) if !path.is_empty() => PathBuf::from(path),
+        Some(_) => return Err(Error::UnsafeRoot),
+        None => std::env::current_dir()?,
+    };
+    if !instance.is_absolute() {
+        return Err(Error::UnsafeRoot);
+    }
+    instance
+        .join("data/artifacts")
+        .into_os_string()
+        .into_string()
+        .map_err(|_| Error::UnsafeRoot)
+}
+/// Only a new document may create folders, and only for the built-in default. An
+/// operator's own root that is missing is refused, so reads and cleanup never
 /// conceal a missing volume by creating an empty replacement.
 pub(crate) fn prepare_root(root: &str) -> Result<()> {
-    check_root(root, true)
+    let path = Path::new(root);
+    if default_root().is_ok_and(|default| default == root) {
+        let data = path.parent().ok_or(Error::UnsafeRoot)?;
+        for dir in [data, path] {
+            match fs::DirBuilder::new().mode(0o700).create(dir) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+    } else if path.is_absolute()
+        && fs::symlink_metadata(path).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)
+    {
+        return Err(Error::MissingRoot(root.to_owned()));
+    }
+    validate_root(root)
 }
 pub(crate) fn validate_root(root: &str) -> Result<()> {
-    check_root(root, false)
-}
-fn check_root(root: &str, create: bool) -> Result<()> {
     let path = Path::new(root);
     if root == "/" || !path.is_absolute() || root.len() > 4096 {
         return Err(Error::UnsafeRoot);
@@ -45,19 +75,6 @@ fn check_root(root: &str, create: bool) -> Result<()> {
             _ => return Err(Error::UnsafeRoot),
         }
         current.push(part);
-        if create {
-            match fs::symlink_metadata(&current) {
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    match fs::DirBuilder::new().mode(0o700).create(&current) {
-                        Ok(()) => {}
-                        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-                        Err(error) => return Err(error.into()),
-                    }
-                }
-                Err(error) => return Err(error.into()),
-                Ok(_) => {}
-            }
-        }
         if !fs::symlink_metadata(&current).is_ok_and(|stat| stat.is_dir()) {
             return Err(Error::UnsafeRoot);
         }

@@ -40,6 +40,8 @@ pub enum Error {
     Storage(#[from] std::io::Error),
     #[error("Storage root must be an existing private 0700 absolute directory")]
     UnsafeRoot,
+    #[error("The storage folder {0} does not exist. Check the drive is connected, or change Storage folder in Settings.")]
+    MissingRoot(String),
     #[error("Configure storage and a positive retention period first")]
     Policy,
     #[error("Invalid artifact input")]
@@ -97,6 +99,7 @@ impl Error {
             Self::Database(_) | Self::Sql(_) => "database",
             Self::Storage(_) | Self::CleanupPending => "storage",
             Self::UnsafeRoot => "unsafe_root",
+            Self::MissingRoot(_) => "missing_root",
             Self::Policy => "policy",
             Self::Invalid | Self::InvalidDocument | Self::UnsupportedText | Self::InvalidPdf => {
                 "invalid"
