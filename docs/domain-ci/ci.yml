@@ -32,6 +32,10 @@ jobs:
 
     env:
       DATABASE_URL: postgres://bilibi:bilibi@localhost:5432/bilibi
+      # Pull requests lint and boot a debug build. Pushes to main do the
+      # locked release build. An older Platform script ignores this and
+      # always release-builds.
+      DOMAIN_CI_BUILD: ${{ github.event_name == 'pull_request' && 'check' || 'release' }}
 
     services:
       postgres:
@@ -83,9 +87,15 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      - name: Keep pull-request debug builds small
+        if: env.DOMAIN_CI_BUILD == 'check'
+        run: echo CARGO_PROFILE_DEV_DEBUG=0 >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@v2.9.2
         with:
           workspaces: bilibi
+          prefix-key: v1-workspace
+          cache-workspace-crates: true
+          cache-on-failure: true
       - uses: actions/setup-node@v6
         with:
           node-version: '24'
@@ -94,7 +104,8 @@ jobs:
       - run: npm ci --prefix apps/base/ui/assets --no-audit --no-fund
 
       # Discovery, committed CSS, Cargo.lock pinning, fmt, clippy -D warnings,
-      # the locked release build, migrate, seed-production, and GET /.
+      # a debug build on a pull request or the locked release build on main,
+      # migrate, seed-production, and GET /.
       - name: Run the mounted gates
         run: ./scripts/domain-ci.sh
 

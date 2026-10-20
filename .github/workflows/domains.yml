@@ -2,6 +2,10 @@
 # shared mounted gates. Companion branches are selected only on pull requests
 # (docs/versions.md); main pushes always check main HEADs. Tags and manual runs
 # retain the existing Domain tested-set recording and catalogue publishing.
+#
+# A pull request whose files cannot affect a mount passes Official compatibility
+# without mounting. Other pull requests lint and boot a debug build. main, tags
+# and manual runs still do the locked release build.
 name: Domains on this change
 
 on:
@@ -25,9 +29,11 @@ on:
 permissions:
   contents: read
 
+# One in-flight run per pull request. A new push or an edited body cancels
+# the older run. Pushes to main and tags are not cancelled.
 concurrency:
-  group: domains-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  group: domains-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   catalogue:
@@ -35,14 +41,22 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      matrix: ${{ steps.select.outputs.matrix }}
-      has_containers: ${{ steps.select.outputs.has_containers }}
+      matrix: ${{ steps.select.outputs.matrix || steps.decide.outputs.matrix }}
+      has_containers: ${{ steps.select.outputs.has_containers || steps.decide.outputs.has_containers }}
+      affected: ${{ steps.decide.outputs.affected }}
     steps:
       - uses: actions/checkout@v7
         with:
+          # The base commit has to be present so a pull request can diff
+          # against it. The repository is small.
+          fetch-depth: 0
           persist-credentials: false
+      - name: Decide whether this change can affect a mount
+        id: decide
+        run: python3 scripts/compatibility.py affected domains
       - name: Read the catalogue and companion branches
         id: select
+        if: steps.decide.outputs.affected == 'true'
         run: python3 scripts/compatibility.py
 
   domain:
@@ -62,6 +76,9 @@ jobs:
       CONTAINER_ID: ${{ matrix.id }}
       CONTAINER_REPOSITORY: ${{ matrix.repository }}
       CONTAINER_REF: ${{ matrix.ref }}
+      # Pull requests lint and boot a debug build. main, tags and manual runs
+      # do the locked release build that a tested set records.
+      DOMAIN_CI_BUILD: ${{ github.event_name == 'pull_request' && 'check' || 'release' }}
 
     services:
       postgres:
@@ -121,11 +138,23 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      # Each mounted container resolves a different Cargo.lock.
+      # Set before the cache so the key matches the profile the build uses.
+      - name: Keep pull-request debug builds small
+        if: env.DOMAIN_CI_BUILD == 'check'
+        run: echo CARGO_PROFILE_DEV_DEBUG=0 >> "$GITHUB_ENV"
+      # discover-modules rewrites the workspace before the cache hashes it,
+      # so a Domain's own manifests are part of the key.
+      - name: Register mounted modules so the cache key sees them
+        run: python3 scripts/discover-modules.py
+      # prefix-key bumps the cache so the saved blob includes workspace crates,
+      # not only dependencies. The profile is part of the key: a pull request
+      # stores the debug build, and main stores the release build.
       - uses: Swatinem/rust-cache@v2.9.2
         with:
           workspaces: bilibi
-          key: ${{ matrix.role }}-${{ matrix.id }}
+          prefix-key: v1-workspace
+          key: ${{ matrix.role }}-${{ matrix.id }}-${{ env.DOMAIN_CI_BUILD }}
+          cache-workspace-crates: true
           cache-on-failure: true
       - uses: actions/setup-node@v6
         with:
@@ -144,10 +173,10 @@ jobs:
       # The existing tested-set format records Domain pairs only. Extension
       # gates are equally required, without changing catalogue publishing.
       - name: Describe the tested set
-        if: matrix.role == 'domains'
+        if: matrix.role == 'domains' && env.DOMAIN_CI_BUILD == 'release'
         run: python3 scripts/catalogue.py tested --run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" | tee "$RUNNER_TEMP/tested-set.json"
       - uses: actions/upload-artifact@v7
-        if: matrix.role == 'domains'
+        if: matrix.role == 'domains' && env.DOMAIN_CI_BUILD == 'release'
         with:
           name: tested-${{ matrix.role }}-${{ matrix.id }}
           path: ${{ runner.temp }}/tested-set.json
@@ -173,7 +202,12 @@ jobs:
           SELECTION: ${{ needs.catalogue.result }}
           MOUNTED: ${{ needs.domain.result }}
           HAS_CONTAINERS: ${{ needs.catalogue.outputs.has_containers }}
+          AFFECTED: ${{ needs.catalogue.outputs.affected }}
         run: |
+          if [ "$SELECTION" = success ] && [ "$AFFECTED" = false ]; then
+            echo 'No changed file can affect an official Domain or Extension. Official compatibility passes without mounting.' | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           if [ "$SELECTION" = success ] && { [ "$MOUNTED" = success ] || { [ "$HAS_CONTAINERS" = false ] && [ "$MOUNTED" = skipped ]; }; }; then
             echo 'Every official Domain and Extension passed.'
           else

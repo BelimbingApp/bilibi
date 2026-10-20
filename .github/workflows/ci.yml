@@ -1,27 +1,62 @@
+# Unmounted Platform gates. A pull request that cannot affect this build
+# (docs, and the other paths scripts/compatibility.py treats as harmless)
+# passes without compiling. Mounted Domain checks are domains.yml: those
+# pull requests lint and boot a debug build, so this release build is the
+# one a pull request still does. main keeps both.
+# A branch push and its pull request share one group, so the later run
+# cancels the earlier instead of compiling twice. main is not cancelled.
 name: Rust
 on:
   push:
   pull_request:
 permissions:
   contents: read
+concurrency:
+  group: rust-${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          # The base commit has to be present so a pull request can diff
+          # against it. The repository is small.
+          fetch-depth: 0
+      - name: Decide whether this change affects the build
+        id: decide
+        run: python3 scripts/compatibility.py affected platform
+      - name: This pull request does not affect the build
+        if: steps.decide.outputs.affected != 'true'
+        run: echo 'No changed file can affect the unmounted build. Passing without compiling.' | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: dtolnay/rust-toolchain@stable
+        if: steps.decide.outputs.affected == 'true'
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2.9.2
+        if: steps.decide.outputs.affected == 'true'
+        with:
+          # New prefix so the saved cache includes workspace crates.
+          prefix-key: v1-workspace
+          cache-workspace-crates: true
+          cache-on-failure: true
       - uses: actions/setup-node@v6
+        if: steps.decide.outputs.affected == 'true'
         with:
           node-version: '24'
           cache: npm
           cache-dependency-path: apps/base/ui/assets/package-lock.json
-      - run: npm ci --prefix apps/base/ui/assets --no-audit --no-fund
-      - run: ./scripts/build-assets.sh --check
-      - run: python3 scripts/discover-modules.py --check
-      - run: python3 scripts/catalogue.py --check
-      - run: cargo fmt --all -- --check
-      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - run: cargo build --workspace --release --locked
+      - if: steps.decide.outputs.affected == 'true'
+        run: npm ci --prefix apps/base/ui/assets --no-audit --no-fund
+      - if: steps.decide.outputs.affected == 'true'
+        run: ./scripts/build-assets.sh --check
+      - if: steps.decide.outputs.affected == 'true'
+        run: python3 scripts/discover-modules.py --check
+      - if: steps.decide.outputs.affected == 'true'
+        run: python3 scripts/catalogue.py --check
+      - if: steps.decide.outputs.affected == 'true'
+        run: cargo fmt --all -- --check
+      - if: steps.decide.outputs.affected == 'true'
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - if: steps.decide.outputs.affected == 'true'
+        run: cargo build --workspace --release --locked
