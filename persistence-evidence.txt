@@ -1,0 +1,10 @@
+instance.installs_from|"source"
+instance.label|"2FA proof copy"
+instance.role|"staging"
+step_up.refused|1
+step_up.window_opened|1
+user.two_factor.enabled|1
+user.two_factor.enrollment_started|1
+user.two_factor.verified|1
+step_up.refused|base.system.instance.role.change|code_required
+step_up.window_opened|base.system.instance.role.change|
