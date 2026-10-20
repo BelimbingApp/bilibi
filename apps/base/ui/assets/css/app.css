@@ -24,29 +24,30 @@
 @plugin "../vendor/heroicons.cjs";
 @import "./legacy-compat.css";
 
-/* Shared colour input; the swatch repeats the banner's surface, line and ink
- * roles rather than approximating the theme with fixed palette values. */
+/* Shared colour input. The chip is the banner's surface, border and ink,
+ * with the name inside, rather than a swatch beside a separate label. */
 .ui-colour-trigger:not([hidden]), .ui-colour-option {
   display: flex;
   align-items: center;
   gap: 0.5rem;
   text-align: left;
 }
-.ui-colour-swatch {
+.ui-colour-chip {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  width: 1.5rem;
-  height: 1rem;
-  flex-shrink: 0;
-  border-width: 1px;
-  border-radius: 0.25rem;
-}
-.ui-colour-swatch > span {
-  width: 0.75rem;
-  height: 0.25rem;
-  border-radius: 0.125rem;
-  background: currentColor;
+  min-width: 0;
+  max-width: 100%;
+  flex: 0 1 auto;
+  border-width: 2px;
+  border-style: solid;
+  border-radius: 0.375rem;
+  padding: 0 0.375rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .ui-colour-option[data-active] { background: var(--color-brand-surface); }
 .ui-colour-option[aria-selected="false"] .ui-colour-check { visibility: hidden; }

@@ -94,7 +94,11 @@ pub(super) fn colour_input(field: bilibi_ui::Field, role: &str) -> bilibi_ui::Co
         Colour::Danger => ColourRole::Danger,
     };
     let inherited = swatch(Role::parse(role).unwrap_or(Role::Production).colour());
-    let mut options = vec![ColourChoice::new("Use role colour", "", inherited)];
+    let mut options = vec![ColourChoice::new(
+        inherited.inherited_label(),
+        "",
+        inherited,
+    )];
     options.extend(Colour::ALL.map(|colour| {
         let role = swatch(colour);
         ColourChoice::new(role.label(), colour.as_str(), role)

@@ -1,6 +1,8 @@
-//! Colour choices extend Bilimbi `UI.Components.Forms` with theme-role swatches.
-//! The native select owns submission, reset and disabled state; `ColourInput`
-//! in hooks.js adds the swatch list, keeping the select as a no-script fallback.
+//! Colour choices extend Bilimbi `UI.Components.Forms` with theme-role chips.
+//! Each choice is the banner surface, border and text colour, with the name
+//! inside the chip. The native select owns submission, reset and disabled
+//! state; `ColourInput` in hooks.js adds the chip list, keeping the select
+//! as a no-script fallback.
 use crate::{Field, InputKind, StatusKind};
 use askama::Template;
 
@@ -29,6 +31,12 @@ impl ColourRole {
             Self::Danger => StatusKind::Error.surface_class(),
         }
     }
+
+    /// The choice that follows the server role, drawn in this role's colour.
+    /// Blue, Green, Amber and Red are short enough to name in the chip.
+    pub fn inherited_label(self) -> String {
+        format!("Use role colour ({})", self.label())
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -47,8 +55,8 @@ impl ColourChoice {
     }
 }
 
-/// A pinned floating label, named colours and a swatch for every choice,
-/// including the inherited choice. Pass the same Field used by the form.
+/// A pinned floating label and one banner-coloured chip per choice, including
+/// the inherited choice. Pass the same Field used by the form.
 #[derive(Template, Clone, Debug)]
 #[template(
     source = r#"{% import "forms.html" as forms %}{% call forms::colour_input(control=self) %}{% endcall %}"#,

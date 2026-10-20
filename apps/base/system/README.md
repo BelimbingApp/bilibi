@@ -69,7 +69,7 @@ Click the status-bar role to open `/system/instance`. A **Core Administrator in 
 
 The label, colour and source also remain in the generic settings editor behind `admin.system.instance.manage`. Empty label and colour follow the stored role. The role has no generic editor, so delegated operators cannot bypass its Core Administrator and 2FA checks.
 
-The Banner colour field uses the shared `ColourInput`: Blue, Green, Amber and Red each show their theme swatch. “Use role colour” shows the stored role's default swatch and clears the override when saved. `src/instance.rs` owns the role-to-colour rule.
+The Banner colour field uses the shared `ColourInput`: Blue, Green, Amber and Red each show their name inside that banner colour. “Use role colour (Blue)” (or Green, Amber or Red for the stored role) shows the role's default colour and clears the override when saved. `src/instance.rs` owns the role-to-colour rule.
 
 `Instance::status` always names the role, including when the label differs. Staging keeps an extra top-bar badge. Dev and Staging show a badge on sign-in; Production shows none there. Reviews and confirmations use `Instance::banner` in every role. `Instance::agent_json` identifies plans, commits, MCP and `/.well-known/bilibi`. All use the same resolved identity.
 

@@ -6,7 +6,7 @@ Use the typed models exported by the crate or their Askama macros; [`DESIGN.md`]
 
 ## Colour input
 
-Use **`ColourInput` for a choice of named colours**, so people see the colour as well as its name.
+Use **`ColourInput` for a choice of named colours**. Each choice is a chip in that colour's banner surface, border and text colour, with the name inside.
 
 Build it from the form's `Field` and the allowed choices:
 
@@ -16,7 +16,7 @@ use bilibi_ui::{ColourChoice, ColourInput, ColourRole, Field};
 let colour = ColourInput::new(
     Field::named("banner_colour").label("Banner colour").value("info"),
     vec![
-        ColourChoice::new("Use role colour", "", ColourRole::Info),
+        ColourChoice::new(ColourRole::Info.inherited_label(), "", ColourRole::Info),
         ColourChoice::new("Blue", "info", ColourRole::Info),
         ColourChoice::new("Amber", "warning", ColourRole::Warning),
     ],
@@ -25,8 +25,8 @@ let colour = ColourInput::new(
 
 The label is what people read; the value is what the form submits. The owner supplies the default choice's actual colour. Render with `Html::render(&colour)` or `forms::colour_input(control=colour)`.
 
-- `ColourRole` permits the status roles from `DESIGN.md`. The swatches use the same light and dark tokens as the components they colour, without inline styles or fixed colour values.
-- The label stays small inside the field. `Field` supplies the hint, errors, required and disabled state.
+- `ColourRole` permits the status roles from `DESIGN.md`. The chip uses the same light and dark surface, border and text tokens as the banner, without inline styles or fixed colour values. `ColourRole::inherited_label` names a short role inside "Use role colour (Blue)".
+- The field label stays small inside the field. `Field` supplies the hint, errors, required and disabled state.
 - Arrow keys, Home, End and typing a colour's name move through the list. Enter or Space selects; Escape cancels and Tab leaves the field. Each option keeps its plain name for screen readers.
 - A native select owns the form value and reset behaviour. Without JavaScript, the named select remains available.
 

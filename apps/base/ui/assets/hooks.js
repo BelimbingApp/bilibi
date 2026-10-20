@@ -92,8 +92,10 @@
   }
 
   // Select-only colour combobox. The native select is the only submitted
-  // control, including when JavaScript is unavailable. Unlike a searchable
-  // combobox, typing moves focus among named colours without editing the value.
+  // control, including when JavaScript is unavailable. The closed field and
+  // each option show the name inside that colour's banner chip. Unlike a
+  // searchable combobox, typing moves focus among named colours without
+  // editing the value.
   const ColourInput = {
     mounted() {
       this.select = this.el.querySelector('[data-colour-select]')
@@ -114,12 +116,11 @@
         const selected = options.find(option => option.dataset.value === this.select.value) || options[0]
         // The shared observer calls updated after child changes. Keep this
         // repaint idempotent or an unchanged preview would update forever.
-        const label = this.el.querySelector('[data-colour-label]')
-        const text = selected.querySelector('[data-option-label]').textContent
-        if (label.textContent !== text) label.textContent = text
         const preview = this.el.querySelector('[data-colour-preview]')
-        const swatch = selected.querySelector('.ui-colour-swatch')
-        if (!preview.firstElementChild?.isEqualNode(swatch)) preview.replaceChildren(swatch.cloneNode(true))
+        const chip = selected.querySelector('[data-option-label]')
+        const text = chip.textContent
+        if (preview.textContent !== text) preview.textContent = text
+        if (preview.className !== chip.className) preview.className = chip.className
         options.forEach(option => option.setAttribute('aria-selected', String(option === selected)))
         if (!this.open) this.active = options.indexOf(selected)
         this.active = Math.min(this.active, options.length - 1)
