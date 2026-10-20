@@ -458,22 +458,30 @@ impl UserService {
                     AccountField::PhoneNumber => "UPDATE users SET phone_number=NULLIF($3,''),phone_verified_at=NULL,version=version+1,updated_at=now() WHERE tenant_id=$1 AND id=$2",
                 };
                 sql.execute(statement, &[&tenant, &user, &new_value]).await?;
+                let mut changes = vec![Change {
+                    kind: "user".into(),
+                    id: user,
+                    old: json!({ field.key(): old_value }),
+                    new: json!({ field.key(): new_value }),
+                }];
+                // A new number: codes sent to the old one stop working.
                 if field == AccountField::PhoneNumber {
-                    sql.execute(
-                        "UPDATE user_two_factor_sms_codes SET voided_at=now() WHERE tenant_id=$1 AND user_id=$2 AND used_at IS NULL AND voided_at IS NULL",
-                        &[&tenant, &user],
-                    )
-                    .await?;
+                    for row in sql
+                        .query(
+                            "UPDATE user_two_factor_sms_codes SET voided_at=now() WHERE tenant_id=$1 AND user_id=$2 AND used_at IS NULL AND voided_at IS NULL RETURNING id",
+                            &[&tenant, &user],
+                        )
+                        .await?
+                    {
+                        changes.push(Change {
+                            kind: "user_two_factor_sms_codes".into(),
+                            id: row.get(0),
+                            old: json!({"status": "sent"}),
+                            new: json!({"status": "voided"}),
+                        });
+                    }
                 }
-                Ok((
-                    (),
-                    vec![Change {
-                        kind: "user".into(),
-                        id: user,
-                        old: json!({ field.key(): old_value }),
-                        new: json!({ field.key(): new_value }),
-                    }],
-                ))
+                Ok(((), changes))
             })
         })
         .await?;

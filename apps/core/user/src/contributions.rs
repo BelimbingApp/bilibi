@@ -160,6 +160,30 @@ inventory::submit! {
     }))
 }
 
+// The text-message code limits (`crate::two_factor` `sms::Limits`), read on
+// each use: installation-wide, bounded so no operator can make a code
+// guessable or let one account send without limit.
+macro_rules! text_code_limit {
+    ($key:expr, $default:expr, $min:expr, $max:expr, $label:expr, $help:expr) => {
+        inventory::submit! {
+            Contribution::new(DEFINITIONS, $key, Provenance { module: "core/user", source: file!(), line: line!() }, &Setting::Definition(Definition {
+                value_type: bilibi_settings::ValueType::Integer, scopes: &[ScopeKind::Global], default: || serde_json::json!($default),
+                nullable: false, encrypted: false, minimum: Some($min), maximum: Some($max), validator: None,
+                editor: Some(bilibi_settings::Editor { group: "2FA", label: $label, help: $help,
+                    capability: Some(bilibi_session::MANAGE), reveal_duration_ms: 5_000 }),
+            }))
+        }
+    };
+}
+text_code_limit!(crate::two_factor::TEXT_CODE_MINUTES_KEY, 5, 1.0, 15.0, "Text-message code lifetime",
+    "Minutes a 2FA code sent by text message can be entered.");
+text_code_limit!(crate::two_factor::TEXT_CODE_ATTEMPTS_KEY, 5, 1.0, 10.0, "Wrong tries per text-message code",
+    "Wrong tries after which a 2FA code sent by text message stops working.");
+text_code_limit!(crate::two_factor::TEXT_RESEND_SECONDS_KEY, 60, 30.0, 600.0, "Wait before another text message",
+    "Seconds an account waits before it may be sent another 2FA code.");
+text_code_limit!(crate::two_factor::TEXT_SENDS_PER_HOUR_KEY, 5, 1.0, 20.0, "Text messages per account per hour",
+    "2FA codes one account may be sent by text message in an hour.");
+
 inventory::submit! {
     Contribution::new(ROUTES, "core/user.settings.appearance", Provenance { module: "core/user", source: file!(), line: line!() }, &Route {
         method: Method::Get, path: "/settings/appearance", service: "core/user.pages", operation: "appearance", access: Access::SignedIn, framed: true,

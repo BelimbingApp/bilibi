@@ -1,18 +1,57 @@
 //! Text-message codes, the second factor of an account with a phone number
 //! and no authenticator app. A code is 6 digits from the operating system's
-//! CSPRNG, sent through Base SMS, stored only as an Argon2id hash, good for
-//! [`CODE_SECONDS`], used once and voided by its [`CODE_FAILURES`]th wrong
-//! attempt or by a newer code. Sends are throttled per account: one per
-//! [`RESEND_SECONDS`], at most [`SENDS_PER_HOUR`] an hour. A 6-digit code
-//! behind Argon2id, the expiry and these limits is out of reach of guessing.
+//! CSPRNG, sent through Base SMS to the number the account has when it is
+//! sent, and stored only as an Argon2id hash with that number (`sent_to`).
+//! It works for the operator's [`Limits`]: minutes, wrong attempts, the wait
+//! before another and the sends an hour per account. It is used once, voided
+//! by a newer code or a change of number, and counts only while the account
+//! still has the number it went to. A 6-digit code behind Argon2id, the
+//! expiry and these limits is out of reach of guessing.
 use bilibi_database::{Error, Result};
+use bilibi_settings::Settings;
 use tokio_postgres::GenericClient;
 
 pub const DIGITS: usize = 6;
-pub const CODE_SECONDS: i64 = 300;
-pub const CODE_FAILURES: i32 = 5;
-pub const RESEND_SECONDS: i64 = 60;
-pub const SENDS_PER_HOUR: i64 = 5;
+/// Installation settings (Core User's contributions), bounded there.
+pub const CODE_MINUTES_KEY: &str = "two_factor.text_code_minutes";
+pub const CODE_ATTEMPTS_KEY: &str = "two_factor.text_code_attempts";
+pub const RESEND_SECONDS_KEY: &str = "two_factor.text_resend_seconds";
+pub const SENDS_PER_HOUR_KEY: &str = "two_factor.text_sends_per_hour";
+
+/// The operator's limits on text-message codes, read on each use so a
+/// change applies to the next code.
+#[derive(Clone, Copy, Debug)]
+pub struct Limits {
+    pub code_minutes: i64,
+    pub attempts: i32,
+    pub resend_seconds: i64,
+    pub sends_per_hour: i64,
+}
+
+impl Limits {
+    pub async fn read(settings: &Settings, client: &(impl GenericClient + Sync)) -> Result<Self> {
+        let mut values = [0i64; 4];
+        for (value, key) in values.iter_mut().zip([
+            CODE_MINUTES_KEY,
+            CODE_ATTEMPTS_KEY,
+            RESEND_SECONDS_KEY,
+            SENDS_PER_HOUR_KEY,
+        ]) {
+            *value = settings
+                .get_global(client, key)
+                .await?
+                .as_i64()
+                .ok_or(Error::Internal)?;
+        }
+        let [code_minutes, attempts, resend_seconds, sends_per_hour] = values;
+        Ok(Self {
+            code_minutes,
+            attempts: i32::try_from(attempts).map_err(|_| Error::Internal)?,
+            resend_seconds,
+            sends_per_hour,
+        })
+    }
+}
 
 /// A fresh code, uniform over all 10^6 values: a draw at or above the
 /// largest multiple of 10^6 below 2^32 is thrown away and drawn again.
@@ -52,15 +91,20 @@ pub struct Sending {
 }
 
 impl Sending {
-    pub async fn read(sql: &impl GenericClient, tenant: i64, user: i64) -> Result<Self> {
+    pub async fn read(
+        sql: &impl GenericClient,
+        tenant: i64,
+        user: i64,
+        limits: Limits,
+    ) -> Result<Self> {
         let row = sql
             .query_one(
-                "SELECT EXISTS(SELECT 1 FROM user_two_factor_sms_codes WHERE tenant_id=$1 AND user_id=$2 AND used_at IS NULL AND voided_at IS NULL AND expires_at>now() AND failures<$3), \
+                "SELECT EXISTS(SELECT 1 FROM user_two_factor_sms_codes c JOIN users u ON u.tenant_id=c.tenant_id AND u.id=c.user_id WHERE c.tenant_id=$1 AND c.user_id=$2 AND c.sent_to=u.phone_number AND c.used_at IS NULL AND c.voided_at IS NULL AND c.expires_at>now() AND c.failures<$3), \
                  COALESCE(ceil(extract(epoch FROM max(sent_at)+make_interval(secs => $4::double precision)-now()))::bigint,0), \
                  count(*) FILTER (WHERE sent_at>now()-interval '1 hour'), \
                  COALESCE(ceil(extract(epoch FROM min(sent_at) FILTER (WHERE sent_at>now()-interval '1 hour')+interval '1 hour'-now()))::bigint,0) \
                  FROM user_two_factor_sms_codes WHERE tenant_id=$1 AND user_id=$2",
-                &[&tenant, &user, &CODE_FAILURES, &(RESEND_SECONDS as f64)],
+                &[&tenant, &user, &limits.attempts, &(limits.resend_seconds as f64)],
             )
             .await?;
         Ok(Self {
@@ -72,16 +116,18 @@ impl Sending {
     }
 }
 
-/// The newest code that can still be entered, as `(id, hash)`.
+/// The newest code that can still be entered, as `(id, hash)`: sent to the
+/// number the account has now.
 pub async fn active(
     sql: &impl GenericClient,
     tenant: i64,
     user: i64,
+    attempts: i32,
 ) -> Result<Option<(i64, String)>> {
     Ok(sql
         .query_opt(
-            "SELECT id,code_hash FROM user_two_factor_sms_codes WHERE tenant_id=$1 AND user_id=$2 AND used_at IS NULL AND voided_at IS NULL AND expires_at>now() AND failures<$3 ORDER BY id DESC LIMIT 1",
-            &[&tenant, &user, &CODE_FAILURES],
+            "SELECT c.id,c.code_hash FROM user_two_factor_sms_codes c JOIN users u ON u.tenant_id=c.tenant_id AND u.id=c.user_id WHERE c.tenant_id=$1 AND c.user_id=$2 AND c.sent_to=u.phone_number AND c.used_at IS NULL AND c.voided_at IS NULL AND c.expires_at>now() AND c.failures<$3 ORDER BY c.id DESC LIMIT 1",
+            &[&tenant, &user, &attempts],
         )
         .await?
         .map(|row| (row.get(0), row.get(1))))
@@ -99,32 +145,49 @@ pub async fn newest_expired(sql: &impl GenericClient, tenant: i64, user: i64) ->
         .is_some_and(|row| row.get(0)))
 }
 
-/// Voids every code still outstanding (a newer code, a new number).
-pub async fn void_outstanding(sql: &impl GenericClient, tenant: i64, user: i64) -> Result<()> {
-    sql.execute(
-        "UPDATE user_two_factor_sms_codes SET voided_at=now() WHERE tenant_id=$1 AND user_id=$2 AND used_at IS NULL AND voided_at IS NULL",
-        &[&tenant, &user],
-    )
-    .await?;
-    Ok(())
+/// Voids every code still outstanding (a newer code, a new number, a code
+/// that was not delivered); returns their ids for the caller's changes.
+pub async fn void_outstanding(
+    sql: &impl GenericClient,
+    tenant: i64,
+    user: i64,
+) -> Result<Vec<i64>> {
+    Ok(sql
+        .query(
+            "UPDATE user_two_factor_sms_codes SET voided_at=now() WHERE tenant_id=$1 AND user_id=$2 AND used_at IS NULL AND voided_at IS NULL RETURNING id",
+            &[&tenant, &user],
+        )
+        .await?
+        .iter()
+        .map(|row| row.get(0))
+        .collect())
 }
 
-/// Stores a sent code's hash, voiding the ones before it and forgetting
-/// rows older than a day. Returns the new row's id.
-pub async fn store(sql: &impl GenericClient, tenant: i64, user: i64, hash: &str) -> Result<i64> {
-    void_outstanding(sql, tenant, user).await?;
+/// Stores a sent code's hash and the number it goes to, voiding the codes
+/// before it and forgetting rows older than a day. Returns the new row's id
+/// and the voided ids.
+pub async fn store(
+    sql: &impl GenericClient,
+    tenant: i64,
+    user: i64,
+    hash: &str,
+    sent_to: &str,
+    limits: Limits,
+) -> Result<(i64, Vec<i64>)> {
+    let voided = void_outstanding(sql, tenant, user).await?;
     sql.execute(
         "DELETE FROM user_two_factor_sms_codes WHERE tenant_id=$1 AND user_id=$2 AND sent_at<now()-interval '1 day'",
         &[&tenant, &user],
     )
     .await?;
-    Ok(sql
+    let id = sql
         .query_one(
-            "INSERT INTO user_two_factor_sms_codes(tenant_id,user_id,code_hash,expires_at) VALUES($1,$2,$3,now()+make_interval(secs => $4::double precision)) RETURNING id",
-            &[&tenant, &user, &hash, &(CODE_SECONDS as f64)],
+            "INSERT INTO user_two_factor_sms_codes(tenant_id,user_id,code_hash,sent_to,expires_at) VALUES($1,$2,$3,$4,now()+make_interval(mins => $5::integer)) RETURNING id",
+            &[&tenant, &user, &hash, &sent_to, &(limits.code_minutes as i32)],
         )
         .await?
-        .get(0))
+        .get(0);
+    Ok((id, voided))
 }
 
 /// Counts one wrong attempt on a code; returns its failures so far.
@@ -133,33 +196,64 @@ pub async fn count_failure(
     tenant: i64,
     user: i64,
     id: i64,
-) -> Result<i32> {
+) -> Result<Option<i32>> {
     Ok(sql
         .query_opt(
             "UPDATE user_two_factor_sms_codes SET failures=failures+1 WHERE id=$1 AND tenant_id=$2 AND user_id=$3 AND used_at IS NULL AND voided_at IS NULL RETURNING failures",
             &[&id, &tenant, &user],
         )
         .await?
-        .map_or(CODE_FAILURES, |row| row.get(0)))
+        .map(|row| row.get(0)))
 }
 
-/// Uses a proven code (compare-and-set, so a racing reuse loses) and marks
-/// the number verified the first time a code sent to it is entered.
-pub async fn spend(sql: &impl GenericClient, tenant: i64, user: i64, id: i64) -> Result<u64> {
-    let spent = sql
+/// What spending a proven code changed.
+pub struct Spent {
+    /// The code row was used (compare-and-set: a racing reuse loses).
+    pub used: bool,
+    /// This was the first correct code sent to the account's number.
+    pub verified: bool,
+}
+
+/// Uses a proven code, only while the account still has the number it went
+/// to: the account row is share-locked first, so a change of number either
+/// commits before (and the code no longer counts) or waits for this
+/// transaction. The first correct code sent to a number verifies it.
+pub async fn spend(
+    sql: &impl GenericClient,
+    tenant: i64,
+    user: i64,
+    id: i64,
+    attempts: i32,
+) -> Result<Spent> {
+    sql.query_one(
+        "SELECT id FROM users WHERE tenant_id=$1 AND id=$2 FOR SHARE",
+        &[&tenant, &user],
+    )
+    .await?;
+    let sent_to: Option<String> = sql
+        .query_opt(
+            "UPDATE user_two_factor_sms_codes c SET used_at=now() FROM users u WHERE c.id=$1 AND c.tenant_id=$2 AND c.user_id=$3 AND u.tenant_id=c.tenant_id AND u.id=c.user_id AND c.sent_to=u.phone_number AND c.used_at IS NULL AND c.voided_at IS NULL AND c.expires_at>now() AND c.failures<$4 RETURNING c.sent_to",
+            &[&id, &tenant, &user, &attempts],
+        )
+        .await?
+        .map(|row| row.get(0));
+    let Some(sent_to) = sent_to else {
+        return Ok(Spent {
+            used: false,
+            verified: false,
+        });
+    };
+    let verified = sql
         .execute(
-            "UPDATE user_two_factor_sms_codes SET used_at=now() WHERE id=$1 AND tenant_id=$2 AND user_id=$3 AND used_at IS NULL AND voided_at IS NULL AND expires_at>now() AND failures<$4",
-            &[&id, &tenant, &user, &CODE_FAILURES],
+            "UPDATE users SET phone_verified_at=now() WHERE tenant_id=$1 AND id=$2 AND phone_number=$3 AND phone_verified_at IS NULL",
+            &[&tenant, &user, &sent_to],
         )
-        .await?;
-    if spent == 1 {
-        sql.execute(
-            "UPDATE users SET phone_verified_at=now() WHERE tenant_id=$1 AND id=$2 AND phone_number IS NOT NULL AND phone_verified_at IS NULL",
-            &[&tenant, &user],
-        )
-        .await?;
-    }
-    Ok(spent)
+        .await?
+        == 1;
+    Ok(Spent {
+        used: true,
+        verified,
+    })
 }
 
 /// The bare host of the public origin, for the origin-bound code line

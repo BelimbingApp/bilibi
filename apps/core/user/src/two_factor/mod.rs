@@ -21,6 +21,10 @@ mod sms;
 mod totp;
 
 pub use provider::Authenticator;
+pub use sms::{
+    CODE_ATTEMPTS_KEY as TEXT_CODE_ATTEMPTS_KEY, CODE_MINUTES_KEY as TEXT_CODE_MINUTES_KEY,
+    RESEND_SECONDS_KEY as TEXT_RESEND_SECONDS_KEY, SENDS_PER_HOUR_KEY as TEXT_SENDS_PER_HOUR_KEY,
+};
 
 use crate::{password, UserService};
 use bilibi_audit::{record_action, Attribution};
@@ -131,6 +135,8 @@ pub struct CodeSent {
     pub phone: String,
     /// Seconds until another code may be asked for.
     pub resend_in: i64,
+    /// Minutes a code works (the operator's setting).
+    pub minutes: i64,
 }
 
 /// A pending enrollment's display: the QR code and the same key for typing.
@@ -184,6 +190,19 @@ async fn spent_for(
     Ok(Spent::Kept)
 }
 
+/// One change per text-message code voided by a newer code, a new number or
+/// a failed delivery.
+fn voided_changes(ids: &[i64]) -> Vec<Change> {
+    ids.iter()
+        .map(|id| Change {
+            kind: SMS_KIND.into(),
+            id: *id,
+            old: json!({"status": "sent"}),
+            new: json!({"status": "voided"}),
+        })
+        .collect()
+}
+
 /// How a code proved the account's holder.
 enum Proof {
     Authenticator(i64),
@@ -218,13 +237,13 @@ fn with_return(base: &str, return_to: Option<&str>) -> String {
 
 /// Refuses another send while the throttle holds: too soon after the last
 /// one, or too many within the hour.
-fn refuse_sending(sending: &sms::Sending) -> Outcome<()> {
+fn refuse_sending(sending: &sms::Sending, limits: sms::Limits) -> Outcome<()> {
     if sending.wait_seconds > 0 {
         return Err(TwoFactorError::ResendTooSoon {
             seconds: sending.wait_seconds,
         });
     }
-    if sending.sent_last_hour >= sms::SENDS_PER_HOUR {
+    if sending.sent_last_hour >= limits.sends_per_hour {
         return Err(TwoFactorError::TooManyCodes {
             minutes: (sending.hour_frees_in + 59) / 60,
         });
@@ -295,16 +314,21 @@ impl UserService {
             .phone
             .ok_or(TwoFactorError::NoPhone)?;
         let client = self.db.get().await.map_err(Error::from)?;
-        let sending = sms::Sending::read(&**client, scope.tenant(), scope.user()).await?;
+        let limits = sms::Limits::read(&self.settings, &**client).await?;
+        let sending = sms::Sending::read(&**client, scope.tenant(), scope.user(), limits).await?;
         Ok(CodeSent {
             phone,
             resend_in: sending.wait_seconds,
+            minutes: limits.code_minutes,
         })
     }
 
     /// Sends the holder a text-message code, unless one that can still be
     /// entered is out and `resend` is false: then it says where that one
-    /// went. Throttled per account (`sms.rs`); each code sent is audited as
+    /// went. Throttled per account by the operator's limits (`sms.rs`); the
+    /// number is read under the account's row lock and stored with the code,
+    /// so a change of number at the same moment cannot verify the new number
+    /// with a code the old one got. Each code sent is audited as
     /// `user.two_factor.code_sent` without the code. A code the transport
     /// failed to deliver is voided again.
     pub async fn send_two_factor_code(&self, scope: &Scope, resend: bool) -> Outcome<CodeSent> {
@@ -318,27 +342,18 @@ impl UserService {
             Method::None if status.phone.is_some() => return Err(TwoFactorError::TextUnavailable),
             Method::None => return Err(TwoFactorError::NoPhone),
         }
+        let masked = status.phone.ok_or(TwoFactorError::NoPhone)?;
         let client = self.db.get().await.map_err(Error::from)?;
-        let phone = client
-            .query_opt(
-                "SELECT phone_number FROM users WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL",
-                &[&tenant, &user],
-            )
-            .await
-            .map_err(Error::from)?
-            .and_then(|row| row.get::<_, Option<String>>(0))
-            .as_deref()
-            .and_then(PhoneNumber::parse)
-            .ok_or(TwoFactorError::NoPhone)?;
-        let masked = phone.masked();
-        let sending = sms::Sending::read(&**client, tenant, user).await?;
+        let limits = sms::Limits::read(&self.settings, &**client).await?;
+        let sending = sms::Sending::read(&**client, tenant, user, limits).await?;
         if sending.active && !resend {
             return Ok(CodeSent {
                 phone: masked,
                 resend_in: sending.wait_seconds,
+                minutes: limits.code_minutes,
             });
         }
-        refuse_sending(&sending)?;
+        refuse_sending(&sending, limits)?;
         let issuer = self
             .settings
             .get_global(&**client, ISSUER_KEY)
@@ -358,53 +373,71 @@ impl UserService {
                 scope.mutation_context("user.two_factor.code_sent"),
             )
             .await?;
-        let to = masked.clone();
         let stored = tx
             .mutate(move |sql| {
                 Box::pin(async move {
-                    // One send at a time per account: the throttle is read
-                    // again under the account's row lock.
-                    sql.query_one(
-                        "SELECT id FROM users WHERE tenant_id=$1 AND id=$2 FOR UPDATE",
-                        &[&tenant, &user],
-                    )
-                    .await?;
-                    let sending = sms::Sending::read(sql, tenant, user).await?;
-                    if sending.wait_seconds > 0 || sending.sent_last_hour >= sms::SENDS_PER_HOUR {
+                    // One send at a time per account, to the number it has
+                    // under this lock: an administrator's change of number
+                    // waits for it, or has already voided what came before.
+                    let phone = sql
+                        .query_one(
+                            "SELECT phone_number FROM users WHERE tenant_id=$1 AND id=$2 FOR UPDATE",
+                            &[&tenant, &user],
+                        )
+                        .await?
+                        .get::<_, Option<String>>(0)
+                        .as_deref()
+                        .and_then(PhoneNumber::parse)
+                        .ok_or(Error::NotFound)?;
+                    let sending = sms::Sending::read(sql, tenant, user, limits).await?;
+                    if sending.wait_seconds > 0 || sending.sent_last_hour >= limits.sends_per_hour {
                         return Err(Error::Conflict);
                     }
-                    let id = sms::store(sql, tenant, user, &hash).await?;
-                    Ok((
-                        (),
-                        vec![Change {
-                            kind: SMS_KIND.into(),
-                            id,
-                            old: json!({}),
-                            new: json!({"status": "sent", "to": to, "expires_in_seconds": sms::CODE_SECONDS}),
-                        }],
-                    ))
+                    let (id, voided) =
+                        sms::store(sql, tenant, user, &hash, phone.as_str(), limits).await?;
+                    let mut changes = voided_changes(&voided);
+                    changes.push(Change {
+                        kind: SMS_KIND.into(),
+                        id,
+                        old: json!({}),
+                        new: json!({"status": "sent", "to": phone.masked(), "expires_in_minutes": limits.code_minutes}),
+                    });
+                    Ok((phone, changes))
                 })
             })
             .await;
-        match stored {
-            Ok(()) => tx.commit().await?,
+        let phone = match stored {
+            Ok(phone) => {
+                tx.commit().await?;
+                phone
+            }
             Err(Error::Conflict) => {
                 tx.rollback().await?;
                 let client = self.db.get().await.map_err(Error::from)?;
-                refuse_sending(&sms::Sending::read(&**client, tenant, user).await?)?;
+                refuse_sending(
+                    &sms::Sending::read(&**client, tenant, user, limits).await?,
+                    limits,
+                )?;
                 return Err(TwoFactorError::ResendTooSoon {
-                    seconds: sms::RESEND_SECONDS,
+                    seconds: limits.resend_seconds,
                 });
             }
+            Err(Error::NotFound) => {
+                tx.rollback().await?;
+                return Err(TwoFactorError::NoPhone);
+            }
             Err(error) => return Err(error.into()),
-        }
+        };
         let text = format!(
-            "{issuer} verification code: {code}. It expires in {} minutes. Do not share it with anyone.",
-            sms::CODE_SECONDS / 60
+            "{issuer} verification code: {code}. It expires in {} minute{}. Do not share it with anyone.",
+            limits.code_minutes,
+            if limits.code_minutes == 1 { "" } else { "s" }
         );
+        // The origin-bound line needs a host name or IPv4 address; an origin
+        // it cannot name sends the code without it.
         let message =
             Message::one_time_code(phone.clone(), &text, sms::origin_host(&self.origin), &code)
-                .or_else(|_| Message::new(phone, &text))
+                .or_else(|_| Message::new(phone.clone(), &text))
                 .map_err(|_| Error::Internal)?;
         if let Err(error) = self.sms.send(&message).await {
             eprintln!("warning: two-factor text message for account {user} failed: {error}");
@@ -413,9 +446,28 @@ impl UserService {
             return Err(TwoFactorError::NotDelivered);
         }
         Ok(CodeSent {
-            phone: masked,
-            resend_in: sms::RESEND_SECONDS,
+            phone: phone.masked(),
+            resend_in: limits.resend_seconds,
+            minutes: limits.code_minutes,
         })
+    }
+
+    /// Turning the app on for an account whose codes come by text message
+    /// replaces its second factor: the step-up operation
+    /// `core.user.two_factor.replace`, on the floor, so the holder proves the
+    /// phone first and a password alone cannot swap the factor. A browser is
+    /// sent to the prompt and back (`Error::StepUpRequired`).
+    async fn replacing_text(&self, scope: &Scope) -> Outcome<()> {
+        if self.two_factor_status(scope).await?.method() == Method::TextMessage {
+            self.step_up
+                .require(
+                    scope,
+                    crate::step_up::REPLACE_FACTOR,
+                    &format!("user:{}", scope.user()),
+                )
+                .await?;
+        }
+        Ok(())
     }
 
     /// Step one of enrollment: the password again, then a fresh secret,
@@ -444,6 +496,9 @@ impl UserService {
             self.failed(scope, "password").await?;
             return Err(TwoFactorError::IncorrectPassword);
         }
+        drop(client);
+        self.replacing_text(scope).await?;
+        let client = self.db.get().await.map_err(Error::from)?;
         let issuer = self
             .settings
             .get_global(&**client, ISSUER_KEY)
@@ -528,6 +583,7 @@ impl UserService {
             self.failed(scope, "authenticator").await?;
             return Err(TwoFactorError::InvalidCode);
         };
+        self.replacing_text(scope).await?;
         let (codes, hashes) = fresh_recovery_codes().await?;
         let mut client = self.db.get().await.map_err(Error::from)?;
         let mut tx = self
@@ -664,16 +720,17 @@ impl UserService {
         }
     }
 
-    /// Checks a code against the account's newest text-message code. A wrong
-    /// code counts against that code (its fifth voids it) and against the
-    /// account's checks.
+    /// Checks a code against the account's newest text-message code that was
+    /// sent to the number it has now. A wrong code counts against that code
+    /// (the operator's attempts void it) and against the account's checks.
     async fn prove_text(&self, scope: &Scope, code: &str) -> Outcome<Proof> {
         let (tenant, user) = (scope.tenant(), scope.user());
         if !self.sms.available() || self.two_factor_status(scope).await?.phone.is_none() {
             return Err(TwoFactorError::NotEnabled);
         }
         let client = self.db.get().await.map_err(Error::from)?;
-        let active = sms::active(&**client, tenant, user).await?;
+        let limits = sms::Limits::read(&self.settings, &**client).await?;
+        let active = sms::active(&**client, tenant, user, limits.attempts).await?;
         let expired = active.is_none() && sms::newest_expired(&**client, tenant, user).await?;
         drop(client);
         let (Some(code), Some((id, hash))) = (sms::normalize(code), active) else {
@@ -687,14 +744,14 @@ impl UserService {
         if password::verify(&code, Some(&hash)).await? {
             return Ok(Proof::TextMessage(id));
         }
-        self.text_code_failed(scope, id).await?;
+        self.text_code_failed(scope, id, limits.attempts).await?;
         self.failed(scope, "text_message").await?;
         Err(TwoFactorError::WrongTextCode)
     }
 
     /// Counts one wrong attempt on a text-message code; the attempt that
-    /// reaches the limit voids it (`user.two_factor.code_invalidated`).
-    async fn text_code_failed(&self, scope: &Scope, id: i64) -> Result<()> {
+    /// reaches the operator's limit leaves it `invalidated`.
+    async fn text_code_failed(&self, scope: &Scope, id: i64, attempts: i32) -> Result<()> {
         let (tenant, user) = (scope.tenant(), scope.user());
         let mut client = self.db.get().await?;
         let mut tx = self
@@ -704,31 +761,39 @@ impl UserService {
                 scope.mutation_context("user.two_factor.code_failed"),
             )
             .await?;
-        tx.mutate(move |sql| {
-            Box::pin(async move {
-                let failures = sms::count_failure(sql, tenant, user, id).await?;
-                let status = if failures >= sms::CODE_FAILURES {
-                    "invalidated"
-                } else {
-                    "sent"
-                };
-                Ok((
-                    (),
-                    vec![Change {
-                        kind: SMS_KIND.into(),
-                        id,
-                        old: json!({}),
-                        new: json!({"status": status, "failures": failures}),
-                    }],
-                ))
+        let counted = tx
+            .mutate(move |sql| {
+                Box::pin(async move {
+                    // Voided or used meanwhile: nothing left to count.
+                    let failures = sms::count_failure(sql, tenant, user, id)
+                        .await?
+                        .ok_or(Error::NotFound)?;
+                    let status = if failures >= attempts {
+                        "invalidated"
+                    } else {
+                        "sent"
+                    };
+                    Ok((
+                        (),
+                        vec![Change {
+                            kind: SMS_KIND.into(),
+                            id,
+                            old: json!({"failures": failures - 1}),
+                            new: json!({"status": status, "failures": failures}),
+                        }],
+                    ))
+                })
             })
-        })
-        .await?;
-        tx.commit().await
+            .await;
+        match counted {
+            Ok(()) => tx.commit().await,
+            Err(Error::NotFound) => tx.rollback().await,
+            Err(error) => Err(error),
+        }
     }
 
-    /// Voids every outstanding text-message code of the account, audited as
-    /// `action` (an undelivered code).
+    /// Voids every outstanding text-message code of the account, one change
+    /// per code, audited as `action` (an undelivered code).
     async fn void_text_codes(&self, scope: &Scope, action: &'static str) -> Result<()> {
         let (tenant, user) = (scope.tenant(), scope.user());
         let mut client = self.db.get().await?;
@@ -736,28 +801,31 @@ impl UserService {
             .mutations
             .begin(&mut client, scope.mutation_context(action))
             .await?;
-        tx.mutate(move |sql| {
-            Box::pin(async move {
-                sms::void_outstanding(sql, tenant, user).await?;
-                Ok((
-                    (),
-                    vec![Change {
-                        kind: SMS_KIND.into(),
-                        id: user,
-                        old: json!({}),
-                        new: json!({"status": "voided"}),
-                    }],
-                ))
+        let voided = tx
+            .mutate(move |sql| {
+                Box::pin(async move {
+                    let voided = sms::void_outstanding(sql, tenant, user).await?;
+                    if voided.is_empty() {
+                        return Err(Error::NotFound);
+                    }
+                    Ok(((), voided_changes(&voided)))
+                })
             })
-        })
-        .await?;
-        tx.commit().await
+            .await;
+        match voided {
+            Ok(()) => tx.commit().await,
+            Err(Error::NotFound) => tx.rollback().await,
+            Err(error) => Err(error),
+        }
     }
 
     /// Spends a proof inside one audited transaction with what it was for:
     /// the authenticator step moves forward (compare-and-set, so a racing
-    /// reuse of the same code loses) or the recovery code is marked used, and
-    /// failures reset. A step-up proved by a recovery code is audited as
+    /// reuse of the same code loses), the recovery code or the text-message
+    /// code is marked used, and failures reset. The account's lock is
+    /// checked again under its row lock first, so a check that passed
+    /// `unlocked` before a concurrent failure locked the account does not
+    /// complete. A step-up proved by a recovery code is audited as
     /// `user.two_factor.recovery_code_used`.
     async fn consume(&self, scope: &Scope, proof: Proof, spend: Spend) -> Outcome<()> {
         let (tenant, user) = (scope.tenant(), scope.user());
@@ -781,6 +849,13 @@ impl UserService {
             Spend::Purpose { operation, channel } => json!({"for": operation, "channel": channel}),
             _ => json!({}),
         };
+        let attempts = match proof {
+            Proof::TextMessage(_) => {
+                let client = self.db.get().await.map_err(Error::from)?;
+                sms::Limits::read(&self.settings, &**client).await?.attempts
+            }
+            _ => 0,
+        };
         let sessions = self.sessions.clone();
         let session = scope.clone();
         let mut client = self.db.get().await.map_err(Error::from)?;
@@ -791,38 +866,89 @@ impl UserService {
         let spent = tx
             .mutate(move |sql| {
                 Box::pin(async move {
+                    let locked: Option<bool> = sql
+                        .query_opt(
+                            "SELECT locked_until IS NOT NULL AND locked_until>now() FROM user_two_factor_attempts WHERE tenant_id=$1 AND user_id=$2 FOR UPDATE",
+                            &[&tenant, &user],
+                        )
+                        .await?
+                        .map(|row| row.get(0));
+                    if locked == Some(true) {
+                        return Err(Error::Forbidden);
+                    }
+                    let mut changes = Vec::new();
+                    // What the proof spent, for the account's own change.
+                    let mut checked = json!({"checked_with": method});
+                    if let (Some(checked), Some(purpose)) =
+                        (checked.as_object_mut(), purpose.as_object())
+                    {
+                        checked.extend(purpose.clone());
+                    }
+                    let text_message = matches!(proof, Proof::TextMessage(_));
                     let spent = match proof {
                         Proof::Authenticator(step) => sql
                             .execute(
                                 "UPDATE user_two_factor SET last_step=$3,updated_at=now() WHERE tenant_id=$1 AND user_id=$2 AND confirmed_at IS NOT NULL AND (last_step IS NULL OR last_step<$3)",
                                 &[&tenant, &user, &step],
                             )
-                            .await?,
+                            .await?
+                            == 1,
                         Proof::Recovery(id) => sql
                             .execute(
                                 "UPDATE user_two_factor_recovery_codes SET used_at=now() WHERE id=$1 AND tenant_id=$2 AND user_id=$3 AND used_at IS NULL",
                                 &[&id, &tenant, &user],
                             )
-                            .await?,
-                        Proof::TextMessage(id) => sms::spend(sql, tenant, user, id).await?,
+                            .await?
+                            == 1,
+                        Proof::TextMessage(id) => {
+                            let spent = sms::spend(sql, tenant, user, id, attempts).await?;
+                            if spent.used {
+                                let mut new = json!({"status": "used"});
+                                if let (Some(new), Some(checked)) =
+                                    (new.as_object_mut(), checked.as_object())
+                                {
+                                    new.extend(checked.clone());
+                                }
+                                changes.push(Change {
+                                    kind: SMS_KIND.into(),
+                                    id,
+                                    old: json!({"status": "sent"}),
+                                    new,
+                                });
+                            }
+                            if spent.verified {
+                                changes.push(Change {
+                                    kind: "user".into(),
+                                    id: user,
+                                    old: json!({"phone_verified_at": null}),
+                                    new: json!({"phone_verified_at": "set"}),
+                                });
+                            }
+                            spent.used
+                        }
                     };
-                    if spent != 1 {
+                    if !spent {
                         return Err(Error::Conflict);
                     }
                     clear_failures(sql, tenant, user).await?;
-                    let new = match spent_for(sql, &sessions, &session, spend).await? {
+                    match spent_for(sql, &sessions, &session, spend).await? {
+                        // An account with only text messages has no
+                        // `user_two_factor` row: the code's change says it.
+                        Spent::Kept if text_message => {}
                         Spent::Kept => {
-                            let mut new = json!({"status": "enabled", "checked_with": method});
-                            if let (Some(new), Some(purpose)) =
-                                (new.as_object_mut(), purpose.as_object())
+                            let mut new = json!({"status": "enabled"});
+                            if let (Some(new), Some(checked)) =
+                                (new.as_object_mut(), checked.as_object())
                             {
-                                new.extend(purpose.clone());
+                                new.extend(checked.clone());
                             }
-                            new
+                            changes.push(change(user, json!({"status": "enabled"}), new));
                         }
-                        Spent::Deleted => json!({}),
-                    };
-                    Ok(((), vec![change(user, json!({"status": "enabled"}), new)]))
+                        Spent::Deleted => {
+                            changes.push(change(user, json!({"status": "enabled"}), json!({})));
+                        }
+                    }
+                    Ok(((), changes))
                 })
             })
             .await;
@@ -831,6 +957,11 @@ impl UserService {
             Err(Error::Conflict) => {
                 tx.rollback().await?;
                 self.failed(scope, "code").await?;
+                Err(TwoFactorError::InvalidCode)
+            }
+            Err(Error::Forbidden) => {
+                tx.rollback().await?;
+                self.unlocked(scope).await?;
                 Err(TwoFactorError::InvalidCode)
             }
             Err(error) => Err(error.into()),
@@ -866,8 +997,10 @@ impl UserService {
     }
 
     /// Counts one failed check (`check` names which: password, authenticator
-    /// or code), audited as `user.two_factor.failed`; the failure that
-    /// reaches the limit then locks the account's checks, audited as
+    /// or code), audited as `user.two_factor.failed`. The failure that
+    /// reaches the limit locks every check of the account in the same
+    /// transaction, under the attempts row's lock, so concurrent failures
+    /// cannot count past it; the lock is then recorded as the action
     /// `user.two_factor.locked`.
     async fn failed(&self, scope: &Scope, check: &'static str) -> Result<()> {
         let (tenant, user) = (scope.tenant(), scope.user());
@@ -879,7 +1012,7 @@ impl UserService {
                 scope.mutation_context("user.two_factor.failed"),
             )
             .await?;
-        let failures = tx
+        let locked = tx
             .mutate(move |sql| {
                 Box::pin(async move {
                     let failures: i32 = sql
@@ -889,38 +1022,36 @@ impl UserService {
                         )
                         .await?
                         .get(0);
-                    Ok((
-                        failures,
-                        vec![attempts_change(user, json!({"failures": failures, "check": check}))],
-                    ))
+                    let mut changes =
+                        vec![attempts_change(user, json!({"failures": failures, "check": check}))];
+                    if failures < MAX_FAILURES {
+                        return Ok((None, changes));
+                    }
+                    let until: String = sql
+                        .query_one(
+                            "UPDATE user_two_factor_attempts SET failures=0,window_started_at=now(),locked_until=now()+make_interval(secs => $3::double precision) WHERE tenant_id=$1 AND user_id=$2 RETURNING locked_until::text",
+                            &[&tenant, &user, &LOCK_SECONDS],
+                        )
+                        .await?
+                        .get(0);
+                    changes.push(attempts_change(user, json!({"locked_until": until})));
+                    Ok((Some(until), changes))
                 })
             })
             .await?;
         tx.commit().await?;
-        if failures < MAX_FAILURES {
-            return Ok(());
-        }
-        let mut tx = self
-            .mutations
-            .begin(
-                &mut client,
-                scope.mutation_context("user.two_factor.locked"),
+        if let Some(until) = locked {
+            record_action(
+                &**client,
+                &Attribution::from_scope(scope),
+                None,
+                "user.two_factor.locked",
+                json!({"semantic": true, "source": "TwoFactor", "summary": "Two-factor checks locked after repeated failures", "result": "locked", "locked_until": until}),
+                false,
             )
             .await?;
-        tx.mutate(move |sql| {
-            Box::pin(async move {
-                let until: String = sql
-                    .query_one(
-                        "UPDATE user_two_factor_attempts SET failures=0,window_started_at=now(),locked_until=now()+make_interval(secs => $3::double precision) WHERE tenant_id=$1 AND user_id=$2 RETURNING locked_until::text",
-                        &[&tenant, &user, &LOCK_SECONDS],
-                    )
-                    .await?
-                    .get(0);
-                Ok(((), vec![attempts_change(user, json!({"locked_until": until}))]))
-            })
-        })
-        .await?;
-        tx.commit().await
+        }
+        Ok(())
     }
 
     fn open_secret(&self, tenant: i64, user: i64, sealed: &serde_json::Value) -> Outcome<Vec<u8>> {

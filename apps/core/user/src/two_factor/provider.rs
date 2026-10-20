@@ -78,6 +78,8 @@ impl Provider for Authenticator {
     }
     /// A text-message account gets a code now, unless one it can still
     /// enter is already out; an authenticator account has nothing to send.
+    /// `Sent` only when a code the holder can enter exists: a wait after an
+    /// undelivered code is `Throttled`.
     fn challenge<'a>(
         &'a self,
         scope: &'a Scope,
@@ -88,9 +90,12 @@ impl Provider for Authenticator {
                 return Ok(Challenge::None);
             }
             Ok(match self.0.send_two_factor_code(scope, false).await {
-                // Too soon after the last one: that one is still on its way.
-                Ok(_) | Err(TwoFactorError::ResendTooSoon { .. }) => Challenge::Sent,
-                Err(TwoFactorError::TooManyCodes { .. }) => Challenge::Throttled,
+                Ok(_) => Challenge::Sent,
+                // Not resending, a wait means no code that can be entered is
+                // out (one was voided): saying "sent" would mislead.
+                Err(TwoFactorError::ResendTooSoon { .. } | TwoFactorError::TooManyCodes { .. }) => {
+                    Challenge::Throttled
+                }
                 Err(TwoFactorError::Locked { .. }) => Challenge::Locked,
                 Err(TwoFactorError::Other(error)) => return Err(error),
                 Err(_) => Challenge::None,
