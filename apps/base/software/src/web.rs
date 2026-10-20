@@ -1307,10 +1307,11 @@ impl View {
                     Some(n) => format!("release {n}"),
                     None => "a release".to_owned(),
                 };
-                Choice::new(
-                    format!("{bundle}: {what} from {}", text(&upload["from"])),
-                    bundle,
-                )
+                let label = match upload["from"].as_str() {
+                    Some(from) => format!("{bundle}: {what} from {from}"),
+                    None => format!("{bundle}: {what}"),
+                };
+                Choice::new(label, bundle)
             }));
             let file = Field::named("bundle")
                 .id("software-bundle")
