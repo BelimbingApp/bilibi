@@ -110,4 +110,4 @@ values and as `staff` for "Restricted" in their place (the walkthrough fixture a
 restricts the company tax ID and revenue for staff, which the Companies rows
 show the same way); open `/companies/1` and press History for the trail.
 
-Actions, Data Mutations and record history show "Client identity" separately from "Self-reported agent". Both are evidence; neither replaces the account attribution or grants permissions.
+Actions, Data Mutations and record history show "Client identity" separately from "Model (as reported)". Both are evidence; neither replaces the account attribution or grants permissions.

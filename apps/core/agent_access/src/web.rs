@@ -767,10 +767,10 @@ impl ConnectionsPage {
             columns: ListColumns::mount(
                 "agent-connections",
                 vec![
-                    BuiltinColumn::new("agent", "Agent"),
-                    BuiltinColumn::new("expiry", "Ends"),
+                    BuiltinColumn::new("agent", "Harness"),
+                    BuiltinColumn::new("expiry", "Expires"),
                     BuiltinColumn::new("status", "Status"),
-                    BuiltinColumn::new("seen", "Also seen as"),
+                    BuiltinColumn::new("seen", "Also known as"),
                     BuiltinColumn::new("self_report", SelfReport::LABEL),
                     BuiltinColumn::new("client_identity", ClientIdentity::LABEL),
                 ],

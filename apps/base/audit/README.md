@@ -45,8 +45,7 @@ rehydration contexts.
 `agent_self_report` (migration `base-audit-007-agent-self-report`, on mutations
 and actions) is the agent's self-reported `harness/model-version-effort`,
 taken from `Context::agent_self_report` or the scope's agent facet. It is
-recorded beside the actor, never replaces it, and is shown as "Self-reported
-agent" on the Actions and Data Mutations lists and in record history.
+recorded beside the actor, never replaces it, and is shown as "Model (as reported)" on the Actions and Data Mutations lists and in record history.
 The committed action payload records `Context::agent_connection` when an agent acts; its shared trace links every nested mutation to that durable grant. The actor remains the person.
 The committed action row carries `event = Context::action`, so name actions as
 `owner.operation` (`company.update`), the way Bilimbi names explicit actions.
@@ -104,4 +103,4 @@ refused unknown kinds, refused mutation and action rows leaving company and
 notification state unchanged with diagnostics written, append-only evidence, every
 console outcome recorded, and an HTTP/browser smoke of the running app.
 
-`client_identity` (migration `base-audit-008-client-identity`) records the transport client separately on actions and mutations, via the sealed scope or trusted `Context`. It is shown as "Client identity", never authorization or a replacement for "Self-reported agent".
+`client_identity` (migration `base-audit-008-client-identity`) records the transport client separately on actions and mutations, via the sealed scope or trusted `Context`. It is shown as "Client identity", never authorization or a replacement for "Model (as reported)".

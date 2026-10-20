@@ -172,7 +172,7 @@ impl AgentFacet {
 }
 /// An agent's self-reported `harness/model-version-effort` (ADR 01, "Agent
 /// identity at runtime"). It is what the agent says about itself: recorded
-/// and shown labelled "Self-reported agent", never used for authorization.
+/// and shown labelled "Model (as reported)", never used for authorization.
 /// Only the shape is checked: one `/` between the harness and the
 /// `model-version-effort` part, either side may be empty but not both, and
 /// each side holds only ASCII letters, digits, `.`, `_` and `-`, so the
@@ -183,7 +183,7 @@ pub struct SelfReport(String);
 impl SelfReport {
     pub const MAX_LEN: usize = 120;
     /// The one label every surface shows the value under.
-    pub const LABEL: &'static str = "Self-reported agent";
+    pub const LABEL: &'static str = "Model (as reported)";
     /// The request header the agent edge (`/api/v1`, `/mcp`) reads it from.
     pub const HEADER: &'static str = "x-bilibi-agent-self-report";
     /// Model-accessible argument on the six generic MCP tools.

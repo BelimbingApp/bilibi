@@ -65,7 +65,7 @@ never authority. `agent_self_report` is the agent's shape-checked
 `harness/model-version-effort` (`bilibi_tenancy::SelfReport`), and
 `agent_self_report_malformed` records that the caller sent one that failed the
 check and was dropped; never set both. The exchange list and detail show it as
-"Self-reported agent" (or "Malformed, dropped"). An omitted method or duration stays unknown; no status and no
+"Model (as reported)" (or "Malformed, dropped"). An omitted method or duration stays unknown; no status and no
 error class records `unknown`; an operation key stands in for the endpoint when
 there is no HTTP path. Out-of-range status, negative duration or over-long
 fields refuse with `Error::Invalid`.
