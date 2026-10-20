@@ -64,25 +64,25 @@ pub fn catalogue(catalogue: &Catalogue, made: &Composition) -> Value {
                 None => format!("No published version is listed as supporting Bilibi {}. Ask your developer to check the requirements before adding it.", made.version),
             });
             // Official modules are kept in step with every Platform release,
-            // so they get one plain status. Anything else keeps the sentence
-            // above: nobody checks it against this Platform for the operator.
+            // so they also get one plain status. The sentence above stays for
+            // every module as the version-check evidence.
             if repository.starts_with(OFFICIAL) {
                 let now = installed[kind]
                     .as_array()
                     .into_iter()
                     .flatten()
                     .find(|d| d["id"] == id.as_str());
-                let (status, text) = match (now, &newest_fit) {
-                    (None, _) => ("not_installed", "Not installed".to_owned()),
-                    (Some(d), Some((latest, name)))
+                let status = match (now, &newest_fit) {
+                    (None, _) => "not_installed",
+                    (Some(d), Some((latest, _)))
                         if d["version"]
                             .as_str()
                             .and_then(Version::parse)
                             .is_some_and(|have| have < *latest) =>
                     {
-                        ("update_available", format!("Update available: {name}"))
+                        "update_available"
                     }
-                    _ => ("installed", "Installed".to_owned()),
+                    _ => "installed",
                 };
                 let warning = match (&newest_fit, &newest_any) {
                     (Some(_), _) => None,
@@ -97,10 +97,6 @@ pub fn catalogue(catalogue: &Catalogue, made: &Composition) -> Value {
                 item["status"] = json!(status);
                 item["latest_version"] = json!(newest_fit.map(|(_, name)| name));
                 item["warning"] = json!(warning);
-                item["compatibility"] = json!(match &warning {
-                    Some(warning) => format!("{text}. {warning}."),
-                    None => format!("{text}."),
-                });
             }
             item["official"] = json!(repository.starts_with(OFFICIAL));
             item["next_step"] = json!(NEXT_STEP);
