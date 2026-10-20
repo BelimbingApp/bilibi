@@ -19,9 +19,9 @@ Values are read with `Settings::resolve_masked`, so an encrypted value is never 
 
 ## Writes
 
-Route access is `OperatorCapability(base.settings.global.manage)`. Every Save and Restore re-asks `authorize_operator` (logged) and rebuilds the field plan from live grants before acting; a refusal flashes and redraws, it never clears the page. A Save is planned in full, then applied in one `MutationTransaction` (shared mutation audit): a blank clears this scope's override, the mask keeps a secret, and a value equal to what the field already shows is not written. That last rule is a deliberate difference from Bilimbi, whose Save pins every submitted value, including inherited defaults and every checkbox, as an override. Messages say what happened ("1 setting updated, 1 override cleared."). Restore confirms through the shared dialog and deletes only the overrides the dialog counted that are still overridden.
+Route access is `OperatorCapability(base.settings.global.manage)`. Every Save and Restore re-asks `authorize_operator` (logged) and rebuilds the field plan from live grants before acting; a refusal flashes and redraws, it never clears the page. A Save is planned in full, then applied in one `MutationTransaction` (shared mutation audit): a blank clears this scope's override, the mask keeps a secret, and a value equal to what the field already shows is not written. That last rule is a deliberate difference from Bilimbi, whose Save pins every submitted value, including inherited defaults and every checkbox, as an override. Messages say what happened ("1 setting updated, 1 override cleared."). Restore confirms through the shared dialog, which counts every changed setting in the current scope, including rows hidden by search or on other pages, and deletes only those that are still overridden. Changing the scope to Global from the URL or Back drops a pending restore.
 
-A setting that a Base Step-up operation guards (`Operation::guards_setting`, declared `.always()`; today the Software pairing key, `base.software.pairing_key.change`) asks for the holder's authenticator code every time before Save or Restore touches it. The row asks for a code and keeps a refused save open. Restore uses the host confirmation page. Other fields ask for nothing.
+A setting that a Base Step-up operation guards (`Operation::guards_setting`, declared `.always()`; today the Software pairing key, `base.software.pairing_key.change`) asks for the holder's authenticator code every time before Save or Restore touches it. The row asks for a code and keeps a refused save open; while viewing as someone else it says the setting cannot be changed instead. Restore uses the host confirmation page. Other fields ask for nothing.
 
 ## Stored-secret reveal
 
@@ -39,7 +39,7 @@ On a disposable migrated database, install the walkthrough fixture (`cargo run -
 
 1. Open **Administration → System → Settings**. Each Value cell says "Set here" or names the inherited source.
 2. Open a number's Value cell and Save: one setting updated. Blank it and Save: one override cleared. Type `abc` into a number: "<Label>: must be a whole number", nothing stored.
-3. Save two rows, press Restore Defaults: the dialog counts two overrides; Restore clears them.
+3. Save two rows, press Restore Defaults: the dialog counts two changed settings; Restore clears them.
 4. Grant the account `base.settings.secret.view` directly and store an encrypted editable setting (the walkthrough in `apps/web/examples` or any module's encrypted definition). "Show stored value" asks for 2FA; a refused check shows nothing, an accepted check shows the value briefly, and `base_audit_actions` holds one `settings.secret.reveal` row per attempt.
 5. Deny one field's capability (`principal_capabilities ... is_allowed=false`) and reload: that row is gone; deny all and the page names them.
 
