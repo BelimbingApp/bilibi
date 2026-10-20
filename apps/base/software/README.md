@@ -147,7 +147,7 @@ Uploading a saved release archive stays available when GitHub cannot be reached.
 
 1. Review an exact GitHub asset or a queued upload. GitHub review binds repository, release and asset IDs, tag, target and archive SHA-256. It checks the selected identity again at commit.
 2. The server's supervised `run_downloads` loop downloads queued GitHub installs through `base/integration` as the reauthenticated requester. It rechecks GitHub, streams into `incoming/job-<id>/`, checks the approved digest before unpacking, and wakes the installer. Cancel stops a download within about two seconds; failures finish before any pause.
-3. The installer takes `incoming/job-<id>/` or `incoming/upload-<n>/`, checks checksums, processor, system libraries and disk space, refuses the program already in service, then copies and checks again. It runs the copy's `status` before pausing. A downloaded folder is removed after the attempt; an upload stays for retry unless installed, corrupt or discarded.
+3. The installer takes `incoming/job-<id>/` or `incoming/upload-<n>/`, checks checksums, processor, system libraries and disk space, refuses the program already in service, then copies and checks again. For GitHub, it compares the program, checksum list and recipe with the downloader's recorded hashes before executing `status`, then checks the copied metadata again. A downloaded folder is removed after the attempt; an upload stays for retry unless installed, corrupt or discarded.
 
 Each failed check is a plain sentence that says what to do next: "This release was built for Linux ARM 64-bit computers, and this server is Linux x86-64. Build it locally for the same kind of server."
 

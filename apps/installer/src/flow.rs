@@ -64,6 +64,8 @@ struct Found {
     /// The folder under `incoming/` an uploaded file was unpacked into; it
     /// stays for another try unless the file is spent or cannot be installed.
     uploaded: Option<PathBuf>,
+    expected_program: Option<String>,
+    identity: Option<Value>,
 }
 /// Where a failed install or undo goes back to, and what it says about it.
 struct Back {
@@ -594,6 +596,8 @@ impl<'a> Run<'a> {
                     name: repository.clone(),
                     text: format!("GitHub {repository} tag {tag} ({words})"),
                     uploaded: None,
+                    expected_program: Some(download["sha256"].as_str().ok_or("The GitHub download recorded no program SHA-256. Download it again.")?.to_owned()),
+                    identity: download.get("identity").cloned(),
                 }
             }
             Some("upload") => {
@@ -621,6 +625,8 @@ impl<'a> Run<'a> {
                     name: bundle.clone(),
                     text: format!("the uploaded file {bundle}{detail}"),
                     uploaded: Some(from),
+                    expected_program: None,
+                    identity: None,
                 }
             }
             _ => return Err("the request names no source".into()),
@@ -661,16 +667,6 @@ impl<'a> Run<'a> {
                 "setup_commit": recipe["setup"]["commit"],
             });
         }
-        if let Some(expected) = request["staging"]["asset"]["program_sha256"].as_str() {
-            if checked["sha256"].as_str() != Some(expected) {
-                return Err("The copied program differs from the program checked on Staging. Nothing was paused.".into());
-            }
-        }
-        if let Some(expected) = request["staging"]["asset"]["setup_commit"].as_str() {
-            if checked["github"]["setup_commit"].as_str() != Some(expected) {
-                return Err("The setup commit differs from the one recorded on Staging. Nothing was paused.".into());
-            }
-        }
         if request.get("staging").is_some() {
             checked["staging"] = request["staging"].clone();
         }
@@ -683,6 +679,23 @@ impl<'a> Run<'a> {
     async fn copy_checked(&mut self, source: &Found, wanted: Option<u64>) -> Result<Value, String> {
         let from = &source.from;
         let sha = layout::verify_checksum(from)?;
+        if source
+            .expected_program
+            .as_ref()
+            .is_some_and(|expected| *expected != sha)
+        {
+            return Err("The incoming program changed after the GitHub download was checked. Nothing was executed or paused.".into());
+        }
+        if let Some(expected) = self.job.request["staging"]["asset"]["program_sha256"].as_str() {
+            if expected != sha {
+                return Err("The program differs from the program checked on Staging. Nothing was executed or paused.".into());
+            }
+        }
+        if let Some(expected) = &source.identity {
+            if layout::identity_of(from)? != *expected {
+                return Err("The incoming recipe or checksum list changed after the GitHub download was checked. Nothing was executed or paused.".into());
+            }
+        }
         layout::built_for_this_server(from)?;
         let current = self
             .layout
@@ -735,6 +748,22 @@ impl<'a> Run<'a> {
                 "the copy in {} does not match the source",
                 dst.display()
             ));
+        }
+        if let Some(expected) = &source.identity {
+            if layout::identity_of(&dst)? != *expected {
+                let _ = fs::remove_dir_all(&dst);
+                return Err("The copied recipe or checksum list differs from the checked GitHub download. Nothing was executed or paused.".into());
+            }
+        }
+        if let Some(expected) = self.job.request["staging"]["asset"]["setup_commit"].as_str() {
+            let recipe: Value = fs::read(dst.join("release.json"))
+                .ok()
+                .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+                .unwrap_or(Value::Null);
+            if recipe["setup"]["commit"].as_str() != Some(expected) {
+                let _ = fs::remove_dir_all(&dst);
+                return Err("The setup commit differs from the one recorded on Staging. Nothing was executed or paused.".into());
+            }
         }
         let status = program_status(&dst).inspect_err(|_| {
             let _ = fs::remove_dir_all(&dst);

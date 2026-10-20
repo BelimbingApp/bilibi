@@ -38,7 +38,7 @@ If the backup cannot be restored, the job ends `failed` with the service **left 
 
 The app downloads GitHub assets before the installer claims the job. The installer leaves a queued download alone until that step is complete. See [release archives](../base/software/README.md#release-archives).
 
-A GitHub download is another folder under `incoming/job-<n>/`. The download step checks that the archive still matches the reviewed check code before it is opened. The installer then checks the files inside against their own check codes, the same way as an upload. The job result keeps the GitHub repository number, release, file, tag, target, archive SHA-256, program SHA-256 and setup commit from `release.json`. It also retains any Staging report and compares its program SHA-256 before pausing. Undo does not call GitHub.
+A GitHub download is another folder under `incoming/job-<n>/`. The download step checks that the archive still matches the reviewed check code before it is opened. The installer compares the program with the downloader’s recorded SHA-256 before executing it. New downloads also record hashes of the checksum list and recipe; these are compared before and after copying. Earlier queued GitHub downloads retain their existing program pin. The files inside are checked against their own check codes, the same way as an upload. The job result keeps the GitHub repository number, release, file, tag, target, archive SHA-256, program SHA-256 and setup commit from `release.json`. It also retains any Staging report and compares its program SHA-256 before pausing. Undo does not call GitHub.
 
 ### "Switch as soon as it is ready" or "ask me first"
 
