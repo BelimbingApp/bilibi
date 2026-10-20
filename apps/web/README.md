@@ -170,7 +170,7 @@ The status bar shows the same facts through `bilibi_ui::version_badges`. The sch
 AI connections (`/settings/ai-connections`) is a `core/agent_access` page, not a host route. `/settings/mcp`, `/settings/agent-connections` and `/settings/chatgpt-plugin` redirect there. The page shows this `/mcp` edge from `APP_ORIGIN`. The ChatGPT plugin download stays a `core/agent_plugins` contribution. The package is named after the instance (`bilibi-staging`, "Bilibi Staging", `bilibi-staging-chatgpt-plugin.zip`), so a person can hold a Dev, a Staging and a Production connection in one harness. The host only parses the exporter subcommand:
 
 ```sh
-bilibi-web plugin-export --harness chatgpt --client <registered-id> --output <new-directory>
+bilibi-web plugin-export --harness chatgpt --output <new-directory>
 ```
 
 See `apps/core/agent_plugins/README.md`.
@@ -221,3 +221,5 @@ The host compresses textual responses (`text/*`, JSON, JavaScript, XML and `+jso
 - CSP, `nosniff` and the referrer policy still apply to every response. A handler's stricter policy is preserved.
 
 Shared templates use `bilibi_ui::Assets::url` for CSS, scripts and icons; CSS also links versioned fonts. See [the UI asset contract](../base/ui/assets/README.md#urls-and-browser-caching) for the catalogue and hashing rules.
+
+OAuth discovery advertises `/oauth/register` and client ID metadata documents. Public client registration, redirect matching and receipt retention belong to [Agent Access](../core/agent_access/README.md#client-registration). Startup requires HTTPS for Staging and Production; Dev permits HTTP only on loopback. Token issuance rechecks the same policy if the stored instance role changes.

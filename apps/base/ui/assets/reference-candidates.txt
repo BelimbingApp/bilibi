@@ -9442,7 +9442,6 @@ oauth-consent-form
 oauth-expiry
 oauth-protected-resource
 oauth2
-oauth_clients
 oauth_requests_per_minute
 oauth_scope
 oban_config

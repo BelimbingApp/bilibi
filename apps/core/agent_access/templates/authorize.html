@@ -28,11 +28,12 @@
 {% call ui::card(id="oauth-consent", title="Review connection", inner_class="wrap-anywhere") %}
 {% call forms::form(id="oauth-consent-form", event="approve", actions=actions) %}
 {% call ui::facts(id="oauth-client-details") %}
-{% call ui::fact(title="App") %}{{ request.client_name }}{% endcall %}
+{% call ui::fact(title="App name (self-declared)") %}{{ request.client_name }}{% endcall %}
 {% call ui::fact(title="Bilibi address", id="oauth-bilibi-address") %}{{ origin }}{% endcall %}
 {% endcall %}
 {% call ui::facts() %}
-{% call ui::fact(title="Returns to") %}{{ request.redirect_uri }}{% endcall %}
+{% call ui::fact(title="Return host") %}{{ request.return_host }}{% endcall %}
+{% call ui::fact(title="Return address") %}{{ request.redirect_uri }}{% endcall %}
 {% call ui::fact(title="Connection ends", id="oauth-connection-end") %}
 {% if let Some(end) = expiry %}{% call time::datetime(instant=end) %}{% endcall %}{% endif %}
 {% endcall %}

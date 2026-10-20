@@ -69,6 +69,31 @@ impl App {
         let client = self.db.get().await?;
         bilibi_base::system::Instance::resolve(&self.settings, &**client).await
     }
+    /// Public OAuth origin policy. Rechecked at issuance so a live role change
+    /// cannot keep issuing tokens on a development HTTP origin.
+    pub async fn require_secure_origin(&self) -> Result<()> {
+        let instance = self.instance().await?;
+        let uri: axum::http::Uri = self.origin.parse().map_err(|_| Error::Invalid)?;
+        let host = uri.host().ok_or(Error::Invalid)?.trim_matches(['[', ']']);
+        let loopback = host == "localhost"
+            || host
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|ip| ip.is_loopback());
+        let bare = uri
+            .authority()
+            .is_some_and(|authority| !authority.as_str().contains('@'))
+            && uri.path_and_query().is_none_or(|path| path.as_str() == "/");
+        if bare
+            && (uri.scheme_str() == Some("https")
+                || (instance.role == bilibi_base::system::Role::Dev
+                    && uri.scheme_str() == Some("http")
+                    && loopback))
+        {
+            Ok(())
+        } else {
+            Err(Error::Invalid)
+        }
+    }
     pub fn new(db: Db, origin: &str) -> Result<Self> {
         let modules = modules()?;
         let mut services = bilibi_module_registry::Services::default();

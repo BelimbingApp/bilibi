@@ -284,3 +284,11 @@ Files outside `/opt/bilibi`: `/etc/systemd/system/bilibi@.service`, `/etc/system
 - What each environment variable does: [`README.md`](../README.md), Configuration.
 - 2FA step-up and why Dev skips it: [`apps/base/step_up/README.md`](../apps/base/step_up/README.md).
 - The instance identity in code: [`apps/base/system/README.md`](../apps/base/system/README.md).
+
+## HTTPS for OAuth
+
+Use an HTTPS `APP_ORIGIN` on Staging and Production; Bilibi refuses to start with HTTP there.
+
+The address must be the exact public origin people browse, without a path, query or credentials. TLS may terminate at your reverse proxy while Bilibi listens on a private HTTP socket. A Dev installation may use HTTP only on `localhost` or a loopback IP. Token issuance rechecks the stored instance role, so changing a running Dev copy to Staging or Production also requires HTTPS.
+
+AI apps register themselves without an operator-maintained client list. Their return addresses must use HTTPS, except HTTP callbacks to the person's own loopback address. Each app supplies its own callback paths; loopback ports may vary. See [Agent Access](../apps/core/agent_access/README.md#client-registration) for matching and retention rules.

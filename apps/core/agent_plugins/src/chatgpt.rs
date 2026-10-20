@@ -55,10 +55,10 @@ impl Harness for ChatGpt {
                             "auth": {
                                 "type": "oauth",
                                 "client": {
-                                    "mode": "provided",
-                                    "clientId": connection.client_id,
+                                    "mode": "dcr",
                                     "tokenEndpointAuthMethod": "none"
                                 },
+                                "registrationUrl": format!("{}/oauth/register", connection.origin()),
                                 "authorizationUrl": connection.authorization_url(),
                                 "tokenUrl": connection.token_url(),
                                 "baseScopes": [connection.scope()]

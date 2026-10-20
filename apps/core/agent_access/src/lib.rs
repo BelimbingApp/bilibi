@@ -9,12 +9,13 @@
 //! SQL against Core account, company or person tables.
 mod contributions;
 mod oauth_client;
+mod registration;
 mod secrets;
 mod setup_prompt;
 mod throttle;
 mod web;
 pub use contributions::MANAGE;
-pub use oauth_client::{proof, valid_clients, AuthorizationRequest, AuthorizeParams, PublicClient};
+pub use oauth_client::{proof, AuthorizationRequest, AuthorizeParams, ClientRegistration};
 /// `code_challenge` is the S256 form a public client sends for its verifier.
 pub use secrets::{digest_base64 as code_challenge, normalize_user_code};
 pub use throttle::Throttle;
@@ -42,7 +43,7 @@ pub const ACCESS_TOKEN_SECONDS: i64 = 3600;
 pub const SEEN_LIMIT: usize = 20;
 pub const UNSTATED: &str = "(not stated)";
 pub const CONNECTION_DAYS: &str = "agent_access.connection_days";
-pub const OAUTH_CLIENTS: &str = "agent_access.oauth_clients";
+pub const UNUSED_CLIENT_DAYS: &str = "agent_access.unused_client_days";
 pub const AUTHORIZATION_CODE_SECONDS: &str = "agent_access.authorization_code_seconds";
 pub const OAUTH_REQUESTS_PER_MINUTE: &str = "agent_access.oauth_requests_per_minute";
 pub const MIGRATION: (&str, &str) = (
@@ -62,6 +63,8 @@ pub enum OAuthError {
     InvalidRequest,
     #[error("invalid_client")]
     InvalidClient,
+    #[error("invalid_client_metadata")]
+    InvalidClientMetadata,
     #[error("invalid_grant")]
     InvalidGrant,
     #[error("authorization_pending")]
@@ -185,6 +188,8 @@ pub struct AgentAccess {
     settings: Arc<Settings>,
     authentication: Arc<Authentication>,
     parties: Arc<PartyProofs>,
+    integration: Arc<bilibi_integration::Integration>,
+    metadata_throttle: Throttle,
 }
 
 struct Connection {
@@ -320,16 +325,15 @@ impl AgentAccess {
             .await?
             .get(0))
     }
-    /// Validates an operator-registered authorization-code request before
+    /// Validates a registered authorization-code request before
     /// displaying consent.
     pub async fn authorization_request(
         &self,
         params: &AuthorizeParams,
         resource: &str,
     ) -> std::result::Result<AuthorizationRequest, OAuthError> {
-        let client = self.db.get().await?;
-        let clients = self.settings.get_global(&**client, OAUTH_CLIENTS).await?;
-        oauth_client::request(&clients, params, resource)
+        let metadata = self.client_metadata(&params.client_id).await?;
+        oauth_client::request(&metadata, params, resource)
     }
     /// Creates a person-owned MCP grant only after explicit browser consent,
     /// returning the one-time authorization code for the registered callback.
@@ -340,8 +344,23 @@ impl AgentAccess {
         resource: &str,
         expires_at: SystemTime,
     ) -> std::result::Result<String, OAuthError> {
+        self.authorize_reviewed(scope, params, resource, expires_at, None)
+            .await
+    }
+    /// Keep the app's currently declared facts equal to what the person saw.
+    pub(crate) async fn authorize_reviewed(
+        &self,
+        scope: &Scope,
+        params: &AuthorizeParams,
+        resource: &str,
+        expires_at: SystemTime,
+        reviewed: Option<&AuthorizationRequest>,
+    ) -> std::result::Result<String, OAuthError> {
         self_service(scope)?;
         let request = self.authorization_request(params, resource).await?;
+        if reviewed.is_some_and(|reviewed| reviewed != &request) {
+            return Err(OAuthError::InvalidRequest);
+        }
         future(expires_at)?;
         let mut client = self.db.get().await?;
         let mut tx = self
@@ -425,10 +444,11 @@ impl AgentAccess {
                 &[&code_id],
             )
             .await?;
-        let clients = self.settings.get_global(tx.sql(), OAUTH_CLIENTS).await?;
         let redirect: String = auth.get("redirect_uri");
-        let bound = oauth_client::registered_redirect(&clients, &connection.client_id, &redirect)
-            && connection.client_id == params.client_id
+        // The grant and code already contain the consented client and exact
+        // callback. Keeping this binding preserves grants across migration and
+        // registration pruning without admitting any new authorization.
+        let bound = connection.client_id == params.client_id
             && connection.resource.as_deref() == Some(resource)
             && params.resource == resource
             && redirect == params.redirect_uri
@@ -738,13 +758,6 @@ impl AgentAccess {
             tx.rollback().await?;
             return Err(OAuthError::InvalidGrant);
         }
-        if client_id != CLIENT_ID {
-            let clients = self.settings.get_global(tx.sql(), OAUTH_CLIENTS).await?;
-            if oauth_client::client(&clients, client_id).is_none() {
-                tx.rollback().await?;
-                return Err(OAuthError::InvalidClient);
-            }
-        }
         if token.get::<_, bool>("used") {
             Self::revoke_connection(&mut tx, &connection, "refresh token replayed").await?;
             tx.commit().await?;
@@ -931,23 +944,6 @@ impl AgentAccess {
         .await?;
         tx.commit().await?;
         Ok(())
-    }
-    /// The operator-registered public clients: global, non-secret
-    /// configuration for an administrative exporter. Registering a client
-    /// is the only way onto this list; listing grants nothing.
-    pub async fn public_clients(&self) -> Result<Vec<PublicClient>> {
-        let client = self.db.get().await?;
-        let clients = self.settings.get_global(&**client, OAUTH_CLIENTS).await?;
-        Ok(oauth_client::public_clients(&clients))
-    }
-    /// The same list for a person setting up their own agent. Impersonation
-    /// and agent facets are refused, as for every self-service decision.
-    pub async fn clients_for(
-        &self,
-        scope: &Scope,
-    ) -> std::result::Result<Vec<PublicClient>, OAuthError> {
-        self_service(scope)?;
-        Ok(self.public_clients().await?)
     }
     /// The person's own connections, newest first, including ended ones.
     pub async fn list_connections(
@@ -1184,8 +1180,8 @@ impl bilibi_tenancy::AgentVerifier for GrantVerifier {
 inventory::submit! {
     bilibi_module_registry::Module {
         id: "core/agent_access", layer: bilibi_module_registry::Layer::Core,
-        dependencies: &["base/database", "base/settings", "base/tenancy", "base/audit", "base/authz", "base/party_ids", "base/ui", "base/datetime", "base/locale", "base/system", "core/user", "core/company"],
-        migrations: &[MIGRATION, SELF_REPORT_MIGRATION, ("core-agent-access-003-client-identity", include_str!("../migrations/003-client-identity.sql"))],
+        dependencies: &["base/database", "base/settings", "base/tenancy", "base/integration", "base/audit", "base/authz", "base/party_ids", "base/ui", "base/datetime", "base/locale", "base/system", "core/user", "core/company"],
+        migrations: &[MIGRATION, SELF_REPORT_MIGRATION, ("core-agent-access-003-client-identity", include_str!("../migrations/003-client-identity.sql")), ("core-agent-access-004-client-registration", include_str!("../migrations/004-client-registration.sql"))],
         services: &[bilibi_module_registry::Service { id: "core/agent_access.grants", factory: |services| {
             let authentication = services.get::<Authentication>("base/tenancy.authentication")?;
             authentication.bind_agents(Arc::new(GrantVerifier))?;
@@ -1195,6 +1191,8 @@ inventory::submit! {
             settings: services.get("base/settings.store")?,
             authentication: services.get("base/tenancy.authentication")?,
             parties: services.get("base/tenancy.parties")?,
+            integration: services.get(bilibi_integration::SERVICE)?,
+            metadata_throttle: Throttle::default(),
         })) } }, bilibi_module_registry::Service { id: "core/agent_access.pages", factory: |services| Ok(Arc::new(bilibi_ui::page::PageService(Arc::new(web::Pages {
             access: services.get("core/agent_access.grants")?,
             db: services.get::<Db>("base/database.pool")?.as_ref().clone(),

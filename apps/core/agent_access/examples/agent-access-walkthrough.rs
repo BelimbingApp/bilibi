@@ -5,8 +5,8 @@
 //! are replaced by explicit SQL time travel on the disposable rows, and each
 //! such step says so. Raw codes and tokens are never printed in full.
 use bilibi_agent_access::{
-    code_challenge, normalize_user_code, AgentAccess, AuthorizeParams, CodeExchange, Decision,
-    OAuthError, Throttle, CLIENT_ID, CONNECTION_DAYS, OAUTH_CLIENTS, SEEN_LIMIT,
+    code_challenge, normalize_user_code, AgentAccess, AuthorizeParams, ClientRegistration,
+    CodeExchange, Decision, OAuthError, Throttle, CLIENT_ID, CONNECTION_DAYS, SEEN_LIMIT,
 };
 use bilibi_database::{pool, Error, MutationBoundary, Result};
 use bilibi_module_registry::Services;
@@ -530,45 +530,33 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("\n== PKCE authorization code (MCP) ==");
     let resource = "https://bilibi.localhost/mcp";
     let callback = "https://chatgpt.com/connector_platform_oauth_redirect";
-    println!(
-        "register wildcard client: {:?}",
-        put_global(
-            &boundary,
-            &settings,
-            &mut client,
-            &actor,
-            OAUTH_CLIENTS,
-            json!({"chatgpt":{"name":"ChatGPT","redirect_uris":["https://*.chatgpt.com/cb"]}})
+    let registration = |uri: &str| {
+        serde_json::from_value::<ClientRegistration>(
+            json!({"client_name":"ChatGPT", "redirect_uris":[uri]}),
         )
-        .await
-        .err()
+        .unwrap()
+    };
+    println!(
+        "register wildcard client: {}",
+        outcome(
+            &grants
+                .register_client(&registration("https://*.chatgpt.com/cb"))
+                .await
+        )
     );
     println!(
-        "register http client:     {:?}",
-        put_global(
-            &boundary,
-            &settings,
-            &mut client,
-            &actor,
-            OAUTH_CLIENTS,
-            json!({"chatgpt":{"name":"ChatGPT","redirect_uris":["http://chatgpt.com/cb"]}})
+        "register http client: {}",
+        outcome(
+            &grants
+                .register_client(&registration("http://chatgpt.com/cb"))
+                .await
         )
-        .await
-        .err()
     );
-    let registered = put_global(
-        &boundary,
-        &settings,
-        &mut client,
-        &actor,
-        OAUTH_CLIENTS,
-        json!({"chatgpt":{"name":"ChatGPT","redirect_uris":[callback]}}),
-    )
-    .await;
-    println!("register ChatGPT callback: {:?}", registered.as_ref().err());
+    let registered = grants.register_client(&registration(callback)).await?;
+    let registered_id = registered["client_id"].as_str().unwrap();
     let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk-verifier";
     let params = AuthorizeParams {
-        client_id: "chatgpt".into(),
+        client_id: registered_id.into(),
         redirect_uri: callback.into(),
         response_type: "code".into(),
         resource: resource.into(),
@@ -628,7 +616,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("consented:            code={}", hint(&code));
     let exchange = CodeExchange {
         code: code.clone(),
-        client_id: "chatgpt".into(),
+        client_id: registered_id.into(),
         redirect_uri: callback.into(),
         code_verifier: verifier.into(),
         resource: resource.into(),
@@ -723,7 +711,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("digest field names in audit values: {leaked}");
 
     // Leave the global settings as they were so reruns start from defaults.
-    for key in [CONNECTION_DAYS, OAUTH_CLIENTS] {
+    for key in [CONNECTION_DAYS] {
         let _ = delete_global(&boundary, &settings, &mut client, &actor, key).await;
     }
     println!(

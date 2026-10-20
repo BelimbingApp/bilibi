@@ -18,7 +18,7 @@ are the base layer and stay where they are.
 | --- | --- | --- |
 | Operations, guides, plans, MCP protocol | `base/agent_api` | No |
 | `/api/v1`, `/mcp`, OAuth endpoints | `apps/web` | No |
-| OAuth public clients, grants, connections | `core/agent_access` | No |
+| OAuth registrations, grants, connections | `core/agent_access` | No |
 | Package builder, archive, download, exporter | `core/agent_plugins` (`src/package.rs`, `src/archive.rs`, `src/web.rs`) | No |
 | AI connections settings page | `core/agent_access` | No |
 | Manifest format and file layout | one adapter per harness (`src/chatgpt.rs`) | Yes |
@@ -34,9 +34,8 @@ are the base layer and stay where they are.
   do not collide and each say which server they reach.
 - `Connection`: the canonical origin (`APP_ORIGIN`, never the Host header),
   `{origin}/mcp`, `{origin}/oauth/authorize`, `{origin}/oauth/token`, the
-  `bilibi` scope, PKCE S256 and the registered public client ID. No secret.
-- Refuses an origin that is not bare `https://host[:port]` and a client ID that
-  is not in `agent_access.oauth_clients`.
+  `bilibi` scope, PKCE S256 and automatic public client registration. No secret.
+- Refuses an origin that is not bare `https://host[:port]`.
 - `Skill`s are generated, not hand-written per harness:
   - `bilibi-<instance>`: the MCP workflow over the six generic tools and the
     app tools (`open_software`), opening with the instance it reaches, and
@@ -61,7 +60,7 @@ are the base layer and stay where they are.
 
 - A `Harness` names itself (`key`, `name`), the archive's file name for a package (`archive_name(&Package)`) and `files(&Package)`: the manifest, MCP configuration and skill files in that harness's layout.
 - Adapters know formats only. They never read settings, scopes or the registry, and they do not own a settings tab.
-- ChatGPT (`src/chatgpt.rs`): `plugin.json` with the `com.openai` interface and onboarding skill, `mcp.json` with `com.openai` OAuth (`mode: provided`, `tokenEndpointAuthMethod: none`), `skills/<name>/SKILL.md`. The ZIP puts them under the package name (`bilibi-staging/`); the exporter writes them at the folder root.
+- ChatGPT (`src/chatgpt.rs`): `plugin.json` with the `com.openai` interface and onboarding skill, `mcp.json` with `com.openai` OAuth (`mode: dcr`, `tokenEndpointAuthMethod: none`), `skills/<name>/SKILL.md`. The ZIP puts them under the package name (`bilibi-staging/`); the exporter writes them at the folder root.
 
 ### How to add a harness
 
@@ -75,17 +74,16 @@ The builder, archive and exporter do not change.
 ## Download
 
 - AI connections (`/settings/ai-connections`) is owned by `core/agent_access`. This module does not serve a settings page.
-- The ChatGPT ZIP stays at `/settings/chatgpt-plugin/download?client_id=…` (a `Download` contribution). It is not linked from the page. It re-checks the client registration and the HTTPS origin on every request:
+- The ChatGPT ZIP stays at `/settings/chatgpt-plugin/download` (a `Download` contribution). It is not linked from the page. It checks self-service access and the HTTPS origin on every request:
 
 | Request | Answer |
 | --- | --- |
 | Signed out | Sent to sign in |
 | Impersonation or agent facet | 403 |
-| Missing or unregistered `client_id` | 404 |
+| Unexpected query fields | 400 |
 | HTTP `APP_ORIGIN` | 409 |
-| Any other query parameter | 400 |
 
-- The ZIP is for a ChatGPT administrator. A public installation needs an HTTPS address ChatGPT can reach and the callback registered as an OAuth public client. A LAN or VPN installation also needs OpenAI's [Secure MCP Tunnel](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels), because a VPN on a person's computer does not let ChatGPT reach Bilibi; login and token exchange must work through it, not only MCP.
+- The ZIP is for a ChatGPT administrator. A public installation needs an HTTPS address ChatGPT can reach and automatic OAuth registration. A LAN or VPN installation also needs OpenAI's [Secure MCP Tunnel](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels), because a VPN on a person's computer does not let ChatGPT reach Bilibi; login and token exchange must work through it, not only MCP.
 - The download does not create or approve a grant. The archive
   holds public configuration and skills only: no token, credential, record or
   executable.
@@ -93,11 +91,11 @@ The builder, archive and exporter do not change.
 ## Exporter
 
 ```sh
-bilibi-web plugin-export --harness chatgpt --client <registered-id> --output <new-directory>
+bilibi-web plugin-export --harness chatgpt --output <new-directory>
 ```
 
 - Same builder as the download, from `APP_ORIGIN` (required). It refuses an
-  existing output directory, an unknown harness, an unregistered client and an
+  existing output directory, an unknown harness and an
   HTTP origin, each with a message.
 - It writes a local package; it does not publish or register it.
 - It is an exporter, not a client. A general Bilibi CLI client over `/api/v1`

@@ -65,9 +65,7 @@ async fn main() -> Result<()> {
                 AgentPlugins, ExportError, PluginError, SERVICE, USAGE,
             };
             let args: Vec<String> = std::env::args().skip(2).collect();
-            let Some([harness, client, output]) =
-                flags(&args, ["--harness", "--client", "--output"])
-            else {
+            let Some([harness, output]) = flags(&args, ["--harness", "--output"]) else {
                 eprintln!("{USAGE}");
                 return Err(Error::Invalid);
             };
@@ -79,11 +77,11 @@ async fn main() -> Result<()> {
             let app = bilibi_web::App::new(db.clone(), &origin)?;
             let plugins = app.services.get::<AgentPlugins>(SERVICE)?;
             match plugins
-                .export(harness, client, std::path::Path::new(output))
+                .export(harness, std::path::Path::new(output))
                 .await
             {
                 Ok(name) => println!(
-                    "Exported {output}. Connect {}/mcp in {name} using client {client} and OAuth without a client secret.",
+                    "Exported {output}. Connect {}/mcp in {name} using OAuth with automatic client registration.",
                     plugins.origin()
                 ),
                 Err(error) => {
@@ -97,8 +95,6 @@ async fn main() -> Result<()> {
                                 ),
                             ExportError::Plugin(PluginError::HttpsRequired) =>
                                 "Configure the host's public HTTPS URL (APP_ORIGIN) first".into(),
-                            ExportError::Plugin(PluginError::InvalidClient) =>
-                                "Register this public OAuth client in Settings first".into(),
                             other => other.to_string(),
                         }
                     );
@@ -139,6 +135,10 @@ async fn main() -> Result<()> {
             let origin =
                 std::env::var("APP_ORIGIN").unwrap_or_else(|_| "http://localhost:3000".into());
             let bind = std::env::var("BIND_ADDR").unwrap_or_else(|_| "127.0.0.1:3000".into());
+            let mut app = bilibi_web::App::new(db, &origin)?;
+            app.require_secure_origin().await.inspect_err(|_| {
+                eprintln!("APP_ORIGIN must use HTTPS. Only a Dev copy on this computer may use HTTP on a loopback address.");
+            })?;
             let listener = tokio::net::TcpListener::bind(&bind)
                 .await
                 .map_err(|_| Error::Internal)?;
@@ -148,7 +148,6 @@ async fn main() -> Result<()> {
             } else {
                 println!("Bilibi listening at {origin}");
             }
-            let mut app = bilibi_web::App::new(db, &origin)?;
             app.listen_address = Some(listen_host(&bind).into());
             let executor = bilibi_base::queue::execution::Executor::from_services(
                 &app.services,

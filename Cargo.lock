@@ -306,6 +306,7 @@ dependencies = [
  "bilibi-core",
  "bilibi-database",
  "bilibi-datetime",
+ "bilibi-integration",
  "bilibi-locale",
  "bilibi-module-registry",
  "bilibi-party-ids",

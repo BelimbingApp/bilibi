@@ -457,9 +457,11 @@ fn authorize_message(error: &OAuthError) -> &'static str {
             "The connection end time cannot be changed here. Start a new connection."
         }
         OAuthError::InvalidClient => {
-            "This client is not registered. Ask the platform operator to register its OAuth client and callback address."
+            "This app has not registered a connection. Return to the app and start sign-in again."
         }
-        _ => "This connection request is invalid. Return to your client and start a new connection.",
+        _ => {
+            "This connection request is invalid. Return to your client and start a new connection."
+        }
     }
 }
 /// RFC 3986 unreserved characters pass; everything else is percent-encoded.
@@ -476,7 +478,7 @@ fn encode(value: &str) -> String {
         .collect()
 }
 impl AuthorizePage {
-    /// The request is validated against the operator's client registry before
+    /// The request is validated against its client registration before
     /// consent renders; an invalid one shows an error and never redirects.
     async fn new(pages: Pages, query: &HashMap<String, String>) -> Result<Self> {
         if query.values().any(|value| value.len() > 2048) {
@@ -598,7 +600,13 @@ impl AuthorizePage {
         match self
             .pages
             .access
-            .authorize(scope, &self.params, &self.pages.resource(), expires_at)
+            .authorize_reviewed(
+                scope,
+                &self.params,
+                &self.pages.resource(),
+                expires_at,
+                Some(&request),
+            )
             .await
         {
             Ok(code) => Ok(Some(self.return_to_client(&request, ("code", &code)))),
@@ -608,7 +616,7 @@ impl AuthorizePage {
             }
         }
     }
-    /// Refusal revalidates the operator's callback allowlist too.
+    /// Refusal revalidates the registered callback too.
     async fn deny(&mut self) -> Result<Option<String>> {
         if self.request.is_none() {
             return Ok(None);
@@ -720,7 +728,6 @@ struct ConnectionsView {
     pending: Option<i64>,
     /// Impersonation and an agent facet see the table's refusal, not the prompt.
     show_setup: bool,
-    no_clients: Html,
     /// The paste-ready text, shown whole so the person sees what the agent is told.
     prompt: Option<Field>,
     /// The same text for the Copy button's `data-copy-text`.
@@ -749,22 +756,14 @@ impl ConnectionsPage {
             copied: None,
         })
     }
-    /// The prompt for this installation, or `None` when no app is registered
-    /// or the caller may not set one up (impersonation, an agent facet).
+    /// Only the person may set up their own connection.
     async fn prompt(&self, scope: &Scope) -> Result<Option<String>> {
-        let clients = match self.pages.access.clients_for(scope).await {
-            Ok(clients) => clients,
-            Err(error) => {
-                refusal(error)?;
-                return Ok(None);
-            }
-        };
-        if clients.is_empty() {
+        if super::self_service(scope).is_err() {
             return Ok(None);
         }
         let client = self.pages.db.get().await?;
         let instance = Instance::resolve(&self.pages.settings, &**client).await?;
-        Ok(Some(setup_prompt::prompt(&instance, &clients)))
+        Ok(Some(setup_prompt::prompt(&instance)))
     }
     async fn view(&self, scope: &Scope) -> Result<String> {
         let client = self.pages.db.get().await?;
@@ -885,25 +884,8 @@ impl ConnectionsPage {
             .id("connections-empty")
         }));
         let render = |rendered: askama::Result<Html>| rendered.map_err(|_| Error::Internal);
-        let show_setup = match self.pages.access.clients_for(scope).await {
-            Ok(_) => true,
-            Err(error) => {
-                refusal(error)?;
-                false
-            }
-        };
         let prompt = self.prompt(scope).await?;
-        let no_clients = if show_setup && prompt.is_none() {
-            render(Html::render(
-                &EmptyState::missing(
-                    "No app registered",
-                    "Ask an admin to register the app under OAuth public clients in Settings, using the callback the app shows.",
-                )
-                .id("ai-no-clients"),
-            ))?
-        } else {
-            Html::EMPTY
-        };
+        let show_setup = prompt.is_some();
         html(ConnectionsView {
             flash: flash_map(self.flash),
             header: render(Html::render(&bilibi_ui::Header {
@@ -914,7 +896,6 @@ impl ConnectionsPage {
             table: render(Html::render(&table))?,
             pending: self.pending,
             show_setup,
-            no_clients,
             prompt: prompt.as_ref().map(|text| {
                 let mut field = Field::named("prompt")
                     .id("ai-prompt")

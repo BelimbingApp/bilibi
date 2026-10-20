@@ -14,7 +14,11 @@ use tokio::io::{AsyncWrite, AsyncWriteExt};
 pub const DEFAULT_MAX_BODY_BYTES: u64 = 10 * 1024 * 1024;
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
-fn build_client(system_roots: bool, follow_redirects: bool) -> Result<reqwest::Client> {
+fn build_client(
+    system_roots: bool,
+    follow_redirects: bool,
+    pinned: Option<(&str, &[std::net::SocketAddr])>,
+) -> Result<reqwest::Client> {
     let mut roots = rustls::RootCertStore::empty();
     roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
     if system_roots {
@@ -34,6 +38,9 @@ fn build_client(system_roots: bool, follow_redirects: bool) -> Result<reqwest::C
         .connect_timeout(Duration::from_secs(10));
     if !follow_redirects {
         builder = builder.redirect(reqwest::redirect::Policy::none());
+    }
+    if let Some((host, addresses)) = pinned {
+        builder = builder.no_proxy().resolve_to_addrs(host, addresses);
     }
     builder.build().map_err(|_| Error::Internal)
 }
@@ -57,7 +64,7 @@ impl Clients {
         if let Some(client) = cell.get() {
             return Ok(client.clone());
         }
-        let client = build_client(system_roots, follow_redirects)?;
+        let client = build_client(system_roots, follow_redirects, None)?;
         Ok(cell.get_or_init(|| client).clone())
     }
 }
@@ -75,6 +82,7 @@ pub struct Outgoing {
     max_body_bytes: u64,
     follow_redirects: bool,
     system_roots: bool,
+    public_https: bool,
     /// When set, reqwest does not follow. `perform` follows each hop itself
     /// and drops credential headers when the host changes.
     redirects: Option<RedirectPolicy>,
@@ -91,6 +99,7 @@ impl Outgoing {
             max_body_bytes: DEFAULT_MAX_BODY_BYTES,
             follow_redirects: true,
             system_roots: false,
+            public_https: false,
             redirects: None,
         }
     }
@@ -135,6 +144,13 @@ impl Outgoing {
     pub fn redirects(mut self, policy: RedirectPolicy) -> Self {
         self.follow_redirects = false;
         self.redirects = Some(policy);
+        self
+    }
+    /// Fetch an untrusted public HTTPS URL. Resolve once, refuse non-public
+    /// addresses, pin the validated addresses, disable proxies and redirects.
+    /// TLS still verifies the original host against public certificate roots.
+    pub fn public_https(mut self) -> Self {
+        self.public_https = true;
         self
     }
     /// Also trust the server's own certificate store (`/etc/ssl/certs`, where
@@ -311,11 +327,41 @@ impl Integration {
         if !matches!(url.scheme(), "http" | "https") {
             return Err(Failure::Invalid);
         }
-        let http = self
-            .clients
-            .get(outgoing.system_roots, outgoing.follow_redirects)
-            .map_err(|_| Failure::Invalid)?;
         let started = Instant::now();
+        let http = if outgoing.public_https {
+            if url.scheme() != "https"
+                || !url.username().is_empty()
+                || url.password().is_some()
+                || url.fragment().is_some()
+            {
+                return Err(Failure::Invalid);
+            }
+            let host = url.host_str().ok_or(Failure::Invalid)?;
+            let host = host.trim_matches(['[', ']']);
+            let addresses: Vec<_> = tokio::time::timeout(
+                outgoing.timeout,
+                tokio::net::lookup_host((
+                    host,
+                    url.port_or_known_default().ok_or(Failure::Invalid)?,
+                )),
+            )
+            .await
+            .map_err(|_| Failure::Invalid)?
+            .map_err(|_| Failure::Invalid)?
+            .collect();
+            if addresses.is_empty()
+                || addresses
+                    .iter()
+                    .any(|address| !public_address(address.ip()))
+            {
+                return Err(Failure::Invalid);
+            }
+            build_client(false, false, Some((host, &addresses))).map_err(|_| Failure::Invalid)?
+        } else {
+            self.clients
+                .get(outgoing.system_roots, outgoing.follow_redirects)
+                .map_err(|_| Failure::Invalid)?
+        };
         let mut observed = Observed {
             status: None,
             headers: None,
@@ -329,7 +375,7 @@ impl Integration {
         loop {
             let mut builder = http
                 .request(outgoing.method.clone(), hop_url.clone())
-                .timeout(outgoing.timeout);
+                .timeout(outgoing.timeout.saturating_sub(started.elapsed()));
             for (name, value) in &hop_headers {
                 builder = builder.header(name.as_str(), value.as_str());
             }
@@ -359,7 +405,7 @@ impl Integration {
                 Ok(response) => response,
             };
             let status = response.status().as_u16();
-            if let Some(policy) = outgoing.redirects {
+            if let Some(policy) = outgoing.redirects.filter(|_| !outgoing.public_https) {
                 if matches!(status, 301 | 302 | 303 | 307 | 308) {
                     let location = response
                         .headers()
@@ -473,5 +519,36 @@ impl Integration {
             .await
             .map_err(|_| Failure::Unrecorded)?;
         Ok((id, observed, sink))
+    }
+}
+
+// Conservative global-unicast ranges for untrusted metadata fetches. IPv4
+// mapped IPv6 is classified as IPv4, including private/link-local addresses.
+fn public_address(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(ip) => {
+            let [a, b, _, _] = ip.octets();
+            !ip.is_private()
+                && !ip.is_loopback()
+                && !ip.is_link_local()
+                && !ip.is_documentation()
+                && !ip.is_broadcast()
+                && a != 0
+                && a < 224
+                && !(a == 100 && (64..=127).contains(&b))
+                && !(a == 198 && (18..=19).contains(&b))
+                && !(a == 192 && b == 0)
+                && !(a == 192 && b == 88)
+        }
+        std::net::IpAddr::V6(ip) => {
+            if let Some(v4) = ip.to_ipv4_mapped() {
+                return public_address(v4.into());
+            }
+            let segments = ip.segments();
+            (segments[0] & 0xe000) == 0x2000
+                && !(segments[0] == 0x2001 && (segments[1] < 0x200 || segments[1] == 0xdb8))
+                && segments[0] != 0x2002
+                && !(segments[0] == 0x3fff && segments[1] < 0x1000)
+        }
     }
 }

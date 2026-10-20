@@ -1,10 +1,9 @@
-//! Operator-configured public OAuth clients, mirroring Bilimbi's
+//! Public OAuth client metadata, mirroring Bilimbi's
 //! `core/agent_access` client registry. HTTPS callbacks match exactly; HTTP
 //! loopback callbacks may vary only their port (RFC 8252 §7.3).
-//! No dynamic registration, wildcard or remote metadata fetch can add a client.
 //! PKCE S256 and the MCP resource are mandatory; the protocol scope delegates only the
 //! person's existing Agent API reach, never a new authorization grant.
-use crate::{secrets, OAuthError, CLIENT_ID, OAUTH_SCOPE};
+use crate::{secrets, OAuthError, OAUTH_SCOPE};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -23,10 +22,11 @@ pub struct AuthorizeParams {
     pub state: Option<String>,
 }
 /// A validated request, ready for the consent page.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct AuthorizationRequest {
     pub client_id: String,
     pub client_name: String,
+    pub return_host: String,
     pub redirect_uri: String,
     pub code_challenge: String,
     pub code_challenge_method: String,
@@ -40,9 +40,6 @@ fn printable_label(value: &str) -> bool {
     (1..=255).contains(&value.len())
         && !value.trim().is_empty()
         && !value.chars().any(char::is_control)
-}
-fn valid_redirect(value: &Value) -> bool {
-    value.as_str().is_some_and(valid_redirect_uri)
 }
 fn valid_redirect_uri(uri: &str) -> bool {
     if uri.contains(['#', '*', '\\']) || uri.chars().any(|c| c.is_control() || c.is_whitespace()) {
@@ -83,41 +80,67 @@ fn loopback_target(uri: &str) -> Option<(&str, &str)> {
     }
     None
 }
-/// Client IDs mapped to a name and non-empty HTTPS or HTTP loopback callbacks.
-pub fn valid_clients(value: &Value) -> bool {
-    value.as_object().is_some_and(|clients| {
-        clients.iter().all(|(id, client)| {
-            (1..=255).contains(&id.len())
-                && id != CLIENT_ID
-                && client.as_object().is_some_and(|fields| {
-                    fields.len() == 2
-                        && fields
-                            .get("name")
-                            .and_then(Value::as_str)
-                            .is_some_and(printable_label)
-                        && fields
-                            .get("redirect_uris")
-                            .and_then(Value::as_array)
-                            .is_some_and(|uris| !uris.is_empty() && uris.iter().all(valid_redirect))
-                })
-        })
-    })
+/// Registration input (RFC 7591). Unknown extension metadata is ignored.
+#[derive(Clone, Debug, Deserialize)]
+pub struct ClientRegistration {
+    pub client_name: Option<String>,
+    pub redirect_uris: Vec<String>,
+    pub token_endpoint_auth_method: Option<String>,
+    pub grant_types: Option<Vec<String>>,
+    pub response_types: Option<Vec<String>>,
+    pub scope: Option<String>,
 }
-pub(crate) fn client<'a>(clients: &'a Value, id: &str) -> Option<&'a Value> {
-    clients.get(id).filter(|client| client.is_object())
+impl ClientRegistration {
+    pub(crate) fn metadata(&self) -> Result<Value, OAuthError> {
+        if self.redirect_uris.is_empty()
+            || self.redirect_uris.len() > 20
+            || self
+                .redirect_uris
+                .iter()
+                .any(|uri| uri.len() > 2048 || !valid_redirect_uri(uri))
+        {
+            return Err(OAuthError::InvalidRedirectUri);
+        }
+        let name = self.client_name.as_deref().unwrap_or("Unnamed app");
+        if !printable_label(name)
+            || self.token_endpoint_auth_method.as_deref().unwrap_or("none") != "none"
+            || self.grant_types.as_ref().is_some_and(|types| {
+                types.is_empty()
+                    || !types
+                        .iter()
+                        .all(|kind| matches!(kind.as_str(), "authorization_code" | "refresh_token"))
+                    || !types.iter().any(|kind| kind == "authorization_code")
+            })
+            || self
+                .response_types
+                .as_ref()
+                .is_some_and(|types| types.as_slice() != ["code"])
+            || self
+                .scope
+                .as_deref()
+                .is_some_and(|scope| scope != OAUTH_SCOPE)
+        {
+            return Err(OAuthError::InvalidClientMetadata);
+        }
+        Ok(serde_json::json!({
+            "client_name": name, "redirect_uris": self.redirect_uris,
+            "token_endpoint_auth_method": "none",
+            "grant_types": self.grant_types.clone().unwrap_or_else(|| vec!["authorization_code".into(), "refresh_token".into()]),
+            "response_types": ["code"], "scope": OAUTH_SCOPE,
+        }))
+    }
 }
-pub(crate) fn registered_redirect(clients: &Value, id: &str, uri: &str) -> bool {
+pub(crate) fn registered_redirect(client: &Value, uri: &str) -> bool {
     valid_redirect_uri(uri)
-        && client(clients, id)
-            .and_then(|client| client.get("redirect_uris"))
+        && client
+            .get("redirect_uris")
             .and_then(Value::as_array)
             .is_some_and(|uris| {
                 uris.iter().filter_map(Value::as_str).any(|known| {
-                    valid_redirect_uri(known)
-                        && (known == uri
-                            || loopback_target(known)
-                                .zip(loopback_target(uri))
-                                .is_some_and(|(registered, requested)| registered == requested))
+                    known == uri
+                        || loopback_target(known)
+                            .zip(loopback_target(uri))
+                            .is_some_and(|(registered, requested)| registered == requested)
                 })
             })
 }
@@ -127,16 +150,13 @@ fn challenge(value: &str) -> bool {
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
-/// Validates an operator-registered authorization-code request before consent.
+/// Validates a registered authorization-code request before consent.
 pub fn request(
-    clients: &Value,
+    client: &Value,
     params: &AuthorizeParams,
     resource: &str,
 ) -> Result<AuthorizationRequest, OAuthError> {
-    let Some(client) = client(clients, &params.client_id) else {
-        return Err(OAuthError::InvalidClient);
-    };
-    if !registered_redirect(clients, &params.client_id, &params.redirect_uri) {
+    if !registered_redirect(client, &params.redirect_uri) {
         return Err(OAuthError::InvalidRedirectUri);
     }
     if params.response_type != "code" {
@@ -158,10 +178,14 @@ pub fn request(
     Ok(AuthorizationRequest {
         client_id: params.client_id.clone(),
         client_name: client
-            .get("name")
+            .get("client_name")
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_owned(),
+        return_host: url::Url::parse(&params.redirect_uri)
+            .ok()
+            .and_then(|url| url.host_str().map(str::to_owned))
+            .unwrap_or_default(),
         redirect_uri: params.redirect_uri.clone(),
         code_challenge: params.code_challenge.clone(),
         code_challenge_method: "S256".into(),
@@ -170,29 +194,6 @@ pub fn request(
         resource: resource.to_owned(),
         scope: OAUTH_SCOPE.into(),
     })
-}
-/// One operator-registered public client as a person chooses it: its ID and
-/// name, never its callbacks.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PublicClient {
-    pub id: String,
-    pub name: String,
-}
-/// The registered clients, sorted by name, then ID (Bilimbi `PluginPackage.clients`).
-pub fn public_clients(clients: &Value) -> Vec<PublicClient> {
-    let mut listed: Vec<PublicClient> = clients
-        .as_object()
-        .into_iter()
-        .flatten()
-        .filter_map(|(id, client)| {
-            Some(PublicClient {
-                id: id.clone(),
-                name: client.get("name")?.as_str()?.to_owned(),
-            })
-        })
-        .collect();
-    listed.sort_by(|a, b| (&a.name, &a.id).cmp(&(&b.name, &b.id)));
-    listed
 }
 /// S256 proof: the verifier's digest must equal the stored challenge.
 pub fn proof(verifier: &str, challenge: &str) -> bool {
