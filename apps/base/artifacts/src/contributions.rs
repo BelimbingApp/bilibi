@@ -2,7 +2,7 @@
 use bilibi_authz::{CapabilityDefinition, VocabularyContribution, VOCABULARY};
 use bilibi_module_registry::{Contribution, Provenance};
 use bilibi_settings::{Definition, Editor, ScopeKind, Setting, Validator, ValueType, DEFINITIONS};
-use serde_json::{json, Value};
+use serde_json::json;
 const MANAGE: &str = "admin.system.artifacts.manage";
 macro_rules! provenance {
     () => {
