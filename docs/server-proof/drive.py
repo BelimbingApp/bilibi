@@ -241,10 +241,12 @@ elif cmd == 'confirm':
     click('#software-review-confirm')
     print('Submitted the reviewed install with a fresh authenticator code.')
 elif cmd == 'receive':
+    before = js('return Array.from(document.querySelectorAll("#software-bundle option")).map(e=>e.value);')
     click('#release-files-upload-submit')
     deadline = time.time() + 60
     while time.time() < deadline:
-        if js('return document.body.textContent.includes("Received release");'):
+        waiting = js('return Array.from(document.querySelectorAll("#software-bundle option")).map(e=>e.value);')
+        if any(bundle.startswith('upload-') and bundle not in before for bundle in waiting):
             break
         time.sleep(0.5)
     else:
