@@ -516,21 +516,11 @@ def main():
     opening.add_argument('--repository', required=True, help='https://github.com/org/name')
     opening.add_argument('--released', required=True, help='YYYY-MM-DD')
     opening.add_argument('--revision', required=True, help='the pinned Platform commit (.github/bilibi-revision)')
-    opening.add_argument('--platform', default='', help='the Platform requirement; omit to read --platform-file or the previous one')
-    opening.add_argument('--platform-file', default='', help='a file with one requirement, usually .github/bilibi-platform')
+    opening.add_argument('--platform-file', default='', help='a file with one requirement, usually .github/bilibi-platform; omit to reuse the previous one')
     platform = commands.add_parser('open-platform-release', help='open a pull request for a Platform release')
     platform.add_argument('--version', required=True)
     platform.add_argument('--commit', required=True)
     platform.add_argument('--released', required=True)
-    editing = commands.add_parser('add-version', help='add one version to a catalogue file, without opening a pull request')
-    editing.add_argument('--file', required=True)
-    editing.add_argument('--role', required=True, choices=('domains', 'extensions', 'platform'))
-    editing.add_argument('--id', default='', help='Domain or Extension id; omit for the Platform')
-    editing.add_argument('--version', required=True)
-    editing.add_argument('--commit', required=True)
-    editing.add_argument('--released', required=True)
-    editing.add_argument('--platform', default='', help='requirement for a Domain or Extension version')
-    editing.add_argument('--repository', default='', help='https address; required for a Domain or Extension')
     args = parser.parse_args()
     try:
         if args.command == 'tested':
@@ -539,23 +529,11 @@ def main():
             count = publish(args.source, args.published, args.record)
             print(f'published {args.published} with {count} tested set(s)')
         elif args.command == 'open-release':
-            text = read_requirement(args.platform_file) or args.platform
+            text = read_requirement(args.platform_file)
             open_release(args.role, args.id, args.version, args.commit, args.repository,
                          args.released, args.revision, text)
         elif args.command == 'open-platform-release':
             open_platform_release(args.version, args.commit, args.released)
-        elif args.command == 'add-version':
-            catalogue = load(args.file)
-            if args.role == 'platform':
-                added = add_platform_version(catalogue, args.version, args.commit, args.released)
-            else:
-                added = add_version(catalogue, args.role, args.id, args.version, args.commit,
-                                    args.released, args.platform, args.repository)
-            if added:
-                Path(args.file).write_text(dump(catalogue))
-                print(f'added {args.role} {args.version}')
-            else:
-                print(f'{args.role} {args.version} is already listed')
         elif args.check:
             check(load(args.check))
             print(f'{args.check} is well formed')
