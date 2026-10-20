@@ -65,7 +65,7 @@ The launcher sets `BILIBI_ENV=development` unless you already set it, so the ins
 | Variable | Use |
 |----------|-----|
 | `DATABASE_URL` | PostgreSQL 18. Unset: the private instance on port 5438 |
-| `APP_ORIGIN` | The exact browser origin, no trailing slash |
+| `APP_ORIGIN` | The exact browser origin, no trailing slash. Staging and Production refuse to start unless it is HTTPS; see [HTTPS for OAuth](docs/server-install.md#https-for-oauth) |
 | `BIND_ADDR` | Listen address, default `127.0.0.1:3000` |
 | `MAIL_HOST` | SMTP relay. Unset: write mail to `.local/mailbox/` |
 | `BILIBI_USER_SIGNING_KEY` | 64 hex characters, for email verification links. Unset: `start-app.sh` supplies one |
