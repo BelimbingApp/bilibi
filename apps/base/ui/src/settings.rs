@@ -10,7 +10,7 @@ pub enum SettingsTab {
     Password,
     TwoFactor,
     Appearance,
-    ChatgptPlugin,
+    Mcp,
     AgentConnections,
 }
 
@@ -42,12 +42,7 @@ impl SettingsTab {
                 "Appearance",
                 "/settings/appearance",
             ),
-            (
-                Self::ChatgptPlugin,
-                "settings-nav-chatgpt-plugin",
-                "Plugin for ChatGPT",
-                "/settings/chatgpt-plugin",
-            ),
+            (Self::Mcp, "settings-nav-mcp", "MCP", "/settings/mcp"),
             (
                 Self::AgentConnections,
                 "settings-nav-agent-connections",

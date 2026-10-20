@@ -1,10 +1,12 @@
 # Agent plugins
 
 Builds the downloadable plugin package that connects an agent harness (ChatGPT
-first) to this installation's `/mcp` edge. Ported from Bilimbi
-`apps/core/agent_access` (`plugin_package.ex`, `web/plugin_live.ex`,
-`web/plugin_controller.ex`, `mix bilimbi.mcp.plugin`), split so the harness
-format is a thin adapter over one harness-neutral builder.
+first) to this installation's `/mcp` edge, and serves the MCP settings page.
+Ported from Bilimbi `apps/core/agent_access` (`plugin_package.ex`,
+`web/plugin_live.ex`, `web/plugin_controller.ex`, `mix bilimbi.mcp.plugin`),
+split so the harness format is a thin adapter over one harness-neutral builder.
+The settings page does not name a harness. App-specific steps are in
+[docs/mcp-setup.md](../../../docs/mcp-setup.md).
 
 ## Layers
 
@@ -16,8 +18,8 @@ are the base layer and stay where they are.
 | Operations, guides, plans, MCP protocol | `base/agent_api` | No |
 | `/api/v1`, `/mcp`, OAuth endpoints | `apps/web` | No |
 | OAuth public clients, grants, connections | `core/agent_access` | No |
-| Package builder, archive, page, download, exporter | `core/agent_plugins` (`src/package.rs`, `src/archive.rs`, `src/web.rs`) | No |
-| Manifest format, file layout, page copy | one adapter per harness (`src/chatgpt.rs`) | Yes |
+| Package builder, archive, MCP settings page, download, exporter | `core/agent_plugins` (`src/package.rs`, `src/archive.rs`, `src/web.rs`) | No |
+| Manifest format and file layout | one adapter per harness (`src/chatgpt.rs`) | Yes |
 
 ## Package builder (`src/package.rs`)
 
@@ -55,41 +57,25 @@ are the base layer and stay where they are.
 
 ## Harness adapters (`src/harness.rs`)
 
-- A `Harness` names itself (`key`, `name`, `title`), its setup page path (the
-  download is that path plus `/download`), the archive's file name for a
-  package (`archive_name(&Package)`), the page copy (install, public and LAN/VPN steps, guide links) and `files(&Package)`:
-  the manifest, MCP configuration and skill files in that harness's layout.
-- Adapters know formats only. They never read settings, scopes or the registry.
-- ChatGPT (`src/chatgpt.rs`): `plugin.json` with the `com.openai` interface
-  and onboarding skill, `mcp.json` with `com.openai` OAuth (`mode: provided`,
-  `tokenEndpointAuthMethod: none`), `skills/<name>/SKILL.md`. The ZIP puts
-  them under the package name (`bilibi-staging/`); the exporter writes them
-  at the folder root.
+- A `Harness` names itself (`key`, `name`), the archive's file name for a package (`archive_name(&Package)`) and `files(&Package)`: the manifest, MCP configuration and skill files in that harness's layout.
+- Adapters know formats only. They never read settings, scopes or the registry, and they do not own a settings tab.
+- ChatGPT (`src/chatgpt.rs`): `plugin.json` with the `com.openai` interface and onboarding skill, `mcp.json` with `com.openai` OAuth (`mode: provided`, `tokenEndpointAuthMethod: none`), `skills/<name>/SKILL.md`. The ZIP puts them under the package name (`bilibi-staging/`); the exporter writes them at the folder root. The install steps are in [docs/mcp-setup.md](../../../docs/mcp-setup.md).
 
 ### How to add a harness
 
-1. Add `src/<harness>.rs` implementing `Harness`: names, page path, archive
-   name, page copy, and the manifest, MCP configuration and skill layout.
-   Nothing else.
+1. Add `src/<harness>.rs` implementing `Harness`: names, archive name, and the manifest, MCP configuration and skill layout. Nothing else.
 2. Add it to `HARNESSES` in `src/harness.rs`.
-3. Submit its `Route` and `Download` contributions in `src/contributions.rs`
-   (operation = the harness key).
-4. Add its tab to `bilibi_ui::SettingsTab` (`base/ui/src/settings.rs`) if people should find it in My settings.
-5. Run the app; open the page, download, unzip and check the files.
+3. Submit its `Download` contribution in `src/contributions.rs` (operation = the harness key). Do not add a settings tab.
+4. Add that app's steps to [docs/mcp-setup.md](../../../docs/mcp-setup.md).
+5. Run the exporter, unzip and check the files.
 
-The builder, archive, page, download and exporter do not change.
+The builder, archive, settings page and exporter do not change.
 
 ## Page and download
 
-- `/settings/<harness>-plugin` (`/settings/chatgpt-plugin`): a live page named for the harness; uses the shared `base/ui/templates/settings.html` layout with its tab active, and is linked from Agent connections.
-- Shows the canonical connection details with copy buttons (`ClipboardCopy`
-  hook, success and failure feedback), the registered-client selection
-  (auto-selected when only one is registered), and the adapter's public HTTPS
-  and private LAN/VPN steps. An HTTP origin or no registered client explains
-  what the administrator must fix and offers no download.
-- `/settings/<harness>-plugin/download?client_id=…` (a `Download` contribution)
-  answers the ZIP built in memory. It re-checks the client registration and
-  the HTTPS origin on every request:
+- `/settings/mcp`: the MCP tab on My settings (`SettingsTab::Mcp`). It shows the server URL (`{origin}/mcp`) and the registered app's client ID, each with copy (`ClipboardCopy` hook, success and failure feedback). The app is auto-selected when only one is registered. Authentication, scope, and the authorization and token URLs sit under Technical details. No registered app tells the person to ask an admin. Impersonation and an agent facet see only "Use your own account". The page works on an HTTP origin. It does not offer a plugin download.
+- `/settings/chatgpt-plugin` redirects to `/settings/mcp` and keeps the query string. Agent connections links to the MCP tab.
+- The ChatGPT ZIP stays at `/settings/chatgpt-plugin/download?client_id=…` (a `Download` contribution). It is not linked from the page. It re-checks the client registration and the HTTPS origin on every request:
 
 | Request | Answer |
 | --- | --- |

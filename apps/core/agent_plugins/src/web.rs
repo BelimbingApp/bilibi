@@ -1,9 +1,9 @@
-//! The setup page and its download (Bilimbi `web/plugin_live.ex` and
-//! `web/plugin_controller.ex`), one adapter for every harness: the operation
-//! names the harness, and the harness supplies its name and copy. Opening the
-//! page, choosing a client or downloading grants no access. `AgentPlugins`
+//! The MCP settings page and the ChatGPT plugin download (Bilimbi
+//! `web/plugin_live.ex` and `web/plugin_controller.ex`). The page is one tab
+//! for any MCP app. The download operation names the harness. Opening the
+//! page, choosing an app or downloading grants no access. `AgentPlugins`
 //! keeps the self-service gate and re-checks the client at download.
-use crate::{harness::PageCopy, package, AgentPlugins, Harness, PluginError};
+use crate::{package, AgentPlugins, PluginError};
 use askama::Template;
 use bilibi_agent_access::PublicClient;
 use bilibi_database::{Error, Result};
@@ -14,13 +14,18 @@ use bilibi_ui::{
         LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, MountFuture, Page, PageBody,
         PageFuture, PageRequest,
     },
-    Button, ButtonVariant, Choice, EmptyState, Field, Html, InputKind,
+    Choice, EmptyState, Field, Html, InputKind,
 };
 use serde::Deserialize;
 use std::{collections::HashMap, sync::Arc};
 
 pub const PAGES: &str = "core/agent_plugins.pages";
 pub const FILES: &str = "core/agent_plugins.files";
+/// The settings page operation. A download operation is a harness key instead.
+const PAGE: &str = "mcp";
+/// `docs/mcp-setup.md` on the default branch. The page links here so ChatGPT
+/// steps stay out of the tab.
+const SETUP_GUIDES: &str = "https://github.com/BelimbingApp/bilibi/blob/main/docs/mcp-setup.md";
 /// Client IDs are bounded by the setting's validator.
 const CLIENT_ID_LIMIT: usize = 255;
 
@@ -43,8 +48,12 @@ fn requested(query: &HashMap<String, String>) -> Result<Option<String>> {
         id => Ok(id.cloned()),
     }
 }
-fn harness(operation: &str) -> Result<&'static dyn Harness> {
-    AgentPlugins::harness(operation).map_err(|_| Error::NotFound)
+fn page(operation: &str) -> Result<()> {
+    if operation == PAGE {
+        Ok(())
+    } else {
+        Err(Error::NotFound)
+    }
 }
 
 impl Page<Scope, Error> for Pages {
@@ -70,9 +79,7 @@ impl Page<Scope, Error> for Pages {
         })
     }
     fn title(&self, operation: &str) -> Option<&'static str> {
-        AgentPlugins::harness(operation)
-            .ok()
-            .map(|harness| harness.title())
+        (operation == PAGE).then_some("My Settings")
     }
 }
 
@@ -109,7 +116,6 @@ enum Copied {
 }
 struct PluginPage {
     pages: Pages,
-    harness: &'static dyn Harness,
     requested: Option<String>,
     copied: Option<Copied>,
 }
@@ -132,11 +138,17 @@ pub struct CopyValue {
     pub text: String,
 }
 #[derive(Template)]
+#[template(
+    source = r#"<ul class="mt-1 list-disc space-y-0.5 pl-4"><li>Use any AI app that supports MCP. Add the server URL from this page in its MCP settings.</li><li>Sign in to Bilibi when the app asks, and approve the connection.</li><li>The agent can do what you can do in Bilibi, nothing more.</li><li>End access any time in Agent connections.</li></ul>"#,
+    ext = "html"
+)]
+struct Hints;
+
+#[derive(Template)]
 #[template(path = "plugin.html")]
 struct PluginView {
-    harness_name: &'static str,
-    copy: &'static PageCopy,
     header: Html,
+    hints: Html,
     person_required: bool,
     no_clients: Html,
     client_field: Option<Field>,
@@ -146,16 +158,14 @@ struct PluginView {
     token_url: String,
     scope: &'static str,
     copied: Option<bool>,
-    https_required: Html,
-    client_required: Html,
-    download: Html,
+    guides_href: &'static str,
 }
 
 impl PluginPage {
     fn new(pages: Pages, operation: &str, query: &HashMap<String, String>) -> Result<Self> {
+        page(operation)?;
         Ok(Self {
             pages,
-            harness: harness(operation)?,
             requested: requested(query)?,
             copied: None,
         })
@@ -177,114 +187,61 @@ impl PluginPage {
         }
     }
     async fn view(&self, scope: &Scope) -> Result<String> {
-        let harness = self.harness;
         let render = |rendered: askama::Result<Html>| rendered.map_err(|_| Error::Internal);
-        let connections = render(Html::render(&Button {
-            variant: ButtonVariant::Secondary,
-            id: "plugin-connections",
-            href: "/settings/agent-connections",
-            body: Html::text("Your connections"),
-            ..Button::default()
-        }))?;
-        let subtitle = format!(
-            "Install Bilibi in {} to work with records using your own account and permissions.",
-            harness.name()
-        );
+        let hints = render(Html::render(&Hints))?;
         let header = render(Html::render(&bilibi_ui::Header {
-            title: Html::text(harness.title()),
-            subtitle: &subtitle,
-            title_actions: Html::EMPTY,
-            actions: connections,
+            title: Html::text("My Settings"),
+            ..bilibi_ui::Header::default()
         }))?;
         let origin = self.pages.plugins.origin();
         let clients = self.clients(scope).await?;
         let person_required = clients.is_none();
         let clients = clients.unwrap_or_default();
         let selected = self.selected(&clients);
-        let https = package::https_origin(origin);
-        let empty = |show: bool, id: &str, title: &str, reason: &str| -> Result<Html> {
-            if !show {
-                return Ok(Html::EMPTY);
-            }
-            render(Html::render(&EmptyState::missing(title, reason).id(id)))
+        let no_clients = if clients.is_empty() {
+            render(Html::render(
+                &EmptyState::missing(
+                    "No app registered",
+                    "Ask an admin to register the app under OAuth public clients in Settings, using the callback the app shows.",
+                )
+                .id("mcp-no-clients"),
+            ))?
+        } else {
+            Html::EMPTY
         };
-        let no_clients = empty(
-            clients.is_empty(),
-            "plugin-no-clients",
-            "Administrator setup needed",
-            &format!("Ask your platform administrator to register {} under OAuth public clients in Settings, using the exact callback shown by {}.", harness.name(), harness.name()),
-        )?;
-        let https_required = empty(
-            !https,
-            "plugin-https-required",
-            "HTTPS setup needed",
-            "Ask your administrator to set up this site's HTTPS address before you download the plugin.",
-        )?;
-        let client_required = empty(
-            https && !clients.is_empty() && selected.is_none(),
-            "plugin-client-required",
-            "Choose an OAuth client",
-            &format!("Select the client your administrator registered for {} to download its plugin configuration.", harness.name()),
-        )?;
         let client_field = (!clients.is_empty()).then(|| {
             Field::named("client_id")
-                .id("plugin-client")
+                .id("mcp-app")
                 .kind(InputKind::Select)
-                .label("OAuth client")
-                .prompt(format!(
-                    "Choose the client registered for {}",
-                    harness.name()
-                ))
+                .label("App")
+                .prompt("Choose an app")
                 .options(
                     clients
                         .iter()
-                        .map(|client| {
-                            Choice::new(format!("{} ({})", client.name, client.id), &client.id)
-                        })
+                        .map(|client| Choice::new(&client.name, &client.id))
                         .collect(),
                 )
                 .value(selected.map_or("", |client| client.id.as_str()))
         });
-        let download_href = selected.map(|client| {
-            format!(
-                "{}/download?client_id={}",
-                harness.path(),
-                encode(&client.id)
-            )
-        });
-        let download = match (&download_href, https) {
-            (Some(href), true) => render(Html::render(&Button {
-                variant: ButtonVariant::Primary,
-                id: "plugin-download",
-                href,
-                class: "mt-4",
-                body: Html::text("Download plugin ZIP"),
-                ..Button::default()
-            }))?,
-            _ => Html::EMPTY,
-        };
         html(PluginView {
-            harness_name: harness.name(),
-            copy: harness.copy(),
             header,
+            hints,
             person_required,
             no_clients,
             client_field,
             server: CopyValue {
-                id: "plugin-copy-server",
+                id: "mcp-copy-server",
                 text: package::server_url(origin),
             },
             client: selected.map(|client| CopyValue {
-                id: "plugin-copy-client",
+                id: "mcp-copy-client",
                 text: client.id.clone(),
             }),
             authorization_url: format!("{origin}/oauth/authorize"),
             token_url: format!("{origin}/oauth/token"),
             scope: bilibi_agent_access::OAUTH_SCOPE,
             copied: self.copied.map(|copied| copied == Copied::Yes),
-            https_required,
-            client_required,
-            download,
+            guides_href: SETUP_GUIDES,
         })
     }
     /// A copy report counts only for a value this page shows (Bilimbi
@@ -300,20 +257,6 @@ impl PluginPage {
         self.copied = shown.then_some(if copied { Copied::Yes } else { Copied::Failed });
         Ok(())
     }
-}
-
-/// RFC 3986 unreserved characters pass; everything else is percent-encoded.
-fn encode(value: &str) -> String {
-    value
-        .bytes()
-        .map(|byte| {
-            if byte.is_ascii_alphanumeric() || b"-._~".contains(&byte) {
-                (byte as char).to_string()
-            } else {
-                format!("%{byte:02X}")
-            }
-        })
-        .collect()
 }
 
 impl LiveState<Scope, Error> for PluginPage {

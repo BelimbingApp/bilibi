@@ -40,7 +40,7 @@ Bilibi is MIT-licensed, like the earlier iterations. The architecture is the sam
 - **Companies, people and addresses:** lists, details and inline edits, scoped to the tenant.
 - **Audit:** every change records old and new values and who made it, in the same save; append-only.
 - **Notifications and mail:** a live notification bell; mail goes to `.local/mailbox/` until an SMTP relay is set.
-- **Agent access:** agents sign in for a person through OAuth and work through `/api/v1` and `/mcp`; a Plugin for ChatGPT can be downloaded from settings.
+- **Agent access:** agents sign in for a person through OAuth and work through `/api/v1` and `/mcp`. Connection details are on My settings, under MCP. ChatGPT's plugin package is in [docs/mcp-setup.md](docs/mcp-setup.md).
 - **Database tables:** an owner-only, read-only view of every table, with data, schema and relationships.
 
 ## Run it locally

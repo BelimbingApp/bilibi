@@ -1,9 +1,9 @@
 //! Agent plugins: the downloadable package that connects an agent harness to
 //! this installation's `/mcp` edge (Bilimbi `Core.AgentAccess.plugin_clients`,
-//! `plugin_files` and `plugin_download`). The harness-neutral builder is
-//! `package.rs`; each harness is a thin adapter (`chatgpt.rs`). Downloading
-//! software never creates or approves a grant: the OAuth consent in
-//! `core/agent_access` still names the person and the end date.
+//! `plugin_files` and `plugin_download`). The settings page is the MCP tab.
+//! The harness-neutral builder is `package.rs`; each harness is a thin adapter
+//! (`chatgpt.rs`). Downloading software never creates or approves a grant: the
+//! OAuth consent in `core/agent_access` still names the person and the end date.
 mod archive;
 mod chatgpt;
 mod contributions;

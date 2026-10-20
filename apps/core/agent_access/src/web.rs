@@ -697,7 +697,7 @@ pub struct ConnectionRow {
 #[template(path = "connections.html")]
 struct ConnectionsView {
     flash: FlashMap<'static>,
-    /// Settings header with the agent plugin setup action (`core/agent_plugins`).
+    /// Settings header with the link to MCP setup (`core/agent_plugins`).
     header: Html,
     table: Html,
     pending: Option<i64>,
@@ -783,9 +783,9 @@ impl ConnectionsPage {
             })
             .collect::<Result<Vec<_>>>()?;
         let plugin = Html::render(&Button {
-            id: "connections-chatgpt-plugin",
-            href: "/settings/chatgpt-plugin",
-            body: Html::text("Plugin for ChatGPT"),
+            id: "connections-mcp",
+            href: "/settings/mcp",
+            body: Html::text("MCP"),
             ..Button::default()
         })
         .map_err(|_| Error::Internal)?;
