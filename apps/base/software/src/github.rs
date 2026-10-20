@@ -761,6 +761,11 @@ async fn fetch_listing(
         let mut cache = previous.unwrap_or_else(|| json!({}));
         cache["fetched_at"] = json!(jiff::Timestamp::now().to_string());
         cache["repository_id"] = json!(id);
+        if let Some(fields) = cache.as_object_mut() {
+            for stale in ["message", "attempt_at", "limited_until"] {
+                fields.remove(stale);
+            }
+        }
         apply_rate(&mut cache, &first);
         write_cache(cache_path, &cache);
         return Ok(cache);
