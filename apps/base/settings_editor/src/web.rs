@@ -559,6 +559,7 @@ impl Editor {
                     "invalid_code" => "That code was not accepted. Enter the current code from your authenticator app.",
                     "locked" => "Too many wrong codes. Wait a while, then try again with a fresh code.",
                     "not_enrolled" => "Set up 2FA before changing this setting.",
+                    "impersonating" => "This setting cannot be changed while viewing as someone else.",
                     _ => "Enter the current 6-digit code from your authenticator app.",
                 };
                 self.flash(StatusKind::Error, message);
