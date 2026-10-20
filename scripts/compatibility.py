@@ -24,20 +24,31 @@ _HARMLESS_PREFIXES = ('docs/', '.agents/', '.amp/', '.claude/')
 _HARMLESS_FILES = {'.gitignore', '.editorconfig', '.gitattributes', 'compose.yml'}
 
 
-def matrix(event, event_name):
+def builds(event_name, ref):
+    """Profiles to run: main also stores the debug cache that pull requests restore."""
+    if event_name == 'pull_request':
+        return ['check']
+    if event_name == 'push' and ref == 'refs/heads/main':
+        return ['check', 'release']
+    return ['release']
+
+
+def matrix(event, event_name, ref):
     catalogue = load(CATALOGUE)
     check(catalogue)
-    containers = {}
+    entries = []
     for role in ('domains', 'extensions'):
         for container, facts in catalogue.get(role, {}).items():
             repository = re.fullmatch(r'https://github\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)', facts['repository'])
             expect(repository, f'{role}/{container}: CI needs a GitHub repository URL')
-            containers[f'{role}/{container}'] = {
-                'role': role,
-                'id': container,
-                'repository': repository.group(1),
-                'ref': 'refs/heads/main',
-            }
+            for build in builds(event_name, ref):
+                entries.append({
+                    'role': role,
+                    'id': container,
+                    'repository': repository.group(1),
+                    'ref': 'refs/heads/main',
+                    'build': build,
+                })
 
     # Other event types ignore companion directives, including manual runs
     # whose payload might be copied from a pull request.
@@ -50,14 +61,16 @@ def matrix(event, event_name):
             expect(match, 'write Bilibi-Companion: domains/finance=fix/platform-change (docs/versions.md)')
             role, container, branch = match.groups()
             key = f'{role}/{container}'
-            expect(key in containers, f'{key}: companion is not listed in catalogue.json')
+            expect(any(f"{entry['role']}/{entry['id']}" == key for entry in entries), f'{key}: companion is not listed in catalogue.json')
             expect(key not in overrides, f'{key}: more than one companion branch')
-            ref = f'refs/heads/{branch}'
-            result = subprocess.run(['git', 'check-ref-format', ref], capture_output=True, check=False)
+            companion = f'refs/heads/{branch}'
+            result = subprocess.run(['git', 'check-ref-format', companion], capture_output=True, check=False)
             expect(result.returncode == 0, f'{key}: invalid companion branch {branch!r}')
-            containers[key]['ref'] = ref
+            for entry in entries:
+                if f"{entry['role']}/{entry['id']}" == key:
+                    entry['ref'] = companion
             overrides.add(key)
-    return {'include': list(containers.values())}
+    return {'include': entries}
 
 
 def compiled_in(path):
@@ -158,7 +171,7 @@ def affected_main(which):
 def matrix_main():
     try:
         event = json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text())
-        selected = matrix(event, os.environ['GITHUB_EVENT_NAME'])
+        selected = matrix(event, os.environ['GITHUB_EVENT_NAME'], os.environ.get('GITHUB_REF', ''))
         encoded = json.dumps(selected, separators=(',', ':'))
         print(encoded)
         write_output('matrix', encoded)

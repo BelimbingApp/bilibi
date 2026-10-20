@@ -5,7 +5,8 @@
 #
 # A pull request whose files cannot affect a mount passes Official compatibility
 # without mounting. Other pull requests lint and boot a debug build. main, tags
-# and manual runs still do the locked release build.
+# and manual runs still do the locked release build. A push to main also runs
+# the debug build, to save the cache a pull request restores.
 name: Domains on this change
 
 on:
@@ -60,7 +61,7 @@ jobs:
         run: python3 scripts/compatibility.py
 
   domain:
-    name: ${{ matrix.role }}/${{ matrix.id }}
+    name: ${{ matrix.role }}/${{ matrix.id }}${{ matrix.build == 'check' && github.event_name == 'push' && ' (debug cache)' || '' }}
     needs: catalogue
     if: needs.catalogue.outputs.has_containers == 'true'
     runs-on: ubuntu-latest
@@ -77,8 +78,9 @@ jobs:
       CONTAINER_REPOSITORY: ${{ matrix.repository }}
       CONTAINER_REF: ${{ matrix.ref }}
       # Pull requests lint and boot a debug build. main, tags and manual runs
-      # do the locked release build that a tested set records.
-      DOMAIN_CI_BUILD: ${{ github.event_name == 'pull_request' && 'check' || 'release' }}
+      # do the locked release build that a tested set records. main also runs
+      # the debug build so pull requests restore a warm cache.
+      DOMAIN_CI_BUILD: ${{ matrix.build }}
 
     services:
       postgres:
@@ -147,8 +149,8 @@ jobs:
       - name: Register mounted modules so the cache key sees them
         run: python3 scripts/discover-modules.py
       # prefix-key bumps the cache so the saved blob includes workspace crates,
-      # not only dependencies. The profile is part of the key: a pull request
-      # stores the debug build, and main stores the release build.
+      # not only dependencies. The profile is part of the key: main stores both
+      # the debug build for pull requests and the release build.
       - uses: Swatinem/rust-cache@v2.9.2
         with:
           workspaces: bilibi

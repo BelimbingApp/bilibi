@@ -30,12 +30,19 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
+    # A push to main also runs the debug build, to save the cache that pull
+    # requests restore.
+    strategy:
+      fail-fast: false
+      matrix:
+        build: ${{ fromJSON(github.event_name == 'pull_request' && '["check"]' || '["check","release"]') }}
+
     env:
       DATABASE_URL: postgres://bilibi:bilibi@localhost:5432/bilibi
       # Pull requests lint and boot a debug build. Pushes to main do the
       # locked release build. An older Platform script ignores this and
       # always release-builds.
-      DOMAIN_CI_BUILD: ${{ github.event_name == 'pull_request' && 'check' || 'release' }}
+      DOMAIN_CI_BUILD: ${{ matrix.build }}
 
     services:
       postgres:
@@ -94,6 +101,7 @@ jobs:
         with:
           workspaces: bilibi
           prefix-key: v1-workspace
+          key: ${{ env.DOMAIN_CI_BUILD }}
           cache-workspace-crates: true
           cache-on-failure: true
       - uses: actions/setup-node@v6

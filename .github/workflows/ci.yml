@@ -1,8 +1,10 @@
 # Unmounted Platform gates. A pull request that cannot affect this build
 # (docs, and the other paths scripts/compatibility.py treats as harmless)
-# passes without compiling. Mounted Domain checks are domains.yml: those
-# pull requests lint and boot a debug build, so this release build is the
-# one a pull request still does. main keeps both.
+# passes without compiling, but still checks the committed CSS: Tailwind
+# scans the whole repository, so a docs change can make it stale.
+# Mounted Domain checks are domains.yml: those pull requests lint and boot a
+# debug build, so this release build is the one a pull request still does.
+# main keeps both.
 # A branch push and its pull request share one group, so the later run
 # cancels the earlier instead of compiling twice. main is not cancelled.
 name: Rust
@@ -28,7 +30,14 @@ jobs:
         run: python3 scripts/compatibility.py affected platform
       - name: This pull request does not affect the build
         if: steps.decide.outputs.affected != 'true'
-        run: echo 'No changed file can affect the unmounted build. Passing without compiling.' | tee -a "$GITHUB_STEP_SUMMARY"
+        run: echo 'No changed file can affect the unmounted build. Passing without compiling; the committed CSS is still checked.' | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: apps/base/ui/assets/package-lock.json
+      - run: npm ci --prefix apps/base/ui/assets --no-audit --no-fund
+      - run: ./scripts/build-assets.sh --check
       - uses: dtolnay/rust-toolchain@stable
         if: steps.decide.outputs.affected == 'true'
         with:
@@ -40,16 +49,6 @@ jobs:
           prefix-key: v1-workspace
           cache-workspace-crates: true
           cache-on-failure: true
-      - uses: actions/setup-node@v6
-        if: steps.decide.outputs.affected == 'true'
-        with:
-          node-version: '24'
-          cache: npm
-          cache-dependency-path: apps/base/ui/assets/package-lock.json
-      - if: steps.decide.outputs.affected == 'true'
-        run: npm ci --prefix apps/base/ui/assets --no-audit --no-fund
-      - if: steps.decide.outputs.affected == 'true'
-        run: ./scripts/build-assets.sh --check
       - if: steps.decide.outputs.affected == 'true'
         run: python3 scripts/discover-modules.py --check
       - if: steps.decide.outputs.affected == 'true'
