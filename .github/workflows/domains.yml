@@ -1,17 +1,12 @@
-# Mounts each Bilibi Domain into this change and runs the same gates as the
-# Domain's own CI (docs/domain-ci/ci.yml), so a Platform change that breaks a
-# Domain shows red before it merges. A Domain's own CI pins an older Platform
-# commit and would not notice. A red entry here means fix the Domain in the
-# same effort (docs/domain-ci/README.md).
-#
-# On a pull request or a push to main each Domain is taken at its main HEAD.
-# On a release tag (v0.1.0) each Domain is taken at its latest release, and
-# every pair that passes is recorded as a tested set in the published
-# catalogue (docs/versions.md). Run it by hand to record a set for other refs.
+# Mount every official Domain and Extension from catalogue.json and run the
+# shared mounted gates. Companion branches are selected only on pull requests
+# (docs/versions.md); main pushes always check main HEADs. Tags and manual runs
+# retain the existing Domain tested-set recording and catalogue publishing.
 name: Domains on this change
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, edited, ready_for_review]
   push:
     branches:
       - main
@@ -20,7 +15,7 @@ on:
   workflow_dispatch:
     inputs:
       domains_at:
-        description: Take each Domain at its latest release tag, or at its main HEAD
+        description: Take each Domain and Extension at its latest release tag, or at its main HEAD
         type: choice
         options:
           - latest-release
@@ -35,24 +30,38 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
+  catalogue:
+    name: Select official software
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.select.outputs.matrix }}
+      has_containers: ${{ steps.select.outputs.has_containers }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Read the catalogue and companion branches
+        id: select
+        run: python3 scripts/compatibility.py
+
   domain:
-    name: ${{ matrix.domain }}
+    name: ${{ matrix.role }}/${{ matrix.id }}
+    needs: catalogue
+    if: needs.catalogue.outputs.has_containers == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - domain: finance
-            repository: BelimbingApp/bilibi-dom-finance
-          - domain: factory
-            repository: BelimbingApp/bilibi-dom-factory
-          - domain: supply_chain
-            repository: BelimbingApp/bilibi-dom-supply-chain
+      matrix: ${{ fromJSON(needs.catalogue.outputs.matrix) }}
 
     env:
       DATABASE_URL: postgres://bilibi:bilibi@localhost:5432/bilibi
+      CONTAINER_ROLE: ${{ matrix.role }}
+      CONTAINER_ID: ${{ matrix.id }}
+      CONTAINER_REPOSITORY: ${{ matrix.repository }}
+      CONTAINER_REF: ${{ matrix.ref }}
 
     services:
       postgres:
@@ -79,43 +88,44 @@ jobs:
         uses: actions/checkout@v7
         with:
           path: bilibi
-          fetch-tags: true
+          fetch-depth: 0
+          persist-credentials: false
 
-      - name: Check out the Domain
+      - name: Check out the Domain or Extension
         uses: actions/checkout@v7
         with:
           repository: ${{ matrix.repository }}
+          ref: ${{ matrix.ref }}
           path: container
-          fetch-tags: true
+          fetch-depth: 0
+          persist-credentials: false
 
-      - name: Move the Domain to its latest release
+      - name: Move the Domain or Extension to its latest release
         if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.domains_at == 'latest-release')
         working-directory: container
         run: |
           latest=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' | sort -V | tail -1)
           if [ -z "$latest" ]; then
-            echo "::error::${{ matrix.repository }} has no release tag yet (docs/versions.md); tag one or run this with domains_at=main"
+            echo "::error::$CONTAINER_REPOSITORY has no release tag yet (docs/versions.md); tag one or run this with domains_at=main"
             exit 1
           fi
           git checkout --quiet "$latest"
 
-      # Same mount as docs/domain-ci/ci.yml: a real nested checkout at
-      # apps/domains/<id>, which the Platform's .gitignore ignores.
-      - name: Mount the Domain
+      # Same real nested checkout as docs/domain-ci/ci.yml.
+      - name: Mount the Domain or Extension
         working-directory: .
         run: |
-          mv container "bilibi/apps/domains/${{ matrix.domain }}"
-          echo "Mounted ${{ matrix.repository }} at $(git -C "bilibi/apps/domains/${{ matrix.domain }}" describe --tags --always)" | tee -a "$GITHUB_STEP_SUMMARY"
+          mv container "bilibi/apps/$CONTAINER_ROLE/$CONTAINER_ID"
+          printf 'Mounted %s (%s) at %s\n' "$CONTAINER_REPOSITORY" "$CONTAINER_REF" "$(git -C "bilibi/apps/$CONTAINER_ROLE/$CONTAINER_ID" rev-parse HEAD)" | tee -a "$GITHUB_STEP_SUMMARY"
 
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      # Each Domain resolves a different Cargo.lock; key the cache per Domain
-      # and keep it when a Domain is red, so a broken Domain still rebuilds fast.
+      # Each mounted container resolves a different Cargo.lock.
       - uses: Swatinem/rust-cache@v2.9.2
         with:
           workspaces: bilibi
-          key: ${{ matrix.domain }}
+          key: ${{ matrix.role }}-${{ matrix.id }}
           cache-on-failure: true
       - uses: actions/setup-node@v6
         with:
@@ -127,17 +137,49 @@ jobs:
       - name: Run the mounted gates
         run: ./scripts/domain-ci.sh
 
-      - name: Verify the gates left the Domain clean
-        run: git -C "apps/domains/${{ matrix.domain }}" diff --exit-code
+      - name: Verify the gates left the Domain or Extension clean
+        run: git -C "apps/$CONTAINER_ROLE/$CONTAINER_ID" diff --exit-code
 
-      # The pin the gates made names both commits and their releases; the
-      # record job below turns the green pairs into tested sets.
+
+      # The existing tested-set format records Domain pairs only. Extension
+      # gates are equally required, without changing catalogue publishing.
       - name: Describe the tested set
+        if: matrix.role == 'domains'
         run: python3 scripts/catalogue.py tested --run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" | tee "$RUNNER_TEMP/tested-set.json"
       - uses: actions/upload-artifact@v7
+        if: matrix.role == 'domains'
         with:
-          name: tested-${{ matrix.domain }}
+          name: tested-${{ matrix.role }}-${{ matrix.id }}
           path: ${{ runner.temp }}/tested-set.json
+
+      - name: Explain a compatibility failure
+        if: failure()
+        run: |
+          message="$CONTAINER_ROLE/$CONTAINER_ID ($CONTAINER_REPOSITORY at $CONTAINER_REF) broke on this Platform change. Fix it in the same task with a companion PR linked from the Platform PR; see docs/versions.md#platform-changes-and-companion-prs."
+          echo "::error::$message"
+          echo "$message" >> "$GITHUB_STEP_SUMMARY"
+
+
+  # One stable check for branch protection, independent of catalogue entries.
+  compatibility:
+    name: Official compatibility
+    needs: [catalogue, domain]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every official Domain and Extension to pass
+        env:
+          SELECTION: ${{ needs.catalogue.result }}
+          MOUNTED: ${{ needs.domain.result }}
+          HAS_CONTAINERS: ${{ needs.catalogue.outputs.has_containers }}
+        run: |
+          if [ "$SELECTION" = success ] && { [ "$MOUNTED" = success ] || { [ "$HAS_CONTAINERS" = false ] && [ "$MOUNTED" = skipped ]; }; }; then
+            echo 'Every official Domain and Extension passed.'
+          else
+            echo '::error::Official compatibility failed. Read the failing domains/<id> or extensions/<id> job. A break requires a companion PR in the same task, linked from the Platform PR (docs/versions.md#platform-changes-and-companion-prs).'
+            exit 1
+          fi
 
   # Publishes catalogue.json from this change plus every tested set so far to
   # the `catalogue` branch (docs/versions.md). Only release tags and hand runs

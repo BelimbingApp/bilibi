@@ -104,10 +104,33 @@ A `platform` requirement is comparators joined by commas: `>=0.1.0, <0.2.0`. The
 
 How CI records a set (`.github/workflows/domains.yml`):
 
-1. On a pull request or a push to `main`, each Domain is mounted at its `main` HEAD and the gates run. Nothing is recorded: these runs protect `main`, they are not releases.
-2. On a release tag `v*`, each Domain is mounted at its latest release tag instead. On a hand-started run, `domains_at` chooses between the two.
+1. On a pull request or a push to `main`, every official Domain and Extension in `catalogue.json` is mounted separately at its `main` HEAD and the gates run. A pull request can select companion branches as described below. Nothing is recorded: these runs protect `main`, they are not releases.
+2. On a release tag `v*`, each Domain and Extension is mounted at its latest release tag instead. On a hand-started run, `domains_at` chooses between the two. Companion branches never apply to tags, manual runs or pushes to `main`.
 3. After the gates pass, `python3 scripts/catalogue.py tested` reads the pin the gates made (`.local/composition/manifest.txt`) and writes the set.
 4. The `Record the tested sets` job then runs `python3 scripts/catalogue.py publish`, which merges `catalogue.json` from the run's checkout, the sets already on the `catalogue` branch and the new ones, and pushes the result to that branch. The same pair recorded twice keeps the newer run.
+
+Extension checks use the same gates. The existing tested-set format records Domain pairs only; Extension checks do not add records or change catalogue publishing.
+
+## Platform changes and companion PRs
+
+**Fix a broken official Domain or Extension in the same task as the Platform change.** Official means listed in `catalogue.json`, whether it is a Domain or an Extension. Public visibility alone does not make a repository official; a private Domain is possible too.
+
+- Open a companion PR in each affected repository and link it from the Platform PR. Link back to the Platform PR from each companion.
+- Keep the Platform and companion checks green, and merge the changes together. For a repository owned by someone else, open the companion PR and notify its owner.
+- For Domains and Extensions outside the catalogue, including private repositories, write short upgrade notes in the Platform PR. Explain the changed contract and the required update so their owner's agent can apply it.
+- Require the stable `Official compatibility` check from `Domains on this change` in branch protection. It fails if catalogue selection or any mounted job fails or is cancelled; no official entry is allowed to fail.
+
+To check a companion branch with a Platform PR, add one standalone line to the Platform PR body for each affected entry:
+
+```text
+Bilibi-Companion: domains/finance=fix/platform-change
+```
+
+Use `extensions/<catalogue-id>=<branch>` for an Extension. The branch must exist in that entry's catalogue repository. Fork repository overrides, duplicate entries, unknown entries and malformed directives are refused. Entries without a directive still use `main`. Link the companion PR alongside the directive; the directive selects a branch, it does not replace that link.
+
+Opening or editing the Platform PR body starts a new run, as does pushing a Platform commit. After pushing a new companion commit, rerun the workflow or edit the Platform PR body to start a fresh run. A companion push alone does not trigger Platform CI. Check the mounted job summary for the exact repository, ref and commit used. For the companion's own CI to check the new Platform API, update its `.github/bilibi-revision` to the Platform commit under review.
+
+The matrix comes from `scripts/compatibility.py`, reading `domains` and optional `extensions` from the checkout's `catalogue.json`. Each job runs the full shared `scripts/domain-ci.sh` gates, including the locked release build, migration, production seeds and `GET /`. A failing job names the Domain or Extension and points back to this companion-PR rule.
 
 ## Versions inside the program
 
