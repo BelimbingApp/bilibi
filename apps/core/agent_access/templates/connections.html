@@ -1,14 +1,61 @@
-{# Mirrors Bilimbi connections_live.ex; the standing list contract uses FlexTable. #}
+{# Mirrors Bilimbi connections_live.ex; the standing list contract uses FlexTable.
+   Setup steps sit under the table. Nothing here grants access. #}
 {% import "components.html" as ui %}
 {% import "settings.html" as settings %}
 {% import "feedback.html" as feedback %}
 {% import "dialog.html" as dialog %}
+{% import "forms.html" as forms %}
+{% import "lists.html" as lists %}
 {% call feedback::flash_group(messages=flash) %}{% endcall %}
-{% call ui::page(variant=bilibi_ui::PageVariant::List) %}
-{% call settings::layout(header=header, current=bilibi_ui::SettingsTab::AgentConnections, heading="Agent connections") %}
+{% call ui::page(id="ai-connections-page", variant=bilibi_ui::PageVariant::List) %}
+{% call settings::layout(header=header, current=bilibi_ui::SettingsTab::AiConnections, heading="Connect Bilibi to AI", description_html=intro) %}
 {{ table }}
 {% if pending.is_some() %}
 {% call dialog::confirm_dialog(id="revoke-connection-dialog", consequence="Revoke connection?", detail="Access ends immediately. Connect again and approve a new connection to grant access again.", confirm="Revoke", working="Revoking…", confirm_event="confirm_revoke", cancel_event="cancel_revoke") %}{% endcall %}
+{% endif %}
+{% if show_setup %}
+<div id="ai-setup" class="mt-6 space-y-4">
+{% call ui::section_heading(id="ai-setup-heading", title="Set up MCP in your AI app") %}{% endcall %}
+<div id="ai-copy-values" data-hook="ClipboardCopy" data-copy-event="connection_copied">
+<ol id="ai-setup-steps" class="list-decimal space-y-3 pl-5 text-sm text-ink">
+<li>In your AI app, open its MCP or connector settings and add a server.</li>
+<li><p>Paste this server's address.</p>
+{% call ui::facts(id="ai-server") %}
+{% call ui::fact(title="Server URL", id="ai-server-url") %}<div class="flex flex-wrap items-center gap-2"><code class="break-all">{{ server.text }}</code><span data-copy-text="{{ server.text }}">{% call ui::button(id=server.id, button_type="button") %}Copy{% endcall %}</span></div>{% endcall %}
+{% endcall %}
+</li>
+<li><p>If the app asks for a client ID, use the client ID for that app.</p>
+{% if !no_clients.is_empty() %}<div class="my-2">{{ no_clients }}</div>{% endif %}
+{% if let Some(field) = client_field %}
+<form id="ai-app-form" data-event="select_client" data-change novalidate>{% call forms::input(field=field) %}{% endcall %}</form>
+{% endif %}
+{% if let Some(client) = client %}
+{% call ui::facts(id="ai-client") %}
+{% call ui::fact(title="Client ID", id="ai-client-id") %}<div class="flex flex-wrap items-center gap-2"><code class="break-all">{{ client.text }}</code><span data-copy-text="{{ client.text }}">{% call ui::button(id=client.id, button_type="button") %}Copy{% endcall %}</span></div>{% endcall %}
+{% endcall %}
+{% endif %}
+</li>
+<li>A browser page opens: sign in to Bilibi, check the connection, and approve it.</li>
+<li>The app appears in the table above.</li>
+</ol>
+{% if let Some(copied) = copied %}
+{% if copied %}
+{% call feedback::alert(kind=bilibi_ui::StatusKind::Success, id="ai-copy-success", class="mt-2") %}Copied.{% endcall %}
+{% else %}
+{% call feedback::alert(kind=bilibi_ui::StatusKind::Error, id="ai-copy-failed", class="mt-2") %}Your browser did not allow copying. Select the value and copy it yourself.{% endcall %}
+{% endif %}
+{% endif %}
+</div>
+{% call ui::fold(id="ai-technical", title="Technical details", summary="OAuth with PKCE. No client secret.") %}
+{% call ui::facts(id="ai-technical-details") %}
+{% call ui::fact(title="Authentication", id="ai-authentication") %}OAuth with PKCE (S256). No client secret.{% endcall %}
+{% call ui::fact(title="Scope", id="ai-scope") %}<code>{{ scope }}</code>{% endcall %}
+{% call ui::fact(title="Authorization URL", id="ai-authorization-url") %}<code class="break-all">{{ authorization_url }}</code>{% endcall %}
+{% call ui::fact(title="Token URL", id="ai-token-url") %}<code class="break-all">{{ token_url }}</code>{% endcall %}
+{% endcall %}
+{% endcall %}
+{% call ui::action_link(id="ai-setup-guides", icon="external", title="App-specific setup guides", href=guides_href) %}App-specific setup guides{% endcall %}
+</div>
 {% endif %}
 {% endcall %}
 {% endcall %}

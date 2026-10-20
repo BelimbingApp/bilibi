@@ -3,7 +3,7 @@
 use bilibi_audit::{Redaction, REDACTIONS};
 use bilibi_authz::{CapabilityDefinition, VocabularyContribution, VOCABULARY};
 use bilibi_module_registry::{
-    contributions::{Access, Method, Route, ROUTES},
+    contributions::{Access, Method, Moved, Route, MOVED, ROUTES},
     Contribution, Provenance,
 };
 use bilibi_settings::{Definition, Editor, ScopeKind, Setting, Validator, ValueType, DEFINITIONS};
@@ -60,5 +60,15 @@ inventory::submit! { Contribution::new(ROUTES, "core/agent_access.authorize", pr
     method: Method::Get, path: "/oauth/authorize", service: "core/agent_access.pages", operation: "authorize", access: Access::SignedIn, framed: false,
 }) }
 inventory::submit! { Contribution::new(ROUTES, "core/agent_access.connections", provenance!(), &Route {
-    method: Method::Get, path: "/settings/agent-connections", service: "core/agent_access.pages", operation: "connections", access: Access::SignedIn, framed: true,
+    method: Method::Get, path: "/settings/ai-connections", service: "core/agent_access.pages", operation: "connections", access: Access::SignedIn, framed: true,
+}) }
+// The MCP page and the connections list are one tab. Old addresses keep working.
+inventory::submit! { Contribution::new(MOVED, "core/agent_access.connections.moved", provenance!(), &Moved {
+    from: "/settings/agent-connections", to: "/settings/ai-connections",
+}) }
+inventory::submit! { Contribution::new(MOVED, "core/agent_access.mcp.moved", provenance!(), &Moved {
+    from: "/settings/mcp", to: "/settings/ai-connections",
+}) }
+inventory::submit! { Contribution::new(MOVED, "core/agent_access.chatgpt.moved", provenance!(), &Moved {
+    from: "/settings/chatgpt-plugin", to: "/settings/ai-connections",
 }) }

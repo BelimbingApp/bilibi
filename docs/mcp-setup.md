@@ -1,10 +1,10 @@
 # App-specific setup guides
 
-Use **My settings → MCP** (`/settings/mcp`) to copy this server's MCP address and the app's client ID.
+Use **My settings → AI connections** (`/settings/ai-connections`) to copy this server's MCP address and the app's client ID, and to revoke a connection.
 
-Add that server URL in the app's MCP settings. Sign in to Bilibi when the app asks, and approve the connection. The agent can do what you can do in Bilibi, and nothing more. End access any time in **Agent connections**.
+Add that server URL in the app's MCP settings. Sign in to Bilibi when the app asks, and approve the connection. The agent can do what you can do in Bilibi, and nothing more. To disconnect an app, choose **Revoke connection** on that page. Access ends at once.
 
-`/settings/chatgpt-plugin` opens the same page. The page does not install an app, and it does not approve a connection.
+`/settings/mcp`, `/settings/agent-connections` and `/settings/chatgpt-plugin` open the same page. The page does not install an app, and it does not approve a connection.
 
 ## ChatGPT
 

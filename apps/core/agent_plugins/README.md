@@ -1,11 +1,12 @@
 # Agent plugins
 
 Builds the downloadable plugin package that connects an agent harness (ChatGPT
-first) to this installation's `/mcp` edge, and serves the MCP settings page.
+first) to this installation's `/mcp` edge.
 Ported from Bilimbi `apps/core/agent_access` (`plugin_package.ex`,
 `web/plugin_live.ex`, `web/plugin_controller.ex`, `mix bilimbi.mcp.plugin`),
 split so the harness format is a thin adapter over one harness-neutral builder.
-The settings page does not name a harness. App-specific steps are in
+The settings page is AI connections in `core/agent_access` and does not name a
+harness. App-specific steps are in
 [docs/mcp-setup.md](../../../docs/mcp-setup.md).
 
 ## Layers
@@ -18,7 +19,8 @@ are the base layer and stay where they are.
 | Operations, guides, plans, MCP protocol | `base/agent_api` | No |
 | `/api/v1`, `/mcp`, OAuth endpoints | `apps/web` | No |
 | OAuth public clients, grants, connections | `core/agent_access` | No |
-| Package builder, archive, MCP settings page, download, exporter | `core/agent_plugins` (`src/package.rs`, `src/archive.rs`, `src/web.rs`) | No |
+| Package builder, archive, download, exporter | `core/agent_plugins` (`src/package.rs`, `src/archive.rs`, `src/web.rs`) | No |
+| AI connections settings page | `core/agent_access` | No |
 | Manifest format and file layout | one adapter per harness (`src/chatgpt.rs`) | Yes |
 
 ## Package builder (`src/package.rs`)
@@ -69,12 +71,11 @@ are the base layer and stay where they are.
 4. Add that app's steps to [docs/mcp-setup.md](../../../docs/mcp-setup.md).
 5. Run the exporter, unzip and check the files.
 
-The builder, archive, settings page and exporter do not change.
+The builder, archive and exporter do not change.
 
-## Page and download
+## Download
 
-- `/settings/mcp`: the MCP tab on My settings (`SettingsTab::Mcp`). It shows the server URL (`{origin}/mcp`) and the registered app's client ID, each with copy (`ClipboardCopy` hook, success and failure feedback). The app is auto-selected when only one is registered. Authentication, scope, and the authorization and token URLs sit under Technical details. No registered app tells the person to ask an admin. Impersonation and an agent facet see only "Use your own account". The page works on an HTTP origin. It does not offer a plugin download.
-- `/settings/chatgpt-plugin` redirects to `/settings/mcp` and keeps the query string. Agent connections links to the MCP tab.
+- AI connections (`/settings/ai-connections`) is owned by `core/agent_access`. This module does not serve a settings page.
 - The ChatGPT ZIP stays at `/settings/chatgpt-plugin/download?client_id=…` (a `Download` contribution). It is not linked from the page. It re-checks the client registration and the HTTPS origin on every request:
 
 | Request | Answer |
@@ -85,7 +86,7 @@ The builder, archive, settings page and exporter do not change.
 | HTTP `APP_ORIGIN` | 409 |
 | Any other query parameter | 400 |
 
-- Neither the page nor the download creates or approves a grant. The archive
+- The download does not create or approve a grant. The archive
   holds public configuration and skills only: no token, credential, record or
   executable.
 

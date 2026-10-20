@@ -1,6 +1,7 @@
 //! Personal settings navigation, mirroring Bilimbi
-//! `Core.User.Web.SettingsComponents.settings_layout`. All six pages use the
-//! same layout and typed active tab, including pages owned by other modules.
+//! `Core.User.Web.SettingsComponents.settings_layout`. All five pages use the
+//! same layout and typed active tab, including the page owned by
+//! `core/agent_access`.
 use crate::Tab;
 
 /// The active section of the signed-in account's settings.
@@ -10,13 +11,12 @@ pub enum SettingsTab {
     Password,
     TwoFactor,
     Appearance,
-    Mcp,
-    AgentConnections,
+    AiConnections,
 }
 
 impl SettingsTab {
     /// One navigation source for every personal settings page.
-    pub fn tabs(&self) -> [Tab<'static>; 6] {
+    pub fn tabs(&self) -> [Tab<'static>; 5] {
         [
             (
                 Self::Profile,
@@ -42,12 +42,11 @@ impl SettingsTab {
                 "Appearance",
                 "/settings/appearance",
             ),
-            (Self::Mcp, "settings-nav-mcp", "MCP", "/settings/mcp"),
             (
-                Self::AgentConnections,
-                "settings-nav-agent-connections",
-                "Agent connections",
-                "/settings/agent-connections",
+                Self::AiConnections,
+                "settings-nav-ai-connections",
+                "AI connections",
+                "/settings/ai-connections",
             ),
         ]
         .map(|(section, id, label, href)| Tab {

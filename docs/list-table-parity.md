@@ -57,7 +57,7 @@ Every operational table in the Base/Core/Web composition uses the shared FlexTab
 | `/admin/system/database-queries` | `user/web/database_queries_live/index.ex` and `.html.heex`: LC; name/description/created/updated sortable; search, P4; saved query links/create/delete | LC | OK |
 | `/admin/system/database-queries/{slug}` — Results | Same directory `show.ex` and `.html.heex`: LC dynamic projection; result columns sortable; P4; Run/save/duplicate/delete query | LC, but sort arrow did not follow aliased owner keys correctly | C4; alias/spec collision and duplicate SQL labels exercised; only first duplicate is sortable because C9 resolves names to first position |
 | `/notifications` | `user/web/notifications_live.ex` and `.html.heex`: cards; All/Unread/Read tabs, P4, mark-one/all and visit links | Cards: no column/drag/height controls | C2 by standing FlexTable rule; tabs/paging/read/deep-link/empty behavior retained; compact actions fit one line |
-| `/settings/agent-connections` | `core/agent_access/lib/agent_access/web/connections_live.ex`: cards; expiry/revoked/expired/identity-warning data; confirmed revoke; no search/sort/pager | Cards: no column/drag/height controls | C2 by standing rule; LC, typed expiry and warnings retained; confirmation/cancel/revoke exercised, including compact rows |
+| `/settings/ai-connections` | `core/agent_access/lib/agent_access/web/connections_live.ex`: cards; expiry/revoked/expired/identity-warning data; confirmed revoke; no search/sort/pager | Cards: no column/drag/height controls | C2 by standing rule; LC, typed expiry and warnings retained; confirmation/cancel/revoke exercised, including compact rows |
 
 ## Base and Web lists
 

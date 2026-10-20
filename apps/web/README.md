@@ -167,7 +167,7 @@ The status bar shows the same facts through `bilibi_ui::version_badges`. The sch
 
 # Agent plugins
 
-The MCP settings page (`/settings/mcp`; `/settings/chatgpt-plugin` redirects there) and the ChatGPT plugin download are `core/agent_plugins` contributions, not host routes. The page shows this `/mcp` edge from `APP_ORIGIN`. The ChatGPT package is named after the instance (`bilibi-staging`, "Bilibi Staging", `bilibi-staging-chatgpt-plugin.zip`), so a person can hold a Dev, a Staging and a Production connection in one harness. The host only parses the exporter subcommand:
+AI connections (`/settings/ai-connections`) is a `core/agent_access` page, not a host route. `/settings/mcp`, `/settings/agent-connections` and `/settings/chatgpt-plugin` redirect there. The page shows this `/mcp` edge from `APP_ORIGIN`. The ChatGPT plugin download stays a `core/agent_plugins` contribution. The package is named after the instance (`bilibi-staging`, "Bilibi Staging", `bilibi-staging-chatgpt-plugin.zip`), so a person can hold a Dev, a Staging and a Production connection in one harness. The host only parses the exporter subcommand:
 
 ```sh
 bilibi-web plugin-export --harness chatgpt --client <registered-id> --output <new-directory>
