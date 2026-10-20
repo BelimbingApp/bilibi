@@ -192,10 +192,11 @@ The review describes how the selected file relates to the report:
 | --- | --- |
 | Same repository/release/asset IDs, tag, target and archive SHA-256 | Same file as tested on Staging |
 | Same repository, tag and setup commit, with a different target | Same setup as tested on Staging, built for a different computer type |
-| Anything else from GitHub, including an unknown setup commit for another target | Not the setup tested on Staging |
+| Same repository and tag, but the setup commit of the selected release or of the report is unavailable | Could not check whether this is the setup tested on Staging |
+| Anything else from GitHub | Not the setup tested on Staging |
 | An uploaded file | An uploaded file cannot be compared with the Staging report |
 
-For this comparison, Production reads the selected tag's commit from GitHub when a report is supplied. An unavailable commit stays unknown. **The comparison informs the owner and never refuses installation.** The installer retains the report without enforcing its program checksum or setup commit. Different targets contain different bytes; tags and local release numbers never establish an equal asset. Never give the agent an authenticator seed or GitHub token.
+For this comparison, Production reads the selected tag's commit from GitHub when a report is supplied. An unavailable commit gets the "could not check" wording, never "different setup". **The comparison informs the owner and never refuses installation.** The installer retains the report without enforcing its program checksum or setup commit. Different targets contain different bytes; tags and local release numbers never establish an equal asset. Never give the agent an authenticator seed or GitHub token.
 
 ### Upgrade existing servers
 

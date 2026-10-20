@@ -83,27 +83,29 @@ pub(crate) fn review(input: &Value, source: &Value) -> SoftwareResult<Option<Val
     })))
 }
 
-/// Tags alone cannot show equal setups when targets differ. Unknown commits
-/// remain unknown; the report is never used as an installation constraint.
+/// Tags alone cannot show equal setups when targets differ. When either setup
+/// commit is unavailable the comparison says so; the report is never used as an
+/// installation constraint.
 fn relation(source: &Value, tested: &Value) -> &'static str {
+    let known = |value: &Value| value.as_str().is_some_and(|text| !text.is_empty());
     if source["kind"] != "github" {
         "An uploaded file cannot be compared with the Staging report"
     } else if crate::github::same_asset(source, tested) {
         "Same file as tested on Staging"
     } else if source["repository_id"].as_i64().is_some_and(|id| id > 0)
         && source["repository_id"] == tested["repository_id"]
-        && source["tag"].as_str().is_some_and(|tag| !tag.is_empty())
+        && known(&source["tag"])
         && source["tag"] == tested["tag"]
-        && source["setup_commit"]
-            .as_str()
-            .is_some_and(|commit| !commit.is_empty())
+        && !(known(&source["setup_commit"]) && known(&tested["setup_commit"]))
+    {
+        "Could not check whether this is the setup tested on Staging"
+    } else if source["repository_id"].as_i64().is_some_and(|id| id > 0)
+        && source["repository_id"] == tested["repository_id"]
+        && known(&source["tag"])
+        && source["tag"] == tested["tag"]
         && source["setup_commit"] == tested["setup_commit"]
-        && source["target"]
-            .as_str()
-            .is_some_and(|target| !target.is_empty())
-        && tested["target"]
-            .as_str()
-            .is_some_and(|target| !target.is_empty())
+        && known(&source["target"])
+        && known(&tested["target"])
         && source["target"] != tested["target"]
     {
         "Same setup as tested on Staging, built for a different computer type"
