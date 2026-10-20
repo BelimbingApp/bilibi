@@ -18,6 +18,9 @@
 <div id="specimen-facts-single" class="border-t border-line pt-3"><p class="mb-1 text-xs text-ink-muted">One fact</p>
 {% call ui::facts(id="specimen-facts-single-list") %}{% call ui::fact(title="Company", id="specimen-facts-company") %}Acme Holdings{% endcall %}{% endcall %}
 </div>
+<div id="specimen-facts-digest" class="border-t border-line pt-3"><p class="mb-1 text-xs text-ink-muted">Long identifiers keep their full value</p>
+{% call ui::facts(id="specimen-facts-digest-list") %}{% call ui::fact(title="SHA-256", id="specimen-facts-sha256") %}e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855{% endcall %}{% call ui::fact(title="Setup commit") %}Not recorded{% endcall %}{% endcall %}
+</div>
 {% endcall %}
 </div>
 {% call ui::card(id="specimen-stat-strip", title="Statistics", inner_class="space-y-4 p-4") %}
