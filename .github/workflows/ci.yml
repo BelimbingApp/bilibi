@@ -5,8 +5,8 @@
 # Mounted Domain checks are domains.yml: those pull requests lint and boot a
 # debug build, so this release build is the one a pull request still does.
 # main keeps both.
-# A branch push and its pull request share one group, so the later run
-# cancels the earlier instead of compiling twice. main is not cancelled.
+# A new push to a pull request cancels its older pull-request run. Branch
+# pushes, main and tags are never cancelled.
 name: Rust
 on:
   push:
@@ -14,8 +14,8 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: rust-${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  group: rust-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   check:
     runs-on: ubuntu-latest
