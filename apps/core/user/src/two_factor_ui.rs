@@ -294,6 +294,16 @@ impl TwoFactorPage {
             Stage::Codes(codes) => ("codes", None, codes),
             Stage::On => ("on", None, &empty),
         };
+        let (heading, subheading) = match self.stage {
+            Stage::Off | Stage::Setup(_) => (
+                "Set up your authenticator app",
+                "Link an authenticator app on your phone, such as Google Authenticator or Microsoft Authenticator. Before risky changes, Bilibi asks for the 6-digit code from the app.",
+            ),
+            Stage::Codes(_) | Stage::On => (
+                "Authenticator app",
+                "Your authenticator app is set up. Before risky changes, Bilibi asks for the 6-digit code from the app.",
+            ),
+        };
         let password = fragment(Html::render(
             &SecretInput::in_form("two_factor", "password", "password")
                 .label("Confirm your password")
@@ -347,8 +357,8 @@ impl TwoFactorPage {
                 actions: Html::EMPTY,
             }))?,
             current: bilibi_ui::SettingsTab::TwoFactor,
-            heading: "Set up your authenticator app",
-            subheading: "Link an authenticator app on your phone, such as Google Authenticator or Microsoft Authenticator. Before risky changes, Bilibi asks for the 6-digit code from the app.",
+            heading,
+            subheading,
             stage,
             notice: &self.notice,
             password,
