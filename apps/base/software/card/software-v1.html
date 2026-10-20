@@ -685,6 +685,8 @@ async function pollOnce() {
     state.data.undo = status.undo;
     state.data.job = status.job;
     state.data.installed = status.installed || state.data.installed;
+    state.data.installed_asset = status.installed_asset;
+    state.releases = null;
     renderJob();
     if (!(status.job.state === 'queued' || status.job.state === 'running')) stopPolling();
   }
