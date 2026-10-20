@@ -58,6 +58,8 @@ Open the address printed by the launcher and sign in as `ai@agent.my` / `bilibi-
 
 The launcher sets `BILIBI_ENV=development` unless you already set it, so the install seed identifies a fresh local copy as Dev. A saved role in Instance settings takes precedence. It starts a private database, builds, migrates, seeds and rebuilds on change. While the HTTPS app is down, its waiting page shows the current build step and elapsed time. A failed build shows the latest diagnostics; fix the error and save a file to rebuild. Cargo output stays in the terminal, and a previous successful build keeps serving until its replacement is ready. Restart it after changing an environment variable.
 
+`start-app.sh` stores three keys for this checkout when they are not already set. `BILIBI_SETTINGS_KEY` is `.local/dev/settings.key`. `BILIBI_USER_SIGNING_KEY` is `.local/dev/user-signing.key`. `BILIBI_MEDIA_SIGNING_KEY` is `.local/dev/media-signing.key`. The first run creates a missing file as 64 hex characters (32 random bytes) with mode 0600. Later runs read that same file. The launcher leaves an existing key file as it is. Replacing `settings.key` would make every secret setting and authenticator key unreadable. `.local/` is not committed. Restart the launcher after you change one of these files.
+
 ## Configuration
 
 | Variable | Use |
@@ -66,8 +68,9 @@ The launcher sets `BILIBI_ENV=development` unless you already set it, so the ins
 | `APP_ORIGIN` | The exact browser origin, no trailing slash |
 | `BIND_ADDR` | Listen address, default `127.0.0.1:3000` |
 | `MAIL_HOST` | SMTP relay. Unset: write mail to `.local/mailbox/` |
-| `BILIBI_USER_SIGNING_KEY` | 64 hex characters, for email verification links |
-| `BILIBI_SETTINGS_KEY` | 64 hex characters. Encrypts secret settings and authenticator keys. Two-factor setup refuses without it |
+| `BILIBI_USER_SIGNING_KEY` | 64 hex characters, for email verification links. Unset: `start-app.sh` reads `.local/dev/user-signing.key` |
+| `BILIBI_SETTINGS_KEY` | 64 hex characters. Encrypts secret settings and authenticator keys. 2FA setup refuses without it. Unset: `start-app.sh` reads `.local/dev/settings.key` and leaves an existing file as it is |
+| `BILIBI_MEDIA_SIGNING_KEY` | 64 hex characters, for signed file links. Unset: `start-app.sh` reads `.local/dev/media-signing.key` |
 | `BILIBI_ENV` | `development`, `staging` or `production`. Initial role for the install seed. Unset means `production`; `start-app.sh` defaults to `development`. Later role changes use Instance settings. Other values refuse installation |
 
 Every page, consent page and agent answer says which Bilibi it is, so nobody mistakes a test copy for the live system. The status bar always shows the stored server role; Staging also shows a top-bar badge. Dev and Staging show a sign-in badge; reviews and agent plans name every instance, production included. The name and colour are the Instance settings (`instance.label`, `instance.colour`), read through `bilibi_base::system::Instance::resolve` ([Base System](apps/base/system/README.md)).

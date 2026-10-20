@@ -7,6 +7,55 @@ set -euo pipefail
 export BILIBI_ENV=${BILIBI_ENV-development}
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 cd "$root"
+# A full local copy needs these keys. When a variable is already set, leave it
+# and its file alone. Otherwise read the file, or create it once: 64 hex
+# characters from 32 random bytes, mode 0600, under gitignored .local/dev/.
+# Never replace an existing key file. A new settings key cannot open secret
+# settings or authenticator keys sealed with the old one.
+ensure_dev_key() {
+    local var=$1 file=$2 value tmp
+    if [[ -n ${!var:-} ]]; then
+        return 0
+    fi
+    mkdir -p -- "$root/.local/dev"
+    chmod 700 "$root/.local/dev"
+    if [[ -e $file && ! -f $file ]]; then
+        echo "$file exists and is not a regular file. It was left unchanged." >&2
+        exit 1
+    fi
+    if [[ -f $file ]]; then
+        value=$(tr -d '[:space:]' < "$file")
+        chmod 600 "$file" || true
+    else
+        value=$(python3 -c 'import secrets; print(secrets.token_hex(32), end="")')
+        tmp=$(mktemp "$root/.local/dev/.new-key.XXXXXX")
+        chmod 600 "$tmp"
+        if ! printf '%s\n' "$value" > "$tmp"; then
+            rm -f -- "$tmp"
+            exit 1
+        fi
+        # ln fails if the file appeared; keep that file and do not rewrite it.
+        if ln -- "$tmp" "$file" 2>/dev/null; then
+            rm -f -- "$tmp"
+        else
+            rm -f -- "$tmp"
+            if [[ ! -f $file ]]; then
+                echo "Could not create $file." >&2
+                exit 1
+            fi
+            value=$(tr -d '[:space:]' < "$file")
+        fi
+    fi
+    if [[ ! $value =~ ^[0-9a-fA-F]{64}$ ]]; then
+        echo "$file must contain 64 hex characters (32 random bytes). It was left unchanged." >&2
+        exit 1
+    fi
+    printf -v "$var" '%s' "$value"
+    export "$var"
+}
+ensure_dev_key BILIBI_SETTINGS_KEY "$root/.local/dev/settings.key"
+ensure_dev_key BILIBI_USER_SIGNING_KEY "$root/.local/dev/user-signing.key"
+ensure_dev_key BILIBI_MEDIA_SIGNING_KEY "$root/.local/dev/media-signing.key"
 # Acquire the checkout owner and bring up status before any build can fail.
 if [[ ${1:-} != --owned ]]; then
     exec python3 scripts/dev-process.py watch "$root/scripts/start-app.sh" --owned
