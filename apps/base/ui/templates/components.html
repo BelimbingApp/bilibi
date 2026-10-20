@@ -122,7 +122,8 @@ ui-icon-button grid shrink-0 place-items-center transition focus-visible:outline
     label, in the same size and ink (FLOATING_LABEL_CLASS, src/forms.rs). The
     text lands where the field's text does, so an inline editor opens as the
     field in the same place (`[data-fact]` in assets/css/app.css). A long text
-    or preformatted value takes the whole row. -#}
+    or preformatted value takes the whole row. Unbroken identifiers wrap
+    within the cell without changing the text a person copies. -#}
 {% macro fact(title, id="") %}
 <div data-fact class="relative min-w-0 rounded-md has-[pre,[data-hook=InlineLongText]]:col-span-full"><dt class="pointer-events-none absolute left-3 top-1 z-[1] max-w-[calc(100%-1.5rem)] truncate text-[0.6875rem] font-medium leading-3 text-ink-muted">{{ title }}</dt><dd{% if !id.is_empty() %} id="{{ id }}"{% endif %} class="min-h-10 min-w-0 border border-transparent px-3 pt-[0.9375rem] pb-[0.1875rem] text-base leading-5 text-ink max-sm:text-[1rem]">{{ caller() }}</dd></div>
 {% endmacro %}
