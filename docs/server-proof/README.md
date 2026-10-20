@@ -2,10 +2,6 @@
 
 Build on your own machine, then prove installation, 2FA, Undo and automatic switch-back in a disposable systemd server.
 
-## Recorded run
-
-[The evidence summary](evidence-2026-10-19.md) records the commits, job results, screenshots and cleanup from the 2026-10-19 run.
-
 ## Prepare the lab
 
 Use a disposable Bilibi checkout on a Linux host with `sudo -n`, `systemd-nspawn`, `machinectl`, `debootstrap`, `iptables`, Rust, Python 3 and `chrome-devtools-axi`.
