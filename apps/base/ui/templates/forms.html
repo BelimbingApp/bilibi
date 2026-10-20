@@ -46,7 +46,7 @@
 {% for option in control.options %}<option value="{{ option.value }}"{% if option.value == control.field.value %} selected{% endif %}>{{ option.label }}</option>{% endfor %}
 </select>
 <button type="button" id="{{ control.field.id }}-trigger" data-colour-trigger hidden role="combobox"{% if control.field.attrs.required %} aria-required="true"{% endif %} aria-haspopup="listbox" aria-expanded="false" aria-controls="{{ control.field.id }}-options" aria-labelledby="{{ control.field.id }}-label {{ control.field.id }}-value"{% call aria(invalid=control.field.invalid(), described_by=control.field.described_by()) %}{% endcall %} class="ui-colour-trigger {{ control.field.control_class() }}"{% if control.field.attrs.disabled || control.field.attrs.readonly %} disabled{% endif %}>
-<span id="{{ control.field.id }}-value" data-colour-preview class="ui-colour-chip {{ control.selected().colour.class() }}">{{ control.selected().label }}</span>{% call ui::icon(name="hero-chevron-down", class="ml-auto size-4 shrink-0 text-ink-muted") %}{% endcall %}
+<span id="{{ control.field.id }}-value" data-colour-preview class="ui-colour-chip {{ control.selected().colour.class() }}">{{ control.selected().label }}</span>{% call ui::icon(name="hero-chevron-down", class="ui-colour-chevron size-4 shrink-0 text-ink-muted") %}{% endcall %}
 </button>
 <label id="{{ control.field.id }}-label" for="{{ control.field.id }}" class="{{ bilibi_ui::forms::PINNED_LABEL_CLASS }}">{{ control.field.label }}{% if control.field.attrs.required %}<span aria-hidden="true">*</span>{% endif %}</label>
 </div>

@@ -32,6 +32,21 @@
   gap: 0.5rem;
   text-align: left;
 }
+/* The closed field borrows the select's right padding. The chevron sits where
+ * that select draws its own arrow: centred on the box. `right` is measured
+ * inside the 1px border, and the 16px icon's glyph is centred in the icon,
+ * so 0.5px puts the glyph on the arrow. */
+.ui-colour-trigger:not([hidden]) { position: relative; }
+.ui-colour-chevron {
+  position: absolute;
+  top: 50%;
+  right: 0.5px;
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
 .ui-colour-chip {
   display: inline-flex;
   align-items: center;
