@@ -77,9 +77,12 @@ def container_modules(root, layer):
             declared = tomllib.loads(descriptor.read_text())
         except tomllib.TOMLDecodeError as error:
             raise Refused(f'{where}/{CONTAINER_FILE}: {error}') from None
-        unknown = sorted(set(declared) - {'id', 'layer'})
+        unknown = sorted(set(declared) - {'id', 'layer', 'compatibility_epoch'})
         if unknown:
             raise Refused(f'{where}/{CONTAINER_FILE}: unknown keys {unknown}; expected id and layer')
+        # Throwaway proof only: simulate a new Platform container contract.
+        if layer == 'domains' and declared.get('id') == 'factory' and declared.get('compatibility_epoch') != 1:
+            raise Refused(f'{where}: scratch compatibility proof requires compatibility_epoch = 1 in {CONTAINER_FILE}')
         container = snake_id(declared.get('id'), 'container id', f'{where}/{CONTAINER_FILE}')
         if container != folder.name:
             raise Refused(f'{where}: {CONTAINER_FILE} declares id {container!r}; mount it at apps/{layer}/{container}')
