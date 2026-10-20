@@ -433,7 +433,11 @@ def push_catalogue(work, branch, message, body, token):
     git(['add', 'catalogue.json'], token, work)
     git(['-c', 'user.name=github-actions', '-c', 'user.email=github-actions@github.com',
          'commit', '--quiet', '-m', message], token, work)
-    git(['push', '--quiet', REMOTE, f'HEAD:refs/heads/{branch}'], token, work)
+    expect(branch.startswith('catalogue-entry/'), f'{branch} is not a catalogue-entry branch')
+    ref = f'refs/heads/{branch}'
+    earlier = git(['ls-remote', REMOTE, ref], token, work).split()
+    lease = [f'--force-with-lease={ref}:{earlier[0]}'] if earlier else []
+    git(['push', '--quiet', *lease, REMOTE, f'HEAD:{ref}'], token, work)
     return open_pull_request(branch, message, body, token)
 
 

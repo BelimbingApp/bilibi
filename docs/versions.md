@@ -77,7 +77,7 @@ To record the pair as tested before the next Platform release, run `Domains on t
 
 ## Upgrade notes for agents
 
-Every pull request has a heading `Upgrade notes for agents`. Say what a Domain or Extension owner must change, and the exact steps for their agent. Write `None` when nothing of theirs changes. The pull request template carries the heading. `python3 scripts/release.py require-notes` refuses a pull request that leaves it empty, and the Rust workflow runs that on every pull request.
+Every pull request has a heading `Upgrade notes for agents`. Say what a Domain or Extension owner must change, and the exact steps for their agent. Write `None` when nothing of theirs changes. The pull request template carries the heading. `python3 scripts/release.py require-notes` refuses a pull request that leaves it empty, and the Upgrade notes workflow runs that on every pull request and again when its body is edited.
 
 `python3 scripts/release.py gather` writes `docs/upgrade-notes/vX.Y.Z.md` from the pull requests merged after the previous `vX.Y.Z` tag. The GitHub release body is that file. An agent updating a private Domain or Extension reads the file for the release it is moving to.
 
