@@ -11,6 +11,36 @@
 // `bilibi:event` CustomEvent, and hears a server push as a `window` event
 // `bilibi:<name>` with the payload in detail. ui.js must load first.
 (() => {
+  // The server owns opening/closing; this hook owns keyboard and focus only.
+  window.BilibiUI.registerHook("InlineForm", {
+    mounted() {
+      this.keydown = event => {
+        if (this.el.dataset.editing !== "true") return
+        if (event.key === "Escape") {
+          event.preventDefault()
+          event.stopPropagation()
+          this.emit(this.el.dataset.cancelEvent, {key: this.el.dataset.key})
+        } else if (event.key === "Enter" && !event.isComposing &&
+                   event.target.matches("input:not([type=button]):not([type=submit])")) {
+          event.preventDefault()
+          this.el.querySelector("form")?.requestSubmit()
+        }
+      }
+      this.el.addEventListener("keydown", this.keydown)
+      this.updated()
+    },
+    updated() {
+      const editing = this.el.dataset.editing === "true"
+      if (editing !== this.editing) {
+        this.editing = editing
+        const target = editing ? this.el.querySelector("input:not([type=hidden]):not([disabled]), select, textarea") : this.el.querySelector("button")
+        if (editing || this.wasEditing) target?.focus()
+        this.wasEditing = editing
+      }
+    },
+    destroyed() { this.el.removeEventListener("keydown", this.keydown) },
+  })
+
   // One native input is the keyboard and accessibility contract. Decorative
   // boxes follow its caret, so editing never adds eight tab stops or labels.
   const CodeInput = {

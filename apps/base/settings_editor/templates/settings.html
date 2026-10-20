@@ -1,28 +1,15 @@
-{#- The operator settings page (Bilimbi `Settings.Web.GroupLive` render).
-    Controls, the picker and the dialogs are rendered by src/web.rs through
-    the shared models; this file lays them out with the source's classes. -#}
+{# Bilimbi Settings.Web.GroupLive, presented through the shared list table. #}
 {%- import "components.html" as ui -%}
 {%- import "feedback.html" as feedback -%}
 <div data-shared-ui>
 {% call feedback::flash_group(messages=flash) %}{% endcall %}
-{% call ui::page(id="settings-group", variant=bilibi_ui::PageVariant::Form) %}
-{{ header|safe }}
-{{ scopes|safe }}
-<form id="settings-form" data-event="save_settings" class="mt-5 space-y-5">
-<div id="settings-group-operator" class="space-y-5">
-{% for field in fields %}<div id="setting-{{ field.dom }}" class="rounded-xl border border-line bg-surface p-4">
-<label for="input-{{ field.dom }}" class="block text-sm font-medium text-ink-strong">{{ field.label }}</label>
-<p class="mt-0.5 text-xs text-ink-subtle">{{ field.help }}</p>
-{{ field.control|safe }}
-<div class="mt-1.5 flex items-center gap-2 text-xs">{% if field.overridden %}{% call ui::badge() %}{{ field.badge }}{% endcall %}{% else %}<span class="text-ink-faint">{{ field.note }}</span>{% endif %}{% if !field.encrypted.is_empty() %}<span class="text-ink-faint">{{ field.encrypted }}</span>{% endif %}</div>
-</div>
-{% endfor %}{{ empty|safe }}
-</div>
-<div class="flex items-center justify-between gap-4">
-<p class="text-xs text-ink-faint">Clear a field to use the inherited value again.</p>
-<div class="flex gap-2">{{ restore|safe }}{{ save|safe }}</div>
-</div>
-</form>
-{{ dialog|safe }}
+{% call ui::page(id="settings-group", variant=bilibi_ui::PageVariant::List) %}
+{{ header }}
+{{ scopes }}
+{{ toolbar }}
+{{ table }}
+{{ pagination }}
+{{ restore }}
+{{ dialog }}
 {% endcall %}
 </div>

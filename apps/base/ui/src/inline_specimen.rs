@@ -124,6 +124,8 @@ impl InlineSpecimen {
 /// no live socket, so these show the read and outcome states only; the
 /// lifecycle is demonstrated by the `u5-inline` running app.
 pub struct InlineSamples {
+    pub form_read: Html,
+    pub form_edit: Html,
     pub edit: Html,
     pub edit_saved: Html,
     pub edit_add: Html,
@@ -175,7 +177,51 @@ impl InlineSamples {
         ));
         let mut choice_error = choice("error", active)?;
         choice_error.field.status = CommitStatus::Error("Pending is not allowed.".into());
+        let form_sample = |editing| -> askama::Result<Html> {
+            let mut actions = Html::render(&crate::Button {
+                button_type: "submit",
+                body: Html::text("Save"),
+                ..crate::Button::default()
+            })?;
+            actions.push(&Html::render(&crate::Button {
+                button_type: "button",
+                event: "cancel_setting",
+                body: Html::text("Cancel"),
+                ..crate::Button::default()
+            })?);
+            Html::render(&crate::InlineForm {
+                compact: false,
+                id: format!("specimen-inline-form-{editing}"),
+                key: "setting".into(),
+                label: "Setting value".into(),
+                value: "30".into(),
+                hint: "Inherited value".into(),
+                editing,
+                open_event: "edit_setting".into(),
+                cancel_event: "cancel_setting".into(),
+                status: if editing {
+                    CommitStatus::Error("Enter a whole number.".into())
+                } else {
+                    CommitStatus::None
+                },
+                form: Html::render(&crate::Form {
+                    id: "specimen-cell-form",
+                    event: "save_setting",
+                    body: Html::render(
+                        &Field::named("value")
+                            .id("specimen-cell-value")
+                            .label("Setting value")
+                            .value("30")
+                            .wrapper_class("mb-0"),
+                    )?,
+                    actions,
+                    ..crate::Form::default()
+                })?,
+            })
+        };
         Ok(Self {
+            form_read: form_sample(false)?,
+            form_edit: form_sample(true)?,
             edit: Html::render(&InlineEdit {
                 field: edit("", "name", "Edit company name", "Editable entity value"),
             })?,

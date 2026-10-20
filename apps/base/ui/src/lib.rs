@@ -77,7 +77,7 @@ pub use forms::{
 };
 pub use html::Html;
 pub use inline::{
-    CommitOutcome, CommitStates, CommitStatus, InlineChoice, InlineEdit, InlineField,
+    CommitOutcome, CommitStates, CommitStatus, InlineChoice, InlineEdit, InlineField, InlineForm,
     InlineLongText,
 };
 pub use inline_specimen::{inline_specimen_values, InlineSpecimen};

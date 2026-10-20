@@ -130,6 +130,7 @@ Width is a shared decision. Every page uses `PageVariant`. All three share one c
 - **Numbers:** tabular numerals for IDs, counts, dates and amounts.
 - **Corners:** table frames are square. A card is flat only where it frames the table.
 - **Pagination:** shown only when another page exists. The rows-per-page selector lives in the component.
+- **Settings:** the operator and company settings table opens each Value cell as a form with Save and Cancel (`InlineForm`). Enter saves; Escape cancels. Protected values ask for 2FA in the row.
 - **Empty:** `EmptyState` says why and what to do next.
 
 ### Flexible columns
