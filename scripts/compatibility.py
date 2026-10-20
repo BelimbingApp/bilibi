@@ -10,6 +10,7 @@ Companion refs are PR-body data, never shell commands or repository overrides.
 """
 import json
 import os
+import posixpath
 import re
 import subprocess
 import sys
@@ -59,14 +60,24 @@ def matrix(event, event_name):
     return {'include': list(containers.values())}
 
 
+def compiled_in(path):
+    """True when a Rust source includes `path` with include_str! or include_bytes!."""
+    result = subprocess.run(
+        ['git', 'grep', '-lF', posixpath.basename(path), '--', '*.rs'],
+        cwd=ROOT, check=False, capture_output=True, text=True)
+    return any(
+        posixpath.normpath(posixpath.join(posixpath.dirname(source), included)) == path
+        for source in result.stdout.split()
+        for included in re.findall(r'include_(?:str|bytes)!\("([^"]+)"\)', (ROOT / source).read_text())
+    )
+
+
 def harmless(path):
     """True when `path` cannot change a mounted build or the unmounted Rust gates."""
-    name = path.rsplit('/', 1)[-1]
     return (
-        path.endswith('.md')
+        (path.endswith('.md') and not compiled_in(path))
         or path.startswith(_HARMLESS_PREFIXES)
-        or path.startswith('LICENSE')
-        or name.startswith('LICENSE')
+        or path == 'LICENSE'
         or path in _HARMLESS_FILES
     )
 
@@ -118,7 +129,7 @@ def decide(which, event_name, event, paths):
 def changed_paths(event):
     base = event['pull_request']['base']['sha']
     result = subprocess.run(
-        ['git', 'diff', '--name-only', base, 'HEAD'],
+        ['git', 'diff', '--no-renames', '--name-only', base, 'HEAD'],
         cwd=ROOT, check=False, capture_output=True, text=True)
     if result.returncode != 0:
         detail = result.stderr.strip() or result.stdout.strip()
