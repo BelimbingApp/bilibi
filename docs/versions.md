@@ -117,7 +117,7 @@ Extension checks use the same gates. The existing tested-set format records Doma
 
 - Open a companion PR in each affected repository and link it from the Platform PR. Link back to the Platform PR from each companion.
 - Keep the Platform and companion checks green, and merge the changes together. For a repository owned by someone else, open the companion PR and notify its owner.
-- For Domains and Extensions outside the catalogue, including private repositories, write short upgrade notes in the Platform PR. Explain the changed contract and the required update so their owner's agent can apply it.
+- Do not change Domains and Extensions outside the catalogue, including private repositories, from a Platform task.
 - Require the stable `Official compatibility` check from `Domains on this change` in branch protection. It fails if catalogue selection or any mounted job fails or is cancelled; no official entry is allowed to fail.
 
 To check a companion branch with a Platform PR, add one standalone line to the Platform PR body for each affected entry:
