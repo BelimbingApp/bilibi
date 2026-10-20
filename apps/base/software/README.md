@@ -29,10 +29,10 @@ If it is already cloned, fetch and check out the chosen commit there instead. Ex
 
 ## Compatibility
 
-**Compatibility** states whether a module version supports the running Bilibi version and whether automated checks covered the exact code running on this server. The catalogue’s Platform requirement supplies version support; its CI record supplies the exact Platform and Domain commits checked.
+Official modules (repositories under BelimbingApp) are checked against every Platform release before it ships, so they carry a plain `status` (`installed`, `not_installed`, `update_available`), `latest_version` and, only when no version fits, a `warning`. For modules from any other catalogue, **Compatibility** states whether a version supports the running Bilibi version and whether automated checks covered the exact code running on this server. The catalogue’s Platform requirement supplies version support; its CI record supplies the exact Platform and Domain commits checked.
 
 - Prefer the newest release recorded as tested with this running commit, then the newest release whose requirements accept this version.
-- Each entry includes `recommended_version`, a plain `compatibility` sentence, `local_steps`, and `next_step`. Each release includes `fits_running` and `tested_with_running`.
+- Each entry includes `recommended_version`, a plain `compatibility` sentence (for official modules it repeats the status), `official`, `local_steps`, and `next_step`. Each release includes `fits_running` and `tested_with_running`.
 - No compatible release, no published release, or no exact tested pair is stated plainly. A development build or an unreleased commit does not inherit a released commit’s evidence.
 - Domains were tested individually; separate pairs do not prove a combined composition. Check your composition locally.
 - The published catalogue is read over HTTPS through `base/integration` as the requesting person and cached for five minutes. **Software › Catalogue address** can point to an operator’s catalogue. An unavailable catalogue returns `available: false` and a reason; installed status and installation remain available.
@@ -81,7 +81,7 @@ Install requires the source to answer and the selected release to be the one it 
 
 ## Page and ChatGPT card
 
-The **Software** page (`/system/software`) has one menu entry and two shared tabs: **Domains and Extensions** and **Releases**. Each catalogue item is one compact card with its description, installed version, and **Compatibility** in one line: **Yes · tested with Bilibi X** when the exact pair has a test record, **Yes, not tested yet** when the version only fits, or **No · needs Bilibi X**. **Developer commands** folds away the repository, exact test evidence and local build commands.
+The **Software** page (`/system/software`) has one menu entry and two shared tabs: **Domains and Extensions** and **Releases**. Each catalogue item is one compact card with its description, installed version (when installed) and one **Status** line. Official modules show **Installed**, **Not installed** or **Update available: X**, plus a short warning such as **Needs Bilibi X** only when no listed version fits this server. Modules from an operator’s own catalogue are not kept in step with the Platform, so they keep a **Compatibility** line: **Yes · tested with Bilibi X**, **Yes, not tested yet** or **No · needs Bilibi X**. **Developer commands** folds away the repository, exact test evidence and local build commands.
 
 **Releases** (`?tab=releases`) shows the installed version, the current or last install (its **Install steps** stay open while the job is active, failed or interrupted, and fold when it completes), a short backup table with folded backup details, and **Get an update**. Backup file locations are folded and only available to accounts that can manage software. Upload, review, download, stored releases, and the folded **Update server and pairing key** share the same mounted page; switching tabs preserves pending uploads and reviews. The old `/system/software/releases` page redirects to the Releases tab, and its authenticated download addresses remain valid.
 

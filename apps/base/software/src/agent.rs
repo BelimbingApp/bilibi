@@ -152,7 +152,7 @@ fn status_output() -> Value {
     json!({"type":"object","description":"instance (role, label, installs_from), installed (platform, domains, extensions from the running program), plugins, uploads (release files waiting here: bundle, release, from), job (the one waiting or running, or the last one, with its steps and whether cancel is available), undo (available, job, restores_backup, backup_at), jobs (recent), backups (at and bytes for recent jobs; file only for a server owner), backup_rule (how many backups are kept and what Undo restores)."})
 }
 fn catalogue_output() -> Value {
-    json!({"type":"object","description":"available, url, running_platform, platform versions, domains and extensions with descriptions, repositories, versions, fits_running, tested_with_running, recommended_version, compatibility, local_steps and next_step; plugins and tested sets. When not available: message."})
+    json!({"type":"object","description":"available, url, running_platform, platform versions, domains and extensions with descriptions, repositories, versions, fits_running, tested_with_running, recommended_version, compatibility, official, status (installed, not_installed, update_available), latest_version, warning, local_steps and next_step; plugins and tested sets. When not available: message."})
 }
 fn review_output() -> Value {
     json!({"type":"object","description":"The review: summary, the change list, warnings, the estimate, what happens, the steps, and the step-up operation key (base.software.change). The commit answers the queued job with its id, state and steps."})

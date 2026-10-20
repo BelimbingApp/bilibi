@@ -1139,25 +1139,18 @@ impl View {
                     .flatten()
                     .find(|d| d["id"] == id);
                 let proposed = self.propose.iter().any(|p| p == id);
-                let facts = vec![
-                    Fact {
+                let mut facts = Vec::new();
+                if let Some(d) = installed {
+                    facts.push(Fact {
                         title: "Installed version",
-                        value: Html::text(
-                            installed
-                                .map(|d| d["version"].as_str().unwrap_or("Version unknown"))
-                                .unwrap_or("Not installed"),
-                        ),
+                        value: Html::text(d["version"].as_str().unwrap_or("Version unknown")),
                         ..Fact::default()
-                    },
-                    Fact {
-                        title: "Compatibility",
-                        value: Html::text(&compatibility(
-                            item,
-                            text(&catalogue["running_platform"]["version"]),
-                        )),
-                        ..Fact::default()
-                    },
-                ];
+                    });
+                }
+                facts.push(status_fact(
+                    item,
+                    text(&catalogue["running_platform"]["version"]),
+                ));
                 let mut item_body = render(Facts {
                     items: facts,
                     ..Facts::default()
@@ -1900,6 +1893,34 @@ impl Page<Scope, Error> for Pages {
                 Box::new(View::new(self.clone(), request.query)?);
             Ok(Some(state))
         })
+    }
+}
+
+/// Official modules show one status; the operator's own catalogue keeps the
+/// compatibility wording because nothing checks it against this Platform.
+fn status_fact<'a>(item: &'a Value, platform: &'a str) -> Fact<'a> {
+    if item["official"] != true {
+        return Fact {
+            title: "Compatibility",
+            value: Html::text(&compatibility(item, platform)),
+            ..Fact::default()
+        };
+    }
+    let status = match item["status"].as_str() {
+        Some("installed") => "Installed".to_owned(),
+        Some("update_available") => format!(
+            "Update available: {}",
+            item["latest_version"].as_str().unwrap_or_default()
+        ),
+        _ => "Not installed".to_owned(),
+    };
+    Fact {
+        title: "Status",
+        value: Html::text(&match item["warning"].as_str() {
+            Some(warning) => format!("{status} · {warning}"),
+            None => status,
+        }),
+        ..Fact::default()
     }
 }
 

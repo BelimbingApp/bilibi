@@ -7,7 +7,12 @@ use serde_json::{json, Value};
 pub const NEXT_STEP: &str =
     "Ask your developer to add the modules you need, build Bilibi on their computer, and test it before installing it here.";
 
+/// Official modules live under this organisation. Releases of these are
+/// checked against every Platform release, so they only need a plain status.
+const OFFICIAL: &str = "https://github.com/BelimbingApp/";
+
 pub fn catalogue(catalogue: &Catalogue, made: &Composition) -> Value {
+    let installed = crate::review::installed_json(made);
     let mut value = catalogue.json();
     value["running_platform"] = json!({"version": made.version, "commit": made.commit});
     value["next_step"] = json!(NEXT_STEP);
@@ -16,6 +21,8 @@ pub fn catalogue(catalogue: &Catalogue, made: &Composition) -> Value {
             let id = item["id"].as_str().unwrap_or_default().to_owned();
             let repository = item["repository"].as_str().unwrap_or_default().to_owned();
             let mut choices = Vec::new();
+            let mut newest_fit: Option<(Version, String)> = None;
+            let mut newest_any: Option<(Version, String)> = None;
             for release in item["versions"].as_array_mut().into_iter().flatten() {
                 let version = release["version"].as_str().unwrap_or_default().to_owned();
                 let commit = release["commit"].as_str().unwrap_or_default().to_owned();
@@ -33,6 +40,15 @@ pub fn catalogue(catalogue: &Catalogue, made: &Composition) -> Value {
                     });
                 release["fits_running"] = json!(fits);
                 release["tested_with_running"] = json!(tested);
+                if let Some(parsed) = Version::parse(&version) {
+                    if newest_any.as_ref().is_none_or(|(n, _)| parsed > *n) {
+                        let needs = release["platform"].as_str().unwrap_or_default().to_owned();
+                        newest_any = Some((parsed, needs));
+                    }
+                    if fits == Some(true) && newest_fit.as_ref().is_none_or(|(n, _)| parsed > *n) {
+                        newest_fit = Some((parsed, version.clone()));
+                    }
+                }
                 if fits == Some(true) {
                     if let Some(parsed) = Version::parse(&version) {
                         choices.push((tested, parsed, version, commit));
@@ -47,6 +63,46 @@ pub fn catalogue(catalogue: &Catalogue, made: &Composition) -> Value {
                 Some((false, _, version, _)) => format!("Version {version} supports Bilibi {}. There is no test record for the exact code running here. Ask your developer to test it first.", made.version),
                 None => format!("No published version is listed as supporting Bilibi {}. Ask your developer to check the requirements before adding it.", made.version),
             });
+            // Official modules are kept in step with every Platform release,
+            // so they get one plain status. Anything else keeps the sentence
+            // above: nobody checks it against this Platform for the operator.
+            if repository.starts_with(OFFICIAL) {
+                let now = installed[kind]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .find(|d| d["id"] == id.as_str());
+                let (status, text) = match (now, &newest_fit) {
+                    (None, _) => ("not_installed", "Not installed".to_owned()),
+                    (Some(d), Some((latest, name)))
+                        if d["version"]
+                            .as_str()
+                            .and_then(Version::parse)
+                            .is_some_and(|have| have < *latest) =>
+                    {
+                        ("update_available", format!("Update available: {name}"))
+                    }
+                    _ => ("installed", "Installed".to_owned()),
+                };
+                let warning = match (&newest_fit, &newest_any) {
+                    (Some(_), _) => None,
+                    (None, Some((_, needs))) if !needs.is_empty() => {
+                        Some(format!("Needs Bilibi {needs}"))
+                    }
+                    _ => Some(format!(
+                        "No published version supports Bilibi {}",
+                        made.version
+                    )),
+                };
+                item["status"] = json!(status);
+                item["latest_version"] = json!(newest_fit.map(|(_, name)| name));
+                item["warning"] = json!(warning);
+                item["compatibility"] = json!(match &warning {
+                    Some(warning) => format!("{text}. {warning}."),
+                    None => format!("{text}."),
+                });
+            }
+            item["official"] = json!(repository.starts_with(OFFICIAL));
             item["next_step"] = json!(NEXT_STEP);
             item["local_steps"] = json!(chosen
                 .and_then(|(_, _, _, commit)| { local_steps(&repository, &id, kind, &commit) }));

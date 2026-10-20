@@ -366,6 +366,12 @@ function footer() {
 }
 
 // --- Discover, then build locally ------------------------------------------
+function statusText(item) {
+  const status = item.status === 'installed' ? 'Installed'
+    : item.status === 'update_available' ? 'Update available: ' + (item.latest_version || '')
+    : 'Not installed';
+  return item.warning ? status + ' · ' + item.warning : status;
+}
 function discoveryView() {
   const catalogue = state.data.catalogue || {};
   const sections = [];
@@ -378,8 +384,8 @@ function discoveryView() {
         el('h3', { text: (item.name || item.id) + (requested ? ' · requested' : '') }),
         el('p', { class: 'small', text: item.description || '' }),
         el('p', { class: 'small muted', text: 'Code for your developer: ' + (item.repository || '') }),
-        el('p', { class: 'small', text: 'Installed version: ' + (installed ? (installed.version || 'Unknown') : 'Not installed') }),
-        el('p', { class: 'small', text: 'Compatibility: ' + (item.compatibility || '') }),
+        installed ? el('p', { class: 'small', text: 'Installed version: ' + (installed.version || 'Unknown') }) : null,
+        el('p', { class: 'small', text: item.official ? 'Status: ' + statusText(item) : 'Compatibility: ' + (item.compatibility || '') }),
         item.local_steps ? el('div', {}, [el('p', { class: 'small', text: 'Developer commands' }), el('p', { class: 'small muted', text: 'Run these commands in the Bilibi code folder on your computer, then test it in the browser.' }), el('pre', { text: item.local_steps.join('\n') })]) : null,
       ]));
     }
