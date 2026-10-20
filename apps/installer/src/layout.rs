@@ -392,6 +392,7 @@ pub fn human(bytes: u64) -> String {
 /// Bind identity metadata to the downloader's checked archive, independently
 /// of a checksum list in the shared writable incoming folder.
 pub fn identity_of(dir: &Path) -> Result<serde_json::Value, String> {
+    use serde_json::json;
     fn digest(path: &Path) -> Result<String, String> {
         let output = Command::new("sha256sum")
             .arg("--")
