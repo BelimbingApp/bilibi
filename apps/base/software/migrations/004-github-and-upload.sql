@@ -5,7 +5,7 @@ BEGIN
     IF EXISTS (SELECT 1 FROM base_software_jobs
                WHERE kind = 'install' AND state IN ('queued', 'running')
                  AND coalesce(request->'source'->>'kind', '') NOT IN ('github', 'upload')) THEN
-        RAISE EXCEPTION 'Finish or cancel active instance-source installs before upgrading. History and Undo will be preserved.';
+        RAISE EXCEPTION 'Finish or cancel active instance-source installs before upgrading, including an upgrade started from an instance source. Install this upgrade through a GitHub asset or an uploaded archive. History and Undo will be preserved.';
     END IF;
 END $$;
 ALTER TABLE base_software_jobs ADD CONSTRAINT base_software_jobs_asset_source_check

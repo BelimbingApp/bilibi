@@ -188,7 +188,7 @@ Replace `asset` with the object, including repository/release/asset IDs, tag, ta
 
 ### Upgrade existing servers
 
-Finish or cancel all active installs using instance sources before applying `base-software-004-github-and-upload`. The migration refuses while any remains, including a job paused for approval or recovery. Keep the old installer until such a job finishes. The migration removes the retired settings and prevents new active installs from any source except GitHub and upload. Completed jobs, audit evidence, release folders and Undo remain intact. Update the installer alongside the app.
+Finish or cancel all active installs using instance sources before applying `base-software-004-github-and-upload`. The migration refuses while any remains, including a job paused for approval or recovery, and including the install that delivers this upgrade: deliver the upgrade itself as a GitHub asset or an uploaded archive, never from an instance source. Keep the old installer until such a job finishes. The migration removes the retired settings and prevents new active installs from any source except GitHub and upload. Completed jobs, audit evidence, release folders and Undo remain intact. Update the installer alongside the app.
 
 ## Caveats
 
