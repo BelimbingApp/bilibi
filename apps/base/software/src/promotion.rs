@@ -28,8 +28,8 @@ struct Check {
     outcome: String,
 }
 
-/// Preserve the full report in the request and review, after matching the
-/// exact asset. Optional for manual installs; failures never authorize promotion.
+/// Retain the report and describe its relation to the selected release.
+/// The comparison informs the owner; it never refuses a different asset.
 pub(crate) fn review(input: &Value, source: &Value) -> SoftwareResult<Option<Value>> {
     let Some(value) = input.get("staging") else {
         return Ok(None);
@@ -39,15 +39,6 @@ pub(crate) fn review(input: &Value, source: &Value) -> SoftwareResult<Option<Val
         return Err(refuse("Keep the Staging report within 16 KB."));
     }
     let evidence: Evidence = serde_json::from_value(value.clone()).map_err(|_| refuse("Give the Staging instance, asset, job, checked_at, outcome and checks from the completed Staging install."))?;
-    if source["kind"] != "github" || !crate::github::same_asset(source, &evidence.asset) {
-        return Err(refuse("The Staging report must name the exact GitHub asset being installed, including its target and archive SHA-256. Review the tested asset again."));
-    }
-    let program = evidence.asset["program_sha256"].as_str().unwrap_or("");
-    if program.len() != 64 || !program.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return Err(refuse(
-            "Include the program SHA-256 from the completed Staging result.",
-        ));
-    }
     let origin = url::Url::parse(&evidence.instance.origin).ok();
     if evidence.instance.role != "staging"
         || evidence.instance.label.trim().is_empty()
@@ -84,11 +75,40 @@ pub(crate) fn review(input: &Value, source: &Value) -> SoftwareResult<Option<Val
             "repository": asset["repository"], "repository_id": asset["repository_id"],
             "release_id": asset["release_id"], "asset_id": asset["asset_id"], "tag": asset["tag"],
             "target": asset["target"], "archive_sha256": asset["archive_sha256"],
-            "program_sha256": program.to_ascii_lowercase(), "setup_commit": asset["setup_commit"],
+            "program_sha256": asset["program_sha256"], "setup_commit": asset["setup_commit"],
         },
+        "relation": relation(source, asset),
         "job": evidence.job, "checked_at": evidence.checked_at, "outcome": evidence.outcome,
         "checks": evidence.checks.iter().map(|check| json!({"name": check.name, "outcome": check.outcome})).collect::<Vec<_>>()
     })))
+}
+
+/// Tags alone cannot show equal setups when targets differ. Unknown commits
+/// remain unknown; the report is never used as an installation constraint.
+fn relation(source: &Value, tested: &Value) -> &'static str {
+    if source["kind"] == "github" && crate::github::same_asset(source, tested) {
+        "Same file as tested on Staging"
+    } else if source["kind"] == "github"
+        && source["repository_id"].as_i64().is_some_and(|id| id > 0)
+        && source["repository_id"] == tested["repository_id"]
+        && source["tag"].as_str().is_some_and(|tag| !tag.is_empty())
+        && source["tag"] == tested["tag"]
+        && source["setup_commit"]
+            .as_str()
+            .is_some_and(|commit| !commit.is_empty())
+        && source["setup_commit"] == tested["setup_commit"]
+        && source["target"]
+            .as_str()
+            .is_some_and(|target| !target.is_empty())
+        && tested["target"]
+            .as_str()
+            .is_some_and(|target| !target.is_empty())
+        && source["target"] != tested["target"]
+    {
+        "Same setup as tested on Staging, built for a different computer type"
+    } else {
+        "Not the setup tested on Staging"
+    }
 }
 
 pub(crate) fn describe(value: &Value) -> String {
@@ -105,7 +125,8 @@ pub(crate) fn describe(value: &Value) -> String {
         })
         .collect::<Vec<_>>()
         .join("; ");
-    format!("Agent-reported Staging checks: {} at {}, job {}, checked {} — {}. This report is supplied by the agent; this server has not verified the Staging server.",
+    format!("{}. Agent-reported Staging checks: {} at {}, job {}, checked {} — {}. This report is supplied by the agent; this server has not verified the Staging server.",
+        value["relation"].as_str().unwrap_or("Not the setup tested on Staging"),
         value["instance"]["label"].as_str().unwrap_or(""), value["instance"]["origin"].as_str().unwrap_or(""),
         value["job"], value["checked_at"].as_str().unwrap_or(""), checks)
 }

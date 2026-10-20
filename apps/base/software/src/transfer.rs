@@ -430,17 +430,12 @@ impl Software {
             let sha = check_folder(&into_for_unpack).inspect_err(|_| {
                 let _ = fs::remove_dir_all(&into_for_unpack);
             })?;
-            let recipe = into_for_unpack.join("release.json");
-            let identity = json!({
-                "sums": crate::github::digest_of(&into_for_unpack.join("SHA256SUMS")).map_err(|_| "The checksum list could not be recorded".to_owned())?,
-                "recipe": if recipe.exists() { Some(crate::github::digest_of(&recipe).map_err(|_| "The recipe could not be recorded".to_owned())?) } else { None },
-            });
-            Ok::<(String, u64, Value), String>((sha, unpacked.bytes, identity))
+            Ok::<(String, u64), String>((sha, unpacked.bytes))
         })
         .await
         .map_err(|_| "the check did not finish".to_owned());
         let _ = fs::remove_file(&part);
-        let (program_sha, program_bytes, identity) = checked??;
+        let (program_sha, program_bytes) = checked??;
         let detail = json!({
             "message": format!("Downloaded {} from GitHub repository {} (tag {}) and checked it", pin.name, pin.repository, pin.tag),
             "path": into.display().to_string(),
@@ -448,7 +443,6 @@ impl Software {
             "digest": pin.digest,
             "archive_sha256": pin.digest,
             "sha256": program_sha,
-            "identity": identity,
             "bytes": program_bytes,
             "bytes_total": size,
             "repository": pin.repository,

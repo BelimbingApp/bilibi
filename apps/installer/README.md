@@ -13,7 +13,7 @@ The owner opens Software on Production, reviews the exact GitHub asset already c
 3. Update the database                     done    Applied 1 migration as one piece.
 4. Switch to the new program               done    current points at release 2; the service is starting
 5. Check that it works                     done    Release 2 answered after 2 s
-Done: Release 2 is in service, installed from dev release 3. The database was updated.
+Done: Release 2 is in service, installed from GitHub. The database was updated.
 ```
 
 Notice what the owner did **not** do: copy a file, stop a service, run `pg_dump`, run `migrate`, or watch a terminal. Notice also what happened to the people using Production: for about a minute every page showed "Production is updating" and then reloaded where they were.
@@ -38,7 +38,7 @@ If the backup cannot be restored, the job ends `failed` with the service **left 
 
 The app downloads GitHub assets before the installer claims the job. The installer leaves a queued download alone until that step is complete. See [release archives](../base/software/README.md#release-archives).
 
-A GitHub download is another folder under `incoming/job-<n>/`. The download step checks that the archive still matches the reviewed check code before it is opened. The installer compares the program with the downloader’s recorded SHA-256 before executing it. New downloads also record hashes of the checksum list and recipe; these are compared before and after copying. Earlier queued GitHub downloads retain their existing program pin. The files inside are checked against their own check codes, the same way as an upload. The job result keeps the GitHub repository number, release, file, tag, target, archive SHA-256, program SHA-256 and setup commit from `release.json`. It also retains any Staging report and compares its program SHA-256 before pausing. Undo does not call GitHub.
+A GitHub download is another folder under `incoming/job-<n>/`. The download step checks that the archive still matches the reviewed check code before it is opened. The installer compares the program with the downloader’s recorded SHA-256 before executing it. The files inside are checked against their own check codes, the same way as an upload. The job result keeps the GitHub repository number, release, file, tag, target, archive SHA-256, program SHA-256 and setup commit from `release.json`. It also retains any agent-supplied Staging report for the owner, without enforcing its program checksum or setup commit. Undo does not call GitHub.
 
 ### "Switch as soon as it is ready" or "ask me first"
 
@@ -110,7 +110,7 @@ The result carries what Undo and the page need:
 | `migrated` | whether the database changed shape; Undo then restores the backup |
 | `backup`, `backup_at` | where the backup is and when (UTC) it was taken |
 | `source`, `source_release`, `sha256`, `program` | where the release came from, its number there, its checksum and its first `status` line |
-| `github` | on a GitHub install: repository, repository number, release number, file number, tag, target, archive SHA-256, program SHA-256 and setup commit from `release.json`. It also retains any Staging report and compares its program SHA-256 before pausing. Undo does not need GitHub |
+| `github` | on a GitHub install: repository, repository number, release number, file number, tag, target, archive SHA-256, program SHA-256 and setup commit from `release.json`. It also retains any agent-supplied Staging report for the owner, without enforcing its program checksum or setup commit. Undo does not need GitHub |
 | `switched_back`, `restored`, `previous_healthy` | on a failure: what the installer did to put things back |
 | `platform`, `domains`, `extensions` | what the release in service is made of, read from its own `bilibi-web status`: the Platform `{"version", "release", "commit"}` and each Domain or Extension `{"id", "version", "commit"}`; null when the program could not say |
 | `changes` | what differs from the release it replaced (an install) or the release it left (an Undo): `{"platform": {"from", "to"} or null, "containers": [{"layer", "id", "change", "from", "to", "from_commit", "to_commit"}]}`, where `change` is `added`, `removed`, `updated`, `downgraded` or `moved` (same version or none, new commit; the commits are short); null when either release could not say |

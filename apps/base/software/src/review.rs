@@ -202,6 +202,7 @@ pub fn install(
                     "name": pin.name,
                     "bytes": pin.bytes,
                     "prerelease": pin.prerelease,
+                    "setup_commit": pin.setup_commit,
                 }),
                 text,
                 None,

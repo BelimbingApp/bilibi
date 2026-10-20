@@ -616,7 +616,18 @@ impl Software {
             // Ask GitHub now, including pre-releases, so a file replaced
             // after review is refused here. A rate limit still serves the
             // saved list; the download checks the file again.
-            Some(self.github_listing(scope, true, true).await?)
+            let mut listing = self.github_listing(scope, true, true).await?;
+            if input.get("staging").is_some() {
+                let pin = github::pin_from_listing(&listing, input)?;
+                let commit = github::setup_commit(self, scope, &pin).await;
+                if let Some(row) = listing["releases"].as_array_mut().and_then(|rows| {
+                    rows.iter_mut()
+                        .find(|row| row["asset_id"].as_i64() == Some(pin.asset_id))
+                }) {
+                    row["setup_commit"] = json!(commit);
+                }
+            }
+            Some(listing)
         } else {
             None
         };

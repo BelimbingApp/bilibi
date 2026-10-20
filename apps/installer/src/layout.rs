@@ -388,29 +388,3 @@ pub fn human(bytes: u64) -> String {
         format!("{:.0} MB", (bytes / MB).max(1.0))
     }
 }
-
-/// Bind identity metadata to the downloader's checked archive, independently
-/// of a checksum list in the shared writable incoming folder.
-pub fn identity_of(dir: &Path) -> Result<serde_json::Value, String> {
-    use serde_json::json;
-    fn digest(path: &Path) -> Result<String, String> {
-        let output = Command::new("sha256sum")
-            .arg("--")
-            .arg(path)
-            .output()
-            .map_err(|_| "The downloaded identity files could not be checked".to_owned())?;
-        if !output.status.success() {
-            return Err("The downloaded identity files could not be checked".into());
-        }
-        String::from_utf8_lossy(&output.stdout)
-            .split_whitespace()
-            .next()
-            .filter(|sha| sha.len() == 64 && sha.bytes().all(|b| b.is_ascii_hexdigit()))
-            .map(str::to_owned)
-            .ok_or_else(|| "The downloaded identity files could not be checked".into())
-    }
-    let recipe = dir.join("release.json");
-    Ok(
-        json!({"sums": digest(&dir.join("SHA256SUMS"))?, "recipe": if recipe.exists() { Some(digest(&recipe)?) } else { None }}),
-    )
-}

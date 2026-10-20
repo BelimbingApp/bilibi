@@ -147,7 +147,7 @@ Uploading a saved release archive stays available when GitHub cannot be reached.
 
 1. Review an exact GitHub asset or a queued upload. GitHub review binds repository, release and asset IDs, tag, target and archive SHA-256. It checks the selected identity again at commit.
 2. The server's supervised `run_downloads` loop downloads queued GitHub installs through `base/integration` as the reauthenticated requester. It rechecks GitHub, streams into `incoming/job-<id>/`, checks the approved digest before unpacking, and wakes the installer. Cancel stops a download within about two seconds; failures finish before any pause.
-3. The installer takes `incoming/job-<id>/` or `incoming/upload-<n>/`, checks checksums, processor, system libraries and disk space, refuses the program already in service, then copies and checks again. For GitHub, it compares the program, checksum list and recipe with the downloader's recorded hashes before executing `status`, then checks the copied metadata again. A downloaded folder is removed after the attempt; an upload stays for retry unless installed, corrupt or discarded.
+3. The installer takes `incoming/job-<id>/` or `incoming/upload-<n>/`, checks checksums, processor, system libraries and disk space, refuses the program already in service, then copies and checks again. For GitHub, it compares the program with the downloader's recorded SHA-256 before executing `status`. A downloaded folder is removed after the attempt; an upload stays for retry unless installed, corrupt or discarded.
 
 Each failed check is a plain sentence that says what to do next: "This release was built for Linux ARM 64-bit computers, and this server is Linux x86-64. Build it locally for the same kind of server."
 
@@ -184,7 +184,17 @@ The optional report has this shape:
 }
 ```
 
-Replace `asset` with the object, including repository/release/asset IDs, tag, target, archive SHA-256 and program SHA-256. Include `setup_commit` when recorded; omit it when null. The review and job retain the report; failed, incomplete or mismatched reports refuse promotion. The installer also compares the reported program SHA-256 before pausing. Reports are supplied by the agent, not signed or independently verified by Production. Manual installation does not require a report. Different targets mean the same recipe with different bytes; tags and local release numbers never establish an equal asset. Never give the agent an authenticator seed or GitHub token.
+Replace `asset` with the object, including repository/release/asset IDs, tag, target and archive SHA-256. Include program SHA-256 and `setup_commit` when recorded; omit missing values. The review and job retain the report. Failed or incomplete checks refuse promotion. Reports are supplied by the agent, not signed or independently verified by Production. Manual installation does not require a report.
+
+The review describes how the selected file relates to the report:
+
+| Comparison | Review wording |
+| --- | --- |
+| Same repository/release/asset IDs, tag, target and archive SHA-256 | Same file as tested on Staging |
+| Same repository, tag and setup commit, with a different target | Same setup as tested on Staging, built for a different computer type |
+| Anything else, including an unknown setup commit for another target | Not the setup tested on Staging |
+
+For this comparison, Production reads the selected tag's commit from GitHub when a report is supplied. An unavailable commit stays unknown. **The comparison informs the owner and never refuses installation.** The installer retains the report without enforcing its program checksum or setup commit. Different targets contain different bytes; tags and local release numbers never establish an equal asset. Never give the agent an authenticator seed or GitHub token.
 
 ### Upgrade existing servers
 
