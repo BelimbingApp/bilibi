@@ -11,6 +11,7 @@ mod agent;
 mod catalogue;
 mod discovery;
 mod follow;
+mod github;
 mod jobs;
 mod pairing;
 mod release_files;
@@ -103,7 +104,7 @@ bilibi_step_up::declare!(
     "base/software",
     bilibi_step_up::Operation::new(
         STEP_UP,
-        "Change the server's software (install, undo, pairing key)"
+        "Change the server's software (install, undo, pairing key, GitHub releases)"
     )
     .always()
 );
@@ -118,6 +119,17 @@ bilibi_step_up::declare!(
     )
     .always()
     .guards_setting(pairing::KEY)
+);
+// Saving the GitHub read token in the settings editor. The token can read
+// the setup repository, so changing it asks for a fresh code.
+bilibi_step_up::declare!(
+    "base/software",
+    bilibi_step_up::Operation::new(
+        github::STEP_UP_TOKEN,
+        "Change the GitHub read token in the settings"
+    )
+    .always()
+    .guards_setting(github::TOKEN)
 );
 
 /// The facade: reviews a request without writing, and records it inside the
@@ -416,14 +428,20 @@ impl Software {
         authorize_operator(tx.sql(), scope, MANAGE).await?;
         let review = self.install_review(tx.sql(), scope, input).await?;
         self.step_up.require(scope, STEP_UP, &review.target).await?;
-        let downloads = review.request["source"]["kind"].as_str() == Some("https");
+        let kind = review.request["source"]["kind"].as_str();
+        let downloads = kind == Some("https") || kind == Some("github");
+        let steps = if kind == Some("github") {
+            jobs::download_steps(true, "Download the release from GitHub")
+        } else {
+            jobs::install_steps(downloads)
+        };
         let new = jobs::NewJob {
             kind: "install",
             request: review.request.clone(),
             review: review.facts.clone(),
             undo_of: None,
             switch: review.switch.clone(),
-            steps: jobs::install_steps(downloads),
+            steps,
         };
         self.queue(tx, scope, new, &review).await
     }
@@ -586,11 +604,24 @@ impl Software {
         let active = jobs::active(client, scope.tenant()).await?;
         // The source is asked only for a release of its own; an uploaded
         // file needs no source.
-        let source = match (&instance.installs_from, input["bundle"].as_str()) {
-            (Some(from), None) => Some(review::SourceFacts {
-                listing: self.source_listing(scope, from).await?,
-            }),
-            _ => None,
+        let github_install = input.get("asset").is_some();
+        let source = if github_install {
+            None
+        } else {
+            match (&instance.installs_from, input["bundle"].as_str()) {
+                (Some(from), None) => Some(review::SourceFacts {
+                    listing: self.source_listing(scope, from).await?,
+                }),
+                _ => None,
+            }
+        };
+        let github = if github_install {
+            // Ask GitHub now, including pre-releases, so a file replaced
+            // after review is refused here. A rate limit still serves the
+            // saved list; the download checks the file again.
+            Some(self.github_listing(scope, true, true).await?)
+        } else {
+            None
         };
         let uploads = self
             .paths
@@ -608,6 +639,7 @@ impl Software {
             active.as_ref(),
             input,
             source.as_ref(),
+            github.as_ref(),
             &review::Held {
                 uploads: &uploads,
                 running_sha256: running_sha256.as_deref(),
@@ -737,6 +769,42 @@ inventory::submit! { Contribution::new(DEFINITIONS, CATALOGUE_URL_KEY, provenanc
         help: "The published catalogue.json that lists the Platform and Domain releases and which were tested together. Change it only to read a catalogue you publish yourself (server owner only).",
         capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
 })) }
+inventory::submit! { Contribution::new(DEFINITIONS, github::REPOSITORY, provenance!(), &Setting::Definition(Definition {
+    value_type: ValueType::String, scopes: &[ScopeKind::Global], default: || json!(null), nullable: true, encrypted: false,
+    minimum: None, maximum: None,
+    validator: Some(Validator { accepts: github::accepts_repository, message: "Enter the repository as owner/name, like BelimbingApp/bilibi-setup-template." }),
+    editor: Some(Editor { group: "Software", label: "GitHub repository: owner and name of the setup repository",
+        help: "Example: BelimbingApp/bilibi-setup-template. Software reads releases from this repository. Server owner only.",
+        capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
+})) }
+inventory::submit! { Contribution::new(DEFINITIONS, github::REPOSITORY_ID, provenance!(), &Setting::Definition(Definition {
+    value_type: ValueType::Integer, scopes: &[ScopeKind::Global], default: || json!(null), nullable: true, encrypted: false,
+    minimum: Some(1.0), maximum: None,
+    validator: Some(Validator { accepts: github::accepts_id, message: "The GitHub repository number is recorded when you accept the repository." }),
+    editor: None,
+})) }
+inventory::submit! { Contribution::new(DEFINITIONS, github::REPOSITORY_BOUND, provenance!(), &Setting::Definition(Definition {
+    value_type: ValueType::String, scopes: &[ScopeKind::Global], default: || json!(null), nullable: true, encrypted: false,
+    minimum: None, maximum: None,
+    validator: Some(Validator { accepts: github::accepts_bound, message: "The remembered repository must be owner/name." }),
+    editor: None,
+})) }
+inventory::submit! { Contribution::new(DEFINITIONS, github::TOKEN, provenance!(), &Setting::Definition(Definition {
+    value_type: ValueType::String, scopes: &[ScopeKind::Global], default: || json!(null), nullable: true, encrypted: true,
+    minimum: None, maximum: None,
+    validator: Some(Validator { accepts: github::accepts_token, message: "The GitHub token must be 20 to 255 characters with no spaces." }),
+    editor: Some(Editor { group: "Software", label: "GitHub read token for a private setup repository",
+        help: "Leave empty for a public repository. For a private one, use a fine-grained token that can read this repository only. Stored encrypted and never shown back. Changing or clearing it asks for your authenticator code every time (server owner only).",
+        capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
+})) }
+inventory::submit! { Contribution::new(DEFINITIONS, github::REFRESH_MINUTES, provenance!(), &Setting::Definition(Definition {
+    value_type: ValueType::Integer, scopes: &[ScopeKind::Global], default: || json!(github::DEFAULT_REFRESH_MINUTES), nullable: false, encrypted: false,
+    minimum: Some(1.0), maximum: Some(1440.0),
+    validator: None,
+    editor: Some(Editor { group: "Software", label: "Check GitHub for new releases every this many minutes",
+        help: "15 means the release list is refreshed at most every 15 minutes, and again when you choose Refresh. Server owner only.",
+        capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
+})) }
 inventory::submit! { Contribution::new(DEFINITIONS, pairing::KEY, provenance!(), &Setting::Definition(Definition {
     value_type: ValueType::String, scopes: &[ScopeKind::Global], default: || json!(null), nullable: true, encrypted: true,
     minimum: None, maximum: None,
@@ -766,7 +834,7 @@ bilibi_menu::contribute!(
 // plan for an install, undo or go-ahead, and a plain submit for cancel.
 inventory::submit! { Contribution::new(PAGE_WRITES, web::PAGES, provenance!(), &PageWrites {
     service: web::PAGES,
-    contracts: &[("install", "base.software.install"), ("undo", "base.software.undo"), ("go", "base.software.go"), ("cancel_job", "base.software.cancel"), ("pair", "base.software.pair"), ("clear_pairing", "base.software.pair")],
+    contracts: &[("install", "base.software.install"), ("undo", "base.software.undo"), ("go", "base.software.go"), ("cancel_job", "base.software.cancel"), ("pair", "base.software.pair"), ("clear_pairing", "base.software.pair"), ("github_source", "base.software.github"), ("github_accept", "base.software.github"), ("clear_github_token", "base.software.github")],
     pending: Pending::None,
 }) }
 // Keep existing bookmarks; the only page is Software with its Releases tab.

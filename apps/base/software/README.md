@@ -55,7 +55,7 @@ Only a server owner with the appropriate platform capability can manage software
 | Capability | Allows |
 | --- | --- |
 | `admin.system.software.view` | Status, catalogue, release listings, Software page and card |
-| `admin.system.software.manage` | Install, undo, go-ahead, cancel, release upload/download and pairing key |
+| `admin.system.software.manage` | Install, undo, go-ahead, cancel, release upload/download, pairing key and GitHub release source |
 
 Install, undo, go-ahead and pairing changes require the owner’s own fresh authenticator code on every commit, including Dev. The existing step-up key `base.software.change` remains `.always()` to preserve its policy and audit identity; it is **not a build operation**. Cancel requires no code. The facade rechecks authorization inside the mutation transaction. Other organisations fail closed with `denied_platform_scope`; a missing grant is `denied_missing_capability`.
 
@@ -68,8 +68,9 @@ Reads and reviewed writes use the shared Agent API; the page uses the same contr
 | `base.software.status` | none | Instance, installed composition, add-ons, uploads, current or last job with steps and cancel state, Undo and recent history |
 | `base.software.catalogue` | none | Discovery, compatibility and local build instructions on every instance |
 | `base.software.open` | optional `propose.domains`, `propose.extensions` | Status plus catalogue, matching and unknown proposals, local next step and `card.resource` |
-| `base.software.releases` | none | Source listing, uploads, pairing state and releases kept here |
-| `base.software.install` | `release` or uploaded `bundle`; optional `switch` | Source, composition changes, add-on changes, checks, pause and installer steps |
+| `base.software.releases` | optional `refresh`, `prerelease` | Source listing, GitHub setup files, uploads, pairing state and releases kept here |
+| `base.software.install` | `release`, uploaded `bundle`, or GitHub `asset` with `repository_id`, `release_id`, `tag`, `target` and `digest`; optional `switch` | Source, composition changes, add-on changes, checks, pause and installer steps |
+| `base.software.github` | `repository`, optional `repository_id`, `token`, `clear_token`, `refresh_minutes`, `accept` | Save the GitHub repository, the read token and how often to check; accept the repository number before installing. The token is never shown back |
 | `base.software.undo` | optional `job` | Previous release, backup restore and backup time; only the newest completed job can be undone |
 | `base.software.go` | optional `job` | Go-ahead for a running install copied and waiting with `switch: ask`, before any later step starts |
 | `base.software.cancel` | optional `job` | Remove a queued job, or request stop before the pause; refused after the pause starts |
@@ -83,7 +84,7 @@ Install requires the source to answer and the selected release to be the one it 
 
 The **Software** page (`/system/software`) has one menu entry and two shared tabs: **Domains and Extensions** and **Releases**. Each catalogue item is one compact card with its description, installed version (when installed) and one **Status** line. Official modules show **Installed**, **Not installed** or **Update available: X**, plus a short warning such as **Needs Bilibi X** only when no listed version fits this server. Modules from an operator’s own catalogue are not kept in step with the Platform, so they keep a **Compatibility** line: **Yes · tested with Bilibi X**, **Yes, not tested yet** or **No · needs Bilibi X**. **Developer commands** folds away the repository, exact test evidence and local build commands.
 
-**Releases** (`?tab=releases`) shows the installed version, the current or last install (its **Install steps** stay open while the job is active, failed or interrupted, and fold when it completes), a short backup table with folded backup details, and **Get an update**. Backup file locations are folded and only available to accounts that can manage software. Upload, review, download, stored releases, and the folded **Update server and pairing key** share the same mounted page; switching tabs preserves pending uploads and reviews. The old `/system/software/releases` page redirects to the Releases tab, and its authenticated download addresses remain valid.
+**Releases** (`?tab=releases`) shows the installed version, the current or last install (its **Install steps** stay open while the job is active, failed or interrupted, and fold when it completes), a short backup table with folded backup details, and **Get an update**. Backup file locations are folded and only available to accounts that can manage software. GitHub releases, upload, review, download, stored releases, and the folded **Update server and pairing key** share the same mounted page; switching tabs preserves pending uploads and reviews. The old `/system/software/releases` page redirects to the Releases tab, and its authenticated download addresses remain valid.
 
 The MCP App (`ui://bilibi/software-v1.html`, `card/software-v1.html`) keeps its **Manage domains and extensions** title and uses the same software contracts.
 
@@ -99,7 +100,7 @@ The MCP App (`ui://bilibi/software-v1.html`, `card/software-v1.html`) keeps its 
 
 **Only install and undo jobs are queued.** One job per tenant can be queued or running. Jobs finish as `done`, `failed`, `cancelled` or `interrupted`; their result explains the outcome.
 
-Install steps are *fetch, backup, migrate, switch, verify*, with *download* first for a remote source. Undo uses *backup, restore* (when needed), *switch, verify*. The first `backup` pauses the instance; cancellation is refused after it starts. The installer backs up before updating, checks the new program, and automatically switches back on a failed check. Undo restores the earlier backup when migrations changed the database; its review names the backup time and the page separately refreshes the count of later audited changes. The committed review records `lost_at_commit`.
+Install steps are *fetch, backup, migrate, switch, verify*, with *download* first for a remote Bilibi server or a GitHub file. Undo uses *backup, restore* (when needed), *switch, verify*. The first `backup` pauses the instance; cancellation is refused after it starts. The installer backs up before updating, checks the new program, and automatically switches back on a failed check. Undo restores the earlier backup when migrations changed the database; its review names the backup time and the page separately refreshes the count of later audited changes. The committed review records `lost_at_commit`.
 
 Migration `base-software-003-local-builds` cancels legacy queued or running `change` jobs, skips unfinished steps, records the reason, gives never-claimed jobs the worker name `software-migration` and clears their settlement mark so the server audits and notifies the outcome. It preserves completed history and prior Undo information. A constraint prevents new active change jobs. The only builder setting, `software.build_jobs`, is removed. All existing tables and columns remain needed for install, undo, release add-ons or historical evidence; no applied migration is edited.
 
@@ -127,15 +128,16 @@ Before a database update committed, a restarted install ends interrupted and res
 
 ## Release transport
 
-Servers install releases built in the operator’s local Bilibi copy and checked before installation. The release has to get there. Three ways in, all ending in the installer's same copy-and-check step:
+Servers install releases built in the operator’s local Bilibi copy and checked before installation. The release has to get there. Four ways in, all ending in the installer's same copy-and-check step:
 
 | Where the instances run | How the release gets there | What you set up |
 | --- | --- | --- |
 | Same machine | The installer copies the folder from the sibling instance's `releases/` | "Install releases tested on" names the instance, like `dev` |
 | Different machines that can reach each other | The target downloads the release file from its source over HTTPS, with a pairing key | "Install releases tested on" is the address, like `https://dev.erp.example.com`; the same pairing key on both |
 | A Dev the servers cannot reach (a laptop) | You download the release file on Dev's **Software › Releases** tab and upload it on the target's | nothing |
+| A published setup file on GitHub | The server lists that repository's releases and installs one file | **Software › GitHub repository**, an optional read token, and **Accept this repository** |
 
-**The install review names its source first**: "Downloads from https://dev.example.com (answered just now)" for an https source, "Copied from dev on this machine" for a sibling, "From the uploaded file upload-3" for an uploaded file; the checks that follow are the checksum, the kind of server, the source's health and disk.
+**The install review names its source first**: "Downloads from https://dev.example.com (answered just now)" for an https source, "Copied from dev on this machine" for a sibling, "From the uploaded file upload-3" for an uploaded file, "Downloads bilibi-setup-….tar.gz from GitHub repository owner/name (tag v1, check code abcdef123456…)" for GitHub; the checks that follow are the checksum, the kind of server, the source's health and disk. A GitHub review also checks that the file is still the one you chose, and that the files inside match their own check codes.
 
 **The target pulls; nothing is ever pushed.** A Production instance accepts no program from anyone: it asks its source, checks the answer, downloads, checks again, and only then does the installer touch anything.
 
@@ -156,6 +158,18 @@ With the key, a source answers two addresses, both reserved by the host (`apps/w
 
 The key goes in the `X-Bilibi-Pairing-Key` header. A missing or wrong key is `403` (`not_paired`, `pairing_key_refused`), a source without an instance folder or without that release is `404`, and a sender is limited to 30 attempts a minute. Every request is one system row in the exchange log; the key never reaches it.
 
+### Install from GitHub
+
+Name one repository on **Software › Releases**, as owner/name, for example BelimbingApp/bilibi-setup-template. A public repository needs no token, but GitHub then allows only 60 calls an hour from a server's address, and each install review uses about three. A token raises that to 5,000 an hour. A private repository needs a fine-grained token that can only read that repository. The token is stored encrypted and never shown again. Changing or clearing it asks for your authenticator code, including in the settings editor.
+
+The first time you save a repository, Bilibi asks GitHub for its number and remembers that number only when you choose **Accept this repository**. That also asks for your authenticator code. If GitHub later reports a different number for the same name, installs stop until you accept the new number. Bilibi does not replace a remembered number by itself.
+
+The list shows setup files for this server: names that start with `bilibi-setup-` and end with this computer's target, such as `-x86_64-unknown-linux-gnu.tar.gz`. Drafts stay hidden. Pre-releases stay hidden until you choose **Show pre-releases**. The list is kept on this server and refreshed at most as often as **Check GitHub every this many minutes** (15 by default), and again when you choose **Refresh**. The list is saved in the instance's `data/` folder. If GitHub is limiting this server, or cannot be reached, the saved list stays on the page, and a failed look is not repeated before the interval has passed; **Refresh** asks again. The running program, Undo and a file already downloaded do not call GitHub.
+
+Choose **Review** on a file. The install records the repository number, the release number, the file number, the tag, the target and the file's check code. Before the download, Bilibi reads that release from GitHub again and refuses when any of those differ. It then downloads the file through the shared outgoing calls, follows only GitHub's own file hosts, and drops the token when the host changes. The download address is not stored. The file's check code is compared before the archive is opened. The files inside are checked after they are copied, the same way as an upload. The job result keeps the GitHub identity. Undo does not call GitHub.
+
+Uploading a release file stays available, and the pairing key stays the way two Bilibi servers share a release with each other.
+
 ### What happens on the target
 
 1. The review (`base.software.install`) asks the source: a sibling's folders directly, or the source's listing over HTTPS as the person asking (the exchange log shows it under them). The release must be the one the source runs now, and the source must answer. The review then states the change list from the release's own recipe.
@@ -168,16 +182,16 @@ Each failed check is a plain sentence that says what to do next: "This release w
 
 ### Release controls
 
-The **Releases** tab (`release_files.rs`, embedded by `web.rs`) moves files through the existing transport contracts. Uploading unpacks and checks the file, then keeps it as `upload-<n>` until you install or remove it. Downloads and uploads require manage permission; setting or clearing the pairing key requires the owner's authenticator code every time. The update server choice stays in **Settings › Instance › Install releases tested on**, linked from the folded update-server section.
+The **Releases** tab (`release_files.rs`, embedded by `web.rs`) moves files through the existing transport contracts. Uploading unpacks and checks the file, then keeps it as `upload-<n>` until you install or remove it. Downloads and uploads require manage permission; setting or clearing the pairing key, and saving or accepting the GitHub repository, require the owner's authenticator code every time. The update server choice stays in **Settings › Instance › Install releases tested on**, linked from the folded update-server section. GitHub settings are **Software › GitHub repository**, **Software › GitHub read token for a private setup repository** and **Software › Check GitHub for new releases every this many minutes**. The repository number is not typed by hand.
 
-The tab asks the source once when first opened and keeps the answer across renders and tab changes. **Refresh releases** and saving the pairing key ask again. The source limits each sender to 30 requests a minute, which install review and download also use. Installing uses the tab's install form and `base.software.install`.
+The tab asks the paired update server once when first opened and keeps the answer across renders and tab changes. **Refresh releases** and saving the pairing key ask again. The source limits each sender to 30 requests a minute, which install review and download also use. The GitHub list is separate: opening the tab uses the saved list, and only **Refresh**, a stale interval, or an install review asks GitHub. The four-second job poll does not. Installing uses the tab's install form, a GitHub row's **Review**, and `base.software.install`.
 
 ## Caveats
 
 - An unpinned program cannot prove its exact Domain versions or CI pair. Pin before building locally.
 - The documented local release folder has no `release.json`; an uploaded file's review says its change list is known only after the installer reads the program. The completed job records its pinned composition and changes.
 - Downloads by a person hold one bundle in memory; pulling instances stream it. Live uploads are limited to 64 MB.
-- Transport calls trust system certificate roots as well as public roots and refuse redirects so pairing keys never go to another address. Install a private authority on the receiving server when needed.
+- Calls to another Bilibi server trust system certificate roots as well as public roots and refuse redirects, so a pairing key never goes to another address. Install a private authority on the receiving server when needed. A GitHub download trusts public roots, follows only GitHub's own file hosts, and drops the read token when the host changes.
 
 ## Where to go next
 

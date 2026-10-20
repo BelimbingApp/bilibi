@@ -101,10 +101,12 @@ pub struct SourceFacts {
     pub listing: std::result::Result<Value, String>,
 }
 
-/// The release the owner means: one the source reports, or a file uploaded
-/// here. The request records which, so the installer knows where to look.
+/// The release the owner means: one the source reports, a GitHub setup file,
+/// or a file uploaded here. The request records which, so the installer
+/// knows where to look.
 enum Chosen {
     FromSource { release: i64, facts: Value },
+    GitHub(crate::github::Pin),
     Uploaded { bundle: String, facts: Value },
 }
 
@@ -125,6 +127,7 @@ pub fn install(
     active: Option<&Job>,
     input: &Value,
     source: Option<&SourceFacts>,
+    github: Option<&Value>,
     held: &Held<'_>,
 ) -> Result<Review> {
     let Held {
@@ -134,7 +137,26 @@ pub fn install(
     } = *held;
     busy(active)?;
     let switch = switch_of(input)?;
-    let chosen = match (input["bundle"].as_str(), input["release"].as_i64()) {
+    if input.get("asset").is_some()
+        && input["bundle"]
+            .as_str()
+            .is_some_and(|bundle| !bundle.is_empty())
+    {
+        return Err(SoftwareError::field(
+            "asset",
+            "Choose a GitHub release or an uploaded file, not both.",
+        ));
+    }
+    let chosen = if input.get("asset").is_some() {
+        let listing = github.ok_or_else(|| {
+            SoftwareError::field(
+                "asset",
+                "Bilibi has not read the GitHub release list, so it cannot check this request.",
+            )
+        })?;
+        Chosen::GitHub(crate::github::pin_from_listing(listing, input)?)
+    } else {
+        match (input["bundle"].as_str(), input["release"].as_i64()) {
         (Some(bundle), _) => {
             let facts = uploads
                 .iter()
@@ -219,9 +241,10 @@ pub fn install(
         _ => {
             return Err(SoftwareError::field(
                 "release",
-                "Give the release number currently running on the update server, like 42, or the name of a release file uploaded here, like upload-3 (base.software.releases lists both).",
+                "Give the release number currently running on the update server, like 42, a GitHub file from base.software.releases, or the name of a release file uploaded here, like upload-3.",
             ))
         }
+    }
     };
     let (source_json_value, source_text, release, facts) = match &chosen {
         Chosen::FromSource { release, facts } => {
@@ -248,9 +271,36 @@ pub fn install(
                 facts.clone(),
             )
         }
+        Chosen::GitHub(pin) => {
+            let text = format!(
+                "GitHub repository {} tag {} ({})",
+                pin.repository,
+                pin.tag,
+                crate::github::describe_target(&pin.target)
+            );
+            (
+                json!({
+                    "kind": "github",
+                    "repository": pin.repository,
+                    "repository_id": pin.repository_id,
+                    "release_id": pin.release_id,
+                    "asset_id": pin.asset_id,
+                    "tag": pin.tag,
+                    "target": pin.target,
+                    "digest": pin.digest,
+                    "name": pin.name,
+                    "bytes": pin.bytes,
+                    "prerelease": pin.prerelease,
+                }),
+                text,
+                None,
+                json!({"sha256": Value::Null, "bytes": pin.bytes, "name": pin.name}),
+            )
+        }
     };
-    let downloads = matches!(instance.installs_from, Some(Source::Https(_)))
-        && matches!(chosen, Chosen::FromSource { .. });
+    let downloads = matches!(chosen, Chosen::GitHub(_))
+        || (matches!(instance.installs_from, Some(Source::Https(_)))
+            && matches!(chosen, Chosen::FromSource { .. }));
     let summary = match release {
         Some(release) => format!(
             "{}: install release {release} from {source_text}",
@@ -259,6 +309,11 @@ pub fn install(
         None => format!("{}: install the release in {source_text}", instance.label),
     };
     let mut warnings = production_warnings(instance);
+    if let Chosen::GitHub(pin) = &chosen {
+        if pin.prerelease {
+            warnings.push(format!("{} is marked as a pre-release on GitHub.", pin.tag));
+        }
+    }
     if let (Chosen::Uploaded { .. }, Some(installs_from)) = (&chosen, &instance.installs_from) {
         if !made_by(&facts, installs_from) {
             warnings.push(format!(
@@ -317,9 +372,24 @@ pub fn install(
         (Chosen::FromSource { .. }, Some(Source::Https(address))) => {
             format!("Downloads from {address} (answered just now)")
         }
+        (Chosen::GitHub(pin), _) => format!(
+            "Downloads {} from GitHub repository {} (tag {}, check code {}…)",
+            pin.name,
+            pin.repository,
+            pin.tag,
+            &pin.digest[..12.min(pin.digest.len())]
+        ),
         (Chosen::FromSource { .. }, None) => return Err(bilibi_database::Error::Internal.into()),
     };
-    let rest = if downloads {
+    let rest = if matches!(chosen, Chosen::GitHub(_)) {
+        vec![
+            "The GitHub file is still the one that was reviewed (repository, release, file, tag and check code)",
+            "The downloaded file matches that check code before it is unpacked",
+            "The files inside match their own check codes after copying",
+            "The release was built for this kind of server",
+            "Enough disk for the program and a backup",
+        ]
+    } else if downloads {
         vec![
             "The update server still runs this release and reports that it works",
             "The downloaded file matches its check code (checksum)",
@@ -358,9 +428,9 @@ pub fn install(
         "pause_minutes": PAUSE_MINUTES,
         "switch": switch,
         "what_happens": format!("{}Then {} pauses for about {PAUSE_MINUTES} minute to back up the database, update it, switch and check. If the check fails it switches back by itself.",
-            if downloads { "The release is downloaded from the source, checked and copied into place. " } else { "The release is copied and checked. " },
+            if matches!(chosen, Chosen::GitHub(_)) { "The release is downloaded from GitHub, its check code is verified, then it is copied and checked. " } else if downloads { "The release is downloaded from the source, checked and copied into place. " } else { "The release is copied and checked. " },
             instance.label),
-        "steps": jobs::install_steps(downloads).iter().map(|s| json!({"seq": s.seq, "key": s.key, "label": s.label, "pauses": s.pauses})).collect::<Vec<_>>(),
+        "steps": (if matches!(chosen, Chosen::GitHub(_)) { jobs::download_steps(true, "Download the release from GitHub") } else { jobs::install_steps(downloads) }).iter().map(|s| json!({"seq": s.seq, "key": s.key, "label": s.label, "pauses": s.pauses})).collect::<Vec<_>>(),
         "step_up": [STEP_UP],
     });
     Ok(Review {

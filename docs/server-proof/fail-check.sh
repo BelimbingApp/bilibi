@@ -1,16 +1,20 @@
 #!/usr/bin/env bash
 # Disposable deployment proof; no Bilimbi counterpart.
-# Lab-only fault injection: release 3 starts normally on the wrong port,
-# so the installer's verify step fails; release 1 keeps its configured port.
+# Lab-only fault injection: the failing release (3 unless given) starts
+# normally on the wrong port, so the installer's verify step fails; the
+# release in service now (1 unless given) keeps its configured port.
+# Usage: fail-check.sh [in-service-release [failing-release]]
 set -euo pipefail
+CURRENT=${1:-1}
+FAILING=${2:-3}
 [[ $(cat /run/systemd/container) == systemd-nspawn ]]
-[[ $(readlink /opt/bilibi/production/releases/current) == 1 ]]
-[[ ! -e /opt/bilibi/production/releases/3 ]]
+[[ $(readlink /opt/bilibi/production/releases/current) == "$CURRENT" ]]
+[[ ! -e /opt/bilibi/production/releases/$FAILING ]]
 install -d /usr/local/lib /etc/systemd/system/bilibi@production.service.d
-cat > /usr/local/lib/bilibi-proof-launch <<'LAUNCH'
+cat > /usr/local/lib/bilibi-proof-launch <<LAUNCH
 #!/usr/bin/env bash
 set -euo pipefail
-if [[ $(readlink /opt/bilibi/production/releases/current) == 3 ]]; then
+if [[ \$(readlink /opt/bilibi/production/releases/current) == $FAILING ]]; then
     export BIND_ADDR=127.0.0.1:4399
 fi
 exec /opt/bilibi/production/current/bilibi-web run
@@ -22,4 +26,4 @@ ExecStart=
 ExecStart=/usr/local/lib/bilibi-proof-launch
 UNIT
 systemctl daemon-reload
-echo 'Fault armed: only release 3 will use the wrong port; health verification must fail.'
+echo "Fault armed: only release $FAILING will use the wrong port; health verification must fail."

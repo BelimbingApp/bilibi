@@ -1,11 +1,12 @@
-//! The software contracts, reached through Agent API: four reads and five
-//! reviewed writes (plan, then commit). A commit of install, undo,
-//! go or pair asks for the server owner's authenticator code every time, on
-//! every instance (`STEP_UP`): the pairing key opens the program for
-//! download, so setting it changes the software's reach; cancel changes
-//! nothing and asks none. The `open` read answers the `open_software` MCP
-//! tool, which shows the card (`card/software-v1.html`) registered here as
-//! an MCP App; `releases` says what this instance can install.
+//! The software contracts, reached through Agent API: four reads and seven
+//! reviewed writes (plan, then commit). A commit of install, undo, go,
+//! pair or the GitHub source asks for the server owner's authenticator
+//! code every time, on every instance (`STEP_UP`): the pairing key opens
+//! the program for download, and the GitHub settings name where a setup
+//! file comes from, so setting either changes the software's reach; cancel
+//! changes nothing and asks none. The `open` read answers the `open_software`
+//! MCP tool, which shows the card (`card/software-v1.html`) registered here
+//! as an MCP App; `releases` says what this instance can install.
 use crate::{bound, SoftwareError, CARD_URI, MANAGE, STEP_UP, VIEW};
 use bilibi_agent_api::{
     App, Channels, Definitions, Error as AgentError, Guide, Handler, Operation, OperationClient,
@@ -49,7 +50,16 @@ impl ReadHandler for Read {
             let value = match self {
                 Self::Status => software.status(scope).await?,
                 Self::Catalogue => software.catalogue(scope).await?,
-                Self::Releases => software.releases(scope).await?,
+                Self::Releases => {
+                    software
+                        .releases_with(
+                            scope,
+                            None,
+                            input["refresh"].as_bool() == Some(true),
+                            input["prerelease"].as_bool() == Some(true),
+                        )
+                        .await?
+                }
                 Self::Open => software.open(scope, input).await?,
             };
             Ok(value.into())
@@ -63,6 +73,7 @@ enum Write {
     Go,
     Cancel,
     Pair,
+    Github,
 }
 impl WriteHandler for Write {
     fn owner(&self) -> &'static str {
@@ -82,6 +93,7 @@ impl WriteHandler for Write {
                 Self::Go => software.review_go(scope, input).await?,
                 Self::Cancel => software.review_cancel(scope, input).await?,
                 Self::Pair => software.review_pair(scope, input).await?,
+                Self::Github => software.review_github(scope, input).await?,
             };
             if !matches!(self, Self::Cancel) {
                 review.facts["two_factor_enabled"] = json!(software.step_up.enrolled(scope).await?);
@@ -108,6 +120,7 @@ impl WriteHandler for Write {
                 Self::Go => software.go_in(tx, scope, input).await?,
                 Self::Cancel => software.cancel_in(tx, scope, input).await?,
                 Self::Pair => software.pair_in(tx, scope, input).await?,
+                Self::Github => software.github_in(tx, scope, input).await?,
             };
             Ok(value.into())
         })
@@ -121,7 +134,29 @@ fn install_schema() -> Value {
     json!({"type":"object","properties":{
         "release":{"type":"integer","minimum":1,"description":"The release number currently running on the update server (base.software.releases lists it)."},
         "bundle":{"type":"string","maxLength":32,"description":"Instead of release: the name of a release file uploaded here, like upload-3 (base.software.releases lists them)."},
+        "asset":{"type":"integer","minimum":1,"description":"Instead of release or bundle: the GitHub file number from base.software.releases."},
+        "repository_id":{"type":"integer","minimum":1,"description":"The GitHub repository number listed with that file."},
+        "release_id":{"type":"integer","minimum":1,"description":"The GitHub release number listed with that file."},
+        "tag":{"type":"string","maxLength":200,"description":"The setup tag listed with that file."},
+        "target":{"type":"string","maxLength":80,"description":"The computer kind listed with that file, such as x86_64-unknown-linux-gnu."},
+        "digest":{"type":"string","maxLength":80,"description":"The file's check code from base.software.releases, 64 hex characters."},
         "switch":{"type":"string","enum":["auto","ask"]}
+    }})
+}
+fn github_schema() -> Value {
+    json!({"type":"object","properties":{
+        "repository":{"type":"string","maxLength":140,"description":"The GitHub repository as owner/name, like BelimbingApp/bilibi-setup-template."},
+        "repository_id":{"type":"integer","minimum":1,"description":"The GitHub repository number to accept. Leave it out to accept the number GitHub reports now."},
+        "token":{"type":"string","maxLength":255,"description":"A fine-grained token that can only read this repository. Leave it out to keep the saved token. Never shown back."},
+        "clear_token":{"type":"boolean","description":"true removes the saved read token."},
+        "refresh_minutes":{"type":"integer","minimum":1,"maximum":1440,"description":"How many minutes to wait between GitHub checks. 15 checks about four times an hour."},
+        "accept":{"type":"boolean","description":"true remembers the GitHub repository number and allows installs from it."}
+    }})
+}
+fn releases_schema() -> Value {
+    json!({"type":"object","properties":{
+        "refresh":{"type":"boolean","description":"true asks GitHub now, unless GitHub is limiting this server. Otherwise the saved list is used when it is still fresh."},
+        "prerelease":{"type":"boolean","description":"true includes files GitHub marks as a pre-release. Drafts are never listed."}
     }})
 }
 fn pair_schema() -> Value {
@@ -131,7 +166,7 @@ fn pair_schema() -> Value {
     }})
 }
 fn releases_output() -> Value {
-    json!({"type":"object","description":"instance; source (available, current, healthy, releases with release, in_service, sha256, platform, domains; or message); uploads (release files waiting here: bundle, release, from, platform, domains, sha256); pairing (set); here (the releases kept on this instance)."})
+    json!({"type":"object","description":"instance; source (available, current, healthy, releases with release, in_service, sha256, platform, domains; or message); uploads (release files waiting here: bundle, release, from, platform, domains, sha256); pairing (set); github (repository, repository_id, accepted, releases with tag, asset, digest, target; or message); here (the releases kept on this instance)."})
 }
 fn job_schema() -> Value {
     json!({"type":"object","properties":{
@@ -163,19 +198,20 @@ inventory::submit! { Contribution::new(DEFINITIONS, "base/software", Provenance 
         Operation { key:"base.software.status", title:"Software status", summary:"See what this server runs, follow an install or undo, and read backup times, sizes and the retention rule; owners also see the files.", keywords:&["software","status","build","install","domain","version","job","undo"], capability:VIEW, input:empty_schema, output:status_output, handler:Handler::Read(&Read::Status), channels:Channels::Every, step_up:&[] },
         Operation { key:"base.software.open", title:"Manage domains and extensions", summary:"Open the Software card to see installed modules, find more modules, follow updates and backups, or undo an install. Includes developer commands for the requested modules.", keywords:&["software","card","open","propose","domain","build"], capability:VIEW, input:open_schema, output:open_output, handler:Handler::Read(&Read::Open), channels:Channels::Every, step_up:&[] },
         Operation { key:"base.software.catalogue", title:"Available domains and extensions", summary:"Find business modules (Domains) and adaptations or connections (Extensions). See which versions support this Bilibi and whether checks covered the exact code running here. Includes commands for a developer to build and test on their computer.", keywords:&["software","catalogue","domain","version","release","tested"], capability:VIEW, input:empty_schema, output:catalogue_output, handler:Handler::Read(&Read::Catalogue), channels:Channels::Every, step_up:&[] },
-        Operation { key:"base.software.releases", title:"Releases available to install", summary:"List updates from the chosen update server, uploaded release files waiting to install, and releases kept here. Say whether the secret for sharing release files is set.", keywords:&["software","release","install","source","download","upload","pairing"], capability:VIEW, input:empty_schema, output:releases_output, handler:Handler::Read(&Read::Releases), channels:Channels::Every, step_up:&[] },
-        Operation { key:"base.software.install", title:"Install a tested release", summary:"Install a tested update from another Bilibi server (release) or an uploaded file (bundle). Review the changes first. Confirmation requires the server owner's authenticator code.", keywords:&["software","install","release","staging","production","upload"], capability:MANAGE, input:install_schema, output:review_output, handler:Handler::SafeWrite(&Write::Install), channels:Channels::Every, step_up:&[STEP_UP] },
+        Operation { key:"base.software.releases", title:"Releases available to install", summary:"List updates from the chosen update server, setup files from the configured GitHub repository, uploaded release files waiting to install, and releases kept here. Say whether the secret for sharing release files is set.", keywords:&["software","release","install","source","download","upload","pairing","github"], capability:VIEW, input:releases_schema, output:releases_output, handler:Handler::Read(&Read::Releases), channels:Channels::Every, step_up:&[] },
+        Operation { key:"base.software.install", title:"Install a tested release", summary:"Install a tested update from another Bilibi server (release), a GitHub setup file (asset), or an uploaded file (bundle). Review the changes first. Confirmation requires the server owner's authenticator code.", keywords:&["software","install","release","staging","production","upload","github"], capability:MANAGE, input:install_schema, output:review_output, handler:Handler::SafeWrite(&Write::Install), channels:Channels::Every, step_up:&[STEP_UP] },
         Operation { key:"base.software.undo", title:"Undo the last software change", summary:"Return to the previous program. Review which backup Undo restores and what data would be lost. Confirmation requires the server owner's authenticator code.", keywords:&["software","undo","rollback","previous","restore"], capability:MANAGE, input:job_schema, output:review_output, handler:Handler::SafeWrite(&Write::Undo), channels:Channels::Every, step_up:&[STEP_UP] },
         Operation { key:"base.software.go", title:"Confirm installation", summary:"Let a copied install go ahead when it was started with switch ask: the server then pauses for about a minute to back up, update, switch and check. Confirmation requires the server owner's authenticator code.", keywords:&["software","go","ahead","switch","pause","install","ask"], capability:MANAGE, input:job_schema, output:review_output, handler:Handler::SafeWrite(&Write::Go), channels:Channels::Every, step_up:&[STEP_UP] },
         Operation { key:"base.software.cancel", title:"Cancel the software job", summary:"Stop the job waiting or running. A waiting job is removed; a running one stops before the pause. Too late once the pause has started.", keywords:&["software","cancel","stop","job"], capability:MANAGE, input:job_schema, output:review_output, handler:Handler::SafeWrite(&Write::Cancel), channels:Channels::Every, step_up:&[] },
         Operation { key:"base.software.pair", title:"Set the pairing key", summary:"Save or clear the secret that lets two Bilibi servers share release files. Use the same secret on both servers. It is never shown back. Confirmation requires the server owner's authenticator code.", keywords:&["software","pairing","key","release","download","source"], capability:MANAGE, input:pair_schema, output:review_output, handler:Handler::SafeWrite(&Write::Pair), channels:Channels::Every, step_up:&[STEP_UP] },
+        Operation { key:"base.software.github", title:"GitHub release source", summary:"Set the GitHub repository this server installs setup files from, the optional read token, and how often to check. Accept the repository before installing. Confirmation requires the server owner's authenticator code.", keywords:&["software","github","release","repository","token"], capability:MANAGE, input:github_schema, output:review_output, handler:Handler::SafeWrite(&Write::Github), channels:Channels::Every, step_up:&[STEP_UP] },
     ],
     guides: &[Guide { key:"base.software", title:"Discover and install software", summary:"Find modules, prepare tested updates on your computer, install them with backups, undo or cancel.", keywords:&["software","domain","extension","build","install","catalogue","undo"], capability:VIEW,
-        body:"Start with base.software.status to see what this server runs. Read base.software.catalogue or open the Software card with propose.domains or propose.extensions for what the person asked for. Each entry says what it does, which version supports this Bilibi, whether checks covered the exact code running here, and local_steps. Ask your developer to add the modules, build Bilibi on their computer, and test it before installing here. In that local checkout, clone the official repository into apps/domains/<id> or apps/extensions/<id>, check out the recommended commit, run python3 scripts/discover-modules.py, ./scripts/build-assets.sh --check, cargo metadata --format-version 1 > /dev/null to resolve the mounted Cargo.lock, python3 scripts/discover-modules.py --pin, cargo build --release --locked -p bilibi-web, and ./target/release/bilibi-web status. Run the composition locally and check it in the browser. Use docs/server-install.md to prepare its release file. Servers never build software. For installation read base.software.releases, then plan base.software.install with release (the source's running tested release), or bundle (a file uploaded here). Install and undo back up, switch, check and switch back automatically on failure through the installer. Install, undo, go and pair require the owner's current authenticator code every time. Follow jobs and recorded backups with status. Show each backup's time and size, the file when it is given, and the backup_rule sentence once. An install with switch ask waits after copying: plan base.software.go to proceed. Cancel is available until the pause starts. Only a server owner can change software, because an install affects every company on this server." }],
+        body:"Start with base.software.status to see what this server runs. Read base.software.catalogue or open the Software card with propose.domains or propose.extensions for what the person asked for. Each entry says what it does, which version supports this Bilibi, whether checks covered the exact code running here, and local_steps. Ask your developer to add the modules, build Bilibi on their computer, and test it before installing here. In that local checkout, clone the official repository into apps/domains/<id> or apps/extensions/<id>, check out the recommended commit, run python3 scripts/discover-modules.py, ./scripts/build-assets.sh --check, cargo metadata --format-version 1 > /dev/null to resolve the mounted Cargo.lock, python3 scripts/discover-modules.py --pin, cargo build --release --locked -p bilibi-web, and ./target/release/bilibi-web status. Run the composition locally and check it in the browser. Use docs/server-install.md to prepare its release file. Servers never build software. For installation read base.software.releases, then plan base.software.install with release (the source's running tested release), bundle (a file uploaded here), or asset (a setup file from the GitHub repository named in the settings, with repository_id, release_id, tag, target and digest from that same list). Uploading a release file still works. Install and undo back up, switch, check and switch back automatically on failure through the installer. Install, undo, go, pair and the GitHub source require the owner's current authenticator code every time. Follow jobs and recorded backups with status. Show each backup's time and size, the file when it is given, and the backup_rule sentence once. An install with switch ask waits after copying: plan base.software.go to proceed. Cancel is available until the pause starts. Only a server owner can change software, because an install affects every company on this server." }],
 }) }
 
 /// How an agent works with the card, for the plugin package's skill.
-const CARD_SKILL: &str = "# Software discovery and installation\n\nCall open_software to find business features (Domains) and adaptations or connections (Extensions), inspect this instance or install a tested release. Pass propose.domains or propose.extensions with the requested catalogue ids; they highlight entries, never request a server build. The card gives a description, compatible version, records of checks on the exact code and exact local_steps. Ask your developer to add the modules, build Bilibi on their computer, and test it before installing here. Follow those steps in a local checkout, run the result and check it in the browser. Servers never build. For a tested release, the person reviews and confirms install or undo in the card with their authenticator code. Do not plan or commit those writes yourself while the card is open. Follow the job and explain its outcome. If the host cannot show cards, read base.software.catalogue and status for discovery, then plan install or undo and show the full review before the person confirms. Every install, undo and go-ahead asks for a fresh code on every instance. Only a server owner may install software because it affects every company.\n";
+const CARD_SKILL: &str = "# Software discovery and installation\n\nCall open_software to find business features (Domains) and adaptations or connections (Extensions), inspect this instance or install a tested release. Pass propose.domains or propose.extensions with the requested catalogue ids; they highlight entries, never request a server build. The card gives a description, compatible version, records of checks on the exact code and exact local_steps. Ask your developer to add the modules, build Bilibi on their computer, and test it before installing here. Follow those steps in a local checkout, run the result and check it in the browser. Servers never build. A server can install a setup file from the GitHub repository named in its settings. Uploading a release file still works. For a tested release, the person reviews and confirms install or undo in the card with their authenticator code. Do not plan or commit those writes yourself while the card is open. Follow the job and explain its outcome. If the host cannot show cards, read base.software.catalogue and status for discovery, then plan install or undo and show the full review before the person confirms. Every install, undo and go-ahead asks for a fresh code on every instance. Only a server owner may install software because it affects every company.\n";
 
 inventory::submit! { Contribution::new(APPS, "base/software", Provenance { module: "base/software", source: file!(), line: line!() }, &App {
     uri: CARD_URI,

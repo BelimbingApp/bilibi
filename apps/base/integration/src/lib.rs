@@ -11,12 +11,14 @@
 //! detail (`/system/api-exchanges`).
 mod contributions;
 mod redaction;
+mod redirect;
 pub mod reference_webhook;
 mod retention;
 mod transport;
 mod web;
 pub mod webhooks;
 pub use contributions::{WebhookLimits, DELETE, LIST, PAYLOAD, RETENTION_DAYS, WEBHOOK_SETTINGS};
+pub use redirect::RedirectPolicy;
 pub use transport::{Failure, Outgoing, Reply, Streamed};
 
 use bilibi_authz::{authorize_key, SystemScope};

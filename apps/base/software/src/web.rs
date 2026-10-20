@@ -68,6 +68,13 @@ fn render(fragment: impl Template) -> Result<Html> {
 fn text(value: &Value) -> &str {
     value.as_str().unwrap_or_default()
 }
+fn event_i64(value: &Value, key: &str) -> Option<i64> {
+    value.get(key).and_then(|item| {
+        item.as_i64()
+            .or_else(|| item.as_str().and_then(|text| text.trim().parse().ok()))
+            .filter(|number| *number > 0)
+    })
+}
 /// A read contract's answer, out of the door's envelope (`result`, `meta`).
 async fn read(contracts: &PageContracts, scope: &Scope, key: &str) -> Result<Value> {
     let mut reply = contracts
@@ -330,19 +337,48 @@ impl View {
             "request_install" => {
                 self.release = values.get("release").cloned().unwrap_or_default();
                 self.bundle = values.get("bundle").cloned().unwrap_or_default();
-                let bundle = self.bundle.trim().to_owned();
-                if !bundle.is_empty() {
+                if value.get("asset").is_some() {
+                    match (
+                        event_i64(value, "asset"),
+                        event_i64(value, "repository_id"),
+                        event_i64(value, "release_id"),
+                    ) {
+                        (Some(asset), Some(repository_id), Some(release_id)) => {
+                            self.install_error = None;
+                            let input = json!({
+                                "asset": asset,
+                                "repository_id": repository_id,
+                                "release_id": release_id,
+                                "tag": value.get("tag").and_then(Value::as_str).unwrap_or(""),
+                                "target": value.get("target").and_then(Value::as_str).unwrap_or(""),
+                                "digest": value.get("digest").and_then(Value::as_str).unwrap_or(""),
+                                "switch": "auto",
+                            });
+                            self.preview(scope, credential, Kind::Install, input)
+                                .await?;
+                            if let Some(message) = self.install_error.clone() {
+                                self.flash(StatusKind::Error, message);
+                            }
+                        }
+                        _ => {
+                            let message = "Choose a GitHub file from the list again.".to_owned();
+                            self.install_error = Some(message.clone());
+                            self.flash(StatusKind::Error, message);
+                        }
+                    }
+                } else if !self.bundle.trim().is_empty() {
+                    let bundle = self.bundle.trim().to_owned();
                     self.install_error = None;
                     let input = json!({"bundle": bundle, "switch": "auto"});
                     self.preview(scope, credential, Kind::Install, input)
-                        .await?
+                        .await?;
                 } else {
                     match self.release.trim().parse::<i64>() {
                         Ok(release) if release >= 1 => {
                             self.install_error = None;
                             let input = json!({"release": release, "switch": "auto"});
                             self.preview(scope, credential, Kind::Install, input)
-                                .await?
+                                .await?;
                         }
                         _ => self.install_error = Some(
                             "Enter the release number shown on the update server, like 42, or pick a release file uploaded here."
@@ -669,7 +705,7 @@ impl View {
             content.push(&self.backups_card(&display, &status)?);
             content.push(&render(SectionHeading {
                 title: "Get an update",
-                description: "Upload a tested release file or get one from the update server.",
+                description: "Install a setup file from GitHub, upload a tested release file, or get one from the update server.",
                 ..SectionHeading::default()
             })?);
             content.push(&transfer);

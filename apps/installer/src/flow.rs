@@ -520,6 +520,9 @@ impl<'a> Run<'a> {
         if let Some(before) = &before {
             result["plugins"] = json!({"before": before, "after": after});
         }
+        if fetched.get("github").is_some() {
+            result["github"] = fetched["github"].clone();
+        }
         self.finish_with_plugins("done", result, after.as_deref())
             .await?;
         self.prune(&[release, previous]);
@@ -627,6 +630,42 @@ impl<'a> Run<'a> {
                     uploaded: None,
                 }
             }
+            Some("github") => {
+                let repository = request["source"]["repository"]
+                    .as_str()
+                    .unwrap_or("the GitHub repository")
+                    .to_owned();
+                let tag = request["source"]["tag"].as_str().unwrap_or("").to_owned();
+                let target = request["source"]["target"].as_str().unwrap_or("");
+                let expected = request["source"]["digest"].as_str().unwrap_or("");
+                let download = self.detail("download");
+                let got = download["digest"].as_str().unwrap_or("");
+                if expected.is_empty() || got != expected {
+                    return Err(
+                        "The downloaded GitHub file is not the one that was reviewed. Nothing was copied."
+                            .into(),
+                    );
+                }
+                let folder = download["folder"].as_str().ok_or(
+                    "the download step recorded no folder, so the GitHub file cannot be found",
+                )?;
+                let from = self
+                    .layout
+                    .incoming(folder)
+                    .filter(|dir| dir.join("bilibi-web").is_file())
+                    .ok_or_else(|| format!("the downloaded release is missing from incoming/{folder}; ask again so it is downloaded again"))?;
+                let words = match target {
+                    "x86_64-unknown-linux-gnu" => "Linux x86-64",
+                    "aarch64-unknown-linux-gnu" => "Linux ARM 64-bit",
+                    _ => "this kind of computer",
+                };
+                Found {
+                    from: from.clone(),
+                    name: repository.clone(),
+                    text: format!("GitHub {repository} tag {tag} ({words})"),
+                    uploaded: None,
+                }
+            }
             Some("upload") => {
                 let bundle = request["source"]["bundle"]
                     .as_str()
@@ -666,7 +705,20 @@ impl<'a> Run<'a> {
                 let _ = fs::remove_dir_all(dir);
             }
         }
-        checked
+        let mut checked = checked?;
+        if request["source"]["kind"].as_str() == Some("github") {
+            checked["github"] = json!({
+                "repository": request["source"]["repository"],
+                "repository_id": request["source"]["repository_id"],
+                "release_id": request["source"]["release_id"],
+                "asset_id": request["source"]["asset_id"],
+                "tag": request["source"]["tag"],
+                "target": request["source"]["target"],
+                "archive_sha256": request["source"]["digest"],
+                "program_sha256": checked["sha256"],
+            });
+        }
+        Ok(checked)
     }
     /// The checks every way in shares, then the copy: the checksum, built
     /// for this kind of server, not already in service, disk for the

@@ -98,7 +98,9 @@ In code, `bilibi_base::system::Instance::resolve` returns the role, label, colou
 
 **Dev and Production on one machine** use separate databases, ports and addresses. Build in your local Bilibi checkout, install the release on Dev or Staging to check it, then promote the tested release to Production.
 
-**Dev and Production on two machines**: run `create` once on each machine with that machine's instance. Production's "Install releases tested on" setting then holds Dev's address, and the same pairing key is set on both (Administration › System › Software › Releases). Production downloads the release from Dev when the owner installs it; nothing is pushed to Production. A Dev the servers cannot reach (a laptop): download the release file on Dev's Software › Releases tab and upload it on Production's. The three ways, the checks and the pairing key: [`apps/base/software/README.md`](../apps/base/software/README.md), "Release transport".
+**Dev and Production on two machines**: run `create` once on each machine with that machine's instance. Production's "Install releases tested on" setting then holds Dev's address, and the same pairing key is set on both (Administration › System › Software › Releases). Production downloads the release from Dev when the owner installs it; nothing is pushed to Production. A Dev the servers cannot reach (a laptop): download the release file on Dev's Software › Releases tab and upload it on Production's. The ways in, the checks and the pairing key: [`apps/base/software/README.md`](../apps/base/software/README.md), "Release transport".
+
+**Install from GitHub**: on Software › Releases, name the setup repository (for example BelimbingApp/bilibi-setup-template), save a read-only token only when the repository is private, and accept the repository. That asks for your authenticator code. Then review one setup file for this server. The server downloads that file, checks it, backs up, switches and can switch back or Undo, the same way as an upload. Uploading a file still works when you do not want GitHub to supply the release.
 
 Staging is optional. Set Production to install from Staging when you have one, or straight from Dev when you do not.
 
@@ -147,7 +149,7 @@ sudo scripts/install-server.sh installer /path/to/bilibi-installer
 
 This copies the program to `/opt/bilibi/build/bin/bilibi-installer`, owned by root so neither Bilibi user can change it, and starts `bilibi-installer@<instance>` for every instance on the machine. A `create` after that starts one for the new instance too. Run `installer` again with a newer program to update it: the services restart, and a job one of them was in the middle of is settled by the rules in [`apps/installer/README.md`](../apps/installer/README.md) ("If the server restarts mid-way"): before the database changed it ends `interrupted` and nothing changed; after, it finishes.
 
-The installer reads the instance's `env` for its database and port. It copies a release from another instance's folder on this machine (the one named in "Install releases tested on"), or from `incoming/`, where the program puts a release it downloaded from a source on another machine or received as an uploaded file.
+The installer reads the instance's `env` for its database and port. It copies a release from another instance's folder on this machine (the one named in "Install releases tested on"), or from `incoming/`, where the program puts a release it downloaded from another Bilibi server, from GitHub, or received as an uploaded file.
 
 The installer unit is skipped quietly while `/opt/bilibi/build/bin/bilibi-installer` does not exist, so starting `bilibi@<instance>` before you have run `installer` does not make it fail and retry.
 

@@ -151,6 +151,18 @@ def plan_commit(op, no_code=False, refuse_first=False, refuse_only=False):
     assert status == 200, 'Commit failed'
     return committed
 
+def github_input(asset=None):
+    # The saved list first: unauthenticated GitHub allows 60 calls an hour.
+    status, value = request('POST', '/api/v1/operations/base.software.releases/call', {'input': {'prerelease': True}})
+    github = value['result']['github']
+    if not github.get('releases'):
+        status, value = request('POST', '/api/v1/operations/base.software.releases/call', {'input': {'refresh': True, 'prerelease': True}})
+        github = value['result']['github']
+    rows = github['releases']
+    row = next(r for r in rows if asset is None or str(r['asset_id']) == str(asset))
+    return {'asset': row['asset_id'], 'repository_id': github['repository_id'], 'release_id': row['release_id'],
+            'tag': row['tag'], 'target': row['target'], 'digest': row['digest'], 'switch': 'auto'}
+
 cmd, *args = sys.argv[1:]
 if cmd == 'login':
     browser('open', ORIGIN + '/login')
@@ -186,6 +198,27 @@ elif cmd == 'install':
     plan_commit({'key': 'base.software.install', 'input': {'bundle': args[0], 'switch': 'auto'}}, refuse_first=True)
 elif cmd == 'refuse-install':
     plan_commit({'key': 'base.software.install', 'input': {'bundle': args[0], 'switch': 'auto'}}, refuse_first=True, refuse_only=True)
+elif cmd == 'github-input':
+    # The GitHub row the page would review, built from base.software.releases.
+    print(json.dumps(github_input(args[0] if args else None)))
+elif cmd == 'github-install':
+    # github-install [asset-id] [refuse|wrong-digest|wrong-repository]
+    asset = args[0] if args and args[0].isdigit() else None
+    mode = next((a for a in args if not a.isdigit()), '')
+    value = github_input(asset)
+    if mode == 'wrong-digest':
+        value['digest'] = '0' * 64
+    elif mode == 'wrong-repository':
+        value['repository_id'] += 1
+    plan_commit({'key': 'base.software.install', 'input': value}, refuse_first=True, refuse_only=(mode == 'refuse'))
+elif cmd == 'cancel':
+    plan_commit({'key': 'base.software.cancel', 'input': {}}, no_code=True)
+elif cmd == 'confirm-page':
+    # The host's confirm page, after a page action asked for a fresh code.
+    fill('input[name*=code]', code())
+    js('const form=document.querySelector("input[name*=code]").closest("form"); form.querySelector("button[type=submit]").click(); return true;')
+    time.sleep(1.5)
+    print(js('return location.pathname + location.search;'))
 elif cmd == 'review':
     browser('open', ORIGIN + '/system/software?tab=releases')
     fill('#software-bundle', args[0])

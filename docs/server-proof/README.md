@@ -117,6 +117,29 @@ The documented release folder has no `release.json`; the review warns that the c
 
 The driver works around two AXI limits: it retains a downloaded Blob and exports bounded chunks because DevTools evicts large response bodies; it fills the real file input through browser scripting because the native upload command's argument shape differs from the installed DevTools tool. Bilibi still streams, receives and validates the file through its ordinary page.
 
+## Install from GitHub
+
+Use a throwaway release in a repository you own, such as `BelimbingApp/bilibi-setup-template`. Publish it as a pre-release with the archive attached, and delete it afterwards. GitHub allows only 60 unauthenticated calls an hour per address, and the lab shares the host's address, so refresh sparingly.
+
+```sh
+docs/server-proof/pack-setup.sh target/release/bilibi-web "$BILIBI_PROOF_DATA/assets/bilibi-setup-proof1-x86_64-unknown-linux-gnu.tar.gz"
+gh-axi release create proof-github-source-1 --draft --prerelease -R BelimbingApp/bilibi-setup-template <archive>
+gh-axi release edit proof-github-source-1 --draft=false --prerelease=true -R BelimbingApp/bilibi-setup-template
+```
+
+Name the repository and accept it on Software › Releases, choose **Show pre-releases**, then drive the same reviewed install the page offers:
+
+```sh
+docs/server-proof/drive.py github-install <asset-id> wrong-digest      # refused at the plan
+docs/server-proof/drive.py github-install <asset-id> wrong-repository  # refused at the plan
+docs/server-proof/drive.py github-install <asset-id> refuse            # refused without a code
+docs/server-proof/drive.py github-install <asset-id>                   # fresh code, then download
+docs/server-proof/drive.py cancel                                      # cancel while it downloads
+docs/server-proof/drive.py wait <job>
+```
+
+To make the download last long enough to cancel or interrupt, slow the lab's veth on the host for the run: `sudo -n tc qdisc add dev ve-fsproof root tbf rate 3mbit burst 64kb latency 500ms`, and `tc qdisc del` it afterwards. Restart `bilibi@production` inside the lab during the download to see an interrupted job. `fail-check.sh <in-service-release> <failing-release>` arms the failed check for the release the GitHub install will create.
+
 ## Undo and fail a check
 
 Undo the completed install and confirm the baseline returns:

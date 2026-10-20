@@ -43,7 +43,12 @@ only. `Outgoing::trust_system_roots()` also trusts the server's own store
 a call to an address the operator chose; the release transport uses it so an
 instance on a private name is reachable. Redirects are followed unless
 `Outgoing::no_redirects()` is set, which returns a 3xx answer as the reply so a
-credential header is never sent on to another address.
+credential header is never sent on to another address. When the next host is
+known and must not see the credential, use `Outgoing::redirects` with a
+`RedirectPolicy` instead of a private client: only the listed HTTPS hosts are
+contacted, private and local addresses are refused, credential headers are
+removed when the host changes, and the exchange row keeps the original URL.
+The `Location` target, including a signed download query, is not stored.
 
 ## Incoming calls
 
