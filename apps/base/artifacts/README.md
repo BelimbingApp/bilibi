@@ -36,13 +36,13 @@ and `X-Content-Type-Options: nosniff`. A1 adds no public download route or scree
 Operator Settings owns these installation values, gated by
 `admin.system.artifacts.manage` and explicit platform operator identity:
 
-- `artifacts.storage_root`: existing absolute private directory, initially empty.
-- `artifacts.retention_days`: required positive integer, initially unset.
+- `artifacts.storage_root`: the server's private `data/artifacts` folder, saved by `seed-production`. Installed servers use `BILIBI_INSTANCE_DIR/data/artifacts`; a local checkout uses `<working directory>/data/artifacts`.
+- `artifacts.retention_days`: initially 2557 days (7 years), saved by `seed-production`.
 - `artifacts.max_bytes`: initially 10 MiB, maximum 512 MiB.
 - `artifacts.purge_batch_size` (100), `artifacts.purge_retry_minutes` (60) and
   `artifacts.purge_max_attempts` (5): retention purge pacing, see below.
 
-Provision the directory with 0700 mode. Files use exclusive random UUID names,
+The first document creates missing storage folders with 0700 mode. Existing folders must already have safe permissions; Bilibi never changes them. The seed preserves every saved administrator value, including an explicitly cleared policy. Administrators can change both settings in Global settings. Files use exclusive random UUID names,
 0600 mode and `O_NOFOLLOW`. Root components cannot be symlinks or named
 public/static/assets. The root and parents must be controlled by trusted OS
 operators; never expose them through a proxy/static server. Root changes affect

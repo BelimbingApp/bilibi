@@ -2,6 +2,7 @@
 //! reservations/tombstones must commit independently of filesystem work.
 mod contributions;
 mod engine;
+mod install;
 pub mod pdf;
 mod protect;
 mod queued;
@@ -604,7 +605,7 @@ impl<O: Owner> Owned<'_, O> {
         if bytes.len() as u64 > max {
             return Err(Error::Invalid);
         }
-        storage::io(|| storage::validate_root(&root))?;
+        storage::io(|| storage::prepare_root(&root))?;
         let id = uuid::Uuid::new_v4().to_string();
         let size = bytes.len() as i64;
         let sha256 = digest(bytes);
@@ -749,7 +750,7 @@ inventory::submit! {
         id:"base/artifacts",layer:bilibi_module_registry::Layer::Base,
         dependencies:&["base/audit","base/authz","base/database","base/queue","base/settings","base/tenancy","base/party_ids"],
         migrations:&[("base-artifacts-001",include_str!("../migrations/001-artifacts.sql")),("base-artifacts-002",include_str!("../migrations/002-retention.sql"))],
-        services:&[Service {id:"base/artifacts.store",factory:|services| Ok(Arc::new(Artifacts {
+        services:&[Service {id:"base/artifacts.install-policy",factory:|_| Ok(Arc::new(bilibi_database::seeds::SeedService(Arc::new(install::InstallPolicy))))},Service {id:"base/artifacts.store",factory:|services| Ok(Arc::new(Artifacts {
             boundary:services.get("base/database.mutations")?, settings:services.get("base/settings.store")?, authentication:services.get("base/tenancy.authentication")?,
             queue:services.get("base/queue.store")?, db:services.get::<Db>("base/database.pool")?.as_ref().clone(),
             tokens:render::Tokens::new().map_err(|error| bilibi_module_registry::RegistryError::Contribution(error.to_string()))?,

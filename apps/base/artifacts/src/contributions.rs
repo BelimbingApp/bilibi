@@ -35,18 +35,22 @@ setting!(
     None,
     None,
     "Private document directory",
-    "A full folder path with permission 0700, outside any public web folder."
+    "Defaults to the server's data/artifacts folder; missing folders are created with permission 0700 (server owner only)."
 );
 setting!(
     "artifacts.retention_days",
     Integer,
-    Value::Null,
+    json!(2557),
     true,
     Some(1.0),
     Some(36500.0),
     "Document retention days",
-    "Must be set before documents can be stored; a change applies only to new documents."
+    "Defaults to 2557 days (7 years); changes apply only to new documents (server owner only)."
 );
+inventory::submit! { Contribution::new(bilibi_module_registry::contributions::SEEDS, "base/artifacts.storage-policy", provenance!(), &bilibi_module_registry::contributions::Seed {
+    version: "artifacts-storage-policy-v1", mode: bilibi_module_registry::contributions::SeedMode::Production,
+    action: bilibi_module_registry::contributions::SeedAction::Service { service: "base/artifacts.install-policy", operation: "initialize" },
+}) }
 setting!(
     "artifacts.max_bytes",
     Integer,
