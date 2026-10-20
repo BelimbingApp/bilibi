@@ -487,7 +487,7 @@ impl ConfirmPage {
 
     fn render(&self) -> Result<String, Error> {
         let mut step =
-            bilibi_ui::StepUp::new(self.enabled, self.return_to.as_deref().unwrap_or("/"));
+            bilibi_ui::StepUp::new(self.enabled, self.return_to.as_deref().unwrap_or_default());
         step.code = code_field("two_factor_code", Some(self.recovery), &self.errors)?;
         step.actions = fragment(Html::render(&Button {
             id: "confirm-access-verify",

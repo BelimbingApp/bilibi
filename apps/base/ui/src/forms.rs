@@ -1066,10 +1066,12 @@ impl StepUp {
         }
     }
     pub fn setup_href(&self) -> String {
-        crate::params::address(
-            "/settings/two-factor",
-            &[("return".into(), self.return_to.clone())].into(),
-        )
+        let query = if self.return_to.is_empty() {
+            Default::default()
+        } else {
+            [("return".into(), self.return_to.clone())].into()
+        };
+        crate::params::address("/settings/two-factor", &query)
     }
 }
 
