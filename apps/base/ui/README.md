@@ -25,14 +25,13 @@ let colour = ColourInput::new(
 
 The label is what people read; the value is what the form submits. The owner supplies the default choice's actual colour. Render with `Html::render(&colour)` or `forms::colour_input(control=colour)`.
 
-- `ColourRole` permits the status roles and the brand role from `DESIGN.md`. The swatches use the same light and dark tokens as the components they colour, without inline styles or fixed colour values.
+- `ColourRole` permits the status roles from `DESIGN.md`. The swatches use the same light and dark tokens as the components they colour, without inline styles or fixed colour values.
 - The label stays small inside the field. `Field` supplies the hint, errors, required and disabled state.
 - Arrow keys, Home, End and typing a colour's name move through the list. Enter or Space selects; Escape cancels and Tab leaves the field. Each option keeps its plain name for screen readers.
 - A native select owns the form value and reset behaviour. Without JavaScript, the named select remains available.
-- A colour setting contributes `ColourSetting` to `COLOUR_SETTINGS`, using its setting key as the contribution ID. Its callback builds this same input for the generic settings editor; `inherited_from` names the non-secret global setting that determines the default swatch. Existing settings definitions and save validation still apply.
 
 The source is [`src/colour.rs`](src/colour.rs), the macro is in [`templates/forms.html`](templates/forms.html), and the browser behaviour is `ColourInput` in [`assets/hooks.js`](assets/hooks.js). The running specimen at `/assets/ui-components.html#specimen-colours` includes inherited, invalid, disabled and required fields.
 
 ## Where to go next
 
-See [`base/system`](../system/README.md) for Banner colour on Instance settings and [`base/settings_editor`](../settings_editor/README.md) for the generic settings page. Their shared palette is contributed by `base/system`; neither page draws its own colour control.
+See [`base/system`](../system/README.md) for Banner colour on Instance settings.

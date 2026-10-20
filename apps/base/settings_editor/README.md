@@ -20,8 +20,6 @@ decrypted to draw the page; a stored secret shows the keep-current mask.
 Without a valid `BILIBI_SETTINGS_KEY` an encrypted field is read-only (it can
 still be cleared by Restore Defaults, which needs no key).
 
-A colour setting also contributes a `bilibi_ui::ColourSetting` under `base/ui.colour_settings`, using the setting key as its contribution ID. The owner supplies the shared `ColourInput` and names the non-secret global setting its default follows. The editor reads that setting each time it draws, so the default swatch stays current. See `apps/base/ui/src/colour.rs` for the contract and `apps/base/system/src/instance.rs` for Banner colour.
-
 ## Writes
 
 Route access is `OperatorCapability(base.settings.global.manage)`. Every Save

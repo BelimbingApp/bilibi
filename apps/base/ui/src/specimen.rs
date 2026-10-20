@@ -553,7 +553,6 @@ fn colour_inputs() -> Vec<crate::ColourInput> {
                 ("success", ColourRole::Success),
                 ("warning", ColourRole::Warning),
                 ("danger", ColourRole::Danger),
-                ("brand", ColourRole::Brand),
             ]
             .map(|(value, role)| ColourChoice::new(role.label(), value, role)),
         );
@@ -584,7 +583,7 @@ fn colour_inputs() -> Vec<crate::ColourInput> {
         ColourInput::new(
             Field::in_form("sample", "colour_required")
                 .label("Colour")
-                .value("brand")
+                .value("danger")
                 .required(),
             options()
                 .into_iter()

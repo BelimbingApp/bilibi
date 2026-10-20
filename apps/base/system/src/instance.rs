@@ -85,7 +85,6 @@ pub enum Colour {
     Danger,
 }
 
-/// Both settings pages use the same named palette and inherited swatch.
 pub(super) fn colour_input(field: bilibi_ui::Field, role: &str) -> bilibi_ui::ColourInput {
     use bilibi_ui::{ColourChoice, ColourInput, ColourRole};
     let swatch = |colour| match colour {
@@ -316,10 +315,6 @@ macro_rules! provenance {
         }
     };
 }
-inventory::submit! { Contribution::new(bilibi_ui::COLOUR_SETTINGS, INSTANCE_COLOUR_KEY, provenance!(), &bilibi_ui::ColourSetting {
-    inherited_from: INSTANCE_ROLE_KEY,
-    input: colour_input,
-}) }
 const GLOBAL: &[ScopeKind] = &[ScopeKind::Global];
 inventory::submit! { Contribution::new(DEFINITIONS, INSTANCE_LABEL_KEY, provenance!(), &Setting::Definition(Definition {
     value_type: ValueType::String, scopes: GLOBAL, default: || json!(null), nullable: true, encrypted: false,
@@ -332,9 +327,9 @@ inventory::submit! { Contribution::new(DEFINITIONS, INSTANCE_LABEL_KEY, provenan
 inventory::submit! { Contribution::new(DEFINITIONS, INSTANCE_COLOUR_KEY, provenance!(), &Setting::Definition(Definition {
     value_type: ValueType::String, scopes: GLOBAL, default: || json!(null), nullable: true, encrypted: false,
     minimum: None, maximum: None,
-    validator: Some(Validator { accepts: |value: &Value| value.is_null() || value.as_str().is_some_and(|colour| Colour::parse(colour).is_some()), message: "Choose blue, green, amber or red." }),
+    validator: Some(Validator { accepts: |value: &Value| value.is_null() || value.as_str().is_some_and(|colour| Colour::parse(colour).is_some()), message: "The colour must be info (blue), success (green), warning (amber) or danger (red)." }),
     editor: Some(Editor { group: "Instance", label: "Banner colour",
-        help: "Choose a colour, or use the server role's colour: blue for Dev, amber for Staging or red for Production (server owner only).",
+        help: "info (blue), success (green), warning (amber) or danger (red). The default follows the role: Dev is info, Staging is warning, Production is danger (server owner only).",
         capability: Some(INSTANCE_MANAGE), reveal_duration_ms: 5_000 }),
 })) }
 inventory::submit! { Contribution::new(DEFINITIONS, INSTANCE_INSTALLS_FROM_KEY, provenance!(), &Setting::Definition(Definition {
