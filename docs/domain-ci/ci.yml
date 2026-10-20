@@ -30,19 +30,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
-    # A push to main also runs the debug build, to save the cache that pull
-    # requests restore.
-    strategy:
-      fail-fast: false
-      matrix:
-        build: ${{ fromJSON(github.event_name == 'pull_request' && '["check"]' || '["check","release"]') }}
-
     env:
       DATABASE_URL: postgres://bilibi:bilibi@localhost:5432/bilibi
       # Pull requests lint and boot a debug build. Pushes to main do the
       # locked release build. An older Platform script ignores this and
       # always release-builds.
-      DOMAIN_CI_BUILD: ${{ matrix.build }}
+      DOMAIN_CI_BUILD: ${{ github.event_name == 'pull_request' && 'check' || 'release' }}
 
     services:
       postgres:
@@ -101,7 +94,6 @@ jobs:
         with:
           workspaces: bilibi
           prefix-key: v1-workspace
-          key: ${{ env.DOMAIN_CI_BUILD }}
           cache-workspace-crates: true
           cache-on-failure: true
       - uses: actions/setup-node@v6
@@ -121,3 +113,12 @@ jobs:
       # container repository itself must stay untouched.
       - name: Verify the gates left the container clean
         run: git -C "apps/$CONTAINER_ROLE/$CONTAINER_ID" diff --exit-code
+
+      # Saved with the cache, so a pull request starts from main's debug build.
+      - name: Warm the debug build for pull requests
+        if: env.DOMAIN_CI_BUILD == 'release'
+        env:
+          CARGO_PROFILE_DEV_DEBUG: '0'
+        run: |
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+          cargo build --locked -p bilibi-web
