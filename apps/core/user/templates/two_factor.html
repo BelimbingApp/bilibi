@@ -21,7 +21,7 @@
 <form id="two-factor-confirm-form" data-event="confirm" class="space-y-4"><h3 class="text-sm font-semibold text-ink">2. Enter the code the app shows</h3>{{ code }}<div class="flex justify-end gap-2">{% call ui::button(id="two-factor-cancel", button_type="button", event="cancel") %}Cancel{% endcall %}{% call ui::button(variant=bilibi_ui::ButtonVariant::Primary, id="two-factor-confirm", button_type="submit", working="Verifying…") %}{% if stage == "move" %}Use this phone{% else %}Turn on{% endif %}{% endcall %}</div></form>
 </div>
 {%- else %}
-<div id="two-factor-on" class="space-y-4 rounded-xl border border-line bg-surface p-6"><div class="flex items-center gap-2"><span class="text-sm font-medium text-ink">Status</span>{% call ui::badge(kind=bilibi_ui::BadgeKind::Success, dot=true) %}On{% endcall %}</div><p class="text-sm text-muted">Protected actions ask for a code from your authenticator app.</p></div>
+<div id="two-factor-on" class="space-y-4 rounded-xl border border-line bg-surface p-6"><div class="flex items-center gap-2"><span class="text-sm font-medium text-ink">Status</span>{% call ui::badge(kind=bilibi_ui::BadgeKind::Success, dot=true) %}On{% endcall %}</div></div>
 <form id="two-factor-move-form" data-event="move" class="space-y-4 rounded-xl border border-line bg-surface p-6"><h3 class="text-sm font-semibold text-ink">Move to a new phone</h3><p class="text-sm text-muted">Enter the code from your current phone. Then you scan a new QR code with your new phone, and the old phone stops working.</p>{{ move_code }}<div class="flex justify-end">{% call ui::button(variant=bilibi_ui::ButtonVariant::Primary, id="two-factor-move", button_type="submit", working="Checking…") %}Move to a new phone{% endcall %}</div></form>
 {%- endif %}
 </div>
