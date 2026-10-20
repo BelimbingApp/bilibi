@@ -171,7 +171,8 @@ impl Editor {
                 .and_then(|value| value.get(format!("instance[{key}]")))
                 .and_then(Value::as_str)
         };
-        let mut body = render(
+        let enrolled = self.pages.instances.step_up.enrolled(scope).await?;
+        let role_field = render(
             Field::named("instance[role]")
                 .id("instance-role")
                 .kind(InputKind::Select)
@@ -183,6 +184,20 @@ impl Editor {
                     Choice::new("Production", "production"),
                 ]),
         )?;
+        let mut role_step = bilibi_ui::StepUp::new(enrolled, "/system/instance");
+        role_step.body = role_field;
+        role_step.reason = "to change the server role.".into();
+        role_step.code = render(
+            CodeInput::new(
+                "instance-code",
+                "instance[code]",
+                "2FA code (role changes only)",
+                6,
+            )
+            .numeric()
+            .optional(),
+        )?;
+        let mut body = render(role_step)?;
         body.push(&render(bilibi_ui::Alert { kind: StatusKind::Warning, body: Html::text("Production is the live system. Changing to or from Production changes the server's warnings and 2FA rules. It does not copy or remove any data. Every role change needs a fresh 2FA code."), ..Default::default() })?);
         for (key, label, hint) in [(INSTANCE_LABEL_KEY, "Instance name", "Leave empty to use the server role."), (INSTANCE_COLOUR_KEY, "Banner colour", "Leave empty to use the role's colour."), (INSTANCE_INSTALLS_FROM_KEY, "Install updates from", "Use an instance name, like staging, or an HTTPS address. Leave empty to upload releases here.")] {
             let value = self.pages.instances.settings.get_global(&**client, key).await?;
@@ -192,16 +207,6 @@ impl Editor {
             }
             body.push(&render(field)?);
         }
-        body.push(&render(
-            CodeInput::new(
-                "instance-code",
-                "instance[code]",
-                "2FA code (role changes only)",
-                6,
-            )
-            .numeric()
-            .optional(),
-        )?);
         let form = render(Form {
             id: "instance-settings",
             event: "save_instance",
@@ -255,6 +260,7 @@ impl Editor {
             "development" => Role::Dev,
             "staging" => Role::Staging,
             "production" => Role::Production,
+            "" => self.role, // The shared enrollment guard disables the role field.
             _ => return Err(Error::Invalid),
         };
         let colour = text(INSTANCE_COLOUR_KEY);

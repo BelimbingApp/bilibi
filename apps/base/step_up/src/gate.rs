@@ -207,6 +207,21 @@ impl StepUp {
     pub fn declared(&self, key: &str) -> Option<&Declared> {
         self.operations.get(key)
     }
+    /// The bound provider's live enrollment state for this account holder.
+    /// Presentation only: mutations still call `require` or `require_code`.
+    pub async fn enrolled(&self, scope: &Scope) -> Result<bool> {
+        match self.provider.get() {
+            Some(provider) => provider.enrolled(scope).await,
+            None => Ok(false),
+        }
+    }
+    /// Whether policy currently protects an operation, without spending proof.
+    /// Used to explain protected fields before a person changes them.
+    pub async fn required(&self, scope: &Scope, key: &str) -> Result<bool> {
+        let declared = self.operations.get(key).ok_or(Error::Invalid)?;
+        Ok(declared.operation.always
+            || (self.enforced().await? && self.mode(scope, declared).await? != Mode::Off))
+    }
     /// The operation declared to guard changes to setting `key`, if any.
     pub fn guarding_setting(&self, key: &str) -> Option<&Declared> {
         self.operations

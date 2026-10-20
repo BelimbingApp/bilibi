@@ -486,6 +486,7 @@ async function review(key, input, verb) {
   }
   const facts = unwrap(first.preview) || {};
   const needsCode = Array.isArray(facts.step_up) && facts.step_up.length > 0;
+  const needsSetup = needsCode && facts.two_factor_enabled !== true;
   const { input: code, field: codeField } = authenticatorInput();
   const confirm = el('button', { class: key === 'base.software.undo' ? 'danger' : 'primary', id: 'confirm', text: verb, onclick: () => commit(key, verb, code.value.trim(), facts) });
   const switchRow = (key === 'base.software.install') ? el('div', { class: 'row small', id: 'switch-row' }, [
@@ -508,13 +509,13 @@ async function review(key, input, verb) {
       switchRow,
     ]),
     productionNote,
-    needsCode ? el('div', { class: 'twofa stack', id: 'twofa' }, [
+    needsSetup ? el('p', { class: 'small muted', id: 'twofa-setup' }, [el('a', { href: facts.two_factor_setup_url, target: '_blank', rel: 'noopener', text: 'Set up 2FA', onclick: (event) => { event.preventDefault(); request('ui/open-link', { url: facts.two_factor_setup_url }).catch(() => flash('warning', 'Open My settings in Bilibi and set up 2FA.')); } }), ' to make this change.']) : needsCode ? el('div', { class: 'twofa stack', id: 'twofa' }, [
       codeField,
       el('p', { class: 'small muted', id: 'step-up-code-hint', text: 'Type or paste all 6 digits. Asked every time, on every instance, because this changes the server itself.' }),
     ]) : null,
-    el('div', { class: 'row' }, [confirm, el('button', { class: 'quiet', onclick: renderHome, text: 'Back' }), el('span', { class: 'grow' }), plan.expires_at ? el('span', { class: 'small muted', text: 'Review valid until ' + plan.expires_at.replace('T', ' ').slice(0, 16) + ' UTC' }) : null]),
+    el('div', { class: 'row' }, [needsSetup ? null : confirm, el('button', { class: 'quiet', onclick: renderHome, text: 'Back' }), el('span', { class: 'grow' }), plan.expires_at ? el('span', { class: 'small muted', text: 'Review valid until ' + plan.expires_at.replace('T', ' ').slice(0, 16) + ' UTC' }) : null]),
   );
-  if (needsCode) code.focus();
+  if (needsCode && !needsSetup) code.focus();
 }
 function factsList(key, facts) {
   const items = [];

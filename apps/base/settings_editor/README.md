@@ -100,3 +100,5 @@ tenant 1 account with `base.settings.global.manage` (an admin role with
    `base_audit_actions` holds one `settings.secret.reveal` row per attempt.
 5. Deny one field's capability (`principal_capabilities ... is_allowed=false`)
    and reload: that card is gone; deny all and the page names them.
+
+A setting protected by the current 2FA policy uses the shared `bilibi_ui::StepUp` form. Before setup its control stays disabled beside a setup link; other settings can still be saved. Restore is replaced by the setup link when it would clear a protected override. Every write keeps its existing authorization and 2FA checks.

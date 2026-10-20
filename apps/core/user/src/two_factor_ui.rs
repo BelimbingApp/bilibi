@@ -458,8 +458,7 @@ struct ConfirmView<'a> {
     enabled: bool,
     minutes: i64,
     hours: i64,
-    code: Html,
-    setup_href: &'a str,
+    step_up: Html,
 }
 
 impl ConfirmPage {
@@ -487,18 +486,25 @@ impl ConfirmPage {
     }
 
     fn render(&self) -> Result<String, Error> {
-        let setup_href = match &self.return_to {
-            Some(path) => format!(
-                "{}?return={}",
-                crate::TWO_FACTOR_PATH,
-                percent_encoding::utf8_percent_encode(path, percent_encoding::NON_ALPHANUMERIC)
-            ),
-            None => crate::TWO_FACTOR_PATH.to_owned(),
-        };
+        let mut step =
+            bilibi_ui::StepUp::new(self.enabled, self.return_to.as_deref().unwrap_or("/"));
+        step.code = code_field("two_factor_code", Some(self.recovery), &self.errors)?;
+        step.actions = fragment(Html::render(&Button {
+            id: "confirm-access-verify",
+            button_type: "submit",
+            variant: bilibi_ui::ButtonVariant::Primary,
+            working: "Verifying…",
+            body: Html::text("Verify"),
+            ..Button::default()
+        }))?;
         ConfirmView {
             header: fragment(Html::render(&Header {
                 title: Html::text("Confirm access"),
-                subtitle: "Enter your 2FA code to continue.",
+                subtitle: if self.enabled {
+                    "Enter your 2FA code to continue."
+                } else {
+                    ""
+                },
                 title_actions: Html::EMPTY,
                 actions: Html::EMPTY,
             }))?,
@@ -506,8 +512,7 @@ impl ConfirmPage {
             enabled: self.enabled,
             minutes: self.minutes,
             hours: self.hours,
-            code: code_field("two_factor_code", Some(self.recovery), &self.errors)?,
-            setup_href: &setup_href,
+            step_up: fragment(Html::render(&step))?,
         }
         .render()
         .map_err(|_| Error::Internal)

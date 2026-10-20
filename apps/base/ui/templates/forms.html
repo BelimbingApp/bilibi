@@ -155,3 +155,8 @@
 {% macro form(id, event, change=false, class="", actions=bilibi_ui::Html::EMPTY) %}
 <form id="{{ id }}" data-event="{{ event }}"{% if change %} data-change{% endif %} class="space-y-3{% if !class.is_empty() %} {{ class }}{% endif %}">{{ caller() }}{% if !actions.is_empty() %}<div class="flex flex-wrap items-center gap-2">{{ actions|safe }}</div>{% endif %}</form>
 {% endmacro %}
+
+{#- Shared enrollment-first proof and submit actions; no Bilimbi counterpart. -#}
+{% macro step_up(step) %}
+{% if !step.body.is_empty() %}<fieldset{% if !step.enrolled %} disabled{% endif %}>{{ step.body|safe }}</fieldset>{% endif %}{% if step.enrolled %}{{ step.code|safe }}{% else %}<p class="mb-3 text-sm text-ink-muted"><a href="{{ step.setup_href() }}" class="text-link hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-strong/30">Set up 2FA</a> {{ step.reason }}</p>{% endif %}{% if !step.secondary_actions.is_empty() || (step.enrolled && !step.actions.is_empty()) %}<div class="flex flex-wrap justify-end gap-2">{{ step.secondary_actions|safe }}{% if step.enrolled %}{{ step.actions|safe }}{% endif %}</div>{% endif %}
+{% endmacro %}

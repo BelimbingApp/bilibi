@@ -186,3 +186,5 @@ The tab asks the source once when first opened and keeps the answer across rende
 - [Versions and CI evidence](../../../docs/versions.md).
 - [Installer checks and recovery](../../installer/README.md).
 - [Step-up](../step_up/README.md) and [Agent API plans](../agent_api/README.md).
+
+Software reviews and the pairing-key form use the shared `bilibi_ui::StepUp` form: an account without 2FA sees a setup link instead of the code and confirmation. Setup returns to Software; the person reviews again before confirming. Agent previews include `two_factor_enabled` and an absolute `two_factor_setup_url`; the ChatGPT card uses these to show the same setup-first flow through the host’s `ui/open-link` request. Cancellation needs no 2FA.

@@ -76,13 +76,21 @@ impl WriteHandler for Write {
     ) -> OperationFuture<'a> {
         Box::pin(async move {
             let software = bound()?;
-            let review = match self {
+            let mut review = match self {
                 Self::Install => software.review_install(scope, input).await?,
                 Self::Undo => software.review_undo(scope, input).await?,
                 Self::Go => software.review_go(scope, input).await?,
                 Self::Cancel => software.review_cancel(scope, input).await?,
                 Self::Pair => software.review_pair(scope, input).await?,
             };
+            if !matches!(self, Self::Cancel) {
+                review.facts["two_factor_enabled"] = json!(software.step_up.enrolled(scope).await?);
+                review.facts["two_factor_setup_url"] = json!(format!(
+                    "{}{}",
+                    software.origin,
+                    bilibi_ui::StepUp::new(false, "/system/software?tab=releases").setup_href()
+                ));
+            }
             Ok(review.facts.into())
         })
     }

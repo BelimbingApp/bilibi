@@ -129,3 +129,5 @@ On a migrated disposable database, select Staging in Instance settings (`BILIBI_
 - Enroll at `/settings/two-factor`.
 - Open `/authz/step-up` and turn an operation on.
 - `cargo run -p bilibi-web --example step-up-reference -- <user id> auditor assign` with `BILIBI_SESSION_TOKEN` set to a browser session's cookie. It prints `ok` or the `step_up_required` answer.
+
+`StepUp::enrolled(scope)` reads the holder’s live enrollment state for shared `bilibi_ui::StepUp` forms. `required(scope, key)` answers whether policy protects a field without spending proof. These reads do not authorize a write; the owner still calls `require` or `require_code`.

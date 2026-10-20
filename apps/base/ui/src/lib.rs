@@ -71,7 +71,7 @@ pub use forms::{
     choices, described_by, error_sentence, field_base_class, field_class, field_inset_class,
     field_state_class, translate_error, AddMore, Attrs, Choice, CodeInput, Combobox, Field, Form,
     InputKind, LabelPlacement, MultiSelect, RadioGroup, Restricted, RestrictedField, Reveal,
-    SecretInput, StoredReveal, RESTRICTED_REASON, SECRET_MASK,
+    SecretInput, StepUp, StoredReveal, RESTRICTED_REASON, SECRET_MASK,
 };
 pub use html::Html;
 pub use inline::{

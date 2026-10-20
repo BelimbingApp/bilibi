@@ -71,6 +71,8 @@ pub struct FormControls {
     pub authenticator: CodeInput,
     pub optional_authenticator: CodeInput,
     pub invalid_authenticator: CodeInput,
+    pub enrollment_first: crate::StepUp,
+    pub enrolled_step_up: crate::StepUp,
     pub text: Field,
     pub search: Field,
     pub email: Field,
@@ -138,9 +140,25 @@ fn strings(values: &[&str]) -> Vec<String> {
 }
 
 impl FormControls {
+    fn step_up(enrolled: bool) -> crate::StepUp {
+        let mut step = crate::StepUp::new(enrolled, "/assets/ui-components.html");
+        step.code = Html::render(
+            &CodeInput::new("specimen-step-up", "specimen[step_up]", "2FA code", 6).numeric(),
+        )
+        .expect("shared code input");
+        step.actions = Html::render(&Button {
+            button_type: "submit",
+            body: Html::text("Save"),
+            ..Default::default()
+        })
+        .expect("shared button");
+        step
+    }
     fn new() -> Self {
         let sample = |key: &str, value: &str| Field::in_form("sample", key).value(value);
         Self {
+            enrollment_first: Self::step_up(false),
+            enrolled_step_up: Self::step_up(true),
             code: CodeInput::new("specimen_code", "specimen[code]", "Device code", 8)
                 .value("ABCD-EF23")
                 .group_size(4),

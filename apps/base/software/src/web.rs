@@ -683,10 +683,17 @@ impl View {
         } else {
             content.push(&self.discovery_card(&status, &catalogue)?);
         }
-        self.page(&instance, lost, content)
+        let enrolled = pages.software.step_up.enrolled(scope).await?;
+        self.page(&instance, lost, content, enrolled)
     }
 
-    fn page(&mut self, instance: &Instance, lost: Option<u64>, content: Html) -> Result<String> {
+    fn page(
+        &mut self,
+        instance: &Instance,
+        lost: Option<u64>,
+        content: Html,
+        enrolled: bool,
+    ) -> Result<String> {
         let label = instance.label.clone();
         let subtitle = "Browse domains and extensions, or get an update for this server.";
         let header = render(Header {
@@ -726,7 +733,7 @@ impl View {
             ],
         })?;
         let dialog = match &self.dialog {
-            Some(Dialog::Review(review)) => self.review_dialog(instance, lost, review)?,
+            Some(Dialog::Review(review)) => self.review_dialog(instance, lost, review, enrolled)?,
             Some(Dialog::Cancel { job, running }) => {
                 let consequence = if *running {
                     format!("Stop job {job}?")
@@ -1457,6 +1464,7 @@ impl View {
         instance: &Instance,
         lost: Option<u64>,
         review: &Review,
+        enrolled: bool,
     ) -> Result<Html> {
         let facts = &review.facts;
         let label = instance.label.as_str();
@@ -1609,13 +1617,15 @@ impl View {
                 what_happens.push_str(&format!(" Undo restores this file on the server: {file}"));
             }
         }
-        let code = CodeInput::new(
-            "software-code",
-            "code",
-            "6-digit code from your authenticator app",
-            6,
-        )
-        .numeric();
+        let code = render(
+            CodeInput::new(
+                "software-code",
+                "code",
+                "6-digit code from your authenticator app",
+                6,
+            )
+            .numeric(),
+        )?;
         let error = match &review.error {
             Some(message) => render(Alert {
                 kind: StatusKind::Error,
@@ -1640,6 +1650,10 @@ impl View {
             body: Html::text(&submit),
             ..Button::default()
         })?;
+        let mut step_up = bilibi_ui::StepUp::new(enrolled, params::address(PATH, &self.query));
+        step_up.code = code;
+        step_up.actions = confirm;
+        step_up.secondary_actions = cancel;
         let body = render(ReviewBody {
             banner,
             lead,
@@ -1649,10 +1663,8 @@ impl View {
             what_happens,
             steps,
             event: review.kind.event(),
-            code,
+            step_up,
             error,
-            cancel,
-            confirm,
         })?;
         render(Modal {
             id: "software-review",
@@ -1777,10 +1789,8 @@ struct ReviewBody {
     what_happens: String,
     steps: Vec<String>,
     event: &'static str,
-    code: CodeInput,
+    step_up: bilibi_ui::StepUp,
     error: Html,
-    cancel: Html,
-    confirm: Html,
 }
 
 #[derive(Template)]

@@ -242,7 +242,8 @@ impl ReleaseFiles {
                 ..ActionLink::default()
             })?);
         }
-        source.push(&self.pairing_section(&instance, &facts, manages)?);
+        let enrolled = self.pages.software.step_up.enrolled(scope).await?;
+        source.push(&self.pairing_section(&instance, &facts, manages, enrolled)?);
         body.push(&render(Fold {
             id: "software-update-server",
             title: "Update server and pairing key",
@@ -489,7 +490,13 @@ impl ReleaseFiles {
         )
     }
     /// The pairing key: set, cleared, never shown.
-    fn pairing_section(&self, instance: &Instance, facts: &Value, manages: bool) -> Result<Html> {
+    fn pairing_section(
+        &self,
+        instance: &Instance,
+        facts: &Value,
+        manages: bool,
+        enrolled: bool,
+    ) -> Result<Html> {
         let pairing = &facts["pairing"];
         let set = pairing["set"].as_bool() == Some(true);
         let status = if set {
@@ -534,12 +541,14 @@ impl ReleaseFiles {
                     ..Button::default()
                 })?);
             }
+            let mut step = bilibi_ui::StepUp::new(enrolled, "/system/software?tab=releases");
+            step.body = render(secret)?;
+            step.actions = actions;
             body.push(&render(Form {
                 id: "release-files-pairing-form",
                 event: "pair",
                 class: "mt-3",
-                body: render(secret)?,
-                actions,
+                body: render(step)?,
                 ..Form::default()
             })?);
         }

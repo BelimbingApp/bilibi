@@ -109,6 +109,7 @@ Width is a shared decision. Every page uses `PageVariant`. All three share one c
 - **Text fields float the label.** Empty, it rests where the value goes. On focus, once filled, or when the browser autofills, it moves up small in muted ink. It never leaves the box.
 - **Selects, textareas, date-like inputs and the combobox pin it small at the top.** They always show something (a prompt, a mask, a selection) that a resting label would cover.
 - **Compact.** An inset box is 40 px with a 14 px value (`text-base`); the floated or pinned label is 11 px. Inset fields sit 12 px apart. Phones get a 16 px value so iOS does not zoom.
+- **2FA before saving:** use `StepUp` (`base/ui`) for the code and protected submit actions. Without 2FA, show a plain setup notice and link first. Keep unrelated changes available.
 - **Sections:** draw a bordered part of a form with `forms::section` (one shared 12 px box and heading), not page-owned box classes. Create Address uses it.
 - **Classic label above** stays for a field with no visible label (toolbars, `sr-only`), a field with its own `class` or `label_class`, checkboxes, radio groups and multi-selects.
 - Placeholder text shows only once the person is in the field, as an example, never as the label.

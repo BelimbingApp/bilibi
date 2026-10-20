@@ -120,3 +120,5 @@ Controls:
   read in a `READ ONLY` transaction with a 5 s statement timeout, at most 100 a
   page and 120 characters a cell; a count past the timeout leaves the total
   unknown rather than failing the page.
+
+Without 2FA, the shared `bilibi_ui::StepUp` form disables the role selector and links to setup with a return address. Name, colour and update-source changes can still be saved. After setup, the role selector and optional code input are available.
