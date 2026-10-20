@@ -33,10 +33,10 @@ pub fn refusal(operation: &str, reason: &str) -> serde_json::Value {
         "message": match reason {
             "invalid_code" => "The code was not accepted (wrong, expired or already used). Ask the account holder for a new current code.",
             "locked" => "The account holder's checks are locked after repeated failures. Try again later.",
-            "not_enrolled" => "The account holder has no authenticator yet. They must set one up in Bilibi first.",
+            "not_enrolled" => "The account holder has no second factor yet. They must set one up in Bilibi first.",
             "impersonating" => "Step-up cannot be satisfied while impersonating.",
             "unavailable" => "No second factor is installed, so this operation cannot be confirmed.",
-            _ => "This operation needs the account holder's authenticator code. Ask them for the current code and repeat the request with step_up_code.",
+            _ => "This operation needs the account holder's current 2FA code. Ask them for it and repeat the request with step_up_code.",
         },
     })
 }

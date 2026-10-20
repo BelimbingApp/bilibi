@@ -69,6 +69,9 @@ pub struct Account {
     pub status: String,
     pub email_verified: bool,
     pub email_verified_at: Option<std::time::SystemTime>,
+    /// The mobile number for SMS codes (E.164), and when its holder proved it.
+    pub phone_number: Option<String>,
+    pub phone_verified_at: Option<std::time::SystemTime>,
     pub links: AccountLinks,
     pub version: i64,
     pub created_at: std::time::SystemTime,
@@ -224,8 +227,12 @@ pub async fn login(
     let result = Login {
         token: uuid::Uuid::new_v4().simple().to_string(),
         csrf: uuid::Uuid::new_v4().simple().to_string(),
+        second_factor: None,
     };
-    client.execute("INSERT INTO sessions(id,tenant_id,user_id,csrf,expires_at) VALUES($1,$2,$3,$4,now()+interval '24 hours')", &[&result.token,&tenant,&user,&result.csrf]).await.map_err(Error::from)?;
+    // Born waiting for its sign-in second factor, for ten minutes: nothing
+    // accepts it until `UserService::login` judges the tenant's policy and
+    // finishes it (full lifetime), or the holder passes the check.
+    client.execute("INSERT INTO sessions(id,tenant_id,user_id,csrf,expires_at,second_factor) VALUES($1,$2,$3,$4,now()+interval '10 minutes','code')", &[&result.token,&tenant,&user,&result.csrf]).await.map_err(Error::from)?;
     Ok(result)
 }
 
@@ -261,7 +268,7 @@ pub(crate) async fn read_account(
     lock: bool,
 ) -> Result<Option<Account>> {
     let sql = format!(
-        "SELECT id,name,email,status,email_verified_at,person_id,affiliation_id,organisation_id,version,created_at,updated_at FROM users WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL{}",
+        "SELECT id,name,email,status,email_verified_at,person_id,affiliation_id,organisation_id,version,created_at,updated_at,phone_number,phone_verified_at FROM users WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL{}",
         if lock { " FOR UPDATE" } else { "" }
     );
     client
@@ -276,6 +283,8 @@ pub(crate) async fn read_account(
                 status: row.get(3),
                 email_verified: email_verified_at.is_some(),
                 email_verified_at,
+                phone_number: row.get(11),
+                phone_verified_at: row.get(12),
                 links: AccountLinks::from_row(&row, 5)?,
                 version: row.get(8),
                 created_at: row.get(9),

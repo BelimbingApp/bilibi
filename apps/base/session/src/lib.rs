@@ -145,6 +145,31 @@ pub struct Holder {
     pub impersonator: Option<i64>,
 }
 
+/// What a session that is still signing in owes before it may act
+/// (`sessions.second_factor`). A waiting session authenticates nothing.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SecondFactor {
+    /// A current authenticator or recovery code.
+    Code,
+    /// An authenticator set up first: the holder has none yet.
+    Setup,
+}
+impl SecondFactor {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Code => "code",
+            Self::Setup => "setup",
+        }
+    }
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "code" => Some(Self::Code),
+            "setup" => Some(Self::Setup),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Termination {
     Terminated,
@@ -455,6 +480,82 @@ impl Sessions {
         }
         Ok(())
     }
+    /// A session still signing in, and what it owes: for the sign-in pages
+    /// only, which must spend the scope on nothing but finishing sign-in.
+    /// Every other check refuses such a session. Like `check`, the opaque
+    /// token is the bootstrap exception to tenant scoping.
+    pub async fn pending(
+        &self,
+        client: &(impl GenericClient + Sync),
+        token: &str,
+    ) -> Result<(Scope, SecondFactor)> {
+        if token.is_empty() || token.len() > 256 {
+            return Err(Error::Unauthorized);
+        }
+        let row = client
+            .query_opt(
+                "SELECT tenant_id,user_id,csrf,second_factor FROM sessions WHERE id=$1 AND second_factor IS NOT NULL AND impersonator_id IS NULL AND expires_at>now()",
+                &[&token],
+            )
+            .await?
+            .ok_or(Error::Unauthorized)?;
+        let owed = SecondFactor::parse(row.get(3)).ok_or(Error::Internal)?;
+        let scope = self
+            .authentication
+            .authenticate_session(client, row.get(0), row.get(1), None, row.get(2))
+            .await?;
+        Ok((scope, owed))
+    }
+    /// Changes what a session still signing in owes (a holder with no
+    /// authenticator must set one up instead of entering a code).
+    pub async fn owe(
+        &self,
+        client: &impl GenericClient,
+        scope: &Scope,
+        owed: SecondFactor,
+    ) -> Result<()> {
+        let updated = client
+            .execute(
+                "UPDATE sessions SET second_factor=$4 WHERE tenant_id=$1 AND user_id=$2 AND csrf=$3 AND second_factor IS NOT NULL AND impersonator_id IS NULL AND expires_at>now()",
+                &[&scope.tenant(), &scope.user(), &scope.csrf, &owed.as_str()],
+            )
+            .await?;
+        if updated != 1 {
+            return Err(Error::Unauthorized);
+        }
+        Ok(())
+    }
+    /// Lets a session that was signing in act: it gets the full lifetime.
+    /// With `checked` (the holder just passed a second factor, inside the
+    /// caller's transaction that proved it), its step-up window opens too.
+    pub async fn finish_sign_in(
+        &self,
+        sql: &impl GenericClient,
+        scope: &Scope,
+        checked: bool,
+    ) -> Result<()> {
+        let updated = sql
+            .execute(
+                "UPDATE sessions SET second_factor=NULL,expires_at=now()+interval '24 hours',last_activity=now(),stepped_up_at=CASE WHEN $4 THEN now() ELSE stepped_up_at END,step_up_used_at=CASE WHEN $4 THEN now() ELSE step_up_used_at END,step_up_spent_at=CASE WHEN $4 THEN NULL ELSE step_up_spent_at END WHERE tenant_id=$1 AND user_id=$2 AND csrf=$3 AND second_factor IS NOT NULL AND impersonator_id IS NULL AND expires_at>now()",
+                &[&scope.tenant(), &scope.user(), &scope.csrf, &checked],
+            )
+            .await?;
+        if updated != 1 {
+            return Err(Error::Unauthorized);
+        }
+        Ok(())
+    }
+    /// Ends a session that never finished signing in (the holder chose to
+    /// start again). Nobody decided about anyone, so no audit row.
+    pub async fn abandon(&self, client: &impl GenericClient, token: &str) -> Result<()> {
+        client
+            .execute(
+                "DELETE FROM sessions WHERE id=$1 AND second_factor IS NOT NULL",
+                &[&token],
+            )
+            .await?;
+        Ok(())
+    }
     /// The signed-in session's step-up window: whether a check exists, is
     /// within `cap_seconds` (absolute, from the check) and its last covered
     /// action within `window_seconds` (sliding). With `extend`, a holding
@@ -546,7 +647,8 @@ impl Sessions {
             return Err(Error::Unauthorized);
         }
         let policy = self.policy(client).await?;
-        let row = client.query_opt("SELECT tenant_id,user_id,csrf,impersonator_id FROM sessions WHERE id=$1 AND expires_at>now() AND last_activity>now()-make_interval(secs => $2::double precision)", &[&token, &(policy.idle_seconds as f64)]).await?.ok_or(Error::Unauthorized)?;
+        // A session still owing its sign-in second factor authenticates nothing.
+        let row = client.query_opt("SELECT tenant_id,user_id,csrf,impersonator_id FROM sessions WHERE id=$1 AND second_factor IS NULL AND expires_at>now() AND last_activity>now()-make_interval(secs => $2::double precision)", &[&token, &(policy.idle_seconds as f64)]).await?.ok_or(Error::Unauthorized)?;
         let scope = self
             .authentication
             .authenticate_session(client, row.get(0), row.get(1), row.get(3), row.get(2))
@@ -580,6 +682,7 @@ inventory::submit! {
             ("base-session-001-client", include_str!("../migrations/001-client.sql")),
             ("base-session-002-impersonation", include_str!("../migrations/002-impersonation.sql")),
             ("base-session-003-step-up", include_str!("../migrations/003-step-up.sql")),
+            ("base-session-004-second-factor", include_str!("../migrations/004-second-factor.sql")),
         ],
         services: &[
             bilibi_module_registry::Service { id: "base/session.sessions", factory: |services| Ok(Arc::new(Sessions::new(services.get("base/tenancy.authentication")?, services.get("base/settings.store")?))) },

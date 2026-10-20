@@ -309,6 +309,13 @@ pub fn router(app: App) -> Router {
         .merge(webhooks::router())
         .route("/", get(auth::home).post(auth::login))
         .route("/login", get(auth::home).post(auth::login))
+        .route("/login/code", get(auth::code_page).post(auth::code))
+        .route("/login/code/sms", post(auth::code_sms))
+        .route("/login/setup", get(auth::setup_page).post(auth::setup))
+        .route("/login/setup/confirm", post(auth::confirm_setup))
+        .route("/login/setup/sms", post(auth::setup_sms))
+        .route("/login/setup/sms/resend", post(auth::setup_sms_resend))
+        .route("/login/cancel", post(auth::cancel))
         .route(
             "/forgot-password",
             get(auth::forgot_page).post(auth::forgot),

@@ -1,0 +1,26 @@
+{#- The development phone inbox (base/sms `inbox.rs`, no Bilimbi
+    counterpart): each sandbox message as one card, newest first, with the
+    code drawn large so a tester copies it at a glance. Reload for new ones. -#}
+{% import "components.html" as ui %}
+{% import "lists.html" as lists %}
+{% call ui::page(id="sms-inbox", variant=bilibi_ui::PageVariant::Form) %}
+{% call ui::header(subtitle="Development only: text messages the SMS sandbox would have sent to a phone.", actions=bilibi_ui::Html::EMPTY) %}SMS inbox{% endcall %}
+<div class="flex flex-col gap-3">
+<div class="flex justify-end">{% call ui::button(id="sms-inbox-refresh", href="/dev/sms-inbox") %}Refresh{% endcall %}</div>
+{%- if messages.is_empty() %}
+{% call ui::card(id="sms-inbox-empty") %}{% call lists::empty_state(empty) %}{% endcall %}{% endcall %}
+{%- else %}
+{%- for message in messages %}
+{% call ui::card(id="sms-message-{}"|format(loop.index)) %}
+{%- if !message.code.is_empty() %}<p class="font-mono text-2xl font-semibold tracking-widest text-ink-strong select-all" data-sms-code>{{ message.code }}</p>{% endif %}
+{% call ui::facts() %}
+{% call ui::fact(title="To") %}{{ message.to }}{% endcall %}
+{% call ui::fact(title="From") %}{{ message.from }}{% endcall %}
+{% call ui::fact(title="Sent") %}{{ message.sent }}{% endcall %}
+{% call ui::fact(title="Message") %}{{ message.body }}{% endcall %}
+{% endcall %}
+{% endcall %}
+{%- endfor %}
+{%- endif %}
+</div>
+{% endcall %}

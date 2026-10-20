@@ -567,6 +567,18 @@ impl Detail {
             })?,
             None => render(&Badge::status(BadgeKind::Warning, "unverified"))?,
         };
+        // Proved by its holder with an SMS code (Two-factor settings); an
+        // administrator can enter the number but never verify it.
+        let phone_verified = match (&account.phone_number, account.phone_verified_at) {
+            (None, _) => Html::text("—"),
+            (Some(_), Some(at)) => render(&Badge {
+                kind: BadgeKind::Success,
+                body: datetime(&display, "user-phone-verified-at", at)?,
+                ..Badge::default()
+            })?,
+            (Some(_), None) => render(&Badge::status(BadgeKind::Warning, "unverified"))?,
+        };
+        let phone = account.phone_number.clone().unwrap_or_default();
         let items = vec![
             Fact {
                 title: crate::record_fields::get("name").label,
@@ -580,6 +592,13 @@ impl Detail {
                 id: "user-view-email",
                 value: render(&InlineEdit {
                     field: self.inline(loaded, "email", "Email", &account.email),
+                })?,
+            },
+            Fact {
+                title: crate::record_fields::PHONE_NUMBER.label,
+                id: "user-view-phone",
+                value: render(&InlineEdit {
+                    field: self.inline(loaded, "phone_number", "Phone", &phone),
                 })?,
             },
             Fact {
@@ -604,6 +623,11 @@ impl Detail {
                 title: crate::record_fields::EMAIL_VERIFIED_AT.label,
                 id: "user-view-email-verified",
                 value: verified,
+            },
+            Fact {
+                title: crate::record_fields::PHONE_VERIFIED_AT.label,
+                id: "user-view-phone-verified",
+                value: phone_verified,
             },
             Fact {
                 title: crate::record_fields::CREATED_AT.label,
@@ -1481,12 +1505,12 @@ impl Detail {
             .ok_or(Error::Invalid)?;
         let users = self.pages.users.clone();
         match field.as_str() {
-            "name" | "email" => {
+            "name" | "email" | "phone_number" => {
                 let kind = AccountField::parse(&field).expect("matched");
-                let label = if kind == AccountField::Name {
-                    "Name"
-                } else {
-                    "Email"
+                let label = match kind {
+                    AccountField::Name => "Name",
+                    AccountField::Email => "Email",
+                    AccountField::Phone => "Phone",
                 };
                 let result = users
                     .update_account(scope, self.id, version, kind, &submitted)

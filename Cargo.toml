@@ -67,6 +67,7 @@ bilibi-grid = { path = "apps/base/grid" }
 bilibi-integration = { path = "apps/base/integration" }
 bilibi-locale = { path = "apps/base/locale" }
 bilibi-mail = { path = "apps/base/mail" }
+bilibi-sms = { path = "apps/base/sms" }
 bilibi-media = { path = "apps/base/media" }
 bilibi-party-ids = { path = "apps/base/party_ids" }
 bilibi-perf = { path = "apps/base/perf" }

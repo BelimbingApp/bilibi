@@ -1,0 +1,27 @@
+{#- Sign-in's second step (no Bilimbi counterpart): the tenant's policy asks
+    for a second factor after the password (Base Step-up operation
+    `core.user.sign_in`). One field takes a current authenticator code or an
+    SMS code; the session acts only after it passes. With
+    SMS on, a second form sends a text, and the Countdown hook keeps its
+    button disabled until the server's resend wait has passed. Signing in as
+    someone else ends the waiting session. -#}
+{% import "components.html" as ui %}
+{% import "feedback.html" as feedback %}
+<div class="flex flex-col gap-5">
+<div><h1 class="text-lg font-semibold tracking-tight text-ink-strong">Two-factor authentication</h1>
+{%- if let Some(sms) = sms %}
+<p class="mt-1 text-sm text-ink-muted">{% if authenticator %}Enter the 6-digit code from your authenticator app, or text a code to <span class="font-medium text-ink">{{ sms.phone }}</span>.{% elif sms.sent %}We sent a 6-digit code to <span class="font-medium text-ink">{{ sms.phone }}</span>. Enter it below.{% else %}Text a 6-digit code to <span class="font-medium text-ink">{{ sms.phone }}</span>, then enter it below.{% endif %}</p>
+{%- else %}
+<p class="mt-1 text-sm text-ink-muted">Enter the 6-digit code from your authenticator app.</p>
+{%- endif %}
+</div>
+{%- if !notice.text.is_empty() %}<div id="sign-in-notice">{% if notice.error %}{% call feedback::alert(kind=bilibi_ui::StatusKind::Error, id="sign-in-notice-1") %}{{ notice.text }}{% endcall %}{% else %}{% call feedback::alert(kind=bilibi_ui::StatusKind::Success, id="sign-in-notice-1") %}{{ notice.text }}{% endcall %}{% endif %}</div>{% endif %}
+<form id="sign-in-code-form" action="/login/code" method="post" class="flex flex-col gap-4">
+{{ code }}
+{% call ui::button(variant=bilibi_ui::ButtonVariant::Primary, id="sign-in-code-submit", class="w-full", button_type="submit", working="Verifying…") %}Verify{% endcall %}
+</form>
+{%- if let Some(sms) = sms %}
+<form id="sign-in-sms-form" action="/login/code/sms" method="post" class="flex flex-col items-center gap-1" data-hook="Countdown" data-countdown="{{ sms.resend_in }}">{% call ui::button(id="sign-in-sms-send", button_type="submit", disabled=sms.resend_in > 0, working="Sending…") %}{% if sms.sent %}Resend code{% else %}Text me a code{% endif %}{% endcall %}<span class="text-xs text-ink-subtle" data-countdown-text>{% if sms.resend_in > 0 %}Resend in {{ sms.resend_in }} s{% endif %}</span></form>
+{%- endif %}
+<form id="sign-in-cancel-form" action="/login/cancel" method="post" class="flex justify-center">{% call ui::button(id="sign-in-cancel", button_type="submit", working="Signing out…") %}Back to sign in{% endcall %}</form>
+</div>

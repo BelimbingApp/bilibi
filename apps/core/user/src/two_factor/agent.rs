@@ -166,6 +166,14 @@ async fn clear_confirmed(
                     &[&tenant, &user],
                 )
                 .await?;
+            // A reset means the phone is gone: SMS codes to it stop too. The
+            // number stays on the account, unproved.
+            let sms_off = sql
+                .execute(
+                    "UPDATE users SET phone_verified_at=NULL,version=version+1,updated_at=now() WHERE tenant_id=$1 AND id=$2 AND phone_verified_at IS NOT NULL",
+                    &[&tenant, &user],
+                )
+                .await?;
             let ended = Sessions::end_user_sessions(sql, tenant, user, None).await?;
             let mut changes = vec![Change {
                 kind: "user_two_factor".into(),
@@ -179,6 +187,14 @@ async fn clear_confirmed(
                     id: user,
                     old: json!({}),
                     new: json!({"reset": true}),
+                });
+            }
+            if sms_off > 0 {
+                changes.push(Change {
+                    kind: "user".into(),
+                    id: user,
+                    old: json!({"phone_verified": true}),
+                    new: json!({"phone_verified": false}),
                 });
             }
             Ok((ended, changes))

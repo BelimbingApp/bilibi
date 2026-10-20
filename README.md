@@ -40,6 +40,7 @@ Bilibi is MIT-licensed, like the earlier iterations. The architecture is the sam
 - **Companies, people and addresses:** lists, details and inline edits, scoped to the tenant.
 - **Audit:** every change records old and new values and who made it, in the same save; append-only.
 - **Notifications and mail:** a live notification bell; mail goes to `.local/mailbox/` until an SMTP relay is set.
+- **Two-factor:** an authenticator app or SMS codes, at sign-in (per company) and before protected actions. Text messages go to a sandbox (`/dev/sms-inbox`) until a provider is added.
 - **Agent access:** agents sign in for a person through OAuth and work through `/api/v1` and `/mcp`. Connection details are on My settings, under AI connections. The tab holds one prompt the person pastes into their AI app, so the agent connects itself.
 - **Database tables:** an owner-only, read-only view of every table, with data, schema and relationships.
 
@@ -71,6 +72,9 @@ The launcher sets `BILIBI_ENV=development` unless you already set it, so the ins
 | `BILIBI_USER_SIGNING_KEY` | 64 hex characters, for email verification links. Unset: `start-app.sh` supplies one |
 | `BILIBI_SETTINGS_KEY` | 64 hex characters. Encrypts secret settings and authenticator keys. 2FA setup refuses without it. Unset: `start-app.sh` supplies one |
 | `BILIBI_MEDIA_SIGNING_KEY` | 64 hex characters, for signed file links. Unset: `start-app.sh` supplies one |
+| `SMS_DRIVER` | `sandbox` or `disabled`. Unset: sandbox, except on production (disabled). See [Base SMS](apps/base/sms/README.md) |
+| `SMS_FROM` | Sender name on text messages. Default `Bilibi` |
+| `BILIBI_SMS_DIR` | Sandbox folder for text messages. Default `.local/sms`; read them at `/dev/sms-inbox` on development |
 | `BILIBI_ENV` | `development`, `staging` or `production`. Initial role for the install seed. Unset means `production`; `start-app.sh` defaults to `development`. Later role changes use Instance settings. Other values refuse installation |
 
 Every page, consent page and agent answer says which Bilibi it is, so nobody mistakes a test copy for the live system. The status bar always shows the stored server role; Staging also shows a top-bar badge. Dev and Staging show a sign-in badge; reviews and agent plans name every instance, production included. The name and colour are the Instance settings (`instance.label`, `instance.colour`), read through `bilibi_base::system::Instance::resolve` ([Base System](apps/base/system/README.md)).
@@ -83,6 +87,7 @@ The stored server role also decides whether ordinary Base Step-up checks apply. 
 | Staging, Production | Ask as each tenant's policy says: a check within a sliding 30-minute window, capped at 6 hours (tenant settings), or every time |
 
 - Choose Dev only for a development copy. A missing install value defaults to Production.
+- One exception: **Sign in**. When a tenant turns it on at `/authz/step-up`, every account enters a 2FA code after the password, on every instance, Dev included. An account without a second factor sets one up before it can continue. See [Core User](apps/core/user/README.md).
 - Each account sets up its authenticator at `/settings/two-factor`. Tenants choose what asks for it at `/authz/step-up`. See [Base Step-up](apps/base/step_up/README.md).
 
 Terminate TLS at a reverse proxy, and keep the database on a private network: Bilibi connects to PostgreSQL without TLS.

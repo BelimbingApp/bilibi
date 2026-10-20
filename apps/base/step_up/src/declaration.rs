@@ -23,6 +23,9 @@ pub struct Operation {
     /// choice, not on the floor's terms, and not turned off in development.
     /// For an action that changes the server itself (its software).
     pub always: bool,
+    /// The tenant's policy applies on every deployment, development
+    /// included, where step-up is otherwise off. Still a tenant choice.
+    pub everywhere: bool,
     /// The setting this operation guards: the settings editor asks for it
     /// before it changes, clears or restores that setting.
     pub setting: Option<&'static str>,
@@ -36,6 +39,7 @@ impl Operation {
             default_on: true,
             floor: false,
             always: false,
+            everywhere: false,
             setting: None,
         }
     }
@@ -67,6 +71,14 @@ impl Operation {
             floor: true,
             default_on: true,
             always: true,
+            ..self
+        }
+    }
+    /// The tenant's policy applies in development too, where step-up is
+    /// otherwise off; unlike `.always()`, the tenant still decides.
+    pub const fn everywhere(self) -> Self {
+        Self {
+            everywhere: true,
             ..self
         }
     }

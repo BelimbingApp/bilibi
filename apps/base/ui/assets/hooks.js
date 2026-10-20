@@ -842,9 +842,49 @@
     },
   }
 
+  // A resend control that must wait (the SMS code prompts): the server
+  // renders the seconds left in data-countdown and its button disabled; this
+  // counts down in the [data-countdown-text] child and enables the button at
+  // zero. The text is written only when it changes, and the count restarts
+  // only when the server sends a new data-countdown, so the mutation this
+  // hook makes never restarts it.
+  const Countdown = {
+    mounted() {
+      this.start()
+    },
+
+    updated() {
+      if (this.el.dataset.countdown !== this.seen) this.start()
+    },
+
+    destroyed() {
+      clearInterval(this.timer)
+    },
+
+    start() {
+      clearInterval(this.timer)
+      this.seen = this.el.dataset.countdown
+      let left = Number(this.seen) || 0
+      const label = this.el.querySelector("[data-countdown-text]")
+      const control = this.el.querySelector("button")
+      const tick = () => {
+        const text = left > 0 ? `Resend in ${left} s` : ""
+        if (label && label.textContent !== text) label.textContent = text
+        if (left <= 0) {
+          clearInterval(this.timer)
+          if (control && control.disabled) control.disabled = false
+          return
+        }
+        left -= 1
+      }
+      tick()
+      this.timer = setInterval(tick, 1000)
+    },
+  }
+
   const registry = window.BilibiUI
   if (!registry) throw new Error("hooks.js needs ui.js loaded first")
-  for (const [name, hook] of Object.entries({CodeInput, ColourInput, Combobox, SecretReveal, SecretClear, SecretStored, DisclosureDismiss, MultiSelect, DashboardSort, Fold})) {
+  for (const [name, hook] of Object.entries({CodeInput, ColourInput, Combobox, SecretReveal, SecretClear, SecretStored, DisclosureDismiss, MultiSelect, DashboardSort, Fold, Countdown})) {
     registry.registerHook(name, hook)
   }
 })()

@@ -16,7 +16,7 @@ pages belong to the Web host, as Bilimbi's do.
 
 | Method | Purpose |
 |---|---|
-| `login(email, password)` / `logout` | Bilimbi's global sign-in: the address alone names the account; the password is verified first, then the account's standing. Refusals are `CredentialError::{Rejected, CompanyArchived, WorkspaceUnavailable}` |
+| `login(email, password)` / `logout` | Bilimbi's global sign-in: the address alone names the account; the password is verified first, then the account's standing. Refusals are `CredentialError::{Rejected, CompanyArchived, WorkspaceUnavailable}`. `Login::second_factor` says what the new session still owes ("Two-factor at sign-in") |
 | `change_password(token, csrf, current, new)` | Signed-in change. Needs the current password; ends the account's other sessions |
 | `request_password_reset(email)` | Always `Ok` for unknown, frozen or throttled accounts. Mail is sent after returning |
 | `reset_password(email, token, new)` | Consumes the one-time token, replaces the password, ends every session; a frozen account's link is as invalid as an unknown one |
@@ -352,6 +352,59 @@ Security rules:
 - **Throttle.** Applies per account to every failed check: password, code, and an agent's code too. The fifth failure within 15 minutes locks every check for 15 minutes (`user_two_factor_attempts`). A success resets the count.
 - **Impersonation.** An impersonated session cannot enroll, change or check two-factor.
 - **Audit.** Each write is a `MutationBoundary` transaction: `user.two_factor.enrollment_started`, `.enabled`, `.verified`, `.moved`, `.failed` and `.locked`. A reset is `core.user.two_factor.reset` (an admin; the change names both people) or `user.two_factor.reset` (the server command, system principal `two-factor-reset`). A code spent for an agent records the purpose's operation key and channel (`for`, `channel`). A check refused while locked is the action `user.two_factor.refused`. No code, secret or recovery code is ever in a change, payload or log.
+
+## SMS codes
+
+A second method beside the authenticator: a 6-digit code by text message, sent through Base SMS (`apps/base/sms/README.md`). Accepted wherever an authenticator code is: sign-in, the Confirm access page and an agent's `step_up_code`. Decision: ADR 03 (`docs/architecture/decisions/03-sms-second-factor.md`).
+
+- **Code:** `src/two_factor/sms.rs`; migrations `014-phone.sql` (`users.phone_number`, `users.phone_verified_at`) and `015-sms-codes.sql` (`user_sms_codes`).
+- **The number:** E.164 on the account. An administrator edits it on the user record (Phone, in place) or on the new-user form; the person may enter it on `/settings/two-factor` while SMS is off. Changing it clears `phone_verified_at`.
+- **On means proved:** the person re-enters the password, gets a code at the number and enters it. Only then is SMS on. Contact numbers on a Person are never used.
+
+| Rule | Value |
+|---|---|
+| Code | 6 random digits, Argon2id hash only, for one purpose (`verify`, `check`) and one number |
+| Lifetime | 5 minutes, single use |
+| Wrong attempts | 5 per code, then it dies; each also counts toward the per-account lock |
+| Sending | Once per 60 s, 5 per hour per account; a new code ends the older ones of its purpose |
+
+| Method | Purpose |
+|---|---|
+| `begin_sms(scope, password, phone)` / `confirm_sms(scope, code)` / `resend_sms_verify(scope)` | Turning SMS on: password, code to the number, code back |
+| `send_sms_check(scope)` | A sign-in or step-up code to the proved number |
+| `disable_sms(scope, code)` | Off after a current code (authenticator or SMS); the number stays |
+| `sms_wait(scope)` | Seconds before another text may go |
+
+- **Pages:** the settings page's Text message codes section; "Text me a code" on the Confirm access page and the sign-in code page (with a live countdown, Base UI's `Countdown` hook); SMS setup at sign-in uses the administrator's number only.
+- **Lost phone:** an admin's 2FA reset (above) also turns SMS off. For an SMS-only account, an administrator entering a new number is the way back; the person then proves it.
+- **Agents:** when an agent is refused for a code and the person's only method is SMS, the provider's `challenge` sends a code within the bounds.
+- **Audit:** `user.two_factor.sms_sent`, `.sms_enabled`, `.sms_disabled`, `.verified` (`checked_with: "sms"`), `.failed`. No code, and only the masked number, in any row.
+- **Try it:** on development, add a number to your account, turn SMS on at `/settings/two-factor`, read the code at `/dev/sms-inbox`.
+
+## Two-factor at sign-in
+
+A tenant can ask for a second factor after the password. It is Base Step-up operation `core.user.sign_in` ("Sign in"), declared off by default and `.everywhere()`, so it is on the policy page (`/authz/step-up`) with every other operation and the tenant's choice holds on the Dev role too. No Bilimbi counterpart.
+
+- **Code:** `src/two_factor/sign_in.rs`; the pages are the Web host's (`apps/web/src/auth.rs`); the waiting state is Base Session's (`sessions.second_factor`).
+- **Born waiting.** `identity::login` creates every session waiting, for 10 minutes. A waiting session authenticates nothing: Base Session's every check refuses it (fail closed).
+- **Policy off:** `login` finishes the session at once (24 hours), as before. **On** (or "ask every time"): a code at every sign-in.
+
+| Policy | Account | Next |
+|---|---|---|
+| Off | Any | Signed in |
+| On | Has an authenticator or SMS on | `/login/code`: a current authenticator or SMS code. SMS-only accounts are texted a code as the page opens |
+| On | Has neither | `/login/setup`: password again, then the authenticator (QR code, first code) or SMS to the administrator's number |
+
+| Method | Purpose |
+|---|---|
+| `sign_in_pending(token)` | What a waiting session owes (`SecondFactor::{Code, Setup}`); `Unauthorized` for none |
+| `sign_in_with_code(token, code)` | Spends a code like `step_up`; the session then acts and its step-up window opens, in the same transaction |
+| `begin_sign_in_setup(token, password)` / `confirm_sign_in_setup(token, code)` | `begin_two_factor` / `confirm_two_factor` for a waiting session; the confirming transaction also lets it act |
+| `abandon_sign_in(token)` | "Sign in as someone else": the waiting session ends |
+
+- **Same rules as every check:** codes are spent once, failures count toward the per-account lock, and the audit is `user.two_factor.verified` with `"for": "core.user.sign_in"`.
+- **Not bypassed by:** password reset (it ends on the sign-in page), agent connections (an agent's grant is approved on a signed-in browser page) or impersonation (the operator is already signed in).
+- **Try it:** turn "Sign in" on at `/authz/step-up`, sign out, sign in.
 
 **Authenticator entry name.** Each server lists itself differently, so several Bilibi servers stay apart in one app: `Bilibi <instance name> (<role>)` with the account's email, or `Bilibi <role>` when the instance still has its role's own name. Both come from Base System's instance identity (`Instance::resolve`); there is no separate setting or input box, and the app lets a person rename the entry.
 

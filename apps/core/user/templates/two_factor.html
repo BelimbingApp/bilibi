@@ -1,8 +1,11 @@
-{#- The account's authenticator page (src/two_factor_ui.rs) inside the
-    settings shell. One stage at a time: off (password to begin), setup (QR
-    code, typed key, first code), on (move to a new phone) and move (the same
-    scan and confirm for the new phone). Every form raises its
-    live event with its field values; no value is echoed back. -#}
+{#- The account's 2FA page (src/two_factor_ui.rs) inside the settings
+    shell: the authenticator, then SMS codes, each with its own stage. The
+    authenticator: off (password to begin), setup (QR code, typed key, first
+    code), on (move to a new phone) and move (the same scan and confirm for
+    the new phone). SMS: off (number and password, then a code), verify (the
+    code texted to the number) and on (turn off with a current code). Every
+    form raises its live event with its field values; no value is echoed
+    back. -#}
 {% import "settings.html" as settings %}
 {% import "components.html" as ui %}
 {% import "feedback.html" as fb %}
@@ -23,6 +26,22 @@
 {%- else %}
 <div id="two-factor-on" class="space-y-4 rounded-xl border border-line bg-surface p-6"><div class="flex items-center gap-2"><span class="text-sm font-medium text-ink">Status</span>{% call ui::badge(kind=bilibi_ui::BadgeKind::Success, dot=true) %}On{% endcall %}</div></div>
 <form id="two-factor-move-form" data-event="move" class="space-y-4 rounded-xl border border-line bg-surface p-6"><h3 class="text-sm font-semibold text-ink">Move to a new phone</h3><p class="text-sm text-muted">Enter the code from your current phone. Then you scan a new QR code with your new phone, and the old phone stops working.</p>{{ move_code }}<div class="flex justify-end">{% call ui::button(variant=bilibi_ui::ButtonVariant::Primary, id="two-factor-move", button_type="submit", working="Checking…") %}Move to a new phone{% endcall %}</div></form>
+{%- endif %}
+</div>
+{% call ui::section_heading(title="Text message codes", id="two-factor-sms-heading", class="mt-6") %}{% endcall %}
+<div id="two-factor-sms" class="space-y-4">
+{%- if !sms_notice.is_empty() %}{% if sms_notice_error %}{% call fb::alert(kind=bilibi_ui::StatusKind::Error, id="two-factor-sms-notice") %}{{ sms_notice }}{% endcall %}{% else %}{% call fb::alert(kind=bilibi_ui::StatusKind::Success, id="two-factor-sms-notice") %}{{ sms_notice }}{% endcall %}{% endif %}{% endif -%}
+{%- if !sms_available && sms_stage != "on" %}
+<div id="two-factor-sms-unavailable" class="rounded-xl border border-line bg-surface p-6"><p class="text-sm text-muted">This server does not send text messages, so SMS codes cannot be turned on here.</p></div>
+{%- elif sms_stage == "off" %}
+<div id="two-factor-sms-off" class="space-y-4 rounded-xl border border-line bg-surface p-6"><div class="flex items-center gap-2"><span class="text-sm font-medium text-ink">Status</span>{% call ui::badge(kind=bilibi_ui::BadgeKind::Neutral, dot=true) %}Off{% endcall %}</div><p class="text-sm text-muted">Get a 6-digit code by text message when you sign in or confirm a protected action, instead of (or as well as) the authenticator app.</p>
+<form id="two-factor-sms-start-form" data-event="sms-start" class="space-y-4">{{ sms_phone }}{{ sms_password }}<div class="flex justify-end">{% call ui::button(variant=bilibi_ui::ButtonVariant::Primary, id="two-factor-sms-start", button_type="submit", working="Sending…") %}Send code{% endcall %}</div></form></div>
+{%- elif sms_stage == "verify" %}
+<div id="two-factor-sms-verify" class="space-y-4 rounded-xl border border-line bg-surface p-6"><p class="text-sm text-muted">Enter the 6-digit code sent to <span class="font-medium text-ink">{{ sms_masked }}</span>. It expires in 5 minutes.</p>
+<form id="two-factor-sms-confirm-form" data-event="sms-confirm" class="space-y-4">{{ sms_code }}<div class="flex flex-wrap items-center justify-end gap-2">{{ sms_send }}{% call ui::button(id="two-factor-sms-cancel", button_type="button", event="sms-cancel") %}Cancel{% endcall %}{% call ui::button(variant=bilibi_ui::ButtonVariant::Primary, id="two-factor-sms-confirm", button_type="submit", working="Verifying…") %}Turn on{% endcall %}</div></form></div>
+{%- else %}
+<div id="two-factor-sms-on" class="space-y-4 rounded-xl border border-line bg-surface p-6"><div class="flex items-center gap-2"><span class="text-sm font-medium text-ink">Status</span>{% call ui::badge(kind=bilibi_ui::BadgeKind::Success, dot=true) %}On{% endcall %}</div><p class="text-sm text-muted">Codes go to <span class="font-medium text-ink">{{ sms_masked }}</span>. To use another number, turn SMS off first.</p></div>
+<form id="two-factor-sms-disable-form" data-event="sms-disable" class="space-y-4 rounded-xl border border-line bg-surface p-6"><h3 class="text-sm font-semibold text-ink">Turn off SMS codes</h3><p class="text-sm text-muted">Needs a current code: from the authenticator app, or a text you ask for here.</p>{{ sms_code }}<div class="flex flex-wrap items-center justify-end gap-2">{{ sms_send }}{% call ui::button(variant=bilibi_ui::ButtonVariant::Danger, id="two-factor-sms-disable", button_type="submit", working="Turning off…") %}Turn off{% endcall %}</div></form>
 {%- endif %}
 </div>
 {% endcall %}

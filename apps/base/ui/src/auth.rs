@@ -1,6 +1,8 @@
 //! The credential pages: the centered layout (Bilimbi `Layouts.auth`) and the
 //! sign-in, forgotten-password and reset cards (`LoginLive`,
-//! `ForgotPasswordLive`, `ResetPasswordLive`) as typed templates. The host
+//! `ForgotPasswordLive`, `ResetPasswordLive`) as typed templates, plus the
+//! sign-in second factor's code and setup cards (no Bilimbi counterpart;
+//! Core User's `two_factor::sign_in` owns the check). The host
 //! owns the routes, the validation and the credential services; these models
 //! own the DOM, the ids and the copy, so a field error lands on the element
 //! Bilimbi puts it on. Field values are the submitted text kept for another
@@ -215,6 +217,192 @@ impl ResetPasswordPage {
             )?,
         })
     }
+}
+
+/// A message above a sign-in card: a completed send, or why not.
+#[derive(Clone, Debug, Default)]
+pub struct SignInNotice {
+    pub text: String,
+    /// A refusal or failure rather than a completed send.
+    pub error: bool,
+}
+impl SignInNotice {
+    pub fn sent(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            error: false,
+        }
+    }
+    pub fn refused(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            error: true,
+        }
+    }
+}
+
+/// The SMS part of a code card: the masked number and how long before
+/// another text may be sent (the `Countdown` hook counts it down).
+#[derive(Clone, Debug)]
+pub struct SignInSms {
+    pub phone: String,
+    pub resend_in: i64,
+    /// A text was sent for this sign-in already: the button says "Resend".
+    pub sent: bool,
+}
+
+/// The sign-in second factor's card (`/login/code`): the tenant's policy
+/// asks for a second factor after the password. One field takes a current
+/// authenticator code or an SMS code, as the step-up
+/// prompt's does; with SMS on, the card can send a text.
+#[derive(Template)]
+#[template(path = "sign_in_code.html")]
+pub struct SignInCodePage {
+    pub code: Html,
+    pub authenticator: bool,
+    pub sms: Option<SignInSms>,
+    pub notice: SignInNotice,
+}
+
+impl SignInCodePage {
+    pub fn new(
+        errors: Vec<String>,
+        authenticator: bool,
+        sms: Option<SignInSms>,
+        notice: SignInNotice,
+    ) -> askama::Result<Self> {
+        let hint = match (authenticator, sms.is_some()) {
+            (true, true) => "6 digits from the app or the text message",
+            (false, true) => "6 digits from the text message",
+            _ => "6 digits from the app",
+        };
+        Ok(Self {
+            code: sign_in_code("sign-in-code", errors, hint)?,
+            authenticator,
+            sms,
+            notice,
+        })
+    }
+}
+
+/// Where setup at sign-in stands (`/login/setup`). The key and QR code exist
+/// only in the response that set them up; a refused first code asks again
+/// without them.
+pub enum SignInSetup {
+    /// The password again, as the settings page asks before setup, and the
+    /// choice of method: `phone` is the administrator's number on the
+    /// account, masked, when this server sends texts.
+    Password {
+        errors: Vec<String>,
+        phone: Option<String>,
+    },
+    /// The fresh secret to scan or type, and the first code.
+    Scan {
+        qr: Html,
+        key: String,
+        issuer: String,
+        account: String,
+    },
+    /// The first code again after a refused one.
+    Confirm { errors: Vec<String> },
+    /// The code texted to the number being proved.
+    Sms { errors: Vec<String>, sms: SignInSms },
+}
+
+#[derive(Template)]
+#[template(path = "sign_in_setup.html")]
+pub struct SignInSetupPage {
+    pub stage: &'static str,
+    pub password: Html,
+    pub code: Html,
+    pub qr: Html,
+    pub key: String,
+    pub issuer: String,
+    pub account: String,
+    pub phone: Option<String>,
+    pub sms: Option<SignInSms>,
+    pub notice: SignInNotice,
+}
+
+impl SignInSetupPage {
+    pub fn new(setup: SignInSetup, notice: SignInNotice) -> askama::Result<Self> {
+        let mut page = Self {
+            stage: "password",
+            password: Html::default(),
+            code: Html::default(),
+            qr: Html::default(),
+            key: String::new(),
+            issuer: String::new(),
+            account: String::new(),
+            phone: None,
+            sms: None,
+            notice,
+        };
+        let app_hint = "6 digits from the app";
+        match setup {
+            SignInSetup::Password { errors, phone } => {
+                page.password = Html::render(
+                    &SecretInput::in_form("sign_in", "password", "password")
+                        .id("sign-in-setup-password")
+                        .label("Confirm your password")
+                        .errors(errors)
+                        .attrs(Attrs {
+                            autocomplete: Some("current-password".into()),
+                            required: true,
+                            autofocus: true,
+                            ..Attrs::default()
+                        }),
+                )?;
+                page.phone = phone;
+            }
+            SignInSetup::Scan {
+                qr,
+                key,
+                issuer,
+                account,
+            } => {
+                page.stage = "scan";
+                page.code = sign_in_code("sign-in-setup-code", Vec::new(), app_hint)?;
+                (page.qr, page.key, page.issuer, page.account) = (qr, key, issuer, account);
+            }
+            SignInSetup::Confirm { errors } => {
+                page.stage = "confirm";
+                page.code = sign_in_code("sign-in-setup-code", errors, app_hint)?;
+            }
+            SignInSetup::Sms { errors, sms } => {
+                page.stage = "sms";
+                page.code = sign_in_code(
+                    "sign-in-setup-sms-code",
+                    errors,
+                    "6 digits from the text message",
+                )?;
+                page.sms = Some(sms);
+            }
+        }
+        Ok(page)
+    }
+}
+
+/// The one code field of sign-in's second factor, never echoed back.
+fn sign_in_code(id: &str, errors: Vec<String>, hint: &str) -> askama::Result<Html> {
+    Html::render(
+        &Field::in_form("sign_in", "code")
+            .id(id)
+            .label("Authentication code")
+            .hint(hint)
+            .errors(errors)
+            .attrs(Attrs {
+                autocomplete: Some("one-time-code".into()),
+                maxlength: Some("32".into()),
+                required: true,
+                autofocus: true,
+                extra: vec![
+                    ("spellcheck".into(), "false".into()),
+                    ("autocapitalize".into(), "off".into()),
+                ],
+                ..Attrs::default()
+            }),
+    )
 }
 
 /// A required `new-password` secret, as both reset fields are.

@@ -35,6 +35,7 @@ serde.workspace = true
 bilibi-mail = { path = "../../base/mail" }
 bilibi-settings = { path = "../../base/settings" }
 bilibi-session.workspace = true
+bilibi-sms.workspace = true
 bilibi-step-up.workspace = true
 bilibi-datetime = { path = "../../base/datetime" }
 bilibi-locale = { path = "../../base/locale" }

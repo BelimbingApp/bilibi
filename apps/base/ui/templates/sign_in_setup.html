@@ -1,0 +1,50 @@
+{#- Setup at sign-in (no Bilimbi counterpart): the tenant's policy asks for
+    a second factor at sign-in and this account has none yet, so the session
+    acts only once one is set up. One stage at a time: password (re-entered,
+    as the settings page asks, with the choice of method), then for the
+    authenticator scan (QR code, typed key, first code) and confirm (the
+    first code again, without the key, which exists only in the response
+    that made it); for SMS, sms (the code
+    texted to the administrator's number on the account). The flow mirrors
+    the settings page's `two_factor.html`. -#}
+{% import "components.html" as ui %}
+{% import "feedback.html" as feedback %}
+<div class="flex flex-col gap-5">
+<div><h1 class="text-lg font-semibold tracking-tight text-ink-strong">Set up two-factor authentication</h1><p class="mt-1 text-sm text-ink-muted">Your organisation asks for a second factor when you sign in: a code from an authenticator app{% if phone.is_some() || sms.is_some() %} or a text message{% endif %}. Set one up to continue.</p></div>
+{%- if !notice.text.is_empty() %}<div id="sign-in-notice">{% if notice.error %}{% call feedback::alert(kind=bilibi_ui::StatusKind::Error, id="sign-in-notice-1") %}{{ notice.text }}{% endcall %}{% else %}{% call feedback::alert(kind=bilibi_ui::StatusKind::Success, id="sign-in-notice-1") %}{{ notice.text }}{% endcall %}{% endif %}</div>{% endif %}
+{%- if stage == "password" %}
+<form id="sign-in-setup-form" action="/login/setup" method="post" class="flex flex-col gap-4">
+{{ password }}
+{% call ui::button(variant=bilibi_ui::ButtonVariant::Primary, id="sign-in-setup-start", class="w-full", button_type="submit", name="sign_in[method]", value="authenticator", working="Checking…") %}Set up authenticator app{% endcall %}
+{%- if let Some(phone) = phone %}
+{% call ui::button(id="sign-in-setup-sms", class="w-full", button_type="submit", name="sign_in[method]", value="sms", working="Sending…") %}Text a code to {{ phone }}{% endcall %}
+{%- endif %}
+</form>
+{%- if phone.is_none() %}<p class="text-xs text-ink-subtle">To use text messages instead, ask an administrator to add your mobile number.</p>{% endif %}
+{%- elif stage == "sms" %}
+{%- if let Some(sms) = sms %}
+<p class="text-sm text-ink-muted">We sent a 6-digit code to <span class="font-medium text-ink">{{ sms.phone }}</span>. Enter it to turn on text message codes.</p>
+<form id="sign-in-setup-sms-form" action="/login/setup/sms" method="post" class="flex flex-col gap-4">
+{{ code }}
+{% call ui::button(variant=bilibi_ui::ButtonVariant::Primary, id="sign-in-setup-sms-confirm", class="w-full", button_type="submit", working="Verifying…") %}Turn on and continue{% endcall %}
+</form>
+<form id="sign-in-setup-sms-resend-form" action="/login/setup/sms/resend" method="post" class="flex flex-col items-center gap-1" data-hook="Countdown" data-countdown="{{ sms.resend_in }}">{% call ui::button(id="sign-in-setup-sms-resend", button_type="submit", disabled=sms.resend_in > 0, working="Sending…") %}Resend code{% endcall %}<span class="text-xs text-ink-subtle" data-countdown-text>{% if sms.resend_in > 0 %}Resend in {{ sms.resend_in }} s{% endif %}</span></form>
+{%- endif %}
+{%- else %}
+{%- if stage == "scan" %}
+<section aria-labelledby="sign-in-scan-heading" class="flex flex-col gap-3"><h2 id="sign-in-scan-heading" class="text-sm font-semibold text-ink">1. Scan the QR code</h2><p class="text-sm text-ink-muted">Open your authenticator app, choose to add an account, and scan this code. It will appear as <span class="font-medium text-ink">{{ issuer }}</span> ({{ account }}).</p><div class="flex justify-center">{{ qr }}</div></section>
+<section aria-labelledby="sign-in-key-heading" class="flex flex-col gap-2"><h2 id="sign-in-key-heading" class="text-sm font-semibold text-ink">Can't scan it?</h2><p class="text-sm text-ink-muted">Choose "enter a setup key" in the app, pick time-based, and type this key. Spaces do not matter.</p><p id="sign-in-setup-key" class="w-fit select-all rounded-md border border-line bg-surface-muted px-3 py-2 font-mono text-sm tracking-wider text-ink">{{ key }}</p></section>
+{%- else %}
+<p class="text-sm text-ink-muted">Enter the code your authenticator app shows now. To scan a new QR code instead, start setup again.</p>
+{%- endif %}
+<form id="sign-in-setup-confirm-form" action="/login/setup/confirm" method="post" class="flex flex-col gap-4">
+<h2 class="text-sm font-semibold text-ink">{% if stage == "scan" %}2. Enter the code the app shows{% else %}Enter the code the app shows{% endif %}</h2>
+{{ code }}
+{% call ui::button(variant=bilibi_ui::ButtonVariant::Primary, id="sign-in-setup-confirm", class="w-full", button_type="submit", working="Verifying…") %}Turn on and continue{% endcall %}
+</form>
+{%- endif %}
+{%- if stage == "confirm" || stage == "sms" %}
+<div class="flex justify-center">{% call ui::action_link(id="sign-in-setup-restart", icon="", href="/login/setup", title="Start setup again") %}Start setup again{% endcall %}</div>
+{%- endif %}
+<form id="sign-in-cancel-form" action="/login/cancel" method="post" class="flex justify-center">{% call ui::button(id="sign-in-cancel", button_type="submit", working="Signing out…") %}Back to sign in{% endcall %}</form>
+</div>

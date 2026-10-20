@@ -96,6 +96,12 @@ pub trait Provider: Send + Sync {
     ) -> ProofFuture<'a, Spent>;
     /// Where a browser checks in (or enrolls first) and returns to `back`.
     fn prompt<'a>(&'a self, scope: &'a Scope, back: &'a str) -> ProofFuture<'a, String>;
+    /// The holder now owes an agent a code: a provider whose codes are
+    /// delivered (a text message) may send one, so the agent's human has it
+    /// to give. Nothing by default; a refusal to send is the provider's own.
+    fn challenge<'a>(&'a self, _scope: &'a Scope) -> ProofFuture<'a, ()> {
+        Box::pin(async { Ok(()) })
+    }
 }
 
 /// One declared operation with its owner module.
@@ -249,7 +255,7 @@ impl StepUp {
             // enforcement is off (development) and whatever the tenant chose.
             Mode::EveryTime
         } else {
-            if !self.enforced().await? {
+            if !self.enforced_for(declared).await? {
                 return Ok(());
             }
             let mode = self.mode(scope, declared).await?;
@@ -312,7 +318,8 @@ impl StepUp {
         let mode = if declared.operation.always {
             Mode::EveryTime
         } else {
-            if !self.enforced().await? || self.mode(scope, declared).await? == Mode::Off {
+            if !self.enforced_for(declared).await? || self.mode(scope, declared).await? == Mode::Off
+            {
                 return Ok(true);
             }
             Mode::On
@@ -321,6 +328,24 @@ impl StepUp {
             self.check(scope, declared, "", mode, false).await?,
             Outcome::Passed(_)
         ))
+    }
+
+    /// Whether the tenant's policy asks for a check on `key` at all, for an
+    /// owner that checks its person outside an action (sign-in, before the
+    /// session may act): `false` when the policy leaves it off or enforcement
+    /// is off for it. Checks nobody and records nothing.
+    pub async fn applies(&self, scope: &Scope, key: &str) -> Result<bool> {
+        let declared = self.declared(key).ok_or(Error::Internal)?;
+        if declared.operation.always {
+            return Ok(true);
+        }
+        Ok(self.enforced_for(declared).await? && self.mode(scope, declared).await? != Mode::Off)
+    }
+
+    /// Enforcement as it applies to one operation: an operation declared
+    /// `everywhere` keeps its tenant policy where enforcement is off.
+    async fn enforced_for(&self, declared: &Declared) -> Result<bool> {
+        Ok(declared.operation.everywhere || self.enforced().await?)
     }
 
     /// Where a browser that owes a step-up goes, coming back to `back`.
@@ -406,7 +431,7 @@ impl StepUp {
                     .await?
             }
         };
-        Ok(match state {
+        let outcome = match state {
             WindowState::Holds => Outcome::Passed(if mode == Mode::EveryTime {
                 "fresh_check"
             } else {
@@ -421,7 +446,17 @@ impl StepUp {
             } else {
                 "required"
             }),
-        })
+        };
+        // An enrolled holder owes the agent a code: let a delivering
+        // provider send one. Its failure never changes the refusal.
+        if let (Some(_), Outcome::Refused(reason)) = (scope.agent(), &outcome) {
+            if *reason != "not_enrolled" {
+                if let Err(error) = provider.challenge(scope).await {
+                    eprintln!("warning: step-up challenge failed: {error:?}");
+                }
+            }
+        }
+        Ok(outcome)
     }
 
     /// Opens (or restarts) the window of this agent connection for its

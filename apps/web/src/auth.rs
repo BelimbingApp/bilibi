@@ -6,6 +6,12 @@
 //! account, as in Bilimbi; a right credential on a frozen account (archived
 //! company, no live workspace identity) is told so above the form, as
 //! Bilimbi's `complete_login` does. Sign-in has no attempt throttle yet.
+//!
+//! When the tenant's policy asks for a second factor at sign-in (Core User's
+//! `two_factor::sign_in`), the new session waits and authenticates nothing:
+//! `/login/code` takes a current authenticator or SMS code, and
+//! `/login/setup` first sets an authenticator up for an account with none.
+//! Neither has a Bilimbi counterpart.
 use crate::{api, document_titled, origin, token, App, HttpError};
 use askama::Template;
 use axum::{
@@ -16,10 +22,11 @@ use axum::{
 use bilibi_database::Error;
 use bilibi_ui::{
     AuthLayout, FlashMap, ForgotForm, ForgotPasswordPage, Html, LoginForm, LoginPage,
-    LoginWorkspace, ResetForm, ResetPasswordPage, COMPANY_ARCHIVED, CREDENTIALS_REJECTED,
-    PASSWORD_RESET, RESET_LINK_INVALID, RESET_REQUESTED, WORKSPACE_UNAVAILABLE,
+    LoginWorkspace, ResetForm, ResetPasswordPage, SignInCodePage, SignInNotice, SignInSetup,
+    SignInSetupPage, SignInSms, COMPANY_ARCHIVED, CREDENTIALS_REJECTED, PASSWORD_RESET,
+    RESET_LINK_INVALID, RESET_REQUESTED, WORKSPACE_UNAVAILABLE,
 };
-use bilibi_user::{password::check_policy, CredentialError};
+use bilibi_user::{password::check_policy, CredentialError, SecondFactor, TwoFactorError};
 use serde::Deserialize;
 use std::{collections::HashMap, net::SocketAddr};
 
@@ -406,13 +413,13 @@ pub async fn login(
                 session.token,
                 secure(&app)
             );
-            // The account's chosen landing page (Bilimbi `ui.landing_menu_id`),
-            // when it still may open it; else the workspace.
-            let destination = app
-                .user
-                .landing_route(&session.token)
-                .await?
-                .unwrap_or_else(|| WORKSPACE.to_owned());
+            // A session that owes its second factor authenticates nothing yet:
+            // it goes to the step it owes. A signed-in one lands as before.
+            let destination = match session.second_factor {
+                Some(SecondFactor::Code) => CODE_PATH.to_owned(),
+                Some(SecondFactor::Setup) => SETUP_PATH.to_owned(),
+                None => landing(&app, &session.token).await?,
+            };
             let mut response = Redirect::to(&destination).into_response();
             response.headers_mut().insert(
                 header::SET_COOKIE,
@@ -440,6 +447,507 @@ pub async fn login(
         Err(CredentialError::Other(error)) => Err(error.into()),
         Err(_) => Err(Error::Internal.into()),
     }
+}
+
+/// The account's chosen landing page (Bilimbi `ui.landing_menu_id`), when it
+/// still may open it; else the workspace.
+async fn landing(app: &App, session: &str) -> std::result::Result<String, HttpError> {
+    Ok(app
+        .user
+        .landing_route(session)
+        .await?
+        .unwrap_or_else(|| WORKSPACE.to_owned()))
+}
+
+// ---- sign-in second factor -------------------------------------------------------
+
+const CODE_PATH: &str = "/login/code";
+const SETUP_PATH: &str = "/login/setup";
+
+/// What the visitor's session still owes, or where a visitor with none goes:
+/// the workspace when signed in, else the sign-in page.
+async fn owed(
+    app: &App,
+    headers: &HeaderMap,
+) -> std::result::Result<Result<SecondFactor, Response>, HttpError> {
+    let Ok(session) = token(headers) else {
+        return Ok(Err(sign_in_redirect(app, false)));
+    };
+    match app.user.sign_in_pending(&session).await {
+        Ok(owed) => Ok(Ok(owed)),
+        Err(Error::Unauthorized) if signed_in(app, headers).await => {
+            Ok(Err(Redirect::to(WORKSPACE).into_response()))
+        }
+        Err(Error::Unauthorized) => Ok(Err(sign_in_redirect(app, true))),
+        Err(error) => Err(error.into()),
+    }
+}
+
+/// The step a session owes, as a redirect, when the visitor opened the other.
+fn owed_page(owed: SecondFactor) -> Response {
+    Redirect::to(match owed {
+        SecondFactor::Code => CODE_PATH,
+        SecondFactor::Setup => SETUP_PATH,
+    })
+    .into_response()
+}
+
+/// A second-factor card. Never stored by the browser: the setup card carries
+/// the secret.
+async fn second_factor_card<T: Template>(
+    app: &App,
+    title: &str,
+    page: T,
+    status: StatusCode,
+) -> std::result::Result<Response, HttpError> {
+    let mut response = card(app, title, page, FlashMap::default(), status).await?;
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    Ok(response)
+}
+
+/// The code card for a session that owes a code: what the account can use
+/// and, with SMS on, the send control. `notice` wins over what the challenge
+/// itself reports (a text sent as the page opened, or why not).
+async fn code_card(
+    app: &App,
+    session: &str,
+    errors: Vec<String>,
+    notice: SignInNotice,
+    auto_send: bool,
+    status: StatusCode,
+) -> std::result::Result<Response, HttpError> {
+    let challenge = match app.user.sign_in_challenge(session, auto_send).await {
+        Ok(challenge) => challenge,
+        Err(error) => {
+            return match refused(app, error)? {
+                Refused::Field(_) => Err(Error::Internal.into()),
+                Refused::Response(response) => Ok(response),
+            }
+        }
+    };
+    let notice = if !notice.text.is_empty() {
+        notice
+    } else if !challenge.notice.is_empty() {
+        SignInNotice::refused(challenge.notice.clone())
+    } else if challenge.sent {
+        SignInNotice::sent(format!(
+            "A code was sent to {}.",
+            challenge.phone.as_deref().unwrap_or_default()
+        ))
+    } else {
+        SignInNotice::default()
+    };
+    let sms = challenge.phone.map(|phone| SignInSms {
+        phone,
+        resend_in: challenge.resend_in,
+        sent: challenge.sent || challenge.resend_in > 0,
+    });
+    let page = SignInCodePage::new(errors, challenge.authenticator, sms, notice)
+        .map_err(|_| Error::Internal)?;
+    second_factor_card(app, "Two-factor authentication", page, status).await
+}
+
+async fn setup_card(
+    app: &App,
+    setup: SignInSetup,
+    notice: SignInNotice,
+    status: StatusCode,
+) -> std::result::Result<Response, HttpError> {
+    let page = SignInSetupPage::new(setup, notice).map_err(|_| Error::Internal)?;
+    second_factor_card(app, "Set up two-factor authentication", page, status).await
+}
+
+/// Setup's first stage: the password field and the methods this account may
+/// choose (SMS only with an administrator's number and a sending server).
+async fn setup_password(
+    app: &App,
+    session: &str,
+    errors: Vec<String>,
+    notice: SignInNotice,
+    status: StatusCode,
+) -> std::result::Result<Response, HttpError> {
+    let phone = match app.user.sign_in_setup_options(session).await {
+        Ok(options) => options.phone,
+        Err(error) => {
+            return match refused(app, error)? {
+                Refused::Field(_) => Err(Error::Internal.into()),
+                Refused::Response(response) => Ok(response),
+            }
+        }
+    };
+    setup_card(app, SignInSetup::Password { errors, phone }, notice, status).await
+}
+
+/// A refusal the card shows on its field; an expired or finished session goes
+/// back to sign in; anything else fails the request.
+enum Refused {
+    Field(String),
+    Response(Response),
+}
+fn refused(app: &App, error: TwoFactorError) -> std::result::Result<Refused, HttpError> {
+    match error {
+        TwoFactorError::Other(Error::Unauthorized) => {
+            Ok(Refused::Response(sign_in_redirect(app, true)))
+        }
+        TwoFactorError::Other(error) => Err(error.into()),
+        refusal => Ok(Refused::Field(refusal.to_string())),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct CodeSubmission {
+    #[serde(rename = "sign_in[code]", default)]
+    code: String,
+}
+#[derive(Deserialize)]
+pub struct PasswordSubmission {
+    #[serde(rename = "sign_in[password]", default)]
+    password: String,
+    /// `authenticator` or `sms`: which setup button was pressed.
+    #[serde(rename = "sign_in[method]", default)]
+    method: String,
+}
+
+/// `/login/code`: the code card for a session that owes one.
+pub async fn code_page(
+    State(app): State<App>,
+    headers: HeaderMap,
+) -> std::result::Result<Response, HttpError> {
+    match owed(&app, &headers).await? {
+        Ok(SecondFactor::Code) => {
+            let session = token(&headers)?;
+            code_card(
+                &app,
+                &session,
+                Vec::new(),
+                SignInNotice::default(),
+                true,
+                StatusCode::OK,
+            )
+            .await
+        }
+        Ok(other) => Ok(owed_page(other)),
+        Err(response) => Ok(response),
+    }
+}
+pub async fn code(
+    State(app): State<App>,
+    headers: HeaderMap,
+    Form(submission): Form<CodeSubmission>,
+) -> std::result::Result<Response, HttpError> {
+    origin(&app, &headers)?;
+    let Ok(session) = token(&headers) else {
+        return Ok(sign_in_redirect(&app, false));
+    };
+    let code = submission.code.trim();
+    let blank = validate_required(code);
+    if !blank.is_empty() {
+        let status = StatusCode::UNPROCESSABLE_ENTITY;
+        return code_card(
+            &app,
+            &session,
+            blank,
+            SignInNotice::default(),
+            false,
+            status,
+        )
+        .await;
+    }
+    match app.user.sign_in_with_code(&session, code).await {
+        Ok(()) => Ok(Redirect::to(&landing(&app, &session).await?).into_response()),
+        Err(error) => match refused(&app, error)? {
+            Refused::Field(message) => {
+                let status = StatusCode::UNPROCESSABLE_ENTITY;
+                code_card(
+                    &app,
+                    &session,
+                    vec![message],
+                    SignInNotice::default(),
+                    false,
+                    status,
+                )
+                .await
+            }
+            Refused::Response(response) => Ok(response),
+        },
+    }
+}
+/// "Text me a code" / "Resend code" on the code card.
+pub async fn code_sms(
+    State(app): State<App>,
+    headers: HeaderMap,
+) -> std::result::Result<Response, HttpError> {
+    origin(&app, &headers)?;
+    let Ok(session) = token(&headers) else {
+        return Ok(sign_in_redirect(&app, false));
+    };
+    let (notice, status) = match app.user.sign_in_send_sms(&session).await {
+        Ok(sent) => (
+            SignInNotice::sent(format!("A code was sent to {}.", sent.phone)),
+            StatusCode::OK,
+        ),
+        Err(error) => match refused(&app, error)? {
+            Refused::Field(message) => (
+                SignInNotice::refused(message),
+                StatusCode::UNPROCESSABLE_ENTITY,
+            ),
+            Refused::Response(response) => return Ok(response),
+        },
+    };
+    code_card(&app, &session, Vec::new(), notice, false, status).await
+}
+
+/// `/login/setup`: setup at sign-in for a session whose account has no
+/// second factor yet. Step one asks for the password again and the method.
+pub async fn setup_page(
+    State(app): State<App>,
+    headers: HeaderMap,
+) -> std::result::Result<Response, HttpError> {
+    match owed(&app, &headers).await? {
+        Ok(SecondFactor::Setup) => {
+            let session = token(&headers)?;
+            setup_password(
+                &app,
+                &session,
+                Vec::new(),
+                SignInNotice::default(),
+                StatusCode::OK,
+            )
+            .await
+        }
+        Ok(other) => Ok(owed_page(other)),
+        Err(response) => Ok(response),
+    }
+}
+pub async fn setup(
+    State(app): State<App>,
+    headers: HeaderMap,
+    Form(submission): Form<PasswordSubmission>,
+) -> std::result::Result<Response, HttpError> {
+    origin(&app, &headers)?;
+    let Ok(session) = token(&headers) else {
+        return Ok(sign_in_redirect(&app, false));
+    };
+    let blank = validate_required(&submission.password);
+    if !blank.is_empty() {
+        let status = StatusCode::UNPROCESSABLE_ENTITY;
+        return setup_password(&app, &session, blank, SignInNotice::default(), status).await;
+    }
+    if submission.method == "sms" {
+        return match app
+            .user
+            .begin_sign_in_sms(&session, &submission.password)
+            .await
+        {
+            Ok(sent) => {
+                let notice = SignInNotice::sent(format!("A code was sent to {}.", sent.phone));
+                let setup = SignInSetup::Sms {
+                    errors: Vec::new(),
+                    sms: SignInSms {
+                        phone: sent.phone,
+                        resend_in: sent.resend_in,
+                        sent: true,
+                    },
+                };
+                setup_card(&app, setup, notice, StatusCode::OK).await
+            }
+            Err(TwoFactorError::IncorrectPassword) => {
+                let errors = vec![TwoFactorError::IncorrectPassword.to_string()];
+                let status = StatusCode::UNPROCESSABLE_ENTITY;
+                setup_password(&app, &session, errors, SignInNotice::default(), status).await
+            }
+            Err(error) => match refused(&app, error)? {
+                Refused::Field(message) => {
+                    let status = StatusCode::UNPROCESSABLE_ENTITY;
+                    let notice = SignInNotice::refused(message);
+                    setup_password(&app, &session, Vec::new(), notice, status).await
+                }
+                Refused::Response(response) => Ok(response),
+            },
+        };
+    }
+    match app
+        .user
+        .begin_sign_in_setup(&session, &submission.password)
+        .await
+    {
+        Ok(enrollment) => {
+            let setup = SignInSetup::Scan {
+                qr: enrollment.qr,
+                key: enrollment.key,
+                issuer: enrollment.issuer,
+                account: enrollment.account,
+            };
+            setup_card(&app, setup, SignInNotice::default(), StatusCode::OK).await
+        }
+        Err(error) => match refused(&app, error)? {
+            Refused::Field(message) => {
+                let status = StatusCode::UNPROCESSABLE_ENTITY;
+                setup_password(
+                    &app,
+                    &session,
+                    vec![message],
+                    SignInNotice::default(),
+                    status,
+                )
+                .await
+            }
+            Refused::Response(response) => Ok(response),
+        },
+    }
+}
+/// The masked number and resend wait an SMS setup stage shows again.
+async fn sms_stage(
+    app: &App,
+    session: &str,
+    errors: Vec<String>,
+    notice: SignInNotice,
+    status: StatusCode,
+) -> std::result::Result<Response, HttpError> {
+    let phone = match app.user.sign_in_setup_options(session).await {
+        Ok(options) => options.phone.unwrap_or_default(),
+        Err(error) => {
+            return match refused(app, error)? {
+                Refused::Field(_) => Err(Error::Internal.into()),
+                Refused::Response(response) => Ok(response),
+            }
+        }
+    };
+    let resend_in = app.user.sign_in_sms_wait(session).await?;
+    let setup = SignInSetup::Sms {
+        errors,
+        sms: SignInSms {
+            phone,
+            resend_in,
+            sent: true,
+        },
+    };
+    setup_card(app, setup, notice, status).await
+}
+/// SMS setup at sign-in, step two: the texted code proves the number and
+/// signs the session in.
+pub async fn setup_sms(
+    State(app): State<App>,
+    headers: HeaderMap,
+    Form(submission): Form<CodeSubmission>,
+) -> std::result::Result<Response, HttpError> {
+    origin(&app, &headers)?;
+    let Ok(session) = token(&headers) else {
+        return Ok(sign_in_redirect(&app, false));
+    };
+    let code = submission.code.trim();
+    let blank = validate_required(code);
+    if !blank.is_empty() {
+        let status = StatusCode::UNPROCESSABLE_ENTITY;
+        return sms_stage(&app, &session, blank, SignInNotice::default(), status).await;
+    }
+    match app.user.confirm_sign_in_sms(&session, code).await {
+        Ok(()) => Ok(Redirect::to(&landing(&app, &session).await?).into_response()),
+        Err(error) => match refused(&app, error)? {
+            Refused::Field(message) => {
+                let status = StatusCode::UNPROCESSABLE_ENTITY;
+                sms_stage(
+                    &app,
+                    &session,
+                    vec![message],
+                    SignInNotice::default(),
+                    status,
+                )
+                .await
+            }
+            Refused::Response(response) => Ok(response),
+        },
+    }
+}
+pub async fn setup_sms_resend(
+    State(app): State<App>,
+    headers: HeaderMap,
+) -> std::result::Result<Response, HttpError> {
+    origin(&app, &headers)?;
+    let Ok(session) = token(&headers) else {
+        return Ok(sign_in_redirect(&app, false));
+    };
+    let (notice, status) = match app.user.resend_sign_in_sms(&session).await {
+        Ok(sent) => (
+            SignInNotice::sent(format!("A new code was sent to {}.", sent.phone)),
+            StatusCode::OK,
+        ),
+        Err(error) => match refused(&app, error)? {
+            Refused::Field(message) => (
+                SignInNotice::refused(message),
+                StatusCode::UNPROCESSABLE_ENTITY,
+            ),
+            Refused::Response(response) => return Ok(response),
+        },
+    };
+    sms_stage(&app, &session, Vec::new(), notice, status).await
+}
+/// Setup at sign-in, step two: the first code turns the authenticator on and
+/// signs the session in.
+pub async fn confirm_setup(
+    State(app): State<App>,
+    headers: HeaderMap,
+    Form(submission): Form<CodeSubmission>,
+) -> std::result::Result<Response, HttpError> {
+    origin(&app, &headers)?;
+    let Ok(session) = token(&headers) else {
+        return Ok(sign_in_redirect(&app, false));
+    };
+    let code = submission.code.trim();
+    let blank = validate_required(code);
+    if !blank.is_empty() {
+        let setup = SignInSetup::Confirm { errors: blank };
+        return setup_card(
+            &app,
+            setup,
+            SignInNotice::default(),
+            StatusCode::UNPROCESSABLE_ENTITY,
+        )
+        .await;
+    }
+    match app.user.confirm_sign_in_setup(&session, code).await {
+        Ok(()) => Ok(Redirect::to(&landing(&app, &session).await?).into_response()),
+        // The setup this code was for is gone: begin again with the password.
+        Err(TwoFactorError::NoPendingEnrollment) => {
+            let errors = vec![TwoFactorError::NoPendingEnrollment.to_string()];
+            let status = StatusCode::UNPROCESSABLE_ENTITY;
+            setup_password(&app, &session, errors, SignInNotice::default(), status).await
+        }
+        Err(error) => match refused(&app, error)? {
+            Refused::Field(message) => {
+                let setup = SignInSetup::Confirm {
+                    errors: vec![message],
+                };
+                setup_card(
+                    &app,
+                    setup,
+                    SignInNotice::default(),
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                )
+                .await
+            }
+            Refused::Response(response) => Ok(response),
+        },
+    }
+}
+
+/// "Sign in as someone else": the waiting session ends and its cookie goes.
+pub async fn cancel(
+    State(app): State<App>,
+    headers: HeaderMap,
+) -> std::result::Result<Response, HttpError> {
+    origin(&app, &headers)?;
+    if let Ok(session) = token(&headers) {
+        app.user.abandon_sign_in(&session).await?;
+    }
+    let mut response = Redirect::to("/").into_response();
+    response.headers_mut().insert(
+        header::SET_COOKIE,
+        HeaderValue::from_static("bilibi_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0"),
+    );
+    Ok(response)
 }
 
 // ---- forgotten password ---------------------------------------------------------

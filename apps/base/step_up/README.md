@@ -4,7 +4,7 @@ Ask the human account holder to prove it is them again before an operation goes 
 
 - **This module names no consumer** (no page, table, sign-in or role) and no second-factor method.
 - Each owner declares its own operations and calls the facade from its own module.
-- The second factor is a bound `Provider`. Today that is Core User's authenticator app (TOTP).
+- The second factor is a bound `Provider`. Today that is Core User's, which accepts an authenticator code (TOTP) or an SMS code.
 
 ## Require step-up for an operation
 
@@ -22,6 +22,7 @@ Two lines in the owning module, nothing anywhere else.
    - Key: lower case, prefixed by the owning module id with `/` as `.`; unique.
    - Label: what administrators read on the policy page (1–120 characters).
    - `.off_by_default()`: tenants turn it on. `.floor()`: on, and tenants cannot turn it off. `.always()`: a fresh code on every action, on every server, development included; no policy and no floor change can relax it. For an action that changes the server itself (Base Software's `base.software.change`), nothing else.
+   - `.everywhere()`: the tenant's policy applies on the Dev role too, where step-up is otherwise off. Unlike `.always()`, the tenant still decides. Today only sign-in (Core User's `core.user.sign_in`).
 
 2. Call it in the facade, after authorizing and before writing:
 
@@ -37,6 +38,7 @@ Two lines in the owning module, nothing anywhere else.
 - A module that is not mounted declares nothing, so its rows leave the policy page.
 - Never decide in code whether step-up applies. That is the tenant's policy.
 - A confirmation form that takes a code itself calls `require_code` for its `.always()` operation. A recent browser check, including enrollment, cannot replace a code on that submission. Missing codes are audited refusals; an account without 2FA receives the usual enrollment prompt.
+- An owner that checks its person itself, outside an action, asks `applies(scope, key)`: whether the policy asks for a check at all. It checks nobody and records nothing. Core User's sign-in is the one user (`apps/core/user/README.md`, "Two-factor at sign-in").
 - Call `require` as often as the action needs: a presented code is spent by the first call and covers the rest of the request.
 
 ## Policy
@@ -53,7 +55,7 @@ Tenants decide per operation on **Administration › Authorization › Step-up 2
 
 - Changing any of these is itself a step-up operation (`base.step_up.policy.update`, on the floor). Settings audits it.
 - The installation owner sees the floor and the maxima on the same page.
-- The stored Dev role turns ordinary enforcement off. Base System binds the live `Enforcement` policy, which reads `instance.role` on each check; changing the role takes effect without restarting. A missing binding enforces. A fixture binary with no authenticator may call `StepUp::set_enforced(false)` after installing its services; the host never does. An operation declared `.always()` is enforced everywhere, as "ask every time", and the policy page shows it as fixed.
+- The stored Dev role turns ordinary enforcement off. Base System binds the live `Enforcement` policy, which reads `instance.role` on each check; changing the role takes effect without restarting. A missing binding enforces. A fixture binary with no authenticator may call `StepUp::set_enforced(false)` after installing its services; the host never does. An operation declared `.always()` is enforced everywhere, as "ask every time", and the policy page shows it as fixed. One declared `.everywhere()` keeps its tenant policy on the Dev role too.
 
 ## Proofs per channel
 
@@ -121,6 +123,7 @@ Every check that applies writes one action:
 | `session` | The browser session's window (`SessionProof::Window`), or one fresh check (`SessionProof::Fresh`) |
 | `spend` | Verify a code and use it, for the `Purpose` (operation, target, channel) |
 | `prompt` | Where a browser checks in, or enrolls first, and comes back to `back` |
+| `challenge` | Optional. The holder now owes an agent a code: a provider that delivers codes may send one. Default: nothing. Never changes the refusal |
 
 ## Try it
 

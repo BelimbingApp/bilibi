@@ -3,6 +3,7 @@
 //! target as data to record, never what the operation is.
 use super::{Spend, TwoFactorError};
 use crate::UserService;
+use bilibi_database::Error;
 use bilibi_step_up::{Provider, Purpose, SessionProof, Spent, WindowState};
 use bilibi_tenancy::{ProofFuture, Scope};
 use std::sync::Arc;
@@ -11,7 +12,7 @@ pub struct Authenticator(pub Arc<UserService>);
 
 impl Provider for Authenticator {
     fn enrolled<'a>(&'a self, scope: &'a Scope) -> ProofFuture<'a, bool> {
-        Box::pin(async move { Ok(self.0.two_factor_status(scope).await?.enabled) })
+        Box::pin(async move { Ok(self.0.two_factor_status(scope).await?.any()) })
     }
     fn session<'a>(
         &'a self,
@@ -74,5 +75,19 @@ impl Provider for Authenticator {
     }
     fn prompt<'a>(&'a self, scope: &'a Scope, back: &'a str) -> ProofFuture<'a, String> {
         Box::pin(async move { self.0.step_up_destination(scope, back).await })
+    }
+    /// A holder whose only second factor is SMS gets a text, so they have a
+    /// code to give their agent. The sending bounds hold; a refusal to send
+    /// (too soon, too many, no driver) leaves the refusal as it was.
+    fn challenge<'a>(&'a self, scope: &'a Scope) -> ProofFuture<'a, ()> {
+        Box::pin(async move {
+            let status = self.0.two_factor_status(scope).await?;
+            if status.sms && !status.enabled {
+                if let Err(TwoFactorError::Other(error)) = self.0.send_sms_check(scope).await {
+                    return Err(error);
+                }
+            }
+            Ok::<(), Error>(())
+        })
     }
 }

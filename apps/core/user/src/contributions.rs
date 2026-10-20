@@ -63,11 +63,13 @@ bilibi_menu::contribute!(
 static GRID: bilibi_grid::GridContribution = bilibi_grid::GridContribution {
     record_fields: &[bilibi_grid::RecordFields { table: "users", fields: crate::record_fields::ALL }],
     tables: &[bilibi_grid::TableDecl::new("users", "Users", LIST,
-        bilibi_grid::Source::tenant("SELECT id,name,email,email_verified_at,created_at,updated_at,organisation_id AS company_id,person_id FROM users WHERE tenant_id=$1 AND deleted_at IS NULL"), "id", &[
+        bilibi_grid::Source::tenant("SELECT id,name,email,email_verified_at,phone_number,phone_verified_at,created_at,updated_at,organisation_id AS company_id,person_id FROM users WHERE tenant_id=$1 AND deleted_at IS NULL"), "id", &[
             bilibi_grid::Field::new("id", "ID", bilibi_grid::FieldType::Integer),
             bilibi_grid::Field::new("name", "Name", bilibi_grid::FieldType::String),
             bilibi_grid::Field::new("email", "Email", bilibi_grid::FieldType::String),
             bilibi_grid::Field::new("email_verified_at", "Email verified", bilibi_grid::FieldType::DateTime),
+            bilibi_grid::Field::new("phone_number", "Phone", bilibi_grid::FieldType::String),
+            bilibi_grid::Field::new("phone_verified_at", "Phone verified", bilibi_grid::FieldType::DateTime),
             bilibi_grid::Field::new("created_at", "Created", bilibi_grid::FieldType::DateTime),
             bilibi_grid::Field::new("updated_at", "Updated", bilibi_grid::FieldType::DateTime),
             bilibi_grid::Field::new("company_id", "Company", bilibi_grid::FieldType::Integer).hidden(),

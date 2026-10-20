@@ -55,6 +55,20 @@ The web proof of Base Step-up (`apps/base/step_up/README.md`) lives on the sessi
 - An impersonated session is never stepped up.
 - `end_user_sessions` also ends the holder's agent step-up windows (`bilibi_step_up::end_agent_windows`).
 
+## Sign-in second factor
+
+A session can be born owing a second factor (migration `004-second-factor`): Core User's sign-in check (`core.user.sign_in`, `apps/core/user/README.md`).
+
+| `sessions.second_factor` | Meaning |
+|---|---|
+| `NULL` | Signed in |
+| `code` | Owes a current authenticator or recovery code |
+| `setup` | Owes an authenticator set up first |
+
+- `check`, `hold` and `activity` refuse a waiting session, so it authenticates nothing anywhere.
+- `pending(client, token)` returns a waiting session's scope and what it owes, for the sign-in pages only.
+- `owe(client, scope, owed)` changes what it owes; `finish_sign_in(sql, scope, checked)` lets it act with the full lifetime, and with `checked` opens its step-up window; `abandon(client, token)` ends it.
+
 ## Listing
 
 `/system/sessions` needs the platform operator identity and
