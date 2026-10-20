@@ -5,7 +5,7 @@
 {% import "dialog.html" as dialog %}
 {% call feedback::flash_group(messages=flash) %}{% endcall %}
 {% call ui::page(variant=bilibi_ui::PageVariant::List) %}
-{% call settings::layout(header=header, current=bilibi_ui::SettingsTab::AgentConnections) %}
+{% call settings::layout(header=header, current=bilibi_ui::SettingsTab::AgentConnections, heading="Agent connections") %}
 {{ table }}
 {% if pending.is_some() %}
 {% call dialog::confirm_dialog(id="revoke-connection-dialog", consequence="Revoke connection?", detail="Access ends immediately. Connect again and approve a new connection to grant access again.", confirm="Revoke", working="Revoking…", confirm_event="confirm_revoke", cancel_event="cancel_revoke") %}{% endcall %}

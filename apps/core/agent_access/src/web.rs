@@ -851,7 +851,7 @@ impl ConnectionsPage {
         html(ConnectionsView {
             flash: flash_map(self.flash),
             header: Html::render(&bilibi_ui::Header {
-                title: Html::text("Agent connections"),
+                title: Html::text("My Settings"),
                 actions: plugin,
                 ..bilibi_ui::Header::default()
             })
