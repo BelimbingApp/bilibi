@@ -2,10 +2,6 @@
 
 Build on your own machine, then prove installation, 2FA, Undo and automatic switch-back in a disposable systemd server.
 
-## Recorded run
-
-[The GitHub install run](evidence-2026-10-20-github.md) records the 2026-10-20 proof of listing and installing a GitHub release.
-
 ## Prepare the lab
 
 Use a disposable Bilibi checkout on a Linux host with `sudo -n`, `systemd-nspawn`, `machinectl`, `debootstrap`, `iptables`, Rust, Python 3 and `chrome-devtools-axi`.
