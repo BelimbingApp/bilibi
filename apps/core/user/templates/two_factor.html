@@ -12,7 +12,7 @@
 <div id="two-factor" class="space-y-4">
 {%- if !notice.is_empty() %}{% call fb::alert(kind=bilibi_ui::StatusKind::Warning, id="two-factor-notice") %}{{ notice }}{% endcall %}{% endif -%}
 {%- if stage == "off" %}
-<div id="two-factor-off" class="space-y-4 rounded-xl border border-line bg-surface p-6"><div class="flex items-center gap-2"><span class="text-sm font-medium text-ink">Status</span>{% call ui::badge(kind=bilibi_ui::BadgeKind::Neutral, dot=true) %}Off{% endcall %}</div><p class="text-sm text-muted">After setup, protected actions ask for a 6-digit code from an authenticator app on your phone, such as Google Authenticator or Microsoft Authenticator.</p>
+<div id="two-factor-off" class="space-y-4 rounded-xl border border-line bg-surface p-6"><div class="flex items-center gap-2"><span class="text-sm font-medium text-ink">Status</span>{% call ui::badge(kind=bilibi_ui::BadgeKind::Neutral, dot=true) %}Off{% endcall %}</div>
 <form id="two-factor-start-form" data-event="start" class="space-y-4">{{ password }}<div class="flex justify-end">{% call ui::button(variant=bilibi_ui::ButtonVariant::Primary, id="two-factor-start", button_type="submit", working="Checking…") %}Set up authenticator{% endcall %}</div></form></div>
 {%- elif stage == "setup" %}
 <div id="two-factor-setup" class="space-y-5 rounded-xl border border-line bg-surface p-6">
