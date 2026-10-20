@@ -6,6 +6,13 @@
 //! account, as in Bilimbi; a right credential on a frozen account (archived
 //! company, no live workspace identity) is told so above the form, as
 //! Bilimbi's `complete_login` does. Sign-in has no attempt throttle yet.
+//!
+//! When the tenant's step-up policy asks for a code at sign-in
+//! (`bilibi_user::SIGN_IN_STEP_UP`), a right password leaves a pending
+//! sign-in instead of a session: its token travels in its own cookie, scoped
+//! to `/login`, and `/login/verify` takes the code (GitHub's two-factor page;
+//! no Bilimbi counterpart). `/dev/sms-inbox` shows the SMS simulator's
+//! messages and is routed only outside production.
 use crate::{api, document_titled, origin, token, App, HttpError};
 use askama::Template;
 use axum::{
@@ -16,10 +23,13 @@ use axum::{
 use bilibi_database::Error;
 use bilibi_ui::{
     AuthLayout, FlashMap, ForgotForm, ForgotPasswordPage, Html, LoginForm, LoginPage,
-    LoginWorkspace, ResetForm, ResetPasswordPage, COMPANY_ARCHIVED, CREDENTIALS_REJECTED,
-    PASSWORD_RESET, RESET_LINK_INVALID, RESET_REQUESTED, WORKSPACE_UNAVAILABLE,
+    LoginWorkspace, ResetForm, ResetPasswordPage, SmsInboxPage, SmsMessage, VerifyForm, VerifyPage,
+    COMPANY_ARCHIVED, CREDENTIALS_REJECTED, PASSWORD_RESET, RESET_LINK_INVALID, RESET_REQUESTED,
+    WORKSPACE_UNAVAILABLE,
 };
-use bilibi_user::{password::check_policy, CredentialError};
+use bilibi_user::{
+    password::check_policy, CredentialError, Login, SignIn, SignInError, TwoFactorError,
+};
 use serde::Deserialize;
 use std::{collections::HashMap, net::SocketAddr};
 
@@ -36,6 +46,9 @@ const FLASH_COOKIE: &str = "bilibi_flash";
 pub const FLASH_RESET: &str = "reset";
 pub const FLASH_EXPIRED: &str = "expired";
 const FLASH_KEYS: [&str; 2] = [FLASH_RESET, FLASH_EXPIRED];
+
+/// The pending sign-in's token, readable only by the `/login` pages.
+const PENDING_COOKIE: &str = "bilibi_pending_sign_in";
 
 /// Record pages whose missing record sends the visitor back to the list with
 /// an error flash, as Bilimbi's `put_flash` + `push_navigate` do:
@@ -385,36 +398,16 @@ pub async fn login(
         )
         .await;
     }
-    match app.user.login(&form.email, &submission.password).await {
-        Ok(session) => {
-            let client = app.db.get().await.map_err(Error::from)?;
-            app.security
-                .sessions
-                .describe(
-                    &**client,
-                    &session.token,
-                    api::client_address(peer.map(|Extension(ConnectInfo(peer))| peer), &headers)
-                        .map(|ip| ip.to_string())
-                        .as_deref(),
-                    headers
-                        .get(header::USER_AGENT)
-                        .and_then(|value| value.to_str().ok()),
-                )
-                .await?;
+    match app.user.sign_in(&form.email, &submission.password).await {
+        Ok(SignIn::Session(session)) => start_session(&app, &headers, peer, session).await,
+        Ok(SignIn::Pending(token)) => {
+            let mut response = Redirect::to("/login/verify").into_response();
             let cookie = format!(
-                "bilibi_session={}; HttpOnly; SameSite=Lax; Path=/; Max-Age=86400{}",
-                session.token,
+                "{PENDING_COOKIE}={token}; HttpOnly; SameSite=Lax; Path=/login; Max-Age={}{}",
+                bilibi_user::SIGN_IN_PENDING_MINUTES * 60,
                 secure(&app)
             );
-            // The account's chosen landing page (Bilimbi `ui.landing_menu_id`),
-            // when it still may open it; else the workspace.
-            let destination = app
-                .user
-                .landing_route(&session.token)
-                .await?
-                .unwrap_or_else(|| WORKSPACE.to_owned());
-            let mut response = Redirect::to(&destination).into_response();
-            response.headers_mut().insert(
+            response.headers_mut().append(
                 header::SET_COOKIE,
                 HeaderValue::from_str(&cookie).map_err(|_| Error::Internal)?,
             );
@@ -439,6 +432,261 @@ pub async fn login(
         }
         Err(CredentialError::Other(error)) => Err(error.into()),
         Err(_) => Err(Error::Internal.into()),
+    }
+}
+
+/// A new session's cookie, its description (address, browser) and the
+/// account's landing page: the end of every successful sign-in.
+async fn start_session(
+    app: &App,
+    headers: &HeaderMap,
+    peer: Option<Extension<ConnectInfo<SocketAddr>>>,
+    session: Login,
+) -> std::result::Result<Response, HttpError> {
+    let client = app.db.get().await.map_err(Error::from)?;
+    app.security
+        .sessions
+        .describe(
+            &**client,
+            &session.token,
+            api::client_address(peer.map(|Extension(ConnectInfo(peer))| peer), headers)
+                .map(|ip| ip.to_string())
+                .as_deref(),
+            headers
+                .get(header::USER_AGENT)
+                .and_then(|value| value.to_str().ok()),
+        )
+        .await?;
+    let cookie = format!(
+        "bilibi_session={}; HttpOnly; SameSite=Lax; Path=/; Max-Age=86400{}",
+        session.token,
+        secure(app)
+    );
+    // The account's chosen landing page (Bilimbi `ui.landing_menu_id`),
+    // when it still may open it; else the workspace.
+    let destination = app
+        .user
+        .landing_route(&session.token)
+        .await?
+        .unwrap_or_else(|| WORKSPACE.to_owned());
+    let mut response = Redirect::to(&destination).into_response();
+    response.headers_mut().insert(
+        header::SET_COOKIE,
+        HeaderValue::from_str(&cookie).map_err(|_| Error::Internal)?,
+    );
+    Ok(response)
+}
+
+// ---- sign-in's second step (2FA) ---------------------------------------------
+
+fn clear_pending(response: &mut Response) {
+    response.headers_mut().append(
+        header::SET_COOKIE,
+        HeaderValue::from_static(
+            "bilibi_pending_sign_in=; HttpOnly; SameSite=Lax; Path=/login; Max-Age=0",
+        ),
+    );
+}
+
+/// Back to the sign-in card, dropping a pending sign-in that ran out.
+fn expired_sign_in() -> Response {
+    let mut response = Redirect::to("/").into_response();
+    clear_pending(&mut response);
+    response
+}
+
+#[derive(Deserialize)]
+pub struct VerifyQuery {
+    #[serde(default)]
+    recovery: Option<String>,
+}
+impl VerifyQuery {
+    fn recovery(&self) -> bool {
+        self.recovery.as_deref() == Some("1")
+    }
+}
+
+#[derive(Deserialize)]
+pub struct VerifySubmission {
+    #[serde(rename = "verify[code]", default)]
+    code: String,
+}
+
+/// The card for the pending sign-in the cookie names, or the sign-in card
+/// again when it is gone.
+async fn verify_card(
+    app: &App,
+    headers: &HeaderMap,
+    mut form: VerifyForm,
+    status: StatusCode,
+) -> std::result::Result<Response, HttpError> {
+    let pending = match cookie(headers, PENDING_COOKIE) {
+        Some(token) => app.user.pending_sign_in(token).await?,
+        None => None,
+    };
+    let Some(pending) = pending else {
+        return Ok(expired_sign_in());
+    };
+    form.phone = pending.phone.clone().unwrap_or_default();
+    form.authenticator = pending.authenticator;
+    form.wait_seconds = pending.wait_seconds;
+    form.recovery &= pending.authenticator;
+    if !pending.enrolled() {
+        form.form_error = SignInError::NotEnrolled.to_string();
+    }
+    card(
+        app,
+        "Two-step verification",
+        VerifyPage::new(&form).map_err(|_| Error::Internal)?,
+        FlashMap::default(),
+        status,
+    )
+    .await
+}
+
+/// `GET /login/verify`.
+pub async fn verify_page(
+    State(app): State<App>,
+    headers: HeaderMap,
+    Query(query): Query<VerifyQuery>,
+) -> std::result::Result<Response, HttpError> {
+    if signed_in(&app, &headers).await {
+        return Ok(Redirect::to(WORKSPACE).into_response());
+    }
+    let form = VerifyForm {
+        recovery: query.recovery(),
+        ..VerifyForm::default()
+    };
+    verify_card(&app, &headers, form, StatusCode::OK).await
+}
+
+/// `POST /login/verify`: the code, then a session.
+pub async fn verify(
+    State(app): State<App>,
+    headers: HeaderMap,
+    Query(query): Query<VerifyQuery>,
+    peer: Option<Extension<ConnectInfo<SocketAddr>>>,
+    Form(submission): Form<VerifySubmission>,
+) -> std::result::Result<Response, HttpError> {
+    origin(&app, &headers)?;
+    let Some(token) = cookie(&headers, PENDING_COOKIE) else {
+        return Ok(expired_sign_in());
+    };
+    let mut form = VerifyForm {
+        recovery: query.recovery(),
+        ..VerifyForm::default()
+    };
+    let code: String = submission.code.trim().chars().take(64).collect();
+    if code.is_empty() {
+        form.code_errors = vec![BLANK.into()];
+        return verify_card(&app, &headers, form, StatusCode::UNPROCESSABLE_ENTITY).await;
+    }
+    match app.user.complete_sign_in(token, &code).await {
+        Ok(session) => {
+            let mut response = start_session(&app, &headers, peer, session).await?;
+            clear_pending(&mut response);
+            Ok(response)
+        }
+        Err(SignInError::Expired) => Ok(expired_sign_in()),
+        Err(SignInError::Refused(TwoFactorError::InvalidCode)) => {
+            form.code_errors = vec![TwoFactorError::InvalidCode.to_string()];
+            verify_card(&app, &headers, form, StatusCode::UNAUTHORIZED).await
+        }
+        Err(SignInError::Other(error)) => Err(error.into()),
+        Err(refusal) => {
+            form.form_error = refusal.to_string();
+            verify_card(&app, &headers, form, StatusCode::UNAUTHORIZED).await
+        }
+    }
+}
+
+/// `POST /login/verify/resend`: another text message.
+pub async fn resend(
+    State(app): State<App>,
+    headers: HeaderMap,
+) -> std::result::Result<Response, HttpError> {
+    origin(&app, &headers)?;
+    let Some(token) = cookie(&headers, PENDING_COOKIE) else {
+        return Ok(expired_sign_in());
+    };
+    let mut form = VerifyForm::default();
+    let status = match app.user.send_sign_in_code(token).await {
+        Ok(masked) => {
+            form.notice = format!("A new code was sent to {masked}.");
+            StatusCode::OK
+        }
+        Err(SignInError::Expired) => return Ok(expired_sign_in()),
+        Err(SignInError::Other(error)) => return Err(error.into()),
+        Err(refusal) => {
+            form.form_error = refusal.to_string();
+            StatusCode::TOO_MANY_REQUESTS
+        }
+    };
+    verify_card(&app, &headers, form, status).await
+}
+
+/// `GET /login/verify/cancel`: "Back to sign in" drops the pending sign-in.
+pub async fn cancel_verify(
+    State(app): State<App>,
+    headers: HeaderMap,
+) -> std::result::Result<Response, HttpError> {
+    if let Some(token) = cookie(&headers, PENDING_COOKIE) {
+        app.user.cancel_sign_in(token).await?;
+    }
+    Ok(expired_sign_in())
+}
+
+/// `GET /dev/sms-inbox`, routed only outside production: the simulator's
+/// messages, newest first.
+pub async fn sms_inbox(State(app): State<App>) -> std::result::Result<Response, HttpError> {
+    let Some(outbox) = app.sms.outbox() else {
+        return Err(Error::NotFound.into());
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs() as i64);
+    let messages = outbox
+        .entries()
+        .map_err(|error| {
+            eprintln!("warning: sms inbox: {error}");
+            Error::Internal
+        })?
+        .into_iter()
+        .map(|entry| SmsMessage {
+            code: six_digits(&entry.text),
+            age: age(now - entry.sent_at),
+            to: entry.to,
+            text: entry.text,
+        })
+        .collect();
+    let body = AuthLayout {
+        body: Html::render(&SmsInboxPage { messages }).map_err(|_| Error::Internal)?,
+        instance: instance_badge(&app).await?,
+        flash: FlashMap::default(),
+    }
+    .render()
+    .map_err(|_| Error::Internal)?;
+    let mut response = document_titled("SMS inbox", &body)?.into_response();
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    Ok(response)
+}
+
+/// The first run of exactly six digits in a message: its code.
+fn six_digits(text: &str) -> String {
+    text.split(|c: char| !c.is_ascii_digit())
+        .find(|run| run.len() == 6)
+        .unwrap_or_default()
+        .to_owned()
+}
+
+fn age(seconds: i64) -> String {
+    match seconds.max(0) {
+        0..=4 => "just now".into(),
+        s @ 5..=59 => format!("{s} s ago"),
+        s @ 60..=3599 => format!("{} min ago", s / 60),
+        s => format!("{} h ago", s / 3600),
     }
 }
 

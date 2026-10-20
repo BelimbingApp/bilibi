@@ -40,8 +40,9 @@ pub use shell::{
 
 pub use auth::{
     AuthLayout, ForgotForm, ForgotPasswordPage, LoginForm, LoginPage, LoginWorkspace, ResetForm,
-    ResetPasswordPage, COMPANY_ARCHIVED, CREDENTIALS_REJECTED, PASSWORD_RESET, RESET_LINK_INVALID,
-    RESET_REQUESTED, SESSION_EXPIRED, WORKSPACE_UNAVAILABLE,
+    ResetPasswordPage, SmsInboxPage, SmsMessage, VerifyForm, VerifyPage, COMPANY_ARCHIVED,
+    CREDENTIALS_REJECTED, PASSWORD_RESET, RESET_LINK_INVALID, RESET_REQUESTED, SESSION_EXPIRED,
+    WORKSPACE_UNAVAILABLE,
 };
 pub use components::{button_class, card_body_class, card_flat, stat_strip_columns};
 pub use components::{

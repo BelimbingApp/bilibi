@@ -4,7 +4,7 @@ Ask the human account holder to prove it is them again before an operation goes 
 
 - **This module names no consumer** (no page, table, sign-in or role) and no second-factor method.
 - Each owner declares its own operations and calls the facade from its own module.
-- The second factor is a bound `Provider`. Today that is Core User's authenticator app (TOTP).
+- The second factor is a bound `Provider`. Today that is Core User's, which accepts a code from the authenticator app (TOTP) or a text message (SMS).
 
 ## Require step-up for an operation
 
@@ -120,6 +120,11 @@ Every check that applies writes one action:
 | `session` | The browser session's window (`SessionProof::Window`), or one fresh check (`SessionProof::Fresh`) |
 | `spend` | Verify a code and use it, for the `Purpose` (operation, target, channel) |
 | `prompt` | Where a browser checks in, or enrolls first, and comes back to `back` |
+| `challenge` | Optional. A code is owed by an agent (`code_required`, `every_time`, `window_expired`, `window_capped`): a method that delivers codes sends one now. Best effort; the refusal stands |
+
+## Before a session exists
+
+`StepUp::applies(scope, key)` says whether the tenant's policy asks for `key`, reading only. Core User's sign-in uses it: when `core.user.sign_in` is on, the password leaves a pending sign-in, and the code then goes through `require` with `Scope::presenting_step_up(code)`, as an agent's does ([ADR 02](../../../docs/architecture/decisions/02-sms-second-factor.md)).
 
 ## Try it
 

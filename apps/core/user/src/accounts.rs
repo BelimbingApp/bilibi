@@ -337,7 +337,7 @@ impl UserService {
     /// Opens the administrative write on one account: `admin.user.update`,
     /// the account's current company writable (an archived one freezes the
     /// account in place), then the row locked and its version checked.
-    async fn open_account_write(
+    pub(crate) async fn open_account_write(
         &self,
         tx: &MutationTransaction<'_>,
         scope: &Scope,

@@ -15,9 +15,13 @@
 mod provider;
 mod qr;
 mod recovery;
+mod sign_in;
+mod sms;
 mod totp;
 
 pub use provider::Authenticator;
+pub use sign_in::{PendingSignIn, SignIn, SignInError, PENDING_MINUTES};
+pub use sms::{PhoneStatus, CODE_MINUTES as SMS_CODE_MINUTES};
 
 use crate::{password, UserService};
 use bilibi_audit::{record_action, Attribution};
@@ -41,6 +45,20 @@ const WINDOW_SECONDS: f64 = 900.0;
 const LOCK_SECONDS: f64 = 900.0;
 const MAX_RETURN: usize = 2048;
 
+/// Sign-in asks for a code when the tenant turns this on (off by default).
+pub const SIGN_IN: &str = "core.user.sign_in";
+/// An administrator changing another account's phone or resetting its 2FA.
+pub const ADMIN_RESET: &str = "core.user.two_factor.reset";
+
+bilibi_step_up::declare!(
+    "core/user",
+    bilibi_step_up::Operation::new(SIGN_IN, "Sign in").off_by_default()
+);
+bilibi_step_up::declare!(
+    "core/user",
+    bilibi_step_up::Operation::new(ADMIN_RESET, "Change a user's 2FA (phone, reset)")
+);
+
 /// Why a two-factor operation was refused; pages map each to a field error.
 #[derive(Debug, thiserror::Error)]
 pub enum TwoFactorError {
@@ -61,6 +79,18 @@ pub enum TwoFactorError {
     Impersonating,
     #[error("2FA needs BILIBI_SETTINGS_KEY, which this installation lacks.")]
     Unavailable,
+    #[error("No verified phone is set up for this account. Contact your administrator.")]
+    NoPhone,
+    #[error("must be in international format, such as +94771234567")]
+    InvalidPhone,
+    #[error("Text messages are not available on this installation.")]
+    SmsUnavailable,
+    #[error("You can request a new code in {seconds} second(s).")]
+    ResendTooSoon { seconds: i64 },
+    #[error("Too many codes were sent in the last hour. Try again later.")]
+    ResendLimit,
+    #[error("The text message could not be sent. Try again.")]
+    Delivery,
     #[error(transparent)]
     Other(#[from] Error),
 }
@@ -69,7 +99,10 @@ type Outcome<T> = std::result::Result<T, TwoFactorError>;
 /// What the settings page shows about the account.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct TwoFactorStatus {
+    /// Any method: the authenticator app or a verified phone.
     pub enabled: bool,
+    pub authenticator: bool,
+    pub sms: bool,
     pub recovery_codes_left: i64,
 }
 
@@ -95,6 +128,8 @@ enum Spend {
     /// The new set's Argon2id hashes.
     Regenerate(Vec<String>),
     Disable,
+    /// Deletes the account's phone.
+    RemovePhone,
 }
 enum Spent {
     Kept,
@@ -120,6 +155,13 @@ async fn spent_for(
             .await?;
             return Ok(Spent::Deleted);
         }
+        Spend::RemovePhone => {
+            sql.execute(
+                "DELETE FROM user_phones WHERE tenant_id=$1 AND user_id=$2",
+                &[&tenant, &user],
+            )
+            .await?;
+        }
     }
     Ok(Spent::Kept)
 }
@@ -128,6 +170,8 @@ async fn spent_for(
 enum Proof {
     Authenticator(i64),
     Recovery(i64),
+    /// A text-message code, by row.
+    Sms(i64),
 }
 
 /// A local path the browser may be sent back to after enrollment or step-up:
@@ -174,17 +218,18 @@ impl UserService {
     pub async fn two_factor_status(&self, scope: &Scope) -> Result<TwoFactorStatus> {
         let client = self.db.get().await?;
         let row = client
-            .query_opt(
-                "SELECT t.confirmed_at IS NOT NULL, (SELECT count(*) FROM user_two_factor_recovery_codes c WHERE c.tenant_id=t.tenant_id AND c.user_id=t.user_id AND c.used_at IS NULL) FROM user_two_factor t WHERE t.tenant_id=$1 AND t.user_id=$2",
+            .query_one(
+                "SELECT EXISTS(SELECT 1 FROM user_two_factor t WHERE t.tenant_id=$1 AND t.user_id=$2 AND t.confirmed_at IS NOT NULL), EXISTS(SELECT 1 FROM user_phones p WHERE p.tenant_id=$1 AND p.user_id=$2 AND p.verified_at IS NOT NULL), (SELECT count(*) FROM user_two_factor_recovery_codes c WHERE c.tenant_id=$1 AND c.user_id=$2 AND c.used_at IS NULL)",
                 &[&scope.tenant(), &scope.user()],
             )
             .await?;
-        Ok(
-            row.map_or_else(TwoFactorStatus::default, |row| TwoFactorStatus {
-                enabled: row.get(0),
-                recovery_codes_left: row.get(1),
-            }),
-        )
+        let (authenticator, sms): (bool, bool) = (row.get(0), row.get(1));
+        Ok(TwoFactorStatus {
+            enabled: authenticator || sms,
+            authenticator,
+            sms,
+            recovery_codes_left: row.get(2),
+        })
     }
 
     /// Where a step-up guard sends a browser that has not confirmed access:
@@ -204,24 +249,9 @@ impl UserService {
         if !self.settings.encryption_available() {
             return Err(TwoFactorError::Unavailable);
         }
-        self.unlocked(scope).await?;
+        let email = self.confirm_password(scope, current).await?;
         let (tenant, user) = (scope.tenant(), scope.user());
         let client = self.db.get().await.map_err(Error::from)?;
-        let row = client
-            .query_opt(
-                "SELECT password_hash,email FROM users WHERE tenant_id=$1 AND id=$2 AND status='active' AND deleted_at IS NULL",
-                &[&tenant, &user],
-            )
-            .await
-            .map_err(Error::from)?
-            .ok_or(Error::Unauthorized)?;
-        let (stored, email): (String, String) = (row.get(0), row.get(1));
-        let matched = current.len() <= password::MAX_LENGTH
-            && password::verify(current, Some(&stored)).await?;
-        if !matched {
-            self.failed(scope, "password").await?;
-            return Err(TwoFactorError::IncorrectPassword);
-        }
         let issuer = self
             .settings
             .get_global(&**client, ISSUER_KEY)
@@ -278,6 +308,30 @@ impl UserService {
             issuer,
             account: email,
         })
+    }
+
+    /// The account's password again, throttled with every other check;
+    /// returns the account's email (the authenticator's account name).
+    async fn confirm_password(&self, scope: &Scope, current: &str) -> Outcome<String> {
+        self.unlocked(scope).await?;
+        let client = self.db.get().await.map_err(Error::from)?;
+        let row = client
+            .query_opt(
+                "SELECT password_hash,email FROM users WHERE tenant_id=$1 AND id=$2 AND status='active' AND deleted_at IS NULL",
+                &[&scope.tenant(), &scope.user()],
+            )
+            .await
+            .map_err(Error::from)?
+            .ok_or(Error::Unauthorized)?;
+        drop(client);
+        let (stored, email): (String, String) = (row.get(0), row.get(1));
+        let matched = current.len() <= password::MAX_LENGTH
+            && password::verify(current, Some(&stored)).await?;
+        if !matched {
+            self.failed(scope, "password").await?;
+            return Err(TwoFactorError::IncorrectPassword);
+        }
+        Ok(email)
     }
 
     /// Step two: a current code from the app turns the pending secret on,
@@ -390,19 +444,44 @@ impl UserService {
         self.unlocked(scope).await?;
         let (tenant, user) = (scope.tenant(), scope.user());
         let client = self.db.get().await.map_err(Error::from)?;
-        let row = client
+        let app = client
             .query_opt(
                 "SELECT secret,last_step FROM user_two_factor WHERE tenant_id=$1 AND user_id=$2 AND confirmed_at IS NOT NULL",
                 &[&tenant, &user],
             )
             .await
-            .map_err(Error::from)?
-            .ok_or(TwoFactorError::NotEnabled)?;
+            .map_err(Error::from)?;
+        let phone = sms::phone(&**client, tenant, user)
+            .await?
+            .is_some_and(|phone| phone.verified);
+        if app.is_none() && !phone {
+            return Err(TwoFactorError::NotEnabled);
+        }
+        // A six-digit code is the app's, else the latest text message's.
+        let mut sms_miss = None;
         let proof = if totp::normalize(code).is_some() {
-            let secret = self.open_secret(tenant, user, &row.get(0))?;
-            totp::verify(&secret, code, now_unix(&**client).await?, row.get(1))?
-                .map(Proof::Authenticator)
-        } else if let Some(code) = recovery::normalize(code) {
+            let by_app = match &app {
+                Some(row) => {
+                    let secret = self.open_secret(tenant, user, &row.get(0))?;
+                    totp::verify(&secret, code, now_unix(&**client).await?, row.get(1))?
+                }
+                None => None,
+            };
+            match by_app {
+                Some(step) => Some(Proof::Authenticator(step)),
+                None if phone => {
+                    match sms::check(&**client, tenant, user, sms::Purpose::Check, code).await? {
+                        sms::Match::Hit(id, _) => Some(Proof::Sms(id)),
+                        sms::Match::Miss(id) => {
+                            sms_miss = Some(id);
+                            None
+                        }
+                        sms::Match::None => None,
+                    }
+                }
+                None => None,
+            }
+        } else if let (Some(code), true) = (recovery::normalize(code), app.is_some()) {
             let rows = client
                 .query(
                     "SELECT id,code_hash FROM user_two_factor_recovery_codes WHERE tenant_id=$1 AND user_id=$2 AND used_at IS NULL ORDER BY id",
@@ -427,7 +506,10 @@ impl UserService {
         match proof {
             Some(proof) => Ok(proof),
             None => {
-                self.failed(scope, "code").await?;
+                match sms_miss {
+                    Some(id) => self.failed_sms(scope, Some(id)).await?,
+                    None => self.failed(scope, "code").await?,
+                }
                 Err(TwoFactorError::InvalidCode)
             }
         }
@@ -443,16 +525,18 @@ impl UserService {
         let method = match proof {
             Proof::Authenticator(_) => "authenticator",
             Proof::Recovery(_) => "recovery_code",
+            Proof::Sms(_) => "sms",
         };
         let event = match (&spend, &proof) {
             (Spend::StepUp | Spend::Purpose { .. }, Proof::Recovery(_)) => {
                 "user.two_factor.recovery_code_used"
             }
-            (Spend::StepUp | Spend::Purpose { .. }, Proof::Authenticator(_)) => {
+            (Spend::StepUp | Spend::Purpose { .. }, Proof::Authenticator(_) | Proof::Sms(_)) => {
                 "user.two_factor.verified"
             }
             (Spend::Regenerate(_), _) => "user.two_factor.recovery_codes_regenerated",
             (Spend::Disable, _) => "user.two_factor.disabled",
+            (Spend::RemovePhone, _) => "user.two_factor.phone_removed",
         };
         let purpose = match &spend {
             Spend::Purpose { operation, channel } => json!({"for": operation, "channel": channel}),
@@ -481,6 +565,7 @@ impl UserService {
                                 &[&id, &tenant, &user],
                             )
                             .await?,
+                        Proof::Sms(id) => u64::from(sms::spend(sql, tenant, user, id).await?),
                     };
                     if spent != 1 {
                         return Err(Error::Conflict);
@@ -546,6 +631,21 @@ impl UserService {
     /// reaches the limit then locks the account's checks, audited as
     /// `user.two_factor.locked`.
     async fn failed(&self, scope: &Scope, check: &'static str) -> Result<()> {
+        self.failed_with(scope, check, None).await
+    }
+
+    /// A wrong text-message code: the account failure, plus one try off the
+    /// live code `id` (the fifth ends it), in the same write.
+    async fn failed_sms(&self, scope: &Scope, id: Option<i64>) -> Result<()> {
+        self.failed_with(scope, "sms_code", id).await
+    }
+
+    async fn failed_with(
+        &self,
+        scope: &Scope,
+        check: &'static str,
+        sms_code: Option<i64>,
+    ) -> Result<()> {
         let (tenant, user) = (scope.tenant(), scope.user());
         let mut client = self.db.get().await?;
         let mut tx = self
@@ -558,6 +658,9 @@ impl UserService {
         let failures = tx
             .mutate(move |sql| {
                 Box::pin(async move {
+                    if let Some(id) = sms_code {
+                        sms::wrong_try(sql, tenant, user, id).await?;
+                    }
                     let failures: i32 = sql
                         .query_one(
                             "INSERT INTO user_two_factor_attempts AS a(tenant_id,user_id,failures) VALUES($1,$2,1) ON CONFLICT ON CONSTRAINT user_two_factor_attempts_pkey DO UPDATE SET failures=CASE WHEN a.window_started_at<=now()-make_interval(secs => $3::double precision) THEN 1 ELSE a.failures+1 END, window_started_at=CASE WHEN a.window_started_at<=now()-make_interval(secs => $3::double precision) THEN now() ELSE a.window_started_at END RETURNING failures",

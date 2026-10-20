@@ -230,3 +230,15 @@ delivery whose audit row cannot be written is refused.
 # Release transport (`src/transport.rs`)
 
 `GET /transport/releases` lists the releases kept on this instance and `GET /transport/releases/{n}` streams one release file, for a paired instance that installs from this one. GET only: the target pulls, so nothing is ever pushed to an instance. The request carries the pairing key in `X-Bilibi-Pairing-Key` and nothing else (no cookie, CSRF or Origin); `base/software` decides admission and compares the key in constant time. The host throttles per sender, answers with fixed JSON errors and records one system incoming exchange per request, never the key. The contract, the checks and the pairing key: `apps/base/software/README.md`, "Release transport".
+
+## Sign-in's second step and the SMS inbox
+
+Host routes in `src/auth.rs` (Core User owns the rules, [ADR 02](../../docs/architecture/decisions/02-sms-second-factor.md)):
+
+| Route | What it does |
+|---|---|
+| `POST /login` | A right password opens a session, or, when the tenant turns step-up `core.user.sign_in` on, sets the `bilibi_pending_sign_in` cookie (`Path=/login`, 10 minutes) and redirects to `/login/verify` |
+| `GET`/`POST /login/verify` | The code card in the sign-in layout: masked phone or app prompt, `CodeInput`, recovery code for an app account (`?recovery=1`). An accepted code opens the session |
+| `POST /login/verify/resend` | Another text message, within the 60-second and 5-per-hour limits; the card states the wait |
+| `GET /login/verify/cancel` | "Back to sign in": drops the pending sign-in |
+| `GET /dev/sms-inbox` | The SMS simulator's messages. Routed only when `BILIBI_ENV` is development or staging |

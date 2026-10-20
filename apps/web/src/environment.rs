@@ -38,4 +38,9 @@ impl Environment {
     pub fn requires_step_up(self) -> bool {
         self != Self::Development
     }
+    /// The SMS simulator (and its `/dev/sms-inbox`) runs in development and
+    /// staging only; production has no SMS until a real driver is added.
+    pub fn sms_simulator(self) -> bool {
+        self != Self::Production
+    }
 }

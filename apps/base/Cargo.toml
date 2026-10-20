@@ -36,6 +36,7 @@ bilibi-security = { path = "security" }
 bilibi-session = { path = "session" }
 bilibi-settings = { path = "settings" }
 bilibi-settings-editor = { path = "settings_editor" }
+bilibi-sms = { path = "sms" }
 bilibi-software = { path = "software" }
 bilibi-step-up = { path = "step_up" }
 bilibi-system = { path = "system" }

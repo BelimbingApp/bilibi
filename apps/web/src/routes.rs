@@ -34,9 +34,13 @@ pub struct BoundDownload {
 }
 
 /// The host paths no discovered route, download or moved path may overlap.
-const HOST_PATHS: [&str; 17] = [
+const HOST_PATHS: [&str; 21] = [
     "/",
     "/login",
+    "/login/verify",
+    "/login/verify/resend",
+    "/login/verify/cancel",
+    "/dev/sms-inbox",
     "/logout",
     "/preferences",
     "/forgot-password",

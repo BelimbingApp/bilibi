@@ -5,7 +5,7 @@
 //! after the request that produced them and are dropped with it, so a reload
 //! never shows them again. Typed values are never echoed back.
 use crate::{
-    two_factor::{Enrollment, TwoFactorError, TwoFactorStatus},
+    two_factor::{Enrollment, PhoneStatus, TwoFactorError, TwoFactorStatus},
     UserService,
 };
 use askama::Template;
@@ -13,7 +13,8 @@ use bilibi_database::Error;
 use bilibi_security::Scope;
 use bilibi_ui::{
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
-    Attrs, Button, CodeInput, Field, FlashGroup, FlashMap, Header, Html, SecretInput, StatusKind,
+    Attrs, Button, CodeInput, Field, FlashGroup, FlashMap, Header, Html, InputKind, SecretInput,
+    StatusKind,
 };
 use std::{collections::HashMap, sync::Arc};
 
@@ -111,11 +112,38 @@ pub struct TwoFactorPage {
     /// shows under that form only.
     last_on: &'static str,
     recovery: bool,
+    phone: Option<PhoneStatus>,
+    sms_available: bool,
+    /// The masked number a phone-verification code was just sent to.
+    sms_verifying: Option<String>,
+    /// The number typed into the add form, kept for another attempt.
+    sms_number: String,
+    sms_errors: Vec<String>,
+    /// Which SMS form the last error belongs to.
+    sms_last: &'static str,
+    sms_notice: String,
 }
 
 #[derive(serde::Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case", deny_unknown_fields)]
 enum TwoFactorEvent {
+    SmsStart {
+        #[serde(rename = "sms[password]", default)]
+        password: String,
+        #[serde(rename = "sms[phone]", default)]
+        phone: String,
+    },
+    SmsConfirm {
+        #[serde(rename = "sms[code]", default)]
+        code: String,
+    },
+    SmsCancel {},
+    /// A code to the verified number, to remove it with.
+    SmsSend {},
+    SmsRemove {
+        #[serde(rename = "sms[code]", default)]
+        code: String,
+    },
     Start {
         #[serde(rename = "two_factor[password]", default)]
         password: String,
@@ -165,6 +193,14 @@ struct TwoFactorView<'a> {
     recovery_left: i64,
     regenerate_code: Html,
     disable_code: Html,
+    sms_stage: &'static str,
+    sms_masked: &'a str,
+    sms_admin_set: bool,
+    sms_notice: &'a str,
+    sms_start: Html,
+    sms_code: Html,
+    sms_remove_code: Html,
+    sms_minutes: i64,
 }
 
 impl TwoFactorPage {
@@ -174,9 +210,11 @@ impl TwoFactorPage {
         query: &HashMap<String, String>,
     ) -> Result<Self, Error> {
         let status = users.two_factor_status(scope).await?;
+        let phone = users.phone_status(scope).await?;
+        let sms_available = users.sms_available();
         Ok(Self {
             users,
-            stage: if status.enabled {
+            stage: if status.authenticator {
                 Stage::On
             } else {
                 Stage::Off
@@ -192,13 +230,25 @@ impl TwoFactorPage {
             success: "",
             last_on: "",
             recovery: false,
+            sms_number: phone
+                .as_ref()
+                .filter(|phone| !phone.verified)
+                .map(|phone| phone.number.clone())
+                .unwrap_or_default(),
+            phone,
+            sms_available,
+            sms_verifying: None,
+            sms_errors: Vec::new(),
+            sms_last: "",
+            sms_notice: String::new(),
         })
     }
 
     async fn reload(&mut self, scope: &Scope) -> Result<(), Error> {
         self.status = self.users.two_factor_status(scope).await?;
+        self.phone = self.users.phone_status(scope).await?;
         self.recovery = false;
-        self.stage = if self.status.enabled {
+        self.stage = if self.status.authenticator {
             Stage::On
         } else {
             Stage::Off
@@ -214,8 +264,66 @@ impl TwoFactorPage {
         event: TwoFactorEvent,
     ) -> Result<Option<String>, Error> {
         self.errors.clear();
+        self.sms_errors.clear();
+        self.sms_notice.clear();
         self.success = "";
         match event {
+            TwoFactorEvent::SmsStart { password, phone } => {
+                self.sms_last = "start";
+                self.sms_number = phone.trim().chars().take(32).collect();
+                if password.is_empty() || phone.trim().is_empty() {
+                    self.sms_errors.push(BLANK.into());
+                    return Ok(None);
+                }
+                match self.users.begin_phone(scope, &password, &phone).await {
+                    Ok(masked) => self.sms_verifying = Some(masked),
+                    Err(error) => self.sms_errors.push(field_error(error)?),
+                }
+            }
+            TwoFactorEvent::SmsConfirm { code } => {
+                self.sms_last = "confirm";
+                if self.sms_verifying.is_none() {
+                    return Err(Error::Invalid);
+                }
+                if code.trim().is_empty() {
+                    self.sms_errors.push(BLANK.into());
+                    return Ok(None);
+                }
+                match self.users.confirm_phone(scope, &code).await {
+                    Ok(()) => {
+                        self.sms_verifying = None;
+                        self.sms_number.clear();
+                        self.reload(scope).await?;
+                        self.success = "Phone verified. Codes can now come by text message.";
+                    }
+                    Err(error) => self.sms_errors.push(field_error(error)?),
+                }
+            }
+            TwoFactorEvent::SmsCancel {} => {
+                self.sms_verifying = None;
+                self.reload(scope).await?;
+            }
+            TwoFactorEvent::SmsSend {} => {
+                self.sms_last = "remove";
+                match self.users.send_check_code(scope).await {
+                    Ok(masked) => self.sms_notice = format!("A code was sent to {masked}."),
+                    Err(error) => self.sms_errors.push(field_error(error)?),
+                }
+            }
+            TwoFactorEvent::SmsRemove { code } => {
+                self.sms_last = "remove";
+                if code.trim().is_empty() {
+                    self.sms_errors.push(BLANK.into());
+                    return Ok(None);
+                }
+                match self.users.remove_phone(scope, &code).await {
+                    Ok(()) => {
+                        self.reload(scope).await?;
+                        self.success = "Phone removed.";
+                    }
+                    Err(error) => self.sms_errors.push(field_error(error)?),
+                }
+            }
             TwoFactorEvent::UseRecovery {} => self.recovery = true,
             TwoFactorEvent::UseAuthenticator {} => self.recovery = false,
             TwoFactorEvent::Start { password } => {
@@ -332,6 +440,61 @@ impl TwoFactorPage {
                 ..Button::default()
             }))?
         };
+        let sms_errors_for = |which: &str| {
+            if self.sms_last == which {
+                self.sms_errors.clone()
+            } else {
+                Vec::new()
+            }
+        };
+        let phone_on = self.phone.as_ref().filter(|phone| phone.verified);
+        let sms_stage = if !self.sms_available && phone_on.is_none() {
+            "unavailable"
+        } else if self.sms_verifying.is_some() {
+            "verify"
+        } else if phone_on.is_some() {
+            "on"
+        } else {
+            "off"
+        };
+        let mut sms_start = fragment(Html::render(
+            &SecretInput::in_form("sms", "password", "password")
+                .id("sms_password")
+                .label("Confirm your password")
+                .attrs(Attrs {
+                    autocomplete: Some("current-password".into()),
+                    ..Attrs::default()
+                }),
+        ))?;
+        sms_start.push(&fragment(Html::render(
+            &Field::in_form("sms", "phone")
+                .id("sms_phone")
+                .kind(InputKind::Tel)
+                .label("Mobile number")
+                .hint("International format with country code, such as +94771234567")
+                .value(&self.sms_number)
+                .autocomplete("tel")
+                .attr("maxlength", "32")
+                .errors(sms_errors_for("start")),
+        ))?);
+        let sms_code = fragment(Html::render(
+            &CodeInput::new("sms_code", "sms[code]", "Code from the text message", 6)
+                .numeric()
+                .errors(sms_errors_for("confirm")),
+        ))?;
+        let mut sms_remove_code = fragment(Html::render(
+            &CodeInput::new("sms_remove_code", "sms[code]", "Authentication code", 6)
+                .numeric()
+                .errors(sms_errors_for("remove")),
+        ))?;
+        sms_remove_code.push(&fragment(Html::render(&Button {
+            id: "two-factor-sms-send",
+            button_type: "button",
+            event: "sms-send",
+            working: "Sending…",
+            body: Html::text("Text me a code"),
+            ..Button::default()
+        }))?);
         let view = TwoFactorView {
             flash: fragment(Html::render(&FlashGroup {
                 id: "flash-group",
@@ -348,7 +511,8 @@ impl TwoFactorPage {
             }))?,
             current: bilibi_ui::SettingsTab::TwoFactor,
             heading: "2FA",
-            subheading: "Confirm protected actions with a code from an authenticator app.",
+            subheading:
+                "Confirm protected actions with a code from an authenticator app or a text message.",
             stage,
             notice: &self.notice,
             password,
@@ -371,6 +535,18 @@ impl TwoFactorPage {
                 Some(self.recovery),
                 &self.on_errors("disable"),
             )?,
+            sms_stage,
+            sms_masked: match (&self.sms_verifying, phone_on, &self.phone) {
+                (Some(masked), _, _) => masked,
+                (None, Some(phone), _) | (None, None, Some(phone)) => &phone.masked,
+                _ => "",
+            },
+            sms_admin_set: self.phone.as_ref().is_some_and(|phone| !phone.verified),
+            sms_notice: &self.sms_notice,
+            sms_start,
+            sms_code,
+            sms_remove_code,
+            sms_minutes: crate::SMS_CODE_MINUTES,
         };
         view.render().map_err(|_| Error::Internal)
     }
@@ -431,6 +607,10 @@ impl LiveState<Scope, Error> for TwoFactorPage {
 pub struct ConfirmPage {
     users: Arc<UserService>,
     enabled: bool,
+    authenticator: bool,
+    /// The account can be sent a code by text message.
+    sms: bool,
+    sms_notice: String,
     recovery: bool,
     minutes: i64,
     hours: i64,
@@ -444,6 +624,7 @@ pub struct ConfirmPage {
 enum ConfirmEvent {
     UseRecovery {},
     UseAuthenticator {},
+    SendSms {},
     Verify {
         #[serde(rename = "two_factor[code]", default)]
         code: String,
@@ -460,6 +641,7 @@ struct ConfirmView<'a> {
     hours: i64,
     code: Html,
     setup_href: &'a str,
+    sms_notice: &'a str,
 }
 
 impl ConfirmPage {
@@ -468,11 +650,14 @@ impl ConfirmPage {
         scope: &Scope,
         query: &HashMap<String, String>,
     ) -> Result<Self, Error> {
-        let enabled = users.two_factor_status(scope).await?.enabled;
+        let status = users.two_factor_status(scope).await?;
         let window = users.step_up.window(scope).await?;
         Ok(Self {
             users,
-            enabled,
+            enabled: status.enabled,
+            authenticator: status.authenticator,
+            sms: status.sms,
+            sms_notice: String::new(),
             recovery: false,
             minutes: window.window_minutes,
             hours: window.cap_hours,
@@ -484,6 +669,12 @@ impl ConfirmPage {
                 String::new()
             },
         })
+    }
+
+    /// Recovery codes come with the authenticator app; an account with only
+    /// a phone has none to offer.
+    fn users_have_recovery(&self) -> bool {
+        self.enabled && !(self.sms && !self.authenticator)
     }
 
     fn render(&self) -> Result<String, Error> {
@@ -506,8 +697,26 @@ impl ConfirmPage {
             enabled: self.enabled,
             minutes: self.minutes,
             hours: self.hours,
-            code: code_field("two_factor_code", Some(self.recovery), &self.errors)?,
+            code: {
+                let mut code = code_field(
+                    "two_factor_code",
+                    self.users_have_recovery().then_some(self.recovery),
+                    &self.errors,
+                )?;
+                if self.sms && !self.recovery {
+                    code.push(&fragment(Html::render(&Button {
+                        id: "confirm-access-send-sms",
+                        button_type: "button",
+                        event: "send-sms",
+                        working: "Sending…",
+                        body: Html::text("Text me a code"),
+                        ..Button::default()
+                    }))?);
+                }
+                code
+            },
             setup_href: &setup_href,
+            sms_notice: &self.sms_notice,
         }
         .render()
         .map_err(|_| Error::Internal)
@@ -524,7 +733,16 @@ impl LiveState<Scope, Error> for ConfirmPage {
                     let event = serde_json::from_value::<ConfirmEvent>(value.clone())
                         .map_err(|_| Error::Invalid)?;
                     self.errors.clear();
+                    self.sms_notice.clear();
                     match event {
+                        ConfirmEvent::SendSms {} => {
+                            match self.users.send_check_code(request.scope).await {
+                                Ok(masked) => {
+                                    self.sms_notice = format!("A code was sent to {masked}.")
+                                }
+                                Err(error) => self.errors.push(field_error(error)?),
+                            }
+                        }
                         ConfirmEvent::UseRecovery {} => self.recovery = true,
                         ConfirmEvent::UseAuthenticator {} => self.recovery = false,
                         ConfirmEvent::Verify { code } => {

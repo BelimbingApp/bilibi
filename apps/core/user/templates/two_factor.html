@@ -1,8 +1,11 @@
 {#- The account's authenticator page (src/two_factor_ui.rs) inside the
     settings shell. One stage at a time: off (password to begin), setup (QR
     code, typed key, first code), codes (the recovery set, shown once) and
-    on (regenerate codes, turn off). Every form raises its live event with
-    its field values; no value is echoed back. -#}
+    on (regenerate codes, turn off). Below it, the text-message (SMS)
+    method: off (password and number), verify (the code sent to the new
+    number), on (masked number, remove with a code) or unavailable. Every
+    form raises its live event with its field values; no value is echoed
+    back. -#}
 {% import "settings.html" as settings %}
 {% import "components.html" as ui %}
 {% import "feedback.html" as fb %}
@@ -11,6 +14,7 @@
 {% call settings::layout(header=header, current=current, heading=heading, subheading=subheading) %}
 <div id="two-factor" class="space-y-4">
 {%- if !notice.is_empty() %}{% call fb::alert(kind=bilibi_ui::StatusKind::Warning, id="two-factor-notice") %}{{ notice }}{% endcall %}{% endif -%}
+<h3 id="two-factor-app-heading" class="text-sm font-semibold text-ink">Authenticator app</h3>
 {%- if stage == "off" %}
 <div id="two-factor-off" class="space-y-4 rounded-xl border border-line bg-surface p-6"><div class="flex items-center gap-2"><span class="text-sm font-medium text-ink">Status</span>{% call ui::badge(kind=bilibi_ui::BadgeKind::Neutral, dot=true) %}Off{% endcall %}</div><p class="text-sm text-muted">After setup, protected actions ask for a 6-digit code from an authenticator app on your phone, such as Google Authenticator or Microsoft Authenticator.</p>
 <form id="two-factor-start-form" data-event="start" class="space-y-4">{{ password }}<div class="flex justify-end">{% call ui::button(variant=bilibi_ui::ButtonVariant::Primary, id="two-factor-start", button_type="submit", working="Checking…") %}Set up authenticator{% endcall %}</div></form></div>
@@ -29,6 +33,20 @@
 <form id="two-factor-regenerate-form" data-event="regenerate" class="space-y-4 rounded-xl border border-line bg-surface p-6"><h3 class="text-sm font-semibold text-ink">New recovery codes</h3><p class="text-sm text-muted">Replaces every recovery code; the old ones stop working at once.</p>{{ regenerate_code }}<div class="flex justify-end">{% call ui::button(id="two-factor-regenerate", button_type="submit", working="Generating…") %}Generate new codes{% endcall %}</div></form>
 <form id="two-factor-disable-form" data-event="disable" class="space-y-4 rounded-xl border border-line bg-surface p-6"><h3 class="text-sm font-semibold text-ink">Turn off 2FA</h3><p class="text-sm text-muted">Deletes the authenticator key and every recovery code. Sensitive pages then ask you to set it up again.</p>{{ disable_code }}<div class="flex justify-end">{% call ui::button(variant=bilibi_ui::ButtonVariant::Danger, id="two-factor-disable", button_type="submit", working="Turning off…") %}Turn off{% endcall %}</div></form>
 {%- endif %}
+<h3 id="two-factor-sms-heading" class="pt-2 text-sm font-semibold text-ink">Text message (SMS)</h3>
+<section id="two-factor-sms" aria-labelledby="two-factor-sms-heading" class="space-y-4 rounded-xl border border-line bg-surface p-6">
+<div class="flex items-center gap-2"><span class="text-sm font-medium text-ink">Status</span>{% if sms_stage == "on" %}{% call ui::badge(kind=bilibi_ui::BadgeKind::Success, dot=true) %}On{% endcall %}{% else %}{% call ui::badge(kind=bilibi_ui::BadgeKind::Neutral, dot=true) %}Off{% endcall %}{% endif %}</div>
+{%- if !sms_notice.is_empty() %}{% call fb::alert(kind=bilibi_ui::StatusKind::Info, id="two-factor-sms-notice") %}{{ sms_notice }}{% endcall %}{% endif -%}
+{%- if sms_stage == "unavailable" %}
+<p id="two-factor-sms-unavailable" class="text-sm text-muted">Text messages are not available on this installation.</p>
+{%- elif sms_stage == "verify" %}
+<form id="two-factor-sms-confirm-form" data-event="sms-confirm" class="space-y-4"><p class="text-sm text-muted">We sent a 6-digit code to <span class="font-medium text-ink">{{ sms_masked }}</span>. It expires in {{ sms_minutes }} minutes.</p>{{ sms_code }}<div class="flex justify-end gap-2">{% call ui::button(id="two-factor-sms-cancel", button_type="button", event="sms-cancel") %}Cancel{% endcall %}{% call ui::button(variant=bilibi_ui::ButtonVariant::Primary, id="two-factor-sms-confirm", button_type="submit", working="Verifying…") %}Verify phone{% endcall %}</div></form>
+{%- elif sms_stage == "on" %}
+<form id="two-factor-sms-remove-form" data-event="sms-remove" class="space-y-4"><p class="text-sm text-muted">Codes are sent to <span class="font-medium text-ink">{{ sms_masked }}</span>. To remove this phone, enter a current code.</p>{{ sms_remove_code }}<div class="flex justify-end">{% call ui::button(variant=bilibi_ui::ButtonVariant::Danger, id="two-factor-sms-remove", button_type="submit", working="Removing…") %}Remove phone{% endcall %}</div></form>
+{%- else %}
+<form id="two-factor-sms-start-form" data-event="sms-start" class="space-y-4"><p class="text-sm text-muted">Get a 6-digit code by text message instead of, or as well as, the app.{% if sms_admin_set %} Your administrator added <span class="font-medium text-ink">{{ sms_masked }}</span>; confirm it to turn this on.{% endif %}</p>{{ sms_start }}<div class="flex justify-end">{% call ui::button(variant=bilibi_ui::ButtonVariant::Primary, id="two-factor-sms-start", button_type="submit", working="Sending…") %}Send code{% endcall %}</div></form>
+{%- endif %}
+</section>
 </div>
 {% endcall %}
 {% endcall %}

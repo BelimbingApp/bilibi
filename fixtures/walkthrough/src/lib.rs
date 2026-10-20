@@ -14,6 +14,13 @@
 //! contractor are Persons affiliated with Companies 001 and 002, and the AI
 //! Agent account is an agent Person; the others stay unlinked.
 //!
+//! Test phones for SMS 2FA, from Ofcom's range reserved for fiction (+44 7700
+//! 900000-900999), so no real person is ever sent a code: the manager
+//! (+447700900001) and the other tenant's manager (+447700900005) are
+//! verified, so their codes reach the SMS simulator's `/dev/sms-inbox`; the
+//! viewer's (+447700900002) was set by an administrator and still waits for
+//! its holder to confirm it.
+//!
 //! `install` writes SQL only, so any example can link it. The fixture's
 //! capabilities and roles are not product vocabulary; an example that checks
 //! them declares them itself, in its own crate, with
@@ -77,6 +84,10 @@ pub async fn install(db: &Db) -> Result<()> {
         )
         .await?;
     }
+    tx.batch_execute(
+        "INSERT INTO user_phones(tenant_id,user_id,phone_number,verified_at) VALUES(1,1,'+447700900001',now()),(1,2,'+447700900002',NULL),(2,5,'+447700900005',now()) ON CONFLICT DO NOTHING",
+    )
+    .await?;
     tx.batch_execute(include_str!("operator.sql")).await?;
     tx.commit().await?;
     Ok(())

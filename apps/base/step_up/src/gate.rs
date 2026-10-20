@@ -96,6 +96,13 @@ pub trait Provider: Send + Sync {
     ) -> ProofFuture<'a, Spent>;
     /// Where a browser checks in (or enrolls first) and returns to `back`.
     fn prompt<'a>(&'a self, scope: &'a Scope, back: &'a str) -> ProofFuture<'a, String>;
+    /// A code is now owed for `purpose` by a caller that cannot be sent to
+    /// [`Provider::prompt`] (an agent). A method that delivers codes (a text
+    /// message) sends one; a method the holder carries (an authenticator
+    /// app) has nothing to do. Delivery is best effort: the refusal stands.
+    fn challenge<'a>(&'a self, _scope: &'a Scope, _purpose: Purpose<'a>) -> ProofFuture<'a, ()> {
+        Box::pin(async { Ok(()) })
+    }
 }
 
 /// One declared operation with its owner module.
@@ -134,6 +141,15 @@ pub struct StepUp {
     /// Off only in development (`BILIBI_ENV`), set once by the host.
     enforced: AtomicBool,
 }
+
+/// Refusals an agent answers by asking its human for a code: the provider is
+/// then asked to deliver one ([`Provider::challenge`]).
+const OWED: [&str; 4] = [
+    "code_required",
+    "every_time",
+    "window_expired",
+    "window_capped",
+];
 
 enum Outcome {
     Passed(&'static str),
@@ -220,12 +236,46 @@ impl StepUp {
         };
         let outcome = self.check(scope, declared, target, mode, true).await?;
         self.audit(scope, declared, target, mode, &outcome).await?;
+        if let (Some(_), Outcome::Refused(reason)) = (scope.agent(), &outcome) {
+            if OWED.contains(reason) {
+                self.challenge(scope, declared, target).await;
+            }
+        }
         match outcome {
             Outcome::Passed(_) => Ok(()),
             Outcome::Refused(reason) | Outcome::Failed(reason) => Err(Error::StepUpRequired {
                 operation: declared.operation.key,
                 reason,
             }),
+        }
+    }
+
+    /// Whether `key` asks for a check at all for this scope's tenant: on in
+    /// its policy (and enforced here), or declared `always`. Reads only. For
+    /// an owner that must decide before any session exists (sign-in), which
+    /// then presents the holder's code with `Scope::presenting_step_up`.
+    pub async fn applies(&self, scope: &Scope, key: &str) -> Result<bool> {
+        let declared = self.declared(key).ok_or(Error::Internal)?;
+        if declared.operation.always {
+            return Ok(true);
+        }
+        Ok(self.enforced() && self.mode(scope, declared).await? != Mode::Off)
+    }
+
+    async fn challenge(&self, scope: &Scope, declared: &Declared, target: &str) {
+        let Some(provider) = self.provider.get() else {
+            return;
+        };
+        let purpose = Purpose {
+            operation: declared.operation.key,
+            target,
+            channel: scope.channel(),
+        };
+        if let Err(error) = provider.challenge(scope, purpose).await {
+            eprintln!(
+                "warning: step-up code delivery for {} failed: {error:?}",
+                declared.operation.key
+            );
         }
     }
 

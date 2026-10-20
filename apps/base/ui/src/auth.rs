@@ -1,11 +1,12 @@
 //! The credential pages: the centered layout (Bilimbi `Layouts.auth`) and the
 //! sign-in, forgotten-password and reset cards (`LoginLive`,
-//! `ForgotPasswordLive`, `ResetPasswordLive`) as typed templates. The host
+//! `ForgotPasswordLive`, `ResetPasswordLive`) as typed templates, plus the
+//! sign-in's 2FA card and the development SMS inbox (no Bilimbi counterpart). The host
 //! owns the routes, the validation and the credential services; these models
 //! own the DOM, the ids and the copy, so a field error lands on the element
 //! Bilimbi puts it on. Field values are the submitted text kept for another
 //! attempt; a password is never echoed back.
-use crate::{Attrs, Field, FlashMap, Html, InputKind, SecretInput};
+use crate::{Attrs, CodeInput, Field, FlashMap, Html, InputKind, SecretInput};
 use askama::Template;
 
 /// The centered credential layout around one card body, with the page-level
@@ -224,4 +225,97 @@ fn new_password() -> Attrs {
         required: true,
         ..Attrs::default()
     }
+}
+
+/// What the sign-in's 2FA card shows for one request.
+#[derive(Clone, Debug, Default)]
+pub struct VerifyForm {
+    /// The masked number a code goes to, when the account has a phone.
+    pub phone: String,
+    /// The account has the authenticator app.
+    pub authenticator: bool,
+    /// A recovery code instead of a six-digit code.
+    pub recovery: bool,
+    pub code_errors: Vec<String>,
+    /// An announced refusal above the form (expired, locked, not set up).
+    pub form_error: String,
+    /// A completed resend.
+    pub notice: String,
+    /// Seconds until another text message may be sent.
+    pub wait_seconds: i64,
+}
+
+impl VerifyForm {
+    pub fn enrolled(&self) -> bool {
+        self.authenticator || !self.phone.is_empty()
+    }
+}
+
+/// The sign-in's second step (GitHub's two-factor page): the code field,
+/// a resend for text messages and the way back. The page posts to
+/// `/login/verify`; the browser holds the pending sign-in, not a session.
+#[derive(Template)]
+#[template(path = "login_verify.html")]
+pub struct VerifyPage {
+    pub phone: String,
+    pub authenticator: bool,
+    pub enrolled: bool,
+    pub recovery: bool,
+    pub form_error: String,
+    pub notice: String,
+    pub wait_seconds: i64,
+    pub code: Html,
+}
+
+impl VerifyPage {
+    pub fn new(form: &VerifyForm) -> askama::Result<Self> {
+        let code = if form.recovery {
+            Html::render(
+                &Field::in_form("verify", "code")
+                    .id("verify-code-recovery")
+                    .label("Recovery code")
+                    .hint("One of the recovery codes you saved during setup")
+                    .autocomplete("off")
+                    .attr("spellcheck", "false")
+                    .attr("autocapitalize", "off")
+                    .attr("maxlength", "32")
+                    .errors(form.code_errors.clone()),
+            )?
+        } else {
+            Html::render(
+                &CodeInput::new("verify-code", "verify[code]", "Verification code", 6)
+                    .numeric()
+                    .errors(form.code_errors.clone()),
+            )?
+        };
+        Ok(Self {
+            phone: form.phone.clone(),
+            authenticator: form.authenticator,
+            enrolled: form.enrolled(),
+            recovery: form.recovery,
+            form_error: form.form_error.clone(),
+            notice: form.notice.clone(),
+            wait_seconds: form.wait_seconds,
+            code,
+        })
+    }
+}
+
+/// One simulated text message as the dev inbox lists it.
+#[derive(Clone, Debug)]
+pub struct SmsMessage {
+    pub to: String,
+    pub text: String,
+    /// The six-digit code in the text, if any, shown large.
+    pub code: String,
+    /// "12 s ago", "3 min ago".
+    pub age: String,
+}
+
+/// The development SMS inbox: what the simulator "sent", newest first, so
+/// a tester signs in without a phone. Never served in production.
+#[derive(Template)]
+#[template(path = "sms_inbox.html")]
+pub struct SmsInboxPage {
+    pub messages: Vec<SmsMessage>,
 }

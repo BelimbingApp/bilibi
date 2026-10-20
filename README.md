@@ -68,6 +68,7 @@ The launcher starts a private database, builds, migrates, seeds and rebuilds on 
 | `MAIL_HOST` | SMTP relay. Unset: write mail to `.local/mailbox/` |
 | `BILIBI_USER_SIGNING_KEY` | 64 hex characters, for email verification links |
 | `BILIBI_SETTINGS_KEY` | 64 hex characters. Encrypts secret settings and authenticator keys. Two-factor setup refuses without it |
+| `BILIBI_SMS_DIR` | Where the SMS simulator writes messages (development and staging only). Default `.local/sms-outbox/`; read them at `/dev/sms-inbox` |
 | `BILIBI_ENV` | `development`, `staging` or `production`. Unset means `production`. Any other value refuses to boot |
 
 Every page, consent page and agent answer says which Bilibi it is, so nobody mistakes a test copy for the live system. Every instance but production shows a badge in the top bar (a debug build leaves it to the status bar's `dev` marker) and on the sign-in page; reviews and agent plans name every instance, production included. The name and colour are the Instance settings (`instance.label`, `instance.colour`), read through `bilibi_base::system::Instance::resolve` ([Base System](apps/base/system/README.md)).
@@ -80,7 +81,8 @@ Every page, consent page and agent answer says which Bilibi it is, so nobody mis
 | `staging`, `production`, unset | Ask as each tenant's policy says: a check within a sliding 30-minute window, capped at 6 hours (tenant settings), or every time |
 
 - Set `BILIBI_ENV=development` only on a developer machine. A missing value never weakens a guard.
-- Each account sets up its authenticator at `/settings/two-factor`. Tenants choose what asks for it at `/authz/step-up`. See [Base Step-up](apps/base/step_up/README.md).
+- Each account sets up its authenticator app or a phone for text-message codes at `/settings/two-factor`. Tenants choose what asks for it at `/authz/step-up`, sign-in included. See [Base Step-up](apps/base/step_up/README.md) and [Base SMS](apps/base/sms/README.md).
+- Text messages: development and staging use the simulator (`/dev/sms-inbox`); production has no SMS driver yet, so SMS is refused there.
 
 Terminate TLS at a reverse proxy, and keep the database on a private network: Bilibi connects to PostgreSQL without TLS.
 

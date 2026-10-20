@@ -1,0 +1,15 @@
+{#- The development SMS inbox (src/auth.rs `SmsInboxPage`; no Bilimbi
+    counterpart): every message the simulator "sent", newest first, as a
+    phone shows them, with the code large so a tester can type it. Served
+    only where BILIBI_ENV is development or staging. -#}
+{% import "components.html" as ui %}
+{% import "feedback.html" as feedback %}
+<div class="flex flex-col gap-5">
+<div><h1 class="text-lg font-semibold tracking-tight text-ink-strong">SMS inbox</h1><p class="mt-1 text-sm text-ink-muted">Text messages the simulator sent. For testing only; this page does not exist in production.</p></div>
+<div class="flex justify-end">{% call ui::button(id="sms-inbox-refresh", href="/dev/sms-inbox") %}Refresh{% endcall %}</div>
+{% if messages.is_empty() %}<div id="sms-inbox-empty">{% call feedback::alert(kind=bilibi_ui::StatusKind::Info) %}No messages yet. Ask for a code, then refresh.{% endcall %}</div>{% endif %}
+<ol id="sms-inbox-messages" class="flex flex-col gap-3">
+{% for message in messages %}<li id="sms-message-{{ loop.index }}" class="rounded-2xl border border-line bg-surface-muted px-4 py-3"><div class="flex items-center justify-between gap-3 text-xs text-ink-muted"><span class="font-mono">{{ message.to }}</span><span>{{ message.age }}</span></div>{% if !message.code.is_empty() %}<p class="mt-2 font-mono text-2xl font-semibold tracking-widest text-ink-strong" data-sms-code>{{ message.code }}</p>{% endif %}<p class="mt-1 text-sm text-ink">{{ message.text }}</p></li>{% endfor %}
+</ol>
+{% call ui::back_link(href="/", id="sms-inbox-back", title="Back to sign in", class="justify-center") %}{% endcall %}
+</div>

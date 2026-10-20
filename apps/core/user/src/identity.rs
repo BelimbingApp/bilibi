@@ -192,6 +192,17 @@ pub async fn login(
     email: &str,
     password: &str,
 ) -> std::result::Result<Login, CredentialError> {
+    let (tenant, user) = verify_credentials(db, email, password).await?;
+    open_session(db, tenant, user).await
+}
+
+/// The credential half of [`login`]: the (tenant, account) a right password
+/// on a live account names, with no session opened.
+pub(crate) async fn verify_credentials(
+    db: &Db,
+    email: &str,
+    password: &str,
+) -> std::result::Result<(i64, i64), CredentialError> {
     let email = crate::reset::normalize_email(email).map_err(|_| CredentialError::Rejected)?;
     if password.len() > password::MAX_LENGTH {
         return Err(CredentialError::Rejected);
@@ -221,6 +232,16 @@ pub async fn login(
             return Err(CredentialError::WorkspaceUnavailable)
         }
     }
+    Ok((tenant, user))
+}
+
+/// A new browser session for an account whose credentials were just proved.
+pub(crate) async fn open_session(
+    db: &Db,
+    tenant: i64,
+    user: i64,
+) -> std::result::Result<Login, CredentialError> {
+    let client = db.get().await.map_err(Error::from)?;
     let result = Login {
         token: uuid::Uuid::new_v4().simple().to_string(),
         csrf: uuid::Uuid::new_v4().simple().to_string(),

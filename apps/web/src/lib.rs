@@ -45,6 +45,8 @@ pub struct App {
     pub environment: Environment,
     settings: Arc<bilibi_base::settings::Settings>,
     pub step_up: Arc<bilibi_base::step_up::StepUp>,
+    /// Text messages; the simulator is on outside production only.
+    pub sms: Arc<bilibi_base::sms::Gateway>,
     /// The host the server listens on, for the development status bar only;
     /// the serving command sets it from `BIND_ADDR`.
     pub listen_address: Option<Arc<str>>,
@@ -86,6 +88,9 @@ impl App {
         let step_up: Arc<bilibi_base::step_up::StepUp> =
             services.get(bilibi_base::step_up::SERVICE)?;
         step_up.set_enforced(environment.requires_step_up());
+        let sms: Arc<bilibi_base::sms::Gateway> = services.get(bilibi_base::sms::SERVICE)?;
+        sms.enable_simulator(environment.sms_simulator());
+        eprintln!("sms: {}", sms.describe());
         let settings = services.get("base/settings.store")?;
         let renderer = services.get("base/ui.renderer")?;
         let menu = bilibi_base::menu::Menu::from_catalog(services.catalog()?)?;
@@ -110,6 +115,7 @@ impl App {
             environment,
             settings,
             step_up,
+            sms,
             listen_address: None,
             company,
             user,
@@ -290,13 +296,21 @@ pub async fn media_cleanup(db: &Db, tenant: i64, hours: u64) -> Result<()> {
 
 pub fn router(app: App) -> Router {
     let perf = app.perf.clone();
-    let pages = routes::install(Router::new(), &app.routes, &app.downloads);
+    let mut pages = routes::install(Router::new(), &app.routes, &app.downloads);
+    // The SMS simulator's inbox exists only where the simulator runs: in
+    // production the route is not registered at all.
+    if app.environment.sms_simulator() {
+        pages = pages.route("/dev/sms-inbox", get(auth::sms_inbox));
+    }
     routes::install_moved(pages, &app.moved)
         .merge(api::router(app.clone()))
         .merge(webhooks::router())
         .merge(transport::router())
         .route("/", get(auth::home).post(auth::login))
         .route("/login", get(auth::home).post(auth::login))
+        .route("/login/verify", get(auth::verify_page).post(auth::verify))
+        .route("/login/verify/resend", post(auth::resend))
+        .route("/login/verify/cancel", get(auth::cancel_verify))
         .route(
             "/forgot-password",
             get(auth::forgot_page).post(auth::forgot),

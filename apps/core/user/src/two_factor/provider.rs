@@ -75,4 +75,17 @@ impl Provider for Authenticator {
     fn prompt<'a>(&'a self, scope: &'a Scope, back: &'a str) -> ProofFuture<'a, String> {
         Box::pin(async move { self.0.step_up_destination(scope, back).await })
     }
+    /// An agent's human owes a code: a holder with a verified phone is sent
+    /// one (within the resend limits); the app needs nothing sent.
+    fn challenge<'a>(&'a self, scope: &'a Scope, _purpose: Purpose<'a>) -> ProofFuture<'a, ()> {
+        Box::pin(async move {
+            if !self.0.two_factor_status(scope).await?.sms {
+                return Ok(());
+            }
+            match self.0.send_check_code(scope).await {
+                Err(TwoFactorError::Other(error)) => Err(error),
+                _ => Ok(()),
+            }
+        })
+    }
 }

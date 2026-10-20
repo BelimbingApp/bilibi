@@ -1,10 +1,12 @@
 {#- The step-up prompt (GitHub's "Confirm access"; src/two_factor_ui.rs): a
-    step-up action sent the browser here; a current authenticator code or one
-    recovery code opens the session's window and returns to `return`. -#}
+    step-up action sent the browser here; a current authenticator code, a
+    code sent by text message ("Text me a code") or one recovery code opens
+    the session's window and returns to `return`. -#}
 {% import "components.html" as ui %}
 {% import "feedback.html" as fb %}
 <div data-shared-ui class="mx-auto w-full max-w-md space-y-4 py-8">{{ header }}
 {%- if !notice.is_empty() %}{% call fb::alert(kind=bilibi_ui::StatusKind::Warning, id="confirm-access-notice") %}{{ notice }}{% endcall %}{% endif -%}
+{%- if !sms_notice.is_empty() %}{% call fb::alert(kind=bilibi_ui::StatusKind::Info, id="confirm-access-sms-notice") %}{{ sms_notice }}{% endcall %}{% endif -%}
 {%- if enabled %}
 <form id="confirm-access-form" data-event="verify" class="space-y-4 rounded-xl border border-line bg-surface p-6"><p class="text-sm text-muted">You won't be asked again while you keep working. We'll ask again after {{ minutes }} {% if minutes == 1 %}minute{% else %}minutes{% endif %} without activity, or after {{ hours }} {% if hours == 1 %}hour{% else %}hours{% endif %} in total. Some actions always ask.</p>{{ code }}<div class="flex justify-end">{% call ui::button(variant=bilibi_ui::ButtonVariant::Primary, id="confirm-access-verify", button_type="submit", working="Verifying…") %}Verify{% endcall %}</div></form>
 {%- else %}

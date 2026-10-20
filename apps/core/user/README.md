@@ -320,10 +320,10 @@ calls `settle_bootstrap_affiliation` for the company link. `operator_accounts(te
 
 ## Two-factor authentication (the step-up provider)
 
-Authenticator-app codes (TOTP, RFC 6238: HMAC-SHA-1, 6 digits, 30 s) for the signed-in account. It is the second factor behind Base Step-up (`apps/base/step_up/README.md`). Bilimbi has no counterpart yet.
+Two methods for the signed-in account: authenticator-app codes (TOTP, RFC 6238: HMAC-SHA-1, 6 digits, 30 s) and codes sent by text message (SMS, [Base SMS](../../base/sms/README.md)). It is the second factor behind Base Step-up (`apps/base/step_up/README.md`). A six-digit code is accepted from either method the account has. Bilimbi has no counterpart yet. Decision: [ADR 02](../../../docs/architecture/decisions/02-sms-second-factor.md).
 
 - **Boundary:** this module checks the account holder and nothing else. It never names what step-up protects, and those owners never name it. They declare operations and call `StepUp::require`; tenant policy decides.
-- **Code:** `src/two_factor/` (facade on `UserService`, provider in `provider.rs`), pages in `src/two_factor_ui.rs`, migration `012-two-factor.sql`.
+- **Code:** `src/two_factor/` (facade on `UserService`, provider in `provider.rs`, text messages in `sms.rs`, sign-in in `sign_in.rs`), pages in `src/two_factor_ui.rs`, migrations `012-two-factor.sql` and `013-sms-two-factor.sql`.
 
 | Method | Purpose |
 |---|---|
@@ -333,11 +333,19 @@ Authenticator-app codes (TOTP, RFC 6238: HMAC-SHA-1, 6 digits, 30 s) for the sig
 | `step_up(scope, code)` | A current code or one recovery code opens the session's step-up window (the confirm page) |
 | `regenerate_recovery_codes(scope, code)` / `disable_two_factor(scope, code)` | Need a current code or a recovery code. The old set stops working / everything is deleted |
 | `two_factor::Authenticator` | The `bilibi_step_up::Provider`, bound at boot: enrolled? session window, spend an agent's code for a purpose, where to prompt |
+| `begin_phone(scope, password, number)` / `confirm_phone(scope, code)` | Password again, a code to the new number, then the code back: it becomes the verified phone and opens the session's step-up window |
+| `send_check_code(scope)` / `remove_phone(scope, code)` | A code to the verified phone (sign-in, step-up, an agent's human) / delete the phone after a current code |
+| `set_phone(scope, user, number)` / `reset_two_factor(scope, user)` | An administrator (`admin.user.update` and step-up `core.user.two_factor.reset`): set or clear a number (unverified) / delete the app and recovery codes, unverify the phone, end the account's sessions |
+| `sign_in(email, password)` | A session, or a pending sign-in when the tenant's policy turns `core.user.sign_in` on. `login` stays session-only for tools |
+| `pending_sign_in` / `send_sign_in_code` / `complete_sign_in` / `cancel_sign_in` (token) | The `/login/verify` page's reads and writes. The code goes through `StepUp::require`; only an accepted code opens a session |
 
 Pages (signed in only, live, `Cache-Control: no-store` like every page):
 
 - `/settings/two-factor`: set up (password, QR code, setup key, first code), recovery codes with a text download, new codes, turn off.
-- `/settings/two-factor/confirm?return=<path>`: the step-up prompt. Success returns to `return`, which must be a local path (`safe_return`).
+- `/settings/two-factor/confirm?return=<path>`: the step-up prompt, with **Text me a code** for an account with a phone. Success returns to `return`, which must be a local path (`safe_return`).
+- The settings page's **Text message (SMS)** section: add a number (password, number, code), or remove it with a current code.
+- `/users/{id}` (administrators): the **Phone** fact (edited in place) and the **2FA** fact with **Reset 2FA**, behind a confirmation dialog.
+- `/login/verify` (Web): the sign-in's code card. See `apps/web/README.md`.
 
 Authenticator entry uses the shared six-digit `CodeInput`: one native field, numeric keypad, OTP autocomplete and whole-code paste. Management and Confirm access offer **Use a recovery code**, which switches to an unrestricted text field without truncating the saved code; setup accepts only an authenticator code.
 
@@ -349,8 +357,11 @@ Security rules:
 - **Verification.** Steps −1, 0 and +1 are each computed and compared in constant time (`subtle`). `last_step` only moves forward, by compare-and-set in the spending transaction, so a code is never accepted twice, even by two racing requests.
 - **Recovery codes.** 10 per set, 50 bits each (`xxxxx-xxxxx`, base32), stored as Argon2id hashes through `password::hash`. Every unused hash is checked. A used code keeps `used_at`.
 - **Throttle.** Applies per account to every failed check: password, code, recovery code, and an agent's code too. The fifth failure within 15 minutes locks every check for 15 minutes (`user_two_factor_attempts`). A success resets the count.
+- **Text-message codes.** Six digits from the OS CSPRNG, stored only as Argon2id hashes in `user_sms_codes` with their purpose and number. Five minutes, used once, five wrong tries end a code, a new code ends the earlier ones. One code a minute and five an hour per account. The texts go through Base SMS; production refuses SMS until a real driver exists.
+- **Phone.** `user_phones`, E.164. A number an administrator sets is a second factor only after its holder accepts a code sent to it.
+- **Pending sign-in.** `user_pending_sign_ins` keeps only the SHA-256 of the browser's token, for ten minutes; it is spent when the session opens.
 - **Impersonation.** An impersonated session cannot enroll, change or check two-factor.
-- **Audit.** Each write is a `MutationBoundary` transaction: `user.two_factor.enrollment_started`, `.enabled`, `.verified`, `.recovery_code_used`, `.recovery_codes_regenerated`, `.disabled`, `.failed` and `.locked`. A code spent for an agent records the purpose's operation key and channel (`for`, `channel`). A check refused while locked is the action `user.two_factor.refused`. No code, secret or recovery code is ever in a change, payload or log.
+- **Audit.** Each write is a `MutationBoundary` transaction: `user.two_factor.enrollment_started`, `.enabled`, `.verified`, `.recovery_code_used`, `.recovery_codes_regenerated`, `.disabled`, `.failed`, `.locked`, `.sms_sent` (masked number and purpose), `.phone_verified`, `.phone_removed` and `.reset`, and `user.phone.update` for an administrator's change. A code spent for an agent records the purpose's operation key and channel (`for`, `channel`). A check refused while locked is the action `user.two_factor.refused`. No code, secret or recovery code is ever in a change, payload or log.
 
 | Setting | Default | Use |
 |---|---|---|
