@@ -3,7 +3,8 @@
 # Domain and Extension repository that catalogue.json lists, and writes each
 # release whose own CI passed to the `catalogue` branch with the built-in token.
 # main is not touched: it stays behind its pull request rules. The Release
-# workflow calls this after it creates a Platform tag.
+# workflow calls this after it creates a Platform tag; the daily run also lists
+# any Platform tag that has a GitHub release but is not listed.
 # A dry run prints what would change and pushes nothing.
 name: Catalogue
 

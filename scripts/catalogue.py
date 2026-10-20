@@ -22,7 +22,9 @@ the versions by hand.
                                    each SET
   catalogue.py refresh --from SOURCE --into PUBLISHED [--platform-version X.Y.Z]
                                    publish, then add every release tag of a
-                                   listed repository that is not listed yet
+                                   listed repository that is not listed yet.
+                                   A Platform tag is added when it has a
+                                   GitHub release; the Platform comes first
 """
 import argparse
 import base64
@@ -441,6 +443,17 @@ def add_platform_version(catalogue, version, commit, released):
     return True
 
 
+def require_release(slug, version):
+    """The Release workflow published a GitHub release for the tag, so the Release gate ran."""
+    result = subprocess.run(['gh', 'api', f'repos/{slug}/releases/tags/v{version}', '--jq', '.tag_name'],
+                            capture_output=True, text=True)
+    if result.returncode == 0:
+        return
+    if 'Not Found' in result.stderr or '404' in result.stderr:
+        raise Pending(f'{slug} has the tag v{version} but no GitHub release; run the Release workflow to publish it')
+    raise Refused(result.stderr.strip() or f'cannot read the release v{version} of {slug}')
+
+
 def add_platform_release(catalogue, version):
     """List one Platform release. The Release workflow made the tag after Official compatibility passed."""
     tags = release_tags(REPO)
@@ -483,9 +496,18 @@ def refresh(source_path, published_path, platform_version):
         expect(SEMVER.fullmatch(platform_version), '--platform-version is X.Y.Z')
         attempt(f'platform {platform_version}', lambda trial: add_platform_release(trial, platform_version))
     try:
-        moved('platform', catalogue['platform']['versions'], release_tags(REPO))
+        platform_tags = release_tags(REPO)
     except Refused as refusal:
         refused.append(f'platform: {refusal}')
+    else:
+        for version in sorted(set(platform_tags) - set(catalogue['platform']['versions']) - {platform_version},
+                              key=version_tuple):
+            def list_release(trial, version=version):
+                require_release(REPO, version)
+                return add_platform_release(trial, version)
+
+            attempt(f'platform {version}', list_release)
+        moved('platform', catalogue['platform']['versions'], platform_tags)
     for role in ('domains', 'extensions'):
         for container in list(catalogue.get(role, {})):
             label = f'{role}.{container}'
@@ -519,7 +541,7 @@ def main():
     refreshing = commands.add_parser('refresh', help='publish, then list the release tags that are not listed yet')
     refreshing.add_argument('--from', dest='source', required=True, help='the catalogue people edit (main)')
     refreshing.add_argument('--into', dest='published', required=True, help='the published catalogue to write')
-    refreshing.add_argument('--platform-version', help='also list this Platform release, made by the Release workflow')
+    refreshing.add_argument('--platform-version', help='also list this Platform release now, made by the Release workflow')
     args = parser.parse_args()
     try:
         if args.command == 'tested':
