@@ -281,7 +281,7 @@ impl TwoFactorPage {
                 },
             }))?,
             header: fragment(Html::render(&Header {
-                title: Html::text("Settings"),
+                title: Html::text("My Settings"),
                 subtitle: "",
                 title_actions: Html::EMPTY,
                 actions: Html::EMPTY,
