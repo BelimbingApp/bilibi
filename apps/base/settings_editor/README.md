@@ -4,7 +4,7 @@
 
 ## Table
 
-Settings appear in the shared `FlexTable`, with Setting, Value, Area and Who can change it columns. The company picker uses the same table; per-person settings do not use this module.
+Settings appear in the shared `FlexTable`, with Setting, Value and Area columns. The company picker uses the same table; per-person settings do not use this module.
 
 - Search matches a setting's name, key, description and current non-secret value as you type. Secret values are never searched or decrypted for the table.
 - Click a heading to sort; click again to reverse. `ListState` keeps search, sort, company and pagination in the URL.

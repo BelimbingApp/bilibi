@@ -46,13 +46,8 @@ use std::{
     sync::{Arc, LazyLock},
 };
 
-const TITLE: &str = "Settings";
-const COLUMNS: [(&str, &str); 4] = [
-    ("setting", "Setting"),
-    ("value", "Value"),
-    ("area", "Area"),
-    ("access", "Who can change it"),
-];
+const TITLE: &str = "Operator Settings";
+const COLUMNS: [(&str, &str); 3] = [("setting", "Setting"), ("value", "Value"), ("area", "Area")];
 static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
     Arc::new(ListSpec {
         sortable: COLUMNS
@@ -67,13 +62,6 @@ static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
 });
 fn list(values: &HashMap<String, String>) -> Result<ListState> {
     ListState::parse(values, SPEC.clone()).map_err(|_| Error::Internal)
-}
-fn access(company: bool) -> &'static str {
-    if company {
-        "Server owner with company access"
-    } else {
-        "Server owner with access to this area"
-    }
 }
 fn displayed(field: &Field) -> String {
     if field.encrypted() {
@@ -271,6 +259,8 @@ impl Editor {
         if wanted == "global" {
             if self.company.is_some() {
                 self.editing = None;
+                self.flash = None;
+                self.pending_restore = None;
             }
             self.company = None;
         } else if self
@@ -675,7 +665,6 @@ impl Editor {
             match sort_key {
                 "value" => displayed(field),
                 "area" => field.editor.group.into(),
-                "access" => access(company).into(),
                 _ => field.editor.label.into(),
             }
             .to_lowercase()
@@ -819,8 +808,7 @@ impl Editor {
                     })?,
                 )
                 .slot("value", cell)
-                .slot("area", Html::text(field.editor.group))
-                .slot("access", Html::text(access(company)));
+                .slot("area", Html::text(field.editor.group));
             row.dom_id = Some(format!("setting-{}", field.dom()));
             rows.push(row);
         }
@@ -915,9 +903,13 @@ impl Editor {
         };
         let dialog = match &self.pending_restore {
             Some(held) => {
+                let scope_name = match &self.company {
+                    Some(company) => format!("{} settings", company.name),
+                    None => "Server settings".to_owned(),
+                };
                 let consequence = format!(
-                    "{} on this page will be removed.",
-                    form::count(held.len(), "override").unwrap_or_default()
+                    "This resets {} in {scope_name} to their defaults, including any hidden by your search.",
+                    form::count(held.len(), "changed setting").unwrap_or_default()
                 );
                 render(ConfirmDialog {
                     id: "restore-defaults-confirm",
