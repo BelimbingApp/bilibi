@@ -23,7 +23,7 @@ pub trait Harness: Sync {
     /// Stable key: the download operation and the exporter's `--harness` value.
     fn key(&self) -> &'static str;
     /// The harness's product name, as people know it. The settings page does
-    /// not show this; the setup guide and the exporter do.
+    /// not show this; the exporter does.
     fn name(&self) -> &'static str;
     /// The download's file name, from the package's instance name
     /// (`bilibi-staging-chatgpt-plugin.zip`).
