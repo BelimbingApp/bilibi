@@ -12,3 +12,7 @@ ALTER TABLE base_software_jobs ADD CONSTRAINT base_software_jobs_asset_source_ch
 CHECK (kind <> 'install' OR state NOT IN ('queued', 'running')
        OR coalesce(request->'source'->>'kind', '') IN ('github', 'upload'));
 DELETE FROM base_settings WHERE key IN ('software.pairing_key', 'instance.installs_from');
+-- Retired step-up configuration is no longer actionable; retain its audit history.
+UPDATE base_settings SET value = value - 'base.software.pairing_key.change'
+WHERE key IN ('step_up.policy', 'step_up.floor') AND NOT is_encrypted
+  AND value ? 'base.software.pairing_key.change';
