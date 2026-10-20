@@ -86,10 +86,11 @@ pub(crate) fn review(input: &Value, source: &Value) -> SoftwareResult<Option<Val
 /// Tags alone cannot show equal setups when targets differ. Unknown commits
 /// remain unknown; the report is never used as an installation constraint.
 fn relation(source: &Value, tested: &Value) -> &'static str {
-    if source["kind"] == "github" && crate::github::same_asset(source, tested) {
+    if source["kind"] != "github" {
+        "An uploaded file cannot be compared with the Staging report"
+    } else if crate::github::same_asset(source, tested) {
         "Same file as tested on Staging"
-    } else if source["kind"] == "github"
-        && source["repository_id"].as_i64().is_some_and(|id| id > 0)
+    } else if source["repository_id"].as_i64().is_some_and(|id| id > 0)
         && source["repository_id"] == tested["repository_id"]
         && source["tag"].as_str().is_some_and(|tag| !tag.is_empty())
         && source["tag"] == tested["tag"]
