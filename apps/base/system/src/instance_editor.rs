@@ -184,13 +184,14 @@ impl Editor {
                 ]),
         )?;
         body.push(&render(bilibi_ui::Alert { kind: StatusKind::Warning, body: Html::text("Production is the live system. Changing to or from Production changes the server's warnings and 2FA rules. It does not copy or remove any data. Every role change needs a fresh 2FA code."), ..Default::default() })?);
-        for (key, label, hint) in [(INSTANCE_LABEL_KEY, "Instance name", "Leave empty to use the server role."), (INSTANCE_COLOUR_KEY, "Banner colour", "Leave empty to use the role's colour."), (INSTANCE_INSTALLS_FROM_KEY, "Install updates from", "Use an instance name, like staging, or an HTTPS address. Leave empty to upload releases here.")] {
+        for (key, label, hint) in [(INSTANCE_LABEL_KEY, "Instance name", "Leave empty to use the server role."), (INSTANCE_COLOUR_KEY, "Banner colour", "Choose a colour, or follow the server role."), (INSTANCE_INSTALLS_FROM_KEY, "Install updates from", "Optional. Another Bilibi server to get tested releases from, like your Staging server's address. Both servers need the same pairing key. Leave empty to upload release files by hand.")] {
             let value = self.pages.instances.settings.get_global(&**client, key).await?;
-            let mut field = Field::named(format!("instance[{key}]" )).id(key.replace('.', "-")).label(label).hint(hint).value(draft(key).unwrap_or_else(|| value.as_str().unwrap_or("")));
+            let field = Field::named(format!("instance[{key}]" )).id(key.replace('.', "-")).label(label).hint(hint).value(draft(key).unwrap_or_else(|| value.as_str().unwrap_or("")));
             if key == INSTANCE_COLOUR_KEY {
-                field = field.kind(InputKind::Select).options(vec![Choice::new("Use role colour", ""), Choice::new("Blue", "info"), Choice::new("Green", "success"), Choice::new("Amber", "warning"), Choice::new("Red", "danger")]);
+                body.push(&render(super::instance::colour_input(field, self.role.env_value()))?);
+            } else {
+                body.push(&render(field)?);
             }
-            body.push(&render(field)?);
         }
         body.push(&render(
             CodeInput::new(

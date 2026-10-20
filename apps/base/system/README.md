@@ -69,6 +69,8 @@ Click the status-bar role to open `/system/instance`. A **Core Administrator in 
 
 The label, colour and source also remain in the generic settings editor behind `admin.system.instance.manage`. Empty label and colour follow the stored role. The role has no generic editor, so delegated operators cannot bypass its Core Administrator and 2FA checks.
 
+Both settings pages use the shared `ColourInput`: Blue, Green, Amber and Red each show their theme swatch. “Use role colour” shows the stored role's default swatch and clears the override when saved. The `base/ui.colour_settings` contribution supplies the same palette to the generic editor; `src/instance.rs` owns the role-to-colour rule.
+
 `Instance::status` always names the role, including when the label differs. Staging keeps an extra top-bar badge. Dev and Staging show a badge on sign-in; Production shows none there. Reviews and confirmations use `Instance::banner` in every role. `Instance::agent_json` identifies plans, commits, MCP and `/.well-known/bilibi`. All use the same resolved identity.
 
 Base Step-up binds an `Enforcement` policy supplied by `Instances`. It reads the saved role on every check across processes: ordinary operations skip 2FA on Dev; `.always()` operations never skip it. The policy holds no process-local role cache. The server layout is in [`docs/server-install.md`](../../../docs/server-install.md).

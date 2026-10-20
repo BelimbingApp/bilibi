@@ -69,12 +69,14 @@ inventory::submit! {
         dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/audit", "base/settings", "base/step_up", "base/ui", "base/menu"],
         migrations: &[],
         services: &[Service { id: "base/settings_editor.pages", factory: |services| {
+            let catalog = bilibi_module_registry::Catalog::discover(&bilibi_module_registry::discover()?)?;
             Ok(Arc::new(bilibi_ui::page::PageService::<bilibi_tenancy::Scope, Error>(Arc::new(web::Pages::new(web::Core {
                 db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
                 settings: services.get("base/settings.store")?,
                 boundary: services.get("base/database.mutations")?,
                 parties: services.get("base/tenancy.parties")?,
                 step_up: services.get(bilibi_step_up::SERVICE)?,
+                colour_settings: catalog.entries::<bilibi_ui::ColourSetting>(bilibi_ui::COLOUR_SETTINGS)?.iter().map(|entry| Ok((entry.id, entry.get::<bilibi_ui::ColourSetting>()?))).collect::<bilibi_module_registry::Result<Vec<_>>>()?,
             })))))
         } }],
     }

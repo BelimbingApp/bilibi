@@ -24,6 +24,36 @@
 @plugin "../vendor/heroicons.cjs";
 @import "./legacy-compat.css";
 
+/* Shared colour input; the swatch repeats the banner's surface, line and ink
+ * roles rather than approximating the theme with fixed palette values. */
+.ui-colour-trigger:not([hidden]), .ui-colour-option {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  text-align: left;
+}
+.ui-colour-swatch {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1rem;
+  flex-shrink: 0;
+  border-width: 1px;
+  border-radius: 0.25rem;
+}
+.ui-colour-swatch > span {
+  width: 0.75rem;
+  height: 0.25rem;
+  border-radius: 0.125rem;
+  background: currentColor;
+}
+.ui-colour-option[data-active] { background: var(--color-brand-surface); }
+.ui-colour-option[aria-selected="false"] .ui-colour-check { visibility: hidden; }
+@media (pointer: coarse) {
+  .ui-colour-option { min-height: 2.5rem; }
+}
+
 /* Instrument Sans is vendored under SIL OFL 1.1 in priv/static/fonts/OFL.txt
  * from Instrument/instrument-sans at 7fa22308a3d0c94ee2b3cd537a1196b65db34a3e.
  * Keep these font files local so production shells do not make third-party

@@ -1,6 +1,6 @@
 {#- Shared form controls: the one markup source for input (text and every
     native type, checkbox, select, textarea, hidden, password with reveal),
-    secret input, code input, combobox, multi-select, radio group, restricted
+    secret input, code input, colour input, combobox, multi-select, radio group, restricted
     value, restricted field and the live file input, with the field classes, described-by wiring
     and error lines they share. Classes, data attributes, ARIA and anatomy
     mirror Bilimbi apps/base/ui/lib/ui/components/forms.ex at the pinned
@@ -35,6 +35,30 @@
 {#- The error lines of a control, each addressable from aria-describedby. -#}
 {% macro errors(id, errors, numbered=true) %}
 {%- for message in errors %}{% call error(id=id, index=loop.index0, numbered=numbered) %}{{ message }}{% endcall %}{% endfor -%}
+{% endmacro %}
+
+{#- A theme-role colour select. The native select remains the form control;
+    the hook enhances it with a keyboard-operated swatch list. -#}
+{% macro colour_swatch(colour) %}
+<span aria-hidden="true" class="ui-colour-swatch {{ colour.class() }}"><span></span></span>
+{% endmacro %}
+
+{% macro colour_input(control) %}
+<div id="{{ control.field.id }}-wrapper" data-hook="ColourInput" class="relative floating-scope {{ control.field.wrapper() }}">
+<div class="relative floating-anchor">
+<select id="{{ control.field.id }}" name="{{ control.field.name }}" data-colour-select class="{{ control.field.control_class() }}"{% call aria(invalid=control.field.invalid(), described_by=control.field.described_by()) %}{% endcall %}{{ control.field.attrs.html() }}>
+{% for option in control.options %}<option value="{{ option.value }}"{% if option.value == control.field.value %} selected{% endif %}>{{ option.label }}</option>{% endfor %}
+</select>
+<button type="button" id="{{ control.field.id }}-trigger" data-colour-trigger hidden role="combobox"{% if control.field.attrs.required %} aria-required="true"{% endif %} aria-haspopup="listbox" aria-expanded="false" aria-controls="{{ control.field.id }}-options" aria-labelledby="{{ control.field.id }}-label {{ control.field.id }}-value"{% call aria(invalid=control.field.invalid(), described_by=control.field.described_by()) %}{% endcall %} class="ui-colour-trigger {{ control.field.control_class() }}"{% if control.field.attrs.disabled || control.field.attrs.readonly %} disabled{% endif %}>
+<span data-colour-preview>{% call colour_swatch(colour=control.selected().colour) %}{% endcall %}</span><span id="{{ control.field.id }}-value" data-colour-label class="truncate">{{ control.selected().label }}</span>{% call ui::icon(name="hero-chevron-down", class="ml-auto size-4 shrink-0 text-ink-muted") %}{% endcall %}
+</button>
+<label id="{{ control.field.id }}-label" for="{{ control.field.id }}" class="{{ bilibi_ui::forms::PINNED_LABEL_CLASS }}">{{ control.field.label }}{% if control.field.attrs.required %}<span aria-hidden="true">*</span>{% endif %}</label>
+</div>
+<div id="{{ control.field.id }}-options" hidden role="listbox" tabindex="-1" aria-labelledby="{{ control.field.id }}-label" class="floating-list ui-colour-options z-30 mt-1 max-h-60 min-w-56 overflow-y-auto rounded-xl border border-line bg-surface p-1.5 shadow-lg">
+{% for option in control.options %}<div id="{{ control.field.id }}-option-{{ loop.index0 }}" role="option" tabindex="-1" data-value="{{ option.value }}" aria-selected="{% if option.value == control.field.value %}true{% else %}false{% endif %}" class="ui-colour-option cursor-pointer rounded-md px-2.5 py-1.5 text-base text-ink hover:bg-surface-sunken">{% call colour_swatch(colour=option.colour) %}{% endcall %}<span data-option-label>{{ option.label }}</span>{% call ui::icon(name="hero-check", class="ui-colour-check ml-auto size-4 shrink-0") %}{% endcall %}</div>{% endfor %}
+</div>
+{% call hint(id=control.field.id, text=control.field.hint) %}{% endcall %}{% call errors(id=control.field.id, errors=control.field.errors) %}{% endcall %}
+</div>
 {% endmacro %}
 
 {#- The bare control of a select, textarea or single-line input; field is a

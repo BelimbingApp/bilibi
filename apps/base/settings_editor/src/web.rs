@@ -55,6 +55,7 @@ pub struct Core {
     pub boundary: Arc<MutationBoundary>,
     pub parties: Arc<PartyProofs>,
     pub step_up: Arc<StepUp>,
+    pub colour_settings: Vec<(&'static str, &'static bilibi_ui::ColourSetting)>,
 }
 pub struct Pages(Arc<Core>);
 impl Pages {
@@ -467,11 +468,32 @@ impl Editor {
         let can_reveal = reveal::available(&**client, &plan, &self.core.settings, scope).await?;
         let keyed = self.core.settings.encryption_available();
         let company = self.company.is_some();
-        let fields = plan
-            .fields
-            .iter()
-            .map(|field| card(field, can_reveal, keyed, company))
-            .collect::<Result<Vec<_>>>()?;
+        let mut fields = Vec::new();
+        for field in &plan.fields {
+            let colour = if let Some((_, editor)) = self
+                .core
+                .colour_settings
+                .iter()
+                .find(|(key, _)| *key == field.key && !field.encrypted())
+            {
+                let inherited = self
+                    .core
+                    .settings
+                    .get_global(&**client, editor.inherited_from)
+                    .await?;
+                Some(render((editor.input)(
+                    Control::named(format!("settings[{}]", field.key))
+                        .id(format!("input-{}", field.dom()))
+                        .label(field.editor.label)
+                        .value(form::input_value(field))
+                        .wrapper_class("mt-2.5"),
+                    inherited.as_str().unwrap_or_default(),
+                ))?)
+            } else {
+                None
+            };
+            fields.push(card(field, can_reveal, keyed, company, colour)?);
+        }
         let empty = if fields.is_empty() {
             let state = if plan.withheld.is_empty() && company {
                 EmptyState::missing("There are no company settings to change.", "")
@@ -615,11 +637,20 @@ fn withheld_wording(capabilities: &std::collections::BTreeSet<&str>) -> String {
     }
 }
 
-fn card(field: &Field, can_reveal: bool, keyed: bool, company: bool) -> Result<FieldCard> {
+fn card(
+    field: &Field,
+    can_reveal: bool,
+    keyed: bool,
+    company: bool,
+    colour: Option<Html>,
+) -> Result<FieldCard> {
     let dom = field.dom();
     let id = format!("input-{dom}");
     let name = format!("settings[{}]", field.key);
-    let control = if field.definition.value_type == ValueType::Boolean {
+    let has_colour = colour.is_some();
+    let control = if let Some(colour) = colour {
+        colour
+    } else if field.definition.value_type == ValueType::Boolean {
         render(
             Control::named(name)
                 .id(id)
@@ -664,6 +695,7 @@ fn card(field: &Field, can_reveal: bool, keyed: bool, company: bool) -> Result<F
         _ => "Inherited from the default".to_owned(),
     };
     Ok(FieldCard {
+        has_colour,
         dom,
         label: field.editor.label,
         help: field.editor.help,
@@ -686,6 +718,7 @@ fn card(field: &Field, can_reveal: bool, keyed: bool, company: bool) -> Result<F
 }
 
 struct FieldCard {
+    has_colour: bool,
     dom: String,
     label: &'static str,
     help: &'static str,

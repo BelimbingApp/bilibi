@@ -28,6 +28,7 @@ pub struct ComponentsSpecimen {
     stats_unlinked: Vec<StatItem>,
     stats_three: Vec<StatItem>,
     controls: FormControls,
+    colours: Vec<crate::ColourInput>,
     /// The help, error and locked fields, rendered through the typed models.
     field_states: Html,
     radio_disabled: Html,
@@ -49,6 +50,7 @@ sections! {
         text_inputs_basic: "ui_components_specimen/text_inputs_basic.html",
         text_inputs_typed: "ui_components_specimen/text_inputs_typed.html",
         choices: "ui_components_specimen/choices.html",
+        colour_inputs: "ui_components_specimen/colour_inputs.html",
         multi_select: "ui_components_specimen/multi_select.html",
         date_secret: "ui_components_specimen/date_secret.html",
         date_inputs: "ui_components_specimen/date_inputs.html",
@@ -461,6 +463,7 @@ impl ComponentsSpecimen {
                 StatItem::text("Current", "MY"),
             ],
             controls: FormControls::new(),
+            colours: colour_inputs(),
             field_states,
             radio_disabled,
             inline: InlineSamples::new()?,
@@ -537,4 +540,56 @@ fn specimen_uploads() -> Uploads {
         &mut ids,
     );
     uploads
+}
+
+// An extension of Bilimbi's form specimens for the theme-role colour input.
+fn colour_inputs() -> Vec<crate::ColourInput> {
+    use crate::{ColourChoice, ColourInput, ColourRole};
+    let options = || {
+        let mut choices = vec![ColourChoice::new("Use role colour", "", ColourRole::Info)];
+        choices.extend(
+            [
+                ("info", ColourRole::Info),
+                ("success", ColourRole::Success),
+                ("warning", ColourRole::Warning),
+                ("danger", ColourRole::Danger),
+                ("brand", ColourRole::Brand),
+            ]
+            .map(|(value, role)| ColourChoice::new(role.label(), value, role)),
+        );
+        choices
+    };
+    vec![
+        ColourInput::new(
+            Field::in_form("sample", "colour")
+                .label("Banner colour")
+                .hint("Choose a colour, or follow the server role."),
+            options(),
+        ),
+        ColourInput::new(
+            Field::in_form("sample", "colour_error")
+                .label("Colour")
+                .value("warning")
+                .error("Choose a colour that is available."),
+            options(),
+        ),
+        ColourInput::new(
+            Field::in_form("sample", "colour_disabled")
+                .label("Colour")
+                .value("success")
+                .disabled()
+                .hint("This colour is set by your administrator."),
+            options(),
+        ),
+        ColourInput::new(
+            Field::in_form("sample", "colour_required")
+                .label("Colour")
+                .value("brand")
+                .required(),
+            options()
+                .into_iter()
+                .filter(|option| !option.value.is_empty())
+                .collect(),
+        ),
+    ]
 }
