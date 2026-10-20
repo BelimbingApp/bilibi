@@ -62,7 +62,7 @@ Two system users share the work, so the program that serves pages can never rewr
 | `bilibi` | the service `bilibi@<instance>` | `data/`, and `incoming/` together with `bilibi-build`; it can read `releases/` and `env` |
 | `bilibi-build` | the installer `bilibi-installer@<instance>`: put releases into service | `releases/`, `backups/`, `/opt/bilibi/build`, and `incoming/` with `bilibi`; it may start, stop and restart `bilibi@*` and reload Caddy through sudo, nothing else |
 
-Two systemd unit templates serve every instance: `bilibi@<instance>` runs `current/bilibi-web run` as `bilibi`, reads `env`, restarts after a crash and permits writes under `data/` and `incoming/`. `bilibi-installer@<instance>` runs `/opt/bilibi/build/bin/bilibi-installer` as `bilibi-build` and carries out install and undo jobs from Software. Servers have no build worker or toolchain requirement. Build releases on your own machine.
+Two systemd unit templates serve every instance: `bilibi@<instance>` runs `current/bilibi-web run` as `bilibi`, reads `env`, restarts after a crash and permits writes under `data/` and `incoming/`. `bilibi-installer@<instance>` runs `/opt/bilibi/build/bin/bilibi-installer` as `bilibi-build` and carries out install and undo jobs from Software. Servers have no build worker or toolchain requirement. Build releases locally or use the setup template’s GitHub Actions.
 
 Each instance has its own PostgreSQL role and database (`bilibi_production`, `bilibi_dev`) on the server's PostgreSQL 18 cluster, with a generated password kept only in `env`. Dev cannot read Production's data.
 
@@ -80,29 +80,28 @@ The role comes from **`instance.role` in the settings table**. The explicit inst
 | Staging | `staging` | Test a release before Production | On |
 | Production | `production` | Run the tested release | On |
 
-All builds happen in a local Bilibi checkout. The role identifies the instance; it never enables a server build.
+Builds run in a development checkout or in the setup template’s GitHub Actions. The role identifies the instance; it never enables a server build.
 
-Click the role in the status bar to open **Instance settings** (`/system/instance`). A Core Administrator in the platform-operator organisation can change the role, name, colour and update source. Every role change needs a fresh 2FA code, even on Dev, and is audited. The page warns before moving to or from Production: this changes warnings and 2FA rules without moving any data. Other accounts cannot change the role.
+Click the role in the status bar to open **Instance settings** (`/system/instance`). A Core Administrator in the platform-operator organisation can change the role, name and colour. Every role change needs a fresh 2FA code, even on Dev, and is audited. The page warns before moving to or from Production: this changes warnings and 2FA rules without moving any data. Other accounts cannot change the role.
 
-The name, colour and source also remain available in the generic operator settings. Empty name and colour follow the current role:
+The name and colour also remain available in the generic operator settings. Empty name and colour follow the current role:
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
 | Instance name shown on every page | Dev, Staging or Production | What the banner and every confirm page say, like "Production" or "Dev (laptop)" |
 | Banner colour | info (blue), warning (amber), danger (red) by role | One of the design's status colours |
-| Install releases tested on | empty | The instance whose tested release this one installs: a name on this machine, like `dev`, or an address, like `https://staging.erp.example.com` |
 
-In code, `bilibi_base::system::Instance::resolve` returns the role, label, colour and source together. **The instance banner, the Software page and the agent confirm pages all read it**, so a purchase order confirmed on Dev and the Software page on Dev cannot disagree about where they are.
+In code, `bilibi_base::system::Instance::resolve` returns the role, label and colour together. **The instance banner, the Software page and the agent confirm pages all read it**, so a purchase order confirmed on Dev and the Software page on Dev cannot disagree about where they are.
 
 ## One machine or two
 
 **Dev and Production on one machine** use separate databases, ports and addresses. Build in your local Bilibi checkout, install the release on Dev or Staging to check it, then promote the tested release to Production.
 
-**Dev and Production on two machines**: run `create` once on each machine with that machine's instance. Production's "Install releases tested on" setting then holds Dev's address, and the same pairing key is set on both (Administration › System › Software › Releases). Production downloads the release from Dev when the owner installs it; nothing is pushed to Production. A Dev the servers cannot reach (a laptop): download the release file on Dev's Software › Releases tab and upload it on Production's. The ways in, the checks and the pairing key: [`apps/base/software/README.md`](../apps/base/software/README.md), "Release transport".
+**Dev and Production on two machines** use the same release archive from GitHub or a saved upload. Each instance keeps its own local release numbers, database and backup. No instance serves release files to another.
 
 **Install from GitHub**: on Software › Releases, name the setup repository (for example BelimbingApp/bilibi-setup-template), save a read-only token only when the repository is private, and accept the repository. That asks for your authenticator code. Then review one setup file for this server. The server downloads that file, checks it, backs up, switches and can switch back or Undo, the same way as an upload. Uploading a file still works when you do not want GitHub to supply the release.
 
-Staging is optional. Set Production to install from Staging when you have one, or straight from Dev when you do not.
+Staging is optional. When used, install and check the exact GitHub asset there first, then review a separate Production install of that asset with fresh 2FA. See [Staging and Production](../apps/base/software/README.md#staging-and-production) for the agent report and identity checks.
 
 ## Putting a release into service
 
@@ -149,7 +148,7 @@ sudo scripts/install-server.sh installer /path/to/bilibi-installer
 
 This copies the program to `/opt/bilibi/build/bin/bilibi-installer`, owned by root so neither Bilibi user can change it, and starts `bilibi-installer@<instance>` for every instance on the machine. A `create` after that starts one for the new instance too. Run `installer` again with a newer program to update it: the services restart, and a job one of them was in the middle of is settled by the rules in [`apps/installer/README.md`](../apps/installer/README.md) ("If the server restarts mid-way"): before the database changed it ends `interrupted` and nothing changed; after, it finishes.
 
-The installer reads the instance's `env` for its database and port. It copies a release from another instance's folder on this machine (the one named in "Install releases tested on"), or from `incoming/`, where the program puts a release it downloaded from another Bilibi server, from GitHub, or received as an uploaded file.
+The installer reads the instance's `env` for its database and port. It copies a release from `incoming/`, where the program puts a verified GitHub download or uploaded archive.
 
 The installer unit is skipped quietly while `/opt/bilibi/build/bin/bilibi-installer` does not exist, so starting `bilibi@<instance>` before you have run `installer` does not make it fail and retry.
 
@@ -243,11 +242,20 @@ cargo build --release --locked -p bilibi-web
 
 Keep other mounted Domains and Extensions. For an existing clone, fetch and check out the chosen commit instead. Run the composition locally against its own database and check its pages in the browser. Build for the server’s operating system, processor and system library version.
 
-Copy `target/release/bilibi-web`, `.local/composition/manifest.txt` and `.local/composition/Cargo.lock` into a release folder. Put the first release on a test instance with `scripts/install-server.sh release` and check it there. Its Software › Releases tab downloads the existing transport bundle; upload that on Staging or Production and install it from Software, or configure the source and let the target download it. Install and undo retain the same fresh 2FA check, backup, automatic switch-back and audit path. There is no new server build or packaging path.
+Copy `target/release/bilibi-web`, `.local/composition/manifest.txt` and `.local/composition/Cargo.lock` into a release folder, then write its checksum and archive it:
+
+```sh
+mkdir -p /path/to/release
+cp target/release/bilibi-web .local/composition/manifest.txt .local/composition/Cargo.lock /path/to/release/
+(cd /path/to/release && sha256sum bilibi-web manifest.txt Cargo.lock > SHA256SUMS)
+tar -C /path/to/release -czf /path/to/release.tar.gz bilibi-web SHA256SUMS manifest.txt Cargo.lock
+```
+
+Upload that archive on **Software › Releases** and review the install. To build and publish complete setup assets on GitHub, use the public [setup template](https://github.com/BelimbingApp/bilibi-setup-template). Install the same published asset on Staging and Production with separate reviews and fresh 2FA. Backup, automatic switch-back, audit and Undo use the same path for GitHub and upload.
 
 A folder prepared this way has no `release.json`. An uploaded file's review therefore warns that its change list is known only once the installer reads the program. The installer records the pinned composition and changes in the job's result.
 
-When upgrading an older installation, `create`, `installer` and `release` stop and disable each former `bilibi-worker@<instance>` service, then remove that obsolete unit and its sudoers rule. Rerunning is safe, and a fresh server is left alone. The new `base-software-003-local-builds` migration cancels queued and running build jobs with local build guidance, preserving their history. Install and undo jobs continue normally.
+When upgrading an older installation, `create`, `installer` and `release` stop and disable each former `bilibi-worker@<instance>` service, then remove that obsolete unit and its sudoers rule. Rerunning is safe, and a fresh server is left alone. The new `base-software-003-local-builds` migration cancels queued and running build jobs with local build guidance, preserving their history. Before upgrading to the GitHub-and-upload release, finish or cancel active instance-source installs; the migration refuses while one remains. Completed history and Undo are preserved.
 
 ## Reference
 

@@ -24,8 +24,8 @@ use bilibi_ui::{
 use std::sync::Arc;
 
 pub use instance::{
-    valid_instance_name, Colour, Instance, Role, Source, INSTANCE_COLOUR_KEY,
-    INSTANCE_INSTALLS_FROM_KEY, INSTANCE_LABEL_KEY, INSTANCE_MANAGE, INSTANCE_ROLE_KEY,
+    valid_instance_name, Colour, Instance, Role, INSTANCE_COLOUR_KEY, INSTANCE_LABEL_KEY,
+    INSTANCE_MANAGE, INSTANCE_ROLE_KEY,
 };
 
 pub const INFO_VIEW: &str = "admin.system.info.view";

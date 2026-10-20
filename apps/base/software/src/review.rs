@@ -7,7 +7,7 @@ use crate::{
     SoftwareError, STEP_UP,
 };
 use bilibi_module_registry::{Composition, Layer, PinState};
-use bilibi_system::{Instance, Source};
+use bilibi_system::Instance;
 use serde_json::{json, Value};
 
 /// A reviewed request: what is stored, what the person reads, and the
@@ -26,14 +26,8 @@ const PAUSE_MINUTES: u64 = 1;
 pub fn instance_json(instance: &Instance) -> Value {
     json!({
         "role": instance.role.env_value(), "label": instance.label, "colour": instance.colour.as_str(),
-        "installs_from": instance.installs_from.as_ref().map(source_json),
+        "origin": instance.origin,
     })
-}
-fn source_json(source: &Source) -> Value {
-    match source {
-        Source::SameMachine(name) => json!({"kind": "same_machine", "instance": name}),
-        Source::Https(address) => json!({"kind": "https", "address": address}),
-    }
 }
 /// The running program's make-up: the one truth about installed Domains.
 pub fn installed_json(made: &Composition) -> Value {
@@ -96,16 +90,9 @@ fn movement(from: Option<&str>, to: &str) -> &'static str {
     }
 }
 
-/// The source listing, or the plain reason it could not be read.
-pub struct SourceFacts {
-    pub listing: std::result::Result<Value, String>,
-}
-
-/// The release the owner means: one the source reports, a GitHub setup file,
-/// or a file uploaded here. The request records which, so the installer
+/// The release the owner means: a GitHub setup file or a file uploaded here. The request records which, so the installer
 /// knows where to look.
 enum Chosen {
-    FromSource { release: i64, facts: Value },
     GitHub(crate::github::Pin),
     Uploaded { bundle: String, facts: Value },
 }
@@ -119,14 +106,12 @@ pub struct Held<'a> {
     pub enabled_plugins: &'a [String],
 }
 
-/// An install of a release the source instance
-/// tested (`release`), or of a release file uploaded here (`bundle`).
+/// Install an exact GitHub asset or a file uploaded here.
 pub fn install(
     instance: &Instance,
     made: &Composition,
     active: Option<&Job>,
     input: &Value,
-    source: Option<&SourceFacts>,
     github: Option<&Value>,
     held: &Held<'_>,
 ) -> Result<Review> {
@@ -156,8 +141,8 @@ pub fn install(
         })?;
         Chosen::GitHub(crate::github::pin_from_listing(listing, input)?)
     } else {
-        match (input["bundle"].as_str(), input["release"].as_i64()) {
-        (Some(bundle), _) => {
+        match input["bundle"].as_str() {
+        Some(bundle) => {
             let facts = uploads
                 .iter()
                 .find(|(name, _)| name == bundle)
@@ -176,89 +161,15 @@ pub fn install(
                 facts,
             }
         }
-        (None, Some(release)) if release >= 1 => {
-            let Some(installs_from) = &instance.installs_from else {
-                return Err(SoftwareError::field("instance", &format!("{} has no update server chosen. A server owner sets \"Install releases tested on\" under Instance in the settings first, or uploads a release file here.", instance.label)));
-            };
-            let listing = match source.map(|facts| &facts.listing) {
-                Some(Ok(listing)) => listing,
-                Some(Err(why)) => {
-                    return Err(SoftwareError::field(
-                        "release",
-                        &format!("{} could not be asked about its releases: {why}", source_name(installs_from)),
-                    ))
-                }
-                None => {
-                    return Err(SoftwareError::field(
-                        "release",
-                        "Bilibi has not contacted the update server, so it cannot check this request.",
-                    ))
-                }
-            };
-            let facts = listing["releases"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .find(|r| r["release"].as_i64() == Some(release))
-                .cloned()
-                .ok_or_else(|| {
-                    let have: Vec<String> = listing["releases"]
-                        .as_array()
-                        .into_iter()
-                        .flatten()
-                        .filter_map(|r| r["release"].as_i64())
-                        .map(|n| n.to_string())
-                        .collect();
-                    SoftwareError::field("release", &format!(
-                        "{} has no release {release}. It has: {}.",
-                        source_name(installs_from),
-                        if have.is_empty() { "none".to_owned() } else { have.join(", ") }
-                    ))
-                })?;
-            match listing["current"].as_i64() {
-                Some(n) if n == release => {}
-                Some(n) => {
-                    return Err(SoftwareError::field("release", &format!(
-                        "{} runs release {n} now, not {release}. Install the release it runs, so you install what was tested.",
-                        source_name(installs_from)
-                    )))
-                }
-                None => {
-                    return Err(SoftwareError::field("release", &format!(
-                        "{} has no release in service, so it cannot vouch for release {release}.",
-                        source_name(installs_from)
-                    )))
-                }
-            }
-            if listing["healthy"].as_bool() != Some(true) {
-                return Err(SoftwareError::field("release", &format!(
-                    "{} is not answering, so it cannot vouch for release {release}. Check it first.",
-                    source_name(installs_from)
-                )));
-            }
-            Chosen::FromSource { release, facts }
-        }
         _ => {
             return Err(SoftwareError::field(
                 "release",
-                "Give the release number currently running on the update server, like 42, a GitHub file from base.software.releases, or the name of a release file uploaded here, like upload-3.",
+                "Choose a GitHub asset from base.software.releases, or a file uploaded here, like upload-3.",
             ))
         }
     }
     };
     let (source_json_value, source_text, release, facts) = match &chosen {
-        Chosen::FromSource { release, facts } => {
-            let installs_from = instance
-                .installs_from
-                .as_ref()
-                .ok_or(bilibi_database::Error::Internal)?;
-            (
-                source_json(installs_from),
-                source_name(installs_from),
-                Some(*release),
-                facts.clone(),
-            )
-        }
         Chosen::Uploaded { bundle, facts } => {
             let from = facts["from"]["label"]
                 .as_str()
@@ -298,9 +209,7 @@ pub fn install(
             )
         }
     };
-    let downloads = matches!(chosen, Chosen::GitHub(_))
-        || (matches!(instance.installs_from, Some(Source::Https(_)))
-            && matches!(chosen, Chosen::FromSource { .. }));
+    let downloads = matches!(chosen, Chosen::GitHub(_));
     let summary = match release {
         Some(release) => format!(
             "{}: install release {release} from {source_text}",
@@ -312,17 +221,6 @@ pub fn install(
     if let Chosen::GitHub(pin) = &chosen {
         if pin.prerelease {
             warnings.push(format!("{} is marked as a pre-release on GitHub.", pin.tag));
-        }
-    }
-    if let (Chosen::Uploaded { .. }, Some(installs_from)) = (&chosen, &instance.installs_from) {
-        if !made_by(&facts, installs_from) {
-            warnings.push(format!(
-                "This file was made on {}, not on {}, which this server normally installs from.",
-                facts["from"]["label"]
-                    .as_str()
-                    .unwrap_or("another instance"),
-                source_short(installs_from)
-            ));
         }
     }
     let changes = changes_between(made, &facts);
@@ -364,22 +262,17 @@ pub fn install(
     if let Chosen::Uploaded { bundle, .. } = &chosen {
         request["bundle"] = json!(bundle);
     }
-    let source_check = match (&chosen, &instance.installs_from) {
-        (Chosen::Uploaded { bundle, .. }, _) => format!("From the uploaded file {bundle}"),
-        (Chosen::FromSource { .. }, Some(Source::SameMachine(name))) => {
-            format!("Copied from {name} on this machine")
-        }
-        (Chosen::FromSource { .. }, Some(Source::Https(address))) => {
-            format!("Downloads from {address} (answered just now)")
-        }
-        (Chosen::GitHub(pin), _) => format!(
-            "Downloads {} from GitHub repository {} (tag {}, check code {}…)",
-            pin.name,
-            pin.repository,
-            pin.tag,
-            &pin.digest[..12.min(pin.digest.len())]
+    let staging = crate::promotion::review(input, &request["source"])?;
+    if let Some(staging) = &staging {
+        request["staging"] = staging.clone();
+        warnings.push(crate::promotion::describe(staging));
+    }
+    let source_check = match &chosen {
+        Chosen::Uploaded { bundle, .. } => format!("From the uploaded file {bundle}"),
+        Chosen::GitHub(pin) => format!(
+            "Downloads {} from GitHub repository {} (tag {}, asset {}, archive SHA-256 {})",
+            pin.name, pin.repository, pin.tag, pin.asset_id, pin.digest
         ),
-        (Chosen::FromSource { .. }, None) => return Err(bilibi_database::Error::Internal.into()),
     };
     let rest = if matches!(chosen, Chosen::GitHub(_)) {
         vec![
@@ -389,24 +282,10 @@ pub fn install(
             "The release was built for this kind of server",
             "Enough disk for the program and a backup",
         ]
-    } else if downloads {
-        vec![
-            "The update server still runs this release and reports that it works",
-            "The downloaded file matches its check code (checksum)",
-            "The release was built for this kind of server",
-            "Enough disk for the program and a backup",
-        ]
-    } else if matches!(chosen, Chosen::Uploaded { .. }) {
-        vec![
-            "The file matches its check code (checksum)",
-            "The release was built for this kind of server",
-            "Enough disk for the program and a backup",
-        ]
     } else {
         vec![
             "The file matches its check code (checksum)",
             "The release was built for this kind of server",
-            "The update server still reports that it works",
             "Enough disk for the program and a backup",
         ]
     };
@@ -418,6 +297,7 @@ pub fn install(
         "instance": instance_json(instance),
         "release": release,
         "source": request["source"],
+        "staging": staging,
         "release_facts": {"sha256": facts["sha256"], "bytes": facts["bytes"], "platform": facts["platform"], "domains": facts["domains"], "built_for": facts["built_for"], "from": facts["from"]},
         "running": {"platform": made.version, "release": made.tag, "domains": made.containers.iter().filter(|c| c.layer == Layer::Domains).map(|c| json!({"id": c.id, "version": c.version})).collect::<Vec<_>>()},
         "changes": changes,
@@ -428,9 +308,9 @@ pub fn install(
         "pause_minutes": PAUSE_MINUTES,
         "switch": switch,
         "what_happens": format!("{}Then {} pauses for about {PAUSE_MINUTES} minute to back up the database, update it, switch and check. If the check fails it switches back by itself.",
-            if matches!(chosen, Chosen::GitHub(_)) { "The release is downloaded from GitHub, its check code is verified, then it is copied and checked. " } else if downloads { "The release is downloaded from the source, checked and copied into place. " } else { "The release is copied and checked. " },
+            if matches!(chosen, Chosen::GitHub(_)) { "The release is downloaded from GitHub, its check code is verified, then it is copied and checked. " } else { "The release is copied and checked. " },
             instance.label),
-        "steps": (if matches!(chosen, Chosen::GitHub(_)) { jobs::download_steps(true, "Download the release from GitHub") } else { jobs::install_steps(downloads) }).iter().map(|s| json!({"seq": s.seq, "key": s.key, "label": s.label, "pauses": s.pauses})).collect::<Vec<_>>(),
+        "steps": jobs::install_steps(downloads).iter().map(|s| json!({"seq": s.seq, "key": s.key, "label": s.label, "pauses": s.pauses})).collect::<Vec<_>>(),
         "step_up": [STEP_UP],
     });
     Ok(Review {
@@ -477,33 +357,6 @@ fn plugin_words(on: &[String], off: &[String]) -> Option<String> {
         parts.push(format!("disable add-on {}", off.join(", ")));
     }
     (!parts.is_empty()).then(|| parts.join("; "))
-}
-/// Whether a release file says it was made by the instance this one installs
-/// from. The file's `bundle.json` is the only record and nobody signs it, so
-/// a mismatch is a warning on the review, never a refusal.
-fn made_by(file: &Value, source: &Source) -> bool {
-    match source {
-        Source::SameMachine(name) => file["from"]["name"].as_str() == Some(name.as_str()),
-        Source::Https(address) => file["from"]["origin"].as_str().is_some_and(|origin| {
-            origin
-                .trim_end_matches('/')
-                .eq_ignore_ascii_case(address.trim_end_matches('/'))
-        }),
-    }
-}
-/// The source as a short name inside a sentence: the instance name or the address.
-fn source_short(source: &Source) -> &str {
-    match source {
-        Source::SameMachine(name) => name,
-        Source::Https(address) => address,
-    }
-}
-/// How the owner reads the source in a sentence.
-pub fn source_name(source: &Source) -> String {
-    match source {
-        Source::SameMachine(name) => format!("instance {name} on this machine"),
-        Source::Https(address) => address.clone(),
-    }
 }
 /// What differs between the running program and a release's recorded
 /// make-up: `{"platform": {"from","to"} | null, "domains": [{"id","change","from","to"}]}`,
@@ -578,35 +431,6 @@ pub fn describe_changes(changes: &Value) -> Option<String> {
         "The business modules and their versions stay the same.".to_owned()
     } else {
         parts.join("; ")
-    })
-}
-
-/// Setting or clearing the pairing key (`pairing.rs`).
-pub fn pair(input: &Value) -> Result<Review> {
-    let clear = input["clear"].as_bool() == Some(true);
-    let key = input["key"]
-        .as_str()
-        .map(str::trim)
-        .filter(|key| !key.is_empty());
-    let (request, summary) = match (clear, key) {
-        (true, _) => (json!({"clear": true}), "Clear the pairing key: other instances can no longer download releases from this one, and this one can no longer download from its source.".to_owned()),
-        (false, Some(key)) => {
-            crate::pairing::check(key).map_err(|why| SoftwareError::field("key", &why))?;
-            // The key itself is never recorded; the review carries only its length.
-            (json!({"key_chars": key.chars().count()}), "Set the pairing key. Paste the same key on the instance this one shares releases with.".to_owned())
-        }
-        (false, None) => {
-            return Err(SoftwareError::field(
-                "key",
-                "Give the pairing key to set, or clear: true to remove it. Make a key with: openssl rand -hex 24",
-            ))
-        }
-    };
-    Ok(Review {
-        target: format!("pair: {summary}"),
-        request,
-        facts: json!({"summary": summary, "clear": clear, "step_up": [STEP_UP]}),
-        switch: "auto".into(),
     })
 }
 
@@ -771,7 +595,7 @@ pub fn go(instance: &Instance, job: &Job, parked: Option<i64>) -> Result<Review>
     let (what, steps) = match job.kind.as_str() {
         "install" => (
             "copy",
-            jobs::install_steps(job.request["source"]["kind"].as_str() == Some("https")),
+            jobs::install_steps(job.request["source"]["kind"].as_str() == Some("github")),
         ),
         kind => {
             return refuse(format!(

@@ -65,9 +65,8 @@ Click the status-bar role to open `/system/instance`. A **Core Administrator in 
 | `instance.role` | Install input | Dev, Staging or Production; only the protected instance page changes it |
 | `instance.label` | Current role word | The name shown to people and agents |
 | `instance.colour` | Blue for Dev, amber for Staging, red for Production | A shared status colour |
-| `instance.installs_from` | Empty | A sibling instance name or HTTPS address to install tested releases from |
 
-The label, colour and source also remain in the generic settings editor behind `admin.system.instance.manage`. Empty label and colour follow the stored role. The role has no generic editor, so delegated operators cannot bypass its Core Administrator and 2FA checks.
+The label and colour also remain in the generic settings editor behind `admin.system.instance.manage`. Empty label and colour follow the stored role. The role has no generic editor, so delegated operators cannot bypass its Core Administrator and 2FA checks.
 
 The Banner colour field uses the shared `ColourInput`: Blue, Green, Amber and Red each show their name inside that banner colour. “Use role colour (Blue)” (or Green, Amber or Red for the stored role) shows the role's default colour and clears the override when saved. `src/instance.rs` owns the role-to-colour rule.
 

@@ -131,7 +131,7 @@ impl Outgoing {
         self
     }
     /// Do not follow redirects: a 3xx answer is returned as the reply, so a
-    /// header such as a pairing key is never sent on to another address.
+    /// secret header is never sent on to another address.
     pub fn no_redirects(mut self) -> Self {
         self.follow_redirects = false;
         self.redirects = None;

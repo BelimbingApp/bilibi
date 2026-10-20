@@ -57,9 +57,9 @@ struct Undone {
 /// Where the release the owner asked for was found, and how to name it.
 struct Found {
     from: PathBuf,
-    /// The source as the result names it: an instance, an address, a file.
+    /// The source as the result names it: a GitHub repository or uploaded file.
     name: String,
-    /// "dev release 3", "https://dev.example.com release 3", "the uploaded file upload-2 (…)".
+    /// "GitHub owner/setup tag v1", or "the uploaded file upload-2 (…)".
     text: String,
     /// The folder under `incoming/` an uploaded file was unpacked into; it
     /// stays for another try unless the file is spent or cannot be installed.
@@ -523,6 +523,9 @@ impl<'a> Run<'a> {
         if fetched.get("github").is_some() {
             result["github"] = fetched["github"].clone();
         }
+        if fetched.get("staging").is_some() {
+            result["staging"] = fetched["staging"].clone();
+        }
         self.finish_with_plugins("done", result, after.as_deref())
             .await?;
         self.prune(&[release, previous]);
@@ -530,7 +533,7 @@ impl<'a> Run<'a> {
     }
 
     /// The release the owner asked for, copied into the next number here,
-    /// checked and tried. It comes from a sibling instance's folder, from
+    /// checked and tried. It comes from
     /// the folder the program downloaded it into (`incoming/job-<id>/`),
     /// or from an uploaded file (`incoming/upload-<n>/`); the checks are
     /// the same whichever way it came. A downloaded release is never reused
@@ -557,79 +560,6 @@ impl<'a> Run<'a> {
         let request = self.job.request.clone();
         let wanted = request["release"].as_u64();
         let source = match request["source"]["kind"].as_str() {
-            Some("same_machine") => {
-                let name = request["source"]["instance"]
-                    .as_str()
-                    .ok_or("the request names no source instance")?
-                    .to_owned();
-                let wanted = wanted.ok_or("the request names no release")?;
-                let sibling = self.layout.sibling(&name).map_err(|reason| {
-                    format!("{name} is not an instance on this machine: {reason}")
-                })?;
-                let from = sibling.release(wanted);
-                if !from.join("bilibi-web").is_file() {
-                    let have = sibling.release_numbers();
-                    return Err(format!(
-                        "{name} has no release {wanted}. It has: {}.",
-                        if have.is_empty() {
-                            "none".to_owned()
-                        } else {
-                            have.iter()
-                                .map(u64::to_string)
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        }
-                    ));
-                }
-                match sibling.current() {
-                    Some(n) if n == wanted => {}
-                    Some(n) => {
-                        return Err(format!(
-                            "{name} runs release {n} now, not {wanted}. Install the release it runs."
-                        ))
-                    }
-                    None => {
-                        return Err(format!(
-                            "{name} has no release in service, so it cannot vouch for release {wanted}."
-                        ))
-                    }
-                }
-                let source_service = Service::of(&sibling)?;
-                if !source_service.answers().await {
-                    return Err(format!(
-                        "{name} is not answering (its service is {}), so it cannot vouch for release {wanted}.",
-                        source_service.state()
-                    ));
-                }
-                Found {
-                    from,
-                    name: name.clone(),
-                    text: format!("{name} release {wanted}"),
-                    uploaded: None,
-                }
-            }
-            Some("https") => {
-                let address = request["source"]["address"]
-                    .as_str()
-                    .unwrap_or("the source")
-                    .to_owned();
-                let download = self.detail("download");
-                let folder = download["folder"]
-                    .as_str()
-                    .ok_or("the download step recorded no folder, so the downloaded release cannot be found")?;
-                let from = self
-                    .layout
-                    .incoming(folder)
-                    .filter(|dir| dir.join("bilibi-web").is_file())
-                    .ok_or_else(|| format!("the downloaded release is missing from incoming/{folder}; ask again so it is downloaded again"))?;
-                let wanted = wanted.ok_or("the request names no release")?;
-                Found {
-                    from: from.clone(),
-                    name: address.clone(),
-                    text: format!("{address} release {wanted}"),
-                    uploaded: None,
-                }
-            }
             Some("github") => {
                 let repository = request["source"]["repository"]
                     .as_str()
@@ -707,6 +637,18 @@ impl<'a> Run<'a> {
         }
         let mut checked = checked?;
         if request["source"]["kind"].as_str() == Some("github") {
+            let recipe: Value = fs::read(
+                self.layout
+                    .release(
+                        checked["release"]
+                            .as_u64()
+                            .ok_or("the copy recorded no release")?,
+                    )
+                    .join("release.json"),
+            )
+            .ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .unwrap_or(Value::Null);
             checked["github"] = json!({
                 "repository": request["source"]["repository"],
                 "repository_id": request["source"]["repository_id"],
@@ -716,7 +658,21 @@ impl<'a> Run<'a> {
                 "target": request["source"]["target"],
                 "archive_sha256": request["source"]["digest"],
                 "program_sha256": checked["sha256"],
+                "setup_commit": recipe["setup"]["commit"],
             });
+        }
+        if let Some(expected) = request["staging"]["asset"]["program_sha256"].as_str() {
+            if checked["sha256"].as_str() != Some(expected) {
+                return Err("The copied program differs from the program checked on Staging. Nothing was paused.".into());
+            }
+        }
+        if let Some(expected) = request["staging"]["asset"]["setup_commit"].as_str() {
+            if checked["github"]["setup_commit"].as_str() != Some(expected) {
+                return Err("The setup commit differs from the one recorded on Staging. Nothing was paused.".into());
+            }
+        }
+        if request.get("staging").is_some() {
+            checked["staging"] = request["staging"].clone();
         }
         Ok(checked)
     }

@@ -23,12 +23,10 @@ thiserror = "2"
 argon2 = "0.6"
 askama = "0.16"
 zip = { version = "9.0.4", default-features = false, features = ["deflate-flate2-zlib-rs"] }
-# Release bundles (base/software transport): a gzip-compressed tar of a
-# release folder, checked with SHA-256; the pairing key compares in constant time.
+# Release archives: gzip-compressed tar files, checked with SHA-256.
 tar = "0.4.44"
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 sha2 = "0.11"
-subtle = "2.6"
 futures-core = "0.3"
 # Outgoing HTTPS (base/integration) trusts the server's own CA store too.
 rustls-native-certs = "0.8"

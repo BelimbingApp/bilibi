@@ -1,6 +1,6 @@
 //! Release controls embedded in the Software page’s Releases tab and the
-//! authenticated release download. No Bilimbi counterpart.
-use crate::{transport, web::PAGES, Software, MANAGE, VIEW};
+//! manual upload. No Bilimbi counterpart.
+use crate::{web::PAGES, MANAGE, VIEW};
 use askama::Template;
 use bilibi_agent_api::Error as AgentError;
 use bilibi_authz::authorize_operator;
@@ -8,18 +8,14 @@ use bilibi_database::{Error, Result};
 use bilibi_system::Instance;
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
-    download::{Download, DownloadFuture, DownloadRequest, FileBody},
     forms::{Field, InputKind, SecretInput},
     page::{LiveInput, LiveRequest, Uploads},
-    ActionLink, BuiltinColumn, Button, ButtonVariant, Card, ColumnsOutcome, Fact, Facts, FlexRow,
-    FlexTable, Fold, Form, Html, ListColumns, SectionHeading, StatusKind, TableEmpty, UploadSpec,
+    BuiltinColumn, Button, ButtonVariant, Card, ColumnsOutcome, Fact, Facts, FlexRow, FlexTable,
+    Fold, Form, Html, ListColumns, SectionHeading, StatusKind, TableEmpty, UploadSpec,
 };
 use serde_json::{json, Value};
-use std::sync::Arc;
 
 pub const PATH: &str = "/system/software/releases";
-pub const DOWNLOAD_PATH: &str = "/system/software/releases/{release}/download";
-pub(crate) const FILES: &str = "base/software.release_files";
 /// The file input's name: the key the owner consumes by.
 const UPLOAD: &str = "release_file";
 /// A release file is a compressed program: tens of megabytes.
@@ -29,42 +25,11 @@ fn render(template: impl Template) -> Result<Html> {
     Html::render(&template).map_err(|_| Error::Internal)
 }
 
-/// The release file download: `/system/software/releases/{release}/download`.
-pub(crate) struct Files {
-    pub software: Arc<Software>,
-}
-impl Download<Scope, Error> for Files {
-    fn serve<'a>(&'a self, request: DownloadRequest<'a, Scope>) -> DownloadFuture<'a, Error> {
-        Box::pin(async move {
-            let release: u64 = request
-                .path
-                .get("release")
-                .and_then(|n| n.parse().ok())
-                .filter(|n| *n >= 1)
-                .ok_or(Error::NotFound)?;
-            let (bytes, filename) = self.software.bundle(request.scope, release).await?;
-            Ok(FileBody::attachment(
-                bytes,
-                transport::BUNDLE_TYPE,
-                &filename,
-            ))
-        })
-    }
-}
-
-/// The mounted page: the file input's state, the three tables' columns, the
-/// source's answer and the last message.
+/// Release-tab state: upload input, list columns, GitHub controls and feedback.
 pub(super) struct ReleaseFiles {
     pages: crate::web::Pages,
     pub(super) uploads: Uploads,
-    here: ListColumns,
-    source: ListColumns,
     waiting: ListColumns,
-    /// What the source reported when this page was mounted. Showing the page
-    /// again does not ask it again (the source limits how often one sender
-    /// may); the person asks again with "Refresh releases", and saving
-    /// the pairing key forgets it, since the answer then differs.
-    asked: Option<Value>,
     github_columns: ListColumns,
     /// Include GitHub files marked as a pre-release. Drafts stay hidden.
     github_prerelease: bool,
@@ -72,24 +37,15 @@ pub(super) struct ReleaseFiles {
     github_refresh: bool,
     github_error: Option<String>,
     pub(super) flash: Option<(StatusKind, String)>,
-    pair_error: Option<String>,
-}
-fn release_columns() -> Vec<BuiltinColumn> {
-    vec![
-        BuiltinColumn::new("release", "Release").right(),
-        BuiltinColumn::new("in_service", "Running now"),
-        BuiltinColumn::new("platform", "Bilibi"),
-        BuiltinColumn::new("domains", "Domains"),
-        BuiltinColumn::new("checksum", "File checksum"),
-        BuiltinColumn::new("file", "File"),
-    ]
 }
 fn github_columns() -> Vec<BuiltinColumn> {
     vec![
         BuiltinColumn::new("tag", "Tag"),
         BuiltinColumn::new("target", "For"),
         BuiltinColumn::new("file", "File"),
-        BuiltinColumn::new("digest", "Check code"),
+        BuiltinColumn::new("asset", "GitHub asset"),
+        BuiltinColumn::new("installed", "Installed"),
+        BuiltinColumn::new("digest", "Archive SHA-256"),
         BuiltinColumn::new("published", "Published"),
     ]
 }
@@ -113,78 +69,18 @@ impl ReleaseFiles {
                 "application/gzip",
                 "application/x-gzip",
             ])]),
-            here: ListColumns::mount("release-files-here", release_columns())
-                .map_err(|_| Error::Internal)?,
-            source: ListColumns::mount("release-files-source", release_columns())
-                .map_err(|_| Error::Internal)?,
             waiting: ListColumns::mount("release-files-waiting", waiting_columns())
                 .map_err(|_| Error::Internal)?,
-            asked: None,
             github_columns: ListColumns::mount("release-files-github", github_columns())
                 .map_err(|_| Error::Internal)?,
             github_prerelease: false,
             github_refresh: false,
             github_error: None,
             flash: None,
-            pair_error: None,
         })
     }
     fn say(&mut self, kind: StatusKind, message: impl Into<String>) {
         self.flash = Some((kind, message.into()));
-    }
-    /// The page's own answer to a refused contract call.
-    fn refused(&mut self, error: Error) {
-        let message = match error {
-            Error::Forbidden => "You do not have permission to change the pairing key.".to_owned(),
-            Error::Invalid => "The pairing key was not accepted.".to_owned(),
-            other => format!("The pairing key could not be saved ({other:?})."),
-        };
-        self.pair_error = Some(message.clone());
-        self.say(StatusKind::Error, message);
-    }
-    /// Sets or clears the pairing key. A step-up the owner asks for ends the
-    /// event: the host takes the person to confirm and back, and nothing was
-    /// changed.
-    async fn pair(
-        &mut self,
-        request: &LiveRequest<'_, Scope>,
-        event: &str,
-        input: Value,
-    ) -> Result<()> {
-        let call = bilibi_agent_api::page::Call {
-            scope: request.scope,
-            credential: request.credential,
-            service: PAGES,
-            event,
-            contract: "base.software.pair",
-        };
-        self.pair_error = None;
-        match self.pages.contracts.submit(&call, input.clone()).await {
-            Ok(_) => {
-                self.asked = None;
-                let message = if input["clear"].as_bool() == Some(true) {
-                    "Pairing key cleared. This instance shares no releases until a key is set again."
-                } else {
-                    "Pairing key saved. Paste the same key on the instance this one shares releases with."
-                };
-                self.say(StatusKind::Success, message);
-            }
-            Err(AgentError::InvalidInput(fields)) => {
-                let message = fields
-                    .values()
-                    .flatten()
-                    .next()
-                    .cloned()
-                    .unwrap_or_else(|| "The pairing key was not accepted.".into());
-                self.pair_error = Some(message.clone());
-                self.say(StatusKind::Error, message);
-            }
-            Err(AgentError::Backend(error @ Error::StepUpRequired { .. })) => return Err(error),
-            Err(AgentError::Forbidden) => self.refused(Error::Forbidden),
-            Err(AgentError::Backend(error)) => self.refused(error),
-            Err(_) => self.refused(Error::Internal),
-        }
-        Ok(())
     }
     /// Saves the GitHub repository, token or refresh interval. A step-up the
     /// owner asks for ends the event: the host takes the person to confirm
@@ -296,176 +192,32 @@ impl ReleaseFiles {
         let facts = self
             .pages
             .software
-            .releases_with(
-                scope,
-                self.asked.clone(),
-                refresh_github,
-                self.github_prerelease,
-            )
+            .releases_with(scope, refresh_github, self.github_prerelease)
             .await?;
-        if self.asked.is_none() {
-            self.asked = Some(facts["source"].clone());
-        }
         let enrolled = self.pages.software.step_up.enrolled(scope).await?;
         let mut body = Html::EMPTY;
         body.push(&self.github_section(&facts, manages, enrolled)?);
+        let mut upload = Html::EMPTY;
         if manages {
-            body.push(&self.upload_section(&instance)?);
+            upload.push(&self.upload_section(&instance)?);
         }
         if facts["uploads"]
             .as_array()
             .is_some_and(|uploads| !uploads.is_empty())
         {
-            body.push(&self.waiting_section(&facts, manages)?);
+            upload.push(&self.waiting_section(&facts, manages)?);
         }
-        body.push(&install);
-        body.push(&self.here_section(&instance, &facts, manages)?);
-        let mut source = self.source_section(&instance, &facts)?;
-        if manages {
-            source.push(&render(ActionLink {
-                id: "software-update-server-settings",
-                href: "/system/settings#setting-instance-installs_from",
-                title: "Choose the update server in Instance settings",
-                body: Html::text("Update server settings"),
-                ..ActionLink::default()
-            })?);
-        }
-        source.push(&self.pairing_section(&instance, &facts, manages, enrolled)?);
+        upload.push(&install);
         body.push(&render(Fold {
-            id: "software-update-server",
-            title: "Update server and pairing key",
-            open: self.pair_error.is_some(),
-            body: source,
+            id: "software-offline-upload",
+            title: "Upload a release file",
+            open: facts["uploads"]
+                .as_array()
+                .is_some_and(|uploads| !uploads.is_empty()),
+            body: upload,
             ..Fold::default()
         })?);
         Ok(body)
-    }
-    /// The releases kept on this instance, each with its download link.
-    fn here_section(&self, instance: &Instance, facts: &Value, manages: bool) -> Result<Html> {
-        let here = &facts["here"];
-        let mut table = release_table(
-            &self.here,
-            "release-files-here-table",
-            "grid_here",
-            &here["releases"],
-            |n| {
-                if manages {
-                    Some(DOWNLOAD_PATH.replace("{release}", &n.to_string()))
-                } else {
-                    None
-                }
-            },
-        )?;
-        table.caption = "Stored releases";
-        if here["available"].as_bool() == Some(false) {
-            table.empty = Some(TableEmpty::Content(Html::text(
-                here["message"]
-                    .as_str()
-                    .unwrap_or("No releases are kept here."),
-            )));
-        } else if here["releases"].as_array().is_none_or(Vec::is_empty) {
-            table.empty = Some(TableEmpty::Content(Html::text(&format!(
-                "No release is kept on {} yet. The first one is put in with scripts/install-server.sh release.",
-                instance.label
-            ))));
-        }
-        let mut body = Html::EMPTY;
-        if manages {
-            if let Some(current) = here["current"].as_u64() {
-                body.push(&render(ActionLink {
-                    id: "software-download-current",
-                    icon: "export",
-                    title: "Download this server’s release file for another Bilibi server",
-                    href: &DOWNLOAD_PATH.replace("{release}", &current.to_string()),
-                    body: Html::text("Download this server’s release file"),
-                    ..ActionLink::default()
-                })?);
-            }
-        }
-        if here["releases"]
-            .as_array()
-            .is_some_and(|releases| !releases.is_empty())
-        {
-            body.push(&render(Fold {
-                id: "software-stored-releases",
-                title: "Stored releases",
-                body: render(table)?,
-                ..Fold::default()
-            })?);
-        } else {
-            body.push(&Html::text(
-                here["message"]
-                    .as_str()
-                    .unwrap_or("No release file is stored on this server yet."),
-            ));
-        }
-        render(Card {
-            id: "release-files-here",
-            title: "Release download",
-            body,
-            ..Card::default()
-        })
-    }
-    /// What the source offers, when the instance installs from one.
-    fn source_section(&self, instance: &Instance, facts: &Value) -> Result<Html> {
-        let source = &facts["source"];
-        let mut table = release_table(
-            &self.source,
-            "release-files-source-table",
-            "grid_source",
-            &source["releases"],
-            |_| None,
-        )?;
-        table.caption = "Updates on the update server";
-        if source["available"].as_bool() != Some(true) {
-            table.empty = Some(TableEmpty::Content(Html::text(
-                source["message"]
-                    .as_str()
-                    .unwrap_or("Bilibi could not contact the update server."),
-            )));
-        } else if source["releases"].as_array().is_none_or(Vec::is_empty) {
-            table.empty = Some(TableEmpty::Content(Html::text(
-                "The update server has no release yet.",
-            )));
-        }
-        let name = match &instance.installs_from {
-            Some(from) => crate::review::source_name(from),
-            None => "no update server".to_owned(),
-        };
-        let mut description = match &instance.installs_from {
-            Some(_) => format!("{} gets tested updates from {name}.", instance.label),
-            None => format!("{} has no update server chosen. Choose one in Settings › Instance › Install releases tested on, or upload a tested release file.", instance.label),
-        };
-        if source["available"].as_bool() == Some(true) {
-            match source["current"].as_u64() {
-                Some(n) => description.push_str(&format!(
-                    " It runs release {n} now{}.",
-                    if source["healthy"].as_bool() == Some(true) {
-                        " and is responding"
-                    } else {
-                        ", but its program does not answer"
-                    }
-                )),
-                None => description.push_str(" It has no release running."),
-            }
-            description.push_str(" Install the running release from the Software page.");
-        }
-        let ask = render(Button {
-            id: "release-files-source-refresh",
-            button_type: "button",
-            event: "refresh_source",
-            working: "Asking…",
-            body: Html::text("Refresh releases"),
-            ..Button::default()
-        })?;
-        section(
-            "release-files-source",
-            "Update server",
-            &description,
-            ask,
-            true,
-            render(table)?,
-        )
     }
     /// The file input for a release file, for a server owner.
     fn upload_section(&self, instance: &Instance) -> Result<Html> {
@@ -473,7 +225,7 @@ impl ReleaseFiles {
             .uploads
             .input(UPLOAD, "release-files-upload")
             .label("Release file")
-            .hint("Choose a tested bilibi-release-<n>.tar.gz file, up to 64 MB.");
+            .hint("Choose a tested .tar.gz release file, up to 64 MB.");
         let form = render(Form {
             id: "release-files-upload-form",
             event: "upload_release",
@@ -626,6 +378,66 @@ impl ReleaseFiles {
         if !notice.is_empty() {
             body.push(&Html::text(&notice));
         }
+        let installed = &facts["installed_asset"];
+        body.push(&render(Facts {
+            id: "software-installed-asset",
+            items: vec![
+                Fact {
+                    id: "software-installed-local-release",
+                    title: "Local release",
+                    value: Html::text(
+                        &installed["local_release"]
+                            .as_u64()
+                            .map_or("Not recorded".into(), |n| n.to_string()),
+                    ),
+                },
+                Fact {
+                    id: "software-installed-github-asset",
+                    title: "Installed GitHub asset",
+                    value: Html::text(&if installed["github"].is_object() {
+                        let pin = &installed["github"];
+                        format!(
+                            "{} · tag {} · repository {} / release {} / asset {} · {}",
+                            pin["repository"].as_str().unwrap_or(""),
+                            pin["tag"].as_str().unwrap_or(""),
+                            pin["repository_id"],
+                            pin["release_id"],
+                            pin["asset_id"],
+                            pin["target"].as_str().unwrap_or("")
+                        )
+                    } else {
+                        "Not recorded".into()
+                    }),
+                },
+                Fact {
+                    id: "software-installed-archive",
+                    title: "Archive SHA-256",
+                    value: Html::text(
+                        installed["github"]["archive_sha256"]
+                            .as_str()
+                            .unwrap_or("Not recorded"),
+                    ),
+                },
+                Fact {
+                    id: "software-installed-program",
+                    title: "Program SHA-256",
+                    value: Html::text(
+                        installed["program_sha256"]
+                            .as_str()
+                            .unwrap_or("Not recorded"),
+                    ),
+                },
+                Fact {
+                    id: "software-installed-setup",
+                    title: "Setup commit",
+                    value: Html::text(
+                        installed["github"]["setup_commit"]
+                            .as_str()
+                            .unwrap_or("Not recorded"),
+                    ),
+                },
+            ],
+        })?);
         if manages {
             let mut repository_field = Field::in_form("github", "repository")
                 .id("release-files-github-repository")
@@ -777,6 +589,21 @@ impl ReleaseFiles {
                 tag.to_owned()
             };
             let mut row = FlexRow::new(asset.to_string())
+                .slot(
+                    "asset",
+                    Html::text(&format!(
+                        "{repository_id}/{}/{}",
+                        release["release_id"], asset
+                    )),
+                )
+                .slot(
+                    "installed",
+                    Html::text(if release["installed"] == true {
+                        "Yes"
+                    } else {
+                        ""
+                    }),
+                )
                 .slot("tag", Html::text(&tag_text))
                 .slot(
                     "target",
@@ -785,13 +612,10 @@ impl ReleaseFiles {
                     )),
                 )
                 .slot("file", Html::text(release["name"].as_str().unwrap_or("")))
-                .slot(
-                    "digest",
-                    Html::text(&digest.chars().take(12).collect::<String>()),
-                )
+                .slot("digest", Html::text(digest))
                 .slot("published", Html::text(&published));
             row.dom_id = Some(format!("release-files-github-row-{asset}"));
-            if can_review {
+            if can_review && release["installed"] != true {
                 row.actions = self.github_review_form(release, repository_id)?;
             }
             rows.push(row);
@@ -869,87 +693,8 @@ impl ReleaseFiles {
             ..Form::default()
         })
     }
-    /// The pairing key: set, cleared, never shown.
-    fn pairing_section(
-        &self,
-        instance: &Instance,
-        facts: &Value,
-        manages: bool,
-        enrolled: bool,
-    ) -> Result<Html> {
-        let pairing = &facts["pairing"];
-        let set = pairing["set"].as_bool() == Some(true);
-        let status = if set {
-            "Saved securely. You can replace or clear it below.".to_owned()
-        } else {
-            "Not set".to_owned()
-        };
-        let mut body = render(Facts {
-            id: "release-files-pairing-facts",
-            items: vec![Fact {
-                title: "Status",
-                id: "release-files-pairing-status",
-                value: Html::text(&status),
-            }],
-        })?;
-        if manages {
-            let mut secret = SecretInput::in_form("pair", "key", "pairing key")
-                .id("release-files-pairing-key")
-                .label("Pairing key")
-                .hint("Use the same secret on both Bilibi servers: 16 to 128 characters, no spaces. Saving or clearing it requires your authenticator code.");
-            if set {
-                secret = secret.stored();
-            }
-            if let Some(error) = &self.pair_error {
-                secret = secret.errors(vec![error.clone()]);
-            }
-            let mut actions = render(Button {
-                id: "release-files-pairing-save",
-                button_type: "submit",
-                variant: ButtonVariant::Primary,
-                working: "Saving…",
-                body: Html::text("Save pairing key"),
-                ..Button::default()
-            })?;
-            if set {
-                actions.push(&render(Button {
-                    id: "release-files-pairing-clear",
-                    button_type: "button",
-                    event: "clear_pairing",
-                    working: "Clearing…",
-                    body: Html::text("Clear the key"),
-                    ..Button::default()
-                })?);
-            }
-            let mut step = bilibi_ui::StepUp::new(enrolled, "/system/software?tab=releases");
-            step.body = render(secret)?;
-            step.actions = actions;
-            body.push(&render(Form {
-                id: "release-files-pairing-form",
-                event: "pair",
-                class: "mt-3",
-                body: render(step)?,
-                ..Form::default()
-            })?);
-        }
-        let mut description = format!("This secret lets {} and its update server share release files. Save the same secret on both servers.", instance.label);
-        if !set {
-            description.push_str(&format!(
-                " Without a key, {} cannot share release files automatically. You can still upload a file.",
-                instance.label
-            ));
-        }
-        section(
-            "release-files-pairing",
-            "Pairing key",
-            &description,
-            Html::default(),
-            false,
-            body,
-        )
-    }
 }
-/// One section: its heading with a short description, then its card.
+
 fn section(
     id: &str,
     title: &str,
@@ -977,7 +722,7 @@ fn section(
 }
 
 impl ReleaseFiles {
-    /// Handles transport controls within the one mounted Software page.
+    /// Handles release controls within the one mounted Software page.
     pub(super) async fn event(&mut self, request: &LiveRequest<'_, Scope>) -> Result<bool> {
         {
             let client = self.pages.db.get().await?;
@@ -987,15 +732,6 @@ impl ReleaseFiles {
             let values = bilibi_ui::params::string_values(value);
             let get = |key: &str| values.get(key).map(String::as_str).unwrap_or("");
             match value["type"].as_str().unwrap_or("") {
-                "pair" => {
-                    let key = get("pair[key]").trim().to_owned();
-                    self.pair(request, "pair", json!({"key": key})).await?;
-                }
-                "clear_pairing" => {
-                    self.pair(request, "clear_pairing", json!({"clear": true}))
-                        .await?
-                }
-                "refresh_source" => self.asked = None,
                 "github_source" => {
                     let repository = get("github[repository]").trim().to_owned();
                     let mut input = json!({"repository": repository});
@@ -1039,16 +775,6 @@ impl ReleaseFiles {
                     let bundle = get("value").to_owned();
                     self.discard(request.scope, &bundle).await?;
                 }
-                "grid_here" => {
-                    if let ColumnsOutcome::Sort(_) = self.here.handle(&values) {
-                        return Err(Error::Invalid);
-                    }
-                }
-                "grid_source" => {
-                    if let ColumnsOutcome::Sort(_) = self.source.handle(&values) {
-                        return Err(Error::Invalid);
-                    }
-                }
                 "grid_waiting" => {
                     if let ColumnsOutcome::Sort(_) = self.waiting.handle(&values) {
                         return Err(Error::Invalid);
@@ -1074,63 +800,6 @@ impl ReleaseFiles {
     }
 }
 
-/// One table of releases, from a listing's `releases` array.
-fn release_table<'a>(
-    columns: &'a ListColumns,
-    id: &'a str,
-    event: &'a str,
-    releases: &Value,
-    download: impl Fn(u64) -> Option<String>,
-) -> Result<FlexTable<'a>> {
-    let mut rows = Vec::new();
-    for release in releases.as_array().into_iter().flatten() {
-        let n = release["release"].as_u64().unwrap_or(0);
-        let in_service = release["in_service"].as_bool() == Some(true);
-        let sha = release["sha256"].as_str().unwrap_or("").to_owned();
-        let file = match download(n) {
-            Some(href) => render(ActionLink {
-                id: &format!("release-files-download-{n}"),
-                icon: "export",
-                title: "Download the release file",
-                href: &href,
-                method: "",
-                body: Html::text("Download"),
-            })?,
-            None => Html::text(&format!(
-                "{} MB",
-                release["bytes"].as_u64().unwrap_or(0) / 1_048_576
-            )),
-        };
-        let mut row = FlexRow::new(n.to_string())
-            .slot("release", Html::text(&n.to_string()))
-            .slot(
-                "in_service",
-                Html::text(if in_service { "Yes" } else { "" }),
-            )
-            .slot(
-                "platform",
-                Html::text(&describe_platform(&release["platform"])),
-            )
-            .slot(
-                "domains",
-                Html::text(describe_domains(&release["domains"]).trim_start_matches(" with ")),
-            )
-            .slot(
-                "checksum",
-                Html::text(&sha.chars().take(12).collect::<String>()),
-            )
-            .slot("file", file);
-        row.dom_id = Some(format!("{id}-{n}"));
-        rows.push(row);
-    }
-    let mut table = FlexTable::new(id, columns.flex_columns(), rows);
-    table.event = event;
-    table.zoom = columns.zoom;
-    table.suggestions = columns.flex_suggestions();
-    table.add_query = &columns.add_query;
-    table.framed = false;
-    Ok(table)
-}
 fn describe_platform(platform: &Value) -> String {
     match platform["version"].as_str() {
         Some(version) => format!("Bilibi {version}"),

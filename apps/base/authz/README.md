@@ -76,12 +76,7 @@ the execution tenant. `SystemScope::rehydrate` is a trusted worker/maintenance
 edge, never a browser constructor. Anonymous system identities always deny;
 declaration alone grants nothing. Removed declarations make old grants inert.
 Named identities hold no user roles, gain no grant-all bypass, and obey platform
-gates. The one thing a named principal may do with no session is read its own
-module's secret: `SystemScope::read_own_secret(client, settings, key)` looks up
-which module declared the principal (`Vocabulary::system_principal_owners`) and
-asks `Settings::get_own_global_secret` for that module's encrypted global
-setting, nothing else (`base/software`'s pairing key, read when another
-instance presents it). It grants no other read and no decision. Decisions stay tenant-scoped; company ownership of custom roles (K15) and
+gates. Decisions stay tenant-scoped; company ownership of custom roles (K15) and
 the account binder (K9) use Tenancy owner proofs. An owner adapter that holds
 only Tenancy's sealed proof connection (`OrganisationDirectory`, Media
 `SubjectOwner`, Artifacts `Owner`) decides through `decide_proof` /

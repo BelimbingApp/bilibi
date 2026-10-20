@@ -171,9 +171,9 @@ async fn main() -> Result<()> {
                 app.services.get(bilibi_base::software::SERVICE)?;
             let (stop, stopped) = tokio::sync::watch::channel(false);
             let settling = tokio::spawn(software.clone().run_settling(stopped.clone()));
-            // A release on its way from another machine is downloaded by this
-            // program, then handed to the installer (release transport).
-            let transporting = tokio::spawn(software.run_transport(stopped.clone()));
+            // This program downloads a GitHub release, then hands the checked
+            // folder to the installer.
+            let downloading = tokio::spawn(software.run_downloads(stopped.clone()));
             let history = tokio::spawn(app.perf.clone().run(stopped.clone()));
             let worker = tokio::spawn(executor.run(stopped.clone()));
             let ticker = tokio::spawn(scheduler.run(stopped));
@@ -192,7 +192,7 @@ async fn main() -> Result<()> {
             .map_err(|_| Error::Internal);
             let _ = stop.send(true);
             settling.await.map_err(|_| Error::Internal)??;
-            transporting.await.map_err(|_| Error::Internal)??;
+            downloading.await.map_err(|_| Error::Internal)??;
             worker.await.map_err(|_| Error::Internal)??;
             history.await.map_err(|_| Error::Internal)??;
             ticker.await.map_err(|_| Error::Internal)??;

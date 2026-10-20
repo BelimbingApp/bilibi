@@ -1191,3 +1191,22 @@ pub(crate) fn pin_from_listing(listing: &Value, input: &Value) -> SoftwareResult
 pub(crate) fn digest_of(path: &std::path::Path) -> std::io::Result<String> {
     transport::sha256_of(path)
 }
+
+/// Compare exact published assets across instances. Local release numbers
+/// and tags alone cannot establish equal bytes.
+pub(crate) fn same_asset(a: &Value, b: &Value) -> bool {
+    let digest = |value: &Value| {
+        value["digest"]
+            .as_str()
+            .or_else(|| value["archive_sha256"].as_str())
+            .and_then(normalize_digest)
+    };
+    ["repository_id", "release_id", "asset_id"]
+        .iter()
+        .all(|key| a[key].as_i64().is_some_and(|id| id > 0) && a[key] == b[key])
+        && ["tag", "target"]
+            .iter()
+            .all(|key| a[key].as_str().is_some_and(|text| !text.is_empty()) && a[key] == b[key])
+        && digest(a).is_some()
+        && digest(a) == digest(b)
+}
