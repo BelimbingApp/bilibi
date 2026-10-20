@@ -55,5 +55,6 @@ jobs:
           fetch-tags: true
       - name: Open the catalogue pull request, then tag and publish
         env:
+          GH_TOKEN: ${{ github.token }}
           BILIBI_CATALOGUE_TOKEN: ${{ secrets.BILIBI_CATALOGUE_TOKEN }}
         run: python3 scripts/release.py publish
