@@ -127,8 +127,11 @@ def integrated(folder, head, default):
     with tempfile.TemporaryDirectory(prefix='bilibi-update-index-') as temporary:
         env = {**os.environ, 'GIT_INDEX_FILE': str(Path(temporary) / 'index')}
         run(folder, 'git', 'read-tree', default, env=env)
+        # Ignore surrounding context: main may have gained adjacent lines after
+        # the squash. The full patch ID above already proved the exact change.
+        patch = run(folder, 'git', 'diff', '--binary', '--unified=0', base, head).stdout
         return run(folder, 'git', 'apply', '--cached', '--reverse', '--check',
-                   input=patch, env=env, check=False).returncode == 0
+                   '--unidiff-zero', input=patch, env=env, check=False).returncode == 0
 
 
 def branch_plan():
