@@ -204,11 +204,11 @@
 
 {# Method-neutral code entry. No Bilimbi counterpart yet. #}
 {% macro proof_input(proof) %}
-<div id="{{ proof.id }}" data-hook="FactorProof" data-proof-name="{{ proof.name }}">
+<div id="{{ proof.id }}-proof" data-hook="FactorProof" data-proof-name="{{ proof.name }}">
 {% if proof.methods.len() > 1 %}{% let selector = proof.selector() %}{% call input(field=selector) %}{% endcall %}{% endif %}
 {% for method in proof.methods %}
 <fieldset data-proof-method="{{ method.id }}"{% if !loop.first %} hidden disabled{% endif %}>
-{% let code = proof.code(method) %}{% call code_input(code=code) %}{% endcall %}
+{% let code = proof.code(*loop.index0, method) %}{% call code_input(code=code) %}{% endcall %}
 </fieldset>
 {% endfor %}
 </div>

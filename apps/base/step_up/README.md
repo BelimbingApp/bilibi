@@ -138,7 +138,7 @@ Declare `base/step_up` as both a Cargo and descriptor dependency. Registration o
 
 Call `StepUp::start(scope, method_id, Purpose { operation, target, channel })` only for an explicit start/resend action. It refuses impersonation, unknown operations and a mismatched channel; an unenrolled method returns `Availability::Unavailable`. `Availability::RetryLater` and `retry_after_seconds` let a page explain a cooldown without delivering again. Never include a plaintext code or destination in the result. Extensions expose any agent challenge operation through their own `agent_api` contribution, using this same facade.
 
-Use `Method::new(id, label).code(length, numeric)` for a different code format (the default is six digits; lengths 1–64 are supported). Protected browser forms use the shared UI `ProofInput`, which builds its method choice and code fields from live enrollment and submits `method_id:code` without changing the owner’s event schema.
+Use `Method::new(id, label).code(length, numeric)` for a different code format (the default is six digits; lengths 1–64 are supported). Protected browser forms and the Software MCP card read `StepUp::enrolled_methods(scope)`, an enrollment-only list that never reads a method's `prompt` or `setup`, so a failing destination cannot break a page. They use the shared UI `ProofInput`, which builds its method choice and code fields from live enrollment and submits `method_id:code` without changing the owner’s event schema.
 
 A single enrolled method accepts the existing plain `step_up_code`. With several enrolled methods, send `"method_id:code"`. Base routes to exactly one provider; it never tries the same code against every method. Missing enrollment and unknown methods fail closed. An accepted code still covers the remaining checks in the same request.
 
@@ -156,7 +156,7 @@ Owners call `StepUp::lifecycle(tx, user, event)` after authorizing inside their 
 - `Delete` removes all method state for the deleted account.
 - `Revoke` clears pending challenges and method-owned proofs while retaining enrollment and failed-attempt lockouts.
 
-Core User calls reset and deletion hooks. `Sessions::revoke(tx, user, except)` calls revocation hooks before ending the account's browser sessions and agent windows. It returns session IDs for announcement after commit; never log them. Operator termination of one session also calls `Revoke` hooks in its owner transaction; the session service reauthorizes the operator and rereads the selected session under the target tenant. The shared lifecycle records a bounded `step_up_lifecycle` marker even when no provider rows changed, so a failed or cancelled hook poisons the mutation boundary.
+Core User calls reset and deletion hooks. `Sessions::revoke(tx, user, except)` calls revocation hooks before ending the account's browser sessions and agent windows. It returns session IDs for announcement after commit; never log them. The shared lifecycle records a bounded `step_up_lifecycle` marker even when no provider rows changed, so a failed or cancelled hook poisons the mutation boundary.
 
 ### Upgrade notes for agents
 
@@ -166,7 +166,7 @@ Extension owners implementing the former `Provider` must:
 2. Move `session` to the identity owner's `SessionProvider`; ordinary factor Extensions implement no session adapter. Custom identity owners use `bind_session` and supply the neutral `prompt` destination too.
 3. Change `enrolled(scope)` to `enrolled(&dyn ProofClient, FactorAccount)` and use the supplied connection, account tenant and user. Add side-effect-free `setup` and `prompt` destinations.
 4. Implement explicit `start` returning `Challenge`, and transactional `lifecycle` returning all `Change` values. Bind delivered proof to the complete `Purpose`; keep phone numbers and delivery state in the Extension.
-5. Handle `SessionProof::Fresh`'s new `consume` field if implementing the session adapter. Update account-wide sign-out callers from `Sessions::end_user_sessions(sql, tenant, user, except)` to `sessions.revoke(tx, user, except)` on a service wired with `with_factors(step_up)`. Call `terminate(tx, scope, id, current)` with the operator's sealed scope and a mutation context using the selected session's tenant; the service reauthorizes and rereads that target before running revocation hooks.
+5. Handle `SessionProof::Fresh`'s new `consume` field if implementing the session adapter. Update account-wide sign-out callers from `Sessions::end_user_sessions(sql, tenant, user, except)` to `sessions.revoke(tx, user, except)` on a service wired with `with_factors(step_up)`.
 6. Qualify codes as `method_id:code` when several methods are enrolled. Keep `require`/`require_code` at the protected owner's boundary.
 
 The sign-in admission flow is unchanged. A second-factor sign-in stage is a separate task. This contract adds no delivery method, secret reader or company policy.

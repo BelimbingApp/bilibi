@@ -483,11 +483,20 @@ impl StepUp {
     /// The bound provider's live enrollment state for this account holder.
     /// Presentation only: mutations still call `require` or `require_code`.
     pub async fn enrolled(&self, scope: &Scope) -> Result<bool> {
-        Ok(!self.enrolled_methods(scope).await?.is_empty())
+        Ok(!self.enrolled_registered(scope).await?.is_empty())
     }
-    /// The registered methods the account holder is enrolled in, with no
-    /// presentation reads: what a check needs, whatever a destination does.
-    async fn enrolled_methods(&self, scope: &Scope) -> Result<Vec<Registered>> {
+    /// The methods the account holder is enrolled in, with no presentation
+    /// reads: what a protected form needs to take a code, whatever a method's
+    /// destinations do.
+    pub async fn enrolled_methods(&self, scope: &Scope) -> Result<Vec<Method>> {
+        Ok(self
+            .enrolled_registered(scope)
+            .await?
+            .into_iter()
+            .map(|(method, _)| method)
+            .collect())
+    }
+    async fn enrolled_registered(&self, scope: &Scope) -> Result<Vec<Registered>> {
         let mut enrolled = Vec::new();
         for registered in self.providers()? {
             if self.provider_enrolled(&*registered.1, scope).await? {
@@ -608,13 +617,12 @@ impl StepUp {
     pub async fn prompt(&self, scope: &Scope, back: &str) -> Result<String> {
         // Core owns the neutral choice page. With one method preserve its
         // existing destination; multiple methods never select by boot order.
-        let choices = self.methods(scope, back).await?;
-        if choices.len() == 1 {
-            let choice = &choices[0];
+        if self.providers()?.len() == 1 {
+            let choice = self.methods(scope, back).await?.remove(0);
             return Ok(if choice.enrolled {
-                choice.prompt.clone()
+                choice.prompt
             } else {
-                choice.setup.clone()
+                choice.setup
             });
         }
         self.session_provider
@@ -638,7 +646,7 @@ impl StepUp {
         if self.providers()?.is_empty() {
             return Ok(Outcome::Refused("unavailable"));
         }
-        let enrolled = self.enrolled_methods(scope).await?;
+        let enrolled = self.enrolled_registered(scope).await?;
         if enrolled.is_empty() {
             return Ok(Outcome::Refused("not_enrolled"));
         }

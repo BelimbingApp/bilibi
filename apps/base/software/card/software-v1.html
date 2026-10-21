@@ -451,12 +451,13 @@ function renderHomeButton() { return el('button', { onclick: renderHome, text: '
 // ---------------------------------------------------------------------------
 // Mirrors base/ui's CodeInput (Bilimbi forms.ex and code_input.js). The card
 // cannot load shared assets; keep one native field, including touch paste.
-function authenticatorInput() {
-  const input = el('input', { type: 'text', inputmode: 'numeric', autocomplete: 'one-time-code', pattern: '[0-9]{6}', id: 'step-up-code', 'aria-describedby': 'step-up-code-hint', spellcheck: 'false', autocapitalize: 'off' });
-  const boxes = Array.from({ length: 6 }, (_, index) => el('span', { data: { codeIndex: index } }));
-  const normalize = value => value.replace(/[^0-9]/g, '').slice(0, 6);
+function authenticatorInput(method) {
+  const size = method.length, numeric = method.numeric;
+  const input = el('input', { type: 'text', inputmode: numeric ? 'numeric' : 'text', autocomplete: 'one-time-code', pattern: numeric ? '[0-9]{' + size + '}' : null, id: 'step-up-code', 'aria-describedby': 'step-up-code-hint', spellcheck: 'false', autocapitalize: numeric ? 'off' : 'characters' });
+  const boxes = Array.from({ length: size }, (_, index) => el('span', { data: { codeIndex: index } }));
+  const normalize = value => (numeric ? value.replace(/[^0-9]/g, '') : value.toUpperCase().replace(/[\s-]/g, '')).slice(0, size);
   const paint = () => {
-    const active = Math.min(input.selectionStart ?? 0, 5);
+    const active = Math.min(input.selectionStart ?? 0, size - 1);
     boxes.forEach((box, index) => {
       const text = input.value[index] || '';
       if (box.textContent !== text) box.textContent = text;
@@ -475,8 +476,8 @@ function authenticatorInput() {
     if (text == null) return;
     event.preventDefault();
     const code = normalize(text), start = input.selectionStart, end = input.selectionEnd;
-    input.value = code.length === 6 ? code : normalize(input.value.slice(0, start) + code + input.value.slice(end));
-    const caret = code.length === 6 ? 6 : Math.min(start + code.length, 6);
+    input.value = code.length === size ? code : normalize(input.value.slice(0, start) + code + input.value.slice(end));
+    const caret = code.length === size ? size : Math.min(start + code.length, size);
     input.setSelectionRange(caret, caret);
     input.dispatchEvent(new Event('input', { bubbles: true }));
   });
@@ -494,7 +495,7 @@ function authenticatorInput() {
     input.setSelectionRange(index, index);
     paint();
   } }, [input, el('div', { class: 'code-boxes', 'aria-hidden': 'true' }, boxes)]);
-  return { input, field: el('div', { class: 'code-input' }, [el('label', { for: input.id, text: 'Your authenticator code' }), control]) };
+  return { input, field: el('div', { class: 'code-input' }, [el('label', { for: input.id, text: 'Your ' + method.label.toLowerCase() + ' code' }), control]) };
 }
 async function review(key, input, verb) {
   stopPolling();
@@ -512,8 +513,18 @@ async function review(key, input, verb) {
   const facts = unwrap(first.preview) || {};
   const needsCode = Array.isArray(facts.step_up) && facts.step_up.length > 0;
   const needsSetup = needsCode && facts.two_factor_enabled !== true;
-  const { input: code, field: codeField } = authenticatorInput();
-  const confirm = el('button', { class: key === 'base.software.undo' ? 'danger' : 'primary', id: 'confirm', text: verb, onclick: () => commit(key, verb, code.value.trim(), facts) });
+  const methods = Array.isArray(facts.two_factor_methods) ? facts.two_factor_methods : [];
+  const chosen = { method: methods[0], input: null };
+  const codeField = el('div', { class: 'stack' });
+  const selector = methods.length > 1 ? el('select', { id: 'step-up-method', 'aria-label': '2FA method', onchange: (event) => { chosen.method = methods.find((m) => m.id === event.target.value); mountCode(); } }, methods.map((m) => el('option', { value: m.id, text: m.label }))) : null;
+  const mountCode = () => {
+    const built = authenticatorInput(chosen.method);
+    chosen.input = built.input;
+    const unit = chosen.method.numeric ? 'digits' : 'characters';
+    codeField.replaceChildren(...[selector, built.field, el('p', { class: 'small muted', id: 'step-up-code-hint', text: 'Type or paste all ' + chosen.method.length + ' ' + unit + '. Asked every time, on every instance, because this changes the server itself.' })].filter(Boolean));
+  };
+  if (methods.length) mountCode();
+  const confirm = el('button', { class: key === 'base.software.undo' ? 'danger' : 'primary', id: 'confirm', text: verb, onclick: () => commit(key, verb, chosen, facts) });
   const switchRow = (key === 'base.software.install') ? el('div', { class: 'row small', id: 'switch-row' }, [
     el('span', { class: 'muted', text: 'When the new version is ready:' }),
     ...['auto', 'ask'].map((mode) => el('label', { class: 'row' }, [el('input', { type: 'radio', name: 'switch', value: mode, checked: state.switchMode === mode, onchange: () => { state.switchMode = mode; input.switch = mode; review(key, input, verb); } }), mode === 'auto' ? 'switch to it at once' : 'copy it now, ask me before the pause'])),
@@ -534,13 +545,10 @@ async function review(key, input, verb) {
       switchRow,
     ]),
     productionNote,
-    needsSetup ? el('p', { class: 'small muted', id: 'twofa-setup' }, [el('a', { href: facts.two_factor_setup_url, target: '_blank', rel: 'noopener', text: 'Set up 2FA', onclick: (event) => { event.preventDefault(); request('ui/open-link', { url: facts.two_factor_setup_url }).catch(() => flash('warning', 'Open My settings in Bilibi and set up 2FA.')); } }), ' to make this change.']) : needsCode ? el('div', { class: 'twofa stack', id: 'twofa' }, [
-      codeField,
-      el('p', { class: 'small muted', id: 'step-up-code-hint', text: 'Type or paste all 6 digits. Asked every time, on every instance, because this changes the server itself.' }),
-    ]) : null,
+    needsSetup ? el('p', { class: 'small muted', id: 'twofa-setup' }, [el('a', { href: facts.two_factor_setup_url, target: '_blank', rel: 'noopener', text: 'Set up 2FA', onclick: (event) => { event.preventDefault(); request('ui/open-link', { url: facts.two_factor_setup_url }).catch(() => flash('warning', 'Open My settings in Bilibi and set up 2FA.')); } }), ' to make this change.']) : needsCode ? el('div', { class: 'twofa stack', id: 'twofa' }, [codeField]) : null,
     el('div', { class: 'row' }, [needsSetup ? null : confirm, el('button', { class: 'quiet', onclick: renderHome, text: 'Back' }), el('span', { class: 'grow' }), plan.expires_at ? el('span', { class: 'small muted', text: 'Review valid until ' + plan.expires_at.replace('T', ' ').slice(0, 16) + ' UTC' }) : null]),
   );
-  if (needsCode && !needsSetup) code.focus();
+  if (needsCode && !needsSetup) chosen.input.focus();
 }
 function factsList(key, facts) {
   const items = [];
@@ -562,13 +570,14 @@ function factsList(key, facts) {
   return items.length ? el('ul', { class: 'plain', id: 'change-list' }, items) : null;
 }
 
-async function commit(key, verb, code, facts) {
+async function commit(key, verb, chosen, facts) {
   const plan = state.plan;
   const args = { plan_code: plan.plan_code, operations: plan.operations };
   const needsCode = Array.isArray(facts.step_up) && facts.step_up.length > 0;
   if (needsCode) {
-    if (!/^\d{6}$/.test(code)) return flash('warning', 'Enter the 6-digit code from your authenticator app.');
-    args.step_up_code = code;
+    const method = chosen.method, code = chosen.input.value.trim();
+    if (code.length !== method.length || (method.numeric && !/^\d+$/.test(code))) return flash('warning', 'Enter the ' + method.length + (method.numeric ? '-digit' : '-character') + ' code from your ' + method.label.toLowerCase() + '.');
+    args.step_up_code = method.id + ':' + code;
   }
   const button = document.getElementById('confirm');
   if (button) { button.disabled = true; button.textContent = verb.replace(/\?$/, '') + '…'; }

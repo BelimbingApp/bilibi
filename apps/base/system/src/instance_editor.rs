@@ -10,8 +10,8 @@ use bilibi_step_up::StepUp;
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
-    Button, ButtonVariant, Card, Choice, CodeInput, Field, FlashGroup, FlashMap, Form, Header,
-    Html, InputKind, Page, PageVariant, StatusKind,
+    Button, ButtonVariant, Card, Choice, Field, FlashGroup, FlashMap, Form, Header, Html,
+    InputKind, Page, PageVariant, StatusKind,
 };
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -169,7 +169,16 @@ impl Editor {
                 .and_then(|value| value.get(format!("instance[{key}]")))
                 .and_then(Value::as_str)
         };
-        let enrolled = self.pages.instances.step_up.enrolled(scope).await?;
+        let methods = self
+            .pages
+            .instances
+            .step_up
+            .enrolled_methods(scope)
+            .await?
+            .into_iter()
+            .map(|m| bilibi_ui::ProofMethod::new(m.id, m.label, m.code_length, m.numeric))
+            .collect::<Vec<_>>();
+        let enrolled = !methods.is_empty();
         let role_field = render(
             Field::named("instance[role]")
                 .id("instance-role")
@@ -186,14 +195,7 @@ impl Editor {
         role_step.body = role_field;
         role_step.reason = "to change the server role.".into();
         role_step.code = render(
-            CodeInput::new(
-                "instance-code",
-                "instance[code]",
-                "2FA code (role changes only)",
-                6,
-            )
-            .numeric()
-            .optional(),
+            bilibi_ui::ProofInput::new("instance-code", "instance[code]", methods).optional(),
         )?;
         let mut body = render(role_step)?;
         body.push(&render(bilibi_ui::Alert { kind: StatusKind::Warning, body: Html::text("Production is the live system. Changing to or from Production changes the server's warnings and 2FA rules. It does not copy or remove any data. Every role change needs a fresh 2FA code."), ..Default::default() })?);

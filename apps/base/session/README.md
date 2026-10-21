@@ -76,11 +76,11 @@ slot `dashboard.sessions`) shows the open count, reading only while
 
 ## Ending a session
 
-`terminate(tx, scope, id, current)` is the operator command: the caller's own session
+`terminate(tx, id, current)` is the operator command: the caller's own session
 is refused before any row is read (`Termination::CurrentSession`), the delete is
 an audited mutation recording whose session ended and from where (the payload
 is marked redacted; the token is never written), and the termination is
-announced after the commit. It reauthorizes the platform operator inside the transaction and calls every factor's revocation hook before deleting the session. The mutation context uses the selected session's tenant, derived from the operator's server-held list selection; a tenant-scoped locked reread refuses a stale or mismatched selection. `delete(client, scope, id)` is logout: the holder's
+announced after the commit. `delete(client, scope, id)` is logout: the holder's
 own session, no audit row. `revoke(tx, user, except)` runs
 inside an owner's mutation transaction (Core User's password change and reset), invokes every registered factor’s revocation hook, and
 returns the ended ids for `announce` after that commit, so a rolled-back

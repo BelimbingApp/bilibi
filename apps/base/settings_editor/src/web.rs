@@ -655,18 +655,10 @@ impl Editor {
         let methods = self
             .core
             .step_up
-            .methods(scope, "/system/settings")
+            .enrolled_methods(scope)
             .await?
             .into_iter()
-            .filter(|m| m.enrolled)
-            .map(|m| {
-                bilibi_ui::ProofMethod::new(
-                    m.method.id,
-                    m.method.label,
-                    m.method.code_length,
-                    m.method.numeric,
-                )
-            })
+            .map(|m| bilibi_ui::ProofMethod::new(m.id, m.label, m.code_length, m.numeric))
             .collect::<Vec<_>>();
         let enrolled = !methods.is_empty();
         let mut protected_override = false;

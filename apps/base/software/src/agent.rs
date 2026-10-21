@@ -85,7 +85,12 @@ impl WriteHandler for Write {
                 Self::Github => software.review_github(scope, input).await?,
             };
             if !matches!(self, Self::Cancel) {
-                review.facts["two_factor_enabled"] = json!(software.step_up.enrolled(scope).await?);
+                let methods = software.step_up.enrolled_methods(scope).await?;
+                review.facts["two_factor_enabled"] = json!(!methods.is_empty());
+                review.facts["two_factor_methods"] = methods
+                    .iter()
+                    .map(|m| json!({"id": m.id, "label": m.label, "length": m.code_length, "numeric": m.numeric}))
+                    .collect();
                 review.facts["two_factor_setup_url"] = json!(format!(
                     "{}{}",
                     software.origin,

@@ -1383,18 +1383,10 @@ impl Detail {
             .pages
             .users
             .step_up
-            .methods(scope, &format!("/users/{}", self.id))
+            .enrolled_methods(scope)
             .await?
             .into_iter()
-            .filter(|m| m.enrolled)
-            .map(|m| {
-                bilibi_ui::ProofMethod::new(
-                    m.method.id,
-                    m.method.label,
-                    m.method.code_length,
-                    m.method.numeric,
-                )
-            })
+            .map(|m| bilibi_ui::ProofMethod::new(m.id, m.label, m.code_length, m.numeric))
             .collect::<Vec<_>>();
         let danger = if loaded.can_delete && !loaded.archived && scope.user() != self.id {
             render(&Danger {

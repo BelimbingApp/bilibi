@@ -1063,7 +1063,8 @@ impl ProofMethod {
 /// Method choice and code entry for a protected form. The shared browser hook
 /// qualifies only this form's submitted code as `method_id:code`; it never
 /// starts a challenge or sends input while a person types. Single-method code
-/// entry keeps the CodeInput DOM and accessibility contract.
+/// entry keeps the CodeInput DOM and accessibility contract: the input id is
+/// the given `id`. Several methods suffix it with their position.
 #[derive(Template, Clone, Debug)]
 #[template(
     source = r#"{% import "forms.html" as forms %}{% call forms::proof_input(proof=self) %}{% endcall %}"#,
@@ -1073,6 +1074,7 @@ pub struct ProofInput {
     pub id: String,
     pub name: String,
     pub methods: Vec<ProofMethod>,
+    pub optional: bool,
 }
 impl ProofInput {
     pub fn new(id: impl Into<String>, name: impl Into<String>, methods: Vec<ProofMethod>) -> Self {
@@ -1080,7 +1082,13 @@ impl ProofInput {
             id: id.into(),
             name: name.into(),
             methods,
+            optional: false,
         }
+    }
+    /// The owning facade still enforces its operation's 2FA requirement.
+    pub fn optional(mut self) -> Self {
+        self.optional = true;
+        self
     }
     pub fn selector(&self) -> Field {
         Field::named("")
@@ -1095,14 +1103,15 @@ impl ProofInput {
                     .collect(),
             )
     }
-    pub fn code(&self, method: &ProofMethod) -> CodeInput {
-        let mut code = CodeInput::new(
-            format!("{}-{}", self.id, method.id),
-            &self.name,
-            "2FA code",
-            method.length,
-        );
+    pub fn code(&self, index: usize, method: &ProofMethod) -> CodeInput {
+        let id = if self.methods.len() == 1 {
+            self.id.clone()
+        } else {
+            format!("{}-{index}", self.id)
+        };
+        let mut code = CodeInput::new(id, &self.name, "2FA code", method.length);
         code.numeric = method.numeric;
+        code.optional = self.optional;
         code
     }
 }

@@ -336,61 +336,51 @@ impl Sessions {
     pub async fn terminate(
         &self,
         tx: &mut MutationTransaction<'_>,
-        scope: &Scope,
         id: &str,
         current: &str,
     ) -> Result<Termination> {
-        bilibi_authz::authorize_operator(tx.sql(), scope, MANAGE).await?;
         if id.is_empty() || current.is_empty() {
             return Err(Error::Invalid);
         }
         if id == current {
             return Ok(Termination::CurrentSession);
         }
-        // A platform operator may terminate a session in another tenant. The
-        // caller uses the selected session's tenant in the mutation context;
-        // this scoped reread proves the selection again before any hook runs.
-        let tenant = tx.context().tenant;
-        let row = tx.sql().query_opt(
-            "SELECT user_id,ip_address,user_agent,last_activity::text FROM sessions WHERE id=$1 AND tenant_id=$2 FOR UPDATE",
-            &[&id, &tenant],
-        ).await?;
-        let Some(row) = row else {
-            return Ok(Termination::NotFound);
-        };
-        let user: i64 = row.get(0);
-        self.factors
-            .as_ref()
-            .ok_or(Error::Internal)?
-            .lifecycle(tx, user, bilibi_step_up::Lifecycle::Revoke)
-            .await?;
         let id = id.to_owned();
         let ended = tx
             .mutate(move |sql| {
                 Box::pin(async move {
-                    sql.execute(
-                        "DELETE FROM sessions WHERE id=$1 AND tenant_id=$2",
-                        &[&id, &tenant],
-                    )
-                    .await?;
+                    let row = sql.query_opt("SELECT tenant_id,user_id,ip_address,user_agent,last_activity::text FROM sessions WHERE id=$1 FOR UPDATE", &[&id]).await?;
+                    let Some(row) = row else {
+                        return Ok((None, Vec::new()));
+                    };
+                    sql.execute("DELETE FROM sessions WHERE id=$1", &[&id])
+                        .await?;
+                    let user: i64 = row.get(1);
                     let change = Change {
                         kind: "session".into(),
                         id: user,
-                        old: json!({"tenant_id": tenant, "user_id": user,
-                    "ip_address": row.get::<_, Option<String>>(1),
-                    "user_agent": row.get::<_, Option<String>>(2),
-                    "last_activity": row.get::<_, String>(3), "payload": "[redacted]"}),
+                        old: json!({
+                            "tenant_id": row.get::<_, i64>(0), "user_id": user,
+                            "ip_address": row.get::<_, Option<String>>(2),
+                            "user_agent": row.get::<_, Option<String>>(3),
+                            "last_activity": row.get::<_, String>(4), "payload": "[redacted]",
+                        }),
                         new: json!({}),
                     };
-                    Ok((id, vec![change]))
+                    Ok((Some(id), vec![change]))
                 })
             })
             .await?;
-        let sessions = self.terminations.clone();
-        tx.after_commit(move || {
-            let _ = sessions.send(Terminated { id: ended });
-        });
-        Ok(Termination::Terminated)
+        match ended {
+            Some(id) => {
+                let sessions = self.terminations.clone();
+                tx.after_commit(move || {
+                    let _ = sessions.send(Terminated { id });
+                });
+                Ok(Termination::Terminated)
+            }
+            None => Ok(Termination::NotFound),
+        }
     }
     /// Ends a user's sessions inside the caller's own write, except the one
     /// named: a credential change keeps the session that made it. A session
