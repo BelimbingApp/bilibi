@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Install the Platform commit guard, chaining a repository-local hook.
 
-No Bilimbi counterpart. Policy lives in discover-modules.py --check; this file
-only installs it. Never change core.hooksPath or a hook outside this repository.
+No Bilimbi counterpart. Policy lives in discover-modules.py --check --staged;
+this file only installs it. Never change core.hooksPath or a hook outside this repository.
 See README.md for conflicts and recovery.
 """
 import argparse
@@ -14,11 +14,12 @@ import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parent.parent
+EARLIER = b'# Bilibi Platform pre-commit safeguard v1; managed by scripts/install-platform-hook.py.'
 HOOK = '''#!/usr/bin/env bash
-# Bilibi Platform pre-commit safeguard v1; managed by scripts/install-platform-hook.py.
+# Bilibi Platform pre-commit safeguard v2; managed by scripts/install-platform-hook.py.
 set -euo pipefail
 root=$(git rev-parse --show-toplevel)
-if ! python3 "$root/scripts/discover-modules.py" --check; then
+if ! python3 "$root/scripts/discover-modules.py" --check --staged; then
     echo "Platform commit refused in $root. See README.md (Commit safeguard) for recovery." >&2
     exit 1
 fi
@@ -65,7 +66,8 @@ def install():
                 refuse(f'{hook} is not executable; run chmod +x on it')
             print(f'Platform safeguard verified: {hook}')
             return
-        if original.exists():
+        earlier = hook.is_file() and hook.read_bytes().split(b'\n')[1:2] == [EARLIER]
+        if original.exists() and not earlier:
             refuse(f'{original} already exists but {hook} is not the managed guard')
         if hook.exists() and not hook.is_file():
             refuse(f'{hook} is not a regular file')
@@ -76,12 +78,12 @@ def install():
             with os.fdopen(fd, 'w') as output:
                 output.write(HOOK)
                 os.fchmod(output.fileno(), 0o755)
-            if hook.exists():
+            if hook.exists() and not earlier:
                 hook.rename(original)
             try:
                 os.replace(temporary, hook)
             except OSError:
-                if original.exists():
+                if not earlier and original.exists():
                     original.rename(hook)
                 raise
         finally:

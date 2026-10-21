@@ -10,7 +10,9 @@ Extension modules sit two levels deep inside a mounted container checkout
 (`apps/<layer>/<container>/<module>`) that declares itself in
 `bilibi.container.toml`. The committed composition is always the unmounted one,
 so `--check` also refuses a staged or committed mounted composition or
-`Cargo.lock`.
+`Cargo.lock`. `--check --staged` judges only the staged form, for the
+pre-commit hook: a commit that removes a mounted composition already at HEAD
+must be allowed. CI runs the full `--check`.
 
 A company build mounts Domain and Extension containers at chosen revisions.
 `--pin` records the Platform and container HEADs, the version each is at (its
@@ -155,15 +157,16 @@ def platform_crates(root, modules):
     return names
 
 
-def git_versions(root, path):
+def git_versions(root, path, staged_only):
     """Yield (label, text) for the committed and staged forms of a tracked file."""
-    for label, spec in (('committed', f'HEAD:{path}'), ('staged', f':{path}')):
+    forms = (('committed', f'HEAD:{path}'), ('staged', f':{path}'))
+    for label, spec in forms[1:] if staged_only else forms:
         shown = subprocess.run(['git', '-C', str(root), 'show', spec], capture_output=True, text=True)
         if shown.returncode == 0:
             yield label, shown.stdout
 
 
-def check_unmounted_commit(root, modules):
+def check_unmounted_commit(root, modules, staged_only):
     """Refuse a staged or committed composition that names mounted Domain or Extension crates."""
     inside = subprocess.run(['git', '-C', str(root), 'rev-parse', '--show-toplevel'],
                             capture_output=True, text=True)
@@ -173,11 +176,11 @@ def check_unmounted_commit(root, modules):
               'unmount, run python3 scripts/discover-modules.py, and let Cargo prune Cargo.lock (see apps/domains/AGENTS.md)')
     for layer in CONTAINER_LAYERS:
         for path, text in composition(layer, []).items():
-            for label, shown in git_versions(root, path):
+            for label, shown in git_versions(root, path, staged_only):
                 if shown != text:
                     raise Refused(f'The {label} {path} is a mounted composition. {advice}')
     allowed = platform_crates(root, modules)
-    for label, shown in git_versions(root, 'Cargo.lock'):
+    for label, shown in git_versions(root, 'Cargo.lock', staged_only):
         lock = tomllib.loads(shown)
         foreign = sorted(p['name'] for p in lock.get('package', []) if 'source' not in p and p['name'] not in allowed)
         if foreign:
@@ -320,7 +323,11 @@ def main():
                       help='record the mounted container HEADs and the resolved Cargo.lock in .local/composition')
     mode.add_argument('--restore', action='store_true',
                       help='rebuild the pinned composition, refusing any container or Platform drift')
+    parser.add_argument('--staged', action='store_true',
+                        help='with --check, judge only the staged composition and Cargo.lock, not HEAD')
     args = parser.parse_args()
+    if args.staged and not args.check:
+        parser.error('--staged only applies to --check')
     try:
         modules = discovered(ROOT)
         files = outputs(ROOT, modules)
@@ -333,7 +340,7 @@ def main():
             for path, text in files.items():
                 if not path.exists() or path.read_text() != text:
                     raise Refused(f'Composition is stale: {path}. Run python3 scripts/discover-modules.py')
-            check_unmounted_commit(ROOT, modules)
+            check_unmounted_commit(ROOT, modules, args.staged)
         else:
             write_outputs(files)
     except Refused as refusal:

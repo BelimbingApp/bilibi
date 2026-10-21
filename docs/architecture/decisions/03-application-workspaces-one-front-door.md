@@ -67,7 +67,7 @@ Local startup permits branches and uncommitted edits. It must report those diffe
 
 **Ship protection with mounting, and preserve work before convenience.**
 
-- Install the direct-Platform pre-commit safeguard with the first `start`/`add` implementation. `add` must verify it even before the first `start`. Reuse `scripts/discover-modules.py --check`, including staged-file inspection; CI remains authoritative because hooks can be bypassed.
+- Install the direct-Platform pre-commit safeguard with the first `start`/`add` implementation. `add` must verify it even before the first `start`. Reuse `scripts/discover-modules.py --check --staged` (staged files only, so a commit that removes a mounted composition at HEAD is allowed); CI runs the full `--check`, which also judges HEAD; CI remains authoritative because hooks can be bypassed.
 - Install safeguards through direct Platform setup, application setup and the agent setup path. Keep installation repository-local and repeatable. Preserve existing hooks and `core.hooksPath`; report unsafe integration with a documented resolution. Never use global Git changes or index flags to hide generated differences.
 - Validate the application's recipe and saved composition in its own repository. Leave Domain and Extension commits under their own checks. Refusals identify the repository and files needing attention.
 - Setup and restore must never silently reset, clean, switch or remove an existing checkout. Preserve branches, staged files, untracked work and dirty sources; report mismatches with a concrete recovery action.

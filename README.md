@@ -85,13 +85,13 @@ The application workspace is being delivered in stages; see [ADR 03](docs/archit
 
 ### Commit safeguard
 
-**Commit component changes in their own repositories.** The Platform pre-commit hook runs `python3 scripts/discover-modules.py --check`, including its staged-file checks. It rejects mounted Domain or Extension linkage and foreign path packages in `Cargo.lock`. CI remains authoritative because Git hooks can be bypassed.
+**Commit component changes in their own repositories.** The Platform pre-commit hook runs `python3 scripts/discover-modules.py --check --staged`. It rejects staged mounted Domain or Extension linkage and foreign path packages in `Cargo.lock`, and ignores HEAD, so a commit that removes a mounted composition already at HEAD is allowed. CI runs the full `--check`, which also judges the committed tip, and remains authoritative because Git hooks can be bypassed.
 
 Installation is local to this repository and safe to repeat. An existing executable `pre-commit` is retained as `pre-commit.bilibi-original` and runs after the discovery check; other hooks and `core.hooksPath` stay unchanged. Relative and absolute hook paths inside the repository are supported. Installation refuses external shared directories, symlinks, tracked hooks and a conflicting backup rather than overwrite them. `start` and `setup` print that refusal and carry on; `add` stops until you resolve it.
 
 For an unsafe hook location, create an untracked directory inside this checkout (for example `.local/hooks`), copy your existing hooks into it, then deliberately set `git config --local core.hooksPath .local/hooks` and run `python3 scripts/install-platform-hook.py`. Keep any existing backup for inspection; do not overwrite it. If your project tracks hooks, keep its originals and use this local copy for chaining. Do not point the local setting at a shared directory.
 
-A rejected commit names its repository and offending file. Unstage the mounted composition files, commit Domain or Extension edits in their own repositories, and follow the [unmount instructions](apps/domains/AGENTS.md) before preparing Platform composition changes. Do not hide generated changes with index flags.
+A rejected commit names its repository and offending file. Unstage the mounted composition files (or stage their unmounted form), commit Domain or Extension edits in their own repositories, and follow the [unmount instructions](apps/domains/AGENTS.md) before preparing Platform composition changes. Do not hide generated changes with index flags.
 
 ### Local launcher
 
