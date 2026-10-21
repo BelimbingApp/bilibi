@@ -101,7 +101,7 @@ bilibi_step_up::declare!(
     .always()
 );
 // Saving the GitHub read token in the settings editor. The token can read
-// the setup repository, so changing it asks for a fresh code.
+// the application repository, so changing it asks for a fresh code.
 bilibi_step_up::declare!(
     "base/software",
     bilibi_step_up::Operation::new(
