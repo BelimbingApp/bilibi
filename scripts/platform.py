@@ -79,7 +79,7 @@ def add(component):
                                'checkout retained for inspection')
     modules = discovery.discovered(ROOT)
     discovery.write_outputs(discovery.outputs(ROOT, modules))
-    subprocess.run(['cargo', 'metadata', '--format-version', '1', '--no-deps'], cwd=ROOT,
+    subprocess.run(['cargo', 'metadata', '--format-version', '1'], cwd=ROOT,
                    stdout=subprocess.DEVNULL, check=True)
     print(f'Added {component} at {destination}. Generated composition and Cargo.lock stay local to Platform.\n'
           'Next: ./bilibi start', flush=True)
