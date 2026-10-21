@@ -16,7 +16,7 @@ pages belong to the Web host, as Bilimbi's do.
 
 | Method | Purpose |
 |---|---|
-| `login(email, password)` / `logout` | Bilimbi's global sign-in: the address alone names the account; the password is verified first, then the account's standing. Refusals are `CredentialError::{Rejected, CompanyArchived, WorkspaceUnavailable}` |
+| `login(email, password)` / `logout` | Bilimbi's global sign-in: the address alone names the account; the password is verified first, then the account's standing. Refusals are `CredentialError::{Rejected, CompanyArchived, WorkspaceUnavailable}`. A required second factor returns a pending credential, not a session; see [Sign-in admission](#sign-in-admission) |
 | `change_password(token, csrf, current, new)` | Signed-in change. Needs the current password; ends the account's other sessions |
 | `request_password_reset(email)` | Always `Ok` for unknown, frozen or throttled accounts. Mail is sent after returning |
 | `reset_password(email, token, new)` | Consumes the one-time token, replaces the password, ends every session; a frozen account's link is as invalid as an unknown one |
