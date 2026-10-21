@@ -5,15 +5,12 @@
 //! `UserService::save_preference`, and the flash names what did and did not
 //! save. Identity is the session alone, so a submitted value cannot name
 //! another account.
-use crate::{
-    web::{settings_entries, SettingsEntry},
-    PreferenceError, Presentation, UserService,
-};
+use crate::{PreferenceError, Presentation, UserService};
 use askama::Template;
 use bilibi_database::Error;
 use bilibi_security::Scope;
 use bilibi_ui::{
-    page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
+    page::{Change, LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, Subscription},
     Choice, Field, FlashGroup, FlashMap, Header, Html, InputKind,
 };
 use std::sync::Arc;
@@ -54,8 +51,7 @@ struct ThemeChoice {
 struct AppearanceView {
     flash: Html,
     header: Html,
-    entries: Vec<SettingsEntry>,
-    current: String,
+    current: bilibi_ui::SettingsTab,
     heading: &'static str,
     subheading: &'static str,
     themes: Vec<ThemeChoice>,
@@ -96,13 +92,12 @@ pub fn render(stored: &Stored, flash: FlashMap<'_>) -> Result<String, Error> {
             flash,
         }))?,
         header: fragment(Html::render(&Header {
-            title: Html::text("Settings"),
+            title: Html::text("My Settings"),
             subtitle: "",
             title_actions: Html::EMPTY,
             actions: Html::EMPTY,
         }))?,
-        entries: settings_entries(),
-        current: "appearance".into(),
+        current: bilibi_ui::SettingsTab::Appearance,
         heading: "Appearance Settings",
         subheading: "Choose your theme, language and time zone.",
         themes: THEME_CHOICES
@@ -169,6 +164,8 @@ pub struct AppearancePage {
     pub users: Arc<UserService>,
     pub stored: Stored,
     notice: Notice,
+    recipient: Change,
+    forwarding: Option<tokio::task::JoinHandle<()>>,
 }
 
 #[derive(Default)]
@@ -178,11 +175,16 @@ struct Notice {
 }
 
 impl AppearancePage {
-    pub fn new(users: Arc<UserService>, stored: Stored) -> Self {
+    pub fn new(users: Arc<UserService>, stored: Stored, scope: &Scope) -> Self {
         Self {
             users,
             stored,
             notice: Notice::default(),
+            recipient: Change {
+                tenant: scope.tenant(),
+                user: Some(scope.user()),
+            },
+            forwarding: None,
         }
     }
 
@@ -264,7 +266,44 @@ impl AppearancePage {
     }
 }
 
+impl Drop for AppearancePage {
+    fn drop(&mut self) {
+        if let Some(job) = self.forwarding.take() {
+            job.abort();
+        }
+    }
+}
+
 impl LiveState<Scope, Error> for AppearancePage {
+    fn subscriptions(&mut self) -> Vec<Subscription> {
+        let mut source = self.users.settings.subscribe();
+        let (sender, receiver) = tokio::sync::broadcast::channel(16);
+        let recipient = self.recipient.clone();
+        // The top bar and this page both write theme and time zone display
+        // through UserService. A committed setting wakes this account's page;
+        // the normal refresh rereads the saved values instead of saving again
+        // or keeping a browser-side copy.
+        self.forwarding = Some(tokio::spawn(async move {
+            loop {
+                match source.recv().await {
+                    Ok(change)
+                        if (change.key == crate::THEME_KEY
+                            || change.key == bilibi_datetime::MODE_KEY)
+                            && change.scope.kind == bilibi_settings::ScopeKind::User
+                            && change.scope.tenant == recipient.tenant
+                            && Some(change.scope.id) == recipient.user => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                    Ok(_) => continue,
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+                if sender.send(recipient.clone()).is_err() {
+                    break;
+                }
+            }
+        }));
+        vec![Subscription { receiver }]
+    }
+
     fn update<'a>(&'a mut self, request: LiveRequest<'a, Scope>) -> LiveFuture<'a, Error> {
         Box::pin(async move {
             match request.input {

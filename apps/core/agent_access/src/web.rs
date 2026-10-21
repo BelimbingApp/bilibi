@@ -1,13 +1,14 @@
 //! The person-facing pages (E4): device consent at `/oauth/device`, client
-//! consent at `/oauth/authorize` and the person's connections at
-//! `/settings/agent-connections`, ported from Bilimbi
+//! consent at `/oauth/authorize` and AI connections at
+//! `/settings/ai-connections`, ported from Bilimbi
 //! `apps/core/agent_access/lib/agent_access/web/{device,authorize,connections}_live.ex`.
 //! Opening a link never approves anything: only an explicit submit decides,
 //! the server computes and displays the connection's end time, and a submitted
 //! expiry is refused. The host proves the session before any adapter call and
 //! `AgentAccess` keeps the self-service gate; this file owns only page state.
 use crate::{
-    AgentAccess, AuthorizationRequest, AuthorizeParams, Decision, DeviceReview, OAuthError,
+    setup_prompt, AgentAccess, AuthorizationRequest, AuthorizeParams, Decision, DeviceReview,
+    OAuthError,
 };
 use askama::Template;
 use bilibi_database::{Db, Error, Result};
@@ -15,15 +16,15 @@ use bilibi_datetime::{DisplayContext, DisplayPolicy, Format, Precision};
 use bilibi_locale::Locales;
 use bilibi_settings::Settings;
 use bilibi_system::Instance;
-use bilibi_tenancy::{Scope, SelfReport};
+use bilibi_tenancy::{ClientIdentity, Scope, SelfReport};
 use bilibi_ui::{
     page::{
         LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, MountFuture, Page, PageBody,
         PageFuture, PageRequest,
     },
     params, ActionLink, Badge, BadgeKind, BuiltinColumn, Button, ButtonVariant, CodeInput,
-    EmptyState, FlashMap, FlexRow, FlexTable, Html, IconButton, ListColumns, StatusKind,
-    TableEmpty, NO_FLASH,
+    EmptyState, Field, FlashMap, FlexRow, FlexTable, Html, IconButton, InputKind, ListColumns,
+    StatusKind, TableEmpty, NO_FLASH,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -74,6 +75,9 @@ impl Pages {
 }
 type State = Box<dyn LiveState<Scope, Error>>;
 impl Page<Scope, Error> for Pages {
+    fn title(&self, operation: &str) -> Option<&'static str> {
+        (operation == "connections").then_some("My Settings")
+    }
     fn render<'a>(&'a self, request: PageRequest<'a, Scope>) -> PageFuture<'a, Error> {
         Box::pin(async move {
             let scope = request.scope.ok_or(Error::Unauthorized)?;
@@ -89,11 +93,7 @@ impl Page<Scope, Error> for Pages {
                         .view(scope)
                         .await?
                 }
-                "connections" => {
-                    ConnectionsPage::new(self.clone(), request.query)?
-                        .view(scope)
-                        .await?
-                }
+                "connections" => ConnectionsPage::new(self.clone())?.view(scope).await?,
                 _ => return Err(Error::NotFound),
             };
             Ok(PageBody {
@@ -108,7 +108,7 @@ impl Page<Scope, Error> for Pages {
             let state: State = match request.operation {
                 "device" => Box::new(DevicePage::new(self.clone(), request.query)?),
                 "authorize" => Box::new(AuthorizePage::new(self.clone(), request.query).await?),
-                "connections" => Box::new(ConnectionsPage::new(self.clone(), request.query)?),
+                "connections" => Box::new(ConnectionsPage::new(self.clone())?),
                 _ => return Err(Error::NotFound),
             };
             Ok(Some(state))
@@ -186,7 +186,6 @@ fn only(query: &HashMap<String, String>, allowed: &[&str]) -> Result<()> {
         Err(Error::Invalid)
     }
 }
-
 // ---- /oauth/device -----------------------------------------------------------
 
 struct Completed {
@@ -458,9 +457,11 @@ fn authorize_message(error: &OAuthError) -> &'static str {
             "The connection end time cannot be changed here. Start a new connection."
         }
         OAuthError::InvalidClient => {
-            "This client is not registered. Ask the platform operator to register its OAuth client and callback address."
+            "This app has not registered a connection. Return to the app and start sign-in again."
         }
-        _ => "This connection request is invalid. Return to your client and start a new connection.",
+        _ => {
+            "This connection request is invalid. Return to your client and start a new connection."
+        }
     }
 }
 /// RFC 3986 unreserved characters pass; everything else is percent-encoded.
@@ -477,7 +478,7 @@ fn encode(value: &str) -> String {
         .collect()
 }
 impl AuthorizePage {
-    /// The request is validated against the operator's client registry before
+    /// The request is validated against its client registration before
     /// consent renders; an invalid one shows an error and never redirects.
     async fn new(pages: Pages, query: &HashMap<String, String>) -> Result<Self> {
         if query.values().any(|value| value.len() > 2048) {
@@ -532,7 +533,7 @@ impl AuthorizePage {
             connections: Html::render(&ActionLink {
                 id: "oauth-connections",
                 title: "Your connections",
-                href: "/settings/agent-connections",
+                href: "/settings/ai-connections",
                 body: Html::text("Your connections"),
                 ..ActionLink::default()
             })
@@ -599,7 +600,13 @@ impl AuthorizePage {
         match self
             .pages
             .access
-            .authorize(scope, &self.params, &self.pages.resource(), expires_at)
+            .authorize_reviewed(
+                scope,
+                &self.params,
+                &self.pages.resource(),
+                expires_at,
+                Some(&request),
+            )
             .await
         {
             Ok(code) => Ok(Some(self.return_to_client(&request, ("code", &code)))),
@@ -609,7 +616,7 @@ impl AuthorizePage {
             }
         }
     }
-    /// Refusal revalidates the operator's callback allowlist too.
+    /// Refusal revalidates the registered callback too.
     async fn deny(&mut self) -> Result<Option<String>> {
         if self.request.is_none() {
             return Ok(None);
@@ -653,13 +660,20 @@ impl LiveState<Scope, Error> for AuthorizePage {
     }
 }
 
-// ---- /settings/agent-connections ----------------------------------------------
+// ---- /settings/ai-connections -------------------------------------------------
 
 struct ConnectionsPage {
     pages: Pages,
     columns: ListColumns,
     pending: Option<i64>,
     flash: Option<Flash>,
+    copied: Option<Copied>,
+}
+/// What the browser reported after a copy click.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Copied {
+    Yes,
+    Failed,
 }
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -673,6 +687,10 @@ enum ConnectionsEvent {
     },
     CancelRevoke,
     ConfirmRevoke,
+    ConnectionCopied {
+        text: String,
+        copied: bool,
+    },
     #[serde(rename = "clear-flash")]
     ClearFlash {
         key: String,
@@ -690,36 +708,62 @@ pub struct ConnectionRow {
     /// Self-reported `harness/model-version-effort` values, newest first,
     /// comma-separated; empty when none.
     pub self_report: String,
+    pub client_identity: String,
     pub revoked: bool,
 }
+#[derive(Template)]
+#[template(
+    source = r#"<p>MCP lets an AI agent act on your behalf in Bilibi, with your permissions and nothing more. Hand it routine tasks, and it shows you each change to check before it is saved. Risky changes also need your 2FA code.</p><ul class="mt-1 list-disc space-y-0.5 pl-4"><li>To connect, paste the prompt below into your AI app's chat. Then sign in to Bilibi in your browser and approve the connection.</li><li>To disconnect an AI app, choose Revoke connection in the table above. Access ends at once.</li></ul>"#,
+    ext = "html"
+)]
+struct Intro;
+
 #[derive(Template)]
 #[template(path = "connections.html")]
 struct ConnectionsView {
     flash: FlashMap<'static>,
-    /// Header action: the agent plugin setup page (`core/agent_plugins`).
-    plugin: Html,
+    header: Html,
+    intro: Html,
     table: Html,
     pending: Option<i64>,
+    /// Impersonation and an agent facet see the table's refusal, not the prompt.
+    show_setup: bool,
+    /// The paste-ready text, shown whole so the person sees what the agent is told.
+    prompt: Option<Field>,
+    /// The same text for the Copy button's `data-copy-text`.
+    prompt_text: String,
+    copied: Option<bool>,
 }
 impl ConnectionsPage {
-    fn new(pages: Pages, query: &HashMap<String, String>) -> Result<Self> {
-        only(query, &[])?;
+    /// The address takes no query. Older links carried `?client_id=` and still open the tab.
+    fn new(pages: Pages) -> Result<Self> {
         Ok(Self {
             pages,
             columns: ListColumns::mount(
                 "agent-connections",
                 vec![
-                    BuiltinColumn::new("agent", "Agent"),
-                    BuiltinColumn::new("expiry", "Ends"),
+                    BuiltinColumn::new("agent", "Harness"),
+                    BuiltinColumn::new("expiry", "Expires"),
                     BuiltinColumn::new("status", "Status"),
-                    BuiltinColumn::new("seen", "Also seen as"),
+                    BuiltinColumn::new("seen", "Also known as"),
                     BuiltinColumn::new("self_report", SelfReport::LABEL),
+                    BuiltinColumn::new("client_identity", ClientIdentity::LABEL),
                 ],
             )
             .map_err(|_| Error::Internal)?,
             pending: None,
             flash: None,
+            copied: None,
         })
+    }
+    /// Only the person may set up their own connection.
+    async fn prompt(&self, scope: &Scope) -> Result<Option<String>> {
+        if super::self_service(scope).is_err() {
+            return Ok(None);
+        }
+        let client = self.pages.db.get().await?;
+        let instance = Instance::resolve(&self.pages.settings, &**client).await?;
+        Ok(Some(setup_prompt::prompt(&instance)))
     }
     async fn view(&self, scope: &Scope) -> Result<String> {
         let client = self.pages.db.get().await?;
@@ -760,6 +804,12 @@ impl ConnectionsPage {
                         .cloned()
                         .collect::<Vec<_>>()
                         .join(", "),
+                    client_identity: row
+                        .observed_clients
+                        .keys()
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(", "),
                     self_report: {
                         let mut reports: Vec<_> = row.self_reported_agents.into_iter().collect();
                         reports.sort_by(|a, b| (&b.1, &b.0).cmp(&(&a.1, &a.0)));
@@ -774,13 +824,6 @@ impl ConnectionsPage {
                 })
             })
             .collect::<Result<Vec<_>>>()?;
-        let plugin = Html::render(&Button {
-            id: "connections-chatgpt-plugin",
-            href: "/settings/chatgpt-plugin",
-            body: Html::text("Plugin for ChatGPT"),
-            ..Button::default()
-        })
-        .map_err(|_| Error::Internal)?;
         let rows = rows
             .into_iter()
             .map(|row| {
@@ -806,7 +849,8 @@ impl ConnectionsPage {
                                 .map_err(|_| Error::Internal)?
                         },
                     )
-                    .slot("self_report", Html::text(&row.self_report));
+                    .slot("self_report", Html::text(&row.self_report))
+                    .slot("client_identity", Html::text(&row.client_identity));
                 rendered.dom_id = Some(row.dom_id);
                 if !row.revoked {
                     rendered.actions = Html::render(&IconButton {
@@ -834,17 +878,46 @@ impl ConnectionsPage {
             EmptyState::missing("Connections unavailable", error).id("connections-error")
         } else {
             EmptyState::missing(
-                "No connections",
-                "Connect an app or agent through its sign-in flow.",
+                "No AI apps connected yet",
+                "Paste the prompt below into your AI app.",
             )
             .id("connections-empty")
         }));
+        let render = |rendered: askama::Result<Html>| rendered.map_err(|_| Error::Internal);
+        let prompt = self.prompt(scope).await?;
+        let show_setup = prompt.is_some();
         html(ConnectionsView {
             flash: flash_map(self.flash),
-            plugin,
-            table: Html::render(&table).map_err(|_| Error::Internal)?,
+            header: render(Html::render(&bilibi_ui::Header {
+                title: Html::text("My Settings"),
+                ..bilibi_ui::Header::default()
+            }))?,
+            intro: render(Html::render(&Intro))?,
+            table: render(Html::render(&table))?,
             pending: self.pending,
+            show_setup,
+            prompt: prompt.as_ref().map(|text| {
+                let mut field = Field::named("prompt")
+                    .id("ai-prompt")
+                    .kind(InputKind::Textarea)
+                    .label("Prompt for your AI app")
+                    .value(text)
+                    .readonly();
+                field.attrs.rows = Some("14".into());
+                field
+            }),
+            prompt_text: prompt.unwrap_or_default(),
+            copied: self.copied.map(|copied| copied == Copied::Yes),
         })
+    }
+    /// A copy report counts only for the prompt this page shows.
+    async fn copied(&mut self, scope: &Scope, text: &str, copied: bool) -> Result<()> {
+        let shown = self
+            .prompt(scope)
+            .await?
+            .is_some_and(|prompt| prompt == text);
+        self.copied = shown.then_some(if copied { Copied::Yes } else { Copied::Failed });
+        Ok(())
     }
     async fn confirm(&mut self, scope: &Scope) -> Result<()> {
         let Some(id) = self.pending.take() else {
@@ -871,7 +944,9 @@ impl LiveState<Scope, Error> for ConnectionsPage {
         Box::pin(async move {
             match request.input {
                 LiveInput::Refresh => {}
-                LiveInput::Params(_) => return Err(Error::Invalid),
+                LiveInput::Params(_) => {
+                    self.copied = None;
+                }
                 LiveInput::Event(value) => {
                     match serde_json::from_value::<ConnectionsEvent>(value.clone())
                         .map_err(|_| Error::Invalid)?
@@ -890,6 +965,9 @@ impl LiveState<Scope, Error> for ConnectionsPage {
                         }
                         ConnectionsEvent::CancelRevoke => self.pending = None,
                         ConnectionsEvent::ConfirmRevoke => self.confirm(request.scope).await?,
+                        ConnectionsEvent::ConnectionCopied { text, copied } => {
+                            self.copied(request.scope, &text, copied).await?
+                        }
                         ConnectionsEvent::ClearFlash { key } => clear_flash(&mut self.flash, &key),
                     }
                 }

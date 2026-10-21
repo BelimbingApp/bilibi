@@ -82,6 +82,17 @@ static SUMMARY: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
     .shared()
     .expect("geonames summary spec")
 });
+// Bilimbi PostcodesLive's edit dialog and picker share their field labels.
+bilibi_ui::record_fields! { mod fields {
+    COUNTRY: bilibi_ui::RecordField::new("country_iso", "Country").slot("country_name"),
+    POSTCODE: bilibi_ui::RecordField::new("postcode", "Postcode"),
+    PLACE_NAME: bilibi_ui::RecordField::new("place_name", "Place Name"),
+    ADMIN1: bilibi_ui::RecordField::new("admin1_division", "Admin1 Division"),
+    LATITUDE: bilibi_ui::RecordField::new("latitude", "Latitude"),
+    LONGITUDE: bilibi_ui::RecordField::new("longitude", "Longitude"),
+    ACCURACY: bilibi_ui::RecordField::new("accuracy", "Accuracy"),
+} }
+
 fn builtins() -> Vec<BuiltinColumn> {
     vec![
         sortable("country_name", "Country", "postcodes-sort-country"),
@@ -224,6 +235,7 @@ impl Postcodes {
             list: parse(query, &SPEC)?,
             summary: parse_summary(query)?,
             columns: ListColumns::mount("postcodes-table", builtins())
+                .map(|columns| columns.with_record_fields(fields::ALL.iter().copied()))
                 .map_err(|_| Error::Internal)?,
             summary_columns: ListColumns::mount(
                 "postcodes-country-summary-rows",
@@ -897,29 +909,29 @@ impl Postcodes {
         };
         let mut postcode = field("postcode")
             .id("postcode-code")
-            .label("Postcode")
+            .label(fields::get("postcode").label)
             .required();
         postcode.attrs.maxlength = Some("20".into());
         let mut place_name = field("place_name")
             .id("postcode-place-name")
-            .label("Place Name")
+            .label(fields::PLACE_NAME.label)
             .required();
         place_name.attrs.maxlength = Some("180".into());
         let mut latitude = field("latitude")
             .id("postcode-latitude")
             .kind(InputKind::Number)
-            .label("Latitude");
+            .label(fields::LATITUDE.label);
         latitude.attrs.step = Some("0.0000001".into());
         let mut longitude = field("longitude")
             .id("postcode-longitude")
             .kind(InputKind::Number)
-            .label("Longitude");
+            .label(fields::LONGITUDE.label);
         longitude.attrs.step = Some("0.0000001".into());
         render(FormView {
             country: field("country_iso")
                 .id("postcode-country")
                 .kind(InputKind::Select)
-                .label("Country")
+                .label(fields::COUNTRY.label)
                 .prompt("Select country...")
                 .options(countries.to_vec())
                 .required(),
@@ -928,7 +940,7 @@ impl Postcodes {
             admin1: field("admin1_code")
                 .id("postcode-admin1")
                 .kind(InputKind::Select)
-                .label("Admin1 Division")
+                .label(fields::ADMIN1.label)
                 .prompt("None")
                 .options(draft.admin1_options.clone()),
             latitude,
@@ -936,7 +948,7 @@ impl Postcodes {
             accuracy: field("accuracy")
                 .id("postcode-accuracy")
                 .kind(InputKind::Select)
-                .label("Accuracy")
+                .label(fields::ACCURACY.label)
                 .prompt("Unknown")
                 .options(
                     (1..=6)
@@ -1103,6 +1115,10 @@ impl Postcodes {
                 )
                 .slot("place_name", place)
                 .slot("admin1_code", muted(postcode.admin1_code.as_deref(), true))
+                .slot("admin1_division", muted(postcode.admin1_name.as_deref().or(postcode.admin1_code.as_deref()), false))
+                .slot("latitude", Html::text(&postcode.latitude.map(|value| value.to_string()).unwrap_or_else(|| "—".into())))
+                .slot("longitude", Html::text(&postcode.longitude.map(|value| value.to_string()).unwrap_or_else(|| "—".into())))
+                .slot("accuracy", Html::text(&postcode.accuracy.map(|value| value.to_string()).unwrap_or_else(|| "—".into())))
                 .slot(
                     "updated_at",
                     date_cell(

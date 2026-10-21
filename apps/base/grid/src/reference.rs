@@ -12,6 +12,7 @@ use bilibi_authz::{CapabilityDefinition as C, VocabularyContribution, VOCABULARY
 pub const READ: &str = "grid.reference.view";
 
 static GRID: GridContribution = GridContribution {
+    record_fields: &[],
     tables: &[
         TableDecl::new(
             "reference_groups",

@@ -189,6 +189,20 @@ impl StepUp {
     pub fn declared(&self, key: &str) -> Option<&Declared> {
         self.operations.get(key)
     }
+    /// The bound provider's live enrollment state for this account holder.
+    /// Presentation only: mutations still call `require` or `require_code`.
+    pub async fn enrolled(&self, scope: &Scope) -> Result<bool> {
+        match self.provider.get() {
+            Some(provider) => provider.enrolled(scope).await,
+            None => Ok(false),
+        }
+    }
+    /// Whether policy currently protects an operation, without spending proof.
+    /// Used to explain protected fields before a person changes them.
+    pub async fn required(&self, scope: &Scope, key: &str) -> Result<bool> {
+        let declared = self.operations.get(key).ok_or(Error::Invalid)?;
+        Ok(declared.operation.always || self.mode(scope, declared).await? != Mode::Off)
+    }
     /// The operation declared to guard changes to setting `key`, if any.
     pub fn guarding_setting(&self, key: &str) -> Option<&Declared> {
         self.operations
@@ -231,6 +245,48 @@ impl StepUp {
                 reason,
             }),
         }
+    }
+
+    /// For an `always` operation whose confirmation form takes a code itself.
+    /// A recent browser check (including enrollment) cannot replace that code.
+    /// Missing codes are audited refusals; presented codes use the normal gate.
+    /// An agent's holder whose codes come by text message is sent one, as by
+    /// [`Self::require`].
+    pub async fn require_code(&self, scope: &Scope, key: &str, target: &str) -> Result<()> {
+        let declared = self.declared(key).ok_or(Error::Internal)?;
+        if !declared.operation.always {
+            return Err(Error::Invalid);
+        }
+        if scope.step_up_code().is_none() {
+            let reason = if scope.impersonator().is_some() {
+                "impersonating"
+            } else if let Some(provider) = self.provider.get() {
+                if !provider.enrolled(scope).await? {
+                    "not_enrolled"
+                } else if scope.agent().is_some() {
+                    self.challenge(scope, provider.as_ref(), declared, target)
+                        .await?
+                        .unwrap_or("code_required")
+                } else {
+                    "code_required"
+                }
+            } else {
+                "unavailable"
+            };
+            self.audit(
+                scope,
+                declared,
+                target,
+                Mode::EveryTime,
+                &Outcome::Refused(reason),
+            )
+            .await?;
+            return Err(Error::StepUpRequired {
+                operation: declared.operation.key,
+                reason,
+            });
+        }
+        self.require(scope, key, target).await
     }
 
     /// Whether the web session's proof still covers `key`, without using it
@@ -356,20 +412,38 @@ impl StepUp {
         // (no `extend`) never sends.
         if let (Outcome::Refused(reason), Some(_), true) = (&outcome, scope.agent(), extend) {
             if *reason != "not_enrolled" {
-                let purpose = Purpose {
-                    operation: declared.operation.key,
-                    target,
-                    channel: scope.channel(),
-                };
-                match provider.challenge(scope, purpose).await? {
-                    Challenge::None => {}
-                    Challenge::Sent => return Ok(Outcome::Refused("code_sent")),
-                    Challenge::Throttled => return Ok(Outcome::Refused("throttled")),
-                    Challenge::Locked => return Ok(Outcome::Refused("locked")),
+                if let Some(reason) = self
+                    .challenge(scope, provider.as_ref(), declared, target)
+                    .await?
+                {
+                    return Ok(Outcome::Refused(reason));
                 }
             }
         }
         Ok(outcome)
+    }
+
+    /// Asks the provider to deliver the holder a code (a text message) for an
+    /// agent that owes one: the refusal reason that says what happened, or
+    /// `None` when the holder reads codes from an app.
+    async fn challenge(
+        &self,
+        scope: &Scope,
+        provider: &dyn Provider,
+        declared: &Declared,
+        target: &str,
+    ) -> Result<Option<&'static str>> {
+        let purpose = Purpose {
+            operation: declared.operation.key,
+            target,
+            channel: scope.channel(),
+        };
+        Ok(match provider.challenge(scope, purpose).await? {
+            Challenge::None => None,
+            Challenge::Sent => Some("code_sent"),
+            Challenge::Throttled => Some("throttled"),
+            Challenge::Locked => Some("locked"),
+        })
     }
 
     /// Opens (or restarts) the window of this agent connection for its

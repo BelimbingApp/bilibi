@@ -273,9 +273,9 @@ impl Panel {
             &format!("{anchor}-columns"),
             vec![
                 BuiltinColumn::new(party, party_label).sortable("party"),
-                BuiltinColumn::new("title", "Title").sortable("title"),
-                BuiltinColumn::new("work_email", "Work email"),
-                BuiltinColumn::new("work_phone", "Work phone"),
+                BuiltinColumn::new("title", fields::TITLE.label).sortable("title"),
+                BuiltinColumn::new("work_email", fields::get("work_email").label),
+                BuiltinColumn::new("work_phone", fields::get("work_phone").label),
                 BuiltinColumn::new("from", "From").sortable("from"),
                 BuiltinColumn::new("to", "To").sortable("to"),
                 BuiltinColumn::new("status", "Status").sortable("status"),
@@ -559,9 +559,17 @@ impl Panel {
         .errors(errors(&format!("{party}_id")));
         controls.push(render(combo)?);
         for (key, label, kind) in [
-            ("title", "Title", InputKind::Text),
-            ("work_email", "Work email", InputKind::Email),
-            ("work_phone", "Work phone", InputKind::Tel),
+            ("title", fields::TITLE.label, InputKind::Text),
+            (
+                "work_email",
+                fields::get("work_email").label,
+                InputKind::Email,
+            ),
+            (
+                "work_phone",
+                fields::get("work_phone").label,
+                InputKind::Tel,
+            ),
             ("effective_from", "From", InputKind::Date),
             ("effective_to", "To", InputKind::Date),
         ] {
@@ -653,9 +661,9 @@ impl Panel {
                 })?,
             );
             for (column, label) in [
-                ("title", "Title"),
-                ("work_email", "Work email"),
-                ("work_phone", "Work phone"),
+                ("title", fields::TITLE.label),
+                ("work_email", fields::get("work_email").label),
+                ("work_phone", fields::get("work_phone").label),
                 ("from", "From"),
                 ("to", "To"),
             ] {
@@ -1310,3 +1318,13 @@ fn changed(error: &ContractError) -> bool {
         _ => false,
     }
 }
+
+// Shared facts mirror Bilimbi’s record detail module; columns extend its list vocabulary.
+bilibi_ui::record_fields! { pub(crate) mod fields {
+    ORGANISATION_ID: bilibi_ui::RecordField::new("organisation_id", "Company").path("work.company.name:list"),
+    TITLE: bilibi_ui::RecordField::new("title", "Role").path("work.title:list"),
+    WORK_EMAIL: bilibi_ui::RecordField::new("work_email", "Work email").path("work.work_email:list"),
+    WORK_PHONE: bilibi_ui::RecordField::new("work_phone", "Work phone").path("work.work_phone:list"),
+    EFFECTIVE_FROM: bilibi_ui::RecordField::new("effective_from", "From").excluded("Nested affiliation dates"),
+    EFFECTIVE_TO: bilibi_ui::RecordField::new("effective_to", "To").excluded("Nested affiliation dates"),
+} }

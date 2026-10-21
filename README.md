@@ -40,7 +40,7 @@ Bilibi is MIT-licensed, like the earlier iterations. The architecture is the sam
 - **Companies, people and addresses:** lists, details and inline edits, scoped to the tenant.
 - **Audit:** every change records old and new values and who made it, in the same save; append-only.
 - **Notifications and mail:** a live notification bell; mail goes to `.local/mailbox/` until an SMTP relay is set.
-- **Agent access:** agents sign in for a person through OAuth and work through `/api/v1` and `/mcp`; a Plugin for ChatGPT can be downloaded from settings.
+- **Agent access:** agents sign in for a person through OAuth and work through `/api/v1` and `/mcp`. Connection details are on My settings, under AI connections. The tab holds one prompt the person pastes into their AI app, so the agent connects itself.
 - **Database tables:** an owner-only, read-only view of every table, with data, schema and relationships.
 
 ## Run it locally
@@ -56,38 +56,41 @@ On Ubuntu, Debian or WSL2:
 
 Open the address printed by the launcher and sign in as `ai@agent.my` / `bilibi-dev` (development seed only). One checkout owns <https://bilibi.localhost>; other checkouts use their own `http://127.0.0.1:<port>` address. Setting `BILIBI_DEV_PORT` selects a backend port, without taking over another checkout's HTTPS address.
 
-The launcher starts a private database, builds, migrates, seeds and rebuilds on change. While the HTTPS app is down, its waiting page shows the current build step and elapsed time. A failed build shows the latest diagnostics; fix the error and save a file to rebuild. Cargo output stays in the terminal, and a previous successful build keeps serving until its replacement is ready. Restart it after changing an environment variable.
+The launcher sets `BILIBI_ENV=development` unless you already set it, so the install seed identifies a fresh local copy as Dev. A saved role in Instance settings takes precedence. It starts a private database, builds, migrates, seeds and rebuilds on change. While the HTTPS app is down, its waiting page shows the current build step and elapsed time. A failed build shows the latest diagnostics; fix the error and save a file to rebuild. Cargo output stays in the terminal, and a previous successful build keeps serving until its replacement is ready. Restart it after changing an environment variable.
+
+`start-app.sh` stores three keys for this checkout when they are not already set. `BILIBI_SETTINGS_KEY` is `.local/dev/settings.key`. `BILIBI_USER_SIGNING_KEY` is `.local/dev/user-signing.key`. `BILIBI_MEDIA_SIGNING_KEY` is `.local/dev/media-signing.key`. The first run creates a missing file as 64 hex characters (32 random bytes) with mode 0600. Later runs read that same file. The launcher leaves an existing key file as it is. Replacing `settings.key` would make every secret setting and authenticator key unreadable. `.local/` is not committed. Restart the launcher after you change one of these files.
 
 ## Configuration
 
 | Variable | Use |
 |----------|-----|
 | `DATABASE_URL` | PostgreSQL 18. Unset: the private instance on port 5438 |
-| `APP_ORIGIN` | The exact browser origin, no trailing slash |
+| `APP_ORIGIN` | The exact browser origin, no trailing slash. Staging and Production refuse to start unless it is HTTPS; see [HTTPS for OAuth](docs/server-install.md#https-for-oauth) |
 | `BIND_ADDR` | Listen address, default `127.0.0.1:3000` |
 | `MAIL_HOST` | SMTP relay. Unset: write mail to `.local/mailbox/` |
-| `BILIBI_USER_SIGNING_KEY` | 64 hex characters, for email verification links |
-| `BILIBI_SETTINGS_KEY` | 64 hex characters. Encrypts secret settings and authenticator keys. Two-factor setup refuses without it |
-| `BILIBI_ENV` | `development`, `staging` or `production`. Unset means `production`. Any other value refuses to boot |
-| `BILIBI_SMS_DIR` | Development only: where the SMS simulator keeps its messages. Default `.local/sms-outbox/` |
+| `BILIBI_USER_SIGNING_KEY` | 64 hex characters, for email verification links. Unset: `start-app.sh` supplies one |
+| `BILIBI_SETTINGS_KEY` | 64 hex characters. Encrypts secret settings and authenticator keys. 2FA setup refuses without it. Unset: `start-app.sh` supplies one |
+| `BILIBI_MEDIA_SIGNING_KEY` | 64 hex characters, for signed file links. Unset: `start-app.sh` supplies one |
+| `BILIBI_ENV` | `development`, `staging` or `production`. Initial role for the install seed. Unset means `production`; `start-app.sh` defaults to `development`. Later role changes use Instance settings. Other values refuse installation |
+| `BILIBI_SMS_DIR` | Where the SMS simulator keeps its messages while the server role is Dev. Default `.local/sms-outbox/` |
 
-Every page, consent page and agent answer says which Bilibi it is, so nobody mistakes a test copy for the live system. Every instance but production shows a badge in the top bar and on the sign-in page; reviews and agent plans name every instance, production included. The name and colour are the Instance settings (`instance.label`, `instance.colour`), read through `bilibi_base::system::Instance::resolve` ([Base System](apps/base/system/README.md)).
+Every page, consent page and agent answer says which Bilibi it is, so nobody mistakes a test copy for the live system. The status bar always shows the stored server role; Staging also shows a top-bar badge. Dev and Staging show a sign-in badge; reviews and agent plans name every instance, production included. The name and colour are the Instance settings (`instance.label`, `instance.colour`), read through `bilibi_base::system::Instance::resolve` ([Base System](apps/base/system/README.md)).
 
-Base Step-up (2FA) asks as each tenant's policy says, on every `BILIBI_ENV`: a check within a sliding 30-minute window, capped at 6 hours (tenant settings), or every time. `BILIBI_ENV` decides one more thing: where text-message codes go.
+Base Step-up (2FA) asks as each tenant's policy says, in every server role, Dev included: a check within a sliding 30-minute window, capped at 6 hours (tenant settings), or every time. The stored server role decides one more thing: where text-message codes go. Click the status-bar role to open Instance settings. A Core Administrator can change it with a fresh 2FA code; changing to or from Production carries a warning and every change is audited.
 
-| `BILIBI_ENV` | Text-message codes |
+| Server role | Text-message codes |
 |--------------|--------------------|
-| `development` | The SMS simulator keeps them; read them at `/dev/sms-inbox`, which anyone who reaches the server can open |
-| `staging`, `production`, unset | Not sent: no SMS provider is built yet, so only authenticator apps work there |
+| Dev | The SMS simulator keeps them; read them at `/dev/sms-inbox`, which anyone who reaches the server can open |
+| Staging, Production | Not sent: no SMS provider is built yet, so only authenticator apps work there |
 
-- Set `BILIBI_ENV=development` only on a developer machine or a Dev server nobody outside the team reaches. A missing value never weakens a guard.
+- Choose Dev only for a development copy, or a Dev server nobody outside the team reaches. A missing install value defaults to Production.
 - Each account sets up its authenticator at `/settings/two-factor`, or an administrator adds its phone number. Tenants choose what asks, sign-in included, at `/authz/step-up`. See [Base Step-up](apps/base/step_up/README.md) and [Base SMS](apps/base/sms/README.md).
 
 Terminate TLS at a reverse proxy, and keep the database on a private network: Bilibi connects to PostgreSQL without TLS.
 
 ## Run it on a server
 
-`scripts/install-server.sh` sets up Dev, Staging and Production instances under `/opt/bilibi`, each with its own database, service and address, and puts releases into service. `bilibi-web create-owner` then creates the first account, the server owner, on the empty database. `BILIBI_ENV` is also the instance's role: only `development` builds software. See [`docs/server-install.md`](docs/server-install.md).
+`scripts/install-server.sh` sets up Dev, Staging and Production instances under `/opt/bilibi`, each with its own database, service and address, and puts releases into service. `bilibi-web create-owner` then creates the first account, the server owner, on the empty database. The install seed saves the initial `BILIBI_ENV` role in settings; later changes use the protected Instance settings page. Build software on your own machine, then install the tested release on any of them. See [`docs/server-install.md`](docs/server-install.md).
 
 ## Add a business area
 

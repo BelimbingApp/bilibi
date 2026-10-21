@@ -1,0 +1,17 @@
+Companies and contacts have postal addresses. Save an address through core.address; it is a linked record, so it is not a field in core.company.create or core.person.create.
+
+For a business card such as Zara Chen at TeamViewer's Adelaide office:
+
+1. Find or create the company through core.company, then find or create the person and company position through core.person or core.affiliation.contact.create.
+2. Search core.address.list with q before creating an address. Read a company's saved addresses with core.address.company.list and a person's with core.address.person.list.
+3. Use core.address.location.options to find imported country and region codes. Supply country_iso and admin1_code from those results. Postcode and locality remain free text; core.address.location.suggest applies the same cascade as the forms. If a country has not been imported, omit it and keep the supplied address text; never invent a code or silently drop the address.
+4. For a new office, plan core.address.company.create_and_attach with company_id, address and attachment. Label it "Adelaide office". Supported attachment kinds are headquarters, billing, shipping, branch and other; use branch or other only when the source supports that meaning. An office label does not imply headquarters. This creates a manual, unverified address and defaults its link's start date to today.
+5. Use the returned address id in core.address.person.attach with person_id, address_id, address_version and attachment to share the office with the contact. Read the current address version before attaching, so a changed address requires a fresh review. Existing addresses can also be linked with core.address.company.attach. Review each plan with the person and commit its single-use code. When the address already exists, company and person attachment operations can share one ordered plan.
+
+An attachment contains kinds (an array), is_primary, priority (0–32767) and optional dates with effective_from/effective_to (inclusive ISO calendar dates). Omitted dates are unbounded except for create_and_attach's start-date default. Omitted kinds, primary and priority default to [], false and 0. The first owner-list result is the primary address, otherwise the lowest-priority address. Several owners can share one address.
+
+To edit, read the current address or attachment version first. core.address.update replaces address facts, including optional fields: omitted visible values clear; omit a restricted phone to preserve it. Empty strings clear visible text. core.address.company.update_attachment and core.address.person.update_attachment replace the link settings. Use the matching detach operation to unlink; the address remains saved. core.address.delete refuses attached addresses.
+
+Attachments require permission to update their company or person. Archived companies and retired or protected people refuse link changes. An archived company's shared address cannot be updated. Hidden phones read as {"restricted":true}; never send that marker as input.
+
+A work address normally belongs to the company. An affiliation records a person's position and work email/phone; it does not own an address. You can also attach that same address directly to the person when requested. Contact creation and address creation are separate reviewed writes.

@@ -25,12 +25,13 @@ sms.send(&message).await?; // Arc<Sms> from bilibi_sms::SERVICE
 
 **Bound once at boot.** The host decides; nothing reads a provider setting yet.
 
-| Deployment | Transport | `send` |
+| Saved instance role | Transport | `send` |
 |---|---|---|
-| `BILIBI_ENV=development` | **Simulator** (`Outbox`): one private JSON file per message in `BILIBI_SMS_DIR` (default `.local/sms-outbox`), newest 100 kept, directory `0700`, files `0600` | Stores the message |
-| Staging, production | None | `Error::Unavailable` |
+| Dev | **Simulator** (`Outbox`): one private JSON file per message in `BILIBI_SMS_DIR` (default `.local/sms-outbox`), newest 100 kept, directory `0700`, files `0600` | Stores the message |
+| Staging, Production | None | `Error::Unavailable` |
 
-- `Sms::available` says whether anything can be sent. An owner that needs SMS must treat "unavailable" as a missing feature, not a failure to retry.
+- The host binds the simulator on every server behind a `Simulation` gate (`Sms::use_simulator`) that reads the saved `instance.role` (Base System) on every send. A role change takes effect without a restart, and a role that cannot be read refuses.
+- `Sms::available` says whether anything can be sent now. An owner that needs SMS must treat "unavailable" as a missing feature, not a failure to retry.
 - The boot log prints the transport (`sms: …`), never a message.
 - A real provider is a future `Transport` bound with `Sms::bind`. Its credentials will be encrypted installation settings with an editor (`AGENTS.md`, Configurable), and its HTTP calls go through `base/integration`.
 
@@ -38,7 +39,7 @@ sms.send(&message).await?; // Arc<Sms> from bilibi_sms::SERVICE
 
 `/dev/sms-inbox` shows the simulator's messages newest first, one card per message: recipient, time, the code apart, then the full text.
 
-- The host binds the route only when `BILIBI_ENV=development`. Elsewhere the path does not exist and answers 404 like any unknown path.
+- It shows messages only while the simulator is allowed (the saved role is Dev). Otherwise the path answers 404 like any unknown path.
 - It is anonymous on purpose: a tester needs the code before signing in. Anyone who reaches a development server can read every code on it.
 - The page model is `InboxPage` (`src/inbox.rs`); the host renders it in the credential layout.
 

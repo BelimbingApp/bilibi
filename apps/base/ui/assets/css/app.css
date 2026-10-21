@@ -24,6 +24,156 @@
 @plugin "../vendor/heroicons.cjs";
 @import "./legacy-compat.css";
 
+/* Bilimbi Forms select and multi_select share the outline chevron. A single
+ * select keeps its native keyboard and popup behaviour; only its arrow changes.
+ * Its icon ends 11px from the outer edge, matching the multi-select's 2px shift. */
+.ui-select { position: relative; }
+.ui-select > select {
+  appearance: none;
+  padding-right: 2.25rem;
+}
+.ui-select-chevron {
+  position: absolute;
+  right: 11px;
+  top: 50%;
+  display: inline-flex;
+  width: 1rem;
+  height: 1rem;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+/* Bilimbi Forms multi_select, using Bilibi's canonical inset chip layout. */
+.ui-multi-field {
+  position: relative;
+  min-height: 3rem;
+}
+.ui-multi-trigger {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  cursor: pointer;
+}
+.ui-multi-trigger:focus-visible { outline: 2px solid var(--color-brand-strong); outline-offset: 1px; }
+.ui-multi-field:focus-within { border-color: var(--color-brand-strong); }
+.ui-multi-field:has(> [aria-invalid="true"]) { border-color: var(--color-danger); }
+.ui-multi-content {
+  position: relative;
+  padding: 0.25rem 11px 0.375rem;
+  pointer-events: none;
+}
+.ui-multi-heading {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding-right: 1.5rem;
+  font-size: 0.6875rem;
+  line-height: 1rem;
+  color: var(--color-ink-muted);
+}
+.ui-multi-chevron {
+  position: absolute;
+  top: 0.25rem;
+  right: 10px;
+  display: inline-flex;
+  width: 1rem;
+  height: 1rem;
+  transition: transform 0.2s;
+}
+.ui-multi-field:has(> [aria-expanded="true"]) .ui-multi-chevron { transform: rotate(180deg); }
+.ui-multi-options { display: none; }
+.ui-multi-field:has(> [aria-expanded="true"]) + .ui-multi-options { display: block; }
+.ui-multi-chips {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-height: 1.25rem;
+  margin-top: 0.125rem;
+  overflow: hidden;
+  font-size: 0.75rem;
+  line-height: 1.25rem;
+}
+.ui-multi-chip {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0.25rem;
+  max-width: calc(100% - 1.25rem);
+  border-radius: 9999px;
+  padding: 0.125rem 0.375rem;
+  background: var(--color-surface-sunken);
+  font-size: 0.6875rem;
+  line-height: 1rem;
+}
+.ui-multi-chip[data-overflow] { position: absolute; left: 0; top: 0; visibility: hidden; pointer-events: none; }
+.ui-multi-remove {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 1rem;
+  height: 1rem;
+  border-radius: 9999px;
+  color: var(--color-ink-muted);
+  pointer-events: auto;
+}
+.ui-multi-remove:hover { color: var(--color-danger-ink); background: var(--color-surface); }
+.ui-multi-remove:focus-visible { outline: 2px solid var(--color-brand-strong); }
+.ui-multi-overflow { flex: 0 0 1rem; width: 1rem; text-align: center; }
+[data-wrap-chips] .ui-multi-chips { flex-wrap: wrap; }
+[data-wrap-chips] .ui-multi-chip { max-width: 100%; }
+.ui-multi-field[data-disabled] { background: var(--color-surface-sunken); opacity: 0.65; }
+.ui-multi-field[data-disabled] :is(button, .ui-multi-remove) { cursor: not-allowed; }
+
+/* Shared colour input. The chip is the banner's surface, border and ink,
+ * with the name inside, rather than a swatch beside a separate label. */
+.ui-colour-trigger:not([hidden]), .ui-colour-option {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  text-align: left;
+}
+/* The closed field borrows the select's right padding. The chevron sits where
+ * that select draws its own arrow: centred on the box. `right` is measured
+ * inside the 1px border, and the 16px icon's glyph is centred in the icon,
+ * so 0.5px puts the glyph on the arrow. */
+.ui-colour-trigger:not([hidden]) { position: relative; }
+.ui-colour-chevron {
+  position: absolute;
+  top: 50%;
+  right: 0.5px;
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+.ui-colour-chip {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+  flex: 0 1 auto;
+  border-width: 2px;
+  border-style: solid;
+  border-radius: 0.375rem;
+  padding: 0 0.375rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ui-colour-option[data-active] { background: var(--color-brand-surface); }
+.ui-colour-option[aria-selected="false"] .ui-colour-check { visibility: hidden; }
+@media (pointer: coarse) {
+  .ui-colour-option { min-height: 2.5rem; }
+}
+
 /* Instrument Sans is vendored under SIL OFL 1.1 in priv/static/fonts/OFL.txt
  * from Instrument/instrument-sans at 7fa22308a3d0c94ee2b3cd537a1196b65db34a3e.
  * Keep these font files local so production shells do not make third-party

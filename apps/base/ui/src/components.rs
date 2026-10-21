@@ -352,8 +352,7 @@ pub struct Button<'a> {
     pub event: &'a str,
     pub working: &'a str,
     /// With `href`, the link saves its target under this file name instead
-    /// of opening it (a `data:` text the page itself built, such as
-    /// recovery codes that exist nowhere else).
+    /// of opening it (a `data:` text file the page itself built).
     pub download: &'a str,
     pub body: Html,
 }

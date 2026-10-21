@@ -2,12 +2,11 @@
 //! (the account's method, authenticator setup and management, inside the
 //! settings shell) and `/settings/two-factor/confirm` (the step-up prompt,
 //! which sends a text-message account its code). Both are live: the
-//! setup key, QR code and recovery codes exist only in the socket's state
-//! after the request that produced them and are dropped with it, so a reload
-//! never shows them again. Typed values are never echoed back.
+//! setup key and QR code exist only in the socket's state after the request
+//! that produced them and are dropped with it, so a reload never shows them
+//! again. Typed values are never echoed back.
 use crate::{
     two_factor::{Enrollment, Method, TwoFactorError, TwoFactorStatus},
-    web::settings_entries,
     UserService,
 };
 use askama::Template;
@@ -15,8 +14,8 @@ use bilibi_database::Error;
 use bilibi_security::Scope;
 use bilibi_ui::{
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
-    Attrs, Button, ButtonVariant, CodeInput, CountdownButton, Field, FlashGroup, FlashMap, Header,
-    Html, SecretInput, StatusKind,
+    Attrs, Button, ButtonVariant, CodeInput, CountdownButton, FlashGroup, FlashMap, Header, Html,
+    SecretInput, StatusKind,
 };
 use std::{collections::HashMap, sync::Arc};
 
@@ -37,14 +36,8 @@ fn fragment(rendered: askama::Result<Html>) -> Result<Html, Error> {
 
 fn code_field(id: &str, label: &str, errors: &[String]) -> Result<Html, Error> {
     fragment(Html::render(
-        &Field::in_form("two_factor", "code")
-            .id(id)
-            .label(label)
-            .hint("6 digits from the app, or a recovery code")
-            .autocomplete("one-time-code")
-            .attr("spellcheck", "false")
-            .attr("autocapitalize", "off")
-            .attr("maxlength", "32")
+        &CodeInput::new(id, "two_factor[code]", label, 6)
+            .numeric()
             .errors(errors.to_vec()),
     ))
 }
@@ -70,8 +63,10 @@ fn canonical(return_to: &Option<String>) -> HashMap<String, String> {
 enum Stage {
     Off,
     Setup(Enrollment),
-    Codes(Vec<String>),
     On,
+    /// Moving to a new phone: the old phone's code was accepted, the new
+    /// phone's first code is still to come.
+    Move(Enrollment),
 }
 
 /// `/settings/two-factor`.
@@ -83,9 +78,6 @@ pub struct TwoFactorPage {
     errors: Vec<String>,
     notice: String,
     success: &'static str,
-    /// Which managed-stage form the last intent came from, so its error
-    /// shows under that form only.
-    last_on: &'static str,
 }
 
 #[derive(serde::Deserialize)]
@@ -100,12 +92,8 @@ enum TwoFactorEvent {
         code: String,
     },
     Cancel {},
-    Done {},
-    Regenerate {
-        #[serde(rename = "two_factor[code]", default)]
-        code: String,
-    },
-    Disable {
+    /// A current code from the old phone, to get a QR code for the new one.
+    Move {
         #[serde(rename = "two_factor[code]", default)]
         code: String,
     },
@@ -121,10 +109,9 @@ enum TwoFactorEvent {
 struct TwoFactorView<'a> {
     flash: Html,
     header: Html,
-    entries: Vec<crate::web::SettingsEntry>,
-    current: String,
+    current: bilibi_ui::SettingsTab,
     heading: &'static str,
-    subheading: &'static str,
+    description: Html,
     stage: &'static str,
     notice: &'a str,
     password: Html,
@@ -133,12 +120,7 @@ struct TwoFactorView<'a> {
     issuer: &'a str,
     account: &'a str,
     code: Html,
-    codes: &'a [String],
-    download: Html,
-    returning: bool,
-    recovery_left: i64,
-    regenerate_code: Html,
-    disable_code: Html,
+    move_code: Html,
     /// Codes come by text message (a phone number, no app, a transport).
     text_method: bool,
     /// The masked number, when the account has one.
@@ -169,7 +151,6 @@ impl TwoFactorPage {
                 String::new()
             },
             success: "",
-            last_on: "",
         })
     }
 
@@ -203,6 +184,26 @@ impl TwoFactorPage {
                     Err(error) => self.errors.push(field_error(error)?),
                 }
             }
+            TwoFactorEvent::Confirm { code } if matches!(self.stage, Stage::Move(_)) => {
+                if code.trim().is_empty() {
+                    self.errors.push(BLANK.into());
+                    return Ok(None);
+                }
+                let Stage::Move(to) = &self.stage else {
+                    return Err(Error::Invalid);
+                };
+                match self.users.confirm_move(scope, to, &code).await {
+                    Ok(()) => {
+                        self.reload(scope).await?;
+                        self.success = "Your new phone is set up. The old phone no longer works.";
+                    }
+                    Err(TwoFactorError::NotEnabled) => {
+                        self.reload(scope).await?;
+                        self.notice = TwoFactorError::NotEnabled.to_string();
+                    }
+                    Err(error) => self.errors.push(field_error(error)?),
+                }
+            }
             TwoFactorEvent::Confirm { code } => {
                 if !matches!(self.stage, Stage::Setup(_)) {
                     return Err(Error::Invalid);
@@ -212,10 +213,12 @@ impl TwoFactorPage {
                     return Ok(None);
                 }
                 match self.users.confirm_two_factor(scope, &code).await {
-                    Ok(codes) => {
-                        self.status = self.users.two_factor_status(scope).await?;
-                        self.stage = Stage::Codes(codes);
+                    Ok(()) => {
+                        self.reload(scope).await?;
                         self.success = "2FA is on.";
+                        if self.return_to.is_some() {
+                            return Ok(self.return_to.clone());
+                        }
                     }
                     Err(TwoFactorError::NoPendingEnrollment) => {
                         self.reload(scope).await?;
@@ -225,34 +228,15 @@ impl TwoFactorPage {
                 }
             }
             TwoFactorEvent::Cancel {} => self.reload(scope).await?,
-            TwoFactorEvent::Done {} => {
-                if !matches!(self.stage, Stage::Codes(_)) {
-                    return Err(Error::Invalid);
-                }
-                self.reload(scope).await?;
-                return Ok(self.return_to.clone());
-            }
-            TwoFactorEvent::Regenerate { code } | TwoFactorEvent::Disable { code }
-                if code.trim().is_empty() =>
-            {
+            TwoFactorEvent::Move { code } if code.trim().is_empty() => {
                 self.errors.push(BLANK.into());
             }
-            TwoFactorEvent::Regenerate { code } => {
-                match self.users.regenerate_recovery_codes(scope, &code).await {
-                    Ok(codes) => {
-                        self.status = self.users.two_factor_status(scope).await?;
-                        self.stage = Stage::Codes(codes);
-                        self.success = "New recovery codes generated. The old ones no longer work.";
-                    }
-                    Err(error) => self.errors.push(field_error(error)?),
+            TwoFactorEvent::Move { code } => {
+                if !matches!(self.stage, Stage::On) {
+                    return Err(Error::Invalid);
                 }
-            }
-            TwoFactorEvent::Disable { code } => {
-                match self.users.disable_two_factor(scope, &code).await {
-                    Ok(()) => {
-                        self.reload(scope).await?;
-                        self.success = "2FA is off.";
-                    }
+                match self.users.begin_move(scope, &code).await {
+                    Ok(enrollment) => self.stage = Stage::Move(enrollment),
                     Err(error) => self.errors.push(field_error(error)?),
                 }
             }
@@ -262,12 +246,30 @@ impl TwoFactorPage {
     }
 
     fn render(&self) -> Result<String, Error> {
-        let empty: Vec<String> = Vec::new();
-        let (stage, enrollment, codes) = match &self.stage {
-            Stage::Off => ("off", None, &empty),
-            Stage::Setup(enrollment) => ("setup", Some(enrollment), &empty),
-            Stage::Codes(codes) => ("codes", None, codes),
-            Stage::On => ("on", None, &empty),
+        let (stage, enrollment) = match &self.stage {
+            Stage::Off => ("off", None),
+            Stage::Setup(enrollment) => ("setup", Some(enrollment)),
+            Stage::On => ("on", None),
+            Stage::Move(enrollment) => ("move", Some(enrollment)),
+        };
+        let text_method = self.status.method() == Method::TextMessage;
+        let (heading, first) = match self.stage {
+            Stage::Off if text_method => (
+                "2FA by text message",
+                "Before risky changes, Bilibi sends a 6-digit code by text message to your phone. You can use an authenticator app instead.",
+            ),
+            Stage::Off | Stage::Setup(_) => (
+                "Set up your authenticator app",
+                "Link an authenticator app on your phone, such as Google Authenticator or Microsoft Authenticator. Before risky changes, Bilibi asks for the 6-digit code from the app.",
+            ),
+            Stage::Move(_) => (
+                "Move to a new phone",
+                "Link the authenticator app on your new phone. Once its first code is confirmed, the old phone stops working.",
+            ),
+            Stage::On => (
+                "Authenticator app",
+                "Your authenticator app is set up. Before risky changes, Bilibi asks for the 6-digit code from the app.",
+            ),
         };
         let password = fragment(Html::render(
             &SecretInput::in_form("two_factor", "password", "password")
@@ -282,31 +284,6 @@ impl TwoFactorPage {
                     ..Attrs::default()
                 }),
         ))?;
-        let errors_for = |which: &str| {
-            if stage == which {
-                self.errors.clone()
-            } else {
-                Vec::new()
-            }
-        };
-        let download_href = format!(
-            "data:text/plain;charset=utf-8,{}",
-            percent_encoding::utf8_percent_encode(
-                &recovery_text(codes),
-                percent_encoding::NON_ALPHANUMERIC
-            )
-        );
-        let download = if codes.is_empty() {
-            Html::default()
-        } else {
-            fragment(Html::render(&Button {
-                id: "two-factor-download",
-                href: &download_href,
-                download: "bilibi-recovery-codes.txt",
-                body: Html::text("Download as text"),
-                ..Button::default()
-            }))?
-        };
         let view = TwoFactorView {
             flash: fragment(Html::render(&FlashGroup {
                 id: "flash-group",
@@ -316,16 +293,14 @@ impl TwoFactorPage {
                 },
             }))?,
             header: fragment(Html::render(&Header {
-                title: Html::text("Settings"),
+                title: Html::text("My Settings"),
                 subtitle: "",
                 title_actions: Html::EMPTY,
                 actions: Html::EMPTY,
             }))?,
-            entries: settings_entries(),
-            current: "two-factor".into(),
-            heading: "2FA",
-            subheading:
-                "Confirm protected actions with a code from an authenticator app or a text message.",
+            current: bilibi_ui::SettingsTab::TwoFactor,
+            heading,
+            description: fragment(Html::render(&Bullets { first }))?,
             stage,
             notice: &self.notice,
             password,
@@ -336,50 +311,36 @@ impl TwoFactorPage {
             code: code_field(
                 "two_factor_code",
                 "Authentication code",
-                &errors_for("setup"),
+                &if matches!(self.stage, Stage::Setup(_) | Stage::Move(_)) {
+                    self.errors.clone()
+                } else {
+                    Vec::new()
+                },
             )?,
-            codes,
-            download,
-            returning: self.return_to.is_some(),
-            recovery_left: self.status.recovery_codes_left,
-            regenerate_code: code_field(
-                "two_factor_regenerate_code",
+            move_code: code_field(
+                "two_factor_move_code",
                 "Authentication code",
-                &self.on_errors("regenerate"),
+                &if matches!(self.stage, Stage::On) {
+                    self.errors.clone()
+                } else {
+                    Vec::new()
+                },
             )?,
-            disable_code: code_field(
-                "two_factor_disable_code",
-                "Authentication code",
-                &self.on_errors("disable"),
-            )?,
-            text_method: self.status.method() == Method::TextMessage,
+            text_method,
             phone: self.status.phone.as_deref().unwrap_or_default(),
             phone_verified: self.status.phone_verified,
         };
         view.render().map_err(|_| Error::Internal)
     }
-
-    /// The managed stage has two forms; the last error belongs to the one
-    /// whose intent produced it.
-    fn on_errors(&self, form: &str) -> Vec<String> {
-        if matches!(self.stage, Stage::On) && self.last_on == form {
-            self.errors.clone()
-        } else {
-            Vec::new()
-        }
-    }
 }
 
-/// The downloadable text: one code per line, with what they are for.
-fn recovery_text(codes: &[String]) -> String {
-    let mut text = String::from(
-        "Bilibi recovery codes\nEach code works once, in place of an authenticator code.\n\n",
-    );
-    for code in codes {
-        text.push_str(code);
-        text.push('\n');
-    }
-    text
+#[derive(Template)]
+#[template(
+    source = r#"<ul class="mt-1 list-disc space-y-0.5 pl-4"><li>{{ first }}</li><li>Lost your phone? Ask an admin to reset your 2FA, then set it up again.</li></ul>"#,
+    ext = "html"
+)]
+struct Bullets<'a> {
+    first: &'a str,
 }
 
 impl LiveState<Scope, Error> for TwoFactorPage {
@@ -392,19 +353,22 @@ impl LiveState<Scope, Error> for TwoFactorPage {
                 LiveInput::Event(value) => {
                     let event = serde_json::from_value::<TwoFactorEvent>(value.clone())
                         .map_err(|_| Error::Invalid)?;
-                    self.last_on = match &event {
-                        TwoFactorEvent::Regenerate { .. } => "regenerate",
-                        TwoFactorEvent::Disable { .. } => "disable",
-                        _ => "",
-                    };
                     redirect = self.handle(request.scope, event).await?;
                 }
             }
+            let flash = redirect.as_ref().and_then(|_| {
+                if self.success.is_empty() {
+                    None
+                } else {
+                    Some((StatusKind::Success, self.success.to_owned()))
+                }
+            });
             Ok(LiveBody {
                 html: self.render()?,
                 query: canonical(&self.return_to),
                 rows: 1,
                 redirect,
+                flash,
                 ..LiveBody::default()
             })
         })
@@ -419,6 +383,8 @@ pub struct ConfirmPage {
     phone: String,
     /// Seconds before another text message may be asked for.
     resend_in: i64,
+    /// Minutes the text-message code works, once one was sent.
+    code_minutes: i64,
     minutes: i64,
     hours: i64,
     return_to: Option<String>,
@@ -447,12 +413,10 @@ struct ConfirmView<'a> {
     /// `app`, `text` or `none`.
     method: &'static str,
     phone: &'a str,
+    code_minutes: i64,
     minutes: i64,
     hours: i64,
-    code: Html,
-    errors: &'a [String],
-    resend: Html,
-    setup_href: &'a str,
+    step_up: Html,
 }
 
 impl ConfirmPage {
@@ -468,6 +432,7 @@ impl ConfirmPage {
             method: status.method(),
             phone: status.phone.unwrap_or_default(),
             resend_in: 0,
+            code_minutes: 0,
             minutes: window.window_minutes,
             hours: window.cap_hours,
             return_to: return_to(query),
@@ -492,6 +457,7 @@ impl ConfirmPage {
             Ok(sent) => {
                 self.phone = sent.phone;
                 self.resend_in = sent.resend_in;
+                self.code_minutes = sent.minutes;
                 if resend {
                     self.info = "A new code is on its way. The earlier one no longer works.".into();
                 }
@@ -507,19 +473,49 @@ impl ConfirmPage {
     }
 
     fn render(&self) -> Result<String, Error> {
-        let setup_href = match &self.return_to {
-            Some(path) => format!(
-                "{}?return={}",
-                crate::TWO_FACTOR_PATH,
-                percent_encoding::utf8_percent_encode(path, percent_encoding::NON_ALPHANUMERIC)
-            ),
-            None => crate::TWO_FACTOR_PATH.to_owned(),
-        };
         let text = self.method == Method::TextMessage;
+        let mut step = bilibi_ui::StepUp::new(
+            self.method != Method::None,
+            self.return_to.as_deref().unwrap_or_default(),
+        );
+        step.reason = "with an authenticator app, or ask an administrator to add your phone number for codes by text message.".into();
+        step.code = code_field(
+            "two_factor_code",
+            if text {
+                "Code from the text message"
+            } else {
+                "Authentication code"
+            },
+            &self.errors,
+        )?;
+        step.actions = fragment(Html::render(&Button {
+            id: "confirm-access-verify",
+            button_type: "submit",
+            variant: ButtonVariant::Primary,
+            working: "Verifying…",
+            body: Html::text("Verify"),
+            ..Button::default()
+        }))?;
+        if text {
+            step.secondary_actions = fragment(Html::render(&CountdownButton {
+                variant: ButtonVariant::Secondary,
+                id: "confirm-access-resend",
+                label: "Resend code",
+                seconds: self.resend_in,
+                button_type: "button",
+                event: "resend",
+                working: "Sending…",
+                ..CountdownButton::default()
+            }))?;
+        }
         ConfirmView {
             header: fragment(Html::render(&Header {
                 title: Html::text("Confirm access"),
-                subtitle: "Enter your 2FA code to continue.",
+                subtitle: if self.method == Method::None {
+                    ""
+                } else {
+                    "Enter your 2FA code to continue."
+                },
                 title_actions: Html::EMPTY,
                 actions: Html::EMPTY,
             }))?,
@@ -531,35 +527,10 @@ impl ConfirmPage {
                 Method::None => "none",
             },
             phone: &self.phone,
+            code_minutes: self.code_minutes,
             minutes: self.minutes,
             hours: self.hours,
-            code: if text {
-                fragment(Html::render(
-                    &CodeInput::new(
-                        "two_factor_code",
-                        "two_factor[code]",
-                        "Code from the text message",
-                        6,
-                    )
-                    .numeric(),
-                ))?
-            } else {
-                code_field("two_factor_code", "Authentication code", &self.errors)?
-            },
-            // The code boxes have no error line: the text form shows the
-            // refusal above them instead.
-            errors: if text { &self.errors } else { &[] },
-            resend: fragment(Html::render(&CountdownButton {
-                variant: ButtonVariant::Secondary,
-                id: "confirm-access-resend",
-                label: "Resend code",
-                seconds: self.resend_in,
-                button_type: "button",
-                event: "resend",
-                working: "Sending…",
-                ..CountdownButton::default()
-            }))?,
-            setup_href: &setup_href,
+            step_up: fragment(Html::render(&step))?,
         }
         .render()
         .map_err(|_| Error::Internal)
@@ -577,37 +548,37 @@ impl LiveState<Scope, Error> for ConfirmPage {
                         .map_err(|_| Error::Invalid)?;
                     self.errors.clear();
                     self.info.clear();
-                    let code = match event {
+                    match event {
                         ConfirmEvent::Resend {} => {
                             if self.method != Method::TextMessage {
                                 return Err(Error::Invalid);
                             }
                             self.send(request.scope, true).await?;
-                            None
                         }
-                        ConfirmEvent::Verify { code } => Some(code),
-                    };
-                    if let Some(code) = code {
-                        if code.trim().is_empty() {
-                            self.errors.push(BLANK.into());
-                        } else {
-                            match self.users.step_up(request.scope, &code).await {
-                                Ok(()) => {
-                                    return Ok(LiveBody {
-                                        html: self.render()?,
-                                        rows: 1,
-                                        redirect: Some(
-                                            self.return_to.clone().unwrap_or_else(|| "/".into()),
-                                        ),
-                                        flash: Some((
-                                            StatusKind::Success,
-                                            "Access confirmed.".into(),
-                                        )),
-                                        ..LiveBody::default()
-                                    });
+                        ConfirmEvent::Verify { code } => {
+                            if code.trim().is_empty() {
+                                self.errors.push(BLANK.into());
+                            } else {
+                                match self.users.step_up(request.scope, &code).await {
+                                    Ok(()) => {
+                                        return Ok(LiveBody {
+                                            html: self.render()?,
+                                            rows: 1,
+                                            redirect: Some(
+                                                self.return_to
+                                                    .clone()
+                                                    .unwrap_or_else(|| "/".into()),
+                                            ),
+                                            flash: Some((
+                                                StatusKind::Success,
+                                                "Access confirmed.".into(),
+                                            )),
+                                            ..LiveBody::default()
+                                        });
+                                    }
+                                    Err(TwoFactorError::NotEnabled) => self.method = Method::None,
+                                    Err(error) => self.errors.push(field_error(error)?),
                                 }
-                                Err(TwoFactorError::NotEnabled) => self.method = Method::None,
-                                Err(error) => self.errors.push(field_error(error)?),
                             }
                         }
                     }

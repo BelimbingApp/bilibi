@@ -1,0 +1,24 @@
+# A pull request must carry an "Upgrade notes for agents" section (docs/versions.md).
+# Its own workflow so editing the pull request body re-checks the notes without
+# rebuilding Rust.
+name: Upgrade notes
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: upgrade-notes-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  upgrade-notes:
+    name: Upgrade notes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - run: python3 scripts/release.py require-notes

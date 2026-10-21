@@ -1,3 +1,4 @@
+//! Mirrors Bilimbi `Base.AgentApi`, extended to every caller by ADR 01.
 //! Module-owned operation contracts (ADR 01): discovery, read dispatch and
 //! reviewed writes for every caller. `/api/v1` and `/mcp` call them for
 //! agents, pages call them through [`page`]. Callers authenticate a fresh
@@ -9,14 +10,21 @@ pub mod plans;
 pub mod reach;
 mod reference;
 pub mod schema;
-pub mod search;
+mod search;
 
 use bilibi_module_registry::{Catalog, Consumer, Contribution, Entry, Provenance, RegistryError};
-use bilibi_tenancy::{Channel, ProofClient, ProofFuture, Scope};
+use bilibi_tenancy::{Channel, Scope};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, future::Future, pin::Pin, sync::Arc};
 use tokio_postgres::GenericClient;
+
+/// Shared business context for MCP initialization and generated plugin skills.
+/// Keep this in one source so both connections teach the same discovery rule.
+pub const BUSINESS_CONTEXT: &str = "Bilibi is this person's business system for contacts, companies, addresses, tenants, users, software, settings and mounted Domains; treat requests about these records as Bilibi requests. Search Bilibi's operations and guides before answering, and never claim Bilibi lacks a field or action without searching for it.";
+
+/// Shared session and write-review identity rule for MCP and plugin skills.
+pub const INSTANCE_INSTRUCTIONS: &str = "State this Bilibi's label, role (Dev, Staging or Production) and address in your first answer of the session and at the top of every plan review and confirmation. Plan and commit results carry them as `instance`.";
 
 pub const DEFINITIONS: &str = "base/agent_api.definitions";
 /// MCP Apps: a module's card, served by `/mcp` as a `ui://` resource and
@@ -31,22 +39,8 @@ pub type OperationFuture<'a> = Pin<Box<dyn Future<Output = Result<json::Output>>
 
 /// Object-safe read adapter, including list queries. Owners can pass this same
 /// client to Tenancy proof providers without opening an unrelated connection.
-pub trait OperationClient: ProofClient {
-    fn query<'a>(
-        &'a self,
-        sql: &'a str,
-        params: &'a [&'a (dyn tokio_postgres::types::ToSql + Sync)],
-    ) -> ProofFuture<'a, Vec<tokio_postgres::Row>>;
-}
-impl<T: GenericClient + Sync> OperationClient for T {
-    fn query<'a>(
-        &'a self,
-        sql: &'a str,
-        params: &'a [&'a (dyn tokio_postgres::types::ToSql + Sync)],
-    ) -> ProofFuture<'a, Vec<tokio_postgres::Row>> {
-        Box::pin(async move { Ok(GenericClient::query(self, sql, params).await?) })
-    }
-}
+pub trait OperationClient: bilibi_tenancy::ReadClient {}
+impl<T: GenericClient + Sync> OperationClient for T {}
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

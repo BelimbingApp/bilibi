@@ -4,10 +4,24 @@
 # apps/<domains|extensions>/<container> (docs/domain-ci/ci.yml does that) and
 # DATABASE_URL naming an empty PostgreSQL 18 database. Nothing here is a unit
 # test: it builds the composed app, migrates a fresh database, and loads `/`.
+#
+# DOMAIN_CI_BUILD=release (default) does the locked release build and boots
+# that binary. DOMAIN_CI_BUILD=check skips it and boots the debug binary.
+# Pull requests use check. main, tags and manual runs use release
+# (docs/domain-ci/README.md).
 set -euo pipefail
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 cd "$root"
 : "${DATABASE_URL:?DATABASE_URL must name an empty PostgreSQL 18 database}"
+build=${DOMAIN_CI_BUILD:-release}
+case "$build" in
+  check|release) ;;
+  *) echo "DOMAIN_CI_BUILD must be check or release (got ${build})" >&2; exit 1 ;;
+esac
+# Debug info dominates compile and link time, and the boot checks do not read it.
+if [[ "$build" == check ]]; then
+  export CARGO_PROFILE_DEV_DEBUG="${CARGO_PROFILE_DEV_DEBUG:-0}"
+fi
 step() { printf '\n== %s\n' "$*"; }
 
 step 'Discovery refuses any container shape the Platform does not accept'
@@ -24,15 +38,30 @@ cargo metadata --format-version 1 >/dev/null
 python3 scripts/discover-modules.py --pin
 cat .local/composition/manifest.txt
 
-step 'Format, lint and build every workspace member, mounted crates included'
+step "Format and lint every workspace member (profile: ${build})"
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo build --workspace --release --locked
+
+if [[ "$build" == release ]]; then
+  step 'Locked release build of every workspace member'
+  cargo build --workspace --release --locked
+  app="${CARGO_TARGET_DIR:-$root/target}/release/bilibi-web"
+else
+  # Clippy only typechecks. The boot checks need a binary, and a debug build
+  # is enough on a pull request; main and tags still prove the release binary.
+  step 'Debug build of the composed app for the boot checks'
+  cargo build --locked -p bilibi-web
+  app="${CARGO_TARGET_DIR:-$root/target}/debug/bilibi-web"
+fi
+if [[ ! -x "$app" ]]; then
+  echo "The gates did not produce an executable at ${app}" >&2
+  exit 1
+fi
 
 step 'Migrate a fresh database and apply the production seeds'
-app="${CARGO_TARGET_DIR:-$root/target}/release/bilibi-web"
 "$app" migrate
-"$app" seed-production
+# This disposable boot uses HTTP loopback, so install it explicitly as Dev.
+BILIBI_ENV=development "$app" seed-production
 
 step 'Boot the composed app and load /'
 port=${DOMAIN_CI_PORT:-3000}

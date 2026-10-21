@@ -25,11 +25,11 @@ use bilibi_base::{
     },
     integration::{Incoming, Integration},
     settings::Settings,
-    tenancy::{ProofFuture, Scope, SelfReport},
+    tenancy::{ClientIdentity, ProofFuture, Scope, SelfReport},
 };
 use bilibi_core::agent_access::{
-    AgentAccess, AgentClaims, CodeExchange, OAuthError, Throttle, CLIENT_ID, DEVICE_GRANT,
-    OAUTH_REQUESTS_PER_MINUTE, OAUTH_SCOPE,
+    AgentAccess, AgentClaims, ClientRegistration, CodeExchange, OAuthError, Throttle, CLIENT_ID,
+    DEVICE_GRANT, OAUTH_REQUESTS_PER_MINUTE, OAUTH_SCOPE,
 };
 use bilibi_database::Error;
 use serde_json::{json, Map, Value};
@@ -54,8 +54,13 @@ pub fn reserved(path: &str) -> bool {
         || path.starts_with("/.well-known/")
         || path == "/webhooks"
         || path.starts_with("/webhooks/")
-        || crate::transport::reserved(path)
-        || ["/oauth/device_authorization", "/oauth/token", "/mcp"].contains(&path)
+        || [
+            "/oauth/device_authorization",
+            "/oauth/token",
+            "/oauth/register",
+            "/mcp",
+        ]
+        .contains(&path)
 }
 
 /// Services this edge composes; built once at boot from the registry.
@@ -103,6 +108,7 @@ pub fn router(app: App) -> Router<App> {
         .route("/.well-known/bilibi", get(descriptor))
         .route("/oauth/device_authorization", post(device))
         .route("/oauth/token", post(token))
+        .route("/oauth/register", post(register))
         .merge(api)
         .merge(crate::mcp::router())
         .method_not_allowed_fallback(method_not_allowed)
@@ -115,6 +121,7 @@ pub fn router(app: App) -> Router<App> {
 pub(crate) struct Trace {
     pub(crate) id: String,
     pub(crate) reported: Reported,
+    pub(crate) client_identity: Option<ClientIdentity>,
 }
 /// The self-report a request carried (ADR 01, "Agent identity at runtime").
 /// A malformed value is dropped and only the fact is recorded; neither case
@@ -162,6 +169,7 @@ pub(crate) struct Exchange {
     pub(crate) scope: Option<Scope>,
     pub(crate) operation: Option<String>,
     pub(crate) reported: Option<Reported>,
+    pub(crate) client_identity: Option<ClientIdentity>,
 }
 
 async fn record(State(app): State<App>, mut request: Request, next: Next) -> Response {
@@ -172,9 +180,11 @@ async fn record(State(app): State<App>, mut request: Request, next: Next) -> Res
     let agent_id = label(request.headers(), AGENT_ID_HEADER);
     let run_id = label(request.headers(), RUN_ID_HEADER);
     let reported = Reported::from_headers(request.headers());
+    let client_identity = client_identity(request.headers(), endpoint == "/mcp");
     request.extensions_mut().insert(Trace {
         id: trace.clone(),
         reported: reported.clone(),
+        client_identity: client_identity.clone(),
     });
     let mut response = next.run(request).await;
     let exchange = response
@@ -204,6 +214,10 @@ async fn record(State(app): State<App>, mut request: Request, next: Next) -> Res
         run_id,
         agent_self_report: reported.report().map(|report| report.as_str().to_owned()),
         agent_self_report_malformed: matches!(reported, Reported::Malformed),
+        client_identity: exchange
+            .client_identity
+            .or(client_identity)
+            .map(|client| client.as_str().to_owned()),
         correlation_id: Some(trace.clone()),
         ..Incoming::default()
     };
@@ -219,6 +233,23 @@ async fn record(State(app): State<App>, mut request: Request, next: Next) -> Res
         response.headers_mut().insert(TRACE_HEADER, value);
     }
     response
+}
+
+/// Transport evidence only: never infer a model from a harness User-Agent.
+/// An omitted/malformed label is stated explicitly for every MCP exchange.
+pub(crate) fn client_identity(headers: &HeaderMap, mcp: bool) -> Option<ClientIdentity> {
+    let mut values = headers.get_all(header::USER_AGENT).iter();
+    let client = match (values.next(), values.next()) {
+        (Some(value), None) => value.to_str().ok().and_then(|value| {
+            let value: String = value.chars().take(ClientIdentity::MAX_LEN - 12).collect();
+            ClientIdentity::parse(&format!("User-Agent: {value}"))
+        }),
+        _ => None,
+    };
+    client.or_else(|| {
+        mcp.then(|| ClientIdentity::parse("MCP: client identity not supplied"))
+            .flatten()
+    })
 }
 
 /// A self-reported label; an unshowable value is treated as not stated.
@@ -289,6 +320,8 @@ async fn metadata(State(app): State<App>) -> Response {
             "device_authorization_endpoint": format!("{base}/oauth/device_authorization"),
             "authorization_endpoint": format!("{base}/oauth/authorize"),
             "token_endpoint": format!("{base}/oauth/token"),
+            "registration_endpoint": format!("{base}/oauth/register"),
+            "client_id_metadata_document_supported": true,
             "response_types_supported": ["code"],
             "grant_types_supported": [DEVICE_GRANT, "authorization_code", "refresh_token"],
             "code_challenge_methods_supported": ["S256"],
@@ -427,6 +460,33 @@ fn oauth(result: Result<Value, OAuthError>) -> Response {
     response
 }
 
+/// RFC 7591 registration is intentionally unauthenticated. The same direct
+/// sender attribution and operator-set limiter as the token edge apply.
+async fn register(State(app): State<App>, request: Request) -> Response {
+    let sender = sender(&request);
+    match allowed(&app, "register", &sender).await {
+        Ok(true) => {}
+        Ok(false) => return oauth(Err(OAuthError::SlowDown)),
+        Err(error) => return oauth(Err(error.into())),
+    }
+    let Ok(Json(value)) = Json::<Value>::from_request(request, &app).await else {
+        return oauth(Err(OAuthError::InvalidClientMetadata));
+    };
+    if value.get("client_secret").is_some() || value.get("client_secret_expires_at").is_some() {
+        return oauth(Err(OAuthError::InvalidClientMetadata));
+    }
+    let Ok(registration) = serde_json::from_value::<ClientRegistration>(value) else {
+        return oauth(Err(OAuthError::InvalidClientMetadata));
+    };
+    let result = app.api.access.register_client(&registration).await;
+    let success = result.is_ok();
+    let mut response = oauth(result);
+    if success {
+        *response.status_mut() = StatusCode::CREATED;
+    }
+    response
+}
+
 async fn device(State(app): State<App>, request: Request) -> Response {
     let sender = sender(&request);
     match allowed(&app, "device", &sender).await {
@@ -469,6 +529,17 @@ fn query_value(value: &str) -> String {
 }
 
 async fn token(State(app): State<App>, request: Request) -> Response {
+    match app.secure_origin().await {
+        Ok(true) => {}
+        Ok(false) => {
+            return reply(
+                StatusCode::BAD_REQUEST,
+                json!({"error":"invalid_request", "error_description":"APP_ORIGIN must use HTTPS. Only a Dev copy on this computer may use HTTP on a loopback address."}),
+            )
+        }
+        Err(error) => return unavailable(&error).into_response(),
+    }
+    let client_identity = client_identity(request.headers(), false);
     let sender = sender(&request);
     match allowed(&app, "token", &sender).await {
         Ok(true) => {}
@@ -504,7 +575,9 @@ async fn token(State(app): State<App>, request: Request) -> Response {
                 code_verifier: field("code_verifier").into(),
                 resource: field("resource").into(),
             };
-            access.exchange_code(&exchange, &mcp_resource(&app)).await
+            access
+                .exchange_code_from(&exchange, &mcp_resource(&app), client_identity.as_ref())
+                .await
         }
         Some(_) => {
             return oauth_code("unsupported_grant_type");
@@ -582,11 +655,16 @@ pub(crate) async fn authenticate(
         .await
         .map_err(fail)?;
     access
-        .observe(&claims, label(headers, AGENT_ID_HEADER).as_deref(), report)
+        .observe(
+            &claims,
+            label(headers, AGENT_ID_HEADER).as_deref(),
+            report,
+            trace.client_identity.as_ref(),
+        )
         .await
         .map_err(fail)?;
     Ok(Agent {
-        scope,
+        scope: scope.with_client_identity(trace.client_identity.clone()),
         claims,
         trace: trace.clone(),
     })
@@ -603,6 +681,7 @@ impl Agent {
             scope: Some(self.scope),
             operation,
             reported: None,
+            client_identity: None,
         });
         response
     }
@@ -635,7 +714,7 @@ impl PlanAuthority for Grant<'_> {
                 })?;
             Ok(PlanIdentity {
                 credential_binding: format!("agent-connection:{}", self.claims.connection),
-                scope,
+                scope: scope.with_client_identity(self.trace.client_identity.clone()),
             })
         })
     }

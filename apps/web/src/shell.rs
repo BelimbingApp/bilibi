@@ -139,7 +139,7 @@ async fn context<'a>(
     // no primary company; a failed lookup paints no warning.
     let operator_company_missing = platform_operator
         && matches!(
-            bilibi_core::company::primary::platform_operator_company(&**client).await,
+            bilibi_core::company::platform_operator_company(&**client).await,
             Ok(None)
         );
     // A module contributes the bell through the `shell.notifications` embed;
@@ -152,6 +152,14 @@ async fn context<'a>(
             notifications = render_embed(app, scope, &slot.embed).await?;
         }
     }
+    // Display only and unlogged: the editor and its save authorize for real.
+    let manage_instance = platform_operator
+        && capabilities.contains(bilibi_base::system::INSTANCE_MANAGE)
+        && app
+            .services
+            .get::<bilibi_base::system::Instances>(bilibi_base::system::SERVICE)?
+            .is_core_administrator(scope)
+            .await?;
     let served = served_routes(app);
     let pins: Vec<_> = bilibi_user::list_pins(&**client, scope)
         .await?
@@ -180,10 +188,16 @@ async fn context<'a>(
         home,
         served_routes: serde_json::to_string(&served).map_err(|_| Error::Internal)?,
         pins: serde_json::to_string(&pins).map_err(|_| Error::Internal)?,
-        instance: instance.badge().map_err(|_| Error::Internal)?,
+        instance: if instance.role == bilibi_base::system::Role::Dev {
+            Html::EMPTY
+        } else {
+            instance.badge().map_err(|_| Error::Internal)?
+        },
+        instance_status: instance
+            .status(manage_instance)
+            .map_err(|_| Error::Internal)?,
         instance_title: instance.label,
-        development: cfg!(debug_assertions),
-        listen_address: if cfg!(debug_assertions) {
+        listen_address: if instance.role == bilibi_base::system::Role::Dev {
             app.listen_address.as_deref()
         } else {
             None

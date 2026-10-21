@@ -1,0 +1,39 @@
+# Tenant administration
+
+Create a customer's tenant and companies together, or search the platform tenant directory.
+
+For example, an operator can create **Acme** with **Acme Trading** as its primary company and **Acme Industrial** and **Acme Auto** as additional companies. The Tenants page and agent doors call the same contract. A failed write creates none of them.
+
+## Operations
+
+Every contract serves every channel through the operation registry.
+
+| Key | Input | Permission |
+| --- | --- | --- |
+| `core.tenant_administration.tenant.list` | Optional `search`, `page`, `page_size` (at most 100) | Operator standing and `admin.tenancy.tenant.list` |
+| `core.tenant_administration.tenant.get` | `tenant_id` | Same list permission |
+| `core.tenant_administration.tenant.create` | `name`, `primary_company`; optional `additional_companies`, `parent_id`, `status` | Operator standing and `admin.tenancy.tenant.create`, plus Base Step-up policy |
+
+The create review shows normalized tenant input, parent facts, company names, generated company codes, status and the primary assignment. Status defaults to `active`; `suspended` is also accepted. At most 99 additional companies may be supplied. All names obey their owning module's validation; names that generate the same company code are refused.
+
+An agent previews, shows the review to its person and commits the single-use plan. If the commit answers `step_up_required`, retry that plan with the person's current authenticator code as `step_up_code`. The step-up key is the create operation key; its declaration is on the installation floor by default. Normal window and tenant policy rules apply.
+
+## Browser
+
+Administration → Tenancy → Tenants (`/tenancy/tenants`) keeps Bilimbi `TenantsLive`'s list, sorting, parent picker and Add Tenant dialog. The dialog also collects the primary company and one additional company per line. The page calls the bounded directory contract through `PageContracts::read` and calls the create contract through `PageContracts::submit`. Its only business write event is `create`; `PageWrites` has no pending allowance. Edit, suspend and provision-existing actions do not exist on this page.
+
+The column picker offers every scalar tenant field the page shows under its dialog label: ID, Name, **Parent tenant**, Sub-tenants and Status. Primary company and Additional companies are entered only when a tenant is created and no tenant view reads them back, so they are not columns. The default columns stay the same.
+
+## Identity and atomic writes
+
+- [Base Tenancy](../../base/tenancy/README.md) owns tenant data and proves the person's live operator standing. Creation preserves today's operator-plus-capability permission; installation ownership is not required.
+- Base Tenancy inserts the tenant on the plan transaction and returns a sealed `CreatedTenant` receipt. It proves only this transaction's new tenant and original actor.
+- [Core Company](../company/README.md) accepts that receipt to insert companies and the primary assignment. No request supplies a tenant to act as, and no scope is retargeted.
+- Each owner rechecks authorization on the mutation transaction and returns every affected row as a `Change`. Tenant, companies, primary assignment, audit and plan consumption commit or roll back together.
+- The actor remains the person. The committed action records the agent connection, and the shared trace links all mutations to it. Revoking the grant immediately ends further calls, including a previously reviewed plan.
+
+Creating a tenant does not create accounts, switch the caller into that tenant or confer access to its business data. No general cross-tenant company operation is exposed. The ChatGPT plugin stays a thin adapter and discovers these contracts through the registry.
+
+## Where to go next
+
+See [operation contracts](../../base/agent_api/README.md), [Base Step-up](../../base/step_up/README.md) and [ADR 01](../../../docs/architecture/decisions/01-agent-first-operations.md).

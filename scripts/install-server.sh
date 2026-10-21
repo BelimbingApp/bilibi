@@ -7,13 +7,13 @@
 #   install-server.sh create <instance> --role dev|staging|production --site <host> [--port <n>] [--tls internal]
 #   install-server.sh release <instance> <bilibi-web binary, or a folder holding it>
 #   install-server.sh create-owner <instance> [bilibi-web create-owner flags]
+#   install-server.sh two-factor-reset <instance> --email <address>
 #   install-server.sh installer <bilibi-installer binary>
 #   install-server.sh switch <instance> <release number>
 #   install-server.sh status [<instance>]
 #
 # Only the layout, the first release and the installer service live here.
-# Building a release is the software worker's job (bilibi-worker@<instance>,
-# started by `release`; it builds on Dev only, apps/base/software/README.md).
+# Build releases in your local Bilibi copy, then install a tested release here.
 # Backing up before a switch, checking the new release, switching back and Undo
 # are the installer's work once a server owner asks on the Software page
 # (apps/installer/README.md).
@@ -25,7 +25,6 @@ here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 source "$here/lib/versions.sh"
 root=/opt/bilibi
 unit_name='bilibi@'
-worker_name='bilibi-worker@'
 installer_unit='bilibi-installer@'
 installer_bin=$root/build/bin/bilibi-installer
 pg=$POSTGRESQL_MAJOR
@@ -44,11 +43,29 @@ instance_dir() { printf '%s/%s' "$root" "$1"; }
 instance_exists() { [[ -f $(instance_dir "$1")/env ]]; }
 # env_value <instance> <KEY>: one value from the instance's env file.
 env_value() { sed -n "s/^$2=//p" "$(instance_dir "$1")/env" | head -n1; }
+# Installed roles live in settings. Only a database without a settings table
+# still uses the install input. An unavailable database cannot announce Dev.
 role_of() {
-    case $(env_value "$1" BILIBI_ENV) in
+    local saved port has_settings
+    port=$(pg_lsclusters -h | awk -v v="$pg" '$1 == v {print $3; exit}')
+    if [[ -z $port ]] || ! has_settings=$(runuser -u postgres -- psql -p "$port" -d "$(database_name "$1")" -Atq -c "SELECT to_regclass('public.base_settings') IS NOT NULL" 2>/dev/null); then
+        echo unavailable
+        return
+    fi
+    if [[ $has_settings == t ]]; then
+        if ! saved=$(runuser -u postgres -- psql -p "$port" -d "$(database_name "$1")" -Atq -c "SELECT value #>> '{}' FROM base_settings WHERE key='instance.role' AND tenant_id=0 AND scope_type='global' AND scope_id=0" 2>/dev/null); then
+            echo unavailable
+            return
+        fi
+        saved=${saved:-production}
+    else
+        saved=$(env_value "$1" BILIBI_ENV)
+    fi
+    case $saved in
         development) echo dev ;;
         staging) echo staging ;;
-        *) echo production ;;
+        production|'') echo production ;;
+        *) echo unavailable ;;
     esac
 }
 # These three print what exists and succeed when nothing does, so a caller's
@@ -117,14 +134,6 @@ install_packages() {
     fi
     apt_install caddy
 }
-# What the software worker needs to build on Dev: a C linker, Git and Python
-# for scripts/discover-modules.py. The Rust toolchain itself is installed by
-# the worker into bilibi-build's home, on the first build or on request
-# (`bilibi-web software-worker --prepare`). Never on Staging or Production.
-install_build_packages() {
-    apt_install build-essential pkg-config git python3
-}
-
 # ---------------------------------------------------------------- users
 ensure_users() {
     getent group bilibi >/dev/null || groupadd --system bilibi
@@ -135,10 +144,29 @@ ensure_users() {
     # bilibi-build reads each instance's env (the database address) to migrate.
     id -nG bilibi-build | tr ' ' '\n' | grep -qx bilibi || usermod -aG bilibi bilibi-build
     install -d -m 0750 -o bilibi-build -g bilibi-build "$root/build"
-    if [[ -d /etc/sudoers.d ]]; then
-        install -m 0440 "$here/server/sudoers" /etc/sudoers.d/bilibi-build
-        visudo -cf /etc/sudoers.d/bilibi-build >/dev/null || fail 'the sudoers rule for bilibi-build did not validate'
-    fi
+    install_sudoers
+}
+# install_sudoers: the rule for bilibi-build, replaced only when it differs.
+install_sudoers() {
+    [[ -d /etc/sudoers.d ]] || return 0
+    cmp -s "$here/server/sudoers" /etc/sudoers.d/bilibi-build && return 0
+    install -m 0440 "$here/server/sudoers" /etc/sudoers.d/bilibi-build
+    visudo -cf /etc/sudoers.d/bilibi-build >/dev/null || fail 'the sudoers rule for bilibi-build did not validate'
+}
+# retire_worker: servers that once built software ran bilibi-worker@<instance>.
+# Stop and disable each, then remove the unit template and the old sudoers
+# rule. Does nothing once the template is gone, so fresh installs skip it.
+retire_worker() {
+    local template=/etc/systemd/system/bilibi-worker@.service instance stuck=
+    [[ -f $template ]] || { install_sudoers; return 0; }
+    for instance in $(instances); do
+        systemctl disable --now "bilibi-worker@$instance" >/dev/null 2>&1 || stuck=1
+    done
+    [[ -z $stuck ]] || fail 'could not stop bilibi-worker@<instance>, which Bilibi no longer uses' 'run: systemctl disable --now "bilibi-worker@*", then rerun this command'
+    rm -f "$template"
+    systemctl daemon-reload
+    install_sudoers
+    say 'retired the obsolete bilibi-worker@<instance> services'
 }
 
 # ---------------------------------------------------------------- database
@@ -185,16 +213,12 @@ free_port() {
 }
 
 # ---------------------------------------------------------------- files
-render_waiting_page() { # <instance> <role> <site> <out>
-    local label colour
-    case $2 in
-        dev) label=Dev colour=info ;;
-        staging) label=Staging colour=warning ;;
-        *) label=Production colour=danger ;;
-    esac
-    python3 - "$here/waiting-page.html" "$4" "$label" "$colour" "$3" "$1" <<'PY'
+render_waiting_page() { # <instance> <site> <out>
+    # This file is static while the app is offline. Identify its address and
+    # folder, never cache a server role that an operator can change in settings.
+    python3 - "$here/waiting-page.html" "$3" "$2" "$1" <<'PY'
 import html, sys
-source, out, label, colour, site, instance = sys.argv[1:]
+source, out, site, instance = sys.argv[1:]
 page = open(source, encoding="utf-8").read()
 def swap(old, new):
     global page
@@ -202,13 +226,12 @@ def swap(old, new):
         sys.exit(f"waiting-page.html no longer has exactly one {old[:40]!r}; update install-server.sh")
     page = page.replace(old, new)
 swap('<title>Bilibi is starting · Business application platform</title>',
-     f'<title>{html.escape(label)} is updating · Bilibi</title>')
-swap('<html lang="en">', f'<html lang="en" data-role="{colour}">')
+     '<title>Bilibi is updating</title>')
 swap('<p class="instance" id="waiting-instance" hidden><span class="role" id="waiting-role"></span><span id="waiting-site"></span></p>',
-     f'<p class="instance" id="waiting-instance"><span class="role" id="waiting-role">{html.escape(label.upper())}</span><span id="waiting-site">{html.escape(site)}</span></p>')
-swap('<h1 id="waiting-heading">Bilibi is starting</h1>', f'<h1 id="waiting-heading">{html.escape(label)} is updating</h1>')
+     f'<p class="instance" id="waiting-instance"><span class="role" id="waiting-role">{html.escape(instance)}</span><span id="waiting-site">{html.escape(site)}</span></p>')
+swap('<h1 id="waiting-heading">Bilibi is starting</h1>', f'<h1 id="waiting-heading">Bilibi is updating</h1>')
 swap('<p id="waiting-text">The app is restarting or rebuilding. This page reloads on its own as soon as it is ready, so you will land back on what you asked for.</p>',
-     f'<p id="waiting-text">Bilibi {html.escape(label)} is switching to a new release or restarting. Back in about a minute. This page reloads on its own, so you will land back on what you asked for.</p>')
+     f'<p id="waiting-text">Bilibi is switching to a new release or restarting. Back in about a minute. This page reloads on its own, so you will land back on what you asked for.</p>')
 swap('<p class="hint" id="waiting-hint">Taking longer than usual. If you started the app yourself, check the terminal running <code>scripts/start-app.sh</code> for a build error.</p>',
      f'<p class="hint" id="waiting-hint">Taking longer than usual. The server owner can check the service with <code>systemctl status bilibi@{html.escape(instance)}</code> and <code>journalctl -u bilibi@{html.escape(instance)}</code>.</p>')
 open(out, "w", encoding="utf-8").write(page)
@@ -234,7 +257,7 @@ write_caddy_site() { # <instance> <site> <port> <tls>
 }
 install_unit() {
     local name reload=
-    for name in "$unit_name" "$worker_name" "$installer_unit"; do
+    for name in "$unit_name" "$installer_unit"; do
         if ! cmp -s "$here/server/$name.service" "/etc/systemd/system/$name.service"; then
             install -m 0644 "$here/server/$name.service" "/etc/systemd/system/$name.service"
             reload=1
@@ -242,29 +265,12 @@ install_unit() {
     done
     [[ -z $reload ]] || systemctl daemon-reload
 }
-# The worker runs the release in service, so it is (re)started after every
-# switch; enabling it here makes a reboot start it with the instance.
-restart_worker() {
-    systemctl enable "$worker_name$1" >/dev/null 2>&1
-    systemctl restart "$worker_name$1"
-}
 # start_installer <instance>: the installer service for an instance, once the
 # program is in place (`installer` puts it there).
 start_installer() {
     [[ -x $installer_bin ]] || return 0
     systemctl enable --now "$installer_unit$1" >/dev/null 2>&1 || say "Warning: could not start $installer_unit$1; see: systemctl status $installer_unit$1"
 }
-same_machine_warning() { # <instance> <role>
-    local other
-    for other in $(instances); do
-        [[ $other == "$1" ]] && continue
-        if [[ $2 == dev && $(role_of "$other") != dev ]] || [[ $2 != dev && $(role_of "$other") == dev ]]; then
-            say "Warning: Dev shares this machine with $other ($(role_of "$other")). A build on Dev competes with it for CPU and memory, so people may find it slow while a build runs. Fine for a small server; put Dev on another machine when that matters."
-            return
-        fi
-    done
-}
-
 # ================================================================ create
 create() {
     local instance=${1:-} role='' site='' port='' tls=''
@@ -288,9 +294,9 @@ create() {
     [[ -f $here/waiting-page.html && -f $here/server/site.caddy ]] || fail "run this from a Bilibi checkout: $here/server is missing"
 
     install_packages
-    [[ $role != dev ]] || install_build_packages
     ensure_users
     install_unit
+    retire_worker
     local dir env created=
     dir=$(instance_dir "$instance"); env=$dir/env
     install -d -m 0755 "$root" "$dir" "$dir/site"
@@ -319,8 +325,8 @@ create() {
         umask 027
         cat >"$env" <<EOF
 # Bilibi instance "$instance". Read by bilibi@$instance.service and the release commands.
-# BILIBI_ENV is the instance's role: development builds software, staging and
-# production only install releases, and only development skips 2FA step-up.
+# BILIBI_ENV initializes the role at install. Later changes use Instance settings.
+# Every role enforces 2FA. Text-message codes go to the SMS simulator only while the saved role is Dev.
 BILIBI_ENV=$bilibi_env
 APP_ORIGIN=https://$site
 BIND_ADDR=127.0.0.1:$port
@@ -329,32 +335,29 @@ BILIBI_SETTINGS_KEY=$(openssl rand -hex 32)
 BILIBI_USER_SIGNING_KEY=$(openssl rand -hex 32)
 BILIBI_MEDIA_SIGNING_KEY=$(openssl rand -hex 32)
 BILIBI_MAIL_DIR=$dir/data/mailbox
-# Read by the software worker (bilibi-worker@$instance): where releases land,
-# and where the Platform checkout and the build cache live (Dev only).
+# Where the program receives releases and the installer keeps them.
 BILIBI_INSTANCE_DIR=$dir
-BILIBI_BUILD_DIR=$root/build
 EOF
         umask 022
     else
         local kept_role; kept_role=$(role_of "$instance")
-        [[ $kept_role == "$role" ]] || fail "$instance already exists with role $kept_role; the role is fixed at creation" "create another instance, or remove $dir and its database first"
+        [[ $kept_role == "$role" ]] || say "$instance keeps its saved role ($kept_role). Change the role in Instance settings with 2FA."
+        role=$kept_role
         [[ -z $port || $(env_value "$instance" BIND_ADDR) == "127.0.0.1:$port" ]] || fail "$instance already listens on $(env_value "$instance" BIND_ADDR); the port is fixed at creation"
         port=${port:-$(env_value "$instance" BIND_ADDR | sed 's/.*://')}
         sed -i "s|^APP_ORIGIN=.*|APP_ORIGIN=https://$site|" "$env"
-        # An env written before the worker existed gains its two keys.
+        # Older layouts gain the instance path used by release transport.
         grep -q '^BILIBI_INSTANCE_DIR=' "$env" || printf 'BILIBI_INSTANCE_DIR=%s\n' "$dir" >>"$env"
-        grep -q '^BILIBI_BUILD_DIR=' "$env" || printf 'BILIBI_BUILD_DIR=%s\n' "$root/build" >>"$env"
     fi
     chown root:bilibi "$env"; chmod 0640 "$env"
 
-    render_waiting_page "$instance" "$role" "$site" "$dir/site/waiting.html"
+    render_waiting_page "$instance" "$site" "$dir/site/waiting.html"
     chmod 0644 "$dir/site/waiting.html"
     write_caddy_site "$instance" "$site" "$port" "$tls"
     systemctl enable "$unit_name$instance" >/dev/null 2>&1
     start_installer "$instance"
 
     say "$instance: $([[ -n $created ]] && echo created || echo updated) as $role at https://$site (backend 127.0.0.1:$port), files under $dir"
-    same_machine_warning "$instance" "$role"
     if [[ -z $(current_release "$instance") ]]; then
         say "Next: put a release into service with: $0 release $instance <path to bilibi-web>"
     fi
@@ -372,9 +375,10 @@ installer() {
     local source=${1:-}
     [[ -n $source ]] || usage
     need_root installer "$@"
-    [[ -f $source && -x $source ]] || fail "$source is not an executable bilibi-installer" "build it with: cargo build --release -p bilibi-installer"
+    [[ -f $source && -x $source ]] || fail "$source is not an executable bilibi-installer" "build it on your own machine with: cargo build --release --locked -p bilibi-installer, then copy target/release/bilibi-installer to this server"
     [[ -d $root/build ]] || fail "no instance exists yet" "create one first: $0 create <instance> --role ... --site ..."
     install_unit
+    retire_worker
     install -d -m 0755 -o root -g root "$root/build/bin"
     install -m 0755 -o root -g root "$source" "$installer_bin.new" && mv -T "$installer_bin.new" "$installer_bin"
     say "installer: $installer_bin updated"
@@ -439,6 +443,7 @@ release() {
     [[ -n $instance && -n $source ]] || usage
     need_root release "$@"
     instance_exists "$instance" || fail "no instance named $instance" "create it first: $0 create $instance --role ... --site ..."
+    retire_worker
     local binary dir n previous
     if [[ -d $source ]]; then binary=$source/bilibi-web; else binary=$source; fi
     [[ -f $binary && -x $binary ]] || fail "$binary is not an executable bilibi-web"
@@ -463,7 +468,6 @@ release() {
         fail "release $n could not update the database" "see the output above; the previous release is back in service"
     fi
     put_in_service "$instance" "$n" "$previous"
-    restart_worker "$instance"
     if [[ -z $previous ]]; then
         say "Next: create the first account with: $0 create-owner $instance"
     fi
@@ -482,6 +486,20 @@ create_owner() {
     [[ -x $dir/current/bilibi-web ]] || fail "$instance has no release in service" "put one in service first: $0 release $instance <path to bilibi-web>"
     with_env "$instance" bilibi-build "$dir/current/bilibi-web" create-owner "$@"
 }
+# ========================================================= two-factor-reset
+# Turns off one account's authenticator, for a person nobody else can reset
+# (the only admin lost their phone): `bilibi-web two-factor-reset` in the
+# instance's environment. Audited as the system principal.
+two_factor_reset() {
+    local instance=${1:-}
+    [[ -n $instance ]] || usage
+    need_root two-factor-reset "$@"
+    shift
+    instance_exists "$instance" || fail "no instance named $instance"
+    local dir; dir=$(instance_dir "$instance")
+    [[ -x $dir/current/bilibi-web ]] || fail "$instance has no release in service" "put one in service first: $0 release $instance <path to bilibi-web>"
+    with_env "$instance" bilibi-build "$dir/current/bilibi-web" two-factor-reset "$@"
+}
 switch() {
     local instance=${1:-} n=${2:-}
     [[ -n $instance && $n =~ ^[0-9]+$ ]] || usage
@@ -494,7 +512,6 @@ switch() {
     # keeps them (migrations are forward-only). Going back is the Software page's
     # Undo, which also restores a backup when tables changed.
     put_in_service "$instance" "$n" "$(current_release "$instance")"
-    restart_worker "$instance"
 }
 status() {
     local instance list
@@ -503,9 +520,9 @@ status() {
     for instance in $list; do
         instance_exists "$instance" || fail "no instance named $instance"
         local dir; dir=$(instance_dir "$instance")
-        printf '%s: role %s, %s, service %s, worker %s, installer %s, current release %s\n' "$instance" "$(role_of "$instance")" \
+        printf '%s: role %s, %s, service %s, installer %s, current release %s\n' "$instance" "$(role_of "$instance")" \
             "$(env_value "$instance" APP_ORIGIN)" "$(service_state "$instance")" \
-            "$(systemctl is-active "$worker_name$instance" 2>/dev/null || true)" "$(installer_state "$instance")" "$(current_release "$instance")"
+            "$(installer_state "$instance")" "$(current_release "$instance")"
         local r
         for r in $(release_numbers "$instance"); do
             printf '  release %s  %s\n' "$r" "$(cut -c1-12 "$dir/releases/$r/SHA256SUMS" 2>/dev/null)"
@@ -517,6 +534,7 @@ case ${1:-} in
     create) shift; create "$@" ;;
     release) shift; release "$@" ;;
     create-owner) shift; create_owner "$@" ;;
+    two-factor-reset) shift; two_factor_reset "$@" ;;
     installer) shift; installer "$@" ;;
     switch) shift; switch "$@" ;;
     status) shift; status "$@" ;;

@@ -145,3 +145,13 @@ fn values(value: &serde_json::Value) -> HashMap<String, String> {
         .filter_map(|(key, value)| value.as_str().map(|value| (key.clone(), value.into())))
         .collect()
 }
+
+// Bilimbi saved-query detail fields; result rows have their own dynamic schema.
+bilibi_ui::record_fields! { pub(crate) mod fields {
+    NAME: bilibi_ui::RecordField::new("name", "Name"),
+    DESCRIPTION: bilibi_ui::RecordField::new("description", "Description").excluded("Long text"),
+    PROMPT: bilibi_ui::RecordField::new("prompt", "Prompt").excluded("Long text"),
+    SQL: bilibi_ui::RecordField::new("sql_query", "SQL query").excluded("Long text"),
+    CREATED: bilibi_ui::RecordField::new("created_at", "Created"),
+    UPDATED: bilibi_ui::RecordField::new("updated_at", "Updated"),
+} }

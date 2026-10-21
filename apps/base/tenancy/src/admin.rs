@@ -1,13 +1,10 @@
 //! Tenant administration (Bilimbi `Bilimbi.Base.Tenancy` `list_tenants/0`,
 //! `count_tenants/0`, `fetch_tenant/1`, `create_tenant/1`): live tenants as
-//! stable identities, and the audited create. Every read and write here takes
-//! an explicit [`OperatorProof`]; a numeric tenant id (tenant 1 included) or
-//! `grant_all` never stands in for it. The capability on top of that identity is
-//! the route's (`LIST`) or the page's (`CREATE`) to prove through the bound
-//! [`crate::OperatorAuthorizer`]; this service only refuses to run without the
-//! identity proof and re-proves it on the write's own transaction.
-use crate::{prove_operator, OperatorProof};
-use bilibi_database::{Change, Db, MutationBoundary, Result};
+//! stable identities and the audited fresh-tenant insert. Each read requires
+//! an explicit OperatorProof; create_in rechecks the capability and operator
+//! identity on the caller's transaction through the bound authorizer.
+use crate::{prove_operator, Authorization, OperatorProof, Scope};
+use bilibi_database::{Change, Db, MutationTransaction, Result};
 use serde_json::json;
 use std::sync::Arc;
 use tokio_postgres::{GenericClient, Row};
@@ -94,9 +91,9 @@ impl TenantErrors {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug)]
 pub enum CreateOutcome {
-    Created(TenantIdentity),
+    Created(CreatedTenant),
     Refused(TenantErrors),
 }
 
@@ -153,7 +150,7 @@ fn validate(new: &NewTenant) -> (NewTenant, TenantErrors) {
 /// `bilimbi.tenant.provision` and `bilimbi.platform.provision` tasks call
 /// them). They write on the caller's transaction with no operator proof, so
 /// only trusted deployment code calls them; a request path uses
-/// `Tenants::create`. The name is validated as a create validates it and an
+/// `Tenants::create_in`. The name is validated as a create validates it and an
 /// invalid one is `Error::Invalid`.
 pub async fn provision_tenant(client: &impl GenericClient, name: &str) -> Result<TenantIdentity> {
     let (new, errors) = validate(&NewTenant {
@@ -222,101 +219,160 @@ pub async fn provision_platform_operator(
 /// The registry service `base/tenancy.tenants`.
 pub struct Tenants {
     db: Db,
-    boundary: Arc<MutationBoundary>,
+    authorization: Arc<Authorization>,
 }
 impl Tenants {
-    pub fn new(db: Db, boundary: Arc<MutationBoundary>) -> Self {
-        Self { db, boundary }
+    pub fn new(db: Db, authorization: Arc<Authorization>) -> Self {
+        Self { db, authorization }
     }
     pub async fn list(&self, proof: &OperatorProof) -> Result<Vec<TenantIdentity>> {
         let client = self.db.get().await?;
-        list_tenants(&**client, proof).await
+        let proof = prove_operator(&**client, proof.scope()).await?;
+        list_tenants(&**client, &proof).await
     }
-    pub async fn count(&self, _proof: &OperatorProof) -> Result<u64> {
+    pub async fn count(&self, proof: &OperatorProof) -> Result<u64> {
         let client = self.db.get().await?;
+        prove_operator(&**client, proof.scope()).await?;
         let count: i64 = client
             .query_one("SELECT count(*) FROM tenants WHERE deleted_at IS NULL", &[])
             .await?
             .get(0);
         Ok(count.unsigned_abs())
     }
-    pub async fn fetch(&self, _proof: &OperatorProof, id: i64) -> Result<Option<TenantIdentity>> {
+    pub async fn fetch(&self, proof: &OperatorProof, id: i64) -> Result<Option<TenantIdentity>> {
         if id <= 0 {
             return Ok(None);
         }
         let client = self.db.get().await?;
+        prove_operator(&**client, proof.scope()).await?;
         Ok(client
             .query_opt(&format!("{SELECT} AND t.id = $1"), &[&id])
             .await?
             .as_ref()
             .map(TenantIdentity::from_row))
     }
-    /// Creates a live tenant as an audited mutation. The operator identity is
-    /// re-proven on the transaction, a parent must be a live tenant, and a
-    /// refusal rolls back and reports field errors instead of failing.
-    pub async fn create(&self, proof: &OperatorProof, new: NewTenant) -> Result<CreateOutcome> {
-        let (new, mut errors) = validate(&new);
-        if !errors.is_empty() {
-            return Ok(CreateOutcome::Refused(errors));
-        }
-        let scope = proof.scope();
-        let mut client = self.db.get().await?;
-        let mut tx = self
-            .boundary
-            .begin(&mut client, scope.mutation_context("tenancy.tenant.create"))
+    /// Validates the draft and parent without a business write.
+    pub async fn preview(
+        &self,
+        proof: &OperatorProof,
+        new: &NewTenant,
+    ) -> Result<std::result::Result<NewTenant, TenantErrors>> {
+        let client = self.db.get().await?;
+        prove_operator(&**client, proof.scope()).await?;
+        validate_on(&**client, new, false).await
+    }
+    /// Creates only a fresh tenant on the caller's audited transaction. The
+    /// capability and live operator identity are rechecked here. Its sealed
+    /// receipt permits Company to provision that new tenant on this transaction;
+    /// it cannot target an existing tenant or change the person's Scope.
+    pub async fn create_in(
+        &self,
+        tx: &mut MutationTransaction<'_>,
+        scope: &Scope,
+        new: &NewTenant,
+    ) -> Result<CreateOutcome> {
+        self.authorization
+            .authorize_operator_in(tx.sql(), scope, CREATE)
             .await?;
+        let new = match validate_on(tx.sql(), new, true).await? {
+            Ok(new) => new,
+            Err(errors) => return Ok(CreateOutcome::Refused(errors)),
+        };
+        let created = tx.mutate(move |sql| Box::pin(async move {
+            let row = sql.query_one(
+                "INSERT INTO tenants(name,parent_id,status,created_at,updated_at) VALUES($1,$2,$3,now(),now()) RETURNING id",
+                &[&new.name, &new.parent_id, &new.status],
+            ).await?;
+            let id = row.get(0);
+            let identity = TenantIdentity { id, parent_id:new.parent_id, name:new.name.clone(), status:new.status.clone(), is_platform_operator:false };
+            Ok((identity, vec![Change { kind:"tenancy.tenant".into(), id, old:serde_json::Value::Null,
+                new:json!({"name":new.name,"parent_id":new.parent_id,"status":new.status}) }]))
+        })).await?;
+        let transaction: String = tx
+            .sql()
+            .query_one("SELECT txid_current()::text", &[])
+            .await?
+            .get(0);
+        Ok(CreateOutcome::Created(CreatedTenant {
+            identity: created,
+            transaction,
+            tenant: scope.tenant(),
+            actor: scope.user(),
+        }))
+    }
+    /// Bounded search of the platform tenant directory. IDs returned here
+    /// are data, not authority to enter that tenant.
+    pub async fn search(
+        &self,
+        proof: &OperatorProof,
+        search: &str,
+        page: i64,
+        page_size: i64,
+    ) -> Result<(Vec<TenantIdentity>, i64)> {
+        let client = self.db.get().await?;
+        prove_operator(&**client, proof.scope()).await?;
+        let page_size = page_size.clamp(1, 100);
+        let offset = (page.clamp(1, 1_000_000) - 1) * page_size;
+        let rows = client.query(&format!("{SELECT} AND ($1='' OR strpos(lower(t.name),lower($1))>0) ORDER BY t.name,t.id LIMIT $2 OFFSET $3"), &[&search,&page_size,&offset]).await?;
+        let total = client.query_one("SELECT count(*) FROM tenants WHERE deleted_at IS NULL AND ($1='' OR strpos(lower(name),lower($1))>0)", &[&search]).await?.get(0);
+        Ok((rows.iter().map(TenantIdentity::from_row).collect(), total))
+    }
+}
+
+async fn validate_on(
+    client: &impl GenericClient,
+    new: &NewTenant,
+    lock: bool,
+) -> Result<std::result::Result<NewTenant, TenantErrors>> {
+    let (new, mut errors) = validate(new);
+    if let Some(parent) = new.parent_id.filter(|id| *id > 0) {
+        let sql = if lock {
+            "SELECT id FROM tenants WHERE id=$1 AND deleted_at IS NULL FOR SHARE"
+        } else {
+            "SELECT id FROM tenants WHERE id=$1 AND deleted_at IS NULL"
+        };
+        if client.query_opt(sql, &[&parent]).await?.is_none() {
+            errors.parent_id.push("does not exist".into());
+        }
+    }
+    Ok(if errors.is_empty() {
+        Ok(new)
+    } else {
+        Err(errors)
+    })
+}
+
+/// Sealed receipt for a tenant inserted on this transaction. It is not a
+/// retargeted Scope: actor and origin tenant remain credential-derived.
+#[derive(Debug)]
+pub struct CreatedTenant {
+    identity: TenantIdentity,
+    transaction: String,
+    tenant: i64,
+    actor: i64,
+}
+impl CreatedTenant {
+    pub fn identity(&self) -> &TenantIdentity {
+        &self.identity
+    }
+    /// Company must call this before provisioning: a saved receipt from any
+    /// earlier request or another person's transaction confers no authority.
+    pub async fn verify(&self, tx: &MutationTransaction<'_>, scope: &Scope) -> Result<i64> {
+        let transaction: String = tx
+            .sql()
+            .query_one("SELECT txid_current()::text", &[])
+            .await?
+            .get(0);
+        if transaction != self.transaction
+            || scope.tenant() != self.tenant
+            || scope.user() != self.actor
+            || tx.context().tenant != scope.tenant()
+            || tx.context().actor.kind != "user"
+            || tx.context().actor.id != scope.user().to_string()
+        {
+            return Err(bilibi_database::Error::Forbidden);
+        }
         prove_operator(tx.sql(), scope).await?;
-        if let Some(parent) = new.parent_id {
-            let live = tx
-                .sql()
-                .query_opt(
-                    "SELECT id FROM tenants WHERE id = $1 AND deleted_at IS NULL FOR SHARE",
-                    &[&parent],
-                )
-                .await?
-                .is_some();
-            if !live {
-                errors.parent_id.push("does not exist".into());
-                tx.rollback().await?;
-                return Ok(CreateOutcome::Refused(errors));
-            }
-        }
-        let created = tx
-            .mutate(|sql| {
-                let new = new.clone();
-                Box::pin(async move {
-                    let row = sql
-                        .query_one(
-                            "INSERT INTO tenants(name, parent_id, status, created_at, updated_at) \
-                             VALUES($1, $2, $3, now(), now()) RETURNING id",
-                            &[&new.name, &new.parent_id, &new.status],
-                        )
-                        .await?;
-                    let id: i64 = row.get(0);
-                    let identity = TenantIdentity {
-                        id,
-                        parent_id: new.parent_id,
-                        name: new.name.clone(),
-                        status: new.status.clone(),
-                        is_platform_operator: false,
-                    };
-                    Ok((
-                        identity,
-                        vec![Change {
-                            kind: "tenancy.tenant".into(),
-                            id,
-                            old: serde_json::Value::Null,
-                            new: json!({
-                                "name": new.name,
-                                "parent_id": new.parent_id,
-                                "status": new.status,
-                            }),
-                        }],
-                    ))
-                })
-            })
-            .await?;
-        tx.commit().await?;
-        Ok(CreateOutcome::Created(created))
+        Ok(self.identity.id)
     }
 }

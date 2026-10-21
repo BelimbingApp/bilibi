@@ -2,13 +2,13 @@
 
 Use `Authentication` and `Scope` from `src/lib.rs` for authenticated identity. Raw route IDs and K0 party IDs carry no authority. Scope and Actor have private identity fields, no deserialize implementation and no public constructor; the display fields are never policy input. A proof applies to one freshly guarded unit of work, not a permanent credential.
 
-`base/tenancy.authentication` owns a once-bound `ActorVerifier`. Core User installs the account adapter during registry boot; missing and duplicate bindings fail startup. The `ProofClient` read adapter keeps owner checks on the caller's connection or transaction. Base has no SQL against Core account/company/person tables. `Authentication::authenticate` is an authentication-edge API: supply only identities extracted from validated durable credentials, never request IDs. It establishes identity and grants no capabilities. `Scope::mutation_context` supplies F2 attribution from that identity.
+`base/tenancy.authentication` owns a once-bound `ActorVerifier`. Core User installs the account adapter during registry boot; missing and duplicate bindings fail startup. The `ProofClient` read adapter keeps owner checks on the caller's connection or transaction. `ReadClient` extends it with `query` for owners that also read lists (Settings reads take `&dyn ReadClient`). Base has no SQL against Core account/company/person tables. `Authentication::authenticate` is an authentication-edge API: supply only identities extracted from validated durable credentials, never request IDs. It establishes identity and grants no capabilities. `Scope::mutation_context` supplies F2 attribution from that identity.
 
 `base/tenancy.parties` owns optional `OrganisationProvider` and `PersonProvider` bindings. K1/K7/K9 install owner adapters using K0's `bilibi-party-ids`. Missing providers refuse all target proof requests. Providers must prove live, eligible targets in the exact scope, including tenant and access checks; IDs and business relationship roles never grant authority. An organisation/person proof retains its scope and typed target ID. The account adapter (`bilibi_user::identity`) proves each stored Person/affiliation/company link through its owner on every authentication, so an unlinked account carries no facet and a frozen one authenticates nowhere. This boundary neither fabricates Person data nor depends on People.
 
-`prove_operator` returns a sealed proof only when the live scope tenant is explicitly recorded in the singleton `platform_operator` table. Numeric tenant IDs and `grant_all` have no operator meaning. Migration `005-tenancy-operator` leaves the marker unset; `bilibi-web platform-provision`, `bilibi-web create-owner` and the development `seed` set it through `admin::provision_platform_operator`; `admin::platform_operator` reads the marked tenant. Operator proof establishes identity, not a permission grant: use Authz `authorize_operator` for an operation that requires both. The migration does not replay the historical tenancy schema in `001-base`.
+`prove_operator` returns a sealed proof only when the live scope tenant is explicitly recorded in the singleton `platform_operator` table. Numeric tenant IDs and `grant_all` have no operator meaning. Migration `005-tenancy-operator` leaves the marker unset; `bilibi-web platform-provision`, `bilibi-web create-owner` and the development `seed` set it through `provision_platform_operator`; `platform_operator` reads the marked tenant. Operator proof establishes identity, not a permission grant: use Authz `authorize_operator` for an operation that requires both. The migration does not replay the historical tenancy schema in `001-base`.
 
-`prove_owner` is the installation owner: the account Core User's bootstrap receipt (`user_bootstrap`) names, sealed by the verifier on every authentication (`AccountIdentity::installation_owner`), with the operator proof added and refused under impersonation or an agent grant. Routes gate on it with `Access::Owner` and menu items with `Requirement::Owner`; no role, capability or grant confers it.
+`prove_owner` proves the installation owner named by Core User's bootstrap receipt (`user_bootstrap`). It re-reads the account, eligibility, receipt and operator marker on the caller's connection every time. An agent can hold that person's standing while its grant remains live; an impersonated session never can. No role or capability confers ownership. `Authentication` carries the bound verifier into each sealed scope so an old scope cannot retain revoked standing. Core Agent Access binds `AgentVerifier`: every reproof checks the connection's tenant, person, organisation, expiry and revocation against the refreshed actor. Missing bindings refuse agent proofs. Reviewed commits also hold the credential row through the existing plan authority, preventing revocation from racing the write. Owner-only actions still require their declared Base Step-up policy.
 
 Named system principals and delegated job rehydration require the corresponding P6/Q2 owner adapters; an unverified worker or system identity cannot construct an authenticated Scope through this API.
 
@@ -16,39 +16,21 @@ Impersonation (K14): `authenticate_session` takes the operator the durable sessi
 
 Agent self-report (ADR 01): `SelfReport` is an agent's `harness/model-version-effort`, shape-checked by `SelfReport::parse` and sealed on the agent facet by `Scope::for_agent`. `mutation_context` copies it to `Context::agent_self_report` and Audit's `Attribution::from_scope` records it. It is evidence shown under `SelfReport::LABEL`, never authority.
 
-## Tenant administration and `/tenancy/tenants`
+## Tenant data and provisioning
 
-`admin::Tenants` (`base/tenancy.tenants`, `src/admin.rs`) is the tenant
-administration service: `list`, `count`, `fetch` and the audited `create`
-(mutation `tenancy.tenant.create`, change kind `tenancy.tenant`). Every method
-takes an explicit `OperatorProof`; a tenant id (tenant 1 included) or `grant_all` is
-never that proof, and `create` re-proves the identity on its own transaction.
-Callers receive `TenantIdentity` (Bilimbi `Tenancy.Identity`), never the row;
-its `is_platform_operator` is the `platform_operator` marker read with the row.
-A refused create is `CreateOutcome::Refused` with the source's field errors
-(blank or over-long name, unknown status, missing parent), never an `Error`.
-Migration `009-tenancy-hierarchy` adds the source's `parent_id` and timestamps;
-the operator marker stays the explicit singleton of `005`.
+`Tenants` (`base/tenancy.tenants`, `src/admin.rs`) owns tenant identities and the audited tenant insert. Its directory methods take an `OperatorProof`; numeric tenant IDs and `grant_all` never confer standing. `search` bounds each page to 100 rows. `TenantIdentity` includes the explicit operator marker, parent, name and status.
 
-The capability keys are `admin::{LIST, CREATE}` (`admin.tenancy.tenant.list`,
-`admin.tenancy.tenant.create`), both platform capabilities. Authz declares them
-on Tenancy's behalf, because the vocabulary type is Authz's and Tenancy sits
-below it. The route `/tenancy/tenants` (`src/web.rs`, ported from Bilimbi
-`TenantsLive`) is `OperatorCapability(LIST)`, so the host proves identity and
-capability on every request and live event; the page decides `CREATE` before
-showing the Add Tenant dialog and again before writing. That decision goes
-through `Authorization` (`base/tenancy.authorization`), a once-bound
-`OperatorAuthorizer` that Authz installs at boot with its `authorize_operator`
-(both requirements, independently logged); missing or duplicate bindings fail
-startup. A module below Authz that needs a capability decision uses this seam
-rather than importing Authz or re-deriving operator standing from an id.
+- `create_in` rechecks operator standing and `admin.tenancy.tenant.create` on the caller's mutation transaction through `Authorization::authorize_operator_in`. It returns field errors or a sealed `CreatedTenant` receipt.
+- The receipt proves only the tenant this transaction just inserted. It is bound to the PostgreSQL transaction and the original tenant and actor. It cannot be reused in another transaction or authorize access to an existing tenant.
+- Core Company's provisioning facade accepts that receipt to insert companies and assign the primary company on the same audited transaction. It never retargets a `Scope`.
+- Deployment commands retain the explicit `provision_tenant`, `provision_platform_operator` and `platform_operator` seams. They are not request handlers.
 
-To try it, install the walkthrough fixture on a migrated disposable database
-(`cargo run -p bilibi-walkthrough-fixture`; it appoints tenant 1, while
-migrations appoint nobody and `bilibi-web seed` provisions a real operator),
-then sign in as `admin@example.test` (grant-all, tenant 1) and open
-Administration → Tenancy → Tenants. Without the marker the same account is
-refused (403, and the menu branch stays hidden); with it, an account that holds
-`LIST` but not `CREATE` sees the list without the Add button and is refused the
-create with a flash. Deleting the marker row restores the non-operator state.
+## Tenants page and operations
 
+[Core Tenant Administration](../../core/tenant_administration/README.md) composes the `/tenancy/tenants` page, search/read contracts and the reviewed tenant-and-companies create contract above Tenancy, Company and Agent API. Base Tenancy stays below those modules and owns no page adapter.
+
+The existing authorization rule is shared by browser and agent: the list requires operator standing and `admin.tenancy.tenant.list`; create requires operator standing and `admin.tenancy.tenant.create`. These platform capabilities are declared by Authz on Tenancy's behalf. `Authorization` is the once-bound seam into Authz; missing and duplicate bindings refuse startup. An agent acts for its person's live standing and capabilities, with direct denials preserved.
+
+Creation requires the tenant's name and primary company name; optional additional companies, parent and active/suspended status are reviewed together. The contract declares its Base Step-up operation. Every tenant, company and primary assignment is returned as a `Change` on one transaction, attributed to the person with the agent connection in the committed action. Failure leaves none of those rows behind.
+
+`ClientIdentity` is bounded printable transport evidence, separate from `SelfReport`. The host attaches it with `Scope::with_client_identity`; `mutation_context` carries it to write audits. It changes no actor, grant or permission.

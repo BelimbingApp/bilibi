@@ -1,0 +1,5 @@
+{%- import "components.html" as ui -%}
+{%- import "forms.html" as form -%}
+{% call ui::card(id="specimen-colours", title="Colour input") %}
+{% for colour in colours %}{% call form::colour_input(control=colour) %}{% endcall %}{% endfor %}
+{% endcall %}

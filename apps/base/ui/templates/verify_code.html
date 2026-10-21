@@ -1,13 +1,13 @@
 {#- The sign-in code card: after a right password, when the tenant asks a
     second factor at sign-in (Core User's `core.user.sign_in`). A text-message
     account sees the masked number the code went to and can ask for another
-    once the wait is over; an authenticator account types the app's code or a
-    recovery code. "Back to login" abandons the sign-in. Each action is its
+    once the wait is over; an authenticator account types the app's code.
+    "Back to login" abandons the sign-in. Each action is its
     own form, so asking for another code never needs a code typed first. -#}
 {% import "components.html" as ui %}
 {% import "feedback.html" as feedback %}
 <div class="flex flex-col gap-5">
-<div class="flex flex-col gap-1"><h1 id="verify-code-title" class="text-base font-semibold text-ink-strong">Enter verification code</h1><p id="verify-code-intro" class="text-sm text-ink-muted">{% if text_message %}We sent a 6-digit code by text message to <span id="verify-code-phone" class="font-medium text-ink tabular-nums">{{ phone }}</span>. It expires in 5 minutes.{% else %}Open your authenticator app and enter the 6-digit code it shows for this account.{% endif %}</p></div>
+<div class="flex flex-col gap-1"><h1 id="verify-code-title" class="text-base font-semibold text-ink-strong">Enter verification code</h1><p id="verify-code-intro" class="text-sm text-ink-muted">{% if text_message %}We sent a 6-digit code by text message to <span id="verify-code-phone" class="font-medium text-ink tabular-nums">{{ phone }}</span>.{% if minutes > 0 %} It expires in {{ minutes }} {% if minutes == 1 %}minute{% else %}minutes{% endif %}.{% endif %}{% else %}Open your authenticator app and enter the 6-digit code it shows for this account.{% endif %}</p></div>
 {% if !notice.is_empty() %}<div id="verify-code-notice">{% call feedback::alert(kind=bilibi_ui::StatusKind::Info, id="verify-code-notice-1") %}{{ notice }}{% endcall %}</div>{% endif %}
 {% if !form_error.is_empty() %}<div id="verify-code-error">{% call feedback::alert(kind=bilibi_ui::StatusKind::Error, id="verify-code-error-1") %}{{ form_error }}{% endcall %}</div>{% endif %}
 <form id="verify-code-form" method="post" class="flex flex-col gap-4"><input type="hidden" name="action" value="verify">{{ code }}{% call ui::button(variant=bilibi_ui::ButtonVariant::Primary, id="verify-code-submit", class="w-full", button_type="submit", working="Verifying…") %}Verify{% endcall %}</form>

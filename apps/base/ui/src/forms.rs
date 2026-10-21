@@ -701,10 +701,10 @@ impl Field {
                 field_inset_class(readonly, self.kind.is_textarea(), false),
                 field_state_class(&self.errors, "border-high-contrast-line")
             );
-            // Chrome pads a select's text by a few pixels more than an
-            // input's, so the select gives them back to line up with its label.
+            // The shared select removes native appearance. Its 11px padding
+            // plus the 1px border aligns text with the label's 12px inset.
             return if self.kind.is_select() {
-                format!("{class} pr-9 !pl-2")
+                format!("{class} pr-9 !pl-2.75")
             } else if self.revealed() {
                 format!("{class} pr-10")
             } else {
@@ -964,8 +964,9 @@ pub struct CodeInput {
     pub label: String,
     pub length: usize,
     pub group_size: Option<usize>,
-    /// Digits only (a text-message code): phones offer the number pad.
     pub numeric: bool,
+    pub optional: bool,
+    pub errors: Vec<String>,
 }
 
 impl CodeInput {
@@ -983,12 +984,35 @@ impl CodeInput {
             length,
             group_size: None,
             numeric: false,
+            optional: false,
+            errors: Vec::new(),
         }
     }
 
+    /// Leave the code blank when only some submitted changes need it.
+    /// The owning facade still enforces its operation's 2FA requirement.
+    pub fn optional(mut self) -> Self {
+        self.optional = true;
+        self
+    }
+
+    /// Authenticator codes keep leading zeroes and request the phone keypad.
     pub fn numeric(mut self) -> Self {
         self.numeric = true;
         self
+    }
+
+    pub fn errors(mut self, errors: Vec<String>) -> Self {
+        self.errors = errors;
+        self
+    }
+
+    pub fn invalid(&self) -> bool {
+        !self.errors.is_empty()
+    }
+
+    pub fn described_by(&self) -> String {
+        described_by(&self.id, true, self.errors.len())
     }
 
     pub fn value(mut self, value: impl Into<String>) -> Self {
@@ -1008,6 +1032,46 @@ impl CodeInput {
     /// A separator precedes every box that starts a group after the first.
     pub fn separator_before(&self, index: &usize) -> bool {
         matches!(self.group_size, Some(size) if size > 0 && *index > 0 && index.is_multiple_of(size))
+    }
+}
+
+/// The shared 2FA part of a protected form. No Bilimbi counterpart.
+/// Callers supply the holder's live enrollment state, never a cached session
+/// flag. Without 2FA this replaces both the proof and protected submit actions
+/// with a plain setup link; unrelated actions stay outside this component.
+#[derive(Template, Clone, Debug)]
+#[template(
+    source = r#"{% import "forms.html" as forms %}{% call forms::step_up(step=self) %}{% endcall %}"#,
+    ext = "html"
+)]
+pub struct StepUp {
+    pub body: Html,
+    pub enrolled: bool,
+    pub code: Html,
+    pub actions: Html,
+    pub secondary_actions: Html,
+    pub return_to: String,
+    pub reason: String,
+}
+impl StepUp {
+    pub fn new(enrolled: bool, return_to: impl Into<String>) -> Self {
+        Self {
+            body: Html::EMPTY,
+            enrolled,
+            code: Html::EMPTY,
+            actions: Html::EMPTY,
+            secondary_actions: Html::EMPTY,
+            return_to: return_to.into(),
+            reason: "to make this change.".into(),
+        }
+    }
+    pub fn setup_href(&self) -> String {
+        let query = if self.return_to.is_empty() {
+            Default::default()
+        } else {
+            [("return".into(), self.return_to.clone())].into()
+        };
+        crate::params::address("/settings/two-factor", &query)
     }
 }
 
@@ -1175,13 +1239,10 @@ impl Combobox {
     }
 }
 
-/// A multi-select dropdown (Bilimbi `multi_select`): a trigger showing the
-/// selection summary and a floating list of checkboxes. With `chips` each
-/// selected option is a chip with a remove button above the trigger, which
-/// then reads `placeholder` as the verb to add more; a chip's remove button
-/// sends `remove_event` with the input name and the option value, and the
-/// owner drops the value and re-renders. The control holds no state of its
-/// own; the `DisclosureDismiss` hook owns open, click-away, blur and Escape.
+/// A multi-select dropdown mirroring Bilimbi `multi_select`, with Bilibi's
+/// canonical inset label, selected count and chips. Chips occupy one line by
+/// default; `wrap_chips` lets the field grow. The browser measures overflow
+/// and owns disclosure; the owner still owns the selected values.
 #[derive(Template, Clone, Debug)]
 #[template(
     source = r#"{% import "forms.html" as forms %}{% call forms::multi_select(control=self) %}{% endcall %}"#,
@@ -1196,13 +1257,16 @@ pub struct MultiSelect {
     pub errors: Vec<String>,
     pub options: Vec<Choice>,
     pub values: Vec<String>,
-    /// The summary with nothing selected, or the add verb with `chips`.
+    /// Prompt beneath the label when nothing is selected.
     pub placeholder: String,
     /// The `singular|plural` summary template; `:count` is the count.
     pub selection_label: String,
     pub hint: String,
     pub required: bool,
+    /// Chip removals use the owner's explicit `remove_event` when true.
     pub chips: bool,
+    /// Allow chips to wrap; false keeps complete chips on one line with an ellipsis.
+    pub wrap_chips: bool,
     pub remove_event: String,
     pub attrs: Attrs,
 }
@@ -1224,11 +1288,12 @@ impl MultiSelect {
             errors: Vec::new(),
             options: Vec::new(),
             values: Vec::new(),
-            placeholder: "All options".to_owned(),
+            placeholder: "Select options…".to_owned(),
             selection_label: ":count option selected|:count options selected".to_owned(),
             hint: String::new(),
             required: false,
             chips: false,
+            wrap_chips: false,
             remove_event: String::new(),
             attrs: Attrs::default(),
         }
@@ -1283,11 +1348,29 @@ impl MultiSelect {
         self
     }
 
-    /// Chips need the event their remove buttons send.
+    /// Use an owner event for chip removal instead of the checkbox change event.
     pub fn chips(mut self, remove_event: impl Into<String>) -> Self {
         self.chips = true;
         self.remove_event = remove_event.into();
         self
+    }
+
+    /// Expand the field to show every selected chip on multiple lines.
+    pub fn wrap_chips(mut self) -> Self {
+        self.wrap_chips = true;
+        self
+    }
+
+    pub fn display_label(&self) -> &str {
+        if !self.label.is_empty() {
+            &self.label
+        } else {
+            self.attrs.aria_label.as_deref().unwrap_or("Selections")
+        }
+    }
+
+    pub fn disabled(&self) -> bool {
+        self.attrs.disabled || self.attrs.readonly
     }
 
     pub fn wrapper_class(mut self, class: impl Into<String>) -> Self {
@@ -1360,12 +1443,12 @@ impl MultiSelect {
     }
 
     pub fn show_chips(&self) -> bool {
-        self.chips && self.selected_count() > 0
+        self.selected_count() > 0
     }
 
     pub fn trigger_class(&self) -> String {
         format!(
-            "ui-field min-h-control peer group floating-anchor flex w-full items-center justify-between gap-3 rounded-md border bg-surface py-1.5 px-3 text-left text-sm text-ink shadow-xs transition hover:bg-surface-muted focus:outline-none focus:ring-2 {}",
+            "ui-multi-field floating-anchor rounded-md border bg-surface text-ink shadow-xs {}",
             field_state_class(
                 &self.errors,
                 "border-line focus:border-brand-strong focus:ring-brand-strong/30"

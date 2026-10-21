@@ -1,3 +1,4 @@
+use super::fields;
 use super::Pending;
 use crate::{Company, FieldError, NewCompany, Params};
 use askama::Template;
@@ -526,23 +527,19 @@ pub(super) async fn detail(
         }
     }
     let mut facts = Vec::new();
-    for (name, label, value) in [
-        ("name", "Name", company.name.as_str()),
-        ("code", "Code", company.code.as_str()),
-        (
-            "legal_name",
-            "Legal Name",
-            company.legal_name.as_deref().unwrap_or(""),
-        ),
+    for (name, value) in [
+        ("name", company.name.as_str()),
+        ("code", company.code.as_str()),
+        ("legal_name", company.legal_name.as_deref().unwrap_or("")),
     ] {
         facts.push(Fact {
-            title: label,
+            title: fields::get(name).label,
             id: "",
             value: text_fact(&company, name, value, editable, false, statuses.get(name))?,
         });
     }
     facts.push(Fact {
-        title: "Status",
+        title: fields::STATUS.label,
         id: "detail-status",
         value: render(&StatusBody {
             badge: badge(&company.status)?,
@@ -558,7 +555,7 @@ pub(super) async fn detail(
         })?,
     });
     facts.push(Fact {
-        title: "Legal Entity Type",
+        title: fields::LEGAL_ENTITY_TYPE_ID.label,
         id: "detail-legal-entity-type",
         value: choice(
             "company-legal-entity-type",
@@ -573,16 +570,15 @@ pub(super) async fn detail(
             editable,
         )?,
     });
-    for (name, label, value) in [
+    for (name, value) in [
         (
             "registration_number",
-            "Registration Number",
             company.registration_number.as_deref().unwrap_or(""),
         ),
-        ("tax_id", "Tax ID", company.tax_id.as_str()),
+        ("tax_id", company.tax_id.as_str()),
     ] {
         facts.push(Fact {
-            title: label,
+            title: fields::get(name).label,
             id: "",
             value: text_fact(
                 &company,
@@ -595,7 +591,7 @@ pub(super) async fn detail(
         });
     }
     facts.push(Fact {
-        title: "Jurisdiction",
+        title: fields::JURISDICTION.label,
         id: "detail-jurisdiction",
         value: if masked.contains("jurisdiction") {
             restricted("company-jurisdiction-restricted")?
@@ -611,16 +607,12 @@ pub(super) async fn detail(
             )?
         },
     });
-    for (name, label, value) in [
-        ("email", "Email", company.email.as_str()),
-        (
-            "website",
-            "Website",
-            company.website.as_deref().unwrap_or(""),
-        ),
+    for (name, value) in [
+        ("email", company.email.as_str()),
+        ("website", company.website.as_deref().unwrap_or("")),
     ] {
         facts.push(Fact {
-            title: label,
+            title: fields::get(name).label,
             id: "",
             value: text_fact(
                 &company,
@@ -633,7 +625,7 @@ pub(super) async fn detail(
         });
     }
     facts.push(Fact {
-        title: "Parent Company",
+        title: fields::PARENT_ID.label,
         id: "detail-parent",
         value: choice(
             "company-parent",
@@ -677,7 +669,7 @@ pub(super) async fn detail(
             field.save_event = "add_activity".into();
             field.editable = editable;
             facts.push(Fact {
-                title: label,
+                title: fields::get(name).label,
                 id: "scope-activities-section",
                 value: render(&ActivityBody {
                     activities,
@@ -703,7 +695,7 @@ pub(super) async fn detail(
         field.class = "font-mono text-xs".into();
         field.input_class = "font-mono text-xs".into();
         facts.push(Fact {
-            title: label,
+            title: fields::get(name).label,
             id: "",
             value: render(&InlineLongText { field, rows: 5 })?,
         });

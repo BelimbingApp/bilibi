@@ -9,8 +9,8 @@
 //! harness gets three plugins that do not collide, each naming the server it
 //! reaches. Bilimbi has one installation and names its package `bilimbi`.
 use crate::PluginError;
-use bilibi_agent_access::{PublicClient, OAUTH_SCOPE};
-use bilibi_agent_api::{mcp, Registry};
+use bilibi_agent_access::OAUTH_SCOPE;
+use bilibi_agent_api::{mcp, Registry, BUSINESS_CONTEXT, INSTANCE_INSTRUCTIONS};
 use bilibi_system::Instance;
 use bilibi_tenancy::SelfReport;
 use serde_json::Value;
@@ -48,30 +48,20 @@ pub fn https_origin(origin: &str) -> bool {
             .any(|c| c.is_control() || c.is_whitespace())
 }
 
-/// Where and how an agent connects: the canonical origin and a registered
-/// public client. Holds no secret; the OAuth consent still names the person.
+/// Where and how an agent connects: the canonical origin and automatic
+/// public client registration. Holds no secret; the OAuth consent still names the person.
 #[derive(Clone, Debug)]
 pub struct Connection {
     origin: String,
-    pub client_id: String,
 }
 impl Connection {
-    /// Refuses an origin that is not bare HTTPS and a client ID that the
-    /// operator has not registered.
-    pub fn new(
-        origin: &str,
-        client_id: &str,
-        clients: &[PublicClient],
-    ) -> Result<Self, PluginError> {
+    /// The app discovers OAuth endpoints and registers itself.
+    pub fn new(origin: &str) -> Result<Self, PluginError> {
         if !https_origin(origin) {
             return Err(PluginError::HttpsRequired);
         }
-        if !clients.iter().any(|client| client.id == client_id) {
-            return Err(PluginError::InvalidClient);
-        }
         Ok(Self {
             origin: origin.trim_end_matches('/').to_owned(),
-            client_id: client_id.to_owned(),
         })
     }
     pub fn origin(&self) -> &str {
@@ -226,21 +216,16 @@ fn app_skills(package: &str, registry: &Registry, instance: &Instance) -> Vec<Sk
         .map(|app| {
             let name = skill_name(package, &app.tool.replace("open_", ""));
             let body = format!(
-                "{skill}\n## This connection\n\nThis `{package}` connection reaches **{label}**. {consequence} {builds} The card says the same at the top of every screen; if the person meant another instance, use that instance's own connection.\n\nOpen the card with the `{tool}` tool of this connection. Read the `{package}` skill for the tools, the self-report and the review rules.\n",
+                "{skill}\n## This connection\n\nThis `{package}` connection reaches **{label}**. {consequence} Software is built in the operator’s local Bilibi copy; the card offers discovery and installation of tested releases. The card says the same at the top of every screen; if the person meant another instance, use that instance's own connection.\n\nOpen the card with the `{tool}` tool of this connection. Read the `{package}` skill for the tools, the self-report and the review rules.\n",
                 skill = app.skill,
                 label = instance.label,
                 consequence = instance.role.consequence(),
-                builds = if instance.role.builds() {
-                    "It builds software, so the card offers Build here."
-                } else {
-                    "It never builds: the card offers only to install a release that another instance tested."
-                },
                 tool = app.tool,
             );
             Skill {
                 name,
                 description: format!(
-                    "{} on {}: {} Use for tasks about the server's software, Domains, versions, plug-ins, builds, installs and undo.",
+                    "{} on {}: {} Use for tasks about the server's software, Domains, versions, extensions, local builds, installs and undo.",
                     app.title, instance.label, app.description
                 ),
                 body,
@@ -260,7 +245,8 @@ fn workflow(
     guides: &[(&'static str, Skill)],
 ) -> Skill {
     let mut body = format!(
-        "## Connection\n\nUse the connected Bilibi MCP server of this plugin. It reaches **{label}**: {consequence} Say \"{label}\" whenever you tell the person where a change lands; a person may hold a Dev, a Staging and a Production connection, and only the plugin's name and this skill tell them apart. It needs no shell, local executable or tokens in chat. Use the host's OAuth connection UI when linking is required; never ask for a token or password. Each connection selects the person, company and tenant during consent. Do not switch accounts or transports to bypass a refusal.\n\n## Tools\n\n",
+        "{BUSINESS_CONTEXT}\n\n{identity} {INSTANCE_INSTRUCTIONS}\n\n## Connection\n\nUse the connected Bilibi MCP server of this plugin. It reaches **{label}**: {consequence} Say \"{label}\" whenever you tell the person where a change lands; a person may hold a Dev, a Staging and a Production connection, and only the plugin's name and this skill tell them apart. It needs no shell, local executable or tokens in chat. Use the host's OAuth connection UI when linking is required; never ask for a token or password. Each connection selects the person, company and tenant during consent. Do not switch accounts or transports to bypass a refusal.\n\n## Tools\n\n",
+        identity = instance.agent_notice(),
         label = instance.label,
         consequence = instance.role.consequence(),
     );
@@ -288,7 +274,7 @@ fn workflow(
 1. Search for the task, describe the returned operation keys, and read relevant guides. Pass only schema-declared fields to `read`. Follow pagination metadata.\n\
 2. Before creating, search existing records. A refusal or restricted field makes a duplicate check incomplete, never an empty result.\n\
 3. Pass discovered write operations to `plan`. It validates inputs and returns changes, defaults, errors and expiry without writing business records.\n\
-4. Start every review and every confirmation with the plan's `instance`, so the person cannot mistake a test copy for the live system: put `instance.label` at the top, prominently (in an HTML review, a full-width banner above everything else), with `instance.notice` under it. Make Development and Staging stand out, and make Production just as clear and sober. Name it again in the approval question (\"Create this order on Staging?\") and in the commit result.\n\
+4. Start every review and every confirmation with the plan's `instance`, so the person cannot mistake a test copy for the live system: put `instance.label`, `instance.role` and `instance.origin` at the top, prominently (in an HTML review, a full-width banner above everything else), with `instance.notice` under it. Make Development and Staging stand out, and make Production just as clear and sober. Name it again in the approval question (\"Create this order on Staging?\") and in the commit result.\n\
 5. Show the person the complete returned preview, clearly identifying every record and changed field, defaults, unresolved questions and expiry. Treat it as immutable evidence. Obtain explicit approval for that exact plan before invoking `commit`; silence, original instructions to create records, or an approval for another plan do not approve it. A host confirmation of the commit may supply that approval only if it shows the complete preview.\n\
 6. On requested changes or expiry, revise the inputs and generate a new plan for fresh review. Commit the exact plan_code and ordered operations returned by the approved plan. Never claim Bilibi attests the person's approval.\n\
 7. Show committed records and the returned verification URLs. Tool `isError` indicates failure; report it. Never retry a commit automatically. If the outcome is uncertain, verify through reads before planning another write.\n\n\
@@ -333,13 +319,12 @@ fn setup(package: &str, connection: &Connection, instance: &Instance) -> Skill {
         description: format!("Set up or diagnose the Bilibi {} connection: check the MCP tools, complete OAuth linking through the host, and report what is available.", instance.label),
         body: format!(
             "Read the `{package}` skill's workflow first, including how to report yourself.\n\n\
-This plugin connects to **{label}** ({consequence}). Its MCP server is `{server}`. It uses OAuth with PKCE (S256) and the registered public client `{client}`, with no client secret and the scope `{scope}`.\n\n\
+This plugin connects to **{label}** ({consequence}). Its MCP server is `{server}`. It uses OAuth with PKCE (S256) and automatic client registration, with no client secret and the scope `{scope}`.\n\n\
 If Bilibi MCP tools are connected, call `search` for the requested task (or `search` for `company` as a connection test) and complete OAuth linking through the host if prompted. Report the operations actually returned, then continue the task. Authentication refusals, permission refusals and empty results are distinct outcomes; report which one happened.\n\n\
-If no Bilibi tools are connected, explain that the server must be added in the host as a remote MCP server with the address and client above, and that the person signs in to Bilibi to approve the connection and sees its end date there. A skill package alone cannot register a server, and the person never sends a Bilibi password or token in a message.\n",
+If no Bilibi tools are connected, explain that the server must be added in the host as a remote MCP server with the address above, and that the person signs in to Bilibi to approve the connection and sees its end date there. A skill package alone cannot register a server, and the person never sends a Bilibi password or token in a message.\n",
             label = instance.label,
             consequence = instance.role.consequence(),
             server = connection.server_url(),
-            client = connection.client_id,
             scope = connection.scope(),
         ),
     }

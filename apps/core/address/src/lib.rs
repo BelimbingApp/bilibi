@@ -1,11 +1,12 @@
 //! Tenant-owned postal addresses, their Geonames-normalized location and the
 //! links that attach them to Organisations and Persons. See `README.md`.
-pub mod bootstrap;
-pub mod contributions;
-pub mod location;
-pub mod model;
-pub mod store;
-pub mod web;
+mod agent_operations;
+mod bootstrap;
+mod contributions;
+mod location;
+mod model;
+mod store;
+mod web;
 use bilibi_database::{Db, Error, MutationBoundary, MutationTransaction, Result};
 use bilibi_geonames::Geonames;
 use bilibi_locale::Bootstrap;
@@ -267,7 +268,7 @@ impl AddressService {
 inventory::submit! {
     bilibi_module_registry::Module {
         id: "core/address", layer: bilibi_module_registry::Layer::Core,
-        dependencies: &["base/database", "base/tenancy", "base/authz", "base/grid", "base/locale", "base/ui", "base/menu", "core/party", "core/company", "core/person", "core/geonames"],
+        dependencies: &["base/agent_api", "base/database", "base/tenancy", "base/authz", "base/grid", "base/locale", "base/ui", "base/menu", "core/party", "core/company", "core/person", "core/geonames"],
         migrations: &[MIGRATION],
         services: &[bilibi_module_registry::Service { id: SERVICE, factory: |services| {
             CHANGES.set(broadcast::channel(128).0).map_err(|_| bilibi_module_registry::RegistryError::Service("duplicate address change sender".into()))?;
@@ -277,6 +278,7 @@ inventory::submit! {
                 authentication: services.get("base/tenancy.authentication")?,
                 geonames: services.get(bilibi_geonames::SERVICE)?,
             });
+            agent_operations::bind(addresses.clone())?;
             // Address owns the operator's address facts, so it supplies Locale's
             // installation bootstrap (K15) without Base naming Core.
             services.get::<bilibi_locale::Locales>("base/locale.locales")?
@@ -286,15 +288,15 @@ inventory::submit! {
             Ok(Arc::new(bilibi_ui::page::PageService::<bilibi_tenancy::Scope, Error>(Arc::new(web::Pages {
                 db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
                 addresses: services.get(SERVICE)?,
+                contracts: services.get(bilibi_agent_api::page::SERVICE)?,
             }))))
         }}],
     }
 }
 
-// ADR 01 gap, listed so it stays visible: these pages still write through
-// the facade rather than an operation contract (`base/agent_api` page).
+// Bilimbi Address page and panel events share the contracts agent doors use.
 inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::PAGE_WRITES, "core/address.pages", bilibi_module_registry::Provenance { module: "core/address", source: file!(), line: line!() }, &bilibi_module_registry::contributions::PageWrites {
     service: "core/address.pages",
-    contracts: &[],
-    pending: bilibi_module_registry::contributions::Pending::Every { reason: "Addresses write through the Address facade; no core.address contract yet." },
+    contracts: &[("create","core.address.create"),("save_field","core.address.update"),("save_location","core.address.update"),("request_delete","core.address.delete"),("delete","core.address.delete"),("attach_address","core.address.company.attach"),("attach_address","core.address.person.attach"),("save_create_address","core.address.company.create_and_attach"),("save_create_address","core.address.person.create_and_attach"),("save_address_kinds","core.address.company.update_attachment"),("save_address_kinds","core.address.person.update_attachment"),("toggle_address_primary","core.address.company.update_attachment"),("toggle_address_primary","core.address.person.update_attachment"),("save_address_priority","core.address.company.update_attachment"),("save_address_priority","core.address.person.update_attachment"),("request_detach","core.address.company.detach"),("request_detach","core.address.person.detach"),("detach_address","core.address.company.detach"),("detach_address","core.address.person.detach")],
+    pending: bilibi_module_registry::contributions::Pending::None,
 }) }

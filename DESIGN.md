@@ -109,9 +109,13 @@ Width is a shared decision. Every page uses `PageVariant`. All three share one c
 
 - **Text fields float the label.** Empty, it rests where the value goes. On focus, once filled, or when the browser autofills, it moves up small in muted ink. It never leaves the box.
 - **Selects, textareas, date-like inputs and the combobox pin it small at the top.** They always show something (a prompt, a mask, a selection) that a resting label would cover.
-- **Compact.** An inset box is 40 px with a 14 px value (`text-base`); the floated or pinned label is 11 px. Inset fields sit 12 px apart. Phones get a 16 px value so iOS does not zoom.
+- **Multi-selects:** one box holds the inset label and `(N selected)` count, with removable selected chips beneath. The default keeps complete chips on one line and shows “…” for overflow; `wrap_chips` expands the box onto multiple lines. The chevron stays beside the label. Empty fields show the label, `(0 selected)` and a selection prompt. The dropdown always exposes every option.
+- **Choice chevrons:** selects and multi-selects use the same 16 px outline chevron, aligned 11 px inside the field's right edge.
+- **Colour choices use `ColourInput`.** Each named choice and the selected value are one chip: that status role's banner surface, border and text colour, with the name inside, including the default choice. Chips follow the light and dark themes. The pinned label, keyboard controls and native select keep it usable with assistive technology and without JavaScript.
+- **Compact.** A single-value inset box is 40 px with a 14 px value (`text-base`); the floated or pinned label is 11 px. A multi-select starts at 48 px to hold its label and chip row, and grows when wrapping is enabled. Inset fields sit 12 px apart. Phones get a 16 px input value so iOS does not zoom.
+- **2FA before saving:** use `StepUp` (`base/ui`) for the code and protected submit actions. Without 2FA, show a plain setup notice and link first. Keep unrelated changes available.
 - **Sections:** draw a bordered part of a form with `forms::section` (one shared 12 px box and heading), not page-owned box classes. Create Address uses it.
-- **Classic label above** stays for a field with no visible label (toolbars, `sr-only`), a field with its own `class` or `label_class`, checkboxes, radio groups and multi-selects.
+- **Classic label above** stays for a field with no visible label (toolbars, `sr-only`), a field with its own `class` or `label_class`, checkboxes and radio groups. Multi-selects keep their canonical inset label.
 - Placeholder text shows only once the person is in the field, as an example, never as the label.
 - Help and error lines sit under the box. An error is a sentence that names its field (`error_sentence`): "Parse confidence must be a number from 0 to 1…".
 - After a refused save, `ErrorSummary` lists the problems above the form, each linking to its field. Inline errors stay.
@@ -124,11 +128,12 @@ Width is a shared decision. Every page uses `PageVariant`. All three share one c
 *Every list is a `FlexTable`.* Never the plain `Table`.
 
 - **State:** `ListState` keeps page, search, filters, sort and page size in the URL. Reload and shared links reopen the same view.
-- **Toolbar:** search and filters sit above the table in the open. No second card.
+- **Toolbar:** search sits first, with filter boxes to its right, above the table in the open. On narrow screens filters wrap below search in the same order. No second card.
 - **Rows:** `py-0.5`, `px-2`. Headers `py-1`, sunken background, `text-xs font-semibold`.
 - **Numbers:** tabular numerals for IDs, counts, dates and amounts.
 - **Corners:** table frames are square. A card is flat only where it frames the table.
 - **Pagination:** shown only when another page exists. The rows-per-page selector lives in the component.
+- **Settings:** the operator and company settings table opens each Value cell as a form with Save and Cancel (`InlineForm`). Enter saves; Escape cancels. Protected values ask for 2FA in the row.
 - **Empty:** `EmptyState` says why and what to do next.
 
 ### Flexible columns
@@ -138,7 +143,8 @@ Width is a shared decision. Every page uses `PageVariant`. All three share one c
 - Many-links become rollup cells that expand in place.
 - Row height has two named zooms: Compact and Normal. A compact row is one line.
 - The arrangement is remembered per account and page (`PageColumns`). An address that carries it wins. "Reset to default columns" forgets it.
-- Catalog: `apps/base/grid/README.md`.
+- Every scalar detail field is available in the column picker under its detail label; shared `RecordField` definitions keep them together. Existing defaults stay unchanged. Long text, files and nested collections stay on the detail page. Restrictions apply to the picker and cells as they do to the record.
+- Catalog and field contract: `apps/base/grid/README.md`.
 
 ## Record pages
 
@@ -146,7 +152,7 @@ Width is a shared decision. Every page uses `PageVariant`. All three share one c
 
 - A detail page is the header plus a stack of sections.
 - A section is a card with a heading, optional count, description and actions, then its facts or table.
-- Facts read like the filled-in form without its boxes: a small muted label (the floated label's size and ink) over the value, no dividers. They flow on a grid that follows the card's width: one column on a phone, two on a normal screen, three on a wide one. A long text or `pre` value takes the whole row. Split a card's facts into several `Facts` to start a new row, as Address Details does for its street lines.
+- Facts wrap long identifiers without changing the copied text. They read like the filled-in form without its boxes: a small muted label (the floated label's size and ink) over the value, no dividers. They flow on a grid that follows the card's width: one column on a phone, two on a normal screen, three on a wide one. A long text or `pre` value takes the whole row. Split a card's facts into several `Facts` to start a new row, as Address Details does for its street lines.
 - An inline editor opens as the floating field in the fact's place and size, so nothing moves between reading and editing (`[data-fact]` in `assets/css/app.css`).
 - **Text facts:** `InlineEdit`. Enter or leaving commits. Escape cancels.
 - **Long text:** `InlineLongText`. Saves on blur.
@@ -162,13 +168,13 @@ Width is a shared decision. Every page uses `PageVariant`. All three share one c
 | --- | --- |
 | Modal | Native `<dialog>`. Focus enters, stays, and returns. Escape and Cancel are one action. A click on the backdrop does nothing |
 | Confirmation | `ConfirmDialog` for irreversible actions: consequence first, Cancel beside the destructive verb. Never `window.confirm` |
-| Flash | Stacks top right, most severe first. Info, warning and error stay until dismissed. Success clears after 8 s |
+| Flash | Stacks at the right above the page, most severe first, reserving space so messages never cover page actions. A message that arrives with a redirect floats top right instead. Info, warning and error stay until dismissed. Success clears after 8 s |
 | Success | Only for a completed write |
 | Info | Informs without confirming a write |
 | Panel notice | Where a panel cannot reach the page flash |
 | Connection | Banners announce a dropped socket. The page reconnects with backoff and remounts in place |
 | Error pages | One shell from `apps/web/src/errors.rs`. Debug detail only in debug builds |
-| Which Bilibi | Every instance but production shows a badge in the top bar and on sign-in; production shows none. A review or confirmation opens with the instance banner on every instance, production included. The colour is the operator's `instance.colour` status role, and the label is the operator's `instance.label`, so the name is always in words |
+| Which Bilibi | The status bar always shows the stored server role, instance label and colour. A Core Administrator can click it to open Instance settings. Staging also shows the top-bar badge; Dev and Staging show a badge on sign-in. A review or confirmation opens with the instance banner on every instance, production included. The colour is the operator's `instance.colour` status role, and the label is the operator's `instance.label`, so the name is always in words |
 
 - A failure says what happened, what it cost, and what to do next.
 - Recover before reporting. Users are not an error channel.
@@ -181,7 +187,7 @@ Width is a shared decision. Every page uses `PageVariant`. All three share one c
 - **Workspace shell:** `h-7` top bar, sidebar menu, status bar.
   - Top bar: sidebar toggle, brand mark, notification bell, timezone and clock selector, theme selector.
   - Sidebar: the menu, pinned items, account entry at the bottom.
-  - Status bar: the Platform version, then each mounted Domain's version (`finance 0.1.0`), with commits in the tooltip (`docs/versions.md`). In development it also shows `dev` and the listen address.
+  - Status bar: the Platform version, then each mounted Domain's version (`finance 0.1.0`), with commits in the tooltip (`docs/versions.md`). It also shows the server role and instance label in the configured colour, plus the listen address when the role is Dev. The role comes from `instance.role`, never the build mode.
   - Below `lg` the menu is an off-canvas drawer.
 - Pages never render chrome. The host wraps them (`apps/web/src/shell.rs`).
 - The bell shows the unread count and follows new notifications live. It opens recent items.

@@ -3,16 +3,16 @@
 {% import "dialog.html" as d %}
 {% import "tiling.html" as tile %}
 
-                <p class="mb-2 text-xs text-ink-muted">Required, with helper text</p>
+                <p class="mb-2 text-xs text-ink-muted">One line (default), with overflow</p>
                 {{ self.control("design-library-multi-select-required")? }}
                 <div class="border-t border-line pt-3">
                   <p class="mb-2 text-xs text-ink-muted">
-                    With chips: each choice is shown and removed in place, and the trigger keeps its verb
+                    Multiple lines: the field grows to show every selected chip
                   </p>
                   {{ self.control("design-library-multi-select-chips")? }}
                 </div>
                 <div class="border-t border-line pt-3">
-                  <p class="mb-2 text-xs text-ink-muted">Optional, on its own</p>
+                  <p class="mb-2 text-xs text-ink-muted">Empty selection</p>
                   {{ self.control("design-library-multi-select-plain")? }}
                 </div>
-              
+

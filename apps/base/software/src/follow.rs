@@ -1,4 +1,4 @@
-//! How the Software page follows a job as the builder or installer works: one
+//! How the Software page follows a job as the installer works: one
 //! connection per process on `LISTEN bilibi_software_jobs` (the channel every
 //! queue, cancel and step write announces on, `jobs::CHANNEL`), fanned out as
 //! live-page `Change`s so each mounted page refreshes itself. No Bilimbi

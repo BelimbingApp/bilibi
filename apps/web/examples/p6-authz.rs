@@ -1,10 +1,10 @@
 //! Running-app authorization walkthrough. Use only a disposable migrated
-//! database: this command changes demo grants and temporarily appoints tenant 1
-//! operator. No test runner or mock services. Its grant changes are step-up
-//! operations a console cannot give a code for, so it first turns the
+//! database: this command changes fixture grants and temporarily appoints
+//! tenant 1 operator. No test runner or mock services. Its grant changes are
+//! step-up operations a console cannot give a code for, so it first turns the
 //! fixture tenant's policy off for them (`console_grants`). Run with
-//! DATABASE_URL and BILIBI_AUTHZ_DEMO=disposable cargo run -p bilibi-web
-//! --example p6-authz.
+//! DATABASE_URL and BILIBI_AUTHZ_DEMO=disposable:
+//! cargo run -p bilibi-web --example p6-authz.
 use bilibi_base::{
     authz::{
         self, fields, grants::Grants, CapabilityDefinition as C, RoleDefinition,

@@ -183,20 +183,6 @@ impl View<'_> {
         {
             return crate::controls::value_text(self.state.sample.get(key));
         }
-        if expression.starts_with("Enum.join") {
-            return self
-                .state
-                .sample
-                .get("roles")
-                .and_then(serde_json::Value::as_array)
-                .map(|v| {
-                    v.iter()
-                        .filter_map(serde_json::Value::as_str)
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                })
-                .unwrap_or_default();
-        }
         match expression {
             "@click_count" => self.state.clicks.to_string(),
             "elem(@confirm_outcome, 1)" => self.state.outcome.clone(),

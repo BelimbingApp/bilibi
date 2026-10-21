@@ -141,6 +141,8 @@ pub struct VerifyCodeForm {
     pub notice: String,
     /// Seconds before another text message may be asked for.
     pub resend_in: i64,
+    /// Minutes the text-message code works (the operator's setting).
+    pub minutes: i64,
 }
 
 #[derive(Template)]
@@ -148,6 +150,7 @@ pub struct VerifyCodeForm {
 pub struct VerifyCodePage {
     pub text_message: bool,
     pub phone: String,
+    pub minutes: i64,
     pub form_error: String,
     pub notice: String,
     pub code: Html,
@@ -157,31 +160,17 @@ pub struct VerifyCodePage {
 impl VerifyCodePage {
     pub fn new(form: &VerifyCodeForm) -> askama::Result<Self> {
         let text_message = !form.phone.is_empty();
-        let code = if text_message {
-            Html::render(
-                &CodeInput::new("verify-code", "verify[code]", "Verification code", 6).numeric(),
-            )?
+        let label = if text_message {
+            "Verification code"
         } else {
-            // An authenticator code, or one recovery code if the phone is lost.
-            Html::render(
-                &Field::in_form("verify", "code")
-                    .id("verify-code")
-                    .label("Authentication code")
-                    .hint("6 digits from the app, or a recovery code")
-                    .autocomplete("one-time-code")
-                    .attr("spellcheck", "false")
-                    .attr("autocapitalize", "off")
-                    .attr("maxlength", "32")
-                    .attrs(Attrs {
-                        required: true,
-                        autofocus: true,
-                        ..Attrs::default()
-                    }),
-            )?
+            "Authentication code"
         };
+        let code =
+            Html::render(&CodeInput::new("verify-code", "verify[code]", label, 6).numeric())?;
         Ok(Self {
             text_message,
             phone: form.phone.clone(),
+            minutes: form.minutes,
             form_error: form.form_error.clone(),
             notice: form.notice.clone(),
             code,

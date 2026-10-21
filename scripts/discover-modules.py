@@ -239,8 +239,6 @@ def pin(root, modules, files):
     if unexpected:
         raise Refused(f'Platform has uncommitted changes outside the composition: {", ".join(unexpected)}')
     mounted = mounted_containers(root, modules)
-    if not mounted:
-        raise Refused('Nothing is mounted under apps/domains or apps/extensions; there is nothing to pin')
     heads = {name: checkout_head(f'apps/{name}', folder) for name, folder in sorted(mounted.items())}
     versions = {name: version_at_head(f'apps/{name}', folder) for name, folder in sorted(mounted.items())}
     require_resolved_lock(root)
@@ -255,7 +253,8 @@ def pin(root, modules, files):
                 f'platform = "{platform}"\n'
                 f'platform_version = "{platform_version}"\n'
                 + (f'platform_tag = "v{tagged}"\n' if tagged else '')
-                + f'cargo_lock_sha256 = "{sha256(lock)}"\n')
+                + f'cargo_lock_sha256 = "{sha256(lock)}"\n'
+                + '\n[containers]\n')
     for name, head in heads.items():
         manifest += f'\n[containers."{name}"]\nhead = "{head}"\n'
         if versions[name]:

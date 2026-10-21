@@ -1,0 +1,30 @@
+{#- /tenancy/tenants (Bilimbi `Tenancy.Web.TenantsLive` render): the platform
+    tenant list and its Add Tenant dialog. The table and its cells are rendered
+    by src/web.rs through the shared models; this file lays the page out. The
+    page renders its own flash outlet (the shell has none), and the open dialog
+    owns the same messages, as the source passes `flash` to its modal. -#}
+{%- import "components.html" as ui -%}
+{%- import "forms.html" as form -%}
+{%- import "feedback.html" as feedback -%}
+{%- import "dialog.html" as dialog -%}
+{% call feedback::flash_group(messages=flash) %}{% endcall %}
+{% call ui::page(id="tenants-index") %}
+{% call ui::header(subtitle="Each tenant is a separate customer with its own data.", title_actions=title_actions, actions=actions) %}Tenants{% endcall %}
+{% call ui::card(id="tenants-card", inner_class="p-0") %}{{ table }}{% endcall %}
+{% endcall %}
+{% if let Some(create) = create %}
+{% call dialog::modal(id="tenant-create-modal", title="Add Tenant", cancel_event="cancel_create", owns_flash=true, messages=flash) %}
+<form id="tenant-create-form" data-event="create" class="mt-6 space-y-4">
+{% call feedback::error_summary(summary=create.summary) %}{% endcall %}
+{% call form::input(field=create.name) %}{% endcall %}
+{% call form::input(field=create.parent) %}{% endcall %}
+{% call form::input(field=create.status) %}{% endcall %}
+{% call form::input(field=create.primary_company) %}{% endcall %}
+{% call form::input(field=create.additional_companies) %}{% endcall %}
+<div class="flex items-center gap-4 pt-2">
+{% call ui::button(variant=bilibi_ui::ButtonVariant::Primary, button_type="submit") %}Create{% endcall %}
+{% call ui::button(button_type="button", event="cancel_create") %}Cancel{% endcall %}
+</div>
+</form>
+{% endcall %}
+{% endif %}

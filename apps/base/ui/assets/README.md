@@ -32,13 +32,20 @@ shell's `#app-content`, using the shared semantic colors; it stops at a
 this compatibility sheet when the legacy pages have been translated; new
 components use shared source classes rather than extending it.
 
-The bounded Rust `static_asset` allowlist owns font/favicon/specimen serving.
-The host serves fonts at `/fonts/`, the favicon at `/favicon.svg` and
-`/favicon.ico`, and the standalone specimen at `/assets/ui-specimen.html`.
-The rendered component specimen at `/assets/ui-components.html` comes from
-`src/specimen.rs` and the shared macros, not from this directory.
-Stylesheets reference local fonts only. Heroicon masks are embedded data URLs;
-the host CSP allows `img-src 'self' data:` for them and local fonts only.
+## URLs and browser caching
+
+Use `bilibi_ui::Assets::url("/assets/app.css")` in shared templates to link an embedded asset with its content version.
+
+- `src/assets.rs` owns the bounded catalogue, mirroring Bilimbi's static assets and Phoenix digest URLs. It never resolves a request path on disk.
+- Each URL carries `?v=<sha256>` of the final served bytes. Fonts are versioned before CSS, and CSS before the static specimen, so a dependency change also changes the referring asset's URL.
+- The live script's version includes its debug/release reload switch. Rust assembles the hook bundle before hashing it.
+- Matching versioned CSS, JavaScript, fonts and icons receive `public, max-age=31536000, immutable`. Unversioned URLs remain available with `no-store`; an incorrect version returns 404 with `no-store`.
+- HTML pages, including specimens, retain `no-store`. The host negotiates gzip or Brotli for compressible responses and sends `Vary: Accept-Encoding`.
+- `build.cjs` already minifies the committed CSS with Tailwind's `--minify`; Cargo needs no Node process at runtime.
+
+Fonts are served at `/fonts/`, favicons at `/favicon.svg` and `/favicon.ico`, and the standalone specimen at `/assets/ui-specimen.html`. The rendered component specimen at `/assets/ui-components.html` comes from `src/specimen.rs` and the shared macros.
+
+Stylesheets reference local fonts only. Heroicon masks are embedded data URLs; the host CSP allows `img-src 'self' data:` for them and local fonts only.
 
 For a quick theme inspection, open the specimen and use browser emulation for
 `prefers-color-scheme`. An absent `data-theme` on the root follows the system;

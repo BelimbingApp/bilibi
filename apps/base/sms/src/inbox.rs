@@ -1,9 +1,9 @@
 //! The development inbox: the simulator's messages as a phone's message
 //! list, newest first, so a tester reads a sign-in or step-up code without a
-//! phone. The host serves it at [`crate::INBOX_PATH`] only when
-//! `BILIBI_ENV=development` and the simulator is the transport; nowhere else
-//! is the route bound. It is anonymous on purpose: a tester needs the code
-//! before signing in.
+//! phone. The host serves it at [`crate::INBOX_PATH`] only while the
+//! simulator stands in for the transport (the saved instance role is Dev);
+//! otherwise the path answers like an unknown one. It is anonymous on
+//! purpose: a tester needs the code before signing in.
 use crate::{Outbox, Sms, INBOX_PATH};
 use askama::Template;
 use bilibi_datetime::{DisplayContext, Format, Precision};
@@ -28,9 +28,12 @@ pub struct InboxPage {
 }
 
 impl InboxPage {
-    /// `None` when the simulator is not the transport (nothing to show).
-    pub fn new(sms: &Sms) -> crate::Result<Option<Self>> {
-        sms.outbox().map(Self::from_outbox).transpose()
+    /// `None` when the simulator does not stand in for the transport now.
+    pub async fn new(sms: &Sms) -> crate::Result<Option<Self>> {
+        match sms.outbox().await {
+            Some(outbox) => Self::from_outbox(outbox).map(Some),
+            None => Ok(None),
+        }
     }
     fn from_outbox(outbox: &Outbox) -> crate::Result<Self> {
         let display = DisplayContext::anonymous();

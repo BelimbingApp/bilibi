@@ -1,7 +1,8 @@
 {%- import "components.html" as ui -%}
 {%- import "feedback.html" as fb -%}
 {% call ui::card(id="component-instance", title="Which Bilibi", inner_class="space-y-3 p-4") %}
-<p class="text-xs text-ink-muted">The top-bar badge shows on every installation except production. The banner opens every review or confirmation, production included. Label and colour are the operator's Instance settings.</p>
+<p class="text-xs text-ink-muted">The status bar names the stored server role. Core Administrators can click it to open Instance settings. Staging keeps a top-bar badge; Dev and Staging show a sign-in badge. The banner opens every review or confirmation, production included. Label and colour are the operator's Instance settings.</p>
+<div class="flex flex-wrap items-center gap-2">{% for status in instance_statuses %}{% call fb::instance_status(status=status) %}{% endcall %}{% endfor %}</div>
 <div class="flex flex-wrap items-center gap-2">{% for badge in instance_badges %}{% call fb::instance_badge(badge=badge) %}{% endcall %}{% endfor %}</div>
 <div class="grid gap-2">{% for banner in instance_banners %}{% call fb::instance_banner(banner=banner) %}{% endcall %}{% endfor %}</div>
 {% endcall %}

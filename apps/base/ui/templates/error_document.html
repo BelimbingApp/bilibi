@@ -1,4 +1,4 @@
 {#- A whole error document: the stylesheet and nothing else, as Bilimbi's
     `layout: false` error templates. `body` is the credential layout. -#}
 <!doctype html>
-<html lang="en" class="h-full bg-canvas"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{{ title }}</title><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/assets/app.css"></head><body class="h-full bg-canvas text-ink antialiased">{{ body }}</body></html>
+<html lang="en" class="h-full bg-canvas"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{{ title }}</title><link rel="icon" href="{{ bilibi_ui::Assets::url("/favicon.svg") }}" type="image/svg+xml"><link rel="stylesheet" href="{{ bilibi_ui::Assets::url("/assets/app.css") }}"></head><body class="h-full bg-canvas text-ink antialiased">{{ body }}</body></html>

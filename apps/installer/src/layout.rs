@@ -9,7 +9,7 @@ use std::{
 };
 
 /// The files the installer copies with a release, when the build wrote them
-/// (`release.json`) or the release came as a file (`bundle.json`). Plug-ins
+/// (`release.json`) or the release came as a file (`bundle.json`). Add-ons
 /// that travel with the release are the `plugins/` folder beside them.
 const RELEASE_FILES: [&str; 6] = [
     "bilibi-web",
@@ -20,14 +20,12 @@ const RELEASE_FILES: [&str; 6] = [
     "bundle.json",
 ];
 const PLUGINS_DIR: &str = "plugins";
-/// The plug-ins a release switches on, written by the builder into the
+/// The add-ons a release switches on, included by the local build in the
 /// release's `plugins/` folder.
 const PLUGINS_ENABLED: &str = "enabled.json";
 
 #[derive(Clone, Debug)]
 pub struct Layout {
-    /// `/opt/bilibi`
-    pub root: PathBuf,
     /// The instance's folder name: `production`, `dev`.
     pub name: String,
     /// `/opt/bilibi/<name>`
@@ -51,24 +49,13 @@ impl Layout {
                 )
             })?
             .to_owned();
-        let root = dir
-            .parent()
-            .ok_or_else(|| format!("{} has no parent folder", dir.display()))?
-            .to_path_buf();
         if !dir.join("env").is_file() {
             return Err(format!(
                 "{} has no env file; create the instance with scripts/install-server.sh create {name} first",
                 dir.display()
             ));
         }
-        Ok(Self { root, name, dir })
-    }
-    /// Another instance on this machine, by its folder name.
-    pub fn sibling(&self, name: &str) -> Result<Self, String> {
-        if !valid_instance_name(name) {
-            return Err(format!("{name} is not an instance name"));
-        }
-        Self::open(&self.root.join(name))
+        Ok(Self { name, dir })
     }
     pub fn releases(&self) -> PathBuf {
         self.dir.join("releases")
@@ -204,10 +191,10 @@ pub fn verify_checksum(dir: &Path) -> Result<String, String> {
             dir.display()
         ));
     }
-    Ok(sha)
+    Ok(sha.to_ascii_lowercase())
 }
 
-/// Copies a release folder's files, and its plug-ins, into `dst` and
+/// Copies a release folder's files, and its add-ons, into `dst` and
 /// returns the program's size.
 pub fn copy_release(src: &Path, dst: &Path) -> io::Result<u64> {
     fs::create_dir_all(dst)?;
@@ -232,9 +219,9 @@ pub fn copy_release(src: &Path, dst: &Path) -> io::Result<u64> {
     }
     Ok(bytes)
 }
-/// The plug-ins the release at `dir` switches on (`plugins/enabled.json`), as
+/// The add-ons the release at `dir` switches on (`plugins/enabled.json`), as
 /// `{id, name, publisher, version, source}`; `None` when the release does not
-/// say (one made before plug-ins travelled), which leaves the server's own
+/// say (one made before add-ons travelled), which leaves the server's own
 /// list as it is. A file that cannot be read as a list is an error: the
 /// release was damaged on the way.
 pub fn read_plugins(dir: &Path) -> Result<Option<Vec<serde_json::Value>>, String> {
@@ -247,7 +234,7 @@ pub fn read_plugins(dir: &Path) -> Result<Option<Vec<serde_json::Value>>, String
     };
     let damaged = || {
         format!(
-            "{PLUGINS_DIR}/{PLUGINS_ENABLED} is not a list of plug-ins. Make the release file again on the source."
+            "{PLUGINS_DIR}/{PLUGINS_ENABLED} is not a list of add-ons. Make the release file again on the server it came from."
         )
     };
     let list: Vec<Value> = serde_json::from_str(&text).map_err(|_| damaged())?;
@@ -302,7 +289,7 @@ fn copy_plain_files(src: &Path, dst: &Path) -> io::Result<()> {
 
 /// Whether the program in `dir` was built for this kind of server: a Linux
 /// program for this processor (read from the program itself) that needs a
-/// system library this server has (`release.json`, when the builder
+/// system library this server has (`release.json`, when the local build
 /// recorded it). Each refusal says what to do. The same check the program
 /// makes when it receives a release (`base/software`, `transport.rs`).
 pub fn built_for_this_server(dir: &Path) -> Result<(), String> {
@@ -325,14 +312,15 @@ pub fn built_for_this_server(dir: &Path) -> Result<(), String> {
     let here = std::env::consts::ARCH;
     if built_arch != here {
         return Err(format!(
-            "This release was built for {} computers, and this server is {}. Build it on a Dev of the same kind as this server.",
+            "This release was built for {} computers, and this server is {}. Build it locally for the same kind of server.",
             describe_arch(built_arch),
             describe_arch(here)
         ));
     }
     if !matches!(head[7], 0 | 3) || std::env::consts::OS != "linux" {
         return Err(
-            "This release was built for another operating system. Build it on a Linux Dev.".into(),
+            "This release was built for another operating system. Build it locally for Linux."
+                .into(),
         );
     }
     let recipe: serde_json::Value = fs::read_to_string(dir.join("release.json"))
@@ -344,7 +332,7 @@ pub fn built_for_this_server(dir: &Path) -> Result<(), String> {
             if let Some(have) = library_version(&have_text) {
                 if have < need {
                     return Err(format!(
-                        "This release needs the system library {needed}, and this server has {have_text}. Update this server, or build on a Dev whose system library is not newer than this server's."
+                        "This release needs the system library {needed}, and this server has {have_text}. Update this server, or build locally with a system library no newer than this server's."
                     ));
                 }
             }

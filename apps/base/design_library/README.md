@@ -19,6 +19,10 @@ The page is split at family/card boundaries because Askama inlines macros;
 large input templates otherwise exceed the compiler's memory limit. Every
 control declaration renders through its shared typed model in `controls.rs`.
 
+Data display demonstrates the canonical list toolbar: search first, filter boxes to its right, wrapping below search on narrow screens. Its company status filter works together with search, sort and pagination.
+
+Inputs keeps the single select, checkbox and radio group in Choice controls. The separate Multi-select card demonstrates the canonical inset label, selected count and chips: single-line overflow by default, explicit wrapping, and an empty selection. The live-state preview reads the first multi-select. Code input shows the device code and a bare 2FA code field.
+
 For manual runtime evidence, follow
 [`design-library-v1.json`](../../../../fixtures/parity/design-library-v1.json) and
 [`runtime-parity.md`](../../../../docs/runtime-parity.md). Use an isolated migrated

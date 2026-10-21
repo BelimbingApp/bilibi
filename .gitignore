@@ -1,6 +1,7 @@
 /target/
 .env
 /.local/
+/data/
 __pycache__/
 /.amp/portals/
 # Mounted Domain and Extension containers are their own Git checkouts; only the

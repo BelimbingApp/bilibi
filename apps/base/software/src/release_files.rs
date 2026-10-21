@@ -1,36 +1,21 @@
-//! The Release files page (`/system/software/releases`) and the release
-//! file download: the small UI of release transport (`README.md`, "Release
-//! transport"). It shows the releases kept on this instance with a download
-//! link for each, the pairing key, what the source offers, and takes an
-//! uploaded release file. Installing is the Software page's (`web.rs`) and the
-//! `base.software.install` contract's; this page only moves files. No
-//! Bilimbi counterpart: the Software page is Bilibi's own.
-use crate::{transport, Software, MANAGE, VIEW};
+//! Release controls embedded in the Software page’s Releases tab and the
+//! manual upload. No Bilimbi counterpart.
+use crate::{web::PAGES, MANAGE, VIEW};
 use askama::Template;
-use bilibi_agent_api::{page::PageContracts, Error as AgentError};
+use bilibi_agent_api::Error as AgentError;
 use bilibi_authz::authorize_operator;
-use bilibi_database::{Db, Error, Result};
-use bilibi_settings::Settings;
+use bilibi_database::{Error, Result};
 use bilibi_system::Instance;
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
-    download::{Download, DownloadFuture, DownloadRequest, FileBody},
-    forms::SecretInput,
-    page::{
-        LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, MountFuture, Page, PageBody,
-        PageFuture, PageRequest, Uploads,
-    },
-    ActionLink, BuiltinColumn, Button, ButtonVariant, Card, ColumnsOutcome, Fact, Facts,
-    FlashGroup, FlashMap, FlexRow, FlexTable, Form, Header, Html, ListColumns, PageVariant,
-    SectionHeading, StatusKind, TableEmpty, UploadSpec,
+    forms::{Field, InputKind, SecretInput},
+    page::{LiveInput, LiveRequest, Uploads},
+    BuiltinColumn, Button, ButtonVariant, Card, ColumnsOutcome, Fact, Facts, FlexRow, FlexTable,
+    Fold, Form, Html, ListColumns, SectionHeading, StatusKind, TableEmpty, UploadSpec,
 };
 use serde_json::{json, Value};
-use std::sync::Arc;
 
 pub const PATH: &str = "/system/software/releases";
-pub const DOWNLOAD_PATH: &str = "/system/software/releases/{release}/download";
-pub(crate) const PAGES: &str = "base/software.release_pages";
-pub(crate) const FILES: &str = "base/software.release_files";
 /// The file input's name: the key the owner consumes by.
 const UPLOAD: &str = "release_file";
 /// A release file is a compressed program: tens of megabytes.
@@ -40,83 +25,28 @@ fn render(template: impl Template) -> Result<Html> {
     Html::render(&template).map_err(|_| Error::Internal)
 }
 
-#[derive(Clone)]
-pub(crate) struct Pages {
-    pub db: Db,
-    pub settings: Arc<Settings>,
-    pub contracts: Arc<PageContracts>,
-    pub software: Arc<Software>,
-}
-impl Page<Scope, Error> for Pages {
-    fn title(&self, _operation: &str) -> Option<&'static str> {
-        Some("Release files")
-    }
-    fn render<'a>(&'a self, request: PageRequest<'a, Scope>) -> PageFuture<'a, Error> {
-        Box::pin(async move {
-            let scope = request.scope.ok_or(Error::Unauthorized)?;
-            let mut view = View::new(self.clone())?;
-            Ok(PageBody {
-                html: view.body(scope).await?,
-                live: true,
-                title: None,
-            })
-        })
-    }
-    fn mount<'a>(&'a self, _request: PageRequest<'a, Scope>) -> MountFuture<'a, Scope, Error> {
-        Box::pin(async move {
-            let view = View::new(self.clone())?;
-            Ok(Some(Box::new(view) as Box<dyn LiveState<Scope, Error>>))
-        })
-    }
-}
-
-/// The release file download: `/system/software/releases/{release}/download`.
-pub(crate) struct Files {
-    pub software: Arc<Software>,
-}
-impl Download<Scope, Error> for Files {
-    fn serve<'a>(&'a self, request: DownloadRequest<'a, Scope>) -> DownloadFuture<'a, Error> {
-        Box::pin(async move {
-            let release: u64 = request
-                .path
-                .get("release")
-                .and_then(|n| n.parse().ok())
-                .filter(|n| *n >= 1)
-                .ok_or(Error::NotFound)?;
-            let (bytes, filename) = self.software.bundle(request.scope, release).await?;
-            Ok(FileBody::attachment(
-                bytes,
-                transport::BUNDLE_TYPE,
-                &filename,
-            ))
-        })
-    }
-}
-
-/// The mounted page: the file input's state, the three tables' columns, the
-/// source's answer and the last message.
-struct View {
-    pages: Pages,
-    uploads: Uploads,
-    here: ListColumns,
-    source: ListColumns,
+/// Release-tab state: upload input, list columns, GitHub controls and feedback.
+pub(super) struct ReleaseFiles {
+    pages: crate::web::Pages,
+    pub(super) uploads: Uploads,
     waiting: ListColumns,
-    /// What the source reported when this page was mounted. Showing the page
-    /// again does not ask it again (the source limits how often one sender
-    /// may); the person asks again with "Ask the source again", and saving
-    /// the pairing key forgets it, since the answer then differs.
-    asked: Option<Value>,
-    flash: Option<(StatusKind, String)>,
-    pair_error: Option<String>,
+    github_columns: ListColumns,
+    /// Include GitHub files marked as a pre-release. Drafts stay hidden.
+    github_prerelease: bool,
+    /// The next render asks GitHub now, unless GitHub is limiting this server.
+    github_refresh: bool,
+    github_error: Option<String>,
+    pub(super) flash: Option<(StatusKind, String)>,
 }
-fn release_columns() -> Vec<BuiltinColumn> {
+fn github_columns() -> Vec<BuiltinColumn> {
     vec![
-        BuiltinColumn::new("release", "Release").right(),
-        BuiltinColumn::new("in_service", "In service"),
-        BuiltinColumn::new("platform", "Bilibi"),
-        BuiltinColumn::new("domains", "Domains"),
-        BuiltinColumn::new("checksum", "Checksum"),
+        BuiltinColumn::new("tag", "Tag"),
+        BuiltinColumn::new("target", "For"),
         BuiltinColumn::new("file", "File"),
+        BuiltinColumn::new("asset", "GitHub asset"),
+        BuiltinColumn::new("installed", "Installed"),
+        BuiltinColumn::new("digest", "Archive SHA-256"),
+        BuiltinColumn::new("published", "Published"),
     ]
 }
 fn waiting_columns() -> Vec<BuiltinColumn> {
@@ -126,11 +56,11 @@ fn waiting_columns() -> Vec<BuiltinColumn> {
         BuiltinColumn::new("from", "Made on"),
         BuiltinColumn::new("platform", "Bilibi"),
         BuiltinColumn::new("domains", "Domains"),
-        BuiltinColumn::new("checksum", "Checksum"),
+        BuiltinColumn::new("checksum", "File checksum"),
     ]
 }
-impl View {
-    fn new(pages: Pages) -> Result<Self> {
+impl ReleaseFiles {
+    pub(super) fn new(pages: crate::web::Pages) -> Result<Self> {
         Ok(Self {
             pages,
             uploads: Uploads::new([UploadSpec::new(UPLOAD, UPLOAD_BYTES).accept([
@@ -139,34 +69,23 @@ impl View {
                 "application/gzip",
                 "application/x-gzip",
             ])]),
-            here: ListColumns::mount("release-files-here", release_columns())
-                .map_err(|_| Error::Internal)?,
-            source: ListColumns::mount("release-files-source", release_columns())
-                .map_err(|_| Error::Internal)?,
             waiting: ListColumns::mount("release-files-waiting", waiting_columns())
                 .map_err(|_| Error::Internal)?,
-            asked: None,
+            github_columns: ListColumns::mount("release-files-github", github_columns())
+                .map_err(|_| Error::Internal)?,
+            github_prerelease: false,
+            github_refresh: false,
+            github_error: None,
             flash: None,
-            pair_error: None,
         })
     }
     fn say(&mut self, kind: StatusKind, message: impl Into<String>) {
         self.flash = Some((kind, message.into()));
     }
-    /// The page's own answer to a refused contract call.
-    fn refused(&mut self, error: Error) {
-        let message = match error {
-            Error::Forbidden => "You do not have permission to change the pairing key.".to_owned(),
-            Error::Invalid => "The pairing key was not accepted.".to_owned(),
-            other => format!("The pairing key could not be saved ({other:?})."),
-        };
-        self.pair_error = Some(message.clone());
-        self.say(StatusKind::Error, message);
-    }
-    /// Sets or clears the pairing key. A step-up the owner asks for ends the
-    /// event: the host takes the person to confirm and back, and nothing was
-    /// changed.
-    async fn pair(
+    /// Saves the GitHub repository, token or refresh interval. A step-up the
+    /// owner asks for ends the event: the host takes the person to confirm
+    /// and back, and nothing was changed.
+    async fn github_save(
         &mut self,
         request: &LiveRequest<'_, Scope>,
         event: &str,
@@ -177,16 +96,20 @@ impl View {
             credential: request.credential,
             service: PAGES,
             event,
-            contract: "base.software.pair",
+            contract: "base.software.github",
         };
-        self.pair_error = None;
+        self.github_error = None;
         match self.pages.contracts.submit(&call, input.clone()).await {
             Ok(_) => {
-                self.asked = None;
-                let message = if input["clear"].as_bool() == Some(true) {
-                    "Pairing key cleared. This instance shares no releases until a key is set again."
+                self.github_refresh = true;
+                let message = if input["accept"].as_bool() == Some(true) {
+                    "GitHub repository accepted. You can review a release below."
+                } else if input["clear_token"].as_bool() == Some(true) {
+                    "GitHub read token cleared."
+                } else if input.get("token").and_then(Value::as_str).is_some() {
+                    "GitHub read token saved. It is not shown again."
                 } else {
-                    "Pairing key saved. Paste the same key on the instance this one shares releases with."
+                    "GitHub settings saved."
                 };
                 self.say(StatusKind::Success, message);
             }
@@ -196,14 +119,26 @@ impl View {
                     .flatten()
                     .next()
                     .cloned()
-                    .unwrap_or_else(|| "The pairing key was not accepted.".into());
-                self.pair_error = Some(message.clone());
+                    .unwrap_or_else(|| "The GitHub settings were not accepted.".into());
+                self.github_error = Some(message.clone());
                 self.say(StatusKind::Error, message);
             }
             Err(AgentError::Backend(error @ Error::StepUpRequired { .. })) => return Err(error),
-            Err(AgentError::Forbidden) => self.refused(Error::Forbidden),
-            Err(AgentError::Backend(error)) => self.refused(error),
-            Err(_) => self.refused(Error::Internal),
+            Err(AgentError::Forbidden) => {
+                let message = "You do not have permission to change the GitHub repository.";
+                self.github_error = Some(message.into());
+                self.say(StatusKind::Error, message);
+            }
+            Err(AgentError::Backend(error)) => {
+                let message = format!("The GitHub settings could not be saved ({error:?}).");
+                self.github_error = Some(message.clone());
+                self.say(StatusKind::Error, message);
+            }
+            Err(_) => {
+                let message = "The GitHub settings could not be saved.";
+                self.github_error = Some(message.into());
+                self.say(StatusKind::Error, message);
+            }
         }
         Ok(())
     }
@@ -230,8 +165,8 @@ impl View {
                 self.say(
                     StatusKind::Success,
                     format!(
-                        "Received {release}{from} as {}. Install it from the Software page or through an assistant (base.software.install with bundle {}).",
-                        upload.bundle, upload.bundle
+                        "Received {release}{from} as {}. Choose it below to review and install it.",
+                        upload.bundle
                     ),
                 );
             }
@@ -247,166 +182,42 @@ impl View {
         Ok(())
     }
 
-    async fn body(&mut self, scope: &Scope) -> Result<String> {
+    pub(super) async fn body(&mut self, scope: &Scope, install: Html) -> Result<Html> {
         let client = self.pages.db.get().await?;
         authorize_operator(&**client, scope, VIEW).await?;
         let manages = authorize_operator(&**client, scope, MANAGE).await.is_ok();
         let instance = Instance::resolve(&self.pages.settings, &**client).await?;
         drop(client);
+        let refresh_github = std::mem::take(&mut self.github_refresh);
         let facts = self
             .pages
             .software
-            .releases_with(scope, self.asked.clone())
+            .releases_with(scope, refresh_github, self.github_prerelease)
             .await?;
-        if self.asked.is_none() {
-            self.asked = Some(facts["source"].clone());
+        let enrolled = self.pages.software.step_up.enrolled(scope).await?;
+        let mut body = Html::EMPTY;
+        body.push(&self.github_section(&facts, manages, enrolled)?);
+        let mut upload = Html::EMPTY;
+        if manages {
+            upload.push(&self.upload_section(&instance)?);
         }
-        let mut body = render(Header {
-            title: Html::text("Release files"),
-            subtitle: "Move a tested release between instances: download its file here, upload it on the instance that installs it.",
-            ..Header::default()
-        })?;
-        body.push(
-            &instance
-                .banner("release-files-instance", "mb-2")
-                .map_err(|_| Error::Internal)?,
-        );
-        body.push(&self.here_section(&instance, &facts, manages)?);
-        if !instance.role.builds() {
-            body.push(&self.source_section(&instance, &facts)?);
-            if manages {
-                body.push(&self.upload_section(&instance)?);
-            }
-            body.push(&self.waiting_section(&facts, manages)?);
+        if facts["uploads"]
+            .as_array()
+            .is_some_and(|uploads| !uploads.is_empty())
+        {
+            upload.push(&self.waiting_section(&facts, manages)?);
         }
-        body.push(&self.pairing_section(&instance, &facts, manages)?);
-        let message = |kind| {
-            self.flash
-                .as_ref()
-                .filter(|(current, _)| *current == kind)
-                .map_or("", |(_, message)| message.as_str())
-        };
-        let mut page = render(FlashGroup {
-            id: "flash-group",
-            flash: FlashMap {
-                info: message(StatusKind::Info),
-                success: message(StatusKind::Success),
-                error: message(StatusKind::Error),
-                warning: message(StatusKind::Warning),
-            },
-        })?;
-        page.push(&render(bilibi_ui::Page {
-            variant: PageVariant::Form,
-            body,
-            ..bilibi_ui::Page::default()
+        upload.push(&install);
+        body.push(&render(Fold {
+            id: "software-offline-upload",
+            title: "Upload a release file",
+            open: facts["uploads"]
+                .as_array()
+                .is_some_and(|uploads| !uploads.is_empty()),
+            body: upload,
+            ..Fold::default()
         })?);
-        Ok(page.to_string())
-    }
-    /// The releases kept on this instance, each with its download link.
-    fn here_section(&self, instance: &Instance, facts: &Value, manages: bool) -> Result<Html> {
-        let here = &facts["here"];
-        let mut table = release_table(
-            &self.here,
-            "release-files-here-table",
-            "grid_here",
-            &here["releases"],
-            |n| {
-                if manages {
-                    Some(DOWNLOAD_PATH.replace("{release}", &n.to_string()))
-                } else {
-                    None
-                }
-            },
-        )?;
-        table.caption = "Releases kept here";
-        if here["available"].as_bool() == Some(false) {
-            table.empty = Some(TableEmpty::Content(Html::text(
-                here["message"]
-                    .as_str()
-                    .unwrap_or("No releases are kept here."),
-            )));
-        } else if here["releases"].as_array().is_none_or(Vec::is_empty) {
-            table.empty = Some(TableEmpty::Content(Html::text(&format!(
-                "No release is kept on {} yet. The first one is put in with scripts/install-server.sh release.",
-                instance.label
-            ))));
-        }
-        let description = if manages {
-            format!("{} keeps these releases. Download the file of the one in service to install it on an instance this one cannot reach, or let that instance download it with the pairing key.", instance.label)
-        } else {
-            format!("{} keeps these releases.", instance.label)
-        };
-        section(
-            "release-files-here",
-            "Releases kept here",
-            &description,
-            Html::default(),
-            true,
-            render(table)?,
-        )
-    }
-    /// What the source offers, when the instance installs from one.
-    fn source_section(&self, instance: &Instance, facts: &Value) -> Result<Html> {
-        let source = &facts["source"];
-        let mut table = release_table(
-            &self.source,
-            "release-files-source-table",
-            "grid_source",
-            &source["releases"],
-            |_| None,
-        )?;
-        table.caption = "Releases on the source";
-        if source["available"].as_bool() != Some(true) {
-            table.empty = Some(TableEmpty::Content(Html::text(
-                source["message"]
-                    .as_str()
-                    .unwrap_or("The source could not be asked."),
-            )));
-        } else if source["releases"].as_array().is_none_or(Vec::is_empty) {
-            table.empty = Some(TableEmpty::Content(Html::text(
-                "The source keeps no release yet.",
-            )));
-        }
-        let name = match &instance.installs_from {
-            Some(from) => crate::review::source_name(from),
-            None => "no source".to_owned(),
-        };
-        let mut description = match &instance.installs_from {
-            Some(_) => format!("{} installs releases tested on {name}.", instance.label),
-            None => format!("{} has no source to install from.", instance.label),
-        };
-        if source["available"].as_bool() == Some(true) {
-            match source["current"].as_u64() {
-                Some(n) => description.push_str(&format!(
-                    " It runs release {n} now{}.",
-                    if source["healthy"].as_bool() == Some(true) {
-                        " and answers"
-                    } else {
-                        ", but its program does not answer"
-                    }
-                )),
-                None => description.push_str(" It has no release in service."),
-            }
-            description.push_str(
-                " Install one from the Software page or through an assistant (base.software.install).",
-            );
-        }
-        let ask = render(Button {
-            id: "release-files-source-refresh",
-            button_type: "button",
-            event: "refresh_source",
-            working: "Asking…",
-            body: Html::text("Ask the source again"),
-            ..Button::default()
-        })?;
-        section(
-            "release-files-source",
-            "Install from the source",
-            &description,
-            ask,
-            true,
-            render(table)?,
-        )
+        Ok(body)
     }
     /// The file input for a release file, for a server owner.
     fn upload_section(&self, instance: &Instance) -> Result<Html> {
@@ -414,7 +225,7 @@ impl View {
             .uploads
             .input(UPLOAD, "release-files-upload")
             .label("Release file")
-            .hint("A bilibi-release-<n>.tar.gz downloaded from the instance that tested it, up to 64 MB.");
+            .hint("Choose a tested .tar.gz release file, up to 64 MB.");
         let form = render(Form {
             id: "release-files-upload-form",
             event: "upload_release",
@@ -424,15 +235,18 @@ impl View {
                 button_type: "submit",
                 variant: ButtonVariant::Primary,
                 working: "Receiving…",
-                body: Html::text("Receive the file"),
+                body: Html::text("Upload file"),
                 ..Button::default()
             })?,
             ..Form::default()
         })?;
-        let description = format!("For a source {} cannot reach: download the release file there, then choose it here. It is unpacked and checked, and waits until you install it.", instance.label);
+        let description = format!(
+            "Upload a tested update for {}, then review and install it below.",
+            instance.label
+        );
         section(
             "release-files-upload-card",
-            "Upload a release file",
+            "Release upload",
             &description,
             Html::default(),
             false,
@@ -501,92 +315,386 @@ impl View {
         table.add_query = &self.waiting.add_query;
         table.framed = false;
         table.actions = manages;
-        table.caption = "Release files waiting here";
+        table.caption = "Uploaded releases";
         table.empty = Some(TableEmpty::Content(Html::text(
             "No release file is waiting here.",
         )));
         section(
             "release-files-waiting-card",
-            "Release files waiting here",
-            "Install one from the Software page or through an assistant (base.software.install with its file name as bundle).",
+            "Uploaded releases",
+            "Choose a file below to review and install it.",
             Html::default(),
             true,
             render(table)?,
         )
     }
-    /// The pairing key: set, cleared, never shown.
-    fn pairing_section(&self, instance: &Instance, facts: &Value, manages: bool) -> Result<Html> {
-        let pairing = &facts["pairing"];
-        let set = pairing["set"].as_bool() == Some(true);
-        let status = if set {
-            "Set (stored encrypted; the settings editor lists it under Software)".to_owned()
-        } else {
-            "Not set".to_owned()
-        };
+    /// Setup files from the GitHub repository the owner named.
+    fn github_section(&self, facts: &Value, manages: bool, enrolled: bool) -> Result<Html> {
+        let github = &facts["github"];
+        let repository = github["repository"].as_str().unwrap_or("");
+        let accepted = github["accepted"].as_bool() == Some(true);
+        let identity_changed = github["identity_changed"].as_bool() == Some(true);
+        let token_set = github["token_set"].as_bool() == Some(true);
+        let minutes = github["refresh_minutes"].as_i64().unwrap_or(15);
         let mut body = render(Facts {
-            id: "release-files-pairing-facts",
-            items: vec![Fact {
-                title: "Status",
-                id: "release-files-pairing-status",
-                value: Html::text(&status),
-            }],
+            id: "release-files-github-facts",
+            items: vec![
+                Fact {
+                    title: "Repository",
+                    id: "release-files-github-repository-fact",
+                    value: Html::text(if repository.is_empty() {
+                        "Not set"
+                    } else {
+                        repository
+                    }),
+                },
+                Fact {
+                    title: "Accepted",
+                    id: "release-files-github-accepted",
+                    value: Html::text(if accepted { "Yes" } else { "No" }),
+                },
+                Fact {
+                    title: "Read token",
+                    id: "release-files-github-token-fact",
+                    value: Html::text(if token_set { "Saved" } else { "Not set" }),
+                },
+                Fact {
+                    title: "Check every",
+                    id: "release-files-github-refresh-fact",
+                    value: Html::text(&format!(
+                        "{minutes} minute{}",
+                        if minutes == 1 { "" } else { "s" }
+                    )),
+                },
+            ],
         })?;
+        let mut notice = github["message"].as_str().unwrap_or("").to_owned();
+        if github["stale"].as_bool() == Some(true) {
+            if !notice.is_empty() {
+                notice.push(' ');
+            }
+            notice.push_str("This list was saved earlier. GitHub could not be asked just now.");
+        }
+        if !notice.is_empty() {
+            body.push(&Html::text(&notice));
+        }
+        let installed = &facts["installed_asset"];
+        body.push(&render(Facts {
+            id: "software-installed-asset",
+            items: vec![
+                Fact {
+                    id: "software-installed-local-release",
+                    title: "Local release",
+                    value: Html::text(
+                        &installed["local_release"]
+                            .as_u64()
+                            .map_or("Not recorded".into(), |n| n.to_string()),
+                    ),
+                },
+                Fact {
+                    id: "software-installed-github-asset",
+                    title: "Installed GitHub asset",
+                    value: Html::text(&if installed["github"].is_object() {
+                        let pin = &installed["github"];
+                        format!(
+                            "{} · tag {} · repository {} / release {} / asset {} · {}",
+                            pin["repository"].as_str().unwrap_or(""),
+                            pin["tag"].as_str().unwrap_or(""),
+                            pin["repository_id"],
+                            pin["release_id"],
+                            pin["asset_id"],
+                            pin["target"].as_str().unwrap_or("")
+                        )
+                    } else {
+                        "Not recorded".into()
+                    }),
+                },
+                Fact {
+                    id: "software-installed-archive",
+                    title: "Archive SHA-256",
+                    value: Html::text(
+                        installed["github"]["archive_sha256"]
+                            .as_str()
+                            .unwrap_or("Not recorded"),
+                    ),
+                },
+                Fact {
+                    id: "software-installed-program",
+                    title: "Program SHA-256",
+                    value: Html::text(
+                        installed["program_sha256"]
+                            .as_str()
+                            .unwrap_or("Not recorded"),
+                    ),
+                },
+                Fact {
+                    id: "software-installed-setup",
+                    title: "Setup commit",
+                    value: Html::text(
+                        installed["github"]["setup_commit"]
+                            .as_str()
+                            .unwrap_or("Not recorded"),
+                    ),
+                },
+            ],
+        })?);
         if manages {
-            let mut secret = SecretInput::in_form("pair", "key", "pairing key")
-                .id("release-files-pairing-key")
-                .label("Pairing key")
-                .hint("The same key on every instance that shares releases: 16 to 128 characters, no spaces. Make one with: openssl rand -hex 24. Saving or clearing it asks for your authenticator code.");
-            if set {
+            let mut repository_field = Field::in_form("github", "repository")
+                .id("release-files-github-repository")
+                .label("GitHub repository")
+                .value(repository)
+                .hint("owner/name, like BelimbingApp/bilibi-setup-template. Saving or accepting asks for your authenticator code.")
+                .wrapper_class("mb-0 w-full sm:w-96");
+            if let Some(error) = &self.github_error {
+                repository_field = repository_field.error(error.clone());
+            }
+            let mut secret = SecretInput::in_form("github", "token", "GitHub read token")
+                .id("release-files-github-token")
+                .label("GitHub read token")
+                .hint("Leave empty for a public repository. For a private one, use a fine-grained token that can read this repository only.");
+            if token_set {
                 secret = secret.stored();
             }
-            if let Some(error) = &self.pair_error {
-                secret = secret.errors(vec![error.clone()]);
-            }
+            let minutes_field = Field::in_form("github", "refresh_minutes")
+                .id("release-files-github-minutes")
+                .label("Check GitHub every this many minutes")
+                .kind(InputKind::Number)
+                .value(minutes.to_string())
+                .hint("15 means the list is refreshed at most every 15 minutes, and again when you choose Refresh.")
+                .wrapper_class("mb-0 w-full sm:w-72")
+                .attr("min", "1")
+                .attr("max", "1440");
+            let mut fields = render(repository_field)?;
+            fields.push(&render(secret)?);
+            fields.push(&render(minutes_field)?);
             let mut actions = render(Button {
-                id: "release-files-pairing-save",
+                id: "release-files-github-save",
                 button_type: "submit",
                 variant: ButtonVariant::Primary,
                 working: "Saving…",
-                body: Html::text("Save pairing key"),
+                body: Html::text("Save"),
                 ..Button::default()
             })?;
-            if set {
+            if token_set {
                 actions.push(&render(Button {
-                    id: "release-files-pairing-clear",
+                    id: "release-files-github-clear-token",
                     button_type: "button",
-                    event: "clear_pairing",
+                    event: "clear_github_token",
                     working: "Clearing…",
-                    body: Html::text("Clear the key"),
+                    body: Html::text("Clear read token"),
                     ..Button::default()
                 })?);
             }
+            let mut step = bilibi_ui::StepUp::new(enrolled, "/system/software?tab=releases");
+            step.body = fields;
+            step.actions = actions;
             body.push(&render(Form {
-                id: "release-files-pairing-form",
-                event: "pair",
+                id: "release-files-github-form",
+                event: "github_source",
                 class: "mt-3",
-                body: render(secret)?,
-                actions,
+                body: render(step)?,
                 ..Form::default()
             })?);
+            if (!accepted || identity_changed) && github["repository_id"].as_i64().is_some() {
+                let repository_id = github["repository_id"].as_i64().unwrap_or(0).to_string();
+                let mut hidden = render(
+                    Field::named("repository")
+                        .id("release-files-github-accept-repository")
+                        .kind(InputKind::Hidden)
+                        .value(repository),
+                )?;
+                hidden.push(&render(
+                    Field::named("repository_id")
+                        .id("release-files-github-accept-id")
+                        .kind(InputKind::Hidden)
+                        .value(repository_id),
+                )?);
+                hidden.push(&render(
+                    Field::named("accept")
+                        .id("release-files-github-accept-flag")
+                        .kind(InputKind::Hidden)
+                        .value("true"),
+                )?);
+                let accept_step = {
+                    let mut step =
+                        bilibi_ui::StepUp::new(enrolled, "/system/software?tab=releases");
+                    step.body = hidden;
+                    step.actions = render(Button {
+                        id: "release-files-github-accept",
+                        button_type: "submit",
+                        variant: ButtonVariant::Primary,
+                        working: "Accepting…",
+                        body: Html::text("Accept this repository"),
+                        ..Button::default()
+                    })?;
+                    step
+                };
+                body.push(&render(Form {
+                    id: "release-files-github-accept-form",
+                    event: "github_accept",
+                    class: "mt-3",
+                    body: render(accept_step)?,
+                    ..Form::default()
+                })?);
+            }
         }
-        let mut description = format!("With the same key on both, an instance downloads releases from the one it installs from, and the other way round never: {} accepts no program pushed to it.", instance.label);
-        if !set {
-            description.push_str(&format!(
-                " With no key set, {} shares no releases and downloads none.",
-                instance.label
-            ));
-        }
+        body.push(&self.github_table(
+            github,
+            manages && accepted && !identity_changed,
+            github["repository_id"].as_i64().unwrap_or(0),
+        )?);
+        let mut actions = render(Button {
+            id: "release-files-github-refresh",
+            button_type: "button",
+            event: "refresh_github",
+            working: "Checking…",
+            body: Html::text("Refresh"),
+            ..Button::default()
+        })?;
+        actions.push(&render(Button {
+            id: "release-files-github-prerelease",
+            button_type: "button",
+            event: "github_prerelease",
+            body: Html::text(if self.github_prerelease {
+                "Show stable releases"
+            } else {
+                "Show pre-releases"
+            }),
+            ..Button::default()
+        })?);
         section(
-            "release-files-pairing",
-            "Pairing key",
-            &description,
-            Html::default(),
+            "release-files-github",
+            "GitHub releases",
+            "Install a setup file from the GitHub repository you name. Uploading a file still works when GitHub cannot be reached.",
+            actions,
             false,
             body,
         )
     }
+    fn github_table(&self, github: &Value, can_review: bool, repository_id: i64) -> Result<Html> {
+        let mut rows = Vec::new();
+        for release in github["releases"].as_array().into_iter().flatten() {
+            let asset = release["asset_id"].as_i64().unwrap_or(0);
+            let digest = release["digest"].as_str().unwrap_or("");
+            let published = release["published_at"]
+                .as_str()
+                .unwrap_or("")
+                .chars()
+                .take(10)
+                .collect::<String>();
+            let tag = release["tag"].as_str().unwrap_or("");
+            let tag_text = if release["prerelease"].as_bool() == Some(true) {
+                format!("{tag} (pre-release)")
+            } else {
+                tag.to_owned()
+            };
+            let mut row = FlexRow::new(asset.to_string())
+                .slot(
+                    "asset",
+                    Html::text(&format!(
+                        "{repository_id}/{}/{}",
+                        release["release_id"], asset
+                    )),
+                )
+                .slot(
+                    "installed",
+                    Html::text(if release["installed"] == true {
+                        "Yes"
+                    } else {
+                        ""
+                    }),
+                )
+                .slot("tag", Html::text(&tag_text))
+                .slot(
+                    "target",
+                    Html::text(crate::github::describe_target(
+                        release["target"].as_str().unwrap_or(""),
+                    )),
+                )
+                .slot("file", Html::text(release["name"].as_str().unwrap_or("")))
+                .slot("digest", Html::text(digest))
+                .slot("published", Html::text(&published));
+            row.dom_id = Some(format!("release-files-github-row-{asset}"));
+            if can_review && release["installed"] != true {
+                row.actions = self.github_review_form(release, repository_id)?;
+            }
+            rows.push(row);
+        }
+        let empty_list = rows.is_empty();
+        let mut table = FlexTable::new(
+            "release-files-github-table",
+            self.github_columns.flex_columns(),
+            rows,
+        );
+        table.event = "grid_github";
+        table.zoom = self.github_columns.zoom;
+        table.suggestions = self.github_columns.flex_suggestions();
+        table.add_query = &self.github_columns.add_query;
+        table.framed = false;
+        table.actions = can_review;
+        table.caption = "GitHub releases";
+        if empty_list {
+            let empty = github["message"].as_str().unwrap_or(
+                if github["repository"]
+                    .as_str()
+                    .is_some_and(|name| !name.is_empty())
+                {
+                    "No setup file for this server is in the list."
+                } else {
+                    "No GitHub repository is set."
+                },
+            );
+            table.empty = Some(TableEmpty::Content(Html::text(empty)));
+        }
+        render(table)
+    }
+    fn github_review_form(&self, release: &Value, repository_id: i64) -> Result<Html> {
+        let asset = release["asset_id"].as_i64().unwrap_or(0);
+        let pairs = [
+            ("asset", asset.to_string()),
+            ("repository_id", repository_id.to_string()),
+            (
+                "release_id",
+                release["release_id"].as_i64().unwrap_or(0).to_string(),
+            ),
+            ("tag", release["tag"].as_str().unwrap_or("").to_owned()),
+            (
+                "target",
+                release["target"].as_str().unwrap_or("").to_owned(),
+            ),
+            (
+                "digest",
+                release["digest"].as_str().unwrap_or("").to_owned(),
+            ),
+        ];
+        let mut body = Html::EMPTY;
+        for (name, value) in pairs {
+            body.push(&render(
+                Field::named(name)
+                    .id(format!("release-files-github-{asset}-{name}"))
+                    .kind(InputKind::Hidden)
+                    .value(value),
+            )?);
+        }
+        let form_id = format!("release-files-github-review-form-{asset}");
+        let button_id = format!("release-files-github-review-{asset}");
+        render(Form {
+            id: &form_id,
+            event: "request_install",
+            body,
+            actions: render(Button {
+                id: &button_id,
+                button_type: "submit",
+                variant: ButtonVariant::Primary,
+                working: "Reviewing…",
+                body: Html::text("Review"),
+                ..Button::default()
+            })?,
+            ..Form::default()
+        })
+    }
 }
-/// One section: its heading with a short description, then its card.
+
 fn section(
     id: &str,
     title: &str,
@@ -599,7 +707,7 @@ fn section(
     let mut section = render(SectionHeading {
         title,
         id: &heading,
-        class: "mt-6",
+
         description,
         actions,
         ..SectionHeading::default()
@@ -613,130 +721,85 @@ fn section(
     Ok(section)
 }
 
-impl LiveState<Scope, Error> for View {
-    fn update<'a>(&'a mut self, request: LiveRequest<'a, Scope>) -> LiveFuture<'a, Error> {
-        Box::pin(async move {
-            {
-                let client = self.pages.db.get().await?;
-                authorize_operator(&**client, request.scope, VIEW).await?;
-            }
-            let mut notice = String::new();
-            if let LiveInput::Event(value) = request.input {
-                let values = bilibi_ui::params::string_values(value);
-                let get = |key: &str| values.get(key).map(String::as_str).unwrap_or("");
-                match value["type"].as_str().unwrap_or("") {
-                    "pair" => {
-                        let key = get("pair[key]").trim().to_owned();
-                        self.pair(&request, "pair", json!({"key": key})).await?;
+impl ReleaseFiles {
+    /// Handles release controls within the one mounted Software page.
+    pub(super) async fn event(&mut self, request: &LiveRequest<'_, Scope>) -> Result<bool> {
+        {
+            let client = self.pages.db.get().await?;
+            authorize_operator(&**client, request.scope, VIEW).await?;
+        }
+        if let LiveInput::Event(value) = request.input {
+            let values = bilibi_ui::params::string_values(value);
+            let get = |key: &str| values.get(key).map(String::as_str).unwrap_or("");
+            match value["type"].as_str().unwrap_or("") {
+                "github_source" => {
+                    let repository = get("github[repository]").trim().to_owned();
+                    let mut input = json!({"repository": repository});
+                    if let Ok(minutes) = get("github[refresh_minutes]").trim().parse::<i64>() {
+                        input["refresh_minutes"] = json!(minutes);
+                    } else if !get("github[refresh_minutes]").trim().is_empty() {
+                        self.github_error = Some(
+                            "Enter how many minutes to wait between GitHub checks, from 1 to 1440. 15 checks about four times an hour."
+                                .into(),
+                        );
+                        self.say(
+                            StatusKind::Error,
+                            "Enter how many minutes to wait between GitHub checks, from 1 to 1440. 15 checks about four times an hour.",
+                        );
+                        return Ok(true);
                     }
-                    "clear_pairing" => {
-                        self.pair(&request, "clear_pairing", json!({"clear": true}))
-                            .await?
+                    let token = get("github[token]").trim().to_owned();
+                    if !token.is_empty() {
+                        input["token"] = json!(token);
                     }
-                    "refresh_source" => self.asked = None,
-                    "upload_release" => self.upload(request.scope).await?,
-                    "discard_upload" => {
-                        let bundle = get("value").to_owned();
-                        self.discard(request.scope, &bundle).await?;
-                    }
-                    "grid_here" => {
-                        if let ColumnsOutcome::Sort(_) = self.here.handle(&values) {
-                            return Err(Error::Invalid);
-                        }
-                    }
-                    "grid_source" => {
-                        if let ColumnsOutcome::Sort(_) = self.source.handle(&values) {
-                            return Err(Error::Invalid);
-                        }
-                    }
-                    "grid_waiting" => {
-                        if let ColumnsOutcome::Sort(_) = self.waiting.handle(&values) {
-                            return Err(Error::Invalid);
-                        }
-                    }
-                    "clear-flash"
-                        if self
-                            .flash
-                            .as_ref()
-                            .is_some_and(|(kind, _)| kind.name() == get("key")) =>
-                    {
-                        self.flash = None;
-                    }
-                    _ => {}
+                    self.github_save(request, "github_source", input).await?;
                 }
-                if let Some((_, message)) = &self.flash {
-                    notice = message.clone();
+                "github_accept" => {
+                    let mut input = json!({
+                        "accept": true,
+                        "repository": get("repository").trim(),
+                    });
+                    if let Ok(id) = get("repository_id").trim().parse::<i64>() {
+                        input["repository_id"] = json!(id);
+                    }
+                    self.github_save(request, "github_accept", input).await?;
                 }
+                "clear_github_token" => {
+                    self.github_save(request, "clear_github_token", json!({"clear_token": true}))
+                        .await?;
+                }
+                "refresh_github" => self.github_refresh = true,
+                "github_prerelease" => self.github_prerelease = !self.github_prerelease,
+                "upload_release" => self.upload(request.scope).await?,
+                "discard_upload" => {
+                    let bundle = get("value").to_owned();
+                    self.discard(request.scope, &bundle).await?;
+                }
+                "grid_waiting" => {
+                    if let ColumnsOutcome::Sort(_) = self.waiting.handle(&values) {
+                        return Err(Error::Invalid);
+                    }
+                }
+                "grid_github" => {
+                    if let ColumnsOutcome::Sort(_) = self.github_columns.handle(&values) {
+                        return Err(Error::Invalid);
+                    }
+                }
+                "clear-flash"
+                    if self
+                        .flash
+                        .as_ref()
+                        .is_some_and(|(kind, _)| kind.name() == get("key")) =>
+                {
+                    self.flash = None;
+                }
+                _ => return Ok(false),
             }
-            Ok(LiveBody {
-                html: self.body(request.scope).await?,
-                notice,
-                ..LiveBody::default()
-            })
-        })
-    }
-    fn uploads(&mut self) -> Option<&mut Uploads> {
-        Some(&mut self.uploads)
+        }
+        Ok(true)
     }
 }
 
-/// One table of releases, from a listing's `releases` array.
-fn release_table<'a>(
-    columns: &'a ListColumns,
-    id: &'a str,
-    event: &'a str,
-    releases: &Value,
-    download: impl Fn(u64) -> Option<String>,
-) -> Result<FlexTable<'a>> {
-    let mut rows = Vec::new();
-    for release in releases.as_array().into_iter().flatten() {
-        let n = release["release"].as_u64().unwrap_or(0);
-        let in_service = release["in_service"].as_bool() == Some(true);
-        let sha = release["sha256"].as_str().unwrap_or("").to_owned();
-        let file = match download(n) {
-            Some(href) => render(ActionLink {
-                id: &format!("release-files-download-{n}"),
-                icon: "export",
-                title: "Download the release file",
-                href: &href,
-                method: "",
-                body: Html::text("Download"),
-            })?,
-            None => Html::text(&format!(
-                "{} MB",
-                release["bytes"].as_u64().unwrap_or(0) / 1_048_576
-            )),
-        };
-        let mut row = FlexRow::new(n.to_string())
-            .slot("release", Html::text(&n.to_string()))
-            .slot(
-                "in_service",
-                Html::text(if in_service { "Yes" } else { "" }),
-            )
-            .slot(
-                "platform",
-                Html::text(&describe_platform(&release["platform"])),
-            )
-            .slot(
-                "domains",
-                Html::text(describe_domains(&release["domains"]).trim_start_matches(" with ")),
-            )
-            .slot(
-                "checksum",
-                Html::text(&sha.chars().take(12).collect::<String>()),
-            )
-            .slot("file", file);
-        row.dom_id = Some(format!("{id}-{n}"));
-        rows.push(row);
-    }
-    let mut table = FlexTable::new(id, columns.flex_columns(), rows);
-    table.event = event;
-    table.zoom = columns.zoom;
-    table.suggestions = columns.flex_suggestions();
-    table.add_query = &columns.add_query;
-    table.framed = false;
-    Ok(table)
-}
 fn describe_platform(platform: &Value) -> String {
     match platform["version"].as_str() {
         Some(version) => format!("Bilibi {version}"),

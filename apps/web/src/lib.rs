@@ -4,7 +4,6 @@ mod api;
 mod auth;
 mod composition;
 mod create_owner;
-mod environment;
 mod errors;
 mod impersonation;
 mod landing;
@@ -15,11 +14,11 @@ mod pdf;
 mod perf;
 mod routes;
 mod shell;
-mod transport;
+mod two_factor_reset;
 mod webhooks;
 use askama::Template;
 use axum::{
-    extract::{DefaultBodyLimit, Form, Path, Query, State, WebSocketUpgrade},
+    extract::{DefaultBodyLimit, Form, Query, State, WebSocketUpgrade},
     http::{header, HeaderMap, HeaderValue, StatusCode},
     middleware::{self, Next},
     response::{Html, IntoResponse, Redirect, Response},
@@ -32,7 +31,7 @@ use serde::Deserialize;
 use std::{collections::HashMap, sync::Arc};
 
 pub use create_owner::create_owner;
-pub use environment::Environment;
+pub use two_factor_reset::two_factor_reset;
 
 #[derive(Clone)]
 pub struct App {
@@ -41,12 +40,10 @@ pub struct App {
     moved: Arc<Vec<&'static bilibi_module_registry::contributions::Moved>>,
     pub db: Db,
     pub origin: Arc<str>,
-    /// `BILIBI_ENV`: development binds the SMS simulator and its inbox, nothing else.
-    pub environment: Environment,
     settings: Arc<bilibi_base::settings::Settings>,
     pub step_up: Arc<bilibi_base::step_up::StepUp>,
     pub sms: Arc<bilibi_base::sms::Sms>,
-    /// The host the server listens on, for the development status bar only;
+    /// The host the server listens on, shown in the status bar;
     /// the serving command sets it from `BIND_ADDR`.
     pub listen_address: Option<Arc<str>>,
     pub services: Arc<bilibi_module_registry::Services>,
@@ -62,7 +59,6 @@ pub struct App {
     pub landing: Arc<landing::Landing>,
     api: Arc<api::Edge>,
     webhooks: Arc<webhooks::Boundary>,
-    transport: Arc<transport::Boundary>,
 }
 impl App {
     /// Which instance this is, with the operator's label and colour
@@ -72,8 +68,29 @@ impl App {
         let client = self.db.get().await?;
         bilibi_base::system::Instance::resolve(&self.settings, &**client).await
     }
+    /// Public OAuth origin policy. Rechecked at issuance so a live role change
+    /// cannot keep issuing tokens on a development HTTP origin.
+    /// `Ok(false)` is a policy refusal; instance settings that cannot be read
+    /// are an `Err`, so callers can report that separately.
+    pub async fn secure_origin(&self) -> Result<bool> {
+        let instance = self.instance().await?;
+        let uri: axum::http::Uri = self.origin.parse().map_err(|_| Error::Invalid)?;
+        let host = uri.host().ok_or(Error::Invalid)?.trim_matches(['[', ']']);
+        let loopback = host == "localhost"
+            || host
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|ip| ip.is_loopback());
+        let bare = uri
+            .authority()
+            .is_some_and(|authority| !authority.as_str().contains('@'))
+            && uri.path_and_query().is_none_or(|path| path.as_str() == "/");
+        Ok(bare
+            && (uri.scheme_str() == Some("https")
+                || (instance.role == bilibi_base::system::Role::Dev
+                    && uri.scheme_str() == Some("http")
+                    && loopback)))
+    }
     pub fn new(db: Db, origin: &str) -> Result<Self> {
-        let environment = Environment::from_env()?;
         let modules = modules()?;
         let mut services = bilibi_module_registry::Services::default();
         services.provide("bootstrap.database", Arc::new(db))?;
@@ -86,17 +103,21 @@ impl App {
         let security = services.get("base/security.guard")?;
         let step_up: Arc<bilibi_base::step_up::StepUp> =
             services.get(bilibi_base::step_up::SERVICE)?;
+        let settings: Arc<bilibi_base::settings::Settings> = services.get("base/settings.store")?;
         let sms: Arc<bilibi_base::sms::Sms> = services.get(bilibi_base::sms::SERVICE)?;
-        if environment.simulates_sms() {
-            let dir = std::env::var("BILIBI_SMS_DIR")
-                .ok()
-                .filter(|dir| !dir.trim().is_empty())
-                .unwrap_or_else(|| ".local/sms-outbox".into());
-            sms.use_simulator(Arc::new(bilibi_base::sms::Outbox::new(dir.into(), 100)))
-                .map_err(|_| Error::Internal)?;
-        }
+        let dir = std::env::var("BILIBI_SMS_DIR")
+            .ok()
+            .filter(|dir| !dir.trim().is_empty())
+            .unwrap_or_else(|| ".local/sms-outbox".into());
+        sms.use_simulator(
+            Arc::new(bilibi_base::sms::Outbox::new(dir.into(), 100)),
+            Arc::new(DevRole {
+                db: db.clone(),
+                settings: settings.clone(),
+            }),
+        )
+        .map_err(|_| Error::Internal)?;
         eprintln!("sms: {}", sms.describe());
-        let settings = services.get("base/settings.store")?;
         let renderer = services.get("base/ui.renderer")?;
         let menu = bilibi_base::menu::Menu::from_catalog(services.catalog()?)?;
         let display = services.get("base/datetime.display")?;
@@ -110,14 +131,12 @@ impl App {
         let moved = Arc::new(routes::bind_moved(&services, &routes, &downloads)?);
         let api = Arc::new(api::Edge::new(&services)?);
         let webhooks = Arc::new(webhooks::Boundary::bind(&services)?);
-        let transport = Arc::new(transport::Boundary::bind(&services)?);
         Ok(Self {
             routes,
             downloads,
             moved,
             db,
             origin: origin.into(),
-            environment,
             settings,
             step_up,
             sms,
@@ -133,8 +152,27 @@ impl App {
             landing: Arc::default(),
             api,
             webhooks,
-            transport,
             services: Arc::new(services),
+        })
+    }
+}
+
+/// The SMS simulator stands in for a phone only while the saved instance role
+/// is Dev (Base System), read on every send and inbox visit; a role that
+/// cannot be read refuses.
+struct DevRole {
+    db: Db,
+    settings: Arc<bilibi_base::settings::Settings>,
+}
+impl bilibi_base::sms::Simulation for DevRole {
+    fn allowed(&self) -> bilibi_base::sms::AllowedFuture<'_> {
+        Box::pin(async move {
+            let Ok(client) = self.db.get().await else {
+                return false;
+            };
+            bilibi_base::system::Instance::resolve(&self.settings, &**client)
+                .await
+                .is_ok_and(|instance| instance.role == bilibi_base::system::Role::Dev)
         })
     }
 }
@@ -232,7 +270,7 @@ pub async fn migrate(db: &Db) -> Result<bilibi_database::Migrated> {
 /// generated by PostgreSQL; re-running the platform command resolves the
 /// existing operator and company instead of creating a second one.
 pub async fn provision(db: &Db, command: &str, args: &[String]) -> Result<()> {
-    use bilibi_core::company::{primary, NewCompany, ProvisionOutcome};
+    use bilibi_core::company::{self as primary, NewCompany, ProvisionOutcome};
     let mut options: HashMap<&str, String> = HashMap::new();
     let mut pairs = args.iter();
     while let Some(flag) = pairs.next() {
@@ -302,10 +340,9 @@ pub async fn media_cleanup(db: &Db, tenant: i64, hours: u64) -> Result<()> {
 pub fn router(app: App) -> Router {
     let perf = app.perf.clone();
     let pages = routes::install(Router::new(), &app.routes, &app.downloads);
-    let mut router = routes::install_moved(pages, &app.moved)
+    routes::install_moved(pages, &app.moved)
         .merge(api::router(app.clone()))
         .merge(webhooks::router())
-        .merge(transport::router())
         .route("/", get(auth::home).post(auth::login))
         .route("/login", get(auth::home).post(auth::login))
         .route(auth::VERIFY_PATH, get(auth::verify_page).post(auth::verify))
@@ -328,94 +365,60 @@ pub fn router(app: App) -> Router {
         .route(media::STREAM, get(media::stream))
         .route(media::ATTACHMENT, get(media::attachment))
         .route(pdf::RENDER, get(pdf::render))
-        .route("/fonts/{name}", get(font_asset))
-        .route(
-            "/assets/ui-specimen.html",
-            get(|| async { asset_response("ui-specimen.html") }),
-        )
+        .route("/fonts/{name}", get(embedded_asset))
+        .route("/assets/{name}", get(embedded_asset))
         .route("/assets/ui-components.html", get(components_specimen))
-        .route(
-            "/assets/logo.svg",
-            get(|| async { asset_response("logo.svg") }),
-        )
         .route("/assets/ui-feedback.html", get(feedback_specimen))
-        .route(
-            "/assets/ui-feedback-driver.js",
-            get(|| async { asset_response("ui-feedback-driver.js") }),
-        )
-        .route(
-            "/assets/ui.js",
-            get(|| async {
-                (
-                    [(header::CONTENT_TYPE, "text/javascript")],
-                    bilibi_ui::UI_JS,
-                )
-            }),
-        )
-        .route(
-            "/favicon.svg",
-            get(|| async { asset_response("favicon.svg") }),
-        )
-        .route(
-            "/favicon.ico",
-            get(|| async { asset_response("favicon.ico") }),
-        )
-        .route(
-            "/assets/app.css",
-            get(|| async { ([(header::CONTENT_TYPE, "text/css")], bilibi_ui::CSS) }),
-        )
-        .route(
-            "/assets/shell.js",
-            get(|| async {
-                (
-                    [(header::CONTENT_TYPE, "text/javascript")],
-                    bilibi_ui::SHELL_JS,
-                )
-            }),
-        )
-        .route(
-            "/assets/hooks.js",
-            get(|| async {
-                (
-                    [(header::CONTENT_TYPE, "text/javascript")],
-                    bilibi_ui::HOOKS_JS,
-                )
-            }),
-        )
-        .route(
-            "/assets/topbar.js",
-            get(|| async {
-                (
-                    [(header::CONTENT_TYPE, "text/javascript")],
-                    bilibi_ui::TOPBAR_JS,
-                )
-            }),
-        )
-        .route(
-            "/assets/live.js",
-            get(|| async {
-                let script = bilibi_ui::JS.replace(
-                    "__BILIBI_DEV_RELOAD__",
-                    if cfg!(debug_assertions) {
-                        "true"
-                    } else {
-                        "false"
-                    },
-                );
-                ([(header::CONTENT_TYPE, "text/javascript")], script)
-            }),
-        );
-    // The SMS simulator's inbox exists in development only; elsewhere the
-    // path is not bound at all and answers like any unknown path.
-    if app.environment.simulates_sms() {
-        router = router.route(bilibi_base::sms::INBOX_PATH, get(auth::sms_inbox));
-    }
-    router
+        .route("/favicon.svg", get(embedded_asset))
+        .route("/favicon.ico", get(embedded_asset))
+        // Answers like an unknown path unless the simulator is allowed now.
+        .route(bilibi_base::sms::INBOX_PATH, get(auth::sms_inbox))
         .layer(DefaultBodyLimit::max(16 * 1024))
         .layer(middleware::from_fn_with_state(app.clone(), errors::pages))
         .layer(middleware::from_fn(response_headers))
+        .layer(
+            tower_http::compression::CompressionLayer::new()
+                .quality(tower_http::CompressionLevel::Precise(4))
+                .compress_when(tower_http::compression::predicate::Predicate::and(
+                    tower_http::compression::DefaultPredicate::new(),
+                    is_textual,
+                )),
+        )
         .layer(middleware::from_fn_with_state(perf, perf::requests))
         .with_state(app)
+}
+
+/// Only text pages and assets compress; any response with a
+/// `Content-Disposition` (attachments, inline media, release bundles) and any
+/// non-text body keeps its bytes and `Content-Length`.
+fn is_textual(
+    _status: StatusCode,
+    _version: axum::http::Version,
+    headers: &HeaderMap,
+    _extensions: &axum::http::Extensions,
+) -> bool {
+    if headers.contains_key(header::CONTENT_DISPOSITION) {
+        return false;
+    }
+    let Some(value) = headers.get(header::CONTENT_TYPE) else {
+        return false;
+    };
+    let Ok(value) = value.to_str() else {
+        return false;
+    };
+    let essence = value
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    essence.starts_with("text/")
+        || matches!(
+            essence.as_str(),
+            "application/json" | "application/javascript" | "application/xml"
+        )
+        || essence.ends_with("+json")
+        || essence.ends_with("+xml")
 }
 
 /// The shared component specimen: the screenshot baseline for the primitives
@@ -431,15 +434,31 @@ async fn feedback_specimen() -> std::result::Result<Html<String>, HttpError> {
     Ok(Html(render(bilibi_ui::FeedbackSpecimen::new())?))
 }
 
-fn asset_response(name: &str) -> Response {
-    match bilibi_ui::static_asset(name) {
-        Some(asset) => ([(header::CONTENT_TYPE, asset.content_type)], asset.bytes).into_response(),
-        None => StatusCode::NOT_FOUND.into_response(),
+/// Only an allowlisted embedded asset with its current content hash earns a
+/// public immutable policy. Pages (including specimens) keep the host default.
+async fn embedded_asset(
+    uri: axum::http::Uri,
+    Query(query): Query<HashMap<String, String>>,
+) -> Response {
+    let Some(asset) = bilibi_ui::Assets::get(uri.path()) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let version = query.get("v");
+    if version.is_some_and(|value| value != asset.version()) {
+        return StatusCode::NOT_FOUND.into_response();
     }
-}
-
-async fn font_asset(Path(name): Path<String>) -> Response {
-    asset_response(&name)
+    let mut response = (
+        [(header::CONTENT_TYPE, asset.content_type)],
+        asset.bytes.as_ref(),
+    )
+        .into_response();
+    if version.is_some() && !asset.content_type.starts_with("text/html") {
+        response.headers_mut().insert(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("public, max-age=31536000, immutable"),
+        );
+    }
+    response
 }
 
 /// Defaults only: a handler that sets its own policy, as signed media streams

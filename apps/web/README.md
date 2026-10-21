@@ -4,7 +4,8 @@ Register HTTP pages with `Contribution::new(ROUTES, ...)` from
 `bilibi_module_registry::contributions`. The named service must resolve to
 `bilibi_ui::page::PageService<bilibi_tenancy::Scope, bilibi_database::Error>`,
 wrapping an owner implementation of `Page<Scope, Error>`. The generic UI contract
-imports no identity/database crate, so Tenancy can compose pages without a cycle.
+imports no identity/database crate. Pages that call operation contracts live above
+Agent API, as Core Tenant Administration does for `/tenancy/tenants`.
 Company's adapter in `apps/core/company/src/web.rs` is the current example.
 Do not add module page paths or business dispatch switches to the host router.
 
@@ -35,13 +36,13 @@ Step-up (`apps/base/step_up/README.md`) is the same on every surface:
 - A live socket on such a page rereads the window on each event and 15 s refresh without extending it. Once the window has run out, the socket reloads its address so the HTTP guard asks again.
 - When an owner's facade answers `Error::StepUpRequired` during a GET render or a live event, the browser goes to the prompt and comes back to the page; nothing acted.
 - `/api/v1` commit and the MCP `commit` tool take an optional `step_up_code` and answer `step_up_required` (`bilibi_step_up::refusal`): 403 on the API, an `isError` result on MCP.
-- Every `BILIBI_ENV` enforces it. Development only binds the SMS simulator (`Environment::simulates_sms`).
+- Every server role enforces it, Dev included. The host binds the SMS simulator behind a gate that reads the saved `instance.role` on every send, so text-message codes go to it only while the role is Dev.
 
 The host owns the anonymous credential pages (`src/auth.rs`):
 
 - `/` and `/login`: sign-in. When the tenant's policy asks a second factor at sign-in (Core User's `core.user.sign_in`), the right password opens only a pending session, kept in the `bilibi_sign_in` cookie (path `/login/verify`, 10 minutes), and the browser goes to `/login/verify`.
 - `/login/verify`: the code card in the sign-in layout. Three forms: the code, "Resend code" (text messages, after the countdown) and "Back to login" (ends the pending session). The right code sets the session cookie and clears the pending one.
-- `/dev/sms-inbox`: the SMS simulator's messages (`bilibi_sms::InboxPage`). Bound only when `BILIBI_ENV=development`; elsewhere the path does not exist. Anonymous, because a tester needs the code before signing in.
+- `/dev/sms-inbox`: the SMS simulator's messages (`bilibi_sms::InboxPage`), while the saved role is Dev; otherwise it answers 404 like an unknown path. Anonymous, because a tester needs the code before signing in.
 
 A live page or panel event runs under the page-write permit its service declared (`PageWrites`, `base/agent_api.pages`): the host wraps the owner's `update` in `bilibi_database::page_write::during`, so a business transaction the declaration does not cover is refused before it writes. Refresh and params carry no permit. Contract: `apps/base/agent_api/README.md` (Page writes declaration and check).
 
@@ -95,7 +96,7 @@ return `live: false`. F6 owns queued events and retained fragment/iframe lifecyc
 
 The host owns the machine endpoints; discovered pages cannot claim them
 (`api::reserved`: `/api/v1/…`, `/.well-known/…`, `/oauth/device_authorization`,
-`/oauth/token`, `/mcp`, `/webhooks/…`, `/transport/…`).
+`/oauth/token`, `/mcp`, `/webhooks/…`).
 
 - Discovery: `/.well-known/oauth-authorization-server`,
   `/.well-known/oauth-protected-resource[/mcp]` and `/.well-known/bilibi`, all
@@ -125,29 +126,11 @@ resource, so an MCP-bound token is refused here, and an API token is refused
 at `/mcp`. `/mcp` uses the same `authenticate` and `Grant`; there is no second
 credential check anywhere in the host.
 
-The `record` middleware writes one incoming Integration exchange per request,
-refusals included. It records method, path, the operation key (or
-`agent_api.plan`/`agent_api.commit`), status, duration, connection id, the
-self-reported `X-Bilibi-Agent-Id`/`X-Bilibi-Run-Id` labels and the agent's
-self-report; bodies, queries, headers and tokens are never recorded.
+The `record` middleware writes one incoming Integration exchange per request, refusals included. It records method, path, the operation key (or `agent_api.plan`/`agent_api.commit`), status, duration, connection id, the self-reported `X-Bilibi-Agent-Id`/`X-Bilibi-Run-Id` labels and the agent's self-report and a separately labelled client identity; bodies, queries, other headers and tokens are never recorded.
 
-The agent's self-report (ADR 01, "Agent identity at runtime") is
-`X-Bilibi-Agent-Self-Report: harness/model-version-effort`, for example
-`amp/gpt-6-astra-high`; at `/mcp` it may instead come in `params._meta`
-under `bilibi/agent-self-report`, which then replaces the header's value.
-`bilibi_tenancy::SelfReport::parse` checks the shape only: one `/`, either
-side may be empty but not both, ASCII letters, digits, `.`, `_`, `-`, at most
-120 characters. A missing or malformed value never refuses a request: a
-malformed one is dropped and the exchange records that it was malformed. A
-valid one rides on the sealed scope's agent facet (and on the `Grant`'s
-reproved scope), so it lands on the exchange row, on every audit mutation and
-action of a write it commits (`agent_self_report`), and in the connection's
-bounded list of distinct reports (`AgentAccess::observe`). It is labelled
-"Self-reported agent" wherever it is shown and is never used for
-authorization. Sealed requests record a tenant row;
-everything else records a system row. The trace in the `x-bilibi-trace-id`
-response header is the exchange's correlation ID and the audit trace of any
-mutation that request committed.
+The agent's self-report (ADR 01, "Agent identity at runtime") is `X-Bilibi-Agent-Self-Report: harness/model-version-effort`, for example `amp/gpt-6-astra-high`; at `/mcp` it may instead come in `params._meta` under `bilibi/agent-self-report`, which replaces the header's value. A model can send the optional `agent_self_report` argument on `search`, `describe`, `guide`, `read`, `plan` or `commit`; it takes precedence over both. The host consumes it before dispatch, so it never enters business inputs or a plan's comparison. MCP connect instructions and tool descriptions tell agents to report on every call, ask their user for unknown parts, never guess, and omit parts nobody can give. `bilibi_tenancy::SelfReport::parse` checks the shape only: one `/`, either side may be empty but not both, ASCII letters, digits, `.`, `_`, `-`, at most 120 characters. A missing or malformed value never refuses a request: a malformed one is dropped and the exchange records that it was malformed. A valid one rides on the sealed scope's agent facet (and on the `Grant`'s reproved scope), so it lands on the exchange row, on every audit mutation and action of a write it commits (`agent_self_report`), and in the connection's bounded list of distinct reports (`AgentAccess::observe`). It is labelled "Model (as reported)" wherever it is shown and is never used for authorization. Sealed requests record a tenant row; everything else records a system row. The trace in the `x-bilibi-trace-id` response header is the exchange's correlation ID and the audit trace of any mutation that request committed.
+
+**Client identity** is transport evidence, separate from the agent's self-report. The edge records a bounded, printable User-Agent as `User-Agent: …` on the exchange, the sealed scope and write audit, and in the connection's newest 20 observed clients. MCP requests without usable User-Agent record `MCP: client identity not supplied`. Initialize records bounded `clientInfo` name/version as `MCP clientInfo: name/version` on that exchange; public initialize metadata is never matched to later requests on this stateless transport. OAuth code redemption also records User-Agent when supplied. Audit Actions, Data Mutations, record history, Exchanges and Your connections show client identity separately. It grants no authority and never supplies unknown model details. Earlier immutable audit rows stay as originally recorded.
 
 # MCP (`src/mcp.rs`)
 
@@ -190,22 +173,17 @@ The status bar shows the same facts through `bilibi_ui::version_badges`. The sch
 
 # Agent plugins
 
-The downloadable plugin package for an agent harness (Plugin for ChatGPT at
-`/settings/chatgpt-plugin`) is a `core/agent_plugins` page and `Download`,
-not a host route. It points the harness at this `/mcp` edge from
-`APP_ORIGIN`, and it is named after the instance (`bilibi-staging`, "Bilibi
-Staging", `bilibi-staging-chatgpt-plugin.zip`), so a person can hold a Dev, a
-Staging and a Production connection in one harness. The host only parses the exporter subcommand:
+AI connections (`/settings/ai-connections`) is a `core/agent_access` page, not a host route. `/settings/mcp`, `/settings/agent-connections` and `/settings/chatgpt-plugin` redirect there. The page shows this `/mcp` edge from `APP_ORIGIN`. The ChatGPT plugin download stays a `core/agent_plugins` contribution. The package is named after the instance (`bilibi-staging`, "Bilibi Staging", `bilibi-staging-chatgpt-plugin.zip`), so a person can hold a Dev, a Staging and a Production connection in one harness. The host only parses the exporter subcommand:
 
 ```sh
-bilibi-web plugin-export --harness chatgpt --client <registered-id> --output <new-directory>
+bilibi-web plugin-export --harness chatgpt --output <new-directory>
 ```
 
 See `apps/core/agent_plugins/README.md`.
 
 # Webhooks (`src/webhooks.rs`)
 
-`POST /webhooks/{identifier}` is the only signed machine namespace (`/transport/…` below takes a pairing key, not a signature). Register a
+`POST /webhooks/{identifier}` is the only signed machine namespace. Register a
 handler with `Contribution::new(WEBHOOKS, …, &Webhook { identifier, service })`
 from `bilibi_base::integration::webhooks`; the service must resolve to a
 `WebhookService` wrapping a `WebhookHandler` (`verify`, then `handle`). Boot
@@ -233,6 +211,17 @@ the window closes. No body, header, signature, callback error or verified
 context is ever recorded, and webhooks do not enter the exchange log. A
 delivery whose audit row cannot be written is refused.
 
-# Release transport (`src/transport.rs`)
+# Response compression and caching
 
-`GET /transport/releases` lists the releases kept on this instance and `GET /transport/releases/{n}` streams one release file, for a paired instance that installs from this one. GET only: the target pulls, so nothing is ever pushed to an instance. The request carries the pairing key in `X-Bilibi-Pairing-Key` and nothing else (no cookie, CSRF or Origin); `base/software` decides admission and compares the key in constant time. The host throttles per sender, answers with fixed JSON errors and records one system incoming exchange per request, never the key. The contract, the checks and the pairing key: `apps/base/software/README.md`, "Release transport".
+The host compresses textual responses (`text/*`, JSON, JavaScript, XML and `+json`/`+xml` types such as SVG) with gzip or Brotli according to `Accept-Encoding`.
+
+- Compression runs at a fixed balanced quality (level 4) so a cold stylesheet request does not spend seconds of CPU. Any response with a `Content-Disposition` (private attachments, signed media, archives) and any non-text body (PDF, archives, fonts, images, octet-stream) is never recompressed and keeps its bytes and `Content-Length`, whatever its MIME type.
+- Compression adds `Vary: Accept-Encoding`; already encoded responses and streams such as server-sent events retain their existing handling.
+- Pages and API responses default to `cache-control: no-store`. Private downloads retain `private, no-store` and their sandboxing policy.
+- Only an embedded asset served with its matching content version receives `public, max-age=31536000, immutable`. Unversioned assets keep `no-store`; an unknown asset or incorrect version returns 404 with `no-store`.
+- HTML specimens remain pages with `no-store`, including the embedded specimen.
+- CSP, `nosniff` and the referrer policy still apply to every response. A handler's stricter policy is preserved.
+
+Shared templates use `bilibi_ui::Assets::url` for CSS, scripts and icons; CSS also links versioned fonts. See [the UI asset contract](../base/ui/assets/README.md#urls-and-browser-caching) for the catalogue and hashing rules.
+
+OAuth discovery advertises `/oauth/register` and client ID metadata documents. Public client registration, redirect matching and receipt retention belong to [Agent Access](../core/agent_access/README.md#client-registration). Startup requires HTTPS for Staging and Production; Dev permits HTTP only on loopback. Token issuance rechecks the same policy if the stored instance role changes.

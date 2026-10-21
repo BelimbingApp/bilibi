@@ -5,7 +5,7 @@
 //! the platform operator: tenant [`TENANT_NAME`], its primary company
 //! [`COMPANY_NAME`] and `ai@agent.my` holding the grant-all `core_admin`
 //! system role, then the modules' development sample data. Nothing else.
-//! The administrator gets [`ADMIN_PHONE`], so with `BILIBI_ENV=development`
+//! The administrator gets [`ADMIN_PHONE`], so on a Dev instance
 //! its 2FA codes arrive in the SMS simulator's inbox (`/dev/sms-inbox`).
 //!
 //! The administrator bootstrap happens once: its `user_bootstrap` receipt
@@ -24,7 +24,7 @@
 //! that step existed. A settled receipt is never revisited.
 use bilibi_authz::grants::Grants;
 use bilibi_base::audit::{record_action, Attribution};
-use bilibi_core::company::{primary, NewCompany, ProvisionOutcome};
+use bilibi_core::company::{self as primary, NewCompany, ProvisionOutcome};
 use bilibi_database::{Db, Error, Result};
 use bilibi_user::bootstrap::BootstrapAffiliation;
 use serde_json::json;

@@ -1,6 +1,6 @@
 // Browser behaviour for the shared form controls in templates/forms.html:
-// CodeInput, Combobox, SecretReveal, SecretClear, SecretStored and
-// DisclosureDismiss (plus the dashboard's DashboardSort, the form Fold and
+// CodeInput, ColourInput, Combobox, SecretReveal, SecretClear, SecretStored and
+// DisclosureDismiss, MultiSelect (plus the dashboard's DashboardSort, the form Fold and
 // the CountdownButton's Countdown), adapted from Bilimbi's Phoenix hooks (apps/web/assets/js
 // at the pinned source) with the LiveView JS commands folded into the hooks.
 // Each registers with the shared `data-hook` runtime in ui.js
@@ -12,6 +12,36 @@
 // `bilibi:event` CustomEvent, and hears a server push as a `window` event
 // `bilibi:<name>` with the payload in detail. ui.js must load first.
 (() => {
+  // The server owns opening/closing; this hook owns keyboard and focus only.
+  window.BilibiUI.registerHook("InlineForm", {
+    mounted() {
+      this.keydown = event => {
+        if (this.el.dataset.editing !== "true") return
+        if (event.key === "Escape") {
+          event.preventDefault()
+          event.stopPropagation()
+          this.emit(this.el.dataset.cancelEvent, {key: this.el.dataset.key})
+        } else if (event.key === "Enter" && !event.isComposing &&
+                   event.target.matches("input:not([type=button]):not([type=submit])")) {
+          event.preventDefault()
+          this.el.querySelector("form")?.requestSubmit()
+        }
+      }
+      this.el.addEventListener("keydown", this.keydown)
+      this.updated()
+    },
+    updated() {
+      const editing = this.el.dataset.editing === "true"
+      if (editing !== this.editing) {
+        this.editing = editing
+        const target = editing ? this.el.querySelector("input:not([type=hidden]):not([disabled]), select, textarea") : this.el.querySelector("button")
+        if (editing || this.wasEditing) target?.focus()
+        this.wasEditing = editing
+      }
+    },
+    destroyed() { this.el.removeEventListener("keydown", this.keydown) },
+  })
+
   // One native input is the keyboard and accessibility contract. Decorative
   // boxes follow its caret, so editing never adds eight tab stops or labels.
   const CodeInput = {
@@ -19,7 +49,8 @@
       this.input = this.el.querySelector("input")
       this.boxes = [...this.el.querySelectorAll("[data-code-index]")]
       this.length = Number(this.el.dataset.codeLength)
-      this.normalize = value => value.toUpperCase().replace(/[\s-]/g, "").slice(0, this.length)
+      this.normalize = value => (this.el.hasAttribute("data-code-numeric") ?
+        value.replace(/[^0-9]/g, "") : value.toUpperCase().replace(/[\s-]/g, "")).slice(0, this.length)
       // Writes only what changed: the runtime reports a child mutation inside
       // the control as an update, and rewriting an unchanged text node would
       // report another.
@@ -28,7 +59,9 @@
         this.boxes.forEach((box, index) => {
           const text = this.input.value[index] || ""
           if (box.textContent !== text) box.textContent = text
-          box.toggleAttribute("data-active", document.activeElement === this.input && index === active)
+          box.toggleAttribute("data-active", document.activeElement === this.input &&
+            (index === active || (index >= this.input.selectionStart && index < this.input.selectionEnd)))
+          box.toggleAttribute("data-invalid", this.input.getAttribute("aria-invalid") === "true")
         })
       }
       this.onInput = () => {
@@ -52,7 +85,14 @@
         this.input.dispatchEvent(new Event("input", {bubbles: true}))
       }
       this.onClick = event => {
-        const box = event.target.closest("[data-code-index]")
+        // The transparent native input remains hit-testable for touch paste.
+        // Preserve ranges created by dragging, Shift-click or multi-click.
+        if (event.target === this.input && (this.input.selectionStart !== this.input.selectionEnd ||
+          event.shiftKey || event.detail > 1)) { this.paint(); return }
+        const box = event.target === this.input ? this.boxes.find(box => {
+          const rect = box.getBoundingClientRect()
+          return event.clientX >= rect.left && event.clientX <= rect.right
+        }) : event.target.closest("[data-code-index]")
         if (!box) return
         this.input.focus()
         const index = Math.min(Number(box.dataset.codeIndex), this.input.value.length)
@@ -60,17 +100,8 @@
         this.paint()
       }
       this.input.value = this.normalize(this.input.value)
-      this.input.classList.add("absolute", "opacity-0", "pointer-events-none")
+      this.input.classList.add("absolute", "inset-0", "w-full", "opacity-0")
       this.el.querySelector("[data-code-boxes]").hidden = false
-      // An inline choice shell restores a versioned draft without committing.
-      this.onChoiceValue = ({detail}) => {
-        this.selectedValue = detail.value;
-        this.selectedLabel = this.options().find(option => option.dataset.value === detail.value)?.dataset.label || "";
-        this.valueInput.value = detail.value;
-        this.restore();
-        this.applyFilter();
-      }
-      this.el.addEventListener("bilibi:choice-value", this.onChoiceValue)
       this.input.addEventListener("input", this.onInput)
       this.input.addEventListener("paste", this.onPaste)
       for (const event of ["focus", "blur", "keyup", "select"]) this.input.addEventListener(event, this.paint)
@@ -78,18 +109,144 @@
       this.paint()
     },
     updated() {
-      this.input.classList.add("absolute", "opacity-0", "pointer-events-none")
+      this.input.classList.add("absolute", "inset-0", "w-full", "opacity-0")
       this.el.querySelector("[data-code-boxes]").hidden = false
       this.input.value = this.normalize(this.input.value)
       this.paint()
     },
     destroyed() {
-      this.el.removeEventListener("bilibi:choice-value", this.onChoiceValue)
       this.input.removeEventListener("input", this.onInput)
       this.input.removeEventListener("paste", this.onPaste)
       for (const event of ["focus", "blur", "keyup", "select"]) this.input.removeEventListener(event, this.paint)
       this.el.removeEventListener("click", this.onClick)
     },
+  }
+
+  // Select-only colour combobox. The native select is the only submitted
+  // control, including when JavaScript is unavailable. The closed field and
+  // each option show the name inside that colour's banner chip. Unlike a
+  // searchable combobox, typing moves focus among named colours without
+  // editing the value.
+  const ColourInput = {
+    mounted() {
+      this.select = this.el.querySelector('[data-colour-select]')
+      this.trigger = this.el.querySelector('[data-colour-trigger]')
+      this.list = this.el.querySelector('[role="listbox"]')
+      this.label = this.el.querySelector('label')
+      this.open = false
+      this.active = 0
+      this.query = ''
+      this.options = () => Array.from(this.list.querySelectorAll('[role="option"]'))
+      this.sync = () => {
+        this.select.hidden = true
+        this.trigger.hidden = false
+        this.trigger.disabled = this.select.matches(':disabled') || this.select.hasAttribute('readonly')
+        if (this.trigger.disabled) this.open = false
+        this.label.htmlFor = this.trigger.id
+        const options = this.options()
+        const selected = options.find(option => option.dataset.value === this.select.value) || options[0]
+        // The shared observer calls updated after child changes. Keep this
+        // repaint idempotent or an unchanged preview would update forever.
+        const preview = this.el.querySelector('[data-colour-preview]')
+        const chip = selected.querySelector('[data-option-label]')
+        const text = chip.textContent
+        if (preview.textContent !== text) preview.textContent = text
+        if (preview.className !== chip.className) preview.className = chip.className
+        options.forEach(option => option.setAttribute('aria-selected', String(option === selected)))
+        if (!this.open) this.active = options.indexOf(selected)
+        this.active = Math.min(this.active, options.length - 1)
+        this.paint()
+      }
+      this.paint = () => {
+        this.trigger.setAttribute('aria-expanded', String(this.open))
+        this.list.hidden = !this.open
+        this.options().forEach((option, index) => option.toggleAttribute('data-active', this.open && index === this.active))
+        if (this.open) {
+          const option = this.options()[this.active]
+          this.trigger.setAttribute('aria-activedescendant', option.id)
+          option.scrollIntoView({block: 'nearest'})
+        } else this.trigger.removeAttribute('aria-activedescendant')
+      }
+      this.setOpen = open => {
+        this.open = open && !this.trigger.disabled
+        this.query = ''
+        this.active = Math.max(0, this.options().findIndex(option => option.dataset.value === this.select.value))
+        this.paint()
+      }
+      this.commit = option => {
+        if (this.trigger.disabled) return
+        this.select.value = option.dataset.value
+        this.setOpen(false)
+        this.sync()
+        this.select.dispatchEvent(new Event('input', {bubbles: true}))
+        this.select.dispatchEvent(new Event('change', {bubbles: true}))
+      }
+      this.onClick = () => this.setOpen(!this.open)
+      this.onKey = event => {
+        const count = this.options().length
+        if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+          event.preventDefault()
+          const wasOpen = this.open
+          if (!wasOpen) this.setOpen(true)
+          if (event.key === 'Home') this.active = 0
+          else if (event.key === 'End') this.active = count - 1
+          else if (wasOpen) this.active = (this.active + (event.key === 'ArrowDown' ? 1 : -1) + count) % count
+          this.paint()
+        } else if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault()
+          if (this.open) this.commit(this.options()[this.active])
+          else this.setOpen(true)
+        } else if (event.key === 'Escape' && this.open) {
+          event.preventDefault()
+          event.stopPropagation()
+          this.setOpen(false)
+        } else if (event.key === 'Tab') this.setOpen(false)
+        else if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
+          event.preventDefault()
+          if (!this.open) this.setOpen(true)
+          clearTimeout(this.queryTimer)
+          this.query += event.key.toLocaleLowerCase()
+          const match = this.options().findIndex(option => option.textContent.trim().toLocaleLowerCase().startsWith(this.query))
+          if (match >= 0) this.active = match
+          this.paint()
+          this.queryTimer = setTimeout(() => { this.query = '' }, 700)
+        }
+      }
+      this.onOption = event => {
+        const option = event.target.closest('[role="option"]')
+        if (option && this.list.contains(option)) this.commit(option)
+      }
+      this.onPointer = event => {
+        if (event.target.closest('[role="option"]')) event.preventDefault()
+      }
+      this.onOutside = event => { if (!this.el.contains(event.target)) this.setOpen(false) }
+      this.onBlur = event => { if (!this.el.contains(event.relatedTarget)) this.setOpen(false) }
+      this.onReset = () => { this.resetTimer = setTimeout(() => { this.setOpen(false); this.sync() }, 0) }
+      this.onChange = () => this.sync()
+      this.form = this.select.form
+      this.trigger.addEventListener('click', this.onClick)
+      this.trigger.addEventListener('keydown', this.onKey)
+      this.list.addEventListener('pointerdown', this.onPointer)
+      this.list.addEventListener('click', this.onOption)
+      this.el.addEventListener('focusout', this.onBlur)
+      this.select.addEventListener('change', this.onChange)
+      this.form?.addEventListener('reset', this.onReset)
+      document.addEventListener('pointerdown', this.onOutside)
+      this.sync()
+    },
+    updated() { this.sync() },
+    destroyed() {
+      clearTimeout(this.queryTimer)
+      clearTimeout(this.resetTimer)
+      this.trigger.removeEventListener('click', this.onClick)
+      this.trigger.removeEventListener('keydown', this.onKey)
+      this.list.removeEventListener('pointerdown', this.onPointer)
+      this.list.removeEventListener('click', this.onOption)
+      this.el.removeEventListener('focusout', this.onBlur)
+      this.select.removeEventListener('change', this.onChange)
+      this.form?.removeEventListener('reset', this.onReset)
+      document.removeEventListener('pointerdown', this.onOutside)
+    }
   }
 
   // Client-side filtering and keyboard interaction for the combobox.
@@ -547,6 +704,76 @@
     },
   }
 
+  // Bilimbi multi_select disclosure with Bilibi's inset chip presentation.
+  // Values remain the owner's; overflow is measured from the actual field width.
+  const MultiSelect = {
+    mounted() {
+      DisclosureDismiss.mounted.call(this)
+      this.paintChips = () => {
+        const row = this.el.querySelector("[data-chip-row]")
+        if (!row || !row.clientWidth) return
+        const chips = [...row.querySelectorAll("[data-selected-chip]")]
+        const marker = row.querySelector("[data-chip-overflow]")
+        const gap = parseFloat(getComputedStyle(row).columnGap) || 0
+        const widths = chips.map(chip => chip.getBoundingClientRect().width)
+        const total = widths.reduce((sum, width) => sum + width, 0) + Math.max(0, chips.length - 1) * gap
+        let visible = chips.length
+        if (!this.el.hasAttribute("data-wrap-chips") && total > row.clientWidth) {
+          const budget = row.clientWidth - parseFloat(getComputedStyle(marker).width) - gap
+          let used = 0
+          visible = 0
+          for (const width of widths) {
+            const next = used + (visible ? gap : 0) + width
+            if (next > budget) break
+            used = next
+            visible++
+          }
+        }
+        chips.forEach((chip, index) => {
+          const hidden = index >= visible
+          if (chip.hasAttribute("data-overflow") !== hidden) chip.toggleAttribute("data-overflow", hidden)
+          if (chip.getAttribute("aria-hidden") !== String(hidden)) chip.setAttribute("aria-hidden", String(hidden))
+        })
+        const hidden = visible === chips.length
+        if (marker.hidden !== hidden) marker.hidden = hidden
+        const title = hidden ? "" : `${chips.length - visible} more selected`
+        if (marker.title !== title) marker.title = title
+      }
+      this.scheduleChips = () => {
+        if (this.chipFrame) return
+        this.chipFrame = requestAnimationFrame(() => {
+          this.chipFrame = null
+          this.paintChips()
+        })
+      }
+      this.removeChip = event => {
+        const button = event.target.closest(".ui-multi-remove")
+        if (!button || button.disabled) return
+        if (!button.hasAttribute("data-remove-value")) {
+          this.trigger.focus()
+          return
+        }
+        const input = [...this.el.querySelectorAll('input[type="checkbox"]')]
+          .find(option => option.value === button.dataset.removeValue)
+        if (!input || input.disabled) return
+        input.checked = false
+        input.dispatchEvent(new Event("change", {bubbles: true}))
+        this.trigger.focus()
+      }
+      this.el.addEventListener("click", this.removeChip)
+      this.chipResize = new ResizeObserver(this.scheduleChips)
+      this.chipResize.observe(this.el)
+      this.scheduleChips()
+    },
+    updated() { this.scheduleChips?.() },
+    destroyed() {
+      DisclosureDismiss.destroyed.call(this)
+      this.chipResize.disconnect()
+      cancelAnimationFrame(this.chipFrame)
+      this.el.removeEventListener("click", this.removeChip)
+    },
+  }
+
   // Drag-to-reorder for the dashboard widget grid (Bilimbi DashboardSort).
   // Server-driven: the hook only computes the DOM order after a drop and
   // reports it as `reorder_widgets`; the dashboard validates the order is a
@@ -652,7 +879,7 @@
 
   const registry = window.BilibiUI
   if (!registry) throw new Error("hooks.js needs ui.js loaded first")
-  for (const [name, hook] of Object.entries({CodeInput, Combobox, SecretReveal, SecretClear, SecretStored, DisclosureDismiss, DashboardSort, Fold, Countdown})) {
+  for (const [name, hook] of Object.entries({CodeInput, ColourInput, Combobox, SecretReveal, SecretClear, SecretStored, DisclosureDismiss, MultiSelect, DashboardSort, Fold, Countdown})) {
     registry.registerHook(name, hook)
   }
 })()

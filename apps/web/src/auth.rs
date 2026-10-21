@@ -351,7 +351,7 @@ async fn login_card(
 async fn login_workspace(app: &App) -> LoginWorkspace {
     let lookup = async {
         let client = app.db.get().await.map_err(Error::from)?;
-        bilibi_core::company::primary::platform_operator_company(&**client).await
+        bilibi_core::company::platform_operator_company(&**client).await
     };
     match lookup.await {
         Ok(Some(company)) => LoginWorkspace::Ready(company.display_name),
@@ -557,6 +557,7 @@ async fn prepare_code(
         Ok(sent) => {
             form.phone = sent.phone;
             form.resend_in = sent.resend_in;
+            form.minutes = sent.minutes;
             if texting == Texting::Again {
                 form.notice = "A new code is on its way. The earlier one no longer works.".into();
             }
@@ -658,10 +659,11 @@ pub async fn verify(
     }
 }
 
-/// `/dev/sms-inbox`: the SMS simulator's messages. Bound only in
-/// development (`Environment::simulates_sms`); nowhere else does the path exist.
+/// `/dev/sms-inbox`: the SMS simulator's messages, while the simulator
+/// stands in for a phone (the saved instance role is Dev); otherwise 404.
 pub async fn sms_inbox(State(app): State<App>) -> std::result::Result<Response, HttpError> {
     let page = bilibi_base::sms::InboxPage::new(&app.sms)
+        .await
         .map_err(|_| Error::Internal)?
         .ok_or(Error::NotFound)?;
     card(&app, "SMS inbox", page, FlashMap::default(), StatusCode::OK).await

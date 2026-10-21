@@ -1,18 +1,14 @@
-//! The program's half of release transport (`transport.rs` holds the files
-//! and checks; this holds what needs the database, the settings key and the
-//! outgoing HTTP client): what a target can install from its source, the
-//! download of a release for a queued install job, an uploaded release
-//! file, the pairing key, and what a source answers to a pulling instance.
+//! GitHub downloads and manual uploads, handed to the separate installer.
+//! Archive checks live in `transport.rs`. No Bilimbi counterpart.
 use crate::{
-    jobs, pairing,
-    review::{self, Review},
+    jobs, review,
     transport::{self, Paths},
-    Software, SoftwareError, SoftwareResult, MANAGE, STEP_UP, VIEW,
+    Software, MANAGE, VIEW,
 };
 use bilibi_authz::authorize_operator;
-use bilibi_database::{Error, MutationTransaction, Result};
-use bilibi_integration::{Call, Failure, Origin, Outgoing};
-use bilibi_system::{Instance, Source};
+use bilibi_database::{Error, Result};
+use bilibi_integration::{Call, Failure, Origin};
+use bilibi_system::Instance;
 use bilibi_tenancy::Scope;
 use serde_json::{json, Value};
 use std::{
@@ -28,35 +24,9 @@ use tokio::io::AsyncWrite;
 
 /// How often the program looks for an install job waiting for its download.
 const TRANSFER_EVERY: Duration = Duration::from_secs(5);
-/// A listing is small; a release file is tens of megabytes and may take a
-/// while over a slow link.
-const LISTING_TIMEOUT: Duration = Duration::from_secs(30);
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(30 * 60);
-const LISTING_MAX_BYTES: u64 = 2 << 20;
 /// Room kept free beyond the file and its unpacked copy.
 const DISK_MARGIN: u64 = 64 * 1024 * 1024;
-/// The exchange log names the source by this system.
-const SYSTEM: &str = "bilibi-source";
-
-/// Why a pulling instance was refused (`README.md`, "Pairing").
-#[derive(Debug)]
-pub enum TransportRefusal {
-    /// This server has no pairing key, so it shares nothing.
-    NotPaired,
-    /// The key presented is not this server's.
-    Refused,
-    /// This program runs without an instance folder.
-    NoInstance,
-    /// No such release here.
-    NotFound,
-    Backend(Error),
-}
-impl<E: Into<Error>> From<E> for TransportRefusal {
-    fn from(error: E) -> Self {
-        Self::Backend(error.into())
-    }
-}
-
 /// What `take_upload` found in an uploaded release file.
 pub struct Upload {
     /// The folder name under `incoming/`, which an install names as `bundle`.
@@ -83,181 +53,52 @@ impl Software {
         let _ = fs::remove_file(paths.incoming().join(format!("{folder}.tar.gz.part")));
     }
     /// The worker name a download runs under in the job rows.
-    fn transport_worker(&self) -> String {
+    fn download_worker(&self) -> String {
         match &self.paths {
-            Some(paths) => format!("transport@{}", paths.name),
-            None => "transport".into(),
+            Some(paths) => format!("download@{}", paths.name),
+            None => "download".into(),
         }
     }
 
-    /// What this instance can install: the releases its source reports (or
-    /// why the source could not be asked), the release files uploaded here,
-    /// whether a pairing key is set, and the releases kept here that another
-    /// instance may download.
+    /// GitHub assets, installed identity and files uploaded here.
     pub async fn releases(&self, scope: &Scope) -> Result<Value> {
-        self.releases_with(scope, None).await
+        self.releases_with(scope, false, false).await
     }
-    /// `releases` with the source's answer already in hand (a page that read
-    /// it once and keeps it), so showing the page again does not ask the
-    /// source again. Left out, the source is asked now.
-    pub async fn releases_with(&self, scope: &Scope, source: Option<Value>) -> Result<Value> {
+    /// Refresh GitHub on request; page polling never calls this.
+    pub async fn releases_with(
+        &self,
+        scope: &Scope,
+        force: bool,
+        prerelease: bool,
+    ) -> Result<Value> {
         let client = self.db.get().await?;
         authorize_operator(&**client, scope, VIEW).await?;
         let instance = Instance::resolve(&self.settings, &**client).await?;
-        let pairing = pairing::state_json(pairing::is_set(&**client, &self.settings, scope).await?);
+        let uploads = self
+            .paths
+            .as_ref()
+            .map(Paths::uploads)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(bundle, mut facts)| {
+                facts["bundle"] = json!(bundle);
+                facts
+            })
+            .collect::<Vec<_>>();
+        let installed = self.installed_asset(&**client, scope).await?;
         drop(client);
-        let (here, uploads) = match self.paths() {
-            Ok(paths) => (
-                transport::listing(paths, &instance, &self.composition),
-                paths
-                    .uploads()
-                    .into_iter()
-                    .map(|(bundle, facts)| {
-                        let mut facts = facts;
-                        facts["bundle"] = json!(bundle);
-                        facts
-                    })
-                    .collect::<Vec<_>>(),
-            ),
-            Err(why) => (json!({"available": false, "message": why}), Vec::new()),
-        };
-        let source = match source {
-            Some(source) => source,
-            None => self.source_facts(scope, &instance).await?,
-        };
-        Ok(json!({
-            "instance": review::instance_json(&instance),
-            "source": source,
-            "uploads": uploads,
-            "pairing": pairing,
-            "here": here,
-        }))
-    }
-    /// What the instance's source reports, or why it cannot be asked: the
-    /// part of `releases` that makes a call to another instance.
-    pub async fn source_facts(&self, scope: &Scope, instance: &Instance) -> Result<Value> {
-        Ok(match (&instance.installs_from, instance.role.builds()) {
-            (_, true) => {
-                json!({"available": false, "message": format!("{} builds its own software and installs from no other instance.", instance.label)})
-            }
-            (None, false) => {
-                json!({"available": false, "message": format!("{} has no source yet. A server owner sets \"Install releases tested on\" under Instance in the settings, or uploads a release file here.", instance.label)})
-            }
-            (Some(from), false) => match self.source_listing(scope, from).await? {
-                Ok(mut listing) => {
-                    listing["available"] = json!(true);
-                    listing["source"] = review::instance_json(instance)["installs_from"].clone();
-                    listing
-                }
-                Err(why) => {
-                    json!({"available": false, "source": review::instance_json(instance)["installs_from"], "message": why})
-                }
-            },
-        })
-    }
-
-    /// The source's listing: a sibling's folders read directly, or the
-    /// source's `/transport/releases` fetched with the pairing key as the
-    /// person asking. `Err` is the plain reason it could not be read.
-    pub(crate) async fn source_listing(
-        &self,
-        scope: &Scope,
-        source: &Source,
-    ) -> Result<std::result::Result<Value, String>> {
-        match source {
-            Source::SameMachine(name) => {
-                let paths = match self.paths() {
-                    Ok(paths) => paths,
-                    Err(why) => return Ok(Err(why)),
-                };
-                let sibling = match paths.sibling(name) {
-                    Ok(sibling) => sibling,
-                    Err(why) => return Ok(Err(why)),
-                };
-                Ok(Ok(sibling_listing(&sibling).await))
-            }
-            Source::Https(address) => {
-                let client = self.db.get().await?;
-                let Some(key) = pairing::key(&**client, &self.settings, scope).await? else {
-                    return Ok(Err(format!(
-                        "No pairing key is set here. Set the same pairing key on this instance and on {address} first."
-                    )));
-                };
-                let url = format!(
-                    "{}{}",
-                    address.trim_end_matches('/'),
-                    transport::LISTING_PATH
-                );
-                let call = Call {
-                    system: SYSTEM.into(),
-                    operation: "releases.list".into(),
-                    ..Call::default()
-                };
-                let outgoing = Outgoing::get(url)
-                    .header(transport::PAIRING_HEADER, key)
-                    .header("accept", "application/json")
-                    .timeout(LISTING_TIMEOUT)
-                    .max_body_bytes(LISTING_MAX_BYTES)
-                    .no_redirects()
-                    .trust_system_roots();
-                let reply = self
-                    .integration
-                    .send(Origin::User(scope), &call, outgoing)
-                    .await;
-                Ok(listing_from_reply(address, reply))
+        let mut github = self.github_listing(scope, force, prerelease).await?;
+        let repository_id = github["repository_id"].clone();
+        if let Some(releases) = github["releases"].as_array_mut() {
+            for release in releases {
+                release["repository_id"] = repository_id.clone();
+                release["installed"] =
+                    json!(crate::github::same_asset(release, &installed["github"]));
             }
         }
-    }
-
-    /// Sets or clears the pairing key. The commit records that a key was set
-    /// or cleared and by whom, never the key.
-    pub async fn review_pair(&self, scope: &Scope, input: &Value) -> SoftwareResult<Review> {
-        let client = self.db.get().await?;
-        authorize_operator(&**client, scope, MANAGE).await?;
-        review::pair(input)
-    }
-    pub async fn pair_in(
-        &self,
-        tx: &mut MutationTransaction<'_>,
-        scope: &Scope,
-        input: &Value,
-    ) -> SoftwareResult<Value> {
-        authorize_operator(tx.sql(), scope, MANAGE).await?;
-        let review = review::pair(input)?;
-        self.step_up.require(scope, STEP_UP, &review.target).await?;
-        if !self.settings.encryption_available() {
-            return Err(SoftwareError::field("key", "This server has no settings key (BILIBI_SETTINGS_KEY), so it cannot keep a pairing key. Set one in the instance's env file first."));
-        }
-        let key = if review.facts["clear"].as_bool() == Some(true) {
-            None
-        } else {
-            input["key"].as_str().map(str::trim)
-        };
-        let set = pairing::put(tx, &self.settings, scope, key).await?;
-        Ok(json!({"pairing": pairing::state_json(set), "review": review.facts}))
-    }
-
-    /// Release `n`'s file, for the owner to download here and upload on
-    /// another instance. Whole in memory: a release file is tens of
-    /// megabytes, read once by one person.
-    pub async fn bundle(&self, scope: &Scope, release: u64) -> Result<(Vec<u8>, String)> {
-        let client = self.db.get().await?;
-        authorize_operator(&**client, scope, MANAGE).await?;
-        let instance = Instance::resolve(&self.settings, &**client).await?;
-        let paths = self.paths().map_err(|_| Error::NotFound)?;
-        let dir = paths.release(release);
-        if !dir.join("bilibi-web").is_file() {
-            return Err(Error::NotFound);
-        }
-        let from = bundle_from(&instance, paths, &self.origin);
-        let bytes = tokio::task::spawn_blocking(move || {
-            let mut out = Vec::new();
-            transport::write_bundle(&dir, release, &from, &mut out).map(|()| out)
-        })
-        .await
-        .map_err(|_| Error::Internal)?
-        .map_err(|_| Error::Internal)?;
-        Ok((bytes, transport::bundle_filename(release)))
+        Ok(
+            json!({"instance": review::instance_json(&instance), "installed_asset": installed, "uploads": uploads, "github": github}),
+        )
     }
 
     /// A release file the owner uploaded: unpacked into `incoming/upload-<n>/`
@@ -271,13 +112,6 @@ impl Software {
     ) -> Result<std::result::Result<Upload, String>> {
         let client = self.db.get().await?;
         authorize_operator(&**client, scope, MANAGE).await?;
-        let instance = Instance::resolve(&self.settings, &**client).await?;
-        if instance.role.builds() {
-            return Ok(Err(format!(
-                "{} builds its own software; a release file is installed on Staging or Production.",
-                instance.label
-            )));
-        }
         let paths = match self.paths() {
             Ok(paths) => paths.clone(),
             Err(why) => return Ok(Err(why)),
@@ -343,56 +177,11 @@ impl Software {
             .map_err(|error| format!("The file could not be removed: {error}.")))
     }
 
-    // ------------------------------------------------ serving a pulling instance
-    /// Checks a pulling instance's key against this server's. Nothing is
-    /// shared without a key on both sides.
-    async fn admit(&self, presented: &str) -> std::result::Result<(), TransportRefusal> {
-        let client = self.db.get().await?;
-        let stored = pairing::server_key(&**client, &self.settings).await?;
-        match stored {
-            None => Err(TransportRefusal::NotPaired),
-            Some(key) if pairing::accepts(&key, presented) => Ok(()),
-            Some(_) => Err(TransportRefusal::Refused),
-        }
-    }
-    /// What a paired instance sees: the releases kept here.
-    pub async fn transport_listing(
-        &self,
-        presented: &str,
-    ) -> std::result::Result<Value, TransportRefusal> {
-        self.admit(presented).await?;
-        let paths = self.paths().map_err(|_| TransportRefusal::NoInstance)?;
-        let client = self.db.get().await?;
-        let instance = Instance::resolve(&self.settings, &**client).await?;
-        Ok(transport::listing(paths, &instance, &self.composition))
-    }
-    /// Release `n`'s file for a paired instance, written to `sink` as it is
-    /// made, so the whole file is never in memory.
-    pub async fn transport_bundle(
-        &self,
-        presented: &str,
-        release: u64,
-        sink: Box<dyn std::io::Write + Send>,
-    ) -> std::result::Result<tokio::task::JoinHandle<std::io::Result<()>>, TransportRefusal> {
-        self.admit(presented).await?;
-        let paths = self.paths().map_err(|_| TransportRefusal::NoInstance)?;
-        let dir = paths.release(release);
-        if !dir.join("bilibi-web").is_file() {
-            return Err(TransportRefusal::NotFound);
-        }
-        let client = self.db.get().await?;
-        let instance = Instance::resolve(&self.settings, &**client).await?;
-        let from = bundle_from(&instance, paths, &self.origin);
-        Ok(tokio::task::spawn_blocking(move || {
-            transport::write_bundle(&dir, release, &from, sink)
-        }))
-    }
-
     // ------------------------------------------------------ the download loop
     /// Runs beside the server for as long as it serves: downloads the
     /// release of each install job that waits for one, then wakes the
     /// installer.
-    pub async fn run_transport(
+    pub async fn run_downloads(
         self: Arc<Self>,
         mut stop: tokio::sync::watch::Receiver<bool>,
     ) -> Result<()> {
@@ -401,7 +190,7 @@ impl Software {
                 return Ok(());
             }
             if let Err(error) = self.transfer_once().await {
-                eprintln!("warning: release transport round failed: {error:?}");
+                eprintln!("warning: release download round failed: {error:?}");
             }
             tokio::select! {
                 _ = stop.changed() => {}
@@ -414,8 +203,8 @@ impl Software {
         let waiting = jobs::awaiting_download(&**client).await?;
         drop(client);
         for (tenant, job) in waiting {
-            let worker = self.transport_worker();
-            match self.download_for(tenant, &job).await {
+            let worker = self.download_worker();
+            match self.download_github(tenant, &job).await {
                 Ok(true) => {}
                 Ok(false) => eprintln!(
                     "software job {}: download stopped because the job was cancelled",
@@ -440,23 +229,17 @@ impl Software {
         }
         Ok(())
     }
-    /// One job's download: ask the source about the release, fetch the file
-    /// into `incoming/job-<id>/`, check it, hand it to the installer. `Err`
-    /// is the plain sentence the job fails with; `Ok(false)` is a download
-    /// stopped because the job was cancelled.
-    async fn download_for(
+    /// One GitHub job: re-read the reviewed file, stream it, check its
+    /// archive code before unpacking, then the files inside. `Ok(false)`
+    /// means the job was cancelled. The signed download address is never
+    /// stored.
+    async fn download_github(
         &self,
         tenant: i64,
         job: &jobs::Job,
     ) -> std::result::Result<bool, String> {
+        let pin = crate::github::Pin::from_request(&job.request["source"])?;
         let paths = self.paths()?.clone();
-        let address = job.request["source"]["address"]
-            .as_str()
-            .ok_or("the request names no source address")?
-            .to_owned();
-        let wanted = job.request["release"]
-            .as_u64()
-            .ok_or("the request names no release")?;
         let mut client = self.db.get().await.map_err(db)?;
         let scope = self
             .authentication
@@ -464,14 +247,10 @@ impl Software {
                 &**client,
                 tenant,
                 job.requested_by,
-                format!("software-transport-{tenant}-{}", job.requested_by),
+                format!("software-download-{tenant}-{}", job.requested_by),
             )
             .await
             .map_err(|_| "The account that asked for this install is no longer active, so the download was not made in its name. Ask again.".to_owned())?;
-        let key = pairing::key(&**client, &self.settings, &scope)
-            .await
-            .map_err(db)?
-            .ok_or_else(|| format!("No pairing key is set here. Set the same pairing key on this instance and on {address}, then ask again."))?;
         let folder = format!("{}{}", transport::JOB_PREFIX, job.id);
         let into = paths.incoming_folder(&folder);
         let part = paths.incoming().join(format!("{folder}.tar.gz.part"));
@@ -495,55 +274,17 @@ impl Software {
             job.id,
             "running",
             &progress(
-                format!("Asking {address} about release {wanted}"),
+                format!("Checking GitHub release {} before download", pin.tag),
                 json!({}),
             ),
         )
         .await
         .map_err(db)?;
-        // 1. The source still runs the release and reports it healthy.
-        let listing_url = format!(
-            "{}{}",
-            address.trim_end_matches('/'),
-            transport::LISTING_PATH
-        );
-        let reply = self
-            .integration
-            .send(
-                Origin::User(&scope),
-                &Call {
-                    system: SYSTEM.into(),
-                    operation: "releases.list".into(),
-                    ..Call::default()
-                },
-                Outgoing::get(listing_url)
-                    .header(transport::PAIRING_HEADER, key.clone())
-                    .header("accept", "application/json")
-                    .timeout(LISTING_TIMEOUT)
-                    .max_body_bytes(LISTING_MAX_BYTES)
-                    .no_redirects()
-                    .trust_system_roots(),
-            )
-            .await;
-        let listing = listing_from_reply(&address, reply)?;
-        match listing["current"].as_u64() {
-            Some(n) if n == wanted => {}
-            Some(n) => return Err(format!("{address} runs release {n} now, not {wanted}. Install the release it runs, so you install what was tested.")),
-            None => return Err(format!("{address} has no release in service, so it cannot vouch for release {wanted}.")),
-        }
-        let facts = listing["releases"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .find(|r| r["release"].as_u64() == Some(wanted))
-            .cloned()
-            .ok_or_else(|| format!("{address} no longer lists release {wanted}."))?;
-        let expected_sha = facts["sha256"].as_str().unwrap_or("").to_owned();
-        let size = facts["bytes"].as_u64().unwrap_or(0);
-        // 2. Disk for the file and its unpacked copy.
+        crate::github::recheck(self, &scope, &pin).await?;
+        let size = pin.bytes;
         if let Some(free) = transport::free_bytes(&paths.incoming()) {
-            let need = size * 2 + DISK_MARGIN;
-            if free < need {
+            let need = size.saturating_mul(2) + DISK_MARGIN;
+            if size > 0 && free < need {
                 return Err(format!(
                     "Not enough disk to receive the release: {} free, about {} needed. Free some space on the server first.",
                     transport::human(free),
@@ -551,7 +292,6 @@ impl Software {
                 ));
             }
         }
-        // 3. The file, streamed to disk, with progress on the step.
         jobs::download_step(
             &**client,
             tenant,
@@ -559,7 +299,8 @@ impl Software {
             "running",
             &progress(
                 format!(
-                    "Downloading release {wanted} from {address} ({})",
+                    "Downloading {} from GitHub ({})",
+                    pin.name,
                     transport::human(size)
                 ),
                 json!({"bytes_total": size, "bytes": 0}),
@@ -579,8 +320,8 @@ impl Software {
         let ticker = {
             let db = self.db.clone();
             let counted = counted.clone();
-            let address = address.clone();
-            let job = job.id;
+            let name = pin.name.clone();
+            let job_id = job.id;
             tokio::spawn(async move {
                 loop {
                     tokio::time::sleep(Duration::from_secs(2)).await;
@@ -589,7 +330,7 @@ impl Software {
                         let queued = client
                             .query_opt(
                                 "SELECT state = 'queued' FROM base_software_jobs WHERE tenant_id=$1 AND id=$2",
-                                &[&tenant, &job],
+                                &[&tenant, &job_id],
                             )
                             .await
                             .map(|row| row.is_some_and(|row| row.get::<_, bool>(0)));
@@ -597,8 +338,8 @@ impl Software {
                             let _ = cancelled_tx.send(());
                             return;
                         }
-                        let _ = jobs::download_step(&**client, tenant, job, "running", &json!({
-                            "message": format!("Downloading release {wanted} from {address}: {} of {}", transport::human(got), transport::human(size)),
+                        let _ = jobs::download_step(&**client, tenant, job_id, "running", &json!({
+                            "message": format!("Downloading {name} from GitHub: {} of {}", transport::human(got), transport::human(size)),
                             "bytes_total": size, "bytes": got,
                         }))
                         .await;
@@ -606,21 +347,15 @@ impl Software {
                 }
             })
         };
+        let token = self.github_token(&scope).await.map_err(db)?;
+        let request = crate::github::asset_request(&pin.repository, pin.asset_id, token.as_deref())
+            .timeout(DOWNLOAD_TIMEOUT)
+            .max_body_bytes(transport::MAX_BUNDLE_BYTES);
         let call = Call {
-            system: SYSTEM.into(),
+            system: "github".into(),
             operation: "releases.download".into(),
             ..Call::default()
         };
-        let request = Outgoing::get(format!(
-            "{}{}",
-            address.trim_end_matches('/'),
-            transport::bundle_path(wanted)
-        ))
-        .header(transport::PAIRING_HEADER, key)
-        .timeout(DOWNLOAD_TIMEOUT)
-        .max_body_bytes(transport::MAX_BUNDLE_BYTES)
-        .no_redirects()
-        .trust_system_roots();
         let download = self
             .integration
             .stream(Origin::User(&scope), &call, request, &mut sink);
@@ -639,14 +374,27 @@ impl Software {
             Ok(streamed) if streamed.status == 200 => streamed,
             Ok(streamed) => {
                 let _ = fs::remove_file(&part);
-                return Err(refusal_sentence(&address, streamed.status));
+                let header = |name: &str| {
+                    streamed
+                        .headers
+                        .get(name)
+                        .and_then(|value| value.to_str().ok())
+                };
+                return Err(crate::github::download_refusal(
+                    streamed.status,
+                    [
+                        header("retry-after"),
+                        header("x-ratelimit-remaining"),
+                        header("x-ratelimit-reset"),
+                    ],
+                    token.is_some(),
+                ));
             }
             Err(failure) => {
                 let _ = fs::remove_file(&part);
-                return Err(transport_sentence(&address, &failure));
+                return Err(github_transport_sentence(&failure));
             }
         };
-        // 4. Unpack and check: checksum, built for this server.
         jobs::download_step(
             &**client,
             tenant,
@@ -654,7 +402,8 @@ impl Software {
             "running",
             &progress(
                 format!(
-                    "Checking the release ({} received)",
+                    "Checking {} ({} received)",
+                    pin.name,
                     transport::human(streamed.bytes)
                 ),
                 json!({"bytes_total": size, "bytes": streamed.bytes}),
@@ -662,39 +411,51 @@ impl Software {
         )
         .await
         .map_err(db)?;
-        let part_for_unpack = part.clone();
+        let part_for_check = part.clone();
         let into_for_unpack = into.clone();
-        let expected = expected_sha.clone();
-        let source_address = address.clone();
+        let expected = pin.digest.clone();
+        let file_name = pin.name.clone();
         let checked = tokio::task::spawn_blocking(move || {
-            let file = fs::File::open(&part_for_unpack)
+            let got = crate::github::digest_of(&part_for_check)
+                .map_err(|error| format!("The downloaded file could not be checked: {error}"))?;
+            if got != expected {
+                let _ = fs::remove_file(&part_for_check);
+                return Err(format!(
+                    "The downloaded file {file_name} does not match the check code that was reviewed. Nothing was unpacked."
+                ));
+            }
+            let file = fs::File::open(&part_for_check)
                 .map_err(|error| format!("could not read the downloaded file: {error}"))?;
             let unpacked = transport::unpack_bundle(file, &into_for_unpack)?;
             let sha = check_folder(&into_for_unpack).inspect_err(|_| {
                 let _ = fs::remove_dir_all(&into_for_unpack);
             })?;
-            if !expected.is_empty() && sha != expected {
-                let _ = fs::remove_dir_all(&into_for_unpack);
-                return Err(format!("The downloaded program is not the one {source_address} lists (its checksum differs). Ask again; if it happens twice, check the source."));
-            }
             Ok::<(String, u64), String>((sha, unpacked.bytes))
         })
         .await
         .map_err(|_| "the check did not finish".to_owned());
         let _ = fs::remove_file(&part);
-        let (sha, program_bytes) = checked??;
-        let facts_here = transport::folder_facts(&into);
+        let (program_sha, program_bytes) = checked??;
         let detail = json!({
-            "message": format!("Downloaded release {wanted} from {address} ({}) and checked it", transport::human(program_bytes)),
-            "path": into.display().to_string(), "folder": folder, "release": wanted, "source_release": wanted,
-            "source": address, "sha256": sha, "bytes": program_bytes, "bytes_total": size,
-            "platform": facts_here["platform"], "domains": facts_here["domains"], "from": facts_here["from"],
+            "message": format!("Downloaded {} from GitHub repository {} (tag {}) and checked it", pin.name, pin.repository, pin.tag),
+            "path": into.display().to_string(),
+            "folder": folder,
+            "digest": pin.digest,
+            "archive_sha256": pin.digest,
+            "sha256": program_sha,
+            "bytes": program_bytes,
+            "bytes_total": size,
+            "repository": pin.repository,
+            "repository_id": pin.repository_id,
+            "release_id": pin.release_id,
+            "asset_id": pin.asset_id,
+            "tag": pin.tag,
+            "target": pin.target,
         });
         let handed = jobs::download_done(&mut client, tenant, job.id, &detail)
             .await
             .map_err(db)?;
         if !handed {
-            // Cancelled while the file was on its way: nothing to install.
             let _ = fs::remove_dir_all(&into);
         }
         Ok(handed)
@@ -715,103 +476,25 @@ fn check_folder(dir: &Path) -> std::result::Result<String, String> {
     transport::built_for_this_server(dir)?;
     Ok(sha)
 }
-/// Who a release file says it came from.
-fn bundle_from(instance: &Instance, paths: &Paths, origin: &str) -> Value {
-    json!({"label": instance.label, "environment": instance.role.env_value(), "name": paths.name, "origin": origin})
-}
-/// A sibling instance's listing, read from its folders: the releases it
-/// keeps and whether its program answers on its port.
-async fn sibling_listing(sibling: &Paths) -> Value {
-    let current = sibling.current();
-    let releases: Vec<Value> = sibling
-        .release_numbers()
-        .into_iter()
-        .rev()
-        .filter(|n| sibling.release(*n).join("bilibi-web").is_file())
-        .map(|n| transport::release_json(sibling, n, current == Some(n), None))
-        .collect();
-    let port = fs::read_to_string(sibling.dir.join("env"))
-        .ok()
-        .and_then(|text| {
-            text.lines()
-                .filter_map(|line| line.split_once('='))
-                .find(|(key, _)| key.trim() == "BIND_ADDR")
-                .and_then(|(_, value)| value.trim().rsplit_once(':')?.1.parse::<u16>().ok())
-        });
-    let healthy = match port {
-        Some(port) => answers_on(port).await,
-        None => false,
-    };
-    json!({
-        "format": 1,
-        "instance": {"name": sibling.name},
-        "current": current,
-        "healthy": healthy,
-        "releases": releases,
-    })
-}
-/// Whether a Bilibi program answers HTTP on `127.0.0.1:<port>`.
-async fn answers_on(port: u16) -> bool {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    let request = async {
-        let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
-            .await
-            .ok()?;
-        stream
-            .write_all(b"GET / HTTP/1.0\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
-            .await
-            .ok()?;
-        let mut head = [0u8; 64];
-        let read = stream.read(&mut head).await.ok()?;
-        let line = String::from_utf8_lossy(&head[..read]);
-        let status: u16 = line.split_whitespace().nth(1)?.parse().ok()?;
-        (100..500).contains(&status).then_some(())
-    };
-    tokio::time::timeout(Duration::from_secs(2), request)
-        .await
-        .ok()
-        .flatten()
-        .is_some()
-}
-/// The source's answer as a listing, or the plain reason it is not one.
-fn listing_from_reply(
-    address: &str,
-    reply: std::result::Result<bilibi_integration::Reply, Failure>,
-) -> std::result::Result<Value, String> {
-    let reply = reply.map_err(|failure| transport_sentence(address, &failure))?;
-    if reply.status != 200 {
-        return Err(refusal_sentence(address, reply.status));
-    }
-    let listing: Value = serde_json::from_slice(&reply.body)
-        .map_err(|_| format!("{address} answered, but not with a list of releases. Is it a Bilibi instance of this version?"))?;
-    if listing["format"].as_u64() != Some(1) || !listing["releases"].is_array() {
-        return Err(format!("{address} answered, but not with a list of releases. Is it a Bilibi instance of this version?"));
-    }
-    Ok(listing)
-}
-fn refusal_sentence(address: &str, status: u16) -> String {
-    match status {
-        403 => format!("{address} refused the pairing key. Set the same pairing key on both instances, then ask again."),
-        404 => format!("{address} has no such release any more."),
-        300..=399 => format!("{address} sent the request elsewhere instead of answering. Check the address under Instance in the settings."),
-        503 => format!("{address} is updating right now. Try again when it is back."),
-        status => format!("{address} answered with status {status} instead of the release."),
-    }
-}
-fn transport_sentence(address: &str, failure: &Failure) -> String {
+fn github_transport_sentence(failure: &Failure) -> String {
     match failure {
         Failure::Transport { class, .. } => match *class {
-            "connect" => format!("{address} could not be reached. Check the address under Instance in the settings, and that the instance is running."),
-            "timeout" => format!("{address} did not answer in time. Check that it is running, then ask again."),
-            "body_limit" => format!("{address} sent more than a release can be. Check the address: it should be the Bilibi instance itself."),
-            "sink" => "The file could not be written to disk here. Check the disk, then ask again.".to_owned(),
-            other => format!("{address} could not be read ({other}). Check that it is running, then ask again."),
+            "timeout" => "GitHub did not finish sending the file. Ask again.".into(),
+            "connect" => "GitHub could not be reached. Ask again.".into(),
+            "redirect" => {
+                "GitHub sent the file to an address this server does not call. Nothing was saved."
+                    .into()
+            }
+            "body_limit" => "The GitHub file is larger than this server will download.".into(),
+            "sink" => {
+                "The file could not be written to disk here. Check the disk, then ask again.".into()
+            }
+            other => format!("GitHub could not be read ({other}). Ask again."),
         },
-        Failure::Invalid => format!("{address} is not an address this program can call. Check it under Instance in the settings."),
-        _ => format!("{address} could not be asked: the exchange could not be recorded. Try again."),
+        Failure::Invalid => "The GitHub file address could not be called.".into(),
+        _ => "GitHub may have answered, but the exchange could not be recorded. Ask again.".into(),
     }
 }
-
 /// A sink that counts what it has written, so progress can be shown.
 struct Counting<W> {
     inner: W,

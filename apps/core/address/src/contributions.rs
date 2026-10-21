@@ -34,6 +34,7 @@ inventory::submit! { Contribution::new(VOCABULARY, "core/address", Provenance { 
 // from owners to addresses. Address owns the attachments, so it declares the
 // owner → address edges for both party kinds.
 static GRID: GridContribution = GridContribution {
+    record_fields: &[],
     tables: &[TableDecl::new("addresses", "Addresses", LIST,
         Source::tenant("SELECT id,label,line1,line2,locality,postcode,country_iso,phone,verification_status,created_at FROM addresses WHERE tenant_id=$1 AND deleted_at IS NULL"), "id", &[
             Field::new("id", "ID", FieldType::Integer).protected(),

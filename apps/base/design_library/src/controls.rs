@@ -51,6 +51,7 @@ pub fn value_text(value: Option<&Value>) -> String {
         Some(Value::Array(v)) => v
             .iter()
             .filter_map(Value::as_str)
+            .filter(|value| !value.is_empty())
             .collect::<Vec<_>>()
             .join(", "),
         Some(Value::Bool(v)) => v.to_string(),
@@ -166,6 +167,10 @@ fn field(c: &Value, state: &State) -> Field {
     field
 }
 impl View<'_> {
+    pub(crate) fn authenticator_sample(&self) -> askama::Result<Html> {
+        render(CodeInput::new("library-step-up", "specimen[step_up]", "2FA code", 6).numeric())
+    }
+
     pub(crate) fn control(&self, id: &str) -> askama::Result<Html> {
         let c = &CONTROLS[id];
         let kind = string(c, "kind");
@@ -203,6 +208,9 @@ impl View<'_> {
                     .unwrap_or_default();
                 if flag(c, "chips") {
                     m = m.chips("sample_chip_remove");
+                }
+                if flag(c, "wrap_chips") {
+                    m = m.wrap_chips();
                 }
                 render(m)
             }
@@ -435,7 +443,16 @@ impl View<'_> {
                     .unwrap_or("search]")
                     .trim_end_matches(']');
                 let value = if id.starts_with("design-library-table-search") {
-                    self.state.list.search.as_str()
+                    if key == "search" {
+                        self.state.list.search.as_str()
+                    } else {
+                        self.state
+                            .list
+                            .filters
+                            .get(key)
+                            .map(String::as_str)
+                            .unwrap_or("")
+                    }
                 } else {
                     self.state
                         .toolbar

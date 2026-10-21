@@ -18,6 +18,7 @@ pub(super) struct TableEntry {
     pub name: String,
     pub estimated_rows: i64,
     pub partitioned: bool,
+    pub column_count: i64,
 }
 
 /// A table the catalog confirmed by name; the only way to name one in SQL.
@@ -87,7 +88,8 @@ pub(super) struct Reference {
 pub(super) async fn tables(client: &impl GenericClient) -> Result<Vec<TableEntry>> {
     Ok(client
         .query(
-            "SELECT c.relname::text, greatest(c.reltuples, 0)::bigint, c.relkind = 'p' \
+            "SELECT c.relname::text, greatest(c.reltuples, 0)::bigint, c.relkind = 'p', \
+             (SELECT count(*) FROM pg_attribute a WHERE a.attrelid=c.oid AND a.attnum > 0 AND NOT a.attisdropped) \
              FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
              WHERE n.nspname = current_schema() AND c.relkind IN ('r', 'p') \
              ORDER BY c.relname",
@@ -99,6 +101,7 @@ pub(super) async fn tables(client: &impl GenericClient) -> Result<Vec<TableEntry
             name: row.get(0),
             estimated_rows: row.get(1),
             partitioned: row.get(2),
+            column_count: row.get(3),
         })
         .collect())
 }

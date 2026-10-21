@@ -7,7 +7,7 @@
 {%- import "feedback.html" as feedback -%}
 {% call feedback::flash_group(messages=flash) %}{% endcall %}
 {% call ui::page(id="field-restrictions-index") %}
-{% call ui::header(subtitle="Hide fields from the roles that should not see or change them.", title_actions=title_actions, actions=actions) %}Field Restrictions{% endcall %}
+{% call ui::header(subtitle="Restrict who can view or edit each field, by role.", title_actions=title_actions, actions=actions) %}Field Restrictions{% endcall %}
 {% call ui::card(id="field-restrictions-card", inner_class="p-0") %}{{ table }}{% endcall %}
 {{ dialog }}
 {{ confirm }}

@@ -50,7 +50,8 @@ Email and Company begin ascending. Built-in columns are Name (initials avatar
 in the normal row height only, record link under `admin.user.view`), Email,
 Company (link under `admin.company.view`, `archived` badge), Roles (chips:
 green for a system role) and Created; the add box also offers the walked
-columns of the `users` Grid table.
+columns of the `users` Grid table and the scalar facts of the account page
+(Person, Email Verified, Updated) through the User module's `record_fields`.
 
 The toolbar is the search and the Roles multi-select (the tenant's first 100
 roles by name). Create (`admin.user.create`) opens `/users/new`; the pin

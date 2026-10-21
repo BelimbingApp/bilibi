@@ -23,7 +23,7 @@ use bilibi_authz::{authorize_key, effective_capabilities};
 use bilibi_database::{Change, Db, Error, MutationBoundary, Result};
 use bilibi_datetime::{DisplayContext, DisplayPolicy};
 use bilibi_locale::Locales;
-use bilibi_tenancy::{Scope, SelfReport};
+use bilibi_tenancy::{ClientIdentity, Scope, SelfReport};
 use bilibi_ui::{
     choices,
     list_state::FILTERS_FORM,
@@ -114,6 +114,7 @@ fn builtins() -> Vec<BuiltinColumn> {
         BuiltinColumn::new("result", "Result"),
         sortable(BuiltinColumn::new("trace_id", "Trace"), "trace_id"),
         BuiltinColumn::new("agent_self_report", SelfReport::LABEL),
+        BuiltinColumn::new("client_identity", ClientIdentity::LABEL),
         BuiltinColumn::new("retain", "Retain").right(),
     ]
 }
@@ -485,6 +486,10 @@ fn row(display: &DisplayContext, can_manage: bool, action: &ActionEntry) -> Resu
             ))?,
         ),
         // The same muted mono text as the trace: a recorded label, not a link.
+        (
+            "client_identity",
+            cell(Cell::Trace(action.client_identity.clone()))?,
+        ),
         (
             "agent_self_report",
             cell(Cell::Trace(action.agent_self_report.clone()))?,

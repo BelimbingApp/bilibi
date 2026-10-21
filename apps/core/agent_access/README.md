@@ -3,7 +3,7 @@
 `core/agent_access` owns OAuth device codes, per-person connections, opaque
 access/refresh tokens and PKCE authorization codes, ported from Bilimbi's
 `apps/core/agent_access` (ADR 0021). E3 is the service layer; E4 adds the
-`/oauth/device`, `/oauth/authorize` and `/settings/agent-connections` pages
+`/oauth/device`, `/oauth/authorize` and `/settings/ai-connections` pages
 (`src/web.rs`, `templates/`). The host OAuth metadata/device/token endpoints
 and the bearer edge (E5) live in `apps/web/src/api.rs`. Use `AgentAccess`
 (`core/agent_access.grants`, `src/lib.rs`) for every code, token and
@@ -48,13 +48,8 @@ compare a credential yourself.
   Bilimbi refuses impersonated sessions and agent facets there. The one gate
   `self_service` refuses a scope carrying the agent facet or an impersonating
   operator (`access_denied`).
-- Operator-registered MCP clients live in `agent_access.oauth_clients`: client
-  IDs mapped to a name and exact HTTPS `redirect_uris` (`src/oauth_client.rs`
-  validates the setting and each request). PKCE S256 and the resource are
-  mandatory; the scope is always `bilibi`. `agent_access.authorization_code_seconds`
-  bounds the code (120 by default). `agent_access.oauth_requests_per_minute`
-  is the host's per-sender limit; `Throttle` is the per-node counter the host applies.
-  Editing these needs the platform capability `admin.system.agent-access.manage`.
+- MCP apps register themselves through `POST /oauth/register` (RFC 7591) or an HTTPS client ID metadata document. No operator-maintained client list or client secret is needed. See [Client registration](#client-registration).
+- PKCE S256 and the MCP resource are mandatory; the scope is always `bilibi`. `agent_access.authorization_code_seconds` bounds the code (120 by default). `agent_access.oauth_requests_per_minute` is the host's per-sender, per-endpoint limit on each node. Changing these settings needs `admin.system.agent-access.manage`.
 
 ## Pages
 
@@ -62,47 +57,40 @@ compare a credential yourself.
 
 Both consent pages open with the instance banner (`bilibi_system::Instance::banner`, `apps/base/system/README.md`), so the person sees which Bilibi they connect the agent to. The authorization review also shows the configured public origin (`APP_ORIGIN`) as the Bilibi address, separately from the client's return address. Its shared form groups the connection facts, access explanation and primary approval action; Your connections stays available in the page header.
 
-Opening `/oauth/device?user_code=…` only fills the code; the person checks it, reviews the stated agent and the server-computed end time, then approves or refuses. `/oauth/authorize` validates the registered client and exact callback before consent renders, and an approve or refuse answers through the live page's `redirect` with `code` or `error=access_denied`, the client's `state` and `iss` (the configured `APP_ORIGIN`, never the Host header). Both consent forms submit no fields: an approve carrying any field is refused as a changed end time. `/settings/agent-connections` lists the person's grants newest first with status, "Also seen as" and "Self-reported agent", and revokes one only through the shared confirm dialog. Audit sees each decision as the signed-in `user`.
+Opening `/oauth/device?user_code=…` only fills the code. The person reviews the stated agent and connection end time before approving or refusing. `/oauth/authorize` validates the client, callback, resource and PKCE before rendering consent. It labels the app name **self-declared** and shows both the return host and full address. A registration establishes no verified app identity or permission.
 
-The pages render instants through `templates/datetime.html`, the Bilimbi
-`<.datetime>` markup fed by `base/datetime`'s `DisplayContext`; it belongs in
-`base/ui` once the shell's display-mode control and `DateTime` hook land (P10,
-C5). The flash outlet renders inside each page until the shared shell owns it.
-Agent facets and impersonation are refused by `self_service` in
-`src/lib.rs`, not by the pages.
+Both consent forms submit no fields; approval with extra fields is refused. An approve or refuse returns `code` or `error=access_denied`, `state` and `iss` (the configured `APP_ORIGIN`). Expiry, revocation, account checks, audit and step-up policies apply as before.
+
+`/settings/ai-connections` lists the person's grants and revokes through the shared confirmation dialog. Its copyable prompt gives this instance's MCP address without client IDs. Impersonation and agent facets cannot set up connections. `/settings/agent-connections`, `/settings/mcp` and `/settings/chatgpt-plugin` redirect here. The page offers no plugin download.
+
+## Connect a local agent
+
+Give your app this instance's MCP address and sign in through your browser.
+
+| App | Add from your project folder |
+| --- | --- |
+| Claude Code | `claude mcp add --scope project --transport http bilibi "$APP_ORIGIN/mcp"` |
+| Codex | Put `[mcp_servers.bilibi]` with `url = "<APP_ORIGIN>/mcp"` in the trusted project's `.codex/config.toml`, then run `codex mcp login bilibi` |
+
+In Claude Code, approve the project server and open `/mcp` to sign in. Review Bilibi's consent page before approving. To stop access, open AI connections and revoke the connection. The next request is refused.
+
+See the current [Claude Code instructions](https://code.claude.com/docs/en/mcp) and [Codex instructions](https://learn.chatgpt.com/docs/extend/mcp?surface=cli). Codex's `mcp add` command writes user configuration; use the project file above for an isolated setup.
+
+## Client registration
+
+Each app supplies its own name and redirect URIs; Bilibi checks safety and matching rather than prescribing a callback path.
+
+- `POST /oauth/register` accepts JSON `redirect_uris` and optional `client_name`, `grant_types`, `response_types`, `scope` and `token_endpoint_auth_method`. It returns HTTP 201 with an unpredictable `client_id`, issue time and accepted metadata. It supports only public clients (`none`), authorization code and refresh grants, `code` responses and `bilibi` scope. Missing app names display as “Unnamed app”. Unknown extension metadata is ignored; secrets and unsupported authentication are refused.
+- Redirect URIs must be HTTPS or HTTP loopback (`localhost`, `127.0.0.1`, `[::1]`). Any path is allowed at registration. HTTPS matches exactly; HTTP loopback matches the host, path and query exactly while allowing any port ([RFC 8252 §7.3](https://www.rfc-editor.org/rfc/rfc8252#section-7.3)). The actual callback must match exactly at code redemption. Fragments, credentials, wildcards and custom schemes are refused. The target clients use HTTPS or loopback; no custom scheme is needed.
+- A non-URL client ID must already be registered before authorization. Registration alone cannot create a grant. The person still consents, and PKCE proves possession during code exchange.
+- The authorization-server metadata advertises both `registration_endpoint` and `client_id_metadata_document_supported`. The [current MCP specification](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/client-registration) prefers metadata documents; DCR remains for compatibility. [Codex](https://learn.chatgpt.com/docs/extend/mcp?surface=cli), [Claude Code](https://code.claude.com/docs/en/mcp) and [ChatGPT](https://developers.openai.com/plugins/build/auth) support this discovery.
+- Metadata client IDs must be HTTPS URLs with a path, no credentials, fragment, query or dot segments. Fetches use `base/integration` with public DNS addresses pinned for the connection, public TLS roots, no proxy or redirects, a five-second timeout and a 16 KiB limit. Invalid or unavailable documents fail closed. The document must have a matching `client_id`, `client_name`, safe `redirect_uris` and public-client authentication. ChatGPT's plural authentication-method field is intersected with `none`. Valid documents cache for up to one hour, respecting `no-store`, `no-cache`, `max-age` and `Age`; the default is five minutes. Cache-miss fetches have a node-wide OAuth request limit as well.
+- Registration receipts are stored in `core_agent_oauth_clients`. Every DCR request prunes at most 100 registrations that were last used over 30 days ago and have no connection that is live or ended in the last 30 days, so an app that still holds its client ID for a current or recent grant can renew. The 30 days is fixed, not a setting. Receipt writes and pruning are pre-authentication lifecycle housekeeping, like device receipts. They assert no tenant or person. Consent and grant actions remain audited business mutations.
+- Migration `004-client-registration` deletes the retired setting. Existing access tokens, refresh tokens and pending authorization codes retain their consented client and callback binding until expiry or revocation. Their use never admits a new authorization for an unregistered ID.
 
 ## Agent plugins
 
-One answer: plugins are thin, per harness. This module, `base/agent_api`
-and the host's `/api/v1` and `/mcp` edges are the base layer every harness
-shares; none of them holds harness-specific code.
-
-- `public_clients` lists the registered OAuth public clients (ID and name,
-  never callbacks): global, non-secret configuration for the exporter.
-- `clients_for(scope)` is the same list behind the `self_service` gate, for a
-  person's own setup page. It refuses impersonation and agent facets.
-- Neither creates or approves a grant. The `/oauth/authorize` consent still
-  names the person and the end date.
-- The package builder, the harness adapters (ChatGPT is the first), the
-  `/settings/<harness>-plugin` pages and their downloads live in
-  `core/agent_plugins` ([README](../agent_plugins/README.md)).
-- The Agent connections header links to the ChatGPT setup page.
-
-### How to add a harness
-
-1. Add `apps/core/agent_plugins/src/<harness>.rs` implementing `Harness`:
-   name, title, page path, archive name, page copy and `files(&Package)` (its
-   manifest, MCP configuration and skill layout). Nothing else.
-2. Add it to `HARNESSES` in `src/harness.rs`.
-3. Submit its `Route` and `Download` in `src/contributions.rs`, with the
-   harness key as the operation.
-4. Optional: link the page from the settings nav (`core/user`
-   `settings_entries`) and from the Agent connections header.
-5. Run the app: open the page, download, unzip and check the files.
-
-The builder, archive, page, download and exporter stay unchanged, and nothing
-in this module changes. The exporter (`bilibi-web plugin-export`) writes the
-same package. A general Bilibi CLI client over `/api/v1` does not exist yet.
+The package builder and harness adapters live in [core/agent_plugins](../agent_plugins/README.md). Packages use discovery and automatic registration without an operator-selected client. Downloading or exporting a package grants nothing; the person's browser consent still controls access.
 
 ## Injected identity
 
@@ -150,6 +138,8 @@ on every token; refusal; receipt and connection expiry through explicit SQL
 time travel; the injected account proof refusing a suspended account; owner
 revocation and tenant isolation; the full PKCE consent/redemption/replay path
 for a registered client; the host throttle; and the audit rows. It uses only
-its own disposable rows and resets the two global settings it changed. Raw
+its own disposable rows and resets the connection-length setting it changed. Raw
 codes and tokens are never printed in full. This is an opt-in demonstration,
 not a test suite.
+
+`observe` also keeps the newest 20 transport client labels in `observed_clients`, separately shown as "Client identity". Its observation audit carries both that label and any valid self-report from the same request. `exchange_code_from` is `exchange_code` with the host-observed `ClientIdentity` on its action audit; a later tool report cannot fill an earlier immutable action.

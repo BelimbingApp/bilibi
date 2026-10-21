@@ -45,3 +45,13 @@
 <span id="{{ id }}-saving" data-role="saving" data-live-ignore role="status" class="hidden mt-0.5 flex items-center gap-1 text-xs text-ink-muted">{% call ui::icon(name="refresh", class="size-3 motion-safe:animate-spin") %}{% endcall %} Saving…</span>
 <p id="{{ id }}-connection" data-role="connection" data-live-ignore role="alert" class="hidden mt-0.5 text-xs text-danger-ink"></p>
 {% endmacro %}
+
+{% macro inline_form(cell) %}
+<div id="{{ cell.id }}" data-hook="InlineForm" data-editing="{{ cell.editing }}" data-key="{{ cell.key }}" data-cancel-event="{{ cell.cancel_event }}" class="min-w-0">
+{% if cell.editing %}{{ cell.form|safe }}{% else %}
+<button id="{{ cell.id }}-trigger" type="button" data-event="{{ cell.open_event }}" data-key="{{ cell.key }}" aria-label="Edit {{ cell.label }}" class="group flex max-w-full items-center gap-1.5 rounded px-1.5 py-0.5 -mx-1.5 text-left hover:bg-surface-sunken focus-visible:ring-1 focus-visible:ring-brand-strong"><span class="{% if cell.compact %}whitespace-nowrap{% else %}whitespace-pre-wrap [overflow-wrap:anywhere]{% endif %}">{{ cell.value }}</span>{% call ui::icon(name="edit", class="size-3.5 shrink-0 text-ink-muted") %}{% endcall %}</button>
+{% endif %}
+{% if !cell.compact && !cell.hint.is_empty() %}<p class="mt-0.5 text-xs text-ink-muted">{{ cell.hint }}</p>{% endif %}
+{% let outcome_id = "{}-outcome"|format(cell.id) %}{% call commit_status(id=outcome_id, status=cell.status) %}{% endcall %}
+</div>
+{% endmacro %}

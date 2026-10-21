@@ -1,7 +1,9 @@
 //! Outgoing HTTP. One row describes one logical call: retries are off and
 //! belong to the owning module. Only transport failures become `Failure`
 //! values; a 4xx/5xx is an ordinary `Reply` the caller interprets.
-use crate::{redaction, valid_call, Call, Direction, Integration, Origin, Record};
+use crate::{
+    redaction, redirect, valid_call, Call, Direction, Integration, Origin, Record, RedirectPolicy,
+};
 use bilibi_database::{Error, Result};
 use reqwest::{header::HeaderMap, Method};
 use serde_json::{Map, Value};
@@ -12,7 +14,11 @@ use tokio::io::{AsyncWrite, AsyncWriteExt};
 pub const DEFAULT_MAX_BODY_BYTES: u64 = 10 * 1024 * 1024;
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
-fn build_client(system_roots: bool, follow_redirects: bool) -> Result<reqwest::Client> {
+fn build_client(
+    system_roots: bool,
+    follow_redirects: bool,
+    pinned: Option<(&str, &[std::net::SocketAddr])>,
+) -> Result<reqwest::Client> {
     let mut roots = rustls::RootCertStore::empty();
     roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
     if system_roots {
@@ -32,6 +38,9 @@ fn build_client(system_roots: bool, follow_redirects: bool) -> Result<reqwest::C
         .connect_timeout(Duration::from_secs(10));
     if !follow_redirects {
         builder = builder.redirect(reqwest::redirect::Policy::none());
+    }
+    if let Some((host, addresses)) = pinned {
+        builder = builder.no_proxy().resolve_to_addrs(host, addresses);
     }
     builder.build().map_err(|_| Error::Internal)
 }
@@ -55,7 +64,7 @@ impl Clients {
         if let Some(client) = cell.get() {
             return Ok(client.clone());
         }
-        let client = build_client(system_roots, follow_redirects)?;
+        let client = build_client(system_roots, follow_redirects, None)?;
         Ok(cell.get_or_init(|| client).clone())
     }
 }
@@ -73,6 +82,10 @@ pub struct Outgoing {
     max_body_bytes: u64,
     follow_redirects: bool,
     system_roots: bool,
+    public_https: bool,
+    /// When set, reqwest does not follow. `perform` follows each hop itself
+    /// and drops credential headers when the host changes.
+    redirects: Option<RedirectPolicy>,
 }
 impl Outgoing {
     pub fn new(method: Method, url: impl Into<String>) -> Self {
@@ -86,6 +99,8 @@ impl Outgoing {
             max_body_bytes: DEFAULT_MAX_BODY_BYTES,
             follow_redirects: true,
             system_roots: false,
+            public_https: false,
+            redirects: None,
         }
     }
     pub fn get(url: impl Into<String>) -> Self {
@@ -116,9 +131,26 @@ impl Outgoing {
         self
     }
     /// Do not follow redirects: a 3xx answer is returned as the reply, so a
-    /// header such as a pairing key is never sent on to another address.
+    /// secret header is never sent on to another address.
     pub fn no_redirects(mut self) -> Self {
         self.follow_redirects = false;
+        self.redirects = None;
+        self
+    }
+    /// Follow a bounded set of HTTPS redirects by hand. Credential headers
+    /// stay on the original host. The exchange row records the original URL
+    /// only, never the `Location` target. Use this instead of a private HTTP
+    /// client when a download host must not see the API token.
+    pub fn redirects(mut self, policy: RedirectPolicy) -> Self {
+        self.follow_redirects = false;
+        self.redirects = Some(policy);
+        self
+    }
+    /// Fetch an untrusted public HTTPS URL. Resolve once, refuse non-public
+    /// addresses, pin the validated addresses, disable proxies and redirects.
+    /// TLS still verifies the original host against public certificate roots.
+    pub fn public_https(mut self) -> Self {
+        self.public_https = true;
         self
     }
     /// Also trust the server's own certificate store (`/etc/ssl/certs`, where
@@ -295,86 +327,161 @@ impl Integration {
         if !matches!(url.scheme(), "http" | "https") {
             return Err(Failure::Invalid);
         }
-        let http = self
-            .clients
-            .get(outgoing.system_roots, outgoing.follow_redirects)
-            .map_err(|_| Failure::Invalid)?;
-        let mut builder = http
-            .request(outgoing.method.clone(), url)
-            .timeout(outgoing.timeout);
-        for (name, value) in &outgoing.headers {
-            builder = builder.header(name.as_str(), value.as_str());
-        }
-        if let Some(json) = &outgoing.json {
-            builder = builder
-                .header(reqwest::header::CONTENT_TYPE, "application/json")
-                .body(serde_json::to_vec(json).map_err(|_| Failure::Invalid)?);
-        } else if let Some(body) = &outgoing.body {
-            builder = builder.body(body.clone());
-        }
-        let request = builder.build().map_err(|_| Failure::Invalid)?;
-        let request_headers = header_preview(request.headers().iter().map(|(name, value)| {
-            (
-                name.as_str().to_string(),
-                value.to_str().unwrap_or_default().to_string(),
-            )
-        }));
-
         let started = Instant::now();
+        let http = if outgoing.public_https {
+            if url.scheme() != "https"
+                || !url.username().is_empty()
+                || url.password().is_some()
+                || url.fragment().is_some()
+            {
+                return Err(Failure::Invalid);
+            }
+            let host = url.host_str().ok_or(Failure::Invalid)?;
+            let host = host.trim_matches(['[', ']']);
+            let addresses: Vec<_> = tokio::time::timeout(
+                outgoing.timeout,
+                tokio::net::lookup_host((
+                    host,
+                    url.port_or_known_default().ok_or(Failure::Invalid)?,
+                )),
+            )
+            .await
+            .map_err(|_| Failure::Invalid)?
+            .map_err(|_| Failure::Invalid)?
+            .collect();
+            if addresses.is_empty()
+                || addresses
+                    .iter()
+                    .any(|address| !public_address(address.ip()))
+            {
+                return Err(Failure::Invalid);
+            }
+            build_client(false, false, Some((host, &addresses))).map_err(|_| Failure::Invalid)?
+        } else {
+            self.clients
+                .get(outgoing.system_roots, outgoing.follow_redirects)
+                .map_err(|_| Failure::Invalid)?
+        };
         let mut observed = Observed {
             status: None,
             headers: None,
             error: None,
             response_body: None,
         };
-        match http.execute(request).await {
-            Err(error) => observed.error = Some(class(&error)),
-            Ok(mut response) => {
-                observed.status = Some(response.status().as_u16());
-                observed.headers = Some(response.headers().clone());
-                let limit = outgoing.max_body_bytes;
-                let mut total: u64 = 0;
-                loop {
-                    match response.chunk().await {
-                        Ok(None) => break,
-                        Ok(Some(chunk)) => {
-                            total += chunk.len() as u64;
-                            if total > limit {
-                                observed.error = Some("body_limit");
-                                break;
+        let mut hop_url = url;
+        let mut hop_headers = outgoing.headers.clone();
+        let mut hops_done: u8 = 0;
+        let mut request_headers = Value::Null;
+        loop {
+            let mut builder = http
+                .request(outgoing.method.clone(), hop_url.clone())
+                .timeout(outgoing.timeout.saturating_sub(started.elapsed()));
+            for (name, value) in &hop_headers {
+                builder = builder.header(name.as_str(), value.as_str());
+            }
+            if hops_done == 0 {
+                if let Some(json) = &outgoing.json {
+                    builder = builder
+                        .header(reqwest::header::CONTENT_TYPE, "application/json")
+                        .body(serde_json::to_vec(json).map_err(|_| Failure::Invalid)?);
+                } else if let Some(body) = &outgoing.body {
+                    builder = builder.body(body.clone());
+                }
+            }
+            let request = builder.build().map_err(|_| Failure::Invalid)?;
+            if hops_done == 0 {
+                request_headers = header_preview(request.headers().iter().map(|(name, value)| {
+                    (
+                        name.as_str().to_string(),
+                        value.to_str().unwrap_or_default().to_string(),
+                    )
+                }));
+            }
+            let response = match http.execute(request).await {
+                Err(error) => {
+                    observed.error = Some(class(&error));
+                    break;
+                }
+                Ok(response) => response,
+            };
+            let status = response.status().as_u16();
+            if let Some(policy) = outgoing.redirects.filter(|_| !outgoing.public_https) {
+                if matches!(status, 301 | 302 | 303 | 307 | 308) {
+                    let location = response
+                        .headers()
+                        .get(reqwest::header::LOCATION)
+                        .and_then(|value| value.to_str().ok())
+                        .unwrap_or("")
+                        .to_owned();
+                    // Drop the redirect body. It is not the download, and the
+                    // Location value is not recorded.
+                    drop(response);
+                    match redirect::choose(hop_url.as_str(), &location, &policy, hops_done) {
+                        redirect::Choice::Follow {
+                            url: next,
+                            strip_credentials,
+                        } => {
+                            hop_url = reqwest::Url::parse(&next).map_err(|_| Failure::Invalid)?;
+                            if strip_credentials {
+                                hop_headers.retain(|(name, _)| !redirect::credential_header(name));
                             }
-                            match &mut sink {
-                                Sink::Buffer(buffer) => buffer.extend_from_slice(&chunk),
-                                Sink::Writer(writer, written) => {
-                                    if writer.write_all(&chunk).await.is_err() {
-                                        observed.error = Some("sink");
-                                        break;
-                                    }
-                                    *written += chunk.len() as u64;
-                                }
-                            }
+                            hops_done += 1;
+                            continue;
                         }
-                        Err(error) => {
-                            observed.error = Some(class(&error));
+                        redirect::Choice::Reject => {
+                            observed.status = Some(status);
+                            observed.error = Some("redirect");
                             break;
                         }
                     }
                 }
-                if observed.error.is_none() {
-                    if let Sink::Writer(writer, _) = &mut sink {
-                        if writer.flush().await.is_err() {
-                            observed.error = Some("sink");
+            }
+            let mut response = response;
+            observed.status = Some(status);
+            observed.headers = Some(response.headers().clone());
+            let limit = outgoing.max_body_bytes;
+            let mut total: u64 = 0;
+            loop {
+                match response.chunk().await {
+                    Ok(None) => break,
+                    Ok(Some(chunk)) => {
+                        total += chunk.len() as u64;
+                        if total > limit {
+                            observed.error = Some("body_limit");
+                            break;
+                        }
+                        match &mut sink {
+                            Sink::Buffer(buffer) => buffer.extend_from_slice(&chunk),
+                            Sink::Writer(writer, written) => {
+                                if writer.write_all(&chunk).await.is_err() {
+                                    observed.error = Some("sink");
+                                    break;
+                                }
+                                *written += chunk.len() as u64;
+                            }
                         }
                     }
-                }
-                if call.retain_payload && observed.error.is_none() {
-                    observed.response_body = Some(match &sink {
-                        Sink::Buffer(body) => serde_json::from_slice(body)
-                            .unwrap_or_else(|_| redaction::omitted("unstructured")),
-                        Sink::Writer(..) => redaction::omitted("unstructured"),
-                    });
+                    Err(error) => {
+                        observed.error = Some(class(&error));
+                        break;
+                    }
                 }
             }
+            if observed.error.is_none() {
+                if let Sink::Writer(writer, _) = &mut sink {
+                    if writer.flush().await.is_err() {
+                        observed.error = Some("sink");
+                    }
+                }
+            }
+            if call.retain_payload && observed.error.is_none() {
+                observed.response_body = Some(match &sink {
+                    Sink::Buffer(body) => serde_json::from_slice(body)
+                        .unwrap_or_else(|_| redaction::omitted("unstructured")),
+                    Sink::Writer(..) => redaction::omitted("unstructured"),
+                });
+            }
+            break;
         }
         let elapsed = i32::try_from(started.elapsed().as_millis()).unwrap_or(i32::MAX);
         let response_headers = observed.headers.as_ref().map(response_headers);
@@ -401,6 +508,7 @@ impl Integration {
                 agent_id: None,
                 run_id: None,
                 agent_self_report: None,
+                client_identity: None,
                 agent_self_report_malformed: false,
                 retain_payload: call.retain_payload,
                 request_headers: Some(&request_headers),
@@ -411,5 +519,36 @@ impl Integration {
             .await
             .map_err(|_| Failure::Unrecorded)?;
         Ok((id, observed, sink))
+    }
+}
+
+// Conservative global-unicast ranges for untrusted metadata fetches. IPv4
+// mapped IPv6 is classified as IPv4, including private/link-local addresses.
+fn public_address(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(ip) => {
+            let [a, b, _, _] = ip.octets();
+            !ip.is_private()
+                && !ip.is_loopback()
+                && !ip.is_link_local()
+                && !ip.is_documentation()
+                && !ip.is_broadcast()
+                && a != 0
+                && a < 224
+                && !(a == 100 && (64..=127).contains(&b))
+                && !(a == 198 && (18..=19).contains(&b))
+                && !(a == 192 && b == 0)
+                && !(a == 192 && b == 88)
+        }
+        std::net::IpAddr::V6(ip) => {
+            if let Some(v4) = ip.to_ipv4_mapped() {
+                return public_address(v4.into());
+            }
+            let segments = ip.segments();
+            (segments[0] & 0xe000) == 0x2000
+                && !(segments[0] == 0x2001 && (segments[1] < 0x200 || segments[1] == 0xdb8))
+                && segments[0] != 0x2002
+                && !(segments[0] == 0x3fff && segments[1] < 0x1000)
+        }
     }
 }

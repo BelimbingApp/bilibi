@@ -150,10 +150,20 @@ pub(crate) async fn record(
     recipients: &[i64],
     notice: &Notice,
 ) -> DbResult<()> {
-    if tx.context().tenant != scope.tenant() {
+    record_in_tenant(tx, scope.tenant(), recipients, notice).await
+}
+
+/// [`record`] for a caller with no sealed scope, the server-side reset
+/// command: the tenant is the transaction's own, and the same checks apply.
+pub(crate) async fn record_in_tenant(
+    tx: &mut MutationTransaction<'_>,
+    tenant: i64,
+    recipients: &[i64],
+    notice: &Notice,
+) -> DbResult<()> {
+    if tx.context().tenant != tenant {
         return Err(Error::Forbidden);
     }
-    let tenant = scope.tenant();
     let recipients = recipients.to_vec();
     let notice = notice.clone();
     tx.mutate(move |sql| {

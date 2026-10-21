@@ -31,6 +31,7 @@ inventory::submit! { Contribution::new(VOCABULARY, "core/affiliation", Provenanc
 
 // Work contacts share the same masking path as API results and audit evidence.
 static GRID: GridContribution = GridContribution {
+    record_fields: &[bilibi_grid::RecordFields { table: "persons", fields: crate::web::fields::ALL }],
     tables: &[TableDecl::new("person_affiliations", "Affiliations", LIST,
         Source::tenant("SELECT id,person_id,organisation_id,title,work_email,work_phone,effective_from,effective_to,unlinked_at,version,created_at,updated_at FROM person_affiliations WHERE tenant_id=$1"), "id", &[
             Field::new("id", "ID", FieldType::Integer).protected(),

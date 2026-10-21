@@ -11,7 +11,7 @@
 //! history or a process list: it is typed at the terminal with echo off, or
 //! read from the first line of standard input with `--password-stdin`.
 use bilibi_authz::grants::Grants;
-use bilibi_core::company::{primary, NewCompany, ProvisionOutcome};
+use bilibi_core::company::{self as primary, NewCompany, ProvisionOutcome};
 use bilibi_database::{Db, Error, Result};
 use bilibi_user::{
     validate_first_administrator, BootstrapAffiliation, FieldError, FirstAdministrator,
@@ -232,7 +232,7 @@ async fn finish_existing_owner(
 /// The marked operator tenant with its primary company, when both exist.
 async fn existing_operator(db: &Db) -> Result<Option<OperatorCompany>> {
     let client = db.get().await?;
-    let Some(tenant) = bilibi_tenancy::admin::platform_operator(&**client).await? else {
+    let Some(tenant) = bilibi_tenancy::platform_operator(&**client).await? else {
         return Ok(None);
     };
     Ok(primary::primary_company(&**client, tenant.id)

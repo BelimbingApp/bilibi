@@ -30,9 +30,11 @@
 {% endmacro %}
 
 {#- The layout's flash outlet: a permanent polite live region stacking the
-    messages most severe first. Only a success times out. -#}
-{% macro flash_group(id="flash-group", messages=bilibi_ui::NO_FLASH) %}
-<div id="{{ id }}" aria-live="polite" class="fixed right-4 top-4 z-50 flex w-[min(24rem,calc(100vw-2rem))] flex-col gap-2">
+    messages most severe first. Only a success times out. In flow by default so
+    an approval notice cannot cover the next action (for example Post); floating
+    pins it top right for the outlet that sits outside the page body. -#}
+{% macro flash_group(id="flash-group", messages=bilibi_ui::NO_FLASH, floating=false) %}
+<div id="{{ id }}" aria-live="polite" class="{% if floating %}fixed right-4 top-4{% else %}relative ml-auto mr-4{% endif %} z-50 flex w-[min(24rem,calc(100vw-2rem))] flex-col gap-2">
 {% call flash(kind=bilibi_ui::StatusKind::Error, message=messages.error) %}{% endcall %}
 {% call flash(kind=bilibi_ui::StatusKind::Warning, message=messages.warning) %}{% endcall %}
 {% call flash(kind=bilibi_ui::StatusKind::Success, message=messages.success, auto_dismiss=true) %}{% endcall %}
@@ -77,4 +79,9 @@
 {%- let kind = bilibi_ui::StatusKind::Error -%}
 <div id="{{ summary.id }}" role="{{ kind.role() }}" aria-labelledby="{{ summary.id }}-heading" class="mb-3 flex items-start gap-2 rounded-lg border px-panel py-feedback text-sm {{ kind.surface_class() }}">{% call c::icon(name=kind.icon(), class="mt-0.5 size-4 shrink-0") %}{% endcall %}<div class="min-w-0"><p id="{{ summary.id }}-heading" class="font-semibold">{{ summary.heading() }}</p><ul class="mt-1 list-disc space-y-0.5 pl-4">{% for item in summary.items %}<li><a href="#{{ item.target }}" data-focus-link class="underline underline-offset-2 hover:no-underline">{{ item.message }}</a></li>{% endfor %}</ul></div></div>
 {%- endif -%}
+{% endmacro %}
+
+{# The stored server role, never the compiler's build mode. #}
+{% macro instance_status(status) %}
+{% if status.editable %}<a{% if !status.id.is_empty() %} id="{{ status.id }}"{% endif %} href="/system/instance" title="Instance settings · {{ status.title }}" data-instance="{{ status.role }}" class="inline-flex shrink-0 items-center gap-1 rounded-sm border px-1.5 font-semibold {{ status.tone.surface_class() }}">{% else %}<span{% if !status.id.is_empty() %} id="{{ status.id }}"{% endif %} title="{{ status.title }}" data-instance="{{ status.role }}" class="inline-flex shrink-0 items-center gap-1 rounded-sm border px-1.5 font-semibold {{ status.tone.surface_class() }}">{% endif %}{{ status.role_label }}{% if status.label != status.role_label %} · {{ status.label }}{% endif %}{% if status.editable %}</a>{% else %}</span>{% endif %}
 {% endmacro %}

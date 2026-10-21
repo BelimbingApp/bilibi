@@ -36,6 +36,7 @@ Two lines in the owning module, nothing anywhere else.
 - An operation may also guard one setting (`.guards_setting("key")`): the settings editor then asks for it before changing, clearing or restoring that setting.
 - A module that is not mounted declares nothing, so its rows leave the policy page.
 - Never decide in code whether step-up applies. That is the tenant's policy.
+- A confirmation form that takes a code itself calls `require_code` for its `.always()` operation. A recent browser check, including enrollment, cannot replace a code on that submission. Missing codes are audited refusals; an account without 2FA receives the usual enrollment prompt. An agent whose holder gets codes by text message is sent one with the refusal (`code_sent`), as `require` does.
 - Call `require` as often as the action needs: a presented code is spent by the first call and covers the rest of the request.
 
 ## Policy
@@ -126,8 +127,10 @@ Every check that applies writes one action:
 
 ## Try it
 
-On a migrated disposable database with `BILIBI_ENV=development` (the walkthrough fixture gives its tenant 1 people phone numbers):
+On a migrated disposable database whose saved role is Dev (the walkthrough fixture gives its tenant 1 people phone numbers):
 
-- Enroll at `/settings/two-factor`, or use an account with a phone number and read its codes at `/dev/sms-inbox`.
+- Enroll at `/settings/two-factor`, or use an account with a phone number and read its codes at `/dev/sms-inbox`. There are no recovery codes: after a lost phone another admin resets the account (`core.user.two_factor.reset`, `.always()`), or the server owner runs `bilibi-web two-factor-reset`.
 - Open `/authz/step-up` and turn an operation on.
 - `cargo run -p bilibi-web --example step-up-reference -- <user id> auditor assign` with `BILIBI_SESSION_TOKEN` set to a browser session's cookie. It prints `ok` or the `step_up_required` answer.
+
+`StepUp::enrolled(scope)` reads the holder’s live enrollment state for shared `bilibi_ui::StepUp` forms. `required(scope, key)` answers whether policy protects a field without spending proof. These reads do not authorize a write; the owner still calls `require` or `require_code`.

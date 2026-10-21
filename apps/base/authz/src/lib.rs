@@ -223,27 +223,6 @@ impl SystemScope {
         };
         context
     }
-    /// The one secret a system principal may read with no session: an
-    /// encrypted, global setting that its own module contributed (the
-    /// module's name is the one that declared the principal). Made for a
-    /// request from a machine, such as another instance presenting its
-    /// pairing key at the release transport boundary. Any other key, module
-    /// or an unnamed principal refuses; this grants no other read. Never log
-    /// the result.
-    pub async fn read_own_secret(
-        &self,
-        client: &(impl GenericClient + Sync),
-        settings: &bilibi_settings::Settings,
-        key: &str,
-    ) -> Result<serde_json::Value> {
-        let principal = self.principal.as_deref().ok_or(Error::Forbidden)?;
-        let owner = vocabulary()?
-            .system_principal_owners
-            .get(principal)
-            .copied()
-            .ok_or(Error::Forbidden)?;
-        settings.get_own_global_secret(client, owner, key).await
-    }
     /// Rehydrate persisted worker metadata at the trusted execution edge. Every
     /// decision still checks the live tenant, declaration and durable grant.
     pub async fn rehydrate(
@@ -360,6 +339,14 @@ pub struct OperatorAuthorizer {
     db: bilibi_database::Db,
 }
 impl bilibi_tenancy::OperatorAuthorizer for OperatorAuthorizer {
+    fn authorize_operator_in<'a>(
+        &'a self,
+        tx: &'a tokio_postgres::Transaction<'_>,
+        scope: &'a Scope,
+        key: &'a str,
+    ) -> bilibi_tenancy::ProofFuture<'a, bilibi_tenancy::OperatorProof> {
+        Box::pin(async move { authorize_operator(tx, scope, key).await })
+    }
     fn authorize_operator<'a>(
         &'a self,
         scope: &'a Scope,
@@ -416,10 +403,10 @@ inventory::submit! { bilibi_module_registry::Module {
 
 // Tenancy's capability keys (Bilimbi `Tenancy.Contributions`): declared here
 // because the vocabulary type is Authz's and Tenancy sits below it; the keys
-// themselves are `bilibi_tenancy::admin::{LIST, CREATE}`.
+// themselves are `bilibi_tenancy::{LIST, CREATE}`.
 inventory::submit! { bilibi_module_registry::Contribution::new(VOCABULARY,"authz.tenancy",bilibi_module_registry::Provenance {module:"base/authz",source:file!(),line:line!()}, &VocabularyContribution {
     domains:&["admin"], verbs:&["list","create"],
-    capabilities:&[CapabilityDefinition::platform(bilibi_tenancy::admin::LIST), CapabilityDefinition::platform(bilibi_tenancy::admin::CREATE)],
+    capabilities:&[CapabilityDefinition::platform(bilibi_tenancy::LIST), CapabilityDefinition::platform(bilibi_tenancy::CREATE)],
     roles:&[], system_principals:&[],
 }) }
 inventory::submit! {

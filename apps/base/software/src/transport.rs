@@ -1,39 +1,16 @@
-//! How a release travels from the instance that tested it to the one that
-//! installs it (`README.md`, "Release transport"). Three ways in, one shape
-//! out: a release folder (`bilibi-web`, `SHA256SUMS`, `manifest.txt`,
-//! `Cargo.lock`, `release.json`, and `plugins/` when the release has any)
-//! that the installer copies and checks like a sibling instance's.
-//!
-//! - **Same machine.** The installer copies the sibling's folder itself; this
-//!   module only lists what the sibling has.
-//! - **HTTPS pull.** The target downloads the release file from its source's
-//!   `/transport/releases/<n>` with the pairing key, unpacks it into
-//!   `incoming/job-<id>/` and lets the installer take it from there.
-//! - **A file.** The owner downloads the release file on the source and
-//!   uploads it on the target, which unpacks it into `incoming/upload-<n>/`.
-//!
-//! The release file is a gzip-compressed tar of the folder plus `bundle.json`,
-//! which names the instance it came from. This module holds what needs no
-//! database: the folders, the file, and the checks every way in shares.
-use bilibi_module_registry::{Composition, Layer};
-use bilibi_system::Instance;
-use flate2::{read::GzDecoder, write::GzEncoder, Compression};
+//! Release archive unpacking, safe file paths and compatibility checks.
+//! Used by GitHub downloads and manual uploads. No Bilimbi counterpart.
+use flate2::read::GzDecoder;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
     fs,
-    io::{self, Read, Write},
+    io::{self, Read},
     os::unix::fs::PermissionsExt,
     path::{Component, Path, PathBuf},
     process::Command,
 };
 
-/// The header a pulling instance presents (`README.md`, "Pairing").
-pub const PAIRING_HEADER: &str = "x-bilibi-pairing-key";
-/// Where a source lists its releases, under its origin.
-pub const LISTING_PATH: &str = "/transport/releases";
-/// The media type of a release file.
-pub const BUNDLE_TYPE: &str = "application/gzip";
 /// The files of a release folder, in the order the file carries them. A
 /// release put in by `install-server.sh release` has only the first two.
 pub const RELEASE_FILES: [&str; 6] = [
@@ -44,10 +21,10 @@ pub const RELEASE_FILES: [&str; 6] = [
     "release.json",
     "bundle.json",
 ];
-/// Plug-ins that travel with the release live here, inside the folder.
+/// Add-ons that travel with the release live here, inside the folder.
 pub const PLUGINS_DIR: &str = "plugins";
-/// The plug-ins the release switches on, a list of `{id, name, publisher,
-/// version, source}` the builder writes in `PLUGINS_DIR`.
+/// The add-ons the release switches on, a list of `{id, name, publisher,
+/// version, source}` the local build includes in `PLUGINS_DIR`.
 pub const PLUGINS_ENABLED: &str = "enabled.json";
 /// A release file larger than this is refused unread: a program is tens of
 /// megabytes, never gigabytes.
@@ -56,22 +33,11 @@ pub const MAX_BUNDLE_BYTES: u64 = 1024 * 1024 * 1024;
 pub const JOB_PREFIX: &str = "job-";
 pub const UPLOAD_PREFIX: &str = "upload-";
 
-/// The path of release `n`'s file under the source's origin.
-pub fn bundle_path(release: u64) -> String {
-    format!("{LISTING_PATH}/{release}")
-}
-/// The name a browser saves a release file under.
-pub fn bundle_filename(release: u64) -> String {
-    format!("bilibi-release-{release}.tar.gz")
-}
-
 /// The instance folder this program serves (`BILIBI_INSTANCE_DIR`, from the
 /// instance's `env` file): where its releases are kept, and where a release
 /// on its way in waits for the installer.
 #[derive(Clone, Debug)]
 pub struct Paths {
-    /// `/opt/bilibi`
-    pub root: PathBuf,
     /// The folder name: `dev`, `production`.
     pub name: String,
     /// `/opt/bilibi/<name>`
@@ -97,25 +63,7 @@ impl Paths {
             .filter(|name| bilibi_system::valid_instance_name(name))
             .ok_or_else(|| format!("{} is not an instance folder", dir.display()))?
             .to_owned();
-        let root = dir
-            .parent()
-            .ok_or_else(|| format!("{} has no parent folder", dir.display()))?
-            .to_path_buf();
-        Ok(Self { root, name, dir })
-    }
-    /// Another instance on this machine, by its folder name.
-    pub fn sibling(&self, name: &str) -> Result<Self, String> {
-        if !bilibi_system::valid_instance_name(name) {
-            return Err(format!("{name} is not an instance name"));
-        }
-        let dir = self.root.join(name);
-        if !dir.is_dir() {
-            return Err(format!(
-                "there is no instance called {name} on this machine ({} does not exist)",
-                dir.display()
-            ));
-        }
-        Self::open(&dir)
+        Ok(Self { name, dir })
     }
     pub fn releases(&self) -> PathBuf {
         self.dir.join("releases")
@@ -130,20 +78,6 @@ impl Paths {
     }
     pub fn incoming_folder(&self, name: &str) -> PathBuf {
         self.incoming().join(name)
-    }
-    /// The kept release numbers, lowest first.
-    pub fn release_numbers(&self) -> Vec<u64> {
-        let mut numbers: Vec<u64> = fs::read_dir(self.releases())
-            .map(|entries| {
-                entries
-                    .flatten()
-                    .filter(|entry| entry.path().is_dir())
-                    .filter_map(|entry| entry.file_name().to_str()?.parse().ok())
-                    .collect()
-            })
-            .unwrap_or_default();
-        numbers.sort_unstable();
-        numbers
     }
     /// The release in service: `current` resolves to `releases/<n>`.
     pub fn current(&self) -> Option<u64> {
@@ -208,7 +142,7 @@ pub fn valid_incoming_name(name: &str) -> bool {
 }
 
 /// What a release folder says about itself: its program's checksum and
-/// size, and the recipe the builder wrote (`release.json`) with the
+/// size, and the recipe the local build included (`release.json`) with the
 /// `bundle.json` of a file that was unpacked here. Null fields mean the
 /// folder lacks that file.
 pub fn folder_facts(dir: &Path) -> Value {
@@ -239,90 +173,6 @@ pub fn folder_facts(dir: &Path) -> Value {
         "program": recipe["status"].as_str().and_then(|s| s.lines().next()).map(|s| s.chars().take(200).collect::<String>()),
         "plugins": plugins,
     })
-}
-
-/// A kept release as the source lists it. The release in service answers
-/// with what the running program says it is made of, which cannot lie; the
-/// others with their recipe.
-pub fn release_json(
-    paths: &Paths,
-    n: u64,
-    in_service: bool,
-    running: Option<&Composition>,
-) -> Value {
-    let dir = paths.release(n);
-    let mut facts = folder_facts(&dir);
-    facts["release"] = json!(n);
-    facts["in_service"] = json!(in_service);
-    if let (true, Some(made)) = (in_service, running) {
-        facts["platform"] =
-            json!({"version": made.version, "release": made.tag, "commit": made.commit});
-        facts["domains"] = json!(made
-            .containers
-            .iter()
-            .filter(|c| c.layer == Layer::Domains)
-            .map(|c| json!({"id": c.id, "version": c.version, "commit": c.commit}))
-            .collect::<Vec<_>>());
-    }
-    facts
-}
-
-/// What a source answers at `/transport/releases`: which instance it is,
-/// the release in service, and every kept release with its checksum.
-pub fn listing(paths: &Paths, instance: &Instance, running: &Composition) -> Value {
-    let current = paths.current();
-    let releases: Vec<Value> = paths
-        .release_numbers()
-        .into_iter()
-        .rev()
-        .filter(|n| paths.release(*n).join("bilibi-web").is_file())
-        .map(|n| release_json(paths, n, current == Some(n), Some(running)))
-        .collect();
-    json!({
-        "format": 1,
-        "instance": {"label": instance.label, "environment": instance.role.env_value(), "name": paths.name},
-        "current": current,
-        "healthy": true,
-        "releases": releases,
-    })
-}
-
-// ------------------------------------------------------------- the file
-
-/// Writes release `n`'s file: the folder's files and `plugins/`, plus a
-/// `bundle.json` naming where it came from, as a gzip-compressed tar.
-pub fn write_bundle(dir: &Path, release: u64, from: &Value, sink: impl Write) -> io::Result<()> {
-    let sha256 = expected_checksum(dir).map_err(io::Error::other)?;
-    let encoder = GzEncoder::new(sink, Compression::fast());
-    let mut tar = tar::Builder::new(encoder);
-    tar.mode(tar::HeaderMode::Deterministic);
-    // A program with holes must still travel as a plain file: the receiver
-    // refuses GNU-sparse entries.
-    tar.sparse(false);
-    for name in RELEASE_FILES {
-        if name == "bundle.json" {
-            continue;
-        }
-        let path = dir.join(name);
-        if path.is_file() {
-            tar.append_path_with_name(&path, name)?;
-        }
-    }
-    let plugins = dir.join(PLUGINS_DIR);
-    if plugins.is_dir() {
-        tar.append_dir_all(PLUGINS_DIR, &plugins)?;
-    }
-    let bundle = serde_json::to_vec_pretty(&json!({
-        "format": 1, "release": release, "sha256": sha256, "from": from,
-    }))
-    .unwrap_or_default();
-    let mut header = tar::Header::new_gnu();
-    header.set_size(bundle.len() as u64);
-    header.set_mode(0o644);
-    header.set_cksum();
-    tar.append_data(&mut header, "bundle.json", bundle.as_slice())?;
-    let encoder = tar.into_inner()?;
-    encoder.finish()?.flush()
 }
 
 /// What `unpack_bundle` found.
@@ -507,14 +357,6 @@ pub fn sha256_of(path: &Path) -> io::Result<String> {
         .collect())
 }
 
-/// What this server is, as a release records what it was built for.
-pub fn this_server() -> Value {
-    json!({
-        "os": std::env::consts::OS,
-        "arch": std::env::consts::ARCH,
-        "system_library": system_library(),
-    })
-}
 /// `glibc 2.39`, from `getconf GNU_LIBC_VERSION`; null when unknown.
 pub fn system_library() -> Option<String> {
     let out = Command::new("getconf")
@@ -533,7 +375,7 @@ fn library_version(text: &str) -> Option<(u64, u64)> {
 }
 /// Whether the program in `dir` was built for this kind of server: a Linux
 /// program for this processor (read from the program itself), needing a
-/// system library this server has (from `release.json`, when the builder
+/// system library this server has (from `release.json`, when the local build
 /// recorded it). Each refusal says what to do.
 pub fn built_for_this_server(dir: &Path) -> Result<(), String> {
     let mut head = [0u8; 20];
@@ -554,14 +396,15 @@ pub fn built_for_this_server(dir: &Path) -> Result<(), String> {
     let here = std::env::consts::ARCH;
     if built_arch != here {
         return Err(format!(
-            "This release was built for {} computers, and this server is {}. Build it on a Dev of the same kind as this server.",
+            "This release was built for {} computers, and this server is {}. Build it locally for the same kind of server.",
             describe_arch(built_arch),
             describe_arch(here)
         ));
     }
     if !matches!(head[7], 0 | 3) || std::env::consts::OS != "linux" {
         return Err(
-            "This release was built for another operating system. Build it on a Linux Dev.".into(),
+            "This release was built for another operating system. Build it locally for Linux."
+                .into(),
         );
     }
     let recipe: Value = fs::read_to_string(dir.join("release.json"))
@@ -573,7 +416,7 @@ pub fn built_for_this_server(dir: &Path) -> Result<(), String> {
             if let Some(have) = library_version(&have_text) {
                 if have < need {
                     return Err(format!(
-                        "This release needs the system library {needed}, and this server has {have_text}. Update this server, or build on a Dev whose system library is not newer than this server's."
+                        "This release needs the system library {needed}, and this server has {have_text}. Update this server, or build locally with a system library no newer than this server's."
                     ));
                 }
             }

@@ -2,6 +2,8 @@
 {%- import "forms.html" as form -%}
 {% call ui::card(id="specimen-code-input", title="Code input", inner_class="p-4") %}
 {% call form::code_input(code=controls.code) %}{% endcall %}
-{% call form::code_input(code=controls.one_time_code) %}{% endcall %}
+{% call form::code_input(code=controls.authenticator) %}{% endcall %}
+{% call form::code_input(code=controls.optional_authenticator) %}{% endcall %}
+{% call form::code_input(code=controls.invalid_authenticator) %}{% endcall %}
 <div id="specimen-resend-row">{{ controls.resend }}</div>
 {% endcall %}

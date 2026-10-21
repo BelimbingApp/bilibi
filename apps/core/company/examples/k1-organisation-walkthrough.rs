@@ -10,10 +10,10 @@ use bilibi_agent_api::{
     plans::{PlanAuthority, PlanIdentity, PlannedOperation, Plans},
     Registry, SearchOptions,
 };
+use bilibi_company as primary;
 use bilibi_company::{
     departments,
     organisation::{self, CreateOutcome},
-    primary,
     reference_types::{self, Direction, NewType, Outcome, TypeSort, TypeUpdate},
     CompanyService, NewCompany, SearchQuery, SERVICE,
 };

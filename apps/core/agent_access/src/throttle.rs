@@ -1,4 +1,4 @@
-//! Per-node fixed-window limiter for the public device and token endpoints,
+//! Per-node fixed-window limiter for the public registration, device and token endpoints,
 //! driven by `agent_access.oauth_requests_per_minute`. Keyed by endpoint and
 //! sender address; memory is bounded; nodes do not share counts, as in Bilimbi.
 use std::{
@@ -23,6 +23,9 @@ impl Throttle {
         let mut windows = self.windows.lock().unwrap_or_else(|p| p.into_inner());
         if windows.len() >= MAX_KEYS {
             windows.retain(|_, (window, _)| *window == minute);
+            if windows.len() >= MAX_KEYS && !windows.contains_key(key) {
+                return false;
+            }
         }
         let entry = windows.entry(key.to_owned()).or_insert((minute, 0));
         if entry.0 != minute {

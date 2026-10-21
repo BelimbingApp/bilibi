@@ -1,4 +1,4 @@
-//! Stable read models. They carry only what callers of the lookup API need;
+//! Stable read models, mirroring Bilimbi's Core.Geonames. They carry only what callers of the lookup API need;
 //! table layout and SQL stay private to this module.
 use crate::corrections::{override_revision, source_revision, Provenance};
 use std::time::SystemTime;
@@ -214,6 +214,7 @@ pub struct PostcodeIndex {
     pub postcode: String,
     pub place_name: String,
     pub admin1_code: Option<String>,
+    pub admin1_name: Option<String>,
     pub latitude: Option<f64>,
     pub longitude: Option<f64>,
     pub accuracy: Option<i16>,
@@ -222,12 +223,13 @@ pub struct PostcodeIndex {
     pub updated_at: SystemTime,
 }
 impl PostcodeIndex {
-    pub(crate) const COLUMNS: &'static str = "p.id,p.country_iso,c.country AS country_name,p.postcode,p.place_name,p.admin1_code,\
+    pub(crate) const COLUMNS: &'static str = "p.id,p.country_iso,c.country AS country_name,p.postcode,p.place_name,p.admin1_code,COALESCE(a.name,p.admin_name1) AS admin1_name,\
         p.latitude::float8 AS latitude,p.longitude::float8 AS longitude,p.accuracy,p.updated_at,o.id AS override_id,o.lock_version";
     /// `p` the postcode, `c` its country, `o` its override when one exists.
     pub(crate) const FROM: &'static str =
         "FROM geonames_postcodes p LEFT JOIN geonames_countries c ON c.iso = p.country_iso \
-        LEFT JOIN geonames_postcode_overrides o ON o.applied_postcode_id = p.id";
+        LEFT JOIN geonames_postcode_overrides o ON o.applied_postcode_id = p.id \
+        LEFT JOIN geonames_admin1 a ON a.code = p.country_iso || '.' || p.admin1_code";
     pub(crate) fn from_row(row: &Row) -> Self {
         let id: i64 = row.get("id");
         let updated_at: SystemTime = row.get("updated_at");
@@ -245,6 +247,7 @@ impl PostcodeIndex {
             postcode: row.get("postcode"),
             place_name: row.get("place_name"),
             admin1_code: row.get("admin1_code"),
+            admin1_name: row.get("admin1_name"),
             latitude: row.get("latitude"),
             longitude: row.get("longitude"),
             accuracy: row.get("accuracy"),
