@@ -358,15 +358,15 @@ pub(super) fn detail(state: &detail::Detail, editor: bool) -> Result<String> {
         )?);
     }
     let title = fragment(&Title {
-        name: fragment(&editor_field("name", "query-name-input", &state.draft.name, "Untitled Query", "bg-transparent text-xl font-bold text-ink border-0 border-b border-transparent hover:border-high-contrast-line focus:border-brand-strong focus:ring-0 px-1 py-0.5"))?,
+        name: fragment(&editor_field("name", "query-name-input", &state.draft.name, "Untitled Query", "bg-transparent text-xl font-bold text-ink border-0 border-b border-transparent hover:border-high-contrast-line focus:border-brand-strong focus:ring-0 px-1 py-0.5").aria_label("Query name"))?,
         dirty: state.dirty,
     })?;
     let description = fragment(&DescriptionForm { description: fragment(&editor_field(
         "description", "query-description-input", &state.draft.description, "Add a description...",
         "w-full bg-transparent text-sm text-ink-subtle border-0 border-b border-transparent hover:border-high-contrast-line focus:border-brand-strong focus:ring-0 px-1 py-0.5",
-    ))? })?;
-    let prompt = editor_field("prompt", "query-prompt-textarea", &state.draft.prompt, "Describe the data or query in natural language...", "block w-full rounded-md border border-line bg-surface px-3 py-1.5 text-sm text-ink placeholder:text-ink-faint focus:border-brand-strong focus:outline-none focus:ring-1 focus:ring-brand-strong/30").kind(InputKind::Textarea).attr("rows", "2");
-    let sql = editor_field("sql_query", "query-sql-textarea", &state.draft.sql_query, "SELECT * FROM users WHERE id = :id LIMIT 25;", "block w-full rounded-md border border-line bg-surface-sunken font-mono text-xs text-ink px-3 py-1.5 placeholder:text-ink-faint focus:border-brand-strong focus:outline-none focus:ring-1 focus:ring-brand-strong/30").kind(InputKind::Textarea).attr("rows", "5");
+    ).aria_label("Query description"))? })?;
+    let prompt = editor_field("prompt", "query-prompt-textarea", &state.draft.prompt, "Describe the data or query in natural language...", "block w-full rounded-md border border-line bg-surface px-3 py-1.5 text-sm text-ink placeholder:text-ink-faint focus:border-brand-strong focus:outline-none focus:ring-1 focus:ring-brand-strong/30").kind(InputKind::Textarea).attr("rows", "2").aria_label("Prompt");
+    let sql = editor_field("sql_query", "query-sql-textarea", &state.draft.sql_query, "SELECT * FROM users WHERE id = :id LIMIT 25;", "block w-full rounded-md border border-line bg-surface-sunken font-mono text-xs text-ink px-3 py-1.5 placeholder:text-ink-faint focus:border-brand-strong focus:outline-none focus:ring-1 focus:ring-brand-strong/30").kind(InputKind::Textarea).attr("rows", "5").aria_label("SQL query");
     let parameters = state.detected.iter().map(|key| fragment(&Field::in_form("parameters", key)
         .id(format!("param-input-{key}")).label(format!(":{key}")).label_class("block text-xs font-mono text-ink mb-1")
         .wrapper_class("mb-0").placeholder(format!("Value for :{key}"))
