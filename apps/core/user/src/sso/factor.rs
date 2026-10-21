@@ -145,9 +145,9 @@ impl Provider for Factor {
             let mut changes = Vec::new();
             for row in sql.query("UPDATE user_identity_flows SET state='revoked',sealed_request='{}' WHERE tenant_id=$1 AND user_id=$2 AND state IN ('pending','processing') RETURNING id",&[&tenant,&user]).await? {changes.push(change("user.identity_flow",row.get(0),json!({"state":"pending"}),json!({"state":"revoked"})));}
             for row in sql.query("DELETE FROM user_identity_proofs WHERE tenant_id=$1 AND user_id=$2 RETURNING id",&[&tenant,&user]).await?{changes.push(change("user.identity_proof",row.get(0),json!({"available":true}),json!(null)));}
-            for row in sql.query("DELETE FROM user_external_sessions WHERE tenant_id=$1 AND user_id=$2 RETURNING id",&[&tenant,&user]).await?{changes.push(change("user.external_session",row.get(0),json!({"active":true}),json!(null)));}
             for row in sql.query("DELETE FROM user_identity_challenges WHERE tenant_id=$1 AND user_id=$2 RETURNING id",&[&tenant,&user]).await?{changes.push(change("user.identity_challenge",row.get(0),json!({"pending":true}),json!(null)));}
             if matches!(event, Lifecycle::Delete) {
+                for row in sql.query("DELETE FROM user_external_sessions WHERE tenant_id=$1 AND user_id=$2 RETURNING id",&[&tenant,&user]).await?{changes.push(change("user.external_session",row.get(0),json!({"active":true}),json!(null)));}
                 changes.extend(
                     self.0
                         .sso_grants
