@@ -62,7 +62,7 @@ Two system users share the work, so the program that serves pages can never rewr
 | `bilibi` | the service `bilibi@<instance>` | `data/`, and `incoming/` together with `bilibi-build`; it can read `releases/` and `env` |
 | `bilibi-build` | the installer `bilibi-installer@<instance>`: put releases into service | `releases/`, `backups/`, `/opt/bilibi/build`, and `incoming/` with `bilibi`; it may start, stop and restart `bilibi@*` and reload Caddy through sudo, nothing else |
 
-Two systemd unit templates serve every instance: `bilibi@<instance>` runs `current/bilibi-web run` as `bilibi`, reads `env`, restarts after a crash and permits writes under `data/` and `incoming/`. `bilibi-installer@<instance>` runs `/opt/bilibi/build/bin/bilibi-installer` as `bilibi-build` and carries out install and undo jobs from Software. Servers have no build worker or toolchain requirement. Build releases locally or use the setup template’s GitHub Actions.
+Two systemd unit templates serve every instance: `bilibi@<instance>` runs `current/bilibi-web run` as `bilibi`, reads `env`, restarts after a crash and permits writes under `data/` and `incoming/`. `bilibi-installer@<instance>` runs `/opt/bilibi/build/bin/bilibi-installer` as `bilibi-build` and carries out install and undo jobs from Software. Servers have no build worker or toolchain requirement. Build releases locally or through your application repository’s GitHub Actions; see [application workspaces](application-workspaces.md).
 
 Each instance has its own PostgreSQL role and database (`bilibi_production`, `bilibi_dev`) on the server's PostgreSQL 18 cluster, with a generated password kept only in `env`. Dev cannot read Production's data.
 
@@ -80,7 +80,7 @@ The role comes from **`instance.role` in the settings table**. The explicit inst
 | Staging | `staging` | Test a release before Production | On |
 | Production | `production` | Run the tested release | On |
 
-Builds run in a development checkout or in the setup template’s GitHub Actions. The role identifies the instance; it never enables a server build.
+Builds run in a development workspace or in your application repository’s GitHub Actions. The role identifies the instance; it never enables a server build.
 
 Click the role in the status bar to open **Instance settings** (`/system/instance`). A Core Administrator in the platform-operator organisation can change the role, name and colour. Every role change needs a fresh 2FA code, even on Dev, and is audited. The page warns before moving to or from Production: this changes warnings and 2FA rules without moving any data. Other accounts cannot change the role.
 
@@ -99,7 +99,7 @@ In code, `bilibi_base::system::Instance::resolve` returns the role, label and co
 
 **Dev and Production on two machines** use the same release archive from GitHub or a saved upload. Each instance keeps its own local release numbers, database and backup. No instance serves release files to another.
 
-**Install from GitHub**: on Software › Releases, name the setup repository (for example BelimbingApp/bilibi-setup-template), save a read-only token only when the repository is private, and accept the repository. That asks for your 2FA code. Then review one setup file for this server. The server downloads that file, checks it, backs up, switches and can switch back or Undo, the same way as an upload. Uploading a file still works when you do not want GitHub to supply the release.
+**Install from GitHub**: on Software › Releases, name your application repository (for example your-org/your-bilibi), save a read-only token only when the repository is private, and accept the repository. That asks for your 2FA code. Then review one setup file for this server. The server downloads that file, checks it, backs up, switches and can switch back or Undo, the same way as an upload. Uploading a file still works when you do not want GitHub to supply the release.
 
 Staging is optional. When used, install and check the exact GitHub asset there first, then review a separate Production install of that asset with fresh 2FA. See [Staging and Production](../apps/base/software/README.md#staging-and-production) for the agent report and identity checks.
 
@@ -227,7 +227,11 @@ The page is rendered once per instance from `scripts/waiting-page.html` into `si
 
 [ADR 02](architecture/decisions/02-build-in-development-keep-everything-in-step.md) records why builds stay in development, servers only install tested releases, and official software is kept in step.
 
-A local Bilibi checkout and a coding agent are the operator’s build tools. Find a Domain or Extension in Software or through MCP, read which release accepts this server and which commits CI recorded as tested together, then follow its `local_steps` in that checkout. For example:
+**Prepare application releases from the outer application repository.** Create it from your trial with `./bilibi new <name>`. Commit and push component changes in their own repositories, run `./bilibi pin`, then review and commit the saved recipe and composition together. Run `./bilibi check` with a separate empty disposable database, then `./bilibi build`. The pinned builder restores the saved lock and verifies the exact source selection; the application's README describes publication. See [application workspaces](application-workspaces.md) for the directory layout and migration.
+
+### Focused component builds
+
+Direct Platform and component clones remain supported for focused contributions. A local Bilibi checkout and an optional coding agent are the operator’s build tools. Find a Domain or Extension in Software or through MCP, read which release accepts this server and which commits CI recorded as tested together, then follow its `local_steps` in that checkout. For example:
 
 ```sh
 ./bilibi add finance --kind domains --source https://github.com/BelimbingApp/bilibi-dom-finance --commit <recommended-commit>
@@ -250,7 +254,7 @@ cp target/release/bilibi-web .local/composition/manifest.txt .local/composition/
 tar -C /path/to/release -czf /path/to/release.tar.gz bilibi-web SHA256SUMS manifest.txt Cargo.lock
 ```
 
-Upload that archive on **Software › Releases** and review the install. To build and publish complete setup assets on GitHub, use the public [setup template](https://github.com/BelimbingApp/bilibi-setup-template). Install the same published asset on Staging and Production with separate reviews and fresh 2FA. Backup, automatic switch-back, audit and Undo use the same path for GitHub and upload.
+Upload that archive on **Software › Releases** and review the install. To build and publish complete assets on GitHub, create your application with `./bilibi new <name>` and use its release workflow; see [application workspaces](application-workspaces.md). Install the same published asset on Staging and Production with separate reviews and fresh 2FA. Backup, automatic switch-back, audit and Undo use the same path for GitHub and upload.
 
 A folder prepared this way has no `release.json`. An uploaded file's review therefore warns that its change list is known only once the installer reads the program. The installer records the pinned composition and changes in the job's result.
 

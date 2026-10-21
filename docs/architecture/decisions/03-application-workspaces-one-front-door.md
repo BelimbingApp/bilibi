@@ -1,7 +1,7 @@
 # ADR 03: Application workspaces: one front door
 
 **Document Type:** Architecture Decision Record
-**Status:** Accepted direction; Platform step 0 implemented (`start`, `setup`, `add`, `status` and the direct-Platform commit safeguard). `new` and application workspaces remain planned.
+**Status:** Accepted; implemented across Platform and the application starting point.
 **Agents:** codex/gpt-6 (author)
 **Scope:** Trying Bilibi, creating an application repository, owning source changes and recording a reproducible composition
 **Last Updated:** 2026-10-21
@@ -18,7 +18,7 @@
 
 ### Trial to application
 
-**Clone once to try; create an application repository when you want to keep your own composition.** Steps 1–2 work in a Platform clone; steps 3–4 remain planned:
+**Clone once to try; create an application repository when you want to keep your own composition.** Steps 1–3 start in a Platform clone; step 4 uses the resulting application repository:
 
 1. Clone `https://github.com/BelimbingApp/bilibi`, enter the clone and run `./bilibi start`. No GitHub account or template step is needed.
 2. To try an official Domain, run `./bilibi add <domain>` in that clone, then `./bilibi start` again. Extensions use the same `add` command and their existing mount location.
@@ -35,7 +35,7 @@ The setup template supplies content to `new`; it is no longer a user-facing star
 
 **Run commands from the Platform clone root or the outer application root, as shown below.** A component repository remains the place to commit that component's changes.
 
-| Planned command | Platform root | Application root |
+| Command | Platform root | Application root |
 | --- | --- | --- |
 | `./bilibi start` | Check prerequisites, run missing setup, start local sources with the development seed | Same, using editable sources |
 | `./bilibi add <component>` | Verify the commit safeguard, then mount an official Domain or Extension | Same, inside `sources/platform/` |
@@ -84,4 +84,6 @@ Local startup permits branches and uncommitted edits. It must report those diffe
 
 ## Current implementation
 
-**Platform step 0 is implemented.** The root `./bilibi` provides `start`, `setup`, `add` and `status` over the existing scripts and discovery. Setup, agent setup and `add` install or verify the repository-local Platform safeguard. The README quick start and Software install command use this entry point. `new`, application repositories, template changes and workspace migration remain planned; `new`, `check`, `pin` and `build` currently print the next step instead of performing application work.
+**The common entry point and application workspace are implemented.** Platform supplies `start`, `setup`, `add`, `status` and `new`; the [application starting point](https://github.com/BelimbingApp/bilibi-setup-template) supplies the application wrapper, independent editable sources, saved recipes, commit safeguards and strict release commands. `new` pins the starting point revision, independently fetches every selected source and validates the trial's resolved lock before saving it. `check`, `pin` and `build` in Platform explain how to create an application.
+
+[Application workspaces](../../application-workspaces.md) documents Git ownership, deliberate tooling updates, parallel migration, manual adoption of ordinary clones and rollback. Setup never adopts or relocates an existing checkout automatically. Runtime data retains its existing paths; output conflicts require a deliberate preserved move. Server delivery remains under ADR 02.

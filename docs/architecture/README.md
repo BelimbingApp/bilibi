@@ -121,7 +121,7 @@ Each Domain and each Extension lives in its own repository, with one or more mod
 - A Domain is its own repository, `BelimbingApp/bilibi-dom-<id>`, cloned to `apps/domains/<name>`. Extensions use `bilibi-ext-<id>` under `apps/extensions`.
 - It is a nested checkout: not a submodule and not a symlink.
 - The repository root has `bilibi.container.toml` and one folder per module. Each module is a crate named `bilibi-<name>-<module>`.
-- A company build pins its composition with `scripts/discover-modules.py --pin` and rebuilds it with `--restore`.
+- An application saves its recipe and composition with `./bilibi pin` in the outer repository. Create it from a trial with `./bilibi new <name>`; see [application workspaces](../application-workspaces.md). Platform discovery still supplies `--pin` and `--restore` to application tooling and component CI.
 - Domain CI is `docs/domain-ci/ci.yml` and `scripts/domain-ci.sh`.
 
 > [!TIP]

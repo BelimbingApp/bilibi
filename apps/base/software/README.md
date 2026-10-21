@@ -1,6 +1,6 @@
 # Base Software
 
-`base/software` shows what this server runs, helps you find more modules, and installs tested updates with a database backup and undo. Build software in your local Bilibi checkout with a coding agent; servers never build it. No Bilimbi counterpart.
+`base/software` shows what this server runs, helps you find more modules, and installs tested updates with a database backup and undo. Build releases in your application workspace, with or without a coding agent; servers never build them. No Bilimbi counterpart.
 
 ## Add a Domain
 
@@ -128,11 +128,11 @@ Before a database update committed, a restarted install ends interrupted and res
 
 Install a published GitHub asset or upload a saved archive. Both paths use the same installer checks, backup, switch-back and Undo.
 
-A gzip-compressed tar carries `bilibi-web`, `SHA256SUMS` and optionally `manifest.txt`, `Cargo.lock`, `release.json`, `bundle.json` and `plugins/`. The public [setup template](https://github.com/BelimbingApp/bilibi-setup-template) builds and packages the complete composition on GitHub. A local build can use the archive commands in [server installation](../../../docs/server-install.md). Archive parsing, safe paths and compatibility checks live in private `src/transport.rs`.
+A gzip-compressed tar carries `bilibi-web`, `SHA256SUMS` and optionally `manifest.txt`, `Cargo.lock`, `release.json`, `bundle.json` and `plugins/`. The application repository created by `./bilibi new <name>` builds and packages the complete composition on GitHub; see [application workspaces](../../../docs/application-workspaces.md). A local build can use the archive commands in [server installation](../../../docs/server-install.md). Archive parsing, safe paths and compatibility checks live in private `src/transport.rs`.
 
 ### Install from GitHub
 
-Name one repository on **Software › Releases**, as owner/name, for example BelimbingApp/bilibi-setup-template. A public repository needs no token, but GitHub then allows only 60 calls an hour from a server's address, and each install review uses about three. A token raises that to 5,000 an hour. A private repository needs a fine-grained token that can only read that repository. The token is stored encrypted and never shown again. Changing or clearing it asks for your 2FA code, including in the settings editor.
+Name one repository on **Software › Releases**, as owner/name, for example your-org/your-bilibi. A public repository needs no token, but GitHub then allows only 60 calls an hour from a server's address, and each install review uses about three. A token raises that to 5,000 an hour. A private repository needs a fine-grained token that can only read that repository. The token is stored encrypted and never shown again. Changing or clearing it asks for your 2FA code, including in the settings editor.
 
 The first time you save a repository, Bilibi asks GitHub for its number and remembers that number only when you choose **Accept this repository**. That also asks for your 2FA code. If GitHub later reports a different number for the same name, installs stop until you accept the new number. Bilibi does not replace a remembered number by itself.
 

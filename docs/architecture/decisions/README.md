@@ -47,4 +47,4 @@ Every record carries these header lines: Document Type, Status, Agents, Scope, L
 | Record | Status |
 | --- | --- |
 | [02 Build in development and keep everything in step](./02-build-in-development-keep-everything-in-step.md) | Accepted |
-| [03 Application workspaces: one front door](./03-application-workspaces-one-front-door.md) | Accepted direction; Platform step 0 implemented, application workspaces planned |
+| [03 Application workspaces: one front door](./03-application-workspaces-one-front-door.md) | Accepted; implemented |

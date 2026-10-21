@@ -78,10 +78,10 @@ Run commands from the clone's root. Local branches, staged files and uncommitted
 | `./bilibi setup` | Run the repeatable setup and install the commit safeguard without starting the app |
 | `./bilibi add <component>` | Install or verify the safeguard, then mount an official Domain or Extension from `catalogue.json`, or at the `--kind`, `--source` and `--commit` that Software shows |
 | `./bilibi status` | Show each component's path, branch, commit and local changes |
-| `./bilibi new <name>` | Planned next step for keeping your composition in your own application repository; currently prints this guidance |
-| `./bilibi check`, `pin`, `build` | Require that future application repository; currently refuse and point to `new` |
+| `./bilibi new <name>` | Keep this source composition in a separate sibling application repository |
+| `./bilibi check`, `pin`, `build` | Require an application repository; create one with `new` |
 
-The application workspace is being delivered in stages; see [ADR 03](docs/architecture/decisions/03-application-workspaces-one-front-door.md). `scripts/setup.sh` and `scripts/start-app.sh` remain available directly. Direct setup also installs the safeguard; after installing tools directly, load `$HOME/.cargo/env` before using the direct launcher.
+The [application workspace guide](docs/application-workspaces.md) covers the next step, Git ownership and migration; [ADR 03](docs/architecture/decisions/03-application-workspaces-one-front-door.md) records the decision. `scripts/setup.sh` and `scripts/start-app.sh` remain available directly. Direct setup also installs the safeguard; after installing tools directly, load `$HOME/.cargo/env` before using the direct launcher.
 
 ### Commit safeguard
 
@@ -92,6 +92,12 @@ Installation is local to this repository and safe to repeat. An existing executa
 For an unsafe hook location, create an untracked directory inside this checkout (for example `.local/hooks`), copy your existing hooks into it, then deliberately set `git config --local core.hooksPath .local/hooks` and run `python3 scripts/install-platform-hook.py`. Keep any existing backup for inspection; do not overwrite it. If your project tracks hooks, keep its originals and use this local copy for chaining. Do not point the local setting at a shared directory.
 
 A rejected commit names its repository and offending file. Unstage the mounted composition files (or stage their unmounted form), commit Domain or Extension edits in their own repositories, and follow the [unmount instructions](apps/domains/AGENTS.md) before preparing Platform composition changes. Do not hide generated changes with index flags.
+
+### Keep your own application
+
+Run `./bilibi new my-bilibi` from the Platform root, then `cd ../my-bilibi && ./bilibi start`. It creates your own application repository from the current Platform, Domains and Extensions. Commit and push source changes first; the command refuses unpublished commits and occupied destinations. Generated composition changes may stay local.
+
+The application saves source URLs, exact commits and the resolved dependency lock. Its sources are independent clones under `sources/platform/`; the trial's database, media, configuration and keys stay untouched. You can also keep a Platform-only application. See [application workspaces](docs/application-workspaces.md) for Git ownership, releases, existing-checkout migration and rollback.
 
 ### Local launcher
 

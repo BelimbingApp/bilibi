@@ -75,6 +75,14 @@ To record the pair as tested before the next Platform release, run `Domains on t
 
 **Fixing a tag.** A tag is a promise other people build from. If a release is wrong, release the next number instead of moving the tag.
 
+## Application releases
+
+**Keep your application's saved composition in its own repository.** After trying a Platform clone, run `./bilibi new <name>` to create it. Domains and Extensions are optional. The [workspace guide](application-workspaces.md) explains Git ownership and migration; direct Platform, Domain and Extension clones remain supported for focused contributions.
+
+In the application root, commit and push component changes in their owning repositories, run `./bilibi pin`, then review and commit `setup.toml`, `composition/manifest.txt` and `composition/Cargo.lock` together. The application's `./bilibi check` and `./bilibi build` use its pinned builder, independently fetchable commits and saved lock. They refuse dirty source inputs outside generated composition; they do not resolve an unlocked replacement lock. Checks need their own empty disposable database.
+
+Follow the generated application's README and release workflow to publish its verified archive. Validate it on Staging and promote that same archive to Production under ADR 02. This does not replace the Platform release workflow above or the server installer's backup and rollback rules.
+
 ## Upgrade notes for agents
 
 Every pull request has a heading `Upgrade notes for agents`. Say what a Domain or Extension owner must change, and the exact steps for their agent. Write `None` when nothing of theirs changes. The pull request template carries the heading. `python3 scripts/release.py require-notes` refuses a pull request that leaves it empty, and the Upgrade notes workflow runs that on every pull request and again when its body is edited.

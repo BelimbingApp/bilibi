@@ -2,7 +2,7 @@
 """Platform clone add/status plumbing; no Bilimbi module counterpart.
 
 Mount conventions and validation belong to discover-modules.py. Application
-recipes and `new` are later work under ADR 03.
+recipes belong to the application starting point; new-application.py creates them (ADR 03).
 """
 import argparse
 import importlib.util
@@ -41,8 +41,7 @@ def status():
         changes = git(folder, 'status', '--short')
         print(changes or '  No local changes.', flush=True)
     print('\nNo saved application recipe exists in this Platform clone.\n'
-          'Next: ./bilibi new <name> will keep your composition in its own application repository '
-          '(planned; not available yet).', flush=True)
+          'Next: ./bilibi new <name> keeps your source composition in its own application repository.', flush=True)
 
 
 OFFICIAL = re.compile(r'https://github\.com/BelimbingApp/[A-Za-z0-9][A-Za-z0-9_.-]*(?:\.git)?')
