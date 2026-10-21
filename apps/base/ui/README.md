@@ -49,6 +49,12 @@ Use `InlineForm` when a read-first table cell needs a complete form, including s
 
 Source: [`src/inline.rs`](src/inline.rs), [`templates/inline.html`](templates/inline.html), and the `InlineForm` hook in [`assets/hooks.js`](assets/hooks.js). The Design Library includes reading and refused-editor states; `/system/settings` exercises the live lifecycle.
 
+## 2FA proof input
+
+Use `ProofInput` inside a protected form's `StepUp` component. Build `ProofMethod` values from the holder's live enrolled methods, including each method's code length and numeric flag. It retains `CodeInput` for one method and adds a shared selector when there are several. The `FactorProof` hook posts the chosen method and code as `method_id:code` in the existing code field, so the owner's event schema stays unchanged. Neither selecting nor rendering a method sends a challenge. The owner still calls `require` or `require_code`.
+
+The specimen at `/assets/ui-components.html#specimen-factor-proof` shows six-digit and eight-character methods. The [Step-up provider contract](../step_up/README.md#provider) owns registration, challenge starts and verification.
+
 ## Where to go next
 
 See [`base/system`](../system/README.md) for Banner colour on Instance settings.

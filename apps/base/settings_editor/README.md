@@ -10,7 +10,7 @@ Settings appear in the shared `FlexTable`, with Setting, Value and Area columns.
 - The Settings scope filter sits to the right of search in the shared toolbar, wrapping below it on narrow screens.
 - Click a heading to sort; click again to reverse. `ListState` keeps search, sort, company and pagination in the URL.
 - Click a Value cell to open only its editor. Save or Enter saves; Cancel or Escape discards the draft. A successful save returns to reading. Validation and 2FA refusals stay beside the value.
-- Protected values use the shared `StepUp` form, with setup guidance before enrollment and an inline authenticator code afterwards.
+- Protected values use the shared `StepUp` form, with setup guidance before enrollment and an inline `ProofInput` method choice and code afterwards.
 
 ## Fields
 
@@ -22,7 +22,7 @@ Values are read with `Settings::resolve_masked`, so an encrypted value is never 
 
 Route access is `OperatorCapability(base.settings.global.manage)`. Every Save and Restore re-asks `authorize_operator` (logged) and rebuilds the field plan from live grants before acting; a refusal flashes and redraws, it never clears the page. A Save is planned in full, then applied in one `MutationTransaction` (shared mutation audit): a blank clears this scope's override, the mask keeps a secret, and a value equal to what the field already shows is not written. That last rule is a deliberate difference from Bilimbi, whose Save pins every submitted value, including inherited defaults and every checkbox, as an override. Messages say what happened ("1 setting updated, 1 override cleared."). Restore confirms through the shared dialog, which counts every changed setting in the current scope, including rows hidden by search or on other pages, and deletes only those that are still overridden. Changing the scope to Global from the URL or Back drops a pending restore.
 
-A setting that a Base Step-up operation guards (`Operation::guards_setting`, declared `.always()`; for example the Software GitHub read token, `base.software.github_token.change`) asks for the holder's authenticator code every time before Save or Restore touches it. The row asks for a code and keeps a refused save open; while viewing as someone else it says the setting cannot be changed instead. Restore uses the host confirmation page. Other fields ask for nothing.
+A setting that a Base Step-up operation guards (`Operation::guards_setting`, declared `.always()`; for example the Software GitHub read token, `base.software.github_token.change`) asks for the holder's 2FA code every time before Save or Restore touches it. The row asks for a code and keeps a refused save open; while viewing as someone else it says the setting cannot be changed instead. Restore uses the host confirmation page. Other fields ask for nothing.
 
 ## Stored-secret reveal
 

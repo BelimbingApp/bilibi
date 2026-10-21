@@ -344,7 +344,7 @@ impl Scope {
     /// empty or oversized value attaches nothing.
     pub fn presenting_step_up(mut self, code: &str) -> Self {
         let code = code.trim();
-        self.step_up = (!code.is_empty() && code.len() <= 64).then(|| {
+        self.step_up = (!code.is_empty() && code.len() <= 256).then(|| {
             Box::new(PresentedCode {
                 value: code.to_owned(),
                 accepted: std::sync::Arc::default(),

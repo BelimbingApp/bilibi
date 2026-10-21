@@ -8,16 +8,16 @@ use crate::{
     policy::{self, Mode},
 };
 use bilibi_audit::{record_action, Attribution};
-use bilibi_database::{Db, Error, MutationTransaction, Result};
+use bilibi_database::{Change, Db, Error, MutationTransaction, Result};
 use bilibi_module_registry::Catalog;
 use bilibi_settings::{Settings, Target};
-use bilibi_tenancy::{Channel, ProofFuture, Scope};
+use bilibi_tenancy::{Channel, ProofClient, ProofFuture, Scope};
 use serde_json::{json, Map, Value};
 use std::{
     collections::BTreeMap,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, OnceLock,
+        Arc, OnceLock, RwLock,
     },
 };
 
@@ -54,7 +54,7 @@ pub enum SessionProof {
     },
     /// A check within `seconds` that no "ask every time" action used yet;
     /// using it spends it.
-    Fresh { seconds: i64 },
+    Fresh { seconds: i64, consume: bool },
 }
 
 /// What a window looked like when asked.
@@ -79,23 +79,112 @@ impl WindowState {
     }
 }
 
-/// The second factor behind the contract (Core User's authenticator).
-/// Every answer is about the scope's own account holder: never an operator
-/// behind an impersonated session, never an agent.
+/// A trusted account within the caller's tenant. Constructed by StepUp from
+/// a sealed scope or the owning mutation's context, never from request tenant IDs.
+#[derive(Clone, Copy)]
+pub struct FactorAccount {
+    tenant: i64,
+    user: i64,
+}
+impl FactorAccount {
+    pub fn tenant(self) -> i64 {
+        self.tenant
+    }
+    pub fn user(self) -> i64 {
+        self.user
+    }
+}
+
+/// Account-wide factor cleanup. Revocation clears pending challenges/proofs,
+/// while reset and deletion also remove enrollment (including pending setup).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Lifecycle {
+    Revoke,
+    Reset,
+    Delete,
+}
+
+/// A method's stable identity and human-facing label. IDs must be namespaced
+/// (`core.user.authenticator`, for example); registration rejects duplicates.
+#[derive(Clone, Copy)]
+pub struct Method {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub code_length: usize,
+    pub numeric: bool,
+}
+impl Method {
+    pub const fn new(id: &'static str, label: &'static str) -> Self {
+        Self {
+            id,
+            label,
+            code_length: 6,
+            numeric: true,
+        }
+    }
+    pub const fn code(mut self, length: usize, numeric: bool) -> Self {
+        self.code_length = length;
+        self.numeric = numeric;
+        self
+    }
+}
+
+/// Live, read-only presentation of one method. Neither destination starts a
+/// challenge: sending/delivering must require an explicit user action.
+pub struct MethodChoice {
+    pub method: Method,
+    pub enrolled: bool,
+    pub prompt: String,
+    pub setup: String,
+}
+
+/// A challenge start result. A provider owns delivery, rate limits and durable
+/// challenge state. Destinations must already be masked; never return a secret.
+pub struct Challenge {
+    pub availability: Availability,
+    pub masked_destination: Option<String>,
+    pub retry_after_seconds: Option<u64>,
+}
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Availability {
+    Ready,
+    Unavailable,
+    RetryLater,
+}
+
+/// No Bilimbi counterpart. Each second-factor owner registers independently.
+/// Reads must have no side effects. All lifecycle writes use the supplied SQL
+/// transaction and return every affected record, without committing or fan-out.
 pub trait Provider: Send + Sync {
-    fn enrolled<'a>(&'a self, scope: &'a Scope) -> ProofFuture<'a, bool>;
-    fn session<'a>(&'a self, scope: &'a Scope, proof: SessionProof)
-        -> ProofFuture<'a, WindowState>;
-    /// Verifies and uses a code in one step: a code is spent once, on this
-    /// purpose, whatever happens to the operation afterwards.
+    fn enrolled<'a>(
+        &'a self,
+        sql: &'a dyn ProofClient,
+        account: FactorAccount,
+    ) -> ProofFuture<'a, bool>;
+    fn start<'a>(&'a self, scope: &'a Scope, purpose: Purpose<'a>) -> ProofFuture<'a, Challenge>;
     fn spend<'a>(
         &'a self,
         scope: &'a Scope,
         code: &'a str,
         purpose: Purpose<'a>,
     ) -> ProofFuture<'a, Spent>;
-    /// Where a browser checks in (or enrolls first) and returns to `back`.
     fn prompt<'a>(&'a self, scope: &'a Scope, back: &'a str) -> ProofFuture<'a, String>;
+    fn setup<'a>(&'a self, scope: &'a Scope, back: &'a str) -> ProofFuture<'a, String>;
+    fn lifecycle<'a>(
+        &'a self,
+        sql: &'a tokio_postgres::Transaction<'_>,
+        account: FactorAccount,
+        event: Lifecycle,
+    ) -> ProofFuture<'a, Vec<Change>>;
+}
+
+/// The identity/session owner binds shared browser proof separately from
+/// factors. A method need not reimplement the installation's session storage.
+pub trait SessionProvider: Send + Sync {
+    /// Neutral method choice destination supplied by the browser identity owner.
+    fn prompt<'a>(&'a self, scope: &'a Scope, back: &'a str) -> ProofFuture<'a, String>;
+    fn session<'a>(&'a self, scope: &'a Scope, proof: SessionProof)
+        -> ProofFuture<'a, WindowState>;
 }
 
 /// One declared operation with its owner module.
@@ -131,11 +220,14 @@ pub trait Enforcement: Send + Sync {
     fn enforced(&self) -> ProofFuture<'_, bool>;
 }
 
+type Registered = (Method, Arc<dyn Provider>);
+
 pub struct StepUp {
     db: Db,
     settings: Arc<Settings>,
     operations: BTreeMap<&'static str, Declared>,
-    provider: OnceLock<Arc<dyn Provider>>,
+    providers: RwLock<BTreeMap<&'static str, Registered>>,
+    session_provider: OnceLock<Arc<dyn SessionProvider>>,
     enforcement: OnceLock<Arc<dyn Enforcement>>,
     /// Turned off only by a fixture binary that has no authenticator.
     enforced: AtomicBool,
@@ -168,16 +260,202 @@ impl StepUp {
             db,
             settings,
             operations,
-            provider: OnceLock::new(),
+            providers: RwLock::new(BTreeMap::new()),
+            session_provider: OnceLock::new(),
             enforcement: OnceLock::new(),
             enforced: AtomicBool::new(true),
         })
     }
-    /// The second-factor owner binds itself once at boot.
-    pub fn bind(&self, provider: Arc<dyn Provider>) -> bilibi_module_registry::Result<()> {
-        self.provider.set(provider).map_err(|_| {
-            bilibi_module_registry::RegistryError::Service("duplicate step-up provider".into())
+    /// Register during service installation. Ordering is by stable method ID;
+    /// duplicate IDs refuse boot rather than silently choosing a winner.
+    pub fn register(
+        &self,
+        method: Method,
+        provider: Arc<dyn Provider>,
+    ) -> bilibi_module_registry::Result<()> {
+        let mut providers = self.providers.write().map_err(|_| {
+            bilibi_module_registry::RegistryError::Service("step-up registry poisoned".into())
+        })?;
+        if !(1..=64).contains(&method.code_length)
+            || method.id.is_empty()
+            || method.id.len() > 120
+            || !method.id.contains('.')
+            || !method
+                .id
+                .bytes()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || b"._-".contains(&c))
+            || method.label.trim().is_empty()
+            || method.label.len() > 120
+            || method.label.chars().any(char::is_control)
+            || providers.contains_key(method.id)
+        {
+            return Err(bilibi_module_registry::RegistryError::Service(format!(
+                "invalid or duplicate step-up method: {}",
+                method.id
+            )));
+        }
+        providers.insert(method.id, (method, provider));
+        Ok(())
+    }
+    pub fn bind_session(
+        &self,
+        provider: Arc<dyn SessionProvider>,
+    ) -> bilibi_module_registry::Result<()> {
+        self.session_provider.set(provider).map_err(|_| {
+            bilibi_module_registry::RegistryError::Service(
+                "duplicate step-up session provider".into(),
+            )
         })
+    }
+    fn providers(&self) -> Result<Vec<Registered>> {
+        Ok(self
+            .providers
+            .read()
+            .map_err(|_| Error::Internal)?
+            .values()
+            .cloned()
+            .collect())
+    }
+    /// Enrollment is read in the owner's transaction (including another
+    /// account's reset). The tenant comes only from that transaction's context.
+    pub async fn account_enrolled(&self, tx: &MutationTransaction<'_>, user: i64) -> Result<bool> {
+        self.enrolled_in(
+            tx.sql(),
+            FactorAccount {
+                tenant: tx.context().tenant,
+                user,
+            },
+        )
+        .await
+    }
+    async fn enrolled_in(&self, sql: &dyn ProofClient, account: FactorAccount) -> Result<bool> {
+        if account.user <= 0 {
+            return Err(Error::Invalid);
+        }
+        for (_, provider) in self.providers()? {
+            if provider.enrolled(sql, account).await? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+    /// Read another account in the scope's tenant, using the caller's read
+    /// connection (including an operation preview's read-only transaction).
+    pub async fn enrolled_for(
+        &self,
+        sql: &dyn ProofClient,
+        scope: &Scope,
+        user: i64,
+    ) -> Result<bool> {
+        self.enrolled_in(
+            sql,
+            FactorAccount {
+                tenant: scope.tenant(),
+                user,
+            },
+        )
+        .await
+    }
+    /// Fan out in deterministic order inside the owner's mutation boundary.
+    /// A marker lets mutate poison failures/cancellation even for a no-op hook.
+    pub async fn lifecycle(
+        &self,
+        tx: &mut MutationTransaction<'_>,
+        user: i64,
+        event: Lifecycle,
+    ) -> Result<()> {
+        if user <= 0 {
+            return Err(Error::Invalid);
+        }
+        let account = FactorAccount {
+            tenant: tx.context().tenant,
+            user,
+        };
+        let providers = self.providers()?;
+        tx.mutate(move |sql| {
+            Box::pin(async move {
+                let mut changes = Vec::new();
+                for (_, provider) in providers {
+                    changes.extend(provider.lifecycle(sql, account, event).await?);
+                }
+                changes.push(Change {
+                    kind: "step_up_lifecycle".into(),
+                    id: user,
+                    old: json!({}),
+                    new: json!({"event": format!("{event:?}").to_lowercase()}),
+                });
+                Ok(((), changes))
+            })
+        })
+        .await
+    }
+    /// Read-only destinations and enrollment, refreshed on every call.
+    pub async fn methods(&self, scope: &Scope, back: &str) -> Result<Vec<MethodChoice>> {
+        let account = FactorAccount {
+            tenant: scope.tenant(),
+            user: scope.user(),
+        };
+        let mut choices = Vec::new();
+        for (method, provider) in self.providers()? {
+            // Destinations may read through their owner's facade. Release the
+            // enrollment connection before asking for them, even with a small pool.
+            let enrolled = {
+                let client = self.db.get().await?;
+                provider.enrolled(&**client, account).await?
+            };
+            let prompt = provider.prompt(scope, back).await?;
+            let setup = provider.setup(scope, back).await?;
+            if !local_destination(&prompt) || !local_destination(&setup) {
+                return Err(Error::Invalid);
+            }
+            choices.push(MethodChoice {
+                method,
+                enrolled,
+                prompt,
+                setup,
+            });
+        }
+        Ok(choices)
+    }
+    /// Explicit delivery/start, never called by presentation checks. The
+    /// provider must bind any delivered code to this exact purpose and holder.
+    pub async fn start(
+        &self,
+        scope: &Scope,
+        method: &str,
+        purpose: Purpose<'_>,
+    ) -> Result<Challenge> {
+        if scope.impersonator().is_some()
+            || purpose.channel != scope.channel()
+            || self.declared(purpose.operation).is_none()
+        {
+            return Err(Error::Forbidden);
+        }
+        let provider = self
+            .providers()?
+            .into_iter()
+            .find(|(m, _)| m.id == method)
+            .ok_or(Error::Invalid)?
+            .1;
+        let client = self.db.get().await?;
+        if !provider
+            .enrolled(
+                &**client,
+                FactorAccount {
+                    tenant: scope.tenant(),
+                    user: scope.user(),
+                },
+            )
+            .await?
+        {
+            return Ok(Challenge {
+                availability: Availability::Unavailable,
+                masked_destination: None,
+                retry_after_seconds: None,
+            });
+        }
+        drop(client);
+        provider.start(scope, purpose).await
     }
     /// Bind once to the installation's live policy, never a process-local role cache.
     pub fn bind_enforcement(
@@ -210,10 +488,11 @@ impl StepUp {
     /// The bound provider's live enrollment state for this account holder.
     /// Presentation only: mutations still call `require` or `require_code`.
     pub async fn enrolled(&self, scope: &Scope) -> Result<bool> {
-        match self.provider.get() {
-            Some(provider) => provider.enrolled(scope).await,
-            None => Ok(false),
-        }
+        Ok(self
+            .methods(scope, "")
+            .await?
+            .iter()
+            .any(|method| method.enrolled))
     }
     /// Whether policy currently protects an operation, without spending proof.
     /// Used to explain protected fields before a person changes them.
@@ -280,8 +559,8 @@ impl StepUp {
         if scope.step_up_code().is_none() {
             let reason = if scope.impersonator().is_some() {
                 "impersonating"
-            } else if let Some(provider) = self.provider.get() {
-                if provider.enrolled(scope).await? {
+            } else if !self.providers()?.is_empty() {
+                if self.enrolled(scope).await? {
                     "code_required"
                 } else {
                     "not_enrolled"
@@ -325,8 +604,22 @@ impl StepUp {
 
     /// Where a browser that owes a step-up goes, coming back to `back`.
     pub async fn prompt(&self, scope: &Scope, back: &str) -> Result<String> {
-        let provider = self.provider.get().ok_or(Error::NotFound)?;
-        provider.prompt(scope, back).await
+        // Core owns the neutral choice page. With one method preserve its
+        // existing destination; multiple methods never select by boot order.
+        let choices = self.methods(scope, back).await?;
+        if choices.len() == 1 {
+            let choice = &choices[0];
+            return Ok(if choice.enrolled {
+                choice.prompt.clone()
+            } else {
+                choice.setup.clone()
+            });
+        }
+        self.session_provider
+            .get()
+            .ok_or(Error::NotFound)?
+            .prompt(scope, back)
+            .await
     }
 
     async fn check(
@@ -340,21 +633,42 @@ impl StepUp {
         if scope.impersonator().is_some() {
             return Ok(Outcome::Refused("impersonating"));
         }
-        let Some(provider) = self.provider.get() else {
+        let methods = self.methods(scope, "").await?;
+        if methods.is_empty() {
             return Ok(Outcome::Refused("unavailable"));
-        };
-        if let Some(code) = scope.step_up_code() {
+        }
+        let enrolled: Vec<_> = methods.iter().filter(|m| m.enrolled).collect();
+        if enrolled.is_empty() {
+            return Ok(Outcome::Refused("not_enrolled"));
+        }
+        if let Some(code) = scope.step_up_code().filter(|_| extend) {
             // One action may need several checks (a role change and a
             // full-access role): the holder's code covers this whole request.
             if code.accepted() {
                 return Ok(Outcome::Passed("request_code"));
             }
+            // A qualified proof routes to exactly one method; never try a
+            // wrong code against every factor (which multiplies lockouts).
+            let (method, presented) = match code.expose().split_once(':') {
+                Some((method, code)) => (method, code),
+                None if enrolled.len() == 1 => (enrolled[0].method.id, code.expose()),
+                None => return Ok(Outcome::Refused("method_required")),
+            };
+            if !enrolled.iter().any(|m| m.method.id == method) {
+                return Ok(Outcome::Refused("not_enrolled"));
+            }
+            let provider = self
+                .providers()?
+                .into_iter()
+                .find(|(m, _)| m.id == method)
+                .ok_or(Error::Invalid)?
+                .1;
             let purpose = Purpose {
                 operation: declared.operation.key,
                 target,
                 channel: scope.channel(),
             };
-            let spent = provider.spend(scope, code.expose(), purpose).await?;
+            let spent = provider.spend(scope, presented, purpose).await?;
             if spent == Spent::Accepted {
                 code.mark_accepted();
                 if let Some(agent) = scope.agent() {
@@ -368,6 +682,9 @@ impl StepUp {
                 Spent::NotEnrolled => Outcome::Refused("not_enrolled"),
             });
         }
+        let Some(provider) = self.session_provider.get() else {
+            return Ok(Outcome::Refused("unavailable"));
+        };
         let window = self.window(scope).await?;
         let (window_seconds, cap_seconds) = (window.window_minutes * 60, window.cap_hours * 3600);
         let state = match (scope.agent(), mode) {
@@ -389,6 +706,7 @@ impl StepUp {
                         scope,
                         SessionProof::Fresh {
                             seconds: policy::FRESH_SECONDS,
+                            consume: extend,
                         },
                     )
                     .await?
@@ -412,7 +730,6 @@ impl StepUp {
             } else {
                 "window"
             }),
-            _ if !provider.enrolled(scope).await? => Outcome::Refused("not_enrolled"),
             WindowState::Capped => Outcome::Refused("window_capped"),
             WindowState::Expired => Outcome::Refused("window_expired"),
             WindowState::None if mode == Mode::EveryTime => Outcome::Refused("every_time"),
@@ -778,4 +1095,13 @@ fn effective(
             chosen
         },
     )
+}
+
+// Owners return destinations, never a redirect supplied verbatim by a request.
+fn local_destination(path: &str) -> bool {
+    path.starts_with('/')
+        && !path.starts_with("//")
+        && path.len() <= 4096
+        && !path.contains('\\')
+        && !path.chars().any(char::is_control)
 }

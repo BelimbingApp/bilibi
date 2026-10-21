@@ -1035,6 +1035,78 @@ impl CodeInput {
     }
 }
 
+/// One enrolled factor's code format, read live from the factor registry.
+/// No Bilimbi counterpart. Presentation data only; the owner verifies proof.
+#[derive(Clone, Debug)]
+pub struct ProofMethod {
+    pub id: String,
+    pub label: String,
+    pub length: usize,
+    pub numeric: bool,
+}
+impl ProofMethod {
+    pub fn new(
+        id: impl Into<String>,
+        label: impl Into<String>,
+        length: usize,
+        numeric: bool,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            label: label.into(),
+            length,
+            numeric,
+        }
+    }
+}
+
+/// Method choice and code entry for a protected form. The shared browser hook
+/// qualifies only this form's submitted code as `method_id:code`; it never
+/// starts a challenge or sends input while a person types. Single-method code
+/// entry keeps the CodeInput DOM and accessibility contract.
+#[derive(Template, Clone, Debug)]
+#[template(
+    source = r#"{% import "forms.html" as forms %}{% call forms::proof_input(proof=self) %}{% endcall %}"#,
+    ext = "html"
+)]
+pub struct ProofInput {
+    pub id: String,
+    pub name: String,
+    pub methods: Vec<ProofMethod>,
+}
+impl ProofInput {
+    pub fn new(id: impl Into<String>, name: impl Into<String>, methods: Vec<ProofMethod>) -> Self {
+        Self {
+            id: id.into(),
+            name: name.into(),
+            methods,
+        }
+    }
+    pub fn selector(&self) -> Field {
+        Field::named("")
+            .id(format!("{}-method", self.id))
+            .kind(InputKind::Select)
+            .label("2FA method")
+            .value(self.methods.first().map_or("", |m| m.id.as_str()))
+            .options(
+                self.methods
+                    .iter()
+                    .map(|m| Choice::new(&m.label, &m.id))
+                    .collect(),
+            )
+    }
+    pub fn code(&self, method: &ProofMethod) -> CodeInput {
+        let mut code = CodeInput::new(
+            format!("{}-{}", self.id, method.id),
+            &self.name,
+            "2FA code",
+            method.length,
+        );
+        code.numeric = method.numeric;
+        code
+    }
+}
+
 /// The shared 2FA part of a protected form. No Bilimbi counterpart.
 /// Callers supply the holder's live enrollment state, never a cached session
 /// flag. Without 2FA this replaces both the proof and protected submit actions

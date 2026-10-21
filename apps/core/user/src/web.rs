@@ -138,22 +138,15 @@ impl Pages {
                 request.framed,
             )?),
             "profile" => Box::new(crate::account_ui::Profile::new(self.clone())),
-            "two_factor" => Box::new(
-                crate::two_factor_ui::TwoFactorPage::new(
+            "two_factor" | "confirm_access" => {
+                crate::factor_choice::state(
                     self.users.clone(),
                     request.scope.ok_or(Error::Unauthorized)?,
                     request.query,
+                    request.operation == "confirm_access",
                 )
-                .await?,
-            ),
-            "confirm_access" => Box::new(
-                crate::two_factor_ui::ConfirmPage::new(
-                    self.users.clone(),
-                    request.scope.ok_or(Error::Unauthorized)?,
-                    request.query,
-                )
-                .await?,
-            ),
+                .await?
+            }
             _ => return Ok(None),
         }))
     }

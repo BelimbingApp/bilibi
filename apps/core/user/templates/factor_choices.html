@@ -1,0 +1,20 @@
+{# Neutral method selection; no Bilimbi counterpart yet. #}
+{% import "components.html" as ui %}
+{% import "settings.html" as settings %}
+{% import "feedback.html" as fb %}
+{% call ui::page(variant=bilibi_ui::PageVariant::Form) %}
+{% if confirm %}{{ header }}{% else %}
+{% call settings::layout(header=header, current=bilibi_ui::SettingsTab::TwoFactor, heading="2FA methods", subheading="Choose how to confirm access.") %}
+{% call ui::card() %}
+{% for choice in choices %}{{ choice }}{% endfor %}
+{% if choices.is_empty() %}{% call fb::alert(kind=bilibi_ui::StatusKind::Warning, id="factor-unavailable") %}2FA is unavailable. Ask a server administrator for help.{% endcall %}{% endif %}
+{% endcall %}
+{% endcall %}
+{% endif %}
+{% if confirm %}
+{% call ui::card() %}
+{% for choice in choices %}{{ choice }}{% endfor %}
+{% if choices.is_empty() %}{% call fb::alert(kind=bilibi_ui::StatusKind::Warning, id="factor-unavailable") %}2FA is unavailable. Ask a server administrator for help.{% endcall %}{% endif %}
+{% endcall %}
+{% endif %}
+{% endcall %}

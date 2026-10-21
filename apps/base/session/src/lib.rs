@@ -157,6 +157,7 @@ pub struct Sessions {
     authentication: Arc<Authentication>,
     settings: Arc<Settings>,
     terminations: broadcast::Sender<Terminated>,
+    factors: Option<Arc<bilibi_step_up::StepUp>>,
 }
 impl Sessions {
     pub fn new(authentication: Arc<Authentication>, settings: Arc<Settings>) -> Self {
@@ -165,7 +166,29 @@ impl Sessions {
             authentication,
             settings,
             terminations,
+            factors: None,
         }
+    }
+    /// Wire the factor registry for account-wide revocation. A standalone
+    /// fixture that omits this cannot revoke account sessions.
+    pub fn with_factors(mut self, factors: Arc<bilibi_step_up::StepUp>) -> Self {
+        self.factors = Some(factors);
+        self
+    }
+    /// Revoke pending challenges of every factor and all holder sessions in
+    /// the owner's audited transaction. Tenant comes from its trusted context.
+    pub async fn revoke(
+        &self,
+        tx: &mut MutationTransaction<'_>,
+        user: i64,
+        except: Option<&str>,
+    ) -> Result<Vec<String>> {
+        self.factors
+            .as_ref()
+            .ok_or(Error::Internal)?
+            .lifecycle(tx, user, bilibi_step_up::Lifecycle::Revoke)
+            .await?;
+        Self::end_user_sessions(tx.sql(), tx.context().tenant, user, except).await
     }
     /// The current operator policy. Read on every check, so a changed lifetime
     /// applies to the next request without a restart.
@@ -313,58 +336,68 @@ impl Sessions {
     pub async fn terminate(
         &self,
         tx: &mut MutationTransaction<'_>,
+        scope: &Scope,
         id: &str,
         current: &str,
     ) -> Result<Termination> {
+        bilibi_authz::authorize_operator(tx.sql(), scope, MANAGE).await?;
         if id.is_empty() || current.is_empty() {
             return Err(Error::Invalid);
         }
         if id == current {
             return Ok(Termination::CurrentSession);
         }
+        // A platform operator may terminate a session in another tenant. The
+        // caller uses the selected session's tenant in the mutation context;
+        // this scoped reread proves the selection again before any hook runs.
+        let tenant = tx.context().tenant;
+        let row = tx.sql().query_opt(
+            "SELECT user_id,ip_address,user_agent,last_activity::text FROM sessions WHERE id=$1 AND tenant_id=$2 FOR UPDATE",
+            &[&id, &tenant],
+        ).await?;
+        let Some(row) = row else {
+            return Ok(Termination::NotFound);
+        };
+        let user: i64 = row.get(0);
+        self.factors
+            .as_ref()
+            .ok_or(Error::Internal)?
+            .lifecycle(tx, user, bilibi_step_up::Lifecycle::Revoke)
+            .await?;
         let id = id.to_owned();
         let ended = tx
             .mutate(move |sql| {
                 Box::pin(async move {
-                    let row = sql.query_opt("SELECT tenant_id,user_id,ip_address,user_agent,last_activity::text FROM sessions WHERE id=$1 FOR UPDATE", &[&id]).await?;
-                    let Some(row) = row else {
-                        return Ok((None, Vec::new()));
-                    };
-                    sql.execute("DELETE FROM sessions WHERE id=$1", &[&id])
-                        .await?;
-                    let user: i64 = row.get(1);
+                    sql.execute(
+                        "DELETE FROM sessions WHERE id=$1 AND tenant_id=$2",
+                        &[&id, &tenant],
+                    )
+                    .await?;
                     let change = Change {
                         kind: "session".into(),
                         id: user,
-                        old: json!({
-                            "tenant_id": row.get::<_, i64>(0), "user_id": user,
-                            "ip_address": row.get::<_, Option<String>>(2),
-                            "user_agent": row.get::<_, Option<String>>(3),
-                            "last_activity": row.get::<_, String>(4), "payload": "[redacted]",
-                        }),
+                        old: json!({"tenant_id": tenant, "user_id": user,
+                    "ip_address": row.get::<_, Option<String>>(1),
+                    "user_agent": row.get::<_, Option<String>>(2),
+                    "last_activity": row.get::<_, String>(3), "payload": "[redacted]"}),
                         new: json!({}),
                     };
-                    Ok((Some(id), vec![change]))
+                    Ok((id, vec![change]))
                 })
             })
             .await?;
-        match ended {
-            Some(id) => {
-                let sessions = self.terminations.clone();
-                tx.after_commit(move || {
-                    let _ = sessions.send(Terminated { id });
-                });
-                Ok(Termination::Terminated)
-            }
-            None => Ok(Termination::NotFound),
-        }
+        let sessions = self.terminations.clone();
+        tx.after_commit(move || {
+            let _ = sessions.send(Terminated { id: ended });
+        });
+        Ok(Termination::Terminated)
     }
     /// Ends a user's sessions inside the caller's own write, except the one
     /// named: a credential change keeps the session that made it. A session
     /// the user holds as an impersonating operator ends too. Returns the
     /// ended ids for [`Sessions::announce`] after the caller's commit. The
     /// caller's audit row (the credential change) covers the sign-outs.
-    pub async fn end_user_sessions(
+    async fn end_user_sessions(
         sql: &impl GenericClient,
         tenant: i64,
         user: i64,
@@ -582,7 +615,7 @@ inventory::submit! {
             ("base-session-003-step-up", include_str!("../migrations/003-step-up.sql")),
         ],
         services: &[
-            bilibi_module_registry::Service { id: "base/session.sessions", factory: |services| Ok(Arc::new(Sessions::new(services.get("base/tenancy.authentication")?, services.get("base/settings.store")?))) },
+            bilibi_module_registry::Service { id: "base/session.sessions", factory: |services| Ok(Arc::new(Sessions::new(services.get("base/tenancy.authentication")?, services.get("base/settings.store")?).with_factors(services.get(bilibi_step_up::SERVICE)?))) },
             bilibi_module_registry::Service { id: "base/session.expiry", factory: |services| Ok(Arc::new(bilibi_queue::execution::HandlerService(Arc::new(expiry::Expiry {
                 schedule: services.get("base/schedule.store")?,
                 sessions: services.get("base/session.sessions")?,

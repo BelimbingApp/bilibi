@@ -287,16 +287,16 @@ impl Index {
                     return Ok(());
                 };
                 let mut client = self.core.db.get().await?;
-                let mut tx = self
-                    .core
-                    .mutations
-                    .begin(&mut client, scope.mutation_context("session.terminate"))
-                    .await?;
+                // Global operator selection is held in page state, never a
+                // submitted tenant ID; Session rereads it under this tenant.
+                let mut context = scope.mutation_context("session.terminate");
+                context.tenant = session.tenant;
+                let mut tx = self.core.mutations.begin(&mut client, context).await?;
                 let current = self.core.sessions.identify(tx.sql(), scope).await?;
                 let outcome = self
                     .core
                     .sessions
-                    .terminate(&mut tx, &session.id, &current)
+                    .terminate(&mut tx, scope, &session.id, &current)
                     .await;
                 match outcome {
                     Ok(Termination::Terminated) => {

@@ -21,10 +21,10 @@ use bilibi_ui::{
     lists::RecordLink,
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, PanelSpec},
     ActionLink, Alert, BackLink, Badge, BadgeKind, BuiltinColumn, Button, ButtonVariant, Card,
-    Cell, Choice, CodeInput, CommitStates, CommitStatus, ConfirmDialog, EmptyState, Fact, Facts,
-    Field, FlashGroup, FlexRow, FlexTable, Header, InlineChoice, InlineEdit, InlineField,
-    InputKind, ListColumns, Modal, ModalWidth, PageVariant, SecretInput, SectionHeading, SortDir,
-    StatusKind, StepUp, TableEmpty,
+    Cell, Choice, CommitStates, CommitStatus, ConfirmDialog, EmptyState, Fact, Facts, Field,
+    FlashGroup, FlexRow, FlexTable, Header, InlineChoice, InlineEdit, InlineField, InputKind,
+    ListColumns, Modal, ModalWidth, PageVariant, SecretInput, SectionHeading, SortDir, StatusKind,
+    StepUp, TableEmpty,
 };
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
@@ -1102,7 +1102,12 @@ impl Detail {
         })
     }
 
-    fn dialog(&self, loaded: &Loaded, admin_enrolled: bool) -> Result<Html> {
+    fn dialog(
+        &self,
+        loaded: &Loaded,
+        admin_enrolled: bool,
+        methods: &[bilibi_ui::ProofMethod],
+    ) -> Result<Html> {
         let name = &loaded.account.name;
         Ok(match &self.pending {
             None => Html::EMPTY,
@@ -1124,7 +1129,7 @@ impl Detail {
                 confirm_event: "unlink",
                 cancel_event: "cancel_unlink",
             })?,
-            Some(Pending::ResetTwoFactor) => self.reset_dialog(loaded, admin_enrolled)?,
+            Some(Pending::ResetTwoFactor) => self.reset_dialog(loaded, admin_enrolled, methods)?,
             Some(Pending::Authz(rule)) => {
                 let (confirm, working, event) = rule.verb();
                 render(&ConfirmDialog {
@@ -1156,10 +1161,10 @@ impl Detail {
         {
             return Ok((Html::EMPTY, false));
         }
-        let enrolled = self.pages.users.two_factor_status(scope).await?.enabled;
+        let enrolled = self.pages.users.step_up.enrolled(scope).await?;
         let card = render(&TwoFactorCard {
             description: format!(
-                "{} set up an authenticator app. If they lost their phone, reset it: they are signed out and set it up again.",
+                "{} set up 2FA. If they lost access, reset it: they are signed out and set it up again.",
                 loaded.account.name
             ),
             button: render(&Button {
@@ -1174,7 +1179,12 @@ impl Detail {
         Ok((card, enrolled))
     }
 
-    fn reset_dialog(&self, loaded: &Loaded, enrolled: bool) -> Result<Html> {
+    fn reset_dialog(
+        &self,
+        loaded: &Loaded,
+        enrolled: bool,
+        methods: &[bilibi_ui::ProofMethod],
+    ) -> Result<Html> {
         let name = &loaded.account.name;
         let error = if self.reset_error.is_empty() {
             Html::EMPTY
@@ -1189,17 +1199,13 @@ impl Detail {
         let mut step_up = StepUp::new(enrolled, format!("/users/{}", self.id));
         step_up.reason = "to reset someone else's 2FA.".into();
         step_up.body = Html::text(&format!(
-            "{name} will be signed out everywhere, notified, and asked to set up their authenticator app again. Enter the 6-digit code from your own authenticator app to confirm."
+            "{name} will be signed out everywhere, notified, and asked to set up 2FA again. Enter your own 2FA code to confirm."
         ));
-        step_up.code = render(
-            &CodeInput::new(
-                "user-reset-two-factor-code",
-                "code",
-                "6-digit code from your authenticator app",
-                6,
-            )
-            .numeric(),
-        )?;
+        step_up.code = render(&bilibi_ui::ProofInput::new(
+            "user-reset-two-factor-code",
+            "code",
+            methods.to_vec(),
+        ))?;
         step_up.secondary_actions = render(&Button {
             id: "user-reset-two-factor-cancel",
             button_type: "button",
@@ -1373,6 +1379,23 @@ impl Detail {
         };
         let links = self.links_card(&loaded)?;
         let (two_factor, admin_enrolled) = self.two_factor_card(scope, &loaded).await?;
+        let methods = self
+            .pages
+            .users
+            .step_up
+            .methods(scope, &format!("/users/{}", self.id))
+            .await?
+            .into_iter()
+            .filter(|m| m.enrolled)
+            .map(|m| {
+                bilibi_ui::ProofMethod::new(
+                    m.method.id,
+                    m.method.label,
+                    m.method.code_length,
+                    m.method.numeric,
+                )
+            })
+            .collect::<Vec<_>>();
         let danger = if loaded.can_delete && !loaded.archived && scope.user() != self.id {
             render(&Danger {
                 button: render(&Button {
@@ -1401,7 +1424,7 @@ impl Detail {
             links,
             two_factor,
             danger,
-            dialog: self.dialog(&loaded, admin_enrolled)?,
+            dialog: self.dialog(&loaded, admin_enrolled, &methods)?,
         })?;
         Ok(LiveBody {
             html: render(&bilibi_ui::Page {

@@ -3,16 +3,20 @@
 //! target as data to record, never what the operation is.
 use super::{Spend, TwoFactorError};
 use crate::UserService;
-use bilibi_step_up::{Provider, Purpose, SessionProof, Spent, WindowState};
+use bilibi_database::Change;
+use bilibi_step_up::{
+    Availability, Challenge, FactorAccount, Lifecycle, Method, Provider, Purpose, SessionProof,
+    SessionProvider, Spent, WindowState,
+};
 use bilibi_tenancy::{ProofFuture, Scope};
+use serde_json::json;
 use std::sync::Arc;
 
 pub struct Authenticator(pub Arc<UserService>);
 
-impl Provider for Authenticator {
-    fn enrolled<'a>(&'a self, scope: &'a Scope) -> ProofFuture<'a, bool> {
-        Box::pin(async move { Ok(self.0.two_factor_status(scope).await?.enabled) })
-    }
+pub const METHOD: Method = Method::new("core.user.authenticator", "Authenticator app");
+
+impl SessionProvider for Authenticator {
     fn session<'a>(
         &'a self,
         scope: &'a Scope,
@@ -33,7 +37,10 @@ impl Provider for Authenticator {
                         .await?;
                     WindowState::from_flags(window.checked, window.within_cap, window.within_window)
                 }
-                SessionProof::Fresh { seconds } => {
+                SessionProof::Fresh { seconds, consume } => {
+                    if !consume {
+                        return Ok(if client.query_opt("SELECT 1 FROM sessions WHERE tenant_id=$1 AND user_id=$2 AND csrf=$3 AND impersonator_id IS NULL AND stepped_up_at>now()-make_interval(secs => $4::double precision) AND (step_up_spent_at IS NULL OR step_up_spent_at<stepped_up_at)", &[&scope.tenant(), &scope.user(), &scope.csrf, &(seconds as f64)]).await?.is_some() { WindowState::Holds } else { WindowState::None });
+                    }
                     if self
                         .0
                         .sessions
@@ -46,6 +53,69 @@ impl Provider for Authenticator {
                     }
                 }
             })
+        })
+    }
+    fn prompt<'a>(&'a self, _scope: &'a Scope, back: &'a str) -> ProofFuture<'a, String> {
+        Box::pin(async move { Ok(super::with_return(super::CONFIRM_PATH, Some(back))) })
+    }
+}
+impl Provider for Authenticator {
+    fn enrolled<'a>(
+        &'a self,
+        sql: &'a dyn bilibi_tenancy::ProofClient,
+        account: FactorAccount,
+    ) -> ProofFuture<'a, bool> {
+        Box::pin(async move {
+            Ok(sql.query_opt("SELECT 1 FROM user_two_factor WHERE tenant_id=$1 AND user_id=$2 AND confirmed_at IS NOT NULL", &[&account.tenant(), &account.user()]).await?.is_some())
+        })
+    }
+    fn start<'a>(&'a self, scope: &'a Scope, _purpose: Purpose<'a>) -> ProofFuture<'a, Challenge> {
+        Box::pin(async move {
+            Ok(Challenge {
+                availability: if self.0.two_factor_status(scope).await?.enabled {
+                    Availability::Ready
+                } else {
+                    Availability::Unavailable
+                },
+                masked_destination: None,
+                retry_after_seconds: None,
+            })
+        })
+    }
+    fn setup<'a>(&'a self, _scope: &'a Scope, back: &'a str) -> ProofFuture<'a, String> {
+        Box::pin(async move { Ok(selected(super::SETTINGS_PATH, back)) })
+    }
+    fn lifecycle<'a>(
+        &'a self,
+        sql: &'a tokio_postgres::Transaction<'_>,
+        account: FactorAccount,
+        event: Lifecycle,
+    ) -> ProofFuture<'a, Vec<Change>> {
+        Box::pin(async move {
+            if event == Lifecycle::Revoke {
+                return Ok(Vec::new());
+            }
+            let mut changes = Vec::new();
+            // Return every affected row, never the sealed secret or a code.
+            if let Some(row) = sql.query_opt("DELETE FROM user_two_factor WHERE tenant_id=$1 AND user_id=$2 RETURNING confirmed_at IS NOT NULL", &[&account.tenant(), &account.user()]).await? {
+                changes.push(Change { kind: "user_two_factor".into(), id: account.user(), old: json!({"status": if row.get::<_, bool>(0) { "enabled" } else { "pending" }}), new: json!({"status": "off"}) });
+            }
+            if sql
+                .execute(
+                    "DELETE FROM user_two_factor_attempts WHERE tenant_id=$1 AND user_id=$2",
+                    &[&account.tenant(), &account.user()],
+                )
+                .await?
+                > 0
+            {
+                changes.push(Change {
+                    kind: "user_two_factor_attempts".into(),
+                    id: account.user(),
+                    old: json!({}),
+                    new: json!({"reset": true}),
+                });
+            }
+            Ok(changes)
         })
     }
     fn spend<'a>(
@@ -72,7 +142,16 @@ impl Provider for Authenticator {
             }
         })
     }
-    fn prompt<'a>(&'a self, scope: &'a Scope, back: &'a str) -> ProofFuture<'a, String> {
-        Box::pin(async move { self.0.step_up_destination(scope, back).await })
+    fn prompt<'a>(&'a self, _scope: &'a Scope, back: &'a str) -> ProofFuture<'a, String> {
+        Box::pin(async move { Ok(selected(super::CONFIRM_PATH, back)) })
     }
+}
+
+fn selected(base: &str, back: &str) -> String {
+    let path = super::with_return(base, Some(back));
+    format!(
+        "{path}{}method={}",
+        if path.contains('?') { "&" } else { "?" },
+        METHOD.id
+    )
 }

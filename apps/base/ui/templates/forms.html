@@ -201,3 +201,15 @@
 {% macro step_up(step) %}
 {% if !step.body.is_empty() %}<fieldset{% if !step.enrolled %} disabled{% endif %}>{{ step.body|safe }}</fieldset>{% endif %}{% if step.enrolled %}{{ step.code|safe }}{% else %}<p class="mb-3 text-sm text-ink-muted"><a href="{{ step.setup_href() }}" class="text-link hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-strong/30">Set up 2FA</a> {{ step.reason }}</p>{% endif %}{% if !step.secondary_actions.is_empty() || (step.enrolled && !step.actions.is_empty()) %}<div class="flex flex-wrap justify-end gap-2">{{ step.secondary_actions|safe }}{% if step.enrolled %}{{ step.actions|safe }}{% endif %}</div>{% endif %}
 {% endmacro %}
+
+{# Method-neutral code entry. No Bilimbi counterpart yet. #}
+{% macro proof_input(proof) %}
+<div id="{{ proof.id }}" data-hook="FactorProof" data-proof-name="{{ proof.name }}">
+{% if proof.methods.len() > 1 %}{% let selector = proof.selector() %}{% call input(field=selector) %}{% endcall %}{% endif %}
+{% for method in proof.methods %}
+<fieldset data-proof-method="{{ method.id }}"{% if !loop.first %} hidden disabled{% endif %}>
+{% let code = proof.code(method) %}{% call code_input(code=code) %}{% endcall %}
+</fieldset>
+{% endfor %}
+</div>
+{% endmacro %}

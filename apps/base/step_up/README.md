@@ -4,7 +4,7 @@ Ask the human account holder to prove it is them again before an operation goes 
 
 - **This module names no consumer** (no page, table, sign-in or role) and no second-factor method.
 - Each owner declares its own operations and calls the facade from its own module.
-- The second factor is a bound `Provider`. Today that is Core User's authenticator app (TOTP).
+- Each second-factor method registers a `Provider`. Core User registers its authenticator app (TOTP); Extensions register beside it.
 
 ## Require step-up for an operation
 
@@ -59,14 +59,14 @@ Tenants decide per operation on **Administration › Authorization › Step-up 2
 
 | Channel | Proof | Window |
 |---|---|---|
-| Web (browser session) | A check on the confirm page (`Provider::prompt`) | On the session row. Ends on sign-out, termination, expiry or an impersonation switch |
+| Web (browser session) | A check on the confirm page (the chosen method’s `Provider::prompt`) | On the session row. Ends on sign-out, termination, expiry or an impersonation switch |
 | Agent (`/api/v1`, `/mcp`) | `step_up_code`: the holder's current code, sent with the commit | Per agent connection and holder. Not shared with browsers or other agents |
 
 - **Window:** sliding. Each protected action inside it restarts it. The cap counts from the check and wins.
 - **Ask every time:** each action needs its own check. On the web, one check made within 5 minutes covers one such action. For an agent, a code per action.
 - **Codes:** a presented code is verified and used in one step, for the operation and target of the first check that meets it. It then covers the rest of that one request, for example a role change that also gives full access, or every operation in one committed plan. In any later request the same code is refused.
 - **Never:** an impersonating operator or an agent cannot satisfy step-up with anything but the account holder's own code.
-- Signing the holder out everywhere (`Sessions::end_user_sessions`) also ends their agent windows.
+- Signing the holder out everywhere (`Sessions::revoke`) also ends their agent windows.
 
 ## Agent flow
 
@@ -76,7 +76,7 @@ Tenants decide per operation on **Administration › Authorization › Step-up 2
    {"error":"step_up_required","operation":"domain.module.thing.approve","reason":"code_required","message":"…"}
    ```
 
-2. The agent asks its human for the current code from their authenticator app.
+2. The agent asks its human for the current code from their 2FA method.
 3. It commits the same plan again with `"step_up_code": "123456"`. A failed commit leaves the plan code usable until it expires.
 4. That opens the agent's window: later protected commits on that connection pass without a code until the window or cap ends, unless an operation asks every time.
 
@@ -92,7 +92,8 @@ Tenants decide per operation on **Administration › Authorization › Step-up 2
 | `window_expired` | The sliding window ran out |
 | `window_capped` | The cap after the check was reached |
 | `impersonating` | The request comes from an impersonated session |
-| `unavailable` | No provider is installed |
+| `unavailable` | No usable provider or session adapter is installed |
+| `method_required` | More than one method is enrolled; qualify the code |
 
 On the web `required` replaces `code_required`. `refusal(operation, reason)` builds the answer body.
 
@@ -113,14 +114,62 @@ Every check that applies writes one action:
 
 ## Provider
 
-`StepUp::bind` once at boot. Core User does this in `src/two_factor/provider.rs`.
+Register your method from its module's service factory:
 
-| Method | Answers |
-|---|---|
-| `enrolled` | Does the holder have a confirmed second factor? |
-| `session` | The browser session's window (`SessionProof::Window`), or one fresh check (`SessionProof::Fresh`) |
-| `spend` | Verify a code and use it, for the `Purpose` (operation, target, channel) |
-| `prompt` | Where a browser checks in, or enrolls first, and comes back to `back` |
+```rust
+step_up.register(
+    bilibi_step_up::Method::new("example.factor.code", "Security code"),
+    provider,
+)?;
+```
+
+Declare `base/step_up` as both a Cargo and descriptor dependency. Registration orders methods by ID and rejects duplicate or malformed IDs at boot. **Never replace Core User's registration.** There is no Base dependency on an Extension.
+
+| Provider method | Responsibility |
+| --- | --- |
+| `enrolled(sql, account)` | Read live enrollment for the sealed `FactorAccount`; bind its tenant and user in every query |
+| `start(scope, purpose)` | Start or resend a challenge after an explicit action; return `Challenge` availability, masked destination and retry seconds |
+| `spend(scope, code, purpose)` | Atomically validate and consume proof for that holder and exact operation, target and channel; own throttling and audit |
+| `prompt(scope, back)` | Return the method's local browser prompt destination |
+| `setup(scope, back)` | Return its local enrollment/management destination |
+| `lifecycle(sql, account, event)` | Clean up inside the supplied owner transaction and return every affected record as a `Change` |
+
+`enrolled`, `prompt` and `setup` are presentation reads. They must never create or send a challenge, consume proof, or write enrollment. `StepUp::methods` returns these live choices; Core User's settings and confirm pages use them. Prompt/setup destinations must be local paths, and the method must validate the return address again. Build method pages with Base UI components. The method owns its data and delivery through the existing Platform services.
+
+Call `StepUp::start(scope, method_id, Purpose { operation, target, channel })` only for an explicit start/resend action. It refuses impersonation, unknown operations and a mismatched channel; an unenrolled method returns `Availability::Unavailable`. `Availability::RetryLater` and `retry_after_seconds` let a page explain a cooldown without delivering again. Never include a plaintext code or destination in the result. Extensions expose any agent challenge operation through their own `agent_api` contribution, using this same facade.
+
+Use `Method::new(id, label).code(length, numeric)` for a different code format (the default is six digits; lengths 1–64 are supported). Protected browser forms use the shared UI `ProofInput`, which builds its method choice and code fields from live enrollment and submits `method_id:code` without changing the owner’s event schema.
+
+A single enrolled method accepts the existing plain `step_up_code`. With several enrolled methods, send `"method_id:code"`. Base routes to exactly one provider; it never tries the same code against every method. Missing enrollment and unknown methods fail closed. An accepted code still covers the remaining checks in the same request.
+
+### Shared browser proof
+
+The identity owner binds `SessionProvider` once with `bind_session`, independently of factor registration. Core User supplies the existing session window and the neutral choice-page destination. A method opens browser proof with `Sessions::step_up` only after consuming its own valid challenge in an audited transaction. Factors do not implement session storage.
+
+`SessionProof::Fresh { seconds, consume: false }` is a read only. `consume: true` spends the fresh check. `holds`, `required`, enrollment reads and destination rendering never send challenges or spend proof.
+
+### Factor lifecycle
+
+Owners call `StepUp::lifecycle(tx, user, event)` after authorizing inside their `MutationBoundary`. The tenant comes from that trusted transaction's context. Hooks run by method ID, and their changes share the owner's audit trace. An error, cancellation, capture failure or rollback prevents all cleanup from committing. Hooks must not open a transaction, commit, send notifications or perform external delivery.
+
+- `Reset` removes confirmed and pending enrollment, pending challenges and method-owned proof/attempt state.
+- `Delete` removes all method state for the deleted account.
+- `Revoke` clears pending challenges and method-owned proofs while retaining enrollment and failed-attempt lockouts.
+
+Core User calls reset and deletion hooks. `Sessions::revoke(tx, user, except)` calls revocation hooks before ending the account's browser sessions and agent windows. It returns session IDs for announcement after commit; never log them. Operator termination of one session also calls `Revoke` hooks in its owner transaction; the session service reauthorizes the operator and rereads the selected session under the target tenant. The shared lifecycle records a bounded `step_up_lifecycle` marker even when no provider rows changed, so a failed or cancelled hook poisons the mutation boundary.
+
+### Upgrade notes for agents
+
+Extension owners implementing the former `Provider` must:
+
+1. Replace `StepUp::bind(provider)` with `register(Method::new(id, label), provider)` from the Extension's service factory. Choose a stable, unique namespaced ID and declare the code format with `.code(length, numeric)` if it differs from six digits.
+2. Move `session` to the identity owner's `SessionProvider`; ordinary factor Extensions implement no session adapter. Custom identity owners use `bind_session` and supply the neutral `prompt` destination too.
+3. Change `enrolled(scope)` to `enrolled(&dyn ProofClient, FactorAccount)` and use the supplied connection, account tenant and user. Add side-effect-free `setup` and `prompt` destinations.
+4. Implement explicit `start` returning `Challenge`, and transactional `lifecycle` returning all `Change` values. Bind delivered proof to the complete `Purpose`; keep phone numbers and delivery state in the Extension.
+5. Handle `SessionProof::Fresh`'s new `consume` field if implementing the session adapter. Update account-wide sign-out callers from `Sessions::end_user_sessions(sql, tenant, user, except)` to `sessions.revoke(tx, user, except)` on a service wired with `with_factors(step_up)`. Call `terminate(tx, scope, id, current)` with the operator's sealed scope and a mutation context using the selected session's tenant; the service reauthorizes and rereads that target before running revocation hooks.
+6. Qualify codes as `method_id:code` when several methods are enrolled. Keep `require`/`require_code` at the protected owner's boundary.
+
+The sign-in admission flow is unchanged. A second-factor sign-in stage is a separate task. This contract adds no delivery method, secret reader or company policy.
 
 ## Try it
 

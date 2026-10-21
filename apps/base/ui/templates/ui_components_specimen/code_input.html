@@ -6,3 +6,7 @@
 {% call form::code_input(code=controls.optional_authenticator) %}{% endcall %}
 {% call form::code_input(code=controls.invalid_authenticator) %}{% endcall %}
 {% endcall %}
+
+{% call ui::card(id="specimen-factor-proof", title="2FA method choice") %}
+{% call form::proof_input(proof=controls.proof) %}{% endcall %}
+{% endcall %}

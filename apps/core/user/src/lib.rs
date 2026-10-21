@@ -7,6 +7,7 @@ pub mod company_accounts;
 pub mod contributions;
 pub mod database_queries;
 mod directory;
+mod factor_choice;
 pub mod identity;
 pub mod impersonation;
 mod inbox;
@@ -188,7 +189,9 @@ inventory::submit! {
             services.get::<bilibi_notifications::NotificationBoundary>("base/notifications.sink")?.bind(std::sync::Arc::new(notifications.clone()))?;
             services.get::<bilibi_principal_directory::PrincipalDirectory>("base/principal_directory.directory")?.bind("core/user", std::sync::Arc::new(directory::UserDirectory))?;
             let users = std::sync::Arc::new(UserService {sessions:services.get("base/session.sessions")?,mutations:services.get("base/database.mutations")?,authentication:services.get("base/tenancy.authentication")?,persons:services.get(bilibi_person::SERVICE)?,affiliations:services.get(bilibi_affiliation::SERVICE)?,db:services.get::<Db>("base/database.pool")?.as_ref().clone(),notifications,mailer:services.get("base/mail.mailer")?,settings:services.get("base/settings.store")?,display:services.get("base/datetime.display")?,locales:services.get("base/locale.locales")?,signer:Signer::from_hex(std::env::var("BILIBI_USER_SIGNING_KEY").ok().as_deref()),origin:std::env::var("APP_ORIGIN").unwrap_or_else(|_| "http://localhost:3000".into()).trim_end_matches('/').to_owned(),step_up:services.get(bilibi_step_up::SERVICE)?});
-            services.get::<bilibi_step_up::StepUp>(bilibi_step_up::SERVICE)?.bind(std::sync::Arc::new(two_factor::Authenticator(users.clone())))?;
+            let authenticator = std::sync::Arc::new(two_factor::Authenticator(users.clone()));
+            users.step_up.register(two_factor::METHOD, authenticator.clone())?;
+            users.step_up.bind_session(authenticator)?;
             two_factor::bind(users.clone())?;
             Ok(users)
         }},

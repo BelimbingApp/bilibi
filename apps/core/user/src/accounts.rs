@@ -16,7 +16,7 @@ use bilibi_affiliation::identity::account_standing as affiliation_standing;
 use bilibi_company::eligibility::{lock_account_company, lock_writable_companies};
 use bilibi_database::{Change, Error, MutationTransaction, Result};
 use bilibi_party_ids::{AffiliationId, OrganisationId, PersonId};
-use bilibi_security::{Scope, Sessions};
+use bilibi_security::Scope;
 use bilibi_settings::Target;
 use serde_json::json;
 use std::collections::BTreeSet;
@@ -456,7 +456,7 @@ impl UserService {
         self.open_account_write(&tx, &scope, user, None, UPDATE)
             .await?;
         let tenant = scope.tenant();
-        let ended = tx
+        tx
             .mutate(move |sql| {
                 Box::pin(async move {
                     sql.execute(
@@ -464,9 +464,9 @@ impl UserService {
                         &[&tenant, &user, &hash],
                     )
                     .await?;
-                    let ended = Sessions::end_user_sessions(sql, tenant, user, None).await?;
+
                     Ok((
-                        ended,
+                        (),
                         vec![Change {
                             kind: "user".into(),
                             id: user,
@@ -477,6 +477,7 @@ impl UserService {
                 })
             })
             .await?;
+        let ended = self.sessions.revoke(&mut tx, user, None).await?;
         let sessions = self.sessions.clone();
         tx.after_commit(move || sessions.announce(ended));
         tx.commit().await?;
@@ -505,7 +506,7 @@ impl UserService {
             .open_account_write(&tx, &scope, user, None, DELETE)
             .await?;
         let tenant = scope.tenant();
-        let ended = tx
+        tx
             .mutate(move |sql| {
                 Box::pin(async move {
                     sql.execute(
@@ -518,9 +519,9 @@ impl UserService {
                         &[&tenant, &user],
                     )
                     .await?;
-                    let ended = Sessions::end_user_sessions(sql, tenant, user, None).await?;
+
                     Ok((
-                        ended,
+                        (),
                         vec![Change {
                             kind: "user".into(),
                             id: user,
@@ -531,6 +532,10 @@ impl UserService {
                 })
             })
             .await?;
+        self.step_up
+            .lifecycle(&mut tx, user, bilibi_step_up::Lifecycle::Delete)
+            .await?;
+        let ended = self.sessions.revoke(&mut tx, user, None).await?;
         let sessions = self.sessions.clone();
         tx.after_commit(move || sessions.announce(ended));
         tx.commit().await?;

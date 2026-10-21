@@ -52,10 +52,12 @@ fn return_to(query: &HashMap<String, String>) -> Option<String> {
 /// the live transport keeps it in the address bar and a reload still knows
 /// where to go back to.
 fn canonical(return_to: &Option<String>) -> HashMap<String, String> {
-    return_to
+    let mut query: HashMap<String, String> = return_to
         .iter()
         .map(|path| ("return".to_owned(), path.clone()))
-        .collect()
+        .collect();
+    query.insert("method".into(), crate::two_factor::METHOD.id.into());
+    query
 }
 
 enum Stage {

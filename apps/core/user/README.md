@@ -327,20 +327,20 @@ Authenticator-app codes (TOTP, RFC 6238: HMAC-SHA-1, 6 digits, 30 s) for the sig
 
 | Method | Purpose |
 |---|---|
-| `two_factor_status(scope)` / `account_two_factor_on(scope, user)` | Whether the signed-in account, or one account of this tenant, has an authenticator |
+| `two_factor_status(scope)` / `account_two_factor_on(scope, user)` | The holder’s authenticator status / whether any registered method is enrolled for one account in the tenant |
 | `begin_two_factor(scope, password)` | Password again, then a fresh 160-bit secret (OS CSPRNG), sealed and stored pending. Returns the QR code and typed key, once |
 | `confirm_two_factor(scope, code)` | A current code turns it on and opens the session's step-up window |
 | `step_up(scope, code)` | A current code opens the session's step-up window (the confirm page) |
 | `begin_move(scope, code)` / `confirm_move(scope, to, code)` | Move to a new phone: a current code from the old phone is spent and a new secret is made (kept only in the page's state). The new phone's first code replaces the old secret, so the old phone stops working |
-| `reset_two_factor_by_email(email)` | The server command's door (see below): turns one account's authenticator off, audited as the system principal `two-factor-reset` |
-| `two_factor::Authenticator` | The `bilibi_step_up::Provider`, bound at boot: enrolled? session window, spend an agent's code for a purpose, where to prompt |
+| `reset_two_factor_by_email(email)` | The server command's door (see below): turns off every registered method for one account, audited as the system principal `two-factor-reset` |
+| `two_factor::Authenticator` | The registered `core.user.authenticator` provider and shared `SessionProvider`; contract: `apps/base/step_up/README.md` |
 
 Pages (signed in only, live, `Cache-Control: no-store` like every page):
 
-- `/settings/two-factor`: set up (password, QR code, setup key, first code), or move to a new phone (a code from the old phone, a new QR code, the new phone's first code). There is no turn-off: Bilibi asks everyone for 2FA. The description is two bullets; the second says to ask an admin to reset 2FA after a lost phone.
-- `/settings/two-factor/confirm?return=<path>`: the step-up prompt. Success returns to `return`, which must be a local path (`safe_return`).
+- `/settings/two-factor?method=core.user.authenticator`: set up (password, QR code, setup key, first code), or move to a new phone (a code from the old phone, a new QR code, the new phone's first code). There is no turn-off: Bilibi asks everyone for 2FA. The description is two bullets; the second says to ask an admin to reset 2FA after a lost phone.
+- `/settings/two-factor/confirm?method=core.user.authenticator&return=<path>`: the authenticator step-up prompt. Success returns to `return`, which must be a local path (`safe_return`).
 
-Authenticator entry uses the shared six-digit `CodeInput`: one native field, numeric keypad, OTP autocomplete and whole-code paste. Every entry takes only an authenticator code.
+Authenticator entry uses the shared six-digit `CodeInput`: one native field, numeric keypad, OTP autocomplete and whole-code paste. This method’s entries take an authenticator code. With multiple registered methods, the settings and confirm routes first show a neutral choice; each method supplies its own setup and prompt destinations.
 
 Security rules:
 
@@ -456,3 +456,5 @@ replacing the draft. Deletion names the saved query in a shared confirmation
 and checks that same saved version. Result values are escaped text; only column
 names from the returned projection may be used for sorting. Read-only execution
 and its success/refusal/failure audit remain C9's responsibility.
+
+The [Base Step-up provider contract](../../base/step_up/README.md#provider) owns method registration, challenge starts and lifecycle hooks. Core User registers TOTP beside Extensions. With one method the existing routes retain their original flow. Reset (including the server command) reads enrollment across all methods in the owner's transaction, removes all factor state, revokes challenges and signs out the target. Account deletion also calls every method's deletion hook. Password changes/resets and account reassignment use `Sessions::revoke`; they retain enrollment. Every provider change shares the owner's mutation transaction and audit trace. Sign-in admission is unchanged.

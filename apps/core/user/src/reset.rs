@@ -7,7 +7,6 @@ use crate::{
 };
 use bilibi_database::{Change, Context, Error};
 use bilibi_mail::{Address, Message};
-use bilibi_security::Sessions;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
@@ -81,8 +80,7 @@ impl UserService {
             .mutations
             .begin(&mut client, scope.mutation_context("user.change_password"))
             .await?;
-        let session = token.to_owned();
-        let ended = tx.mutate(move |sql| {
+        tx.mutate(move |sql| {
             Box::pin(async move {
                 // Compare-and-set: a concurrent change makes this one a conflict.
                 let changed = sql
@@ -94,14 +92,14 @@ impl UserService {
                 if changed != 1 {
                     return Err(Error::Conflict);
                 }
-                let ended = Sessions::end_user_sessions(sql, tenant, user, Some(&session)).await?;
+
                 sql.execute(
                     "DELETE FROM password_reset_tokens WHERE tenant_id=$1 AND user_id=$2",
                     &[&tenant, &user],
                 )
                 .await?;
                 Ok((
-                    ended,
+                    (),
                     vec![Change {
                         kind: "user".into(),
                         id: user,
@@ -113,6 +111,7 @@ impl UserService {
         })
         .await?;
         // Other live pages of this account hear it once the change is committed.
+        let ended = self.sessions.revoke(&mut tx, user, Some(token)).await?;
         let sessions = self.sessions.clone();
         tx.after_commit(move || sessions.announce(ended));
         tx.commit().await?;
@@ -272,9 +271,9 @@ impl UserService {
                         &[&tenant, &user, &replacement],
                     )
                     .await?;
-                    let ended = Sessions::end_user_sessions(sql, tenant, user, None).await?;
+
                     Ok((
-                        ended,
+                        (),
                         vec![Change {
                             kind: "user".into(),
                             id: user,
@@ -286,7 +285,8 @@ impl UserService {
             })
             .await;
         match claimed {
-            Ok(ended) => {
+            Ok(()) => {
+                let ended = self.sessions.revoke(&mut tx, user, None).await?;
                 let sessions = self.sessions.clone();
                 tx.after_commit(move || sessions.announce(ended));
                 Ok(tx.commit().await?)

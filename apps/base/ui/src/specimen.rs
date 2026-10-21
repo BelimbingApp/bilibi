@@ -69,6 +69,7 @@ sections! {
 /// The form controls of the specimen, mirroring Bilimbi's Design Library
 /// sample form (`sample[...]` fields) so one reference renders both.
 pub struct FormControls {
+    pub proof: crate::ProofInput,
     pub code: CodeInput,
     pub authenticator: CodeInput,
     pub optional_authenticator: CodeInput,
@@ -144,6 +145,14 @@ impl FormControls {
     fn new() -> Self {
         let sample = |key: &str, value: &str| Field::in_form("sample", key).value(value);
         Self {
+            proof: crate::ProofInput::new(
+                "specimen-proof",
+                "specimen[proof]",
+                vec![
+                    crate::ProofMethod::new("example.app", "Authenticator app", 6, true),
+                    crate::ProofMethod::new("example.device", "Security device", 8, false),
+                ],
+            ),
             code: CodeInput::new("specimen_code", "specimen[code]", "Device code", 8)
                 .value("ABCD-EF23")
                 .group_size(4),

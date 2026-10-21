@@ -22,7 +22,7 @@ mod totp;
 
 pub(crate) use agent::bind;
 pub use agent::{TwoFactorEmailError, TwoFactorEmailReset};
-pub use provider::Authenticator;
+pub use provider::{Authenticator, METHOD};
 
 use crate::{password, UserService};
 use bilibi_audit::{record_action, Attribution};
@@ -172,32 +172,24 @@ impl UserService {
     /// Whether the account has a confirmed authenticator.
     pub async fn two_factor_status(&self, scope: &Scope) -> Result<TwoFactorStatus> {
         Ok(TwoFactorStatus {
-            enabled: self.account_two_factor_on(scope, scope.user()).await?,
+            enabled: {
+                let client = self.db.get().await?;
+                client.query_opt("SELECT 1 FROM user_two_factor WHERE tenant_id=$1 AND user_id=$2 AND confirmed_at IS NOT NULL", &[&scope.tenant(), &scope.user()]).await?.is_some()
+            },
         })
     }
 
-    /// Whether `user` in this tenant has a confirmed authenticator.
+    /// Whether any registered method is enrolled for `user` in this tenant.
     pub async fn account_two_factor_on(&self, scope: &Scope, user: i64) -> Result<bool> {
-        if user <= 0 {
-            return Err(Error::Invalid);
-        }
         let client = self.db.get().await?;
-        let row = client
-            .query_opt(
-                "SELECT confirmed_at IS NOT NULL FROM user_two_factor WHERE tenant_id=$1 AND user_id=$2",
-                &[&scope.tenant(), &user],
-            )
-            .await?;
-        Ok(row.is_some_and(|row| row.get(0)))
+        self.step_up.enrolled_for(&**client, scope, user).await
     }
 
     /// Where a step-up guard sends a browser that has not confirmed access:
     /// the prompt, or enrollment for an account with no authenticator yet.
     /// Either brings it back to `return_to` afterwards.
     pub async fn step_up_destination(&self, scope: &Scope, return_to: &str) -> Result<String> {
-        let enabled = self.two_factor_status(scope).await?.enabled;
-        let base = if enabled { CONFIRM_PATH } else { SETTINGS_PATH };
-        Ok(with_return(base, Some(return_to)))
+        self.step_up.prompt(scope, return_to).await
     }
 
     /// Step one of enrollment: the password again, then a fresh secret,

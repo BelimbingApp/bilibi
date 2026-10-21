@@ -30,7 +30,7 @@ use bilibi_ui::{
         LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, MountFuture, Page, PageBody,
         PageFuture, PageRequest, Subscription,
     },
-    params, Alert, Badge, BadgeKind, BuiltinColumn, Button, ButtonVariant, Card, Choice, CodeInput,
+    params, Alert, Badge, BadgeKind, BuiltinColumn, Button, ButtonVariant, Card, Choice,
     ColumnType, ColumnsOutcome, ConfirmDialog, Fact, Facts, Field, FlashMap, FlexRow, FlexTable,
     Fold, Header, Html, IconButton, IconContext, InputKind, Instant, ListColumns, ListSpec,
     ListState, Modal, ModalWidth, SectionHeading, StatusKind, Tab, TableEmpty, Tabs, NO_FLASH,
@@ -706,8 +706,23 @@ impl View {
         } else {
             content.push(&self.discovery_card(&status, &catalogue)?);
         }
-        let enrolled = pages.software.step_up.enrolled(scope).await?;
-        self.page(&instance, lost, content, enrolled)
+        let methods = pages
+            .software
+            .step_up
+            .methods(scope, PATH)
+            .await?
+            .into_iter()
+            .filter(|m| m.enrolled)
+            .map(|m| {
+                bilibi_ui::ProofMethod::new(
+                    m.method.id,
+                    m.method.label,
+                    m.method.code_length,
+                    m.method.numeric,
+                )
+            })
+            .collect::<Vec<_>>();
+        self.page(&instance, lost, content, &methods)
     }
 
     fn page(
@@ -715,7 +730,7 @@ impl View {
         instance: &Instance,
         lost: Option<u64>,
         content: Html,
-        enrolled: bool,
+        methods: &[bilibi_ui::ProofMethod],
     ) -> Result<String> {
         let label = instance.label.clone();
         let subtitle = "Browse domains and extensions, or get an update for this server.";
@@ -756,7 +771,7 @@ impl View {
             ],
         })?;
         let dialog = match &self.dialog {
-            Some(Dialog::Review(review)) => self.review_dialog(instance, lost, review, enrolled)?,
+            Some(Dialog::Review(review)) => self.review_dialog(instance, lost, review, methods)?,
             Some(Dialog::Cancel { job, running }) => {
                 let consequence = if *running {
                     format!("Stop job {job}?")
@@ -1467,7 +1482,7 @@ impl View {
         instance: &Instance,
         lost: Option<u64>,
         review: &Review,
-        enrolled: bool,
+        methods: &[bilibi_ui::ProofMethod],
     ) -> Result<Html> {
         let facts = &review.facts;
         let label = instance.label.as_str();
@@ -1620,15 +1635,11 @@ impl View {
                 what_happens.push_str(&format!(" Undo restores this file on the server: {file}"));
             }
         }
-        let code = render(
-            CodeInput::new(
-                "software-code",
-                "code",
-                "6-digit code from your authenticator app",
-                6,
-            )
-            .numeric(),
-        )?;
+        let code = render(bilibi_ui::ProofInput::new(
+            "software-code",
+            "code",
+            methods.to_vec(),
+        ))?;
         let error = match &review.error {
             Some(message) => render(Alert {
                 kind: StatusKind::Error,
@@ -1653,7 +1664,8 @@ impl View {
             body: Html::text(&submit),
             ..Button::default()
         })?;
-        let mut step_up = bilibi_ui::StepUp::new(enrolled, params::address(PATH, &self.query));
+        let mut step_up =
+            bilibi_ui::StepUp::new(!methods.is_empty(), params::address(PATH, &self.query));
         step_up.code = code;
         step_up.actions = confirm;
         step_up.secondary_actions = cancel;

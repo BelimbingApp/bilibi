@@ -11,7 +11,8 @@ mod policy;
 
 pub use declaration::{Operation, OPERATIONS};
 pub use gate::{
-    end_agent_windows, Declared, Enforcement, Provider, Purpose, Rule, SessionProof, Spent, StepUp,
+    end_agent_windows, Availability, Challenge, Declared, Enforcement, FactorAccount, Lifecycle,
+    Method, MethodChoice, Provider, Purpose, Rule, SessionProof, SessionProvider, Spent, StepUp,
     Window, WindowState,
 };
 pub use policy::{Mode, CAP_RANGE, WINDOW_RANGE};
@@ -32,11 +33,12 @@ pub fn refusal(operation: &str, reason: &str) -> serde_json::Value {
         "reason": reason,
         "message": match reason {
             "invalid_code" => "The code was not accepted (wrong, expired or already used). Ask the account holder for a new current code.",
+            "method_required" => "Choose a second-factor method and send step_up_code as method_id:code.",
             "locked" => "The account holder's checks are locked after repeated failures. Try again later.",
-            "not_enrolled" => "The account holder has no authenticator yet. They must set one up in Bilibi first.",
+            "not_enrolled" => "The account holder has no second factor yet. They must set one up in Bilibi first.",
             "impersonating" => "Step-up cannot be satisfied while impersonating.",
             "unavailable" => "No second factor is installed, so this operation cannot be confirmed.",
-            _ => "This operation needs the account holder's authenticator code. Ask them for the current code and repeat the request with step_up_code.",
+            _ => "This operation needs the account holder's 2FA code. Ask them for the current code and repeat the request with step_up_code.",
         },
     })
 }

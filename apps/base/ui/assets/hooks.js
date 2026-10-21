@@ -43,6 +43,39 @@
 
   // One native input is the keyboard and accessibility contract. Decorative
   // boxes follow its caret, so editing never adds eight tab stops or labels.
+  // Methods own their code formats; the form still posts one credential to
+  // its owner. Native FormData keeps the method choice out of event schemas.
+  const FactorProof = {
+    mounted() {
+      this.form = this.el.closest("form")
+      this.select = this.el.querySelector("select")
+      this.choose = () => {
+        const groups = [...this.el.querySelectorAll("[data-proof-method]")]
+        const selected = this.select?.value || groups[0]?.dataset.proofMethod
+        for (const group of groups) {
+          group.hidden = group.dataset.proofMethod !== selected
+          group.disabled = group.hidden
+        }
+      }
+      this.qualify = event => {
+        const active = this.el.querySelector("[data-proof-method]:not([disabled])")
+        const name = this.el.dataset.proofName
+        const code = event.formData.get(name)
+        if (active && typeof code === "string" && code.trim()) {
+          event.formData.set(name, `${active.dataset.proofMethod}:${code}`)
+        }
+      }
+      this.select?.addEventListener("change", this.choose)
+      this.form?.addEventListener("formdata", this.qualify)
+      this.choose()
+    },
+    updated() { this.choose() },
+    destroyed() {
+      this.select?.removeEventListener("change", this.choose)
+      this.form?.removeEventListener("formdata", this.qualify)
+    },
+  }
+
   const CodeInput = {
     mounted() {
       this.input = this.el.querySelector("input")
@@ -844,7 +877,7 @@
 
   const registry = window.BilibiUI
   if (!registry) throw new Error("hooks.js needs ui.js loaded first")
-  for (const [name, hook] of Object.entries({CodeInput, ColourInput, Combobox, SecretReveal, SecretClear, SecretStored, DisclosureDismiss, MultiSelect, DashboardSort, Fold})) {
+  for (const [name, hook] of Object.entries({FactorProof, CodeInput, ColourInput, Combobox, SecretReveal, SecretClear, SecretStored, DisclosureDismiss, MultiSelect, DashboardSort, Fold})) {
     registry.registerHook(name, hook)
   }
 })()

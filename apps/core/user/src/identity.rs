@@ -19,7 +19,7 @@ use bilibi_company::eligibility::{
 use bilibi_database::{Change, Db, Error, MutationTransaction, Result};
 use bilibi_party_ids::{AffiliationId, OrganisationId, PersonId};
 use bilibi_person::identity::account_standing as person_standing;
-use bilibi_security::{AccountIdentity, ActorVerifier, ProofClient, ProofFuture, Scope, Sessions};
+use bilibi_security::{AccountIdentity, ActorVerifier, ProofClient, ProofFuture, Scope};
 use serde::Serialize;
 use serde_json::json;
 use tokio_postgres::{GenericClient, Row};
@@ -297,7 +297,7 @@ async fn save_links(
 ) -> Result<AccountLinks> {
     let tenant = tx.context().tenant;
     let (id, before) = (old.id, old.links);
-    let ended = tx
+    tx
         .mutate(move |sql| {
             Box::pin(async move {
                 sql.execute(
@@ -311,13 +311,8 @@ async fn save_links(
                     ],
                 )
                 .await?;
-                let ended = if before.organisation != links.organisation {
-                    Sessions::end_user_sessions(sql, tenant, id, None).await?
-                } else {
-                    Vec::new()
-                };
                 Ok((
-                    ended,
+                    (),
                     vec![Change {
                         kind: "user".into(),
                         id,
@@ -328,6 +323,11 @@ async fn save_links(
             })
         })
         .await?;
+    let ended = if before.organisation != links.organisation {
+        service.sessions.revoke(tx, id, None).await?
+    } else {
+        Vec::new()
+    };
     let sessions = service.sessions.clone();
     tx.after_commit(move || sessions.announce(ended));
     Ok(links)

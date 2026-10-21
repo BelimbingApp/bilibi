@@ -36,7 +36,7 @@ remains.
 Scope. `switch(sql, token, tenant, from, to)` moves a still-valid session from
 one `Holder` to another inside the caller's transaction and rotates its CSRF
 secret; a session that no longer holds `from` is `Conflict`. A switch is not
-announced as a termination. `end_user_sessions` also ends the sessions a user
+announced as a termination. `revoke` also ends the sessions a user
 holds as an impersonating operator.
 
 ## Step-up
@@ -53,7 +53,7 @@ The web proof of Base Step-up (`apps/base/step_up/README.md`) lives on the sessi
 - `step_up_window(client, scope, window, cap, extend)` reads, and with `extend` restarts, the window.
 - `spend_fresh_step_up(client, scope, seconds)` lets one recent check cover one "ask every time" action.
 - An impersonated session is never stepped up.
-- `end_user_sessions` also ends the holder's agent step-up windows (`bilibi_step_up::end_agent_windows`).
+- `revoke` also ends the holder's agent step-up windows (`bilibi_step_up::end_agent_windows`).
 
 ## Listing
 
@@ -76,13 +76,13 @@ slot `dashboard.sessions`) shows the open count, reading only while
 
 ## Ending a session
 
-`terminate(tx, id, current)` is the operator command: the caller's own session
+`terminate(tx, scope, id, current)` is the operator command: the caller's own session
 is refused before any row is read (`Termination::CurrentSession`), the delete is
 an audited mutation recording whose session ended and from where (the payload
 is marked redacted; the token is never written), and the termination is
-announced after the commit. `delete(client, scope, id)` is logout: the holder's
-own session, no audit row. `end_user_sessions(sql, tenant, user, except)` runs
-inside an owner's transaction (Core User's password change and reset) and
+announced after the commit. It reauthorizes the platform operator inside the transaction and calls every factor's revocation hook before deleting the session. The mutation context uses the selected session's tenant, derived from the operator's server-held list selection; a tenant-scoped locked reread refuses a stale or mismatched selection. `delete(client, scope, id)` is logout: the holder's
+own session, no audit row. `revoke(tx, user, except)` runs
+inside an owner's mutation transaction (Core User's password change and reset), invokes every registered factor’s revocation hook, and
 returns the ended ids for `announce` after that commit, so a rolled-back
 credential change signs nobody out.
 
@@ -113,3 +113,5 @@ and sign in as `admin@example.test`
 browser profile, then terminate its row: that browser's open page is sent to
 sign-in at once, and the row disappears. Your own row carries the Current badge
 and no terminate control.
+
+`Sessions::with_factors(step_up)` wires the registry; the production service factory does this. A standalone fixture that constructs `Sessions::new` must wire it before calling `revoke`, or revocation fails closed. Factor hooks retain enrollment and lockouts while clearing pending challenges and method-owned proof; their `Change` values commit with the credential owner's write. The [Step-up lifecycle contract](../step_up/README.md#factor-lifecycle) is authoritative.
