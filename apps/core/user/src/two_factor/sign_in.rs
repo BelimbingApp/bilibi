@@ -25,13 +25,18 @@ pub enum SignIn {
 pub struct PendingSignIn {
     /// The account has the authenticator app.
     pub authenticator: bool,
-    /// The verified phone, masked, when the account has one.
+    /// The verified phone, masked, when the account has one and this
+    /// server can send text messages now.
     pub phone: Option<String>,
+    /// The account has a verified phone, but this server sends no text
+    /// messages (its role is Production and no SMS driver exists).
+    pub sms_unavailable: bool,
     /// Seconds until another text message may be sent.
     pub wait_seconds: i64,
 }
 impl PendingSignIn {
-    /// Neither method: the holder cannot sign in until an administrator helps.
+    /// No usable method: the holder cannot sign in until an administrator
+    /// helps (or text messages become available).
     pub fn enrolled(&self) -> bool {
         self.authenticator || self.phone.is_some()
     }
@@ -96,7 +101,9 @@ impl UserService {
             .map_err(Error::from)?;
         drop(client);
         let status = self.two_factor_status(&scope).await?;
-        if status.sms && !status.authenticator {
+        // A code goes out at once only where it can be sent; elsewhere the
+        // page says so instead of waiting for a message that never comes.
+        if status.sms && !status.authenticator && self.sms_available().await {
             match self.send_check_code(&scope).await {
                 Ok(_) | Err(TwoFactorError::ResendTooSoon { .. } | TwoFactorError::ResendLimit) => {
                 }
@@ -113,7 +120,8 @@ impl UserService {
             return Ok(None);
         };
         let status = self.two_factor_status(&scope).await?;
-        let phone = if status.sms {
+        let sendable = status.sms && self.sms_available().await;
+        let phone = if sendable {
             self.phone_status(&scope).await?.map(|phone| phone.masked)
         } else {
             None
@@ -121,6 +129,7 @@ impl UserService {
         Ok(Some(PendingSignIn {
             authenticator: status.authenticator,
             phone,
+            sms_unavailable: status.sms && !sendable,
             wait_seconds: self.sms_wait_seconds(&scope).await?,
         }))
     }

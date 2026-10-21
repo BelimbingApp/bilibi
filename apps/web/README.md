@@ -216,7 +216,7 @@ Host routes in `src/auth.rs` (Core User owns the rules, [ADR 03](../../docs/arch
 | Route | What it does |
 |---|---|
 | `POST /login` | A right password opens a session, or, when the tenant turns step-up `core.user.sign_in` on, sets the `bilibi_pending_sign_in` cookie (`Path=/login`, 10 minutes) and redirects to `/login/verify` |
-| `GET`/`POST /login/verify` | The code card in the sign-in layout: masked phone or app prompt, `CodeInput`, recovery code for an app account (`?recovery=1`). An accepted code opens the session |
+| `GET`/`POST /login/verify` | The code card in the sign-in layout: masked phone or app prompt, `CodeInput`, or a notice that this server sends no text messages. An accepted code opens the session |
 | `POST /login/verify/resend` | Another text message, within the 60-second and 5-per-hour limits; the card states the wait |
 | `GET /login/verify/cancel` | "Back to sign in": drops the pending sign-in |
 | `GET /dev/sms-inbox` | The SMS simulator's messages while the server role is Dev or Staging; a 404 on Production |

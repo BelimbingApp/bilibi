@@ -1,22 +1,22 @@
 {#- The sign-in's second step (src/auth.rs `VerifyPage`; GitHub's two-factor
     page, no Bilimbi counterpart): where the code comes from, the announced
     refusal, the code field, "Resend code" for a text message with the wait
-    the server computed, the recovery-code switch for an authenticator
-    account, and the way back. An account with no method is told to ask its
+    the server computed, and the way back. Where the server sends no text messages, a
+    phone account is told so (and to use the app) instead of waiting. An account with no method is told to ask its
     administrator and offered only the way back. -#}
 {% import "components.html" as ui %}
 {% import "feedback.html" as feedback %}
 <div class="flex flex-col gap-5">
-<div><h1 class="text-lg font-semibold tracking-tight text-ink-strong">Two-step verification</h1><p id="verify-source" class="mt-1 text-sm text-ink-muted">{% if recovery %}Enter one of your recovery codes.{% elif !phone.is_empty() && authenticator %}Enter the code from your authenticator app, or the code we sent to <span class="font-medium text-ink">{{ phone }}</span>.{% elif !phone.is_empty() %}We sent a 6-digit code to <span class="font-medium text-ink">{{ phone }}</span>.{% elif authenticator %}Enter the 6-digit code from your authenticator app.{% endif %}</p></div>
+<div><h1 class="text-lg font-semibold tracking-tight text-ink-strong">Two-step verification</h1><p id="verify-source" class="mt-1 text-sm text-ink-muted">{% if !phone.is_empty() && authenticator %}Enter the code from your authenticator app, or the code we sent to <span class="font-medium text-ink">{{ phone }}</span>.{% elif !phone.is_empty() %}We sent a 6-digit code to <span class="font-medium text-ink">{{ phone }}</span>.{% elif authenticator %}Enter the 6-digit code from your authenticator app.{% endif %}</p></div>
 {% if !form_error.is_empty() %}<div id="verify-form-error">{% call feedback::alert(kind=bilibi_ui::StatusKind::Error, id="verify-form-error-1") %}{{ form_error }}{% endcall %}</div>{% endif %}
+{% if sms_unavailable && enrolled %}<div id="verify-sms-unavailable">{% call feedback::alert(kind=bilibi_ui::StatusKind::Warning, id="verify-sms-unavailable-1") %}Text messages are not available on this server, so no code was sent to your phone. Use your authenticator app.{% endcall %}</div>{% endif %}
 {% if !notice.is_empty() %}<div id="verify-notice">{% call feedback::alert(kind=bilibi_ui::StatusKind::Success, id="verify-notice-1") %}{{ notice }}{% endcall %}</div>{% endif %}
 {% if enrolled %}
-<form id="verify-form" action="/login/verify{% if recovery %}?recovery=1{% endif %}" method="post" class="flex flex-col gap-4">
+<form id="verify-form" action="/login/verify" method="post" class="flex flex-col gap-4">
 {{ code }}
 {% call ui::button(variant=bilibi_ui::ButtonVariant::Primary, id="verify-submit", class="w-full", button_type="submit", working="Verifying…") %}Verify{% endcall %}
 </form>
-{% if !phone.is_empty() && !recovery %}<form id="verify-resend-form" action="/login/verify/resend" method="post" class="flex items-center justify-between gap-3"><p id="verify-resend-wait" class="text-xs text-ink-muted">{% if wait_seconds > 0 %}You can request a new code in {{ wait_seconds }} s.{% else %}Didn't get a code?{% endif %}</p>{% call ui::button(id="verify-resend", button_type="submit", working="Sending…") %}Resend code{% endcall %}</form>{% endif %}
-{% if authenticator %}<div class="flex justify-center">{% if recovery %}{% call ui::action_link(id="verify-use-code", icon="", href="/login/verify", title="Use a 6-digit code") %}Use a 6-digit code{% endcall %}{% else %}{% call ui::action_link(id="verify-use-recovery", icon="", href="/login/verify?recovery=1", title="Use a recovery code") %}Use a recovery code{% endcall %}{% endif %}</div>{% endif %}
+{% if !phone.is_empty() %}<form id="verify-resend-form" action="/login/verify/resend" method="post" class="flex items-center justify-between gap-3"><p id="verify-resend-wait" class="text-xs text-ink-muted">{% if wait_seconds > 0 %}You can request a new code in {{ wait_seconds }} s.{% else %}Didn't get a code?{% endif %}</p>{% call ui::button(id="verify-resend", button_type="submit", working="Sending…") %}Resend code{% endcall %}</form>{% endif %}
 {% endif %}
 {% call ui::back_link(href="/login/verify/cancel", id="verify-back", title="Back to sign in", class="justify-center") %}{% endcall %}
 </div>

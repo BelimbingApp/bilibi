@@ -392,7 +392,7 @@ impl TwoFactorPage {
             }
         };
         let phone_on = self.phone.as_ref().filter(|phone| phone.verified);
-        let sms_stage = if !self.sms_available && phone_on.is_none() {
+        let sms_stage = if !self.sms_available {
             "unavailable"
         } else if self.sms_verifying.is_some() {
             "verify"
@@ -581,10 +581,11 @@ impl ConfirmPage {
     ) -> Result<Self, Error> {
         let status = users.two_factor_status(scope).await?;
         let window = users.step_up.window(scope).await?;
+        let sms = status.sms && users.sms_available().await;
         Ok(Self {
             users,
             enabled: status.enabled,
-            sms: status.sms,
+            sms,
             sms_notice: String::new(),
             minutes: window.window_minutes,
             hours: window.cap_hours,

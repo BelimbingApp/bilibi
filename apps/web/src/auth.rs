@@ -496,17 +496,6 @@ fn expired_sign_in() -> Response {
 }
 
 #[derive(Deserialize)]
-pub struct VerifyQuery {
-    #[serde(default)]
-    recovery: Option<String>,
-}
-impl VerifyQuery {
-    fn recovery(&self) -> bool {
-        self.recovery.as_deref() == Some("1")
-    }
-}
-
-#[derive(Deserialize)]
 pub struct VerifySubmission {
     #[serde(rename = "verify[code]", default)]
     code: String,
@@ -530,9 +519,13 @@ async fn verify_card(
     form.phone = pending.phone.clone().unwrap_or_default();
     form.authenticator = pending.authenticator;
     form.wait_seconds = pending.wait_seconds;
-    form.recovery &= pending.authenticator;
+    form.sms_unavailable = pending.sms_unavailable;
     if !pending.enrolled() {
-        form.form_error = SignInError::NotEnrolled.to_string();
+        form.form_error = if pending.sms_unavailable {
+            "Text messages are not available on this server, and no authenticator app is set up for your account. Contact your administrator.".into()
+        } else {
+            SignInError::NotEnrolled.to_string()
+        };
     }
     card(
         app,
@@ -548,23 +541,17 @@ async fn verify_card(
 pub async fn verify_page(
     State(app): State<App>,
     headers: HeaderMap,
-    Query(query): Query<VerifyQuery>,
 ) -> std::result::Result<Response, HttpError> {
     if signed_in(&app, &headers).await {
         return Ok(Redirect::to(WORKSPACE).into_response());
     }
-    let form = VerifyForm {
-        recovery: query.recovery(),
-        ..VerifyForm::default()
-    };
-    verify_card(&app, &headers, form, StatusCode::OK).await
+    verify_card(&app, &headers, VerifyForm::default(), StatusCode::OK).await
 }
 
 /// `POST /login/verify`: the code, then a session.
 pub async fn verify(
     State(app): State<App>,
     headers: HeaderMap,
-    Query(query): Query<VerifyQuery>,
     peer: Option<Extension<ConnectInfo<SocketAddr>>>,
     Form(submission): Form<VerifySubmission>,
 ) -> std::result::Result<Response, HttpError> {
@@ -572,10 +559,7 @@ pub async fn verify(
     let Some(token) = cookie(&headers, PENDING_COOKIE) else {
         return Ok(expired_sign_in());
     };
-    let mut form = VerifyForm {
-        recovery: query.recovery(),
-        ..VerifyForm::default()
-    };
+    let mut form = VerifyForm::default();
     let code: String = submission.code.trim().chars().take(64).collect();
     if code.is_empty() {
         form.code_errors = vec![BLANK.into()];

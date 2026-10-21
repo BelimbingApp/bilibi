@@ -234,13 +234,13 @@ pub struct VerifyForm {
     pub phone: String,
     /// The account has the authenticator app.
     pub authenticator: bool,
-    /// A recovery code instead of a six-digit code.
-    pub recovery: bool,
     pub code_errors: Vec<String>,
     /// An announced refusal above the form (expired, locked, not set up).
     pub form_error: String,
     /// A completed resend.
     pub notice: String,
+    /// The account has a phone, but this server sends no text messages.
+    pub sms_unavailable: bool,
     /// Seconds until another text message may be sent.
     pub wait_seconds: i64,
 }
@@ -252,7 +252,8 @@ impl VerifyForm {
 }
 
 /// The sign-in's second step (GitHub's two-factor page): the code field,
-/// a resend for text messages and the way back. The page posts to
+/// a resend for text messages and the way back. A lost phone is an
+/// administrator's 2FA reset. The page posts to
 /// `/login/verify`; the browser holds the pending sign-in, not a session.
 #[derive(Template)]
 #[template(path = "login_verify.html")]
@@ -260,41 +261,27 @@ pub struct VerifyPage {
     pub phone: String,
     pub authenticator: bool,
     pub enrolled: bool,
-    pub recovery: bool,
     pub form_error: String,
     pub notice: String,
+    pub sms_unavailable: bool,
     pub wait_seconds: i64,
     pub code: Html,
 }
 
 impl VerifyPage {
     pub fn new(form: &VerifyForm) -> askama::Result<Self> {
-        let code = if form.recovery {
-            Html::render(
-                &Field::in_form("verify", "code")
-                    .id("verify-code-recovery")
-                    .label("Recovery code")
-                    .hint("One of the recovery codes you saved during setup")
-                    .autocomplete("off")
-                    .attr("spellcheck", "false")
-                    .attr("autocapitalize", "off")
-                    .attr("maxlength", "32")
-                    .errors(form.code_errors.clone()),
-            )?
-        } else {
-            Html::render(
-                &CodeInput::new("verify-code", "verify[code]", "Verification code", 6)
-                    .numeric()
-                    .errors(form.code_errors.clone()),
-            )?
-        };
+        let code = Html::render(
+            &CodeInput::new("verify-code", "verify[code]", "Verification code", 6)
+                .numeric()
+                .errors(form.code_errors.clone()),
+        )?;
         Ok(Self {
             phone: form.phone.clone(),
             authenticator: form.authenticator,
             enrolled: form.enrolled(),
-            recovery: form.recovery,
             form_error: form.form_error.clone(),
             notice: form.notice.clone(),
+            sms_unavailable: form.sms_unavailable,
             wait_seconds: form.wait_seconds,
             code,
         })
