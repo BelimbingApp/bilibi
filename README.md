@@ -70,7 +70,7 @@ Python 3.11 or newer is required. Ubuntu 20.04 and 22.04, and Debian 11, ship ol
 
 ### Commands in a Platform clone
 
-Run commands from the clone's root. Use `./bilibi help` to see the command list.
+Run commands from the clone's root. Use `./bilibi help` to see the command list. Local branches, staged files and uncommitted edits are kept.
 
 | Command | What it does |
 | --- | --- |
@@ -85,7 +85,7 @@ Run commands from the clone's root. Use `./bilibi help` to see the command list.
 
 The [application workspace guide](docs/application-workspaces.md) covers the next step, Git ownership and migration; [ADR 03](docs/architecture/decisions/03-application-workspaces-one-front-door.md) records the decision. `scripts/setup.sh` and `scripts/start-app.sh` remain available directly. Direct setup also installs the safeguard; after installing tools directly, load `$HOME/.cargo/env` before using the direct launcher.
 
-Run `./bilibi update` before `./bilibi start` to bring an existing clone up to date. It fast-forwards your branch from its upstream. A published branch whose changes already reached the default branch, including an exact squash merge, can safely return to that default branch. Other local commits and source edits stop the update with a concrete next step. Recognised generated composition and its reproduced dependency lock are regenerated; real edits are never discarded or silently stashed. Update never downgrades a component. A component on a branch, dirty, private, unlisted or off its official origin stays where it is, with its path and reason printed; this does not fail the update.
+Run `./bilibi update` before `./bilibi start` to bring an existing clone up to date. It fast-forwards your branch from its upstream. A published branch whose changes already reached the default branch, including an exact squash merge, can safely return to that default branch. Other local commits and source edits stop the update with a concrete next step. Recognised generated composition and its reproduced dependency lock are regenerated; real edits are never discarded or silently stashed. Update never downgrades a component. A component on a branch, dirty, symlinked, unlisted or off its official origin stays where it is, with its path and reason printed; this does not fail the update.
 
 ### Commit safeguard
 
