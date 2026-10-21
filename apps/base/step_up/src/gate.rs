@@ -15,7 +15,10 @@ use bilibi_tenancy::{Channel, ProofFuture, Scope};
 use serde_json::{json, Map, Value};
 use std::{
     collections::BTreeMap,
-    sync::{Arc, OnceLock},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, OnceLock,
+    },
 };
 
 /// What a presented code is being spent on; the provider may record it.
@@ -148,6 +151,8 @@ pub struct StepUp {
     settings: Arc<Settings>,
     operations: BTreeMap<&'static str, Declared>,
     provider: OnceLock<Arc<dyn Provider>>,
+    /// Turned off only by a fixture binary that has no authenticator.
+    enforced: AtomicBool,
 }
 
 enum Outcome {
@@ -178,6 +183,7 @@ impl StepUp {
             settings,
             operations,
             provider: OnceLock::new(),
+            enforced: AtomicBool::new(true),
         })
     }
     /// The second-factor owner binds itself once at boot.
@@ -185,6 +191,14 @@ impl StepUp {
         self.provider.set(provider).map_err(|_| {
             bilibi_module_registry::RegistryError::Service("duplicate step-up provider".into())
         })
+    }
+    /// For a fixture binary that installs its own services and enrolls no
+    /// authenticator; the host never calls it, so every server role enforces.
+    pub fn set_enforced(&self, enforced: bool) {
+        self.enforced.store(enforced, Ordering::SeqCst);
+    }
+    fn enforced(&self) -> bool {
+        self.enforced.load(Ordering::SeqCst)
     }
     pub fn declared(&self, key: &str) -> Option<&Declared> {
         self.operations.get(key)
@@ -201,7 +215,8 @@ impl StepUp {
     /// Used to explain protected fields before a person changes them.
     pub async fn required(&self, scope: &Scope, key: &str) -> Result<bool> {
         let declared = self.operations.get(key).ok_or(Error::Invalid)?;
-        Ok(declared.operation.always || self.mode(scope, declared).await? != Mode::Off)
+        Ok(declared.operation.always
+            || (self.enforced() && self.mode(scope, declared).await? != Mode::Off))
     }
     /// The operation declared to guard changes to setting `key`, if any.
     pub fn guarding_setting(&self, key: &str) -> Option<&Declared> {
@@ -218,9 +233,10 @@ impl StepUp {
 
     /// The step-up check of one operation on one target. `Ok` when the
     /// tenant's policy leaves it off or a proof for this channel holds;
-    /// otherwise `Error::StepUpRequired`. Every deployment enforces it,
-    /// development included. An operation declared `always` ignores the
-    /// policy: it needs a fresh check on every action. Every
+    /// otherwise `Error::StepUpRequired`. Every server role enforces it,
+    /// Dev included; only a fixture binary turns it off (`set_enforced`).
+    /// An operation declared `always` ignores both: it needs a fresh check
+    /// on every action. Every
     /// check that applies is audited (`step_up.passed`, `.refused`, `.failed`)
     /// with the operation, target, channel and actor, never a code.
     pub async fn require(&self, scope: &Scope, key: &str, target: &str) -> Result<()> {
@@ -230,6 +246,9 @@ impl StepUp {
             // tenant chose.
             Mode::EveryTime
         } else {
+            if !self.enforced() {
+                return Ok(());
+            }
             let mode = self.mode(scope, declared).await?;
             if mode == Mode::Off {
                 return Ok(());
@@ -296,7 +315,7 @@ impl StepUp {
         let mode = if declared.operation.always {
             Mode::EveryTime
         } else {
-            if self.mode(scope, declared).await? == Mode::Off {
+            if !self.enforced() || self.mode(scope, declared).await? == Mode::Off {
                 return Ok(true);
             }
             Mode::On

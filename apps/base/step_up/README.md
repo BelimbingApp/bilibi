@@ -53,7 +53,7 @@ Tenants decide per operation on **Administration › Authorization › Step-up 2
 
 - Changing any of these is itself a step-up operation (`base.step_up.policy.update`, on the floor). Settings audits it.
 - The installation owner sees the floor and the maxima on the same page.
-- Every deployment enforces the policy, development included. An operation declared `.always()` is "ask every time" whatever the policy says, and the policy page shows it as fixed.
+- Every server role enforces the policy, Dev included. An operation declared `.always()` is "ask every time" whatever the policy says, and the policy page shows it as fixed. A fixture binary with no authenticator may call `StepUp::set_enforced(false)` after installing its services, which skips every check but `.always()`; the host never calls it.
 
 ## Proofs per channel
 
