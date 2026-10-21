@@ -29,9 +29,13 @@ case ${1:-help} in
             exec "$root/scripts/start-app.sh"
         fi
         ;;
-    status)
+    status|update)
         activate_cargo
         python3 -c 'import tomllib' 2>/dev/null || { echo 'Python 3.11+ is required. See README.md (supported environment).' >&2; exit 1; }
+        if [[ $1 == update ]]; then
+            [[ $# == 1 ]] || { echo 'Usage: ./bilibi update' >&2; exit 1; }
+            exec python3 "$root/scripts/update-platform.py"
+        fi
         exec python3 "$root/scripts/platform.py" "$@"
         ;;
     new)
@@ -53,8 +57,10 @@ Usage: ./bilibi <command>
   add <component>   Mount an official Domain or Extension (from catalogue.json, or the
                     --kind, --source and --commit that Software shows)
   status            Show component repositories, branches and local changes
+  update            Pull safe Platform changes and recommended component releases
   new <name>        Keep this source composition in a sibling application repository
   check, pin, build Require an application repository
+  help              Show this command list (-h and --help also work)
 USAGE
         ;;
     *) echo "Unknown command: $1. Run ./bilibi --help." >&2; exit 1 ;;

@@ -73,6 +73,19 @@ Review and commit those three saved files together. Domains and Extensions are o
 
 Publish an application release through its existing workflow. Verify the resulting artifact on Staging, then promote **that same artifact** to Production under [ADR 02](architecture/decisions/02-build-in-development-keep-everything-in-step.md) and the [server installation guide](server-install.md). A workspace migration is not a server deployment.
 
+## Update your workspace
+
+Run `./bilibi update`, then `./bilibi start`, from your workspace root. Use `./bilibi help` for the command list.
+
+| Workspace | What `update` does |
+| --- | --- |
+| Platform clone | Fast-forward the current branch from its upstream, update clean official Domains and Extensions to the catalogue's recommended compatible releases, then regenerate composition and `Cargo.lock` |
+| Application repository | Pull the application repository and bring `sources/` to its saved commits; saved pins advance only when you run `pin` |
+
+A published branch whose changes already reached the default branch can return there safely, including an exact squash merge. Updates stop for source edits or commits that would be lost. Recognised generated composition files and a dependency lock reproduced from the committed lock may be regenerated. Updates never reset source work, silently stash edits or force a checkout. A component that cannot move safely stays in place; the command prints its path, why it stayed and the action needed. Review and commit real edits in their owning repository, follow the printed action, then retry.
+
+An application created before `update` was available needs the deliberate tooling update below first. Its wrapper belongs to the application repository.
+
 ## Update application tooling
 
 The application owns its wrapper, scripts and workflows after creation. `setup` obtains component sources; it does not overwrite application automation from a moving template branch.
