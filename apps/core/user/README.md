@@ -320,7 +320,7 @@ calls `settle_bootstrap_affiliation` for the company link. `operator_accounts(te
 
 ## Two-factor authentication (the step-up provider)
 
-Authenticator-app codes (TOTP, RFC 6238: HMAC-SHA-1, 6 digits, 30 s) for the signed-in account. It is the second factor behind Base Step-up (`apps/base/step_up/README.md`). Bilimbi has no counterpart yet.
+Authenticator-app codes (TOTP, RFC 6238: HMAC-SHA-1, 6 digits, 30 s) for the signed-in account. It is the second factor behind Base Step-up (`apps/base/step_up/README.md`), with SMS codes as a second method (below). Bilimbi has no counterpart yet.
 
 - **Boundary:** this module checks the account holder and nothing else. It never names what step-up protects, and those owners never name it. They declare operations and call `StepUp::require`; tenant policy decides.
 - **Code:** `src/two_factor/` (facade on `UserService`, provider in `provider.rs`), pages in `src/two_factor_ui.rs`, reset doors in `src/two_factor/agent.rs`, migrations `012-two-factor.sql` and `013-drop-two-factor-recovery.sql`.
@@ -363,6 +363,37 @@ Security rules:
 The person then signs in with their password and sets the app up again.
 
 The step-up window, cap and per-operation policy belong to Base Step-up, not here.
+
+### SMS codes (ADR 03)
+
+A second method beside the authenticator, behind the same provider. Delivery goes through `base/sms`; on Dev and Staging servers that is the simulator (`/dev/sms-inbox`).
+
+- **The phone is the account's.** `users.phone_number` (E.164, migration `014-sms-second-factor.sql`), set by an administrator on `/users/new` or in place on `/users/{id}` ("2FA Phone"). Setting or changing it clears `phone_verified_at` and is the step-up operation `core.user.account.phone.set` (on by default).
+- **The holder verifies it** on `/settings/two-factor` (Text message card): Send code, then Verify phone. Only a verified phone answers a check. The holder cannot change the number.
+- **Codes:** 6 digits (OS CSPRNG, uniform), stored only as an Argon2id hash in `user_sms_codes`, 5 minutes, single use, a newer code supersedes older ones, void after 5 wrong tries. Every miss also counts toward the account lock above.
+- **Resend throttle:** 60 seconds apart, at most 5 an hour, per account, rechecked under the account row's lock.
+- **Saying why no code came:** `sign_in_challenge` reports whether a code is waiting. When none is, the code page says why (the hourly limit or a lock) and the Resend countdown covers both, in seconds up to 90 and then in minutes; it never claims a code was sent.
+- **Where it answers:** step-up (`step_up`), sign-in (`complete_sign_in`) and an agent's `step_up_code`. Moving the authenticator to a new phone takes an authenticator code, not an SMS code.
+- **Enrolled** (`TwoFactorStatus::enrolled`) means a confirmed authenticator or a verified phone on a server that sends SMS. Confirm access offers **Text me a code** when the phone can answer.
+- **Agents:** when an agent owes a code and SMS is the holder's only method, the provider's `challenge` sends one.
+- **Audit:** `user.two_factor.sms_sent` (masked number), `.sms_failed`, `.phone_verified`, and the existing `.verified`, `.failed`, `.locked` with `checked_with: "sms"`. A plain code is never stored, logged or audited.
+
+| Method | Purpose |
+|---|---|
+| `send_sms_code(scope, purpose)` | A fresh code to the phone (`Check` needs it verified, `VerifyPhone` does not) |
+| `verify_phone(scope, code)` | Marks the phone verified |
+| `sms_resend_in(scope)` | Seconds before another code may be sent (throttle or lock) |
+
+### Sign-in (ADR 03)
+
+Sign-in is the step-up operation `core.user.sign_in` ("Sign in"), **off by default**. Tenants turn it on at `/authz/step-up`.
+
+1. `identity::login` checks the password and writes the session **pending its second factor**, expiring in 15 minutes (Base Session refuses it everywhere).
+2. `UserService::login` calls `begin_sign_in`, which asks `StepUp::require`:
+   - off, or development: the session is admitted;
+   - required: the session stays pending and `Login::second_factor_owed` is set; an SMS-only account gets its first code now;
+   - not enrolled: the session is deleted and sign-in answers `CredentialError::SecondFactorUnavailable` ("contact an administrator").
+3. The host's `/login/verify` card calls `complete_sign_in` (admits the session and opens its step-up window), `resend_sign_in_code` and `cancel_sign_in`.
 
 ## Audit
 

@@ -6,6 +6,12 @@
 //! account, as in Bilimbi; a right credential on a frozen account (archived
 //! company, no live workspace identity) is told so above the form, as
 //! Bilimbi's `complete_login` does. Sign-in has no attempt throttle yet.
+//!
+//! When the tenant asks for a second factor at sign-in (ADR 03), a correct
+//! password leaves the session pending and the browser goes to
+//! `/login/verify`, the code card on the same layout; Core User decides and
+//! checks, this host only carries the forms. `/dev/sms-inbox` shows the SMS
+//! simulator's messages on Dev and Staging servers and is a 404 on Production.
 use crate::{api, document_titled, origin, token, App, HttpError};
 use askama::Template;
 use axum::{
@@ -15,11 +21,12 @@ use axum::{
 };
 use bilibi_database::Error;
 use bilibi_ui::{
-    AuthLayout, FlashMap, ForgotForm, ForgotPasswordPage, Html, LoginForm, LoginPage,
-    LoginWorkspace, ResetForm, ResetPasswordPage, COMPANY_ARCHIVED, CREDENTIALS_REJECTED,
-    PASSWORD_RESET, RESET_LINK_INVALID, RESET_REQUESTED, WORKSPACE_UNAVAILABLE,
+    AuthLayout, ChallengeForm, FlashMap, ForgotForm, ForgotPasswordPage, Html, LoginChallengePage,
+    LoginForm, LoginPage, LoginWorkspace, ResetForm, ResetPasswordPage, SimulatedSms, SmsInboxPage,
+    COMPANY_ARCHIVED, CREDENTIALS_REJECTED, PASSWORD_RESET, RESET_LINK_INVALID, RESET_REQUESTED,
+    WORKSPACE_UNAVAILABLE,
 };
-use bilibi_user::{password::check_policy, CredentialError};
+use bilibi_user::{password::check_policy, CredentialError, TwoFactorError};
 use serde::Deserialize;
 use std::{collections::HashMap, net::SocketAddr};
 
@@ -29,6 +36,10 @@ const CONFIRMATION_MISMATCH: &str = "does not match confirmation";
 /// Where a signed-in visitor to a credential page is sent: the dashboard, as
 /// Bilimbi's `UserAuth` signs every account in.
 const WORKSPACE: &str = "/dashboard";
+/// The sign-in code card for a session pending its second factor.
+pub const CHALLENGE: &str = "/login/verify";
+/// The SMS simulator's inbox; a 404 on a Production server.
+pub const SMS_INBOX: &str = "/dev/sms-inbox";
 
 /// The one-shot flash cookie carries one of these keys; the sign-in page maps
 /// the key to its copy and clears the cookie. Free text never travels in it.
@@ -299,6 +310,9 @@ pub async fn home(
     if signed_in(&app, &headers).await {
         return Ok(Redirect::to(WORKSPACE).into_response());
     }
+    if owes_code(&app, &headers).await {
+        return Ok(Redirect::to(CHALLENGE).into_response());
+    }
     let key = flash_key(&headers);
     let form = LoginForm {
         session_expired: key == Some(FLASH_EXPIRED),
@@ -406,13 +420,18 @@ pub async fn login(
                 session.token,
                 secure(&app)
             );
-            // The account's chosen landing page (Bilimbi `ui.landing_menu_id`),
-            // when it still may open it; else the workspace.
-            let destination = app
-                .user
-                .landing_route(&session.token)
-                .await?
-                .unwrap_or_else(|| WORKSPACE.to_owned());
+            // A code is still owed: the code card, which nothing else accepts
+            // the pending session for. Otherwise the account's chosen landing
+            // page (Bilimbi `ui.landing_menu_id`), when it still may open it;
+            // else the workspace.
+            let destination = if session.second_factor_owed {
+                CHALLENGE.to_owned()
+            } else {
+                app.user
+                    .landing_route(&session.token)
+                    .await?
+                    .unwrap_or_else(|| WORKSPACE.to_owned())
+            };
             let mut response = Redirect::to(&destination).into_response();
             response.headers_mut().insert(
                 header::SET_COOKIE,
@@ -437,9 +456,214 @@ pub async fn login(
             form.form_error = WORKSPACE_UNAVAILABLE.into();
             login_card(&app, form, FlashMap::default(), StatusCode::FORBIDDEN).await
         }
+        // A code is owed but the account has no method: said, never silent.
+        Err(error @ CredentialError::SecondFactorUnavailable) => {
+            form.form_error = error.to_string();
+            form.password.clear();
+            login_card(&app, form, FlashMap::default(), StatusCode::FORBIDDEN).await
+        }
         Err(CredentialError::Other(error)) => Err(error.into()),
         Err(_) => Err(Error::Internal.into()),
     }
+}
+
+// ---- second factor at sign-in (ADR 03) -------------------------------------------
+
+/// Whether the visitor's cookie names a session still owed its code.
+async fn owes_code(app: &App, headers: &HeaderMap) -> bool {
+    match token(headers) {
+        Ok(token) => app.user.sign_in_challenge(&token).await.is_ok(),
+        Err(_) => false,
+    }
+}
+
+fn end_session_cookie(response: &mut Response) {
+    response.headers_mut().insert(
+        header::SET_COOKIE,
+        HeaderValue::from_static("bilibi_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0"),
+    );
+}
+
+/// Back to the sign-in card: the pending session is gone or never was.
+fn restart_sign_in() -> Response {
+    let mut response = Redirect::to("/").into_response();
+    end_session_cookie(&mut response);
+    response
+}
+
+/// The code card for the visitor's pending session, with what the last step
+/// said; `None` when the cookie names no pending session.
+async fn challenge_card(
+    app: &App,
+    token: &str,
+    mut form: ChallengeForm,
+    status: StatusCode,
+) -> std::result::Result<Option<Response>, HttpError> {
+    let challenge = match app.user.sign_in_challenge(token).await {
+        Ok(challenge) => challenge,
+        Err(Error::Unauthorized) => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    form.phone = challenge.phone;
+    form.authenticator = challenge.authenticator;
+    form.resend_in = challenge.resend_in;
+    form.sms_waiting = challenge.sms_waiting;
+    form.sms_held = challenge.sms_held.unwrap_or_default();
+    Ok(Some(
+        card(
+            app,
+            "Verification code",
+            LoginChallengePage::new(&form).map_err(|_| Error::Internal)?,
+            FlashMap::default(),
+            status,
+        )
+        .await?,
+    ))
+}
+
+/// `GET /login/verify`.
+pub async fn challenge_page(
+    State(app): State<App>,
+    headers: HeaderMap,
+) -> std::result::Result<Response, HttpError> {
+    let Ok(token) = token(&headers) else {
+        return Ok(Redirect::to("/").into_response());
+    };
+    Ok(
+        challenge_card(&app, &token, ChallengeForm::default(), StatusCode::OK)
+            .await?
+            .unwrap_or_else(restart_sign_in),
+    )
+}
+
+#[derive(Deserialize)]
+pub struct ChallengeSubmission {
+    #[serde(rename = "challenge[code]", default)]
+    code: String,
+}
+
+/// `POST /login/verify`: a right code admits the session and lands it as a
+/// password-only sign-in would.
+pub async fn verify(
+    State(app): State<App>,
+    headers: HeaderMap,
+    Form(submission): Form<ChallengeSubmission>,
+) -> std::result::Result<Response, HttpError> {
+    origin(&app, &headers)?;
+    let Ok(token) = token(&headers) else {
+        return Ok(Redirect::to("/").into_response());
+    };
+    let mut form = ChallengeForm::default();
+    let code = submission.code.trim();
+    if code.is_empty() {
+        form.code_errors = vec![BLANK.into()];
+    } else {
+        match app.user.complete_sign_in(&token, code).await {
+            Ok(()) => {
+                let destination = app
+                    .user
+                    .landing_route(&token)
+                    .await?
+                    .unwrap_or_else(|| WORKSPACE.to_owned());
+                return Ok(Redirect::to(&destination).into_response());
+            }
+            Err(error @ TwoFactorError::InvalidCode) => form.code_errors = vec![error.to_string()],
+            Err(TwoFactorError::Other(Error::Unauthorized)) => return Ok(restart_sign_in()),
+            Err(TwoFactorError::Other(error)) => return Err(error.into()),
+            Err(error) => form.form_error = error.to_string(),
+        }
+    }
+    Ok(
+        challenge_card(&app, &token, form, StatusCode::UNPROCESSABLE_ENTITY)
+            .await?
+            .unwrap_or_else(restart_sign_in),
+    )
+}
+
+/// `POST /login/resend`: another SMS code, under the account's throttle.
+pub async fn resend(
+    State(app): State<App>,
+    headers: HeaderMap,
+) -> std::result::Result<Response, HttpError> {
+    origin(&app, &headers)?;
+    let Ok(token) = token(&headers) else {
+        return Ok(Redirect::to("/").into_response());
+    };
+    let mut form = ChallengeForm::default();
+    let status = match app.user.resend_sign_in_code(&token).await {
+        Ok(phone) => {
+            form.notice = format!("A new code was sent to {phone}.");
+            StatusCode::OK
+        }
+        Err(TwoFactorError::Other(Error::Unauthorized)) => return Ok(restart_sign_in()),
+        Err(TwoFactorError::Other(error)) => return Err(error.into()),
+        Err(error) => {
+            form.form_error = error.to_string();
+            StatusCode::TOO_MANY_REQUESTS
+        }
+    };
+    Ok(challenge_card(&app, &token, form, status)
+        .await?
+        .unwrap_or_else(restart_sign_in))
+}
+
+/// `POST /login/cancel` ("Back to login"): the pending session ends.
+pub async fn cancel(
+    State(app): State<App>,
+    headers: HeaderMap,
+) -> std::result::Result<Response, HttpError> {
+    origin(&app, &headers)?;
+    if let Ok(token) = token(&headers) {
+        app.user.cancel_sign_in(&token).await?;
+    }
+    Ok(restart_sign_in())
+}
+
+/// `GET /dev/sms-inbox` (Dev and Staging servers; a 404 on Production): the
+/// simulator's newest messages as phone screens. Anonymous on purpose: the
+/// tester reading it is in the middle of signing in.
+pub async fn sms_inbox(State(app): State<App>) -> std::result::Result<Response, HttpError> {
+    let sms = app
+        .services
+        .get::<bilibi_base::sms::Sms>(bilibi_base::sms::SERVICE)
+        .map_err(|_| Error::Internal)?;
+    let Some(simulator) = sms.simulator().await? else {
+        return Err(Error::NotFound.into());
+    };
+    let messages = simulator
+        .recent(50)
+        .map_err(|_| Error::Internal)?
+        .into_iter()
+        .map(|message| SimulatedSms {
+            sent_at: jiff::Timestamp::try_from(message.sent_at)
+                .map(|at| at.strftime("%Y-%m-%d %H:%M:%S UTC").to_string())
+                .unwrap_or_default(),
+            code: six_digits(&message.body),
+            to: message.to,
+            body: message.body,
+        })
+        .collect();
+    let mut response = card(
+        &app,
+        "SMS inbox",
+        SmsInboxPage { messages },
+        FlashMap::default(),
+        StatusCode::OK,
+    )
+    .await?;
+    // Live codes: never kept by a cache.
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    Ok(response)
+}
+
+/// The first run of exactly six digits in a message body, or empty.
+fn six_digits(body: &str) -> String {
+    body.split(|c: char| !c.is_ascii_digit())
+        .find(|run| run.len() == 6)
+        .unwrap_or("")
+        .to_owned()
 }
 
 // ---- forgotten password ---------------------------------------------------------

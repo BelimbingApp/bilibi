@@ -1,7 +1,7 @@
 //! The authenticator as Base Step-up's provider: Step-up asks, this answers
 //! about the scope's own account holder. It learns only an operation key and
 //! target as data to record, never what the operation is.
-use super::{Spend, TwoFactorError};
+use super::{SmsPurpose, Spend, TwoFactorError};
 use crate::UserService;
 use bilibi_step_up::{Provider, Purpose, SessionProof, Spent, WindowState};
 use bilibi_tenancy::{ProofFuture, Scope};
@@ -11,7 +11,7 @@ pub struct Authenticator(pub Arc<UserService>);
 
 impl Provider for Authenticator {
     fn enrolled<'a>(&'a self, scope: &'a Scope) -> ProofFuture<'a, bool> {
-        Box::pin(async move { Ok(self.0.two_factor_status(scope).await?.enabled) })
+        Box::pin(async move { Ok(self.0.two_factor_status(scope).await?.enrolled()) })
     }
     fn session<'a>(
         &'a self,
@@ -59,8 +59,8 @@ impl Provider for Authenticator {
                 operation: purpose.operation.to_owned(),
                 channel: purpose.channel.as_str(),
             };
-            let outcome = match self.0.prove(scope, code).await {
-                Ok(step) => self.0.consume(scope, step, spend).await,
+            let outcome = match self.0.prove(scope, code, true).await {
+                Ok(proof) => self.0.consume(scope, proof, spend).await,
                 Err(error) => Err(error),
             };
             match outcome {
@@ -74,5 +74,21 @@ impl Provider for Authenticator {
     }
     fn prompt<'a>(&'a self, scope: &'a Scope, back: &'a str) -> ProofFuture<'a, String> {
         Box::pin(async move { self.0.step_up_destination(scope, back).await })
+    }
+    /// An agent owes a code and the holder's only method is SMS: send one,
+    /// under the same throttle as a person's resend. A throttled or failed
+    /// send changes nothing; the refusal still asks for a code.
+    fn challenge<'a>(&'a self, scope: &'a Scope) -> ProofFuture<'a, ()> {
+        Box::pin(async move {
+            let status = self.0.two_factor_status(scope).await?;
+            if status.sms_ready() && !status.enabled {
+                if let Err(TwoFactorError::Other(error)) =
+                    self.0.send_sms_code(scope, SmsPurpose::Check).await
+                {
+                    return Err(error);
+                }
+            }
+            Ok(())
+        })
     }
 }

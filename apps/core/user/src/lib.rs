@@ -38,8 +38,9 @@ pub use preferences::{
     MAX_PINS, THEMES, THEME_KEY,
 };
 pub use two_factor::{
-    safe_return, Enrollment, TwoFactorEmailError, TwoFactorEmailReset, TwoFactorError,
-    TwoFactorStatus, CONFIRM_PATH, SETTINGS_PATH as TWO_FACTOR_PATH,
+    safe_return, Enrollment, SignInChallenge, TwoFactorEmailError, TwoFactorEmailReset,
+    TwoFactorError, TwoFactorStatus, CONFIRM_PATH, PHONE_SET, SETTINGS_PATH as TWO_FACTOR_PATH,
+    SIGN_IN,
 };
 pub use verification::{Signer, Verification};
 
@@ -84,6 +85,10 @@ pub const TWO_FACTOR_RECOVERY_DROP: (&str, &str) = (
     "core-user-013-drop-two-factor-recovery",
     include_str!("../migrations/013-drop-two-factor-recovery.sql"),
 );
+pub const SMS_MIGRATION: (&str, &str) = (
+    "core-user-014-sms-second-factor",
+    include_str!("../migrations/014-sms-second-factor.sql"),
+);
 pub const ACCOUNTS_MIGRATION: (&str, &str) = (
     "core-user-008-accounts",
     include_str!("../migrations/008-accounts.sql"),
@@ -121,6 +126,11 @@ pub enum CredentialError {
     VerificationUnavailable,
     #[error("The email could not be sent")]
     Delivery,
+    /// Sign-in: the password is right and the tenant asks for a second
+    /// factor, but the account has none to offer (ADR 03). The pending
+    /// session is already gone.
+    #[error("Your organisation asks for a verification code at sign-in, but your account has no verified phone number or authenticator app. Contact an administrator.")]
+    SecondFactorUnavailable,
     #[error(transparent)]
     Other(#[from] Error),
 }
@@ -133,6 +143,9 @@ impl From<tokio_postgres::Error> for CredentialError {
 pub struct Login {
     pub token: String,
     pub csrf: String,
+    /// The session is still pending its second factor (ADR 03): the browser
+    /// goes to the sign-in code page, and no other read accepts the token.
+    pub second_factor_owed: bool,
 }
 
 /// Bilimbi's global sign-in: email alone names the account (`identity::login`).
@@ -163,6 +176,7 @@ pub struct UserService {
     pub(crate) persons: std::sync::Arc<bilibi_person::PersonService>,
     pub(crate) affiliations: std::sync::Arc<bilibi_affiliation::AffiliationService>,
     mailer: std::sync::Arc<bilibi_mail::Mailer>,
+    pub(crate) sms: std::sync::Arc<bilibi_sms::Sms>,
     settings: std::sync::Arc<bilibi_settings::Settings>,
     display: std::sync::Arc<bilibi_datetime::DisplayPolicy>,
     locales: std::sync::Arc<bilibi_locale::Locales>,
@@ -174,7 +188,7 @@ pub struct UserService {
 inventory::submit! {
     bilibi_module_registry::Module {
         id:"core/user",layer:bilibi_module_registry::Layer::Core,
-        dependencies:&["base/agent_api","base/database","base/security","base/step_up","base/system","base/notifications","base/tenancy","base/session","base/principal_directory","base/mail","base/settings","base/datetime","base/locale","base/ui","base/audit","base/authz","base/menu","base/grid","base/dashboard","base/party_ids","core/company","core/person","core/affiliation"],migrations:&[MIGRATION,CREDENTIALS_MIGRATION,PINS_MIGRATION,NOTIFICATIONS_MIGRATION,database_queries::MIGRATION,BOOTSTRAP_MIGRATION,IDENTITY_MIGRATION,ACCOUNTS_MIGRATION,IMPERSONATION_MIGRATION,BOOTSTRAP_AFFILIATION_MIGRATION,MOVED_PINS_MIGRATION,TWO_FACTOR_MIGRATION,TWO_FACTOR_RECOVERY_DROP],
+        dependencies:&["base/agent_api","base/database","base/security","base/step_up","base/system","base/notifications","base/tenancy","base/session","base/principal_directory","base/mail","base/sms","base/settings","base/datetime","base/locale","base/ui","base/audit","base/authz","base/menu","base/grid","base/dashboard","base/party_ids","core/company","core/person","core/affiliation"],migrations:&[MIGRATION,CREDENTIALS_MIGRATION,PINS_MIGRATION,NOTIFICATIONS_MIGRATION,database_queries::MIGRATION,BOOTSTRAP_MIGRATION,IDENTITY_MIGRATION,ACCOUNTS_MIGRATION,IMPERSONATION_MIGRATION,BOOTSTRAP_AFFILIATION_MIGRATION,MOVED_PINS_MIGRATION,TWO_FACTOR_MIGRATION,TWO_FACTOR_RECOVERY_DROP,SMS_MIGRATION],
         services:&[bilibi_module_registry::Service {id:"core/user.database_queries",factory:|services| {
             Ok(std::sync::Arc::new(database_queries::QueryService::new(services.get::<Db>("base/database.pool")?.as_ref().clone(), services.get("base/database.mutations")?, services.get("base/tenancy.authentication")?)))
         }},bilibi_module_registry::Service {id:"core/user.query-pages",factory:|services| {
@@ -187,7 +201,7 @@ inventory::submit! {
             services.get::<bilibi_security::Authentication>("base/tenancy.authentication")?.bind(std::sync::Arc::new(AccountVerifier))?;
             services.get::<bilibi_notifications::NotificationBoundary>("base/notifications.sink")?.bind(std::sync::Arc::new(notifications.clone()))?;
             services.get::<bilibi_principal_directory::PrincipalDirectory>("base/principal_directory.directory")?.bind("core/user", std::sync::Arc::new(directory::UserDirectory))?;
-            let users = std::sync::Arc::new(UserService {sessions:services.get("base/session.sessions")?,mutations:services.get("base/database.mutations")?,authentication:services.get("base/tenancy.authentication")?,persons:services.get(bilibi_person::SERVICE)?,affiliations:services.get(bilibi_affiliation::SERVICE)?,db:services.get::<Db>("base/database.pool")?.as_ref().clone(),notifications,mailer:services.get("base/mail.mailer")?,settings:services.get("base/settings.store")?,display:services.get("base/datetime.display")?,locales:services.get("base/locale.locales")?,signer:Signer::from_hex(std::env::var("BILIBI_USER_SIGNING_KEY").ok().as_deref()),origin:std::env::var("APP_ORIGIN").unwrap_or_else(|_| "http://localhost:3000".into()).trim_end_matches('/').to_owned(),step_up:services.get(bilibi_step_up::SERVICE)?});
+            let users = std::sync::Arc::new(UserService {sessions:services.get("base/session.sessions")?,mutations:services.get("base/database.mutations")?,authentication:services.get("base/tenancy.authentication")?,persons:services.get(bilibi_person::SERVICE)?,affiliations:services.get(bilibi_affiliation::SERVICE)?,db:services.get::<Db>("base/database.pool")?.as_ref().clone(),notifications,mailer:services.get("base/mail.mailer")?,sms:services.get(bilibi_sms::SERVICE)?,settings:services.get("base/settings.store")?,display:services.get("base/datetime.display")?,locales:services.get("base/locale.locales")?,signer:Signer::from_hex(std::env::var("BILIBI_USER_SIGNING_KEY").ok().as_deref()),origin:std::env::var("APP_ORIGIN").unwrap_or_else(|_| "http://localhost:3000".into()).trim_end_matches('/').to_owned(),step_up:services.get(bilibi_step_up::SERVICE)?});
             services.get::<bilibi_step_up::StepUp>(bilibi_step_up::SERVICE)?.bind(std::sync::Arc::new(two_factor::Authenticator(users.clone())))?;
             two_factor::bind(users.clone())?;
             Ok(users)
@@ -199,12 +213,25 @@ inventory::submit! {
 }
 
 impl UserService {
+    /// The password, then the tenant's sign-in step-up (ADR 03): the
+    /// session comes back admitted when no check applies, or still pending
+    /// with `second_factor_owed` (a code was sent when the account's only
+    /// method is SMS). An account with nothing to offer is refused and its
+    /// pending session deleted.
     pub async fn login(
         &self,
         email: &str,
         password: &str,
     ) -> std::result::Result<Login, CredentialError> {
-        login(&self.db, email, password).await
+        let login = login(&self.db, email, password).await?;
+        match self.begin_sign_in(&login.token).await? {
+            two_factor::SignInStep::Admitted => Ok(Login {
+                second_factor_owed: false,
+                ..login
+            }),
+            two_factor::SignInStep::Owed => Ok(login),
+            two_factor::SignInStep::Unavailable => Err(CredentialError::SecondFactorUnavailable),
+        }
     }
     pub async fn logout(&self, token: &str, csrf: &str) -> Result<()> {
         logout(&self.db, token, csrf, &self.sessions).await
@@ -256,6 +283,8 @@ bilibi_ui::record_fields! { pub(crate) mod record_fields {
     PERSON_ID: bilibi_ui::RecordField::new("person_id", "Person").path("person.name"),
     COMPANY_ID: bilibi_ui::RecordField::new("company_id", "Company").path("company.name").slot("company_name"),
     EMAIL_VERIFIED_AT: bilibi_ui::RecordField::new("email_verified_at", "Email Verified"),
+    PHONE_NUMBER: bilibi_ui::RecordField::new("phone_number", "2FA Phone"),
+    PHONE_VERIFIED_AT: bilibi_ui::RecordField::new("phone_verified_at", "Phone Verified"),
     CREATED_AT: bilibi_ui::RecordField::new("created_at", "Created"),
     UPDATED_AT: bilibi_ui::RecordField::new("updated_at", "Updated"),
 } }

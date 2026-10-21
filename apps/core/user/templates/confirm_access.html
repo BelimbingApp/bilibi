@@ -1,9 +1,13 @@
 {#- The step-up prompt (GitHub's "Confirm access"; src/two_factor_ui.rs): a
-    step-up action sent the browser here; a current authenticator code opens
-    the session's window and returns to `return`. -#}
+    step-up action sent the browser here; a current authenticator code or the
+    latest SMS code (Text me a code) opens the session's window and returns
+    to `return`. -#}
 {% import "components.html" as ui %}
 {% import "feedback.html" as fb %}
 <div data-shared-ui class="mx-auto w-full max-w-md space-y-4 py-8">{{ header }}
 {%- if !notice.is_empty() %}{% call fb::alert(kind=bilibi_ui::StatusKind::Warning, id="confirm-access-notice") %}{{ notice }}{% endcall %}{% endif -%}
-<form id="confirm-access-form" data-event="verify" class="space-y-4 rounded-xl border border-line bg-surface p-6">{% if enabled %}<p class="text-sm text-muted">You won't be asked again while you keep working. We'll ask again after {{ minutes }} {% if minutes == 1 %}minute{% else %}minutes{% endif %} without activity, or after {{ hours }} {% if hours == 1 %}hour{% else %}hours{% endif %} in total. Some actions always ask.</p>{% endif %}{{ step_up }}</form>
+<form id="confirm-access-form" data-event="verify" class="space-y-4 rounded-xl border border-line bg-surface p-6">{% if enabled %}<p class="text-sm text-muted">You won't be asked again while you keep working. We'll ask again after {{ minutes }} {% if minutes == 1 %}minute{% else %}minutes{% endif %} without activity, or after {{ hours }} {% if hours == 1 %}hour{% else %}hours{% endif %} in total. Some actions always ask.</p>{% endif %}
+{%- if !sms_phone.is_empty() %}<p id="confirm-access-sms" class="text-sm text-muted">{% if authenticator %}Use your authenticator app, or get a code by text message to <span class="font-medium text-ink">{{ sms_phone }}</span>.{% else %}We'll text a code to <span class="font-medium text-ink">{{ sms_phone }}</span>.{% endif %}</p>{% endif %}
+{%- if !sent.is_empty() %}{% call fb::alert(kind=bilibi_ui::StatusKind::Info, id="confirm-access-sent") %}{{ sent }}{% endcall %}{% endif -%}
+{{ step_up }}</form>
 </div>

@@ -54,6 +54,7 @@ bilibi-extensions = { path = "apps/extensions" }
 
 bilibi-notifications = { path = "apps/base/notifications" }
 bilibi-menu = { path = "apps/base/menu" }
+bilibi-sms = { path = "apps/base/sms" }
 bilibi-principal-directory = { path = "apps/base/principal_directory" }
 bilibi-agent-api = { path = "apps/base/agent_api" }
 bilibi-artifacts = { path = "apps/base/artifacts" }

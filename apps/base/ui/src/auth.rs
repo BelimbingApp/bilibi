@@ -5,7 +5,7 @@
 //! own the DOM, the ids and the copy, so a field error lands on the element
 //! Bilimbi puts it on. Field values are the submitted text kept for another
 //! attempt; a password is never echoed back.
-use crate::{Attrs, Field, FlashMap, Html, InputKind, SecretInput};
+use crate::{Attrs, CodeInput, Field, FlashMap, Html, InputKind, SecretInput};
 use askama::Template;
 
 /// The centered credential layout around one card body, with the page-level
@@ -224,4 +224,96 @@ fn new_password() -> Attrs {
         required: true,
         ..Attrs::default()
     }
+}
+
+/// What the sign-in code page shows for one pending session (ADR 03): where
+/// the code went, whether an authenticator may answer instead, and the
+/// resend countdown. The code itself is never echoed back.
+#[derive(Clone, Debug, Default)]
+pub struct ChallengeForm {
+    /// The masked phone (`+94 ••• ••• 567`) when SMS can answer.
+    pub phone: Option<String>,
+    pub authenticator: bool,
+    /// Seconds before Resend is allowed.
+    pub resend_in: i64,
+    /// An SMS code was sent and is still usable.
+    pub sms_waiting: bool,
+    /// Why no SMS code is waiting and Resend is held (the send limit).
+    pub sms_held: String,
+    pub code_errors: Vec<String>,
+    /// What just happened (a code was sent), announced above the form.
+    pub notice: String,
+    /// Why the last step was refused (throttled, locked), above the form.
+    pub form_error: String,
+}
+
+/// The sign-in code card: the sign-in card's layout with one six-digit code
+/// field, Resend with its countdown, and the way back (which ends the
+/// pending session).
+#[derive(Template)]
+#[template(path = "login_challenge.html")]
+pub struct LoginChallengePage {
+    pub phone: String,
+    pub authenticator: bool,
+    pub resend_in: i64,
+    /// `resend_in` in words: seconds up to 90, then minutes.
+    pub resend_words: String,
+    pub sms_waiting: bool,
+    pub notice: String,
+    pub form_error: String,
+    pub code: Html,
+}
+
+/// A wait the reader can take in: `45s`, or `42 minutes` past 90 seconds.
+/// `hooks.js` (Countdown) words its live count the same way.
+fn wait_words(seconds: i64) -> String {
+    if seconds <= 90 {
+        format!("{seconds}s")
+    } else {
+        let minutes = (seconds + 59) / 60;
+        format!("{minutes} minutes")
+    }
+}
+
+impl LoginChallengePage {
+    pub fn new(form: &ChallengeForm) -> askama::Result<Self> {
+        Ok(Self {
+            phone: form.phone.clone().unwrap_or_default(),
+            authenticator: form.authenticator,
+            resend_in: form.resend_in.max(0),
+            resend_words: wait_words(form.resend_in.max(0)),
+            sms_waiting: form.sms_waiting,
+            notice: form.notice.clone(),
+            // A refusal of this request wins; otherwise say why no code came.
+            form_error: if form.form_error.is_empty() {
+                form.sms_held.clone()
+            } else {
+                form.form_error.clone()
+            },
+            code: Html::render(
+                &CodeInput::new("challenge-code", "challenge[code]", "Verification code", 6)
+                    .numeric()
+                    .errors(form.code_errors.clone()),
+            )?,
+        })
+    }
+}
+
+/// One message the SMS simulator kept, as the development inbox shows it.
+#[derive(Clone, Debug)]
+pub struct SimulatedSms {
+    pub to: String,
+    pub body: String,
+    /// When it was sent, already rendered for the reader.
+    pub sent_at: String,
+    /// The six-digit code in the body, picked out for the tester.
+    pub code: String,
+}
+
+/// `/dev/sms-inbox`: the simulator's newest messages as phone screens, so a
+/// tester signs in without a phone. Never built on a production instance.
+#[derive(Template)]
+#[template(path = "sms_inbox.html")]
+pub struct SmsInboxPage {
+    pub messages: Vec<SimulatedSms>,
 }

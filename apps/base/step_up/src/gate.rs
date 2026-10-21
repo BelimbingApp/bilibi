@@ -96,6 +96,13 @@ pub trait Provider: Send + Sync {
     ) -> ProofFuture<'a, Spent>;
     /// Where a browser checks in (or enrolls first) and returns to `back`.
     fn prompt<'a>(&'a self, scope: &'a Scope, back: &'a str) -> ProofFuture<'a, String>;
+    /// An agent, or a form that takes a fresh code (`require_code`), was
+    /// refused for want of a code: a provider whose codes are delivered (SMS)
+    /// sends one to the holder now. One that the holder reads from an app
+    /// does nothing.
+    fn challenge<'a>(&'a self, _scope: &'a Scope) -> ProofFuture<'a, ()> {
+        Box::pin(async { Ok(()) })
+    }
 }
 
 /// One declared operation with its owner module.
@@ -282,6 +289,9 @@ impl StepUp {
                 "impersonating"
             } else if let Some(provider) = self.provider.get() {
                 if provider.enrolled(scope).await? {
+                    // The form asks again with its code box; a delivered code
+                    // (SMS) is sent now so the holder has one to type.
+                    provider.challenge(scope).await?;
                     "code_required"
                 } else {
                     "not_enrolled"
@@ -406,7 +416,7 @@ impl StepUp {
                     .await?
             }
         };
-        Ok(match state {
+        let outcome = match state {
             WindowState::Holds => Outcome::Passed(if mode == Mode::EveryTime {
                 "fresh_check"
             } else {
@@ -421,7 +431,21 @@ impl StepUp {
             } else {
                 "required"
             }),
-        })
+        };
+        // An agent's human needs a code to give it: a delivered one is sent
+        // now (only on a real check, never while a page merely rechecks).
+        if extend
+            && scope.agent().is_some()
+            && matches!(
+                outcome,
+                Outcome::Refused(
+                    "code_required" | "every_time" | "window_expired" | "window_capped"
+                )
+            )
+        {
+            provider.challenge(scope).await?;
+        }
+        Ok(outcome)
     }
 
     /// Opens (or restarts) the window of this agent connection for its

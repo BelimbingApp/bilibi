@@ -1,0 +1,20 @@
+{#- The sign-in code card (ADR 03; no Bilimbi counterpart): the sign-in
+    card's layout after a correct password when the tenant asks for a second
+    factor. Where the code went (masked phone) or that the authenticator app
+    answers, the one six-digit field, Resend with its countdown (the
+    Countdown hook keeps the button disabled until the server's throttle
+    allows another code) and Back to login, which ends the pending session.
+    Plain posts, as the sign-in card's. -#}
+{% import "components.html" as ui %}
+{% import "feedback.html" as feedback %}
+<div class="flex flex-col gap-5">
+<div><h1 class="text-lg font-semibold tracking-tight text-ink-strong">Enter verification code</h1><p id="challenge-lead" class="mt-1 text-sm text-ink-muted">{% if !phone.is_empty() %}{% if sms_waiting %}We sent a 6-digit code to <span id="challenge-phone" class="font-medium text-ink">{{ phone }}</span>. It expires in 5 minutes.{% else %}Codes are sent to <span id="challenge-phone" class="font-medium text-ink">{{ phone }}</span>. No code is waiting: choose Resend code when it is available.{% endif %}{% if authenticator %} A code from your authenticator app works too.{% endif %}{% else %}Enter the 6-digit code from your authenticator app.{% endif %}</p></div>
+{% if !notice.is_empty() %}<div id="challenge-notice">{% call feedback::alert(kind=bilibi_ui::StatusKind::Info, id="challenge-notice-1") %}{{ notice }}{% endcall %}</div>{% endif %}
+{% if !form_error.is_empty() %}<div id="challenge-form-error">{% call feedback::alert(kind=bilibi_ui::StatusKind::Error, id="challenge-form-error-1") %}{{ form_error }}{% endcall %}</div>{% endif %}
+<form id="challenge-form" action="/login/verify" method="post" class="flex flex-col gap-4">
+{{ code }}
+{% call ui::button(variant=bilibi_ui::ButtonVariant::Primary, id="challenge-submit", class="w-full", button_type="submit", working="Verifying…") %}Verify{% endcall %}
+</form>
+{% if !phone.is_empty() %}<form id="challenge-resend-form" action="/login/resend" method="post" class="flex flex-col items-center gap-1"><div data-hook="Countdown" data-seconds="{{ resend_in }}" class="flex flex-col items-center gap-1">{% call ui::button(id="challenge-resend", button_type="submit", disabled=resend_in > 0, working="Sending…") %}Resend code{% endcall %}<p data-countdown-text class="text-xs text-ink-subtle"{% if resend_in == 0 %} hidden{% endif %}>You can ask for another code in {{ resend_words }}.</p></div></form>{% endif %}
+<form id="challenge-back-form" action="/login/cancel" method="post" class="flex justify-center border-t border-low-contrast-line pt-4">{% call ui::button(id="challenge-back", button_type="submit") %}Back to login{% endcall %}</form>
+</div>

@@ -4,7 +4,7 @@ Ask the human account holder to prove it is them again before an operation goes 
 
 - **This module names no consumer** (no page, table, sign-in or role) and no second-factor method.
 - Each owner declares its own operations and calls the facade from its own module.
-- The second factor is a bound `Provider`. Today that is Core User's authenticator app (TOTP).
+- The second factor is a bound `Provider`. Today that is Core User's: an authenticator app (TOTP) or a code by SMS (ADR 03).
 
 ## Require step-up for an operation
 
@@ -36,7 +36,7 @@ Two lines in the owning module, nothing anywhere else.
 - An operation may also guard one setting (`.guards_setting("key")`): the settings editor then asks for it before changing, clearing or restoring that setting.
 - A module that is not mounted declares nothing, so its rows leave the policy page.
 - Never decide in code whether step-up applies. That is the tenant's policy.
-- A confirmation form that takes a code itself calls `require_code` for its `.always()` operation. A recent browser check, including enrollment, cannot replace a code on that submission. Missing codes are audited refusals; an account without 2FA receives the usual enrollment prompt.
+- A confirmation form that takes a code itself calls `require_code` for its `.always()` operation. A recent browser check, including enrollment, cannot replace a code on that submission. Missing codes are audited refusals, and an account whose only method is SMS is texted a code then (`Provider::challenge`, under the resend throttle); an account without 2FA receives the usual enrollment prompt.
 - Call `require` as often as the action needs: a presented code is spent by the first call and covers the rest of the request.
 
 ## Policy
@@ -76,7 +76,7 @@ Tenants decide per operation on **Administration › Authorization › Step-up 2
    {"error":"step_up_required","operation":"domain.module.thing.approve","reason":"code_required","message":"…"}
    ```
 
-2. The agent asks its human for the current code from their authenticator app.
+2. The agent asks its human for the current code: from their authenticator app, or the SMS the provider just sent (`Provider::challenge`, when SMS is the holder's only method).
 3. It commits the same plan again with `"step_up_code": "123456"`. A failed commit leaves the plan code usable until it expires.
 4. That opens the agent's window: later protected commits on that connection pass without a code until the window or cap ends, unless an operation asks every time.
 
@@ -121,6 +121,7 @@ Every check that applies writes one action:
 | `session` | The browser session's window (`SessionProof::Window`), or one fresh check (`SessionProof::Fresh`) |
 | `spend` | Verify a code and use it, for the `Purpose` (operation, target, channel) |
 | `prompt` | Where a browser checks in, or enrolls first, and comes back to `back` |
+| `challenge` | An agent was refused for want of a code (`code_required`, `every_time`, `window_expired`, `window_capped`): send a delivered code now. Default: nothing |
 
 ## Try it
 

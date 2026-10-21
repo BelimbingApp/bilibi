@@ -182,6 +182,51 @@ impl Sessions {
     pub async fn check(&self, client: &(impl GenericClient + Sync), token: &str) -> Result<Scope> {
         self.resolve(client, token, false).await
     }
+    /// A session still owed its second factor (migration `004-second-factor`):
+    /// the only read that accepts one, for the sign-in code page. Every
+    /// other read refuses it. Never renews activity.
+    pub async fn pending(
+        &self,
+        client: &(impl GenericClient + Sync),
+        token: &str,
+    ) -> Result<Scope> {
+        self.lookup(client, token, true).await
+    }
+    /// Admits a pending session once its second factor was proved (or no
+    /// check applied), inside the caller's transaction: the flag clears, the
+    /// absolute expiry restarts from now, and with `stepped_up` the check
+    /// opens the session's step-up window as `step_up` would. Named by the
+    /// sealed scope's CSRF proof; a session already admitted, expired or
+    /// impersonated is `Unauthorized`.
+    pub async fn admit(
+        &self,
+        sql: &impl GenericClient,
+        scope: &Scope,
+        stepped_up: bool,
+    ) -> Result<()> {
+        let admitted = sql
+            .execute(
+                "UPDATE sessions SET second_factor_pending=false,expires_at=now()+interval '24 hours',last_activity=now(),stepped_up_at=CASE WHEN $4 THEN now() ELSE stepped_up_at END,step_up_used_at=CASE WHEN $4 THEN now() ELSE step_up_used_at END,step_up_spent_at=CASE WHEN $4 THEN NULL ELSE step_up_spent_at END WHERE tenant_id=$1 AND user_id=$2 AND csrf=$3 AND second_factor_pending AND impersonator_id IS NULL AND expires_at>now()",
+                &[&scope.tenant(), &scope.user(), &scope.csrf, &stepped_up],
+            )
+            .await?;
+        if admitted != 1 {
+            return Err(Error::Unauthorized);
+        }
+        Ok(())
+    }
+    /// Ends a pending session ("Back to login", or no second factor to
+    /// offer). Nobody decided about an admitted session, so nothing else is
+    /// touched and nothing is announced: no page ever held a pending one.
+    pub async fn discard_pending(&self, client: &impl GenericClient, token: &str) -> Result<()> {
+        client
+            .execute(
+                "DELETE FROM sessions WHERE id=$1 AND second_factor_pending",
+                &[&token],
+            )
+            .await?;
+        Ok(())
+    }
     /// `check`, then holds the row until `client`'s transaction ends, so a
     /// sign-out or termination waits for a write the session is making (Agent
     /// API's page caller). A key-share lock: the session's own step-up and
@@ -536,21 +581,31 @@ impl Sessions {
             )
             .await?)
     }
+    /// The one session read: an admitted session, or with `pending` only a
+    /// session still owed its second factor. The two never cross.
+    async fn lookup(
+        &self,
+        client: &(impl GenericClient + Sync),
+        token: &str,
+        pending: bool,
+    ) -> Result<Scope> {
+        if token.is_empty() || token.len() > 256 {
+            return Err(Error::Unauthorized);
+        }
+        let policy = self.policy(client).await?;
+        let row = client.query_opt("SELECT tenant_id,user_id,csrf,impersonator_id FROM sessions WHERE id=$1 AND second_factor_pending=$3 AND expires_at>now() AND last_activity>now()-make_interval(secs => $2::double precision)", &[&token, &(policy.idle_seconds as f64), &pending]).await?.ok_or(Error::Unauthorized)?;
+        self.authentication
+            .authenticate_session(client, row.get(0), row.get(1), row.get(3), row.get(2))
+            .await
+    }
     async fn resolve(
         &self,
         client: &(impl GenericClient + Sync),
         token: &str,
         activity: bool,
     ) -> Result<Scope> {
-        if token.is_empty() || token.len() > 256 {
-            return Err(Error::Unauthorized);
-        }
         let policy = self.policy(client).await?;
-        let row = client.query_opt("SELECT tenant_id,user_id,csrf,impersonator_id FROM sessions WHERE id=$1 AND expires_at>now() AND last_activity>now()-make_interval(secs => $2::double precision)", &[&token, &(policy.idle_seconds as f64)]).await?.ok_or(Error::Unauthorized)?;
-        let scope = self
-            .authentication
-            .authenticate_session(client, row.get(0), row.get(1), row.get(3), row.get(2))
-            .await?;
+        let scope = self.lookup(client, token, false).await?;
         if activity {
             // Lock the valid row, even when renewal is throttled. The UPDATE
             // executes only when due; a revoked/expired row cannot be revived.
@@ -580,6 +635,7 @@ inventory::submit! {
             ("base-session-001-client", include_str!("../migrations/001-client.sql")),
             ("base-session-002-impersonation", include_str!("../migrations/002-impersonation.sql")),
             ("base-session-003-step-up", include_str!("../migrations/003-step-up.sql")),
+            ("base-session-004-second-factor", include_str!("../migrations/004-second-factor.sql")),
         ],
         services: &[
             bilibi_module_registry::Service { id: "base/session.sessions", factory: |services| Ok(Arc::new(Sessions::new(services.get("base/tenancy.authentication")?, services.get("base/settings.store")?))) },

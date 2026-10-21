@@ -304,11 +304,19 @@ pub async fn media_cleanup(db: &Db, tenant: i64, hours: u64) -> Result<()> {
 pub fn router(app: App) -> Router {
     let perf = app.perf.clone();
     let pages = routes::install(Router::new(), &app.routes, &app.downloads);
+    // The SMS simulator's inbox answers 404 on a Production server (ADR 03).
+    let pages = pages.route(auth::SMS_INBOX, get(auth::sms_inbox));
     routes::install_moved(pages, &app.moved)
         .merge(api::router(app.clone()))
         .merge(webhooks::router())
         .route("/", get(auth::home).post(auth::login))
         .route("/login", get(auth::home).post(auth::login))
+        .route(
+            auth::CHALLENGE,
+            get(auth::challenge_page).post(auth::verify),
+        )
+        .route("/login/resend", post(auth::resend))
+        .route("/login/cancel", post(auth::cancel))
         .route(
             "/forgot-password",
             get(auth::forgot_page).post(auth::forgot),

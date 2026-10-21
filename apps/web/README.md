@@ -38,6 +38,19 @@ Step-up (`apps/base/step_up/README.md`) is the same on every surface:
 - `/api/v1` commit and the MCP `commit` tool take an optional `step_up_code` and answer `step_up_required` (`bilibi_step_up::refusal`): 403 on the API, an `isError` result on MCP.
 - Base System supplies the live enforcement policy from the saved `instance.role`: Dev skips ordinary checks; role changes and other `.always()` operations always require a fresh code.
 
+Sign-in with a second factor (ADR 03, `src/auth.rs`):
+
+| Route | Does |
+|---|---|
+| `POST /` or `/login` | Password; when the tenant's `core.user.sign_in` applies, the cookie names a pending session and the browser goes to `/login/verify` |
+| `GET /login/verify` | The code card on the sign-in layout: masked phone, six-digit field, Resend with countdown, Back to login |
+| `POST /login/verify` | A right code admits the session and lands as a normal sign-in |
+| `POST /login/resend` | Another SMS code, under the account's throttle |
+| `POST /login/cancel` | Ends the pending session |
+| `GET /dev/sms-inbox` | The SMS simulator's messages on a Dev or Staging server; 404 when the stored role is Production |
+
+A pending session is refused by every other route, socket and API call (Base Session). Each POST checks the Origin like sign-in.
+
 A live page or panel event runs under the page-write permit its service declared (`PageWrites`, `base/agent_api.pages`): the host wraps the owner's `update` in `bilibi_database::page_write::during`, so a business transaction the declaration does not cover is refused before it writes. Refresh and params carry no permit. Contract: `apps/base/agent_api/README.md` (Page writes declaration and check).
 
 Other methods also require the configured Origin and, for an authenticated

@@ -28,6 +28,7 @@ pub const LANDING_KEY: &str = "ui.landing_menu_id";
 pub const NAME_MAX: usize = 255;
 const BLANK: &str = "can't be blank";
 const EMAIL_FORMAT: &str = "must be an email address";
+const PHONE_FORMAT: &str = "must be an international number such as +94771234567";
 pub(crate) const EMAIL_TAKEN: &str = "has already been taken";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -89,6 +90,8 @@ pub struct AccountInput {
     pub name: String,
     pub email: String,
     pub password: String,
+    /// Optional second-factor phone; empty for none (ADR 03).
+    pub phone: String,
     pub person: Option<PersonId>,
     pub affiliation: Option<AffiliationId>,
 }
@@ -98,18 +101,22 @@ pub struct AccountInput {
 pub enum AccountField {
     Name,
     Email,
+    /// The second-factor phone (ADR 03); empty clears it.
+    Phone,
 }
 impl AccountField {
     pub fn key(self) -> &'static str {
         match self {
             Self::Name => "name",
             Self::Email => "email",
+            Self::Phone => "phone_number",
         }
     }
     pub fn parse(key: &str) -> Option<Self> {
         match key {
             "name" => Some(Self::Name),
             "email" => Some(Self::Email),
+            "phone_number" => Some(Self::Phone),
             _ => None,
         }
     }
@@ -143,6 +150,15 @@ pub(crate) fn validate_email(email: &str) -> std::result::Result<String, FieldEr
         Err(field_error("email", EMAIL_FORMAT))
     }
 }
+/// An optional E.164 phone: empty is none, anything else must parse.
+pub(crate) fn validate_phone(phone: &str) -> std::result::Result<Option<String>, FieldError> {
+    if phone.trim().is_empty() {
+        return Ok(None);
+    }
+    bilibi_sms::PhoneNumber::parse(phone)
+        .map(|number| Some(number.as_str().to_owned()))
+        .map_err(|_| field_error("phone_number", PHONE_FORMAT))
+}
 pub(crate) fn validate_password(password: &str) -> Option<FieldError> {
     if password.is_empty() {
         Some(field_error("password", BLANK))
@@ -160,6 +176,7 @@ pub fn validate_input(input: &AccountInput) -> Vec<FieldError> {
     errors.extend(validate_name(&input.name));
     errors.extend(validate_email(&input.email).err());
     errors.extend(validate_password(&input.password));
+    errors.extend(validate_phone(&input.phone).err());
     errors
 }
 
@@ -177,6 +194,11 @@ pub(crate) async fn email_taken(
         )
         .await?
         .is_some())
+}
+
+fn masked_phone(value: &str) -> serde_json::Value {
+    bilibi_sms::PhoneNumber::parse(value)
+        .map_or(serde_json::Value::Null, |number| json!(number.masked()))
 }
 
 /// What an emailed page needs after a profile save.
@@ -213,6 +235,13 @@ impl UserService {
             }
         };
         errors.extend(validate_password(&input.password));
+        let phone = match validate_phone(&input.phone) {
+            Ok(phone) => phone,
+            Err(error) => {
+                errors.push(error);
+                None
+            }
+        };
         if !errors.is_empty() {
             return Err(AccountError::Validation(errors));
         }
@@ -237,12 +266,16 @@ impl UserService {
         }
         let tenant = scope.tenant();
         let (insert_name, insert_email) = (name.clone(), email.clone());
+        let masked = phone
+            .as_deref()
+            .and_then(|p| bilibi_sms::PhoneNumber::parse(p).ok())
+            .map(|p| p.masked());
         let id: i64 = tx
             .mutate(move |sql| {
                 Box::pin(async move {
                     let row = sql
                         .query_one(
-                            "INSERT INTO users(tenant_id,name,email,password_hash,person_id,affiliation_id,organisation_id) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id",
+                            "INSERT INTO users(tenant_id,name,email,password_hash,person_id,affiliation_id,organisation_id,phone_number) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id",
                             &[
                                 &tenant,
                                 &insert_name,
@@ -251,6 +284,7 @@ impl UserService {
                                 &links.person.map(PersonId::get),
                                 &links.affiliation.map(AffiliationId::get),
                                 &links.organisation.map(OrganisationId::get),
+                                &phone,
                             ],
                         )
                         .await?;
@@ -268,6 +302,7 @@ impl UserService {
                                 "person_id": links.person.map(PersonId::get),
                                 "affiliation_id": links.affiliation.map(AffiliationId::get),
                                 "organisation_id": links.organisation.map(OrganisationId::get),
+                                "phone_number": masked,
                             }),
                         }],
                     ))
@@ -382,6 +417,9 @@ impl UserService {
             AccountField::Email => {
                 validate_email(value).map_err(|error| AccountError::Validation(vec![error]))?
             }
+            AccountField::Phone => validate_phone(value)
+                .map_err(|error| AccountError::Validation(vec![error]))?
+                .unwrap_or_default(),
         };
         let mut client = self.db.get().await.map_err(Error::from)?;
         let mut tx = self
@@ -395,10 +433,21 @@ impl UserService {
         let current = match field {
             AccountField::Name => account.name.clone(),
             AccountField::Email => account.email.clone(),
+            AccountField::Phone => account.phone_number.clone().unwrap_or_default(),
         };
         if current == value {
             tx.rollback().await?;
             return Ok(account);
+        }
+        if field == AccountField::Phone {
+            // Whoever holds this phone receives the account's codes.
+            self.step_up
+                .require(
+                    &scope,
+                    crate::two_factor::PHONE_SET,
+                    &format!("user:{user}"),
+                )
+                .await?;
         }
         if field == AccountField::Email && email_taken(tx.sql(), &value, Some(user)).await? {
             return Err(AccountError::Validation(vec![field_error(
@@ -413,15 +462,22 @@ impl UserService {
                 let statement = match field {
                     AccountField::Name => "UPDATE users SET name=$3,version=version+1,updated_at=now() WHERE tenant_id=$1 AND id=$2",
                     AccountField::Email => "UPDATE users SET email=$3,email_verified_at=NULL,version=version+1,updated_at=now() WHERE tenant_id=$1 AND id=$2",
+                    // A new number is unverified until its holder proves it.
+                    AccountField::Phone => "UPDATE users SET phone_number=NULLIF($3,''),phone_verified_at=NULL,version=version+1,updated_at=now() WHERE tenant_id=$1 AND id=$2",
                 };
                 sql.execute(statement, &[&tenant, &user, &new_value]).await?;
+                let (old_shown, new_shown) = match field {
+                    // The audit trail names the number masked, as pages do.
+                    AccountField::Phone => (masked_phone(&old_value), masked_phone(&new_value)),
+                    _ => (json!(old_value), json!(new_value)),
+                };
                 Ok((
                     (),
                     vec![Change {
                         kind: "user".into(),
                         id: user,
-                        old: json!({ field.key(): old_value }),
-                        new: json!({ field.key(): new_value }),
+                        old: json!({ field.key(): old_shown }),
+                        new: json!({ field.key(): new_shown }),
                     }],
                 ))
             })

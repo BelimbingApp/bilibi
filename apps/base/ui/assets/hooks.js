@@ -774,7 +774,36 @@
 
   const registry = window.BilibiUI
   if (!registry) throw new Error("hooks.js needs ui.js loaded first")
-  for (const [name, hook] of Object.entries({CodeInput, ColourInput, Combobox, SecretReveal, SecretClear, SecretStored, DisclosureDismiss, DashboardSort, Fold})) {
+  // The sign-in code page's Resend (ADR 03): the server renders the seconds
+  // its throttle still holds; the button stays disabled and the line under
+  // it counts down until then. The server refuses an early resend anyway.
+  const Countdown = {
+    mounted() {
+      this.button = this.el.querySelector("button")
+      this.text = this.el.querySelector("[data-countdown-text]")
+      this.left = Number(this.el.dataset.seconds) || 0
+      this.tick = () => {
+        if (this.left <= 0) {
+          if (this.button?.disabled) this.button.disabled = false
+          if (this.text && !this.text.hidden) this.text.hidden = true
+          clearInterval(this.timer)
+          return
+        }
+        // As the server words it (`wait_words` in src/auth.rs).
+        const wait = this.left <= 90 ? `${this.left}s` : `${Math.ceil(this.left / 60)} minutes`
+        const words = `You can ask for another code in ${wait}.`
+        if (this.text && this.text.textContent !== words) this.text.textContent = words
+        this.left -= 1
+      }
+      this.tick()
+      this.timer = setInterval(this.tick, 1000)
+    },
+    destroyed() {
+      clearInterval(this.timer)
+    },
+  }
+
+  for (const [name, hook] of Object.entries({CodeInput, ColourInput, Combobox, SecretReveal, SecretClear, SecretStored, DisclosureDismiss, DashboardSort, Fold, Countdown})) {
     registry.registerHook(name, hook)
   }
 })()

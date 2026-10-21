@@ -24,6 +24,18 @@
 <div id="two-factor-on" class="space-y-4 rounded-xl border border-line bg-surface p-6"><div class="flex items-center gap-2"><span class="text-sm font-medium text-ink">Status</span>{% call ui::badge(kind=bilibi_ui::BadgeKind::Success, dot=true) %}On{% endcall %}</div></div>
 <form id="two-factor-move-form" data-event="move" class="space-y-4 rounded-xl border border-line bg-surface p-6"><h3 class="text-sm font-semibold text-ink">Move to a new phone</h3><p class="text-sm text-muted">Enter the code from your current phone. Then you scan a new QR code with your new phone, and the old phone stops working.</p>{{ move_code }}<div class="flex justify-end">{% call ui::button(variant=bilibi_ui::ButtonVariant::Primary, id="two-factor-move", button_type="submit", working="Checking…") %}Move to a new phone{% endcall %}</div></form>
 {%- endif %}
+{%- if stage == "off" || stage == "on" %}
+<div id="two-factor-sms" class="space-y-4 rounded-xl border border-line bg-surface p-6"><div class="flex items-center gap-2"><span class="text-sm font-medium text-ink">Text message (SMS)</span>{% if sms_state == "verified" %}{% call ui::badge(kind=bilibi_ui::BadgeKind::Success, dot=true) %}Verified{% endcall %}{% elif sms_state == "unverified" %}{% call ui::badge(kind=bilibi_ui::BadgeKind::Warning, dot=true) %}Not verified{% endcall %}{% else %}{% call ui::badge(kind=bilibi_ui::BadgeKind::Neutral, dot=true) %}Off{% endcall %}{% endif %}</div>
+{%- if sms_state == "unavailable" %}<p class="text-sm text-muted">SMS is not available on this server.</p>
+{%- elif sms_state == "none" %}<p class="text-sm text-muted">Your account has no phone number. Ask an administrator to add one, then verify it here.</p>
+{%- elif sms_state == "verified" %}<p class="text-sm text-muted">Codes for sign-in and protected actions can be sent to <span class="font-medium text-ink">{{ sms_phone }}</span>. Only an administrator can change this number.</p>
+{%- else %}<p class="text-sm text-muted">An administrator added <span class="font-medium text-ink">{{ sms_phone }}</span> to your account. Prove it is yours: send a code to it and enter the code here.</p>
+{%- if !sms_notice.is_empty() %}{% call fb::alert(kind=bilibi_ui::StatusKind::Info, id="two-factor-sms-notice") %}{{ sms_notice }}{% endcall %}{% endif -%}
+{%- if sms_sent %}<form id="two-factor-sms-verify-form" data-event="sms-verify" class="space-y-4">{{ sms_code }}<div class="flex justify-end gap-2">{% call ui::button(id="two-factor-sms-resend", button_type="button", event="sms-send", working="Sending…") %}Send another code{% endcall %}{% call ui::button(variant=bilibi_ui::ButtonVariant::Primary, id="two-factor-sms-verify", button_type="submit", working="Verifying…") %}Verify phone{% endcall %}</div></form>
+{%- else %}<div class="flex justify-end">{% call ui::button(variant=bilibi_ui::ButtonVariant::Primary, id="two-factor-sms-send", button_type="button", event="sms-send", working="Sending…") %}Send code{% endcall %}</div>{% endif %}
+{%- endif %}
+</div>
+{%- endif %}
 </div>
 {% endcall %}
 {% endcall %}

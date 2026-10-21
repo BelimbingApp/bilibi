@@ -41,6 +41,7 @@ Every record carries these header lines: Document Type, Status, Agents, Scope, L
 | Record | Status |
 | --- | --- |
 | [01 Agent-first operations: one contract, four doors](./01-agent-first-operations.md) | Accepted |
+| [03 SMS as a second factor, and sign-in as a step-up operation](./03-sms-second-factor.md) | Proposed |
 
 ### Software delivery
 

@@ -55,6 +55,19 @@ The web proof of Base Step-up (`apps/base/step_up/README.md`) lives on the sessi
 - An impersonated session is never stepped up.
 - `end_user_sessions` also ends the holder's agent step-up windows (`bilibi_step_up::end_agent_windows`).
 
+## Second factor at sign-in
+
+A correct password writes the session **pending its second factor** (`second_factor_pending`, migration `004-second-factor`; ADR 03). A pending session proves nothing.
+
+| Call | Does |
+|---|---|
+| `check`, `hold`, `activity` | Refuse a pending session, like an expired one |
+| `pending(client, token)` | The only read that accepts one, for the sign-in code page. Never renews activity |
+| `admit(sql, scope, stepped_up)` | Clears the flag inside the verifying owner's transaction and restarts the 24-hour expiry. With `stepped_up`, also opens the step-up window |
+| `discard_pending(client, token)` | Deletes a pending session ("Back to login") |
+
+Core User sets the pending expiry (15 minutes) and decides when to admit: at once when the tenant's `core.user.sign_in` policy is off, after a correct code otherwise.
+
 ## Listing
 
 `/system/sessions` needs the platform operator identity and

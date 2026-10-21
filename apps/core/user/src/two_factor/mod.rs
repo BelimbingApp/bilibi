@@ -9,6 +9,10 @@
 //! ([`CONFIRM_PATH`]) and spends a code an agent carries, for whatever
 //! purpose the contract names.
 //!
+//! A code sent by SMS to the account's verified phone (`sms.rs`, ADR 03) is
+//! the second method beside the authenticator, and sign-in itself is one
+//! more step-up operation (`sign_in.rs`).
+//!
 //! Every account-level write is one `MutationBoundary` transaction whose
 //! action names what happened (`user.two_factor.enabled`, `.failed`,
 //! `.locked`, ...); no code or secret is ever part of a `Change`, an action
@@ -18,11 +22,15 @@
 mod agent;
 mod provider;
 mod qr;
+mod sign_in;
+mod sms;
 mod totp;
 
 pub(crate) use agent::bind;
 pub use agent::{TwoFactorEmailError, TwoFactorEmailReset};
 pub use provider::Authenticator;
+pub use sign_in::{SignInChallenge, SignInStep, PHONE_SET, SIGN_IN};
+pub use sms::SmsPurpose;
 
 use crate::{password, UserService};
 use bilibi_audit::{record_action, Attribution};
@@ -72,15 +80,43 @@ pub enum TwoFactorError {
     Impersonating,
     #[error("2FA needs BILIBI_SETTINGS_KEY, which this installation lacks.")]
     Unavailable,
+    #[error("Wait {seconds} second(s) before asking for another code.")]
+    ResendTooSoon { seconds: i64 },
+    #[error("Too many codes were sent. Try again in {minutes} minute(s).")]
+    TooManySends { minutes: i64 },
+    #[error("Your account has no phone number. Ask an administrator to add one.")]
+    NoPhone,
+    #[error("Verify your phone number in My settings › 2FA first.")]
+    PhoneNotVerified,
+    #[error("SMS is not available on this server.")]
+    SmsUnavailable,
+    #[error("The text message could not be sent. Try again.")]
+    SmsFailed,
     #[error(transparent)]
     Other(#[from] Error),
 }
 type Outcome<T> = std::result::Result<T, TwoFactorError>;
 
 /// What the settings page shows about the account.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct TwoFactorStatus {
+    /// A confirmed authenticator.
     pub enabled: bool,
+    /// The administrator-set phone, masked (`+94 ••• ••• 567`).
+    pub phone: Option<String>,
+    pub phone_verified: bool,
+    /// This server can send SMS (`base/sms`).
+    pub sms_available: bool,
+}
+impl TwoFactorStatus {
+    /// SMS can answer a check: a verified phone on a server that sends SMS.
+    pub fn sms_ready(&self) -> bool {
+        self.phone_verified && self.sms_available && self.phone.is_some()
+    }
+    /// The account can answer a check by any method (ADR 03).
+    pub fn enrolled(&self) -> bool {
+        self.enabled || self.sms_ready()
+    }
 }
 
 /// A pending enrollment's display: the QR code and the same key for typing.
@@ -116,6 +152,8 @@ enum Spend {
         operation: String,
         channel: &'static str,
     },
+    /// Admits a session pending its second factor and opens its window.
+    SignIn,
 }
 
 async fn spent_for(
@@ -124,10 +162,19 @@ async fn spent_for(
     scope: &Scope,
     spend: Spend,
 ) -> Result<()> {
-    if let Spend::StepUp = spend {
-        sessions.step_up(sql, scope).await?;
+    match spend {
+        Spend::StepUp => sessions.step_up(sql, scope).await,
+        Spend::SignIn => sessions.admit(sql, scope, true).await,
+        Spend::Purpose { .. } => Ok(()),
     }
-    Ok(())
+}
+
+/// A code that matched, not yet spent.
+enum Proof {
+    /// The authenticator's time step.
+    Authenticator(i64),
+    /// The row of the SMS code that matched.
+    Sms(i64),
 }
 
 /// A local path the browser may be sent back to after enrollment or step-up:
@@ -169,10 +216,16 @@ async fn now_unix(client: &impl GenericClient) -> Result<i64> {
 }
 
 impl UserService {
-    /// Whether the account has a confirmed authenticator.
+    /// Whether the account has a confirmed authenticator, and its phone.
     pub async fn two_factor_status(&self, scope: &Scope) -> Result<TwoFactorStatus> {
+        let enabled = self.account_two_factor_on(scope, scope.user()).await?;
+        let client = self.db.get().await?;
+        let phone = sms::phone(&**client, scope.tenant(), scope.user()).await?;
         Ok(TwoFactorStatus {
-            enabled: self.account_two_factor_on(scope, scope.user()).await?,
+            enabled,
+            phone_verified: phone.as_ref().is_some_and(|(_, verified)| *verified),
+            phone: phone.map(|(number, _)| number.masked()),
+            sms_available: self.sms.available().await?,
         })
     }
 
@@ -192,11 +245,15 @@ impl UserService {
     }
 
     /// Where a step-up guard sends a browser that has not confirmed access:
-    /// the prompt, or enrollment for an account with no authenticator yet.
+    /// the prompt, or enrollment for an account with no second factor yet.
     /// Either brings it back to `return_to` afterwards.
     pub async fn step_up_destination(&self, scope: &Scope, return_to: &str) -> Result<String> {
-        let enabled = self.two_factor_status(scope).await?.enabled;
-        let base = if enabled { CONFIRM_PATH } else { SETTINGS_PATH };
+        let enrolled = self.two_factor_status(scope).await?.enrolled();
+        let base = if enrolled {
+            CONFIRM_PATH
+        } else {
+            SETTINGS_PATH
+        };
         Ok(with_return(base, Some(return_to)))
     }
 
@@ -343,11 +400,11 @@ impl UserService {
         Ok(())
     }
 
-    /// Step-up: a current authenticator code marks this session as having
-    /// confirmed access just now.
+    /// Step-up: a current authenticator code, or the latest SMS code, marks
+    /// this session as having confirmed access just now.
     pub async fn step_up(&self, scope: &Scope, code: &str) -> Outcome<()> {
-        let step = self.prove(scope, code).await?;
-        self.consume(scope, step, Spend::StepUp).await
+        let proof = self.prove(scope, code, true).await?;
+        self.consume(scope, proof, Spend::StepUp).await
     }
 
     /// Step one of moving to a new phone: a current code from the old
@@ -358,10 +415,11 @@ impl UserService {
         if !self.settings.encryption_available() {
             return Err(TwoFactorError::Unavailable);
         }
-        let step = self.prove(scope, code).await?;
+        // Moving the authenticator takes a code from the authenticator.
+        let proof = self.prove(scope, code, false).await?;
         self.consume(
             scope,
-            step,
+            proof,
             Spend::Purpose {
                 operation: "core.user.two_factor.move".into(),
                 channel: "web",
@@ -456,9 +514,11 @@ impl UserService {
         })
     }
 
-    /// Checks a code against the confirmed authenticator without consuming
-    /// it. A miss counts as a failure.
-    async fn prove(&self, scope: &Scope, code: &str) -> Outcome<i64> {
+    /// Checks a code against the confirmed authenticator, or (with
+    /// `allow_sms`) the latest SMS code to a verified phone, without
+    /// consuming it. Managing the authenticator itself takes no SMS code. A
+    /// miss counts as a failure, and against the SMS code that was live.
+    async fn prove(&self, scope: &Scope, code: &str, allow_sms: bool) -> Outcome<Proof> {
         refuse_impersonation(scope)?;
         self.unlocked(scope).await?;
         let (tenant, user) = (scope.tenant(), scope.user());
@@ -469,29 +529,63 @@ impl UserService {
                 &[&tenant, &user],
             )
             .await
-            .map_err(Error::from)?
-            .ok_or(TwoFactorError::NotEnabled)?;
-        let secret = self.open_secret(tenant, user, &row.get(0))?;
-        let step = totp::verify(&secret, code, now_unix(&**client).await?, row.get(1))?;
+            .map_err(Error::from)?;
+        let sms_ready = allow_sms
+            && self.sms.available().await?
+            && sms::phone(&**client, tenant, user)
+                .await?
+                .is_some_and(|(_, verified)| verified);
+        if row.is_none() && !sms_ready {
+            return Err(TwoFactorError::NotEnabled);
+        }
+        let by_app = match &row {
+            Some(row) => {
+                let secret = self.open_secret(tenant, user, &row.get(0))?;
+                totp::verify(&secret, code, now_unix(&**client).await?, row.get(1))?
+                    .map(Proof::Authenticator)
+            }
+            None => None,
+        };
+        let mut missed_sms = None;
+        let proof = match (by_app, sms_ready, totp::normalize(code)) {
+            (Some(proof), _, _) => Some(proof),
+            (None, true, Some(digits)) => match sms::live_code(&**client, tenant, user).await? {
+                Some((id, hash)) if password::verify(&digits, Some(&hash)).await? => {
+                    Some(Proof::Sms(id))
+                }
+                Some((id, _)) => {
+                    missed_sms = Some(id);
+                    None
+                }
+                None => None,
+            },
+            _ => None,
+        };
         drop(client);
-        match step {
-            Some(step) => Ok(step),
+        match proof {
+            Some(proof) => Ok(proof),
             None => {
-                self.failed(scope, "code").await?;
+                self.failed_with(scope, "code", missed_sms).await?;
                 Err(TwoFactorError::InvalidCode)
             }
         }
     }
 
-    /// Spends a proved step inside one audited transaction with what it was
-    /// for. The step moves forward by compare-and-set, so a racing reuse of
-    /// the same code loses, and failures reset.
-    async fn consume(&self, scope: &Scope, step: i64, spend: Spend) -> Outcome<()> {
+    /// Spends a proved code inside one audited transaction with what it was
+    /// for. An authenticator step moves forward by compare-and-set and an SMS
+    /// code is marked spent, so a racing reuse of the same code loses, and
+    /// failures reset.
+    async fn consume(&self, scope: &Scope, proof: Proof, spend: Spend) -> Outcome<()> {
         let (tenant, user) = (scope.tenant(), scope.user());
         let event = "user.two_factor.verified";
         let purpose = match &spend {
             Spend::Purpose { operation, channel } => json!({"for": operation, "channel": channel}),
-            _ => json!({}),
+            Spend::SignIn => json!({"for": SIGN_IN, "channel": "web"}),
+            Spend::StepUp => json!({}),
+        };
+        let method = match proof {
+            Proof::Authenticator(_) => "authenticator",
+            Proof::Sms(_) => "sms",
         };
         let sessions = self.sessions.clone();
         let session = scope.clone();
@@ -503,18 +597,22 @@ impl UserService {
         let spent = tx
             .mutate(move |sql| {
                 Box::pin(async move {
-                    let spent = sql
-                        .execute(
-                            "UPDATE user_two_factor SET last_step=$3,updated_at=now() WHERE tenant_id=$1 AND user_id=$2 AND confirmed_at IS NOT NULL AND (last_step IS NULL OR last_step<$3)",
-                            &[&tenant, &user, &step],
-                        )
-                        .await?;
-                    if spent != 1 {
+                    let spent = match proof {
+                        Proof::Authenticator(step) => sql
+                            .execute(
+                                "UPDATE user_two_factor SET last_step=$3,updated_at=now() WHERE tenant_id=$1 AND user_id=$2 AND confirmed_at IS NOT NULL AND (last_step IS NULL OR last_step<$3)",
+                                &[&tenant, &user, &step],
+                            )
+                            .await?
+                            == 1,
+                        Proof::Sms(id) => sms::spend(sql, tenant, user, id).await?,
+                    };
+                    if !spent {
                         return Err(Error::Conflict);
                     }
                     clear_failures(sql, tenant, user).await?;
                     spent_for(sql, &sessions, &session, spend).await?;
-                    let mut new = json!({"status": "enabled", "checked_with": "authenticator"});
+                    let mut new = json!({"status": "enabled", "checked_with": method});
                     if let (Some(new), Some(purpose)) = (new.as_object_mut(), purpose.as_object()) {
                         new.extend(purpose.clone());
                     }
@@ -566,6 +664,17 @@ impl UserService {
     /// reaches the limit then locks the account's checks, audited as
     /// `user.two_factor.locked`.
     async fn failed(&self, scope: &Scope, check: &'static str) -> Result<()> {
+        self.failed_with(scope, check, None).await
+    }
+
+    /// `failed`, also counting the miss against the SMS code that was live
+    /// (`sms`): its fifth wrong try voids it.
+    async fn failed_with(
+        &self,
+        scope: &Scope,
+        check: &'static str,
+        sms: Option<i64>,
+    ) -> Result<()> {
         let (tenant, user) = (scope.tenant(), scope.user());
         let mut client = self.db.get().await?;
         let mut tx = self
@@ -585,10 +694,18 @@ impl UserService {
                         )
                         .await?
                         .get(0);
-                    Ok((
-                        failures,
-                        vec![attempts_change(user, json!({"failures": failures, "check": check}))],
-                    ))
+                    let mut changes =
+                        vec![attempts_change(user, json!({"failures": failures, "check": check}))];
+                    if let Some(id) = sms {
+                        let void = sms::miss(sql, tenant, user, id).await?;
+                        changes.push(Change {
+                            kind: "user_sms_code".into(),
+                            id,
+                            old: json!({}),
+                            new: json!({"missed": true, "status": if void { "void" } else { "live" }}),
+                        });
+                    }
+                    Ok((failures, changes))
                 })
             })
             .await?;

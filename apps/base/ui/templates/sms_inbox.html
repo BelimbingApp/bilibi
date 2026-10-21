@@ -1,0 +1,12 @@
+{#- The development SMS inbox (`/dev/sms-inbox`, ADR 03): the simulator's
+    newest messages, each drawn as a phone screen with the recipient, the
+    text, the time and the code picked out, so a tester signs in without a
+    phone. The host answers 404 on a Production server, which has no
+    simulator. -#}
+{% import "components.html" as ui %}
+<div class="flex flex-col gap-5">
+<div><h1 class="text-lg font-semibold tracking-tight text-ink-strong">SMS inbox</h1><p class="mt-1 text-sm text-ink-muted">Text messages the simulator sent on this test server, newest first. Reload to see new ones.</p></div>
+{% if messages.is_empty() %}<p id="sms-inbox-empty" class="rounded-md border border-dashed border-line px-3 py-6 text-center text-sm text-ink-subtle">No messages yet. Sign in with an account whose company asks for a code.</p>
+{% else %}<ol id="sms-inbox" class="flex flex-col gap-4">{% for message in messages %}<li id="sms-{{ loop.index }}" class="rounded-2xl border-4 border-ink-strong/80 bg-surface-muted p-3"><div class="flex items-center justify-between text-xs text-ink-subtle"><span class="font-medium text-ink">To {{ message.to }}</span><span>{{ message.sent_at }}</span></div><p class="mt-2 rounded-xl rounded-tl-sm bg-surface px-3 py-2 text-sm text-ink shadow-xs">{{ message.body }}</p>{% if !message.code.is_empty() %}<p class="mt-2 text-center"><span class="sr-only">Code </span><span data-code class="select-all font-mono text-2xl font-semibold tracking-[0.3em] text-ink-strong">{{ message.code }}</span></p>{% endif %}</li>{% endfor %}</ol>{% endif %}
+{% call ui::back_link(href="/", id="sms-inbox-back", title="Back to sign in", class="justify-center") %}{% endcall %}
+</div>

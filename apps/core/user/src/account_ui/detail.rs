@@ -567,6 +567,17 @@ impl Detail {
             })?,
             None => render(&Badge::status(BadgeKind::Warning, "unverified"))?,
         };
+        // Proven by the holder with a code sent to it; an administrator only
+        // sets the number (ADR 03).
+        let phone_verified = match (&account.phone_number, account.phone_verified_at) {
+            (None, _) => render(&Badge::status(BadgeKind::Neutral, "no phone"))?,
+            (Some(_), Some(at)) => render(&Badge {
+                kind: BadgeKind::Success,
+                body: datetime(&display, "user-phone-verified-at", at)?,
+                ..Badge::default()
+            })?,
+            (Some(_), None) => render(&Badge::status(BadgeKind::Warning, "unverified"))?,
+        };
         let items = vec![
             Fact {
                 title: crate::record_fields::get("name").label,
@@ -581,6 +592,27 @@ impl Detail {
                 value: render(&InlineEdit {
                     field: self.inline(loaded, "email", "Email", &account.email),
                 })?,
+            },
+            Fact {
+                title: crate::record_fields::PHONE_NUMBER.label,
+                id: "user-view-phone",
+                value: render(&InlineEdit {
+                    field: self
+                        .inline(
+                            loaded,
+                            "phone_number",
+                            crate::record_fields::PHONE_NUMBER.label,
+                            account.phone_number.as_deref().unwrap_or(""),
+                        )
+                        .allow_empty()
+                        .placeholder("Add phone")
+                        .hint("International format, such as +94771234567. Codes for 2FA go here."),
+                })?,
+            },
+            Fact {
+                title: crate::record_fields::PHONE_VERIFIED_AT.label,
+                id: "user-view-phone-verified",
+                value: phone_verified,
             },
             Fact {
                 title: crate::record_fields::PERSON_ID.label,
@@ -1453,6 +1485,8 @@ impl Detail {
                 }],
             ),
             Err(AccountError::Access(Error::Unauthorized)) => return Err(Error::Unauthorized),
+            // The host sends the browser to confirm access and back here.
+            Err(AccountError::Access(error @ Error::StepUpRequired { .. })) => return Err(error),
             Err(AccountError::Access(Error::Forbidden)) => {
                 self.statuses.clear_saved();
                 self.flash.error(FORBIDDEN);
@@ -1481,12 +1515,12 @@ impl Detail {
             .ok_or(Error::Invalid)?;
         let users = self.pages.users.clone();
         match field.as_str() {
-            "name" | "email" => {
+            "name" | "email" | "phone_number" => {
                 let kind = AccountField::parse(&field).expect("matched");
-                let label = if kind == AccountField::Name {
-                    "Name"
-                } else {
-                    "Email"
+                let label = match kind {
+                    AccountField::Name => "Name",
+                    AccountField::Email => "Email",
+                    AccountField::Phone => crate::record_fields::PHONE_NUMBER.label,
                 };
                 let result = users
                     .update_account(scope, self.id, version, kind, &submitted)
