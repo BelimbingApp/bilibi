@@ -452,20 +452,24 @@ async fn admitted(
     peer: Option<Extension<ConnectInfo<SocketAddr>>>,
     session: bilibi_user::Login,
 ) -> std::result::Result<Response, HttpError> {
-    let client = app.db.get().await.map_err(Error::from)?;
-    app.security
-        .sessions
-        .describe(
-            &**client,
-            &session.token,
-            api::client_address(peer.map(|Extension(ConnectInfo(peer))| peer), headers)
-                .map(|ip| ip.to_string())
-                .as_deref(),
-            headers
-                .get(header::USER_AGENT)
-                .and_then(|value| value.to_str().ok()),
-        )
-        .await?;
+    {
+        // Release the connection before `landing_route` takes its own, or
+        // concurrent logins can hold the whole pool while waiting for a second.
+        let client = app.db.get().await.map_err(Error::from)?;
+        app.security
+            .sessions
+            .describe(
+                &**client,
+                &session.token,
+                api::client_address(peer.map(|Extension(ConnectInfo(peer))| peer), headers)
+                    .map(|ip| ip.to_string())
+                    .as_deref(),
+                headers
+                    .get(header::USER_AGENT)
+                    .and_then(|value| value.to_str().ok()),
+            )
+            .await?;
+    }
     let cookie = format!(
         "bilibi_session={}; HttpOnly; SameSite=Lax; Path=/; Max-Age=86400{}",
         session.token,
