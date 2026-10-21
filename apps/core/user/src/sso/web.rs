@@ -58,6 +58,7 @@ struct State {
     public: String,
     editing: bool,
     notice: String,
+    refused: Option<String>,
     error: bool,
     errors: std::collections::BTreeMap<String, String>,
     raw_mapping: Option<String>,
@@ -94,6 +95,7 @@ impl Pages {
             public,
             editing: id.is_none(),
             notice: String::new(),
+            refused: None,
             error: false,
             errors: Default::default(),
             raw_mapping: None,
@@ -626,7 +628,7 @@ impl State {
                 if !get("client_secret").is_empty() {
                     input["client_secret"] = json!(get("client_secret"));
                 }
-                let result = self
+                let result = match self
                     .contracts
                     .submit(
                         &bilibi_agent_api::page::Call {
@@ -639,10 +641,17 @@ impl State {
                         input,
                     )
                     .await
-                    .map_err(|e| match e {
-                        bilibi_agent_api::Error::Backend(e) => e,
-                        _ => Error::Invalid,
-                    })?;
+                {
+                    Ok(result) => result,
+                    Err(bilibi_agent_api::Error::InvalidInput(mut fields)) => {
+                        self.refused = fields
+                            .remove("configuration")
+                            .and_then(|messages| messages.into_iter().next());
+                        return Err(Error::Invalid);
+                    }
+                    Err(bilibi_agent_api::Error::Backend(error)) => return Err(error),
+                    Err(_) => return Err(Error::Invalid),
+                };
                 let id = result["result"]["id"].as_i64().ok_or(Error::Internal)?;
                 return Ok(Some(format!("/companies/{company}/sso?connection={id}")));
             }
@@ -690,12 +699,8 @@ impl LiveState<Scope, Error> for State {
                         self.error = false
                     }
                     Err(e @ Error::StepUpRequired { .. }) => return Err(e),
-                    Err(Error::InvalidReason(reason)) => {
-                        self.notice = reason.into();
-                        self.error = true;
-                    }
                     Err(Error::Invalid | Error::Conflict | Error::NotFound) => {
-                        self.notice="Could not save company sign-in. Check the fields, permissions and emergency administrator.".into();
+                        self.notice = self.refused.take().unwrap_or_else(|| "Could not save company sign-in. Check the fields, permissions and emergency administrator.".into());
                         self.error = true;
                     }
                     Err(e) => return Err(e),

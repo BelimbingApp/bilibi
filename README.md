@@ -120,6 +120,7 @@ The launcher sets `BILIBI_ENV=development` unless you already set it, so the ins
 | `BILIBI_USER_SIGNING_KEY` | 64 hex characters, for email verification links. Unset: `start-app.sh` supplies one |
 | `BILIBI_SETTINGS_KEY` | 64 hex characters. Encrypts secret settings and authenticator keys. 2FA setup refuses without it. Unset: `start-app.sh` supplies one |
 | `BILIBI_MEDIA_SIGNING_KEY` | 64 hex characters, for signed file links. Unset: `start-app.sh` supplies one |
+| `BILIBI_SSO_ALLOW_PRIVATE_ENDPOINTS` | `1` lets company sign-in reach identity providers on private networks and literal-loopback HTTP. Unset: public HTTPS only. See [company sign-in](apps/core/user/sso.md) |
 | `BILIBI_ENV` | `development`, `staging` or `production`. Initial role for the install seed. Unset means `production`; `start-app.sh` defaults to `development`. Later role changes use Instance settings. Other values refuse installation |
 
 Every page, consent page and agent answer says which Bilibi it is, so nobody mistakes a test copy for the live system. The status bar always shows the stored server role; Staging also shows a top-bar badge. Dev and Staging show a sign-in badge; reviews and agent plans name every instance, production included. The name and colour are the Instance settings (`instance.label`, `instance.colour`), read through `bilibi_base::system::Instance::resolve` ([Base System](apps/base/system/README.md)).

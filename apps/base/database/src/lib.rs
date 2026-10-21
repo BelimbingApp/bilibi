@@ -26,10 +26,6 @@ pub enum Error {
     NotFound,
     #[error("Invalid input")]
     Invalid,
-    /// A safe, static explanation chosen by the owning facade. Never include
-    /// request values, credentials, claims or database details in this message.
-    #[error("{0}")]
-    InvalidReason(&'static str),
     #[error("The record changed. Reload before saving")]
     Conflict,
     #[error("Database unavailable")]

@@ -20,8 +20,8 @@ mod reset;
 mod sign_in;
 mod sso;
 pub use sso::{
-    ExternalIdentity, ExternalLogout, IdentityConfiguration, IdentityFuture, IdentityOutcome,
-    IdentityProvider, IdentityPurpose, IdentityRedirect, IdentityRequest,
+    ConfigurationError, ExternalIdentity, ExternalLogout, IdentityConfiguration, IdentityFuture,
+    IdentityOutcome, IdentityProvider, IdentityPurpose, IdentityRedirect, IdentityRequest,
 };
 mod two_factor;
 mod two_factor_ui;
@@ -187,7 +187,7 @@ pub struct UserService {
 inventory::submit! {
     bilibi_module_registry::Module {
         id:"core/user",layer:bilibi_module_registry::Layer::Core,
-        dependencies:&["base/integration","base/agent_api","base/database","base/security","base/step_up","base/system","base/notifications","base/tenancy","base/session","base/principal_directory","base/mail","base/settings","base/datetime","base/locale","base/ui","base/audit","base/authz","base/menu","base/grid","base/dashboard","base/party_ids","core/company","core/person","core/affiliation"],migrations:&[MIGRATION,CREDENTIALS_MIGRATION,PINS_MIGRATION,NOTIFICATIONS_MIGRATION,database_queries::MIGRATION,database_queries::DROP_PROMPT,BOOTSTRAP_MIGRATION,IDENTITY_MIGRATION,ACCOUNTS_MIGRATION,IMPERSONATION_MIGRATION,BOOTSTRAP_AFFILIATION_MIGRATION,MOVED_PINS_MIGRATION,TWO_FACTOR_MIGRATION,TWO_FACTOR_RECOVERY_DROP,sign_in::MIGRATION,sso::MIGRATION],
+        dependencies:&["base/integration","base/agent_api","base/database","base/security","base/step_up","base/system","base/notifications","base/tenancy","base/session","base/principal_directory","base/mail","base/settings","base/datetime","base/locale","base/ui","base/audit","base/authz","base/menu","base/grid","base/dashboard","base/party_ids","core/company","core/person","core/affiliation"],migrations:&[MIGRATION,CREDENTIALS_MIGRATION,PINS_MIGRATION,NOTIFICATIONS_MIGRATION,database_queries::MIGRATION,database_queries::DROP_PROMPT,BOOTSTRAP_MIGRATION,IDENTITY_MIGRATION,ACCOUNTS_MIGRATION,IMPERSONATION_MIGRATION,BOOTSTRAP_AFFILIATION_MIGRATION,MOVED_PINS_MIGRATION,TWO_FACTOR_MIGRATION,TWO_FACTOR_RECOVERY_DROP,sign_in::MIGRATION,sso::MIGRATION,sso::RUNTIME_MIGRATION],
         services:&[bilibi_module_registry::Service {id:"core/user.database_queries",factory:|services| {
             Ok(std::sync::Arc::new(database_queries::QueryService::new(services.get::<Db>("base/database.pool")?.as_ref().clone(), services.get("base/database.mutations")?, services.get("base/tenancy.authentication")?)))
         }},bilibi_module_registry::Service {id:"core/user.query-pages",factory:|services| {
@@ -226,6 +226,14 @@ impl UserService {
         self.begin_sign_in(email, password).await
     }
     pub async fn logout(&self, token: &str, csrf: &str) -> Result<()> {
+        let scope = {
+            let client = self.db.get().await?;
+            guard(&**client, token, &self.sessions).await?
+        };
+        if scope.csrf != csrf {
+            return Err(Error::Forbidden);
+        }
+        self.forget_external_session(&scope, token).await?;
         logout(&self.db, token, csrf, &self.sessions).await
     }
     pub async fn mark_read(&self, token: &str, id: i64) -> Result<notifications::Item> {

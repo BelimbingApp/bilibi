@@ -854,6 +854,14 @@ pub async fn sso_callback(
     peer: Option<Extension<ConnectInfo<SocketAddr>>>,
     Query(query): Query<HashMap<String, String>>,
 ) -> Result<Response, HttpError> {
+    let sender = api::client_address(
+        peer.as_ref().map(|Extension(ConnectInfo(peer))| *peer),
+        &headers,
+    )
+    .map_or_else(|| "unknown".into(), |ip| ip.to_string());
+    if !api::allowed(&app, "sso_callback", &sender).await? {
+        return Ok(StatusCode::TOO_MANY_REQUESTS.into_response());
+    }
     let scope = sso_scope(&app, &headers).await?;
     let outcome = app
         .user
@@ -899,9 +907,18 @@ pub struct LogoutDelivery {
 }
 pub async fn sso_backchannel(
     State(app): State<App>,
+    headers: HeaderMap,
     Path(provider): Path<String>,
+    peer: Option<Extension<ConnectInfo<SocketAddr>>>,
     Form(delivery): Form<LogoutDelivery>,
 ) -> Response {
+    let sender = api::client_address(peer.map(|Extension(ConnectInfo(peer))| peer), &headers)
+        .map_or_else(|| "unknown".into(), |ip| ip.to_string());
+    match api::allowed(&app, "sso_backchannel", &sender).await {
+        Ok(true) => {}
+        Ok(false) => return StatusCode::TOO_MANY_REQUESTS.into_response(),
+        Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    }
     match app
         .user
         .external_backchannel_logout(&provider, &delivery.logout_token)

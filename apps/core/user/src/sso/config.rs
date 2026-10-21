@@ -1,17 +1,43 @@
 //! Company identity configuration; extends Bilimbi User settings with no
-//! provider-specific implementation. Secret configuration uses Base Settings.
+//! provider-specific implementation. The connection and its client secret are
+//! sealed with the installation key (`Settings::seal_owned`) in the connection row.
 use super::*;
-use bilibi_module_registry::{Contribution, Provenance};
-use bilibi_settings::{Definition, ScopeKind, Setting, Target, ValueType, DEFINITIONS};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-fn configuration_error(error: Error, reason: &'static str) -> Error {
+const SEALED: &str = "core/user.sso.connection";
+
+/// A save refused for a reason the administrator can act on. Messages are chosen
+/// here and never carry request values, credentials or claims.
+#[derive(Debug, thiserror::Error)]
+pub enum ConfigurationError {
+    #[error("{0}")]
+    Refused(&'static str),
+    #[error(transparent)]
+    Backend(#[from] Error),
+}
+impl From<ConfigurationError> for bilibi_agent_api::Error {
+    fn from(error: ConfigurationError) -> Self {
+        match error {
+            ConfigurationError::Refused(reason) => Self::InvalidInput(BTreeMap::from([(
+                "configuration".into(),
+                vec![reason.into()],
+            )])),
+            ConfigurationError::Backend(error) => error.into(),
+        }
+    }
+}
+impl From<tokio_postgres::Error> for ConfigurationError {
+    fn from(error: tokio_postgres::Error) -> Self {
+        Self::Backend(error.into())
+    }
+}
+fn refuse(error: Error, reason: &'static str) -> ConfigurationError {
     match error {
         Error::Invalid | Error::Forbidden | Error::Unauthorized | Error::NotFound => {
-            Error::InvalidReason(reason)
+            ConfigurationError::Refused(reason)
         }
-        other => other,
+        other => other.into(),
     }
 }
 
@@ -21,9 +47,6 @@ bilibi_step_up::declare!(
     "core/user",
     bilibi_step_up::Operation::new(CONFIGURE, "Change company sign-in").floor()
 );
-inventory::submit! {Contribution::new(DEFINITIONS,"user.sso.*",Provenance{module:"core/user",source:file!(),line:line!()},&Setting::Definition(Definition{
- value_type:ValueType::Mixed,scopes:&[ScopeKind::Company],default:||json!({}),nullable:false,encrypted:true,minimum:None,maximum:None,validator:None,editor:None,
-}))}
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct IdentityConfiguration {
@@ -123,38 +146,20 @@ impl UserService {
         id: Option<i64>,
     ) -> Result<(IdentityConfiguration, String)> {
         let client = self.db.get().await?;
-        let scope = self
-            .authentication
-            .reprove(&**client, scope)
-            .await
-            .map_err(|error| {
-                configuration_error(
-                    error,
-                    "Your signed-in account is no longer valid. Sign in again.",
-                )
-            })?;
+        let scope = self.authentication.reprove(&**client, scope).await?;
         self.sso_company(&**client, &scope, company).await?;
-        if let Some(id) = id {
-            let row=client.query_opt("SELECT public_id FROM user_identity_providers WHERE tenant_id=$1 AND company_id=$2 AND id=$3",&[&scope.tenant(),&company,&id]).await?.ok_or(Error::NotFound)?;
-            let value = self
-                .settings
-                .get(
-                    &**client,
-                    &scope,
-                    Target::Company(
-                        bilibi_party_ids::OrganisationId::new(company)
-                            .map_err(|_| Error::Invalid)?,
-                    ),
-                    &format!("user.sso.{id}"),
-                )
-                .await.map_err(|error| configuration_error(error, "The company sign-in settings could not be decrypted. Check the installation encryption key."))?
-                .value;
-            let config = serde_json::from_value(value["configuration"].clone())
-                .map_err(|_| Error::InvalidReason("The saved company sign-in configuration is invalid. Ask an administrator to repair it."))?;
-            Ok((config, row.get(0)))
-        } else {
-            Ok((IdentityConfiguration::default(), String::new()))
-        }
+        let Some(id) = id else {
+            return Ok((IdentityConfiguration::default(), String::new()));
+        };
+        let row=client.query_opt("SELECT public_id,sealed_runtime FROM user_identity_providers WHERE tenant_id=$1 AND company_id=$2 AND id=$3",&[&scope.tenant(),&company,&id]).await?.ok_or(Error::NotFound)?;
+        let value = self.open_connection(scope.tenant(), id, row.get(1))?;
+        let config =
+            serde_json::from_value(value["configuration"].clone()).map_err(|_| Error::Invalid)?;
+        Ok((config, row.get(0)))
+    }
+    fn open_connection(&self, tenant: i64, id: i64, sealed: Option<Value>) -> Result<Value> {
+        self.settings
+            .open_owned(SEALED, tenant, id, &sealed.ok_or(Error::NotFound)?)
     }
     pub(super) async fn sso_company(
         &self,
@@ -162,14 +167,7 @@ impl UserService {
         scope: &Scope,
         company: i64,
     ) -> Result<()> {
-        bilibi_authz::authorize_key(sql, scope, MANAGE)
-            .await
-            .map_err(|error| {
-                configuration_error(
-                    error,
-                    "Your account cannot manage company sign-in. Ask an administrator for access.",
-                )
-            })?;
+        bilibi_authz::authorize_key(sql, scope, MANAGE).await?;
         // Company ownership/reach follows the same directory used by Settings.
         let company = self
             .sso_parties
@@ -179,13 +177,7 @@ impl UserService {
                 bilibi_party_ids::OrganisationId::new(company).map_err(|_| Error::Invalid)?,
                 MANAGE,
             )
-            .await
-            .map_err(|error| {
-                configuration_error(
-                    error,
-                    "This company is outside your account's company or workspace access.",
-                )
-            })?;
+            .await?;
         if company.archived {
             return Err(Error::Forbidden);
         }
@@ -198,8 +190,8 @@ impl UserService {
         id: Option<i64>,
         config: IdentityConfiguration,
         secret: Option<String>,
-    ) -> Result<(i64, String)> {
-        let mut client = self.db.get().await?;
+    ) -> std::result::Result<(i64, String), ConfigurationError> {
+        let mut client = self.db.get().await.map_err(Error::from)?;
         let mut tx = self
             .mutations
             .begin(
@@ -221,17 +213,17 @@ impl UserService {
         id: Option<i64>,
         config: IdentityConfiguration,
         secret: Option<String>,
-    ) -> Result<(i64, String)> {
+    ) -> std::result::Result<(i64, String), ConfigurationError> {
         if tx.context().tenant != scope.tenant() {
-            return Err(Error::Forbidden);
+            return Err(Error::Forbidden.into());
         }
 
-        self.identities.get(&config.method).map_err(|error| configuration_error(error, "That sign-in method is not registered. Install its Extension or choose OpenID Connect."))?;
+        self.identities.get(&config.method).map_err(|error| refuse(error, "That sign-in method is not registered. Install its Extension or choose OpenID Connect."))?;
         if let Some((_, reason)) = config.problems().into_iter().next() {
-            return Err(Error::InvalidReason(reason));
+            return Err(ConfigurationError::Refused(reason));
         }
         if secret.as_ref().is_some_and(|s| s.len() > 16384) {
-            return Err(Error::InvalidReason(
+            return Err(ConfigurationError::Refused(
                 "The client secret is too long. Use at most 16384 bytes.",
             ));
         }
@@ -241,7 +233,7 @@ impl UserService {
             || config.protocol.to_string().len() > 16384
             || config.step_up_acr.as_ref().is_some_and(|s| s.is_empty())
         {
-            return Err(Error::InvalidReason(
+            return Err(ConfigurationError::Refused(
                 "The company sign-in configuration is too large or incomplete.",
             ));
         }
@@ -251,17 +243,17 @@ impl UserService {
                 .as_str()
                 .is_none_or(str::is_empty)
             {
-                return Err(Error::Invalid);
+                return Err(Error::Invalid.into());
             }
         }
         if config.just_in_time && config.default_role.is_none() {
-            return Err(Error::Invalid);
+            return Err(Error::Invalid.into());
         }
         if !config.groups_claim.is_empty() && config.groups_claim.len() > 512 {
-            return Err(Error::Invalid);
+            return Err(Error::Invalid.into());
         }
         if !config.role_mapping.is_empty() && config.groups_claim.is_empty() {
-            return Err(Error::Invalid);
+            return Err(Error::Invalid.into());
         }
         self.step_up
             .require(scope, CONFIGURE, &company.to_string())
@@ -271,12 +263,19 @@ impl UserService {
             .reprove(tx.sql(), scope)
             .await
             .map_err(|error| {
-                configuration_error(
+                refuse(
                     error,
                     "Your signed-in account is no longer valid. Sign in again.",
                 )
             })?;
-        self.sso_company(tx.sql(), &scope, company).await?;
+        self.sso_company(tx.sql(), &scope, company)
+            .await
+            .map_err(|error| {
+                refuse(
+                    error,
+                    "Your account cannot manage sign-in for this company.",
+                )
+            })?;
         bilibi_company::eligibility::lock_account_company(
             tx.sql(),
             &scope,
@@ -292,35 +291,45 @@ impl UserService {
                 .authenticate(tx.sql(), tenant, bg, String::new())
                 .await?;
             if bg_scope.actor().organisation().map(|id| id.get()) != Some(company) {
-                return Err(Error::InvalidReason(
+                return Err(ConfigurationError::Refused(
                     "The emergency administrator must be an active administrator in this company.",
                 ));
             }
             bilibi_authz::authorize_key(tx.sql(), &bg_scope, MANAGE).await?;
         }
-        if id.is_none()&&tx.sql().query_one("SELECT count(*) FROM user_identity_providers WHERE tenant_id=$1 AND company_id=$2",&[&tenant,&company]).await?.get::<_,i64>(0)>=100{return Err(Error::InvalidReason("This company already has 100 sign-in connections. Reuse an existing connection."));}
-        let (id, public_id) = if let Some(id) = id {
-            let r=tx.sql().query_opt("SELECT public_id FROM user_identity_providers WHERE tenant_id=$1 AND company_id=$2 AND id=$3 FOR UPDATE",&[&tenant,&company,&id]).await?.ok_or(Error::NotFound)?;
-            (id, r.get::<_, String>(0))
+        if id.is_none()&&tx.sql().query_one("SELECT count(*) FROM user_identity_providers WHERE tenant_id=$1 AND company_id=$2",&[&tenant,&company]).await?.get::<_,i64>(0)>=100{return Err(ConfigurationError::Refused("This company already has 100 sign-in connections. Reuse an existing connection."));}
+        let (id, public_id, previous) = if let Some(id) = id {
+            let r=tx.sql().query_opt("SELECT public_id,sealed_runtime FROM user_identity_providers WHERE tenant_id=$1 AND company_id=$2 AND id=$3 FOR UPDATE",&[&tenant,&company,&id]).await?.ok_or(Error::NotFound)?;
+            let previous = self
+                .open_connection(tenant, id, r.get(1))
+                .map_err(|error| {
+                    refuse(
+                        error,
+                        "The saved connection could not be decrypted. Check the installation encryption key.",
+                    )
+                })?;
+            (id, r.get::<_, String>(0), previous)
         } else {
             let public_id = uuid::Uuid::new_v4().simple().to_string();
             let public = public_id.clone();
             let method = config.method.clone();
             let id=tx.mutate(move|sql|Box::pin(async move{let id=sql.query_one("INSERT INTO user_identity_providers(tenant_id,company_id,public_id,configured_by,method) VALUES($1,$2,$3,$4,$5) RETURNING id",&[&tenant,&company,&public,&owner,&method]).await?.get(0);Ok((id,vec![change("user.identity_provider",id,json!(null),json!({"company":company,"enabled":false}))]))})).await?;
-            (id, public_id)
+            (id, public_id, json!({}))
         };
-        let key = format!("user.sso.{id}");
-        let target = Target::Company(
-            bilibi_party_ids::OrganisationId::new(company).map_err(|_| Error::Invalid)?,
-        );
-        let previous = self
-            .settings
-            .get(tx.sql(), &scope, target, &key)
-            .await?
-            .value;
-        // Changing issuer or client is a new trust relationship; links must be explicitly
-        // unlinked first, rather than silently granting a new provider the old subjects.
-        if previous.get("configuration").is_some_and(|old|old["protocol"]!=config.protocol || old["method"]!=config.method) && tx.sql().query_opt("SELECT 1 FROM user_external_identities WHERE tenant_id=$1 AND provider_id=$2 LIMIT 1",&[&tenant,&id]).await?.is_some() {return Err(Error::InvalidReason("Unlink this connection's accounts before changing its protocol or client. This creates a new identity trust relationship."));}
+        // A new issuer, client or client-authentication method is a new trust relationship;
+        // links must be explicitly unlinked first, rather than silently granting a new
+        // provider the old subjects. Scopes and other options may change freely.
+        let trust = |protocol: &Value| {
+            [
+                protocol["issuer"].clone(),
+                protocol["client_id"].clone(),
+                protocol
+                    .get("token_auth")
+                    .cloned()
+                    .unwrap_or_else(|| json!("auto")),
+            ]
+        };
+        if previous.get("configuration").is_some_and(|old|old["method"]!=json!(config.method) || trust(&old["protocol"])!=trust(&config.protocol)) && tx.sql().query_opt("SELECT 1 FROM user_external_identities WHERE tenant_id=$1 AND provider_id=$2 LIMIT 1",&[&tenant,&id]).await?.is_some() {return Err(ConfigurationError::Refused("Unlink this connection's accounts before changing its method, issuer, client ID or client authentication. This creates a new identity trust relationship."));}
         let secret =
             secret.unwrap_or_else(|| previous["client_secret"].as_str().unwrap_or("").to_owned());
         let roles: Vec<i64> = config
@@ -342,23 +351,28 @@ impl UserService {
             )
             .await
             .map_err(|error| {
-                configuration_error(
+                refuse(
                     error,
                     "The mapped roles are outside this company or your role-management permission.",
                 )
             })?;
-        self.settings
-            .put(
-                tx,
-                &scope,
-                target,
-                &key,
-                json!({"configuration":config,"client_secret":secret}),
+        let sealed = self
+            .settings
+            .seal_owned(
+                SEALED,
+                tenant,
+                id,
+                &json!({"configuration":config,"client_secret":secret}),
             )
-            .await?;
+            .map_err(|error| {
+                refuse(
+                    error,
+                    "The installation encryption key is missing or invalid, so the connection cannot be saved.",
+                )
+            })?;
         let method = config.method.clone();
         let enabled = config.enabled;
-        tx.mutate(move|sql|Box::pin(async move{sql.execute("UPDATE user_identity_providers SET configured_by=$3,method=$4,enabled=$5,version=version+1 WHERE tenant_id=$1 AND id=$2",&[&tenant,&id,&owner,&method,&enabled]).await?;Ok(((),vec![change("user.identity_provider",id,json!({"configuration":"previous"}),json!({"configuration":config,"enabled":enabled}))]))})).await?;
+        tx.mutate(move|sql|Box::pin(async move{sql.execute("UPDATE user_identity_providers SET configured_by=$3,method=$4,enabled=$5,sealed_runtime=$6,version=version+1 WHERE tenant_id=$1 AND id=$2",&[&tenant,&id,&owner,&method,&enabled,&sealed]).await?;Ok(((),vec![change("user.identity_provider",id,json!({"configuration":"previous"}),json!({"configuration":config,"enabled":enabled}))]))})).await?;
         Ok((id, public_id))
     }
     pub(super) async fn sso_connection(&self, public: &str, enabled: bool) -> Result<Connection> {
@@ -367,8 +381,9 @@ impl UserService {
         }
         let client = self.db.get().await?;
         // An opaque public connection is an authentication bootstrap lookup, as for
-        // Session. Its stored tenant/company are re-proved before any secret is read.
-        let r=client.query_opt("SELECT id,tenant_id,company_id,configured_by,version,enabled FROM user_identity_providers WHERE public_id=$1",&[&public]).await?.ok_or(Error::NotFound)?;
+        // Session. The sealed record binds its tenant and connection, so it is read
+        // without any administrator's session: the person who saved it may be gone.
+        let r=client.query_opt("SELECT p.id,p.tenant_id,p.company_id,p.configured_by,p.version,p.enabled,p.sealed_runtime FROM user_identity_providers p JOIN tenants t ON t.id=p.tenant_id AND t.status='active' AND t.deleted_at IS NULL WHERE p.public_id=$1",&[&public]).await?.ok_or(Error::NotFound)?;
         if enabled && !r.get::<_, bool>(5) {
             return Err(Error::Forbidden);
         }
@@ -378,26 +393,9 @@ impl UserService {
             r.get::<_, i64>(2),
             r.get::<_, i64>(3),
         );
-        let scope = self
-            .authentication
-            .authenticate(&**client, tenant, owner, String::new())
-            .await?;
-        let value = self
-            .settings
-            .get(
-                &**client,
-                &scope,
-                Target::Company(
-                    bilibi_party_ids::OrganisationId::new(company).map_err(|_| Error::Invalid)?,
-                ),
-                    &format!("user.sso.{id}"),
-                )
-                .await.map_err(|error| configuration_error(error, "The company sign-in settings could not be decrypted. Check the installation encryption key."))?
-            .value;
-        let config: IdentityConfiguration = serde_json::from_value(value["configuration"].clone())
-            .map_err(|_| {
-                Error::InvalidReason("The saved company sign-in configuration could not be parsed.")
-            })?;
+        let value = self.open_connection(tenant, id, r.get(6))?;
+        let config: IdentityConfiguration =
+            serde_json::from_value(value["configuration"].clone()).map_err(|_| Error::Invalid)?;
         if enabled && !config.enabled {
             return Err(Error::Forbidden);
         }
@@ -445,7 +443,7 @@ impl IdentityConfiguration {
                 .as_str()
                 .is_none_or(|value| oidc::endpoint(value).map_or(true, |url| url.query().is_some()))
             {
-                errors.push(("issuer","Issuer address must use HTTPS, or literal loopback HTTP for local verification."));
+                errors.push(("issuer",if oidc::private_endpoints(){"Issuer address must use HTTPS, or literal loopback HTTP for local verification."}else{"Issuer address must use HTTPS."}));
             }
             if self.protocol["client_id"]
                 .as_str()

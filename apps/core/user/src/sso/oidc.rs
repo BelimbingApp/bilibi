@@ -12,7 +12,7 @@ use jsonwebtoken::{
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
-    sync::Arc,
+    sync::{Arc, OnceLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use url::Url;
@@ -51,19 +51,36 @@ fn text<'a>(v: &'a Value, key: &str) -> Result<&'a str> {
         .filter(|s| !s.is_empty())
         .ok_or(Error::Invalid)
 }
-/// Only explicit administrator configuration may name an internal HTTPS IdP.
-/// HTTP is limited to literal loopback for disposable local providers.
+/// A company administrator names the issuer, so by default every server-side call
+/// goes only to public HTTPS addresses. The operator alone may allow internal HTTPS
+/// providers and literal-loopback HTTP, with `BILIBI_SSO_ALLOW_PRIVATE_ENDPOINTS=1`
+/// in the server's environment, for a self-hosted or disposable local provider.
+pub(super) fn private_endpoints() -> bool {
+    static ALLOWED: OnceLock<bool> = OnceLock::new();
+    *ALLOWED.get_or_init(|| {
+        std::env::var("BILIBI_SSO_ALLOW_PRIVATE_ENDPOINTS").is_ok_and(|value| value == "1")
+    })
+}
 pub(super) fn endpoint(value: &str) -> Result<Url> {
     let u = Url::parse(value).map_err(|_| Error::Invalid)?;
+    let loopback_http = private_endpoints()
+        && u.scheme() == "http"
+        && matches!(u.host_str(), Some("127.0.0.1" | "[::1]"));
     if !u.username().is_empty()
         || u.password().is_some()
         || u.fragment().is_some()
-        || !(u.scheme() == "https"
-            || (u.scheme() == "http" && matches!(u.host_str(), Some("127.0.0.1" | "[::1]"))))
+        || !(u.scheme() == "https" || loopback_http)
     {
         return Err(Error::Invalid);
     }
     Ok(u)
+}
+fn outbound(outgoing: Outgoing) -> Outgoing {
+    if private_endpoints() {
+        outgoing.trust_system_roots()
+    } else {
+        outgoing.public_https()
+    }
 }
 impl Oidc {
     async fn fetch(&self, outgoing: Outgoing, operation: &str) -> Result<Value> {
@@ -96,11 +113,10 @@ impl Oidc {
         }
         let doc = self
             .fetch(
-                Outgoing::get(format!(
+                outbound(Outgoing::get(format!(
                     "{}/.well-known/openid-configuration",
                     issuer.trim_end_matches('/')
-                ))
-                .trust_system_roots(),
+                ))),
                 "oidc.discovery",
             )
             .await?;
@@ -145,11 +161,8 @@ impl Oidc {
         // Refresh JWKS for every verification: rotations take effect immediately,
         // including reuse of a kid. Never trust a token-supplied jku/x5u.
         let jwks: JwkSet = serde_json::from_value(
-            self.fetch(
-                Outgoing::get(text(doc, "jwks_uri")?).trust_system_roots(),
-                "oidc.jwks",
-            )
-            .await?,
+            self.fetch(outbound(Outgoing::get(text(doc, "jwks_uri")?)), "oidc.jwks")
+                .await?,
         )
         .map_err(|_| Error::Unauthorized)?;
         let jwk = jwks.find(&kid).ok_or(Error::Unauthorized)?;
@@ -280,8 +293,7 @@ impl IdentityProvider for Oidc {
                 }
                 form.finish().into_bytes()
             };
-            let mut outgoing = Outgoing::post(text(&doc, "token_endpoint")?)
-                .trust_system_roots()
+            let mut outgoing = outbound(Outgoing::post(text(&doc, "token_endpoint")?))
                 .header("Content-Type", "application/x-www-form-urlencoded")
                 .bytes(body);
             if auth == "client_secret_basic" {

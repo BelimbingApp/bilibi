@@ -11,7 +11,7 @@ use crate::{Login, UserService};
 use bilibi_database::{Change, Context, Error, MutationTransaction, Result};
 use bilibi_tenancy::Scope;
 use config::Connection;
-pub use config::IdentityConfiguration;
+pub use config::{ConfigurationError, IdentityConfiguration};
 pub(super) use provider::Registry;
 pub use provider::{
     ExternalIdentity, ExternalLogout, IdentityFuture, IdentityProvider, IdentityRequest,
@@ -24,6 +24,10 @@ use tokio_postgres::GenericClient;
 pub(super) const MIGRATION: (&str, &str) = (
     "core-user-016-sso",
     include_str!("../../migrations/016-sso.sql"),
+);
+pub(super) const RUNTIME_MIGRATION: (&str, &str) = (
+    "core-user-017-sso-runtime",
+    include_str!("../../migrations/017-sso-runtime.sql"),
 );
 pub(crate) fn hash(s: &str) -> Vec<u8> {
     Sha256::digest(s.as_bytes()).to_vec()
@@ -334,14 +338,25 @@ impl UserService {
             return Err(Error::Unauthorized);
         }
         let mut client = self.db.get().await?;
-        let owner = self
-            .authentication
-            .authenticate(&**client, c.tenant, c.owner, String::new())
-            .await?;
         let known=client.query_opt("SELECT user_id FROM user_external_identities WHERE tenant_id=$1 AND company_id=$2 AND provider_id=$3 AND issuer=$4 AND subject=$5",&[&c.tenant,&c.company,&c.id,&identity.issuer,&identity.subject]).await?.map(|r|r.get::<_,i64>(0));
-        let context = known
-            .map(|user| Context::user(c.tenant, user, "user.sso.sign_in"))
-            .unwrap_or_else(|| owner.mutation_context("user.sso.sign_in"));
+        // Only creating an account acts with the configurer's authority; every other
+        // outcome is attributed to the person it concerns and needs no administrator.
+        let owner = if known.is_none() && f.purpose == "sign_in" && c.config.just_in_time {
+            Some(
+                self.authentication
+                    .authenticate(&**client, c.tenant, c.owner, String::new())
+                    .await?,
+            )
+        } else {
+            None
+        };
+        let context = match (f.purpose.as_str(), known, f.user, &owner) {
+            ("sign_in", Some(user), _, _) => Context::user(c.tenant, user, "user.sso.sign_in"),
+            ("link", _, Some(user), _) => Context::user(c.tenant, user, "user.sso.linked"),
+            ("step_up", _, Some(user), _) => Context::user(c.tenant, user, "user.sso.step_up"),
+            (_, _, _, Some(owner)) => owner.mutation_context("user.sso.sign_in"),
+            _ => Context::system(c.tenant, "user.sso", "user.sso.sign_in"),
+        };
         let mut tx = self.mutations.begin(&mut client, context).await?;
         let (tenant, provider, company, version) = (c.tenant, c.id, c.company, c.version);
         tx.sql().query_opt("SELECT id FROM user_identity_providers WHERE tenant_id=$1 AND id=$2 AND version=$3 AND enabled FOR SHARE",&[&tenant,&provider,&version]).await?.ok_or(Error::Unauthorized)?;
@@ -415,12 +430,13 @@ impl UserService {
             if crate::accounts::validate_name(&name).is_some() {
                 return Err(Error::Invalid);
             }
-            bilibi_authz::authorize_key(tx.sql(), &owner, crate::contributions::CREATE).await?;
+            let owner = owner.as_ref().ok_or(Error::Conflict)?;
+            bilibi_authz::authorize_key(tx.sql(), owner, crate::contributions::CREATE).await?;
             let person = self
                 .persons
                 .create_in(
                     &mut tx,
-                    &owner,
+                    owner,
                     &bilibi_person::PersonInput {
                         name: name.clone(),
                         kind: bilibi_person::PersonKind::Human,
@@ -434,7 +450,7 @@ impl UserService {
                 .affiliations
                 .create_in(
                     &mut tx,
-                    &owner,
+                    owner,
                     &bilibi_affiliation::AffiliationInput {
                         person_id: person.id,
                         organisation_id: bilibi_party_ids::OrganisationId::new(company)
@@ -497,7 +513,14 @@ impl UserService {
                 let channel: String = challenge.get(3);
                 let code = random();
                 let proof_hash = hash(&code);
-                tx.mutate(move|sql|Box::pin(async move{sql.execute("UPDATE user_identity_challenges SET consumed=true WHERE tenant_id=$1 AND id=$2",&[&tenant,&id]).await?;let proof_id=sql.query_one("INSERT INTO user_identity_proofs(tenant_id,user_id,proof_hash,operation,target,channel,expires_at) VALUES($1,$2,$3,$4,$5,$6,now()+interval '2 minutes') RETURNING id",&[&tenant,&user,&proof_hash,&operation,&target,&channel]).await?.get(0);Ok(((),vec![change("user.identity_challenge",id,json!({"consumed":false}),json!({"consumed":true})),change("user.identity_proof",proof_id,json!(null),json!({"operation":operation,"target":target,"channel":channel}))]))})).await?;
+                tx.mutate(move|sql|Box::pin(async move{
+   let expired=sql.query("DELETE FROM user_identity_proofs WHERE tenant_id=$1 AND expires_at<=clock_timestamp() RETURNING id",&[&tenant]).await?;
+   sql.execute("UPDATE user_identity_challenges SET consumed=true WHERE tenant_id=$1 AND id=$2",&[&tenant,&id]).await?;
+   let proof_id=sql.query_one("INSERT INTO user_identity_proofs(tenant_id,user_id,proof_hash,operation,target,channel,expires_at) VALUES($1,$2,$3,$4,$5,$6,now()+interval '2 minutes') RETURNING id",&[&tenant,&user,&proof_hash,&operation,&target,&channel]).await?.get(0);
+   let mut changes=vec![change("user.identity_challenge",id,json!({"consumed":false}),json!({"consumed":true})),change("user.identity_proof",proof_id,json!(null),json!({"operation":operation,"target":target,"channel":channel}))];
+   changes.extend(expired.iter().map(|r|change("user.identity_proof",r.get(0),json!({"available":true}),json!(null))));
+   Ok(((),changes))
+  })).await?;
                 Some(code)
             } else {
                 None
@@ -569,7 +592,13 @@ impl UserService {
                     .seal_owned("core/user.sso.logout", tenant, user, &json!(hint))
             })
             .transpose()?;
-        let external=tx.mutate(move|sql|Box::pin(async move{let id:i64=sql.query_one("INSERT INTO user_external_sessions(tenant_id,provider_id,user_id,subject,provider_sid,session_hash,logout_hint) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id",&[&tenant,&provider,&user,&subject,&sid,&session_hash,&hint]).await?.get(0);Ok((id,vec![change("user.external_session",id,json!(null),json!({"user":user,"provider":provider,"pending":pending,"provider_mfa":mfa}))]))})).await?;
+        let external=tx.mutate(move|sql|Box::pin(async move{
+   let ended=sql.query("DELETE FROM user_external_sessions WHERE tenant_id=$1 AND id IN (SELECT e.id FROM user_external_sessions e WHERE e.tenant_id=$1 AND NOT EXISTS(SELECT 1 FROM sessions s WHERE s.tenant_id=e.tenant_id AND s.user_id=e.user_id AND s.expires_at>clock_timestamp() AND sha256(convert_to(s.id,'UTF8'))=e.session_hash) AND NOT EXISTS(SELECT 1 FROM user_sign_ins p WHERE p.tenant_id=e.tenant_id AND p.external_session_id=e.id AND p.state='pending' AND p.expires_at>clock_timestamp()) ORDER BY e.id LIMIT 1000) RETURNING id",&[&tenant]).await?;
+   let id:i64=sql.query_one("INSERT INTO user_external_sessions(tenant_id,provider_id,user_id,subject,provider_sid,session_hash,logout_hint) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id",&[&tenant,&provider,&user,&subject,&sid,&session_hash,&hint]).await?.get(0);
+   let mut changes=vec![change("user.external_session",id,json!(null),json!({"user":user,"provider":provider,"pending":pending,"provider_mfa":mfa}))];
+   changes.extend(ended.iter().map(|r|change("user.external_session",r.get(0),json!({"active":false}),json!(null))));
+   Ok((id,changes))
+  })).await?;
         if pending {
             let token_hash = hash(&login.token);
             tx.mutate(move|sql|Box::pin(async move{sql.execute("UPDATE user_sign_ins SET external_session_id=$4 WHERE tenant_id=$1 AND user_id=$2 AND token_hash=$3",&[&tenant,&user,&token_hash,&external]).await?;Ok(((),vec![change("user.external_session",external,json!({"bound":false}),json!({"bound":true}))]))})).await?;
@@ -736,6 +765,25 @@ impl UserService {
     }
 }
 impl UserService {
+    /// Local logout ends the provider session record with it; no later reader needs
+    /// the stored logout hint once the Bilibi session is gone.
+    pub(crate) async fn forget_external_session(&self, scope: &Scope, token: &str) -> Result<()> {
+        let (tenant, user, session) = (scope.tenant(), scope.user(), hash(token));
+        let mut client = self.db.get().await?;
+        let held=client.query_opt("SELECT 1 FROM user_external_sessions WHERE tenant_id=$1 AND user_id=$2 AND session_hash=$3 LIMIT 1",&[&tenant,&user,&session]).await?.is_some();
+        if !held {
+            return Ok(());
+        }
+        let mut tx = self
+            .mutations
+            .begin(
+                &mut client,
+                scope.mutation_context("user.sso.session_ended"),
+            )
+            .await?;
+        tx.mutate(move|sql|Box::pin(async move{let rows=sql.query("DELETE FROM user_external_sessions WHERE tenant_id=$1 AND user_id=$2 AND session_hash=$3 RETURNING id",&[&tenant,&user,&session]).await?;Ok(((),rows.iter().map(|r|change("user.external_session",r.get(0),json!({"active":true}),json!(null))).collect()))})).await?;
+        tx.commit().await
+    }
     /// Read the optional provider destination before local logout. Callers always
     /// end the local session even if discovery or the remote provider is unavailable.
     pub async fn external_logout_destination(
@@ -769,7 +817,6 @@ impl UserService {
             .map(|v| {
                 self.settings
                     .open_owned("core/user.sso.logout", scope.tenant(), scope.user(), &v)
-                    .map_err(|_| Error::InvalidReason("The provider logout hint could not be decrypted. Check the installation encryption key."))
             })
             .transpose()?;
         self.identities
@@ -780,12 +827,6 @@ impl UserService {
                 &format!("{}/login", self.origin),
             )
             .await
-            .map_err(|error| match error {
-                Error::Invalid => {
-                    Error::InvalidReason("The provider logout discovery or endpoint is invalid.")
-                }
-                other => other,
-            })
     }
     /// OIDC-authenticated delivery; never accepts an ordinary ID/access token.
     /// A single atomic replay claim and all revocations share one audit transaction.
@@ -824,9 +865,10 @@ impl UserService {
             .await?;
         let replay = hash(&delivery.replay_id);
         tx.mutate(move|sql|Box::pin(async move{
+   let expired=sql.execute("DELETE FROM user_identity_logout_replays WHERE tenant_id=$1 AND provider_id=$2 AND expires_at<=clock_timestamp()",&[&tenant,&provider]).await?;
    let inserted=sql.execute("INSERT INTO user_identity_logout_replays(tenant_id,provider_id,replay_hash,expires_at) VALUES($1,$2,$3,now()+interval '10 minutes') ON CONFLICT DO NOTHING",&[&tenant,&provider,&replay]).await?;
    if inserted!=1{return Err(Error::Unauthorized);}
-   Ok(((),vec![change("user.identity_logout",provider,json!(null),json!({"received":true}))]))
+   Ok(((),vec![change("user.identity_logout",provider,json!({"expired_replays":expired}),json!({"received":true}))]))
   })).await?;
         let users=tx.sql().query("SELECT DISTINCT e.user_id FROM user_external_sessions e JOIN user_external_identities i ON i.tenant_id=e.tenant_id AND i.provider_id=e.provider_id AND i.user_id=e.user_id AND i.subject=e.subject WHERE e.tenant_id=$1 AND e.provider_id=$2 AND i.issuer=$3 AND ($4::text IS NULL OR e.subject=$4) AND ($5::text IS NULL OR e.provider_sid=$5)",&[&tenant,&provider,&delivery.issuer,&delivery.subject,&delivery.session_id]).await?;
         let mut ended = Vec::new();
@@ -862,7 +904,6 @@ fn refusal_reason(error: &Error) -> &'static str {
         Error::Unauthorized => "invalid_or_expired_identity",
         Error::Forbidden => "account_or_company_policy",
         Error::Invalid => "invalid_configuration_or_claims",
-        Error::InvalidReason(reason) => reason,
         Error::Conflict => "concurrent_identity_change",
         Error::NotFound => "identity_connection_unavailable",
         _ => "service_unavailable",

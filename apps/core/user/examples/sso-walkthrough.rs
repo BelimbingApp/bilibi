@@ -266,6 +266,51 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("Staging sign-in factor policy enabled");
             return Ok(());
         }
+        "offboard-configurer" => {
+            // Destructive: retires the administrator who last saved the connection.
+            let (mut config, public) = users.identity_configuration(&scope, 1, Some(1)).await?;
+            config.enforce_sso = true;
+            config.break_glass_user = Some(1);
+            users
+                .save_identity_configuration(&scope, 1, Some(1), config, None)
+                .await?;
+            let admin = app
+                .security
+                .guard(
+                    &users
+                        .login("admin@example.test", bilibi_walkthrough_fixture::PASSWORD)
+                        .await?
+                        .token,
+                )
+                .await?;
+            users.delete_account(&admin, scope.user()).await?;
+            let password = bilibi_walkthrough_fixture::PASSWORD;
+            println!(
+                "company member password admitted: {}",
+                users
+                    .login("contractor@example.test", password)
+                    .await
+                    .is_ok()
+            );
+            println!(
+                "emergency password admitted: {}",
+                users.login("manager@example.test", password).await.is_ok()
+            );
+            println!(
+                "company sign-in starts: {}",
+                users
+                    .begin_external_sign_in(
+                        &public,
+                        bilibi_user::IdentityPurpose::SignIn,
+                        None,
+                        "/workspace"
+                    )
+                    .await
+                    .is_ok()
+            );
+            println!("finish the provider sign-in in the browser: {origin}/login?sso={public}");
+            return Ok(());
+        }
         "isolation" => {
             let secret = std::env::var("BILIBI_SSO_CLIENT_SECRET")?;
             let first = users.identity_configuration(&scope, 1, Some(1)).await?.0;

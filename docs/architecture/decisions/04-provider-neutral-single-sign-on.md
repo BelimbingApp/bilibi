@@ -25,7 +25,7 @@
 
 ### Behaviour and defaults
 
-- **Off by default.** Each company connects its own providers inside its tenant. Configuration and client secrets use encrypted, tenant-scoped settings; there is no server-wide provider.
+- **Off by default.** Each company connects its own providers inside its tenant. Configuration and client secrets are sealed with the installation key and bound to their tenant and connection; there is no server-wide provider.
 - **Link by issuer and subject.** Never match by email alone. Linking an existing account first requires a verified email match and its existing sign-in, or an admin link.
 - **Pre-added accounts by default.** A company may enable account creation on first sign-in with a default role.
 - **Bilibi roles by default.** A company may map provider groups or roles to Bilibi roles using configurable claims, including nested `realm_access.roles` and `resource_access.<client>.roles`. Reapply mappings at every sign-in and audit them. Bilibi retains its own fine-grained permissions.

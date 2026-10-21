@@ -72,7 +72,13 @@ impl Provider for Factor {
             let operation = purpose.operation.to_owned();
             let target = purpose.target.to_owned();
             let channel = purpose.channel.as_str().to_owned();
-            tx.mutate(move|sql|Box::pin(async move{let id=sql.query_one("INSERT INTO user_identity_challenges(tenant_id,user_id,operation,target,channel,expires_at) VALUES($1,$2,$3,$4,$5,now()+interval '5 minutes') RETURNING id",&[&tenant,&user,&operation,&target,&channel]).await?.get(0);Ok(((),vec![change("user.identity_challenge",id,json!(null),json!({"operation":operation,"target":target,"channel":channel}))]))})).await?;
+            tx.mutate(move|sql|Box::pin(async move{
+                let spent=sql.query("DELETE FROM user_identity_challenges WHERE tenant_id=$1 AND (expires_at<=clock_timestamp() OR consumed) AND started_at<now()-interval '1 minute' RETURNING id",&[&tenant]).await?;
+                let id=sql.query_one("INSERT INTO user_identity_challenges(tenant_id,user_id,operation,target,channel,expires_at) VALUES($1,$2,$3,$4,$5,now()+interval '5 minutes') RETURNING id",&[&tenant,&user,&operation,&target,&channel]).await?.get(0);
+                let mut changes=vec![change("user.identity_challenge",id,json!(null),json!({"operation":operation,"target":target,"channel":channel}))];
+                changes.extend(spent.iter().map(|r|change("user.identity_challenge",r.get(0),json!({"pending":true}),json!(null))));
+                Ok(((),changes))
+            })).await?;
             tx.commit().await?;
             Ok(Challenge {
                 availability: Availability::Ready,
