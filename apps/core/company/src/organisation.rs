@@ -108,6 +108,15 @@ pub async fn require_writable(
     id: i64,
     lock: bool,
 ) -> std::result::Result<i64, WriteError> {
+    require_writable_in(client, scope.tenant(), id, lock).await
+}
+/// [`require_writable`] for a system principal with no account scope.
+pub async fn require_writable_in(
+    client: &impl GenericClient,
+    tenant: i64,
+    id: i64,
+    lock: bool,
+) -> std::result::Result<i64, WriteError> {
     if id <= 0 {
         return Err(WriteError::NotFound);
     }
@@ -116,7 +125,7 @@ pub async fn require_writable(
         if lock { " FOR UPDATE" } else { "" }
     );
     let row = client
-        .query_opt(&sql, &[&scope.tenant(), &id])
+        .query_opt(&sql, &[&tenant, &id])
         .await
         .map_err(Error::from)?
         .ok_or(WriteError::NotFound)?;

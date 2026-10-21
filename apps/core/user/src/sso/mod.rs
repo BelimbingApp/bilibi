@@ -339,23 +339,17 @@ impl UserService {
         }
         let mut client = self.db.get().await?;
         let known=client.query_opt("SELECT user_id FROM user_external_identities WHERE tenant_id=$1 AND company_id=$2 AND provider_id=$3 AND issuer=$4 AND subject=$5",&[&c.tenant,&c.company,&c.id,&identity.issuer,&identity.subject]).await?.map(|r|r.get::<_,i64>(0));
-        // Only creating an account acts with the configurer's authority; every other
-        // outcome is attributed to the person it concerns and needs no administrator.
-        let owner = if known.is_none() && f.purpose == "sign_in" && c.config.just_in_time {
-            Some(
-                self.authentication
-                    .authenticate(&**client, c.tenant, c.owner, String::new())
-                    .await?,
-            )
-        } else {
-            None
-        };
-        let context = match (f.purpose.as_str(), known, f.user, &owner) {
-            ("sign_in", Some(user), _, _) => Context::user(c.tenant, user, "user.sso.sign_in"),
-            ("link", _, Some(user), _) => Context::user(c.tenant, user, "user.sso.linked"),
-            ("step_up", _, Some(user), _) => Context::user(c.tenant, user, "user.sso.step_up"),
-            (_, _, _, Some(owner)) => owner.mutation_context("user.sso.sign_in"),
-            _ => Context::system(c.tenant, "user.sso", "user.sso.sign_in"),
+        // Outcomes are attributed to the person they concern. Creating an account has no
+        // such person yet, so it is attributed to this connection and needs no administrator.
+        let context = match (f.purpose.as_str(), known, f.user) {
+            ("sign_in", Some(user), _) => Context::user(c.tenant, user, "user.sso.sign_in"),
+            ("link", _, Some(user)) => Context::user(c.tenant, user, "user.sso.linked"),
+            ("step_up", _, Some(user)) => Context::user(c.tenant, user, "user.sso.step_up"),
+            _ => Context::system(
+                c.tenant,
+                &format!("core/user.sso.{}", c.id),
+                "user.sso.sign_in",
+            ),
         };
         let mut tx = self.mutations.begin(&mut client, context).await?;
         let (tenant, provider, company, version) = (c.tenant, c.id, c.company, c.version);
@@ -418,7 +412,11 @@ impl UserService {
                 .and_then(Value::as_str)
                 .ok_or(Error::Unauthorized)?;
             let email = crate::accounts::validate_email(email).map_err(|_| Error::Invalid)?;
+            let domain = email
+                .rsplit_once('@')
+                .map(|(_, domain)| domain.to_ascii_lowercase());
             if config::claim(&identity.claims, &c.config.email_verified_claim) != Some(&json!(true))
+                || !domain.is_some_and(|domain| c.config.allowed_email_domains.contains(&domain))
                 || crate::accounts::email_taken(tx.sql(), &email, None).await?
             {
                 return Err(Error::Forbidden);
@@ -430,13 +428,10 @@ impl UserService {
             if crate::accounts::validate_name(&name).is_some() {
                 return Err(Error::Invalid);
             }
-            let owner = owner.as_ref().ok_or(Error::Conflict)?;
-            bilibi_authz::authorize_key(tx.sql(), owner, crate::contributions::CREATE).await?;
             let person = self
                 .persons
-                .create_in(
+                .provision_in(
                     &mut tx,
-                    owner,
                     &bilibi_person::PersonInput {
                         name: name.clone(),
                         kind: bilibi_person::PersonKind::Human,
@@ -448,9 +443,8 @@ impl UserService {
                 .map_err(|_| Error::Forbidden)?;
             let affiliation = self
                 .affiliations
-                .create_in(
+                .provision_in(
                     &mut tx,
-                    owner,
                     &bilibi_affiliation::AffiliationInput {
                         person_id: person.id,
                         organisation_id: bilibi_party_ids::OrganisationId::new(company)
@@ -578,7 +572,25 @@ impl UserService {
             || identity.claims["acr"]
                 .as_str()
                 .is_some_and(|v| c.config.mfa_acr.iter().any(|a| a == v));
+        // Policy is read with no pooled connection held; admission is a second transaction.
+        tx.commit().await?;
+        drop(client);
         let pending = !mfa && self.step_up.required(&account, crate::SIGN_IN).await?;
+        let mut client = self.db.get().await?;
+        let mut tx = self
+            .mutations
+            .begin(&mut client, Context::user(tenant, user, "user.sso.sign_in"))
+            .await?;
+        tx.sql().query_opt("SELECT id FROM user_identity_providers WHERE tenant_id=$1 AND id=$2 AND version=$3 AND enabled FOR SHARE",&[&tenant,&provider,&version]).await?.ok_or(Error::Unauthorized)?;
+        tx.sql().query_opt("SELECT id FROM user_identity_flows WHERE tenant_id=$1 AND id=$2 AND state='processing' AND expires_at>clock_timestamp() FOR UPDATE",&[&tenant,&f.id]).await?.ok_or(Error::Unauthorized)?;
+        tx.sql().query_opt("SELECT id FROM user_external_identities WHERE tenant_id=$1 AND provider_id=$2 AND user_id=$3 FOR SHARE",&[&tenant,&provider,&user]).await?.ok_or(Error::Unauthorized)?;
+        let account = self
+            .authentication
+            .authenticate(tx.sql(), tenant, user, String::new())
+            .await?;
+        if account.actor().organisation().map(|id| id.get()) != Some(company) {
+            return Err(Error::Forbidden);
+        }
         let login = self
             .external_admission(&mut tx, &account, pending, provider)
             .await?;
@@ -744,11 +756,11 @@ impl UserService {
         self.step_up
             .require(&scope, config::CONFIGURE, public)
             .await?;
-        self.sso_connection(public, false).await
+        self.sso_connection_in(tx.sql(), public, false).await
     }
     pub(super) async fn password_sso_allowed(
         &self,
-        sql: &impl GenericClient,
+        sql: &(impl GenericClient + Sync),
         scope: &Scope,
     ) -> Result<bool> {
         let Some(company) = scope.actor().organisation().map(|id| id.get()) else {
@@ -757,7 +769,7 @@ impl UserService {
         let mut enforced = false;
         let mut emergency = false;
         for row in sql.query("SELECT p.public_id,EXISTS(SELECT 1 FROM user_external_identities i WHERE i.tenant_id=p.tenant_id AND i.provider_id=p.id AND i.user_id=$3) FROM user_identity_providers p WHERE p.tenant_id=$1 AND p.company_id=$2 AND p.enabled ORDER BY p.id LIMIT 100",&[&scope.tenant(),&company,&scope.user()]).await?{
-            let c=self.sso_connection(&row.get::<_,String>(0),true).await?;
+            let c=self.sso_connection_in(sql,&row.get::<_,String>(0),true).await?;
             emergency|=c.config.break_glass_user==Some(scope.user());
             enforced|=c.config.enforce_sso&&row.get::<_,bool>(1);
         }

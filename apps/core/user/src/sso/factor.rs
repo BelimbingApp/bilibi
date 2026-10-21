@@ -28,7 +28,7 @@ impl Provider for Factor {
             for public in row.get::<_, Option<Vec<String>>>(0).unwrap_or_default() {
                 if self
                     .0
-                    .sso_connection(&public, true)
+                    .sso_connection_in(sql, &public, true)
                     .await?
                     .config
                     .step_up_acr

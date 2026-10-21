@@ -33,6 +33,7 @@
     "email_claim": "email",
     "name_claim": "name",
     "groups_claim": "",
+    "note": "One issuer serves every Google account. Before creating accounts on first sign-in, list your own email domains.",
     "live_verified": false
   },
   {

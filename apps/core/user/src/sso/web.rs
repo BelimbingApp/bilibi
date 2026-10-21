@@ -331,6 +331,11 @@ impl State {
                         "Create accounts on first sign-in",
                         c.just_in_time,
                     )?,
+                    self.field(
+                        "allowed_email_domains",
+                        "Allowed email domains for new accounts (comma separated)",
+                        &c.allowed_email_domains.join(","),
+                    )?,
                     render(
                         &Field::named("default_role")
                             .kind(InputKind::Select)
@@ -571,6 +576,11 @@ impl State {
                 c.email_verified_claim = get("email_verified_claim").into();
                 c.groups_claim = get("groups_claim").into();
                 c.just_in_time = get("just_in_time") == "true";
+                c.allowed_email_domains = get("allowed_email_domains")
+                    .split(',')
+                    .map(|s| s.trim().to_ascii_lowercase())
+                    .filter(|s| !s.is_empty())
+                    .collect();
                 c.default_role = if get("default_role").is_empty() {
                     None
                 } else {

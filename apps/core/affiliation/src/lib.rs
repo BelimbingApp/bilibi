@@ -89,6 +89,17 @@ impl AffiliationService {
         let scope = self.fresh(tx.sql(), scope).await?;
         identity::create(tx, &scope, input).await
     }
+    /// Create the Affiliation of an account a system principal provisions, in the
+    /// caller's audited `Context::system` transaction, right after it created the
+    /// Person there. No capability is checked: the caller has authorized the
+    /// creation. A user context is refused.
+    pub async fn provision_in(
+        &self,
+        tx: &mut bilibi_database::MutationTransaction<'_>,
+        input: &AffiliationInput,
+    ) -> std::result::Result<Affiliation, Error> {
+        identity::provision(tx, input).await
+    }
     pub async fn update(
         &self,
         scope: &Scope,

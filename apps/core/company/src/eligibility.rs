@@ -56,6 +56,17 @@ pub async fn lock_account_company(
     Ok(organisation)
 }
 
+/// [`lock_account_company`] for a system principal that provisions an account
+/// and has no account scope; `tenant` comes from its audited transaction.
+pub async fn lock_account_company_in(
+    tx: &Transaction<'_>,
+    tenant: i64,
+    organisation: OrganisationId,
+) -> std::result::Result<OrganisationId, WriteError> {
+    organisation::require_writable_in(tx, tenant, organisation.get(), true).await?;
+    Ok(organisation)
+}
+
 /// Moving a record or editing a relationship must freeze on *either* company.
 /// Sort/deduplicate before locking, then lock child records. All callers use
 /// this order even when source/target direction is reversed to avoid deadlocks.

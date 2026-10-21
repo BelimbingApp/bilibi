@@ -173,3 +173,5 @@ account arrangement and shareable URL are the saved-view contract here too.
 Companies and contacts have linked postal addresses, owned by [Core Address](../address/README.md). The `core.address` guide explains saving an office or billing address and attaching it to a company or person. Use `core.address.company.list` or `core.address.person.list` to read those links. Address creation and attachment are reviewed writes; a namecard contact can be created first, then linked to its office address. An affiliation holds a position and work email/phone, not a postal address.
 
 `PersonService::create_in` composes the same authorized creation inside a caller-owned `MutationTransaction`, so atomic account provisioning never opens an inner transaction. It retains validation, field policy and after-commit notifications.
+
+`PersonService::provision_in` is the same creation for a system principal (`Context::system`) that has authorized it itself, such as company sign-in creating an account. It checks no capability and refuses a user context.

@@ -61,6 +61,9 @@ pub struct IdentityConfiguration {
     /// or namespaced claim names, e.g. /https:~1~1example.com~1groups.
     pub groups_claim: String,
     pub just_in_time: bool,
+    /// Lower-case domains of verified emails that may create an account on first
+    /// sign-in. Exact domains only: a shared issuer such as Google's must not admit everyone.
+    pub allowed_email_domains: Vec<String>,
     pub default_role: Option<i64>,
     pub role_mapping: BTreeMap<String, Vec<i64>>,
     pub enforce_sso: bool,
@@ -82,6 +85,7 @@ impl Default for IdentityConfiguration {
             email_verified_claim: "email_verified".into(),
             groups_claim: String::new(),
             just_in_time: false,
+            allowed_email_domains: Vec::new(),
             default_role: None,
             role_mapping: BTreeMap::new(),
             enforce_sso: false,
@@ -97,7 +101,6 @@ pub(super) struct Connection {
     pub id: i64,
     pub tenant: i64,
     pub company: i64,
-    pub owner: i64,
     pub public_id: String,
     pub version: i64,
     pub config: IdentityConfiguration,
@@ -249,6 +252,9 @@ impl UserService {
         if config.just_in_time && config.default_role.is_none() {
             return Err(Error::Invalid.into());
         }
+        if config.just_in_time && config.allowed_email_domains.is_empty() {
+            return Err(Error::Invalid.into());
+        }
         if !config.groups_claim.is_empty() && config.groups_claim.len() > 512 {
             return Err(Error::Invalid.into());
         }
@@ -285,6 +291,16 @@ impl UserService {
         .map_err(|_| Error::Forbidden)?;
         let tenant = scope.tenant();
         let owner = scope.user();
+        if config.just_in_time {
+            bilibi_authz::authorize_key(tx.sql(), &scope, crate::contributions::CREATE)
+                .await
+                .map_err(|error| {
+                    refuse(
+                        error,
+                        "Creating accounts on first sign-in needs permission to create accounts. Ask an administrator who has it to save this connection.",
+                    )
+                })?;
+        }
         if let Some(bg) = config.break_glass_user {
             let bg_scope = self
                 .authentication
@@ -376,24 +392,29 @@ impl UserService {
         Ok((id, public_id))
     }
     pub(super) async fn sso_connection(&self, public: &str, enabled: bool) -> Result<Connection> {
+        let client = self.db.get().await?;
+        self.sso_connection_in(&**client, public, enabled).await
+    }
+    /// Reads on the caller's connection, so a caller holding a transaction never
+    /// waits for a second pooled connection.
+    pub(super) async fn sso_connection_in(
+        &self,
+        client: &dyn bilibi_tenancy::ProofClient,
+        public: &str,
+        enabled: bool,
+    ) -> Result<Connection> {
         if public.len() != 32 {
             return Err(Error::NotFound);
         }
-        let client = self.db.get().await?;
         // An opaque public connection is an authentication bootstrap lookup, as for
         // Session. The sealed record binds its tenant and connection, so it is read
         // without any administrator's session: the person who saved it may be gone.
-        let r=client.query_opt("SELECT p.id,p.tenant_id,p.company_id,p.configured_by,p.version,p.enabled,p.sealed_runtime FROM user_identity_providers p JOIN tenants t ON t.id=p.tenant_id AND t.status='active' AND t.deleted_at IS NULL WHERE p.public_id=$1",&[&public]).await?.ok_or(Error::NotFound)?;
-        if enabled && !r.get::<_, bool>(5) {
+        let r=client.query_opt("SELECT p.id,p.tenant_id,p.company_id,p.version,p.enabled,p.sealed_runtime FROM user_identity_providers p JOIN tenants t ON t.id=p.tenant_id AND t.status='active' AND t.deleted_at IS NULL WHERE p.public_id=$1",&[&public]).await?.ok_or(Error::NotFound)?;
+        if enabled && !r.get::<_, bool>(4) {
             return Err(Error::Forbidden);
         }
-        let (id, tenant, company, owner) = (
-            r.get::<_, i64>(0),
-            r.get::<_, i64>(1),
-            r.get::<_, i64>(2),
-            r.get::<_, i64>(3),
-        );
-        let value = self.open_connection(tenant, id, r.get(6))?;
+        let (id, tenant, company) = (r.get::<_, i64>(0), r.get::<_, i64>(1), r.get::<_, i64>(2));
+        let value = self.open_connection(tenant, id, r.get(5))?;
         let config: IdentityConfiguration =
             serde_json::from_value(value["configuration"].clone()).map_err(|_| Error::Invalid)?;
         if enabled && !config.enabled {
@@ -403,9 +424,8 @@ impl UserService {
             id,
             tenant,
             company,
-            owner,
             public_id: public.into(),
-            version: r.get(4),
+            version: r.get(3),
             config,
             secret: value["client_secret"].as_str().unwrap_or("").to_owned(),
         })
@@ -459,6 +479,29 @@ impl IdentityConfiguration {
             errors.push((
                 "default_role",
                 "Choose a default role before creating accounts on first sign-in.",
+            ));
+        }
+        if self.just_in_time && self.allowed_email_domains.is_empty() {
+            errors.push((
+                "allowed_email_domains",
+                "Add at least one allowed email domain before creating accounts on first sign-in.",
+            ));
+        }
+        if self.allowed_email_domains.len() > 50
+            || self.allowed_email_domains.iter().any(|domain| {
+                domain.is_empty()
+                    || domain.len() > 253
+                    || domain.starts_with('.')
+                    || domain.ends_with('.')
+                    || !domain.contains('.')
+                    || !domain.bytes().all(|b| {
+                        b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'.' || b == b'-'
+                    })
+            })
+        {
+            errors.push((
+                "allowed_email_domains",
+                "Use up to 50 full lower-case domains such as example.com, with no @ or wildcard.",
             ));
         }
         if self.enforce_sso && self.break_glass_user.is_none() {

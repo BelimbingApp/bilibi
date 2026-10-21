@@ -269,6 +269,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "offboard-configurer" => {
             // Destructive: retires the administrator who last saved the connection.
             let (mut config, public) = users.identity_configuration(&scope, 1, Some(1)).await?;
+            let mut open = config.clone();
+            open.just_in_time = true;
+            open.default_role = open.default_role.or(Some(2));
+            open.allowed_email_domains.clear();
+            println!(
+                "account creation without allowed domains refused: {}",
+                users
+                    .save_identity_configuration(&scope, 1, Some(1), open, None)
+                    .await
+                    .is_err()
+            );
             config.enforce_sso = true;
             config.break_glass_user = Some(1);
             users
@@ -308,7 +319,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .await
                     .is_ok()
             );
-            println!("finish the provider sign-in in the browser: {origin}/login?sso={public}");
+            println!("finish in the browser at {origin}/login?sso={public}: a linked person signs in; a new person with a verified email on an allowed domain is created; one on another domain is refused");
             return Ok(());
         }
         "isolation" => {
@@ -452,6 +463,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         groups_claim: "realm_access.roles".into(),
         default_role: Some(role),
         just_in_time: true,
+        allowed_email_domains: std::env::var("BILIBI_SSO_JIT_DOMAINS")
+            .unwrap_or_else(|_| "example.test".into())
+            .split(',')
+            .map(|domain| domain.trim().to_owned())
+            .collect(),
         ..Default::default()
     };
     let (id, public) = users

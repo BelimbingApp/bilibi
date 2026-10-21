@@ -115,6 +115,40 @@ fn company_error(error: bilibi_company::WriteError) -> Error {
         _ => Error::Forbidden,
     }
 }
+async fn insert(
+    tx: &mut MutationTransaction<'_>,
+    tenant: i64,
+    input: AffiliationInput,
+) -> Result<Affiliation> {
+    let affiliation = tx.mutate(move |sql| Box::pin(async move {
+        let from = input.dates.from().map(CalendarDate::as_str);
+        let to = input.dates.to().map(CalendarDate::as_str);
+        let row = sql.query_one(&format!("INSERT INTO person_affiliations(tenant_id,person_id,organisation_id,title,work_email,work_phone,effective_from,effective_to) VALUES($1,$2,$3,$4,$5,$6,$7::text::date,$8::text::date) RETURNING {COLUMNS}"), &[&tenant, &input.person_id.get(), &input.organisation_id.get(), &input.title, &input.work_email, &input.work_phone, &from, &to]).await?;
+        let affiliation = Affiliation::from_row(&row)?;
+        let change = Change { kind: "affiliation".into(), id: affiliation.id.get(), old: Value::Null, new: affiliation.audit_values() };
+        Ok((affiliation, vec![change]))
+    })).await?;
+    publish(tx, tenant, &affiliation);
+    Ok(affiliation)
+}
+/// Account provisioning by a named system principal, composed in the caller's
+/// audited transaction. The caller has authorized the creation itself and just
+/// created the Person in this transaction, so only the company is locked.
+pub async fn provision(
+    tx: &mut MutationTransaction<'_>,
+    input: &AffiliationInput,
+) -> Result<Affiliation> {
+    if tx.context().actor.kind != "system" {
+        return Err(Error::Forbidden);
+    }
+    let input = validate(input)?;
+    let tenant = tx.context().tenant;
+    bilibi_company::eligibility::lock_account_company_in(tx.sql(), tenant, input.organisation_id)
+        .await
+        .map_err(company_error)?;
+    let affiliation = insert(tx, tenant, input).await?;
+    Ok(affiliation)
+}
 pub async fn create(
     tx: &mut MutationTransaction<'_>,
     scope: &Scope,
@@ -127,15 +161,7 @@ pub async fn create(
     restricted_input(&input, &masked)?;
     lock_owners(tx, scope, &input).await?;
     let tenant = scope.tenant();
-    let affiliation = tx.mutate(move |sql| Box::pin(async move {
-        let from = input.dates.from().map(CalendarDate::as_str);
-        let to = input.dates.to().map(CalendarDate::as_str);
-        let row = sql.query_one(&format!("INSERT INTO person_affiliations(tenant_id,person_id,organisation_id,title,work_email,work_phone,effective_from,effective_to) VALUES($1,$2,$3,$4,$5,$6,$7::text::date,$8::text::date) RETURNING {COLUMNS}"), &[&tenant, &input.person_id.get(), &input.organisation_id.get(), &input.title, &input.work_email, &input.work_phone, &from, &to]).await?;
-        let affiliation = Affiliation::from_row(&row)?;
-        let change = Change { kind: "affiliation".into(), id: affiliation.id.get(), old: Value::Null, new: affiliation.audit_values() };
-        Ok((affiliation, vec![change]))
-    })).await?;
-    publish(tx, tenant, &affiliation);
+    let affiliation = insert(tx, tenant, input).await?;
     Ok(affiliation.redact(&masked))
 }
 async fn lock_existing(
