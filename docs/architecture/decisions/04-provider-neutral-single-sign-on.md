@@ -10,7 +10,7 @@
 
 ## Context
 
-**Companies need enterprise sign-in without provider-specific Core code.** Microsoft Entra ID (Azure AD) and Keycloak are the first required providers. Adopters that do not need SSO must have no extra setup or change in behaviour.
+**Companies need enterprise sign-in without provider-specific Core code.** Initial presets cover Microsoft Entra ID (Azure AD), Keycloak, Google, Okta and Auth0. Adopters that do not need SSO must have no extra setup or change in behaviour.
 
 ## Decision
 
@@ -20,7 +20,7 @@
 | --- | --- | --- |
 | Identity-provider registry | Base/Core | A provider-neutral hook starts external sign-in, receives its result and hands Core a verified identity: issuer, subject and claims. All methods share the pending-sign-in lifecycle. |
 | Built-in OIDC method | Core | Discovery, authorization code flow with PKCE, state and nonce checks, ID token signature/issuer/audience/expiry validation and JWKS key rotation. No provider-specific code. |
-| Provider presets | Data | Display name, issuer URL pattern and email/name/group claim names for Entra ID and Keycloak. Company admins supply their tenant URL, client ID and secret. Adding a preset needs no code change. |
+| Provider presets | Data | Display name, issuer URL pattern and email/name/group claim names for Entra ID, Keycloak, Google, Okta and Auth0. Company admins supply their provider URL, client ID and secret. Adding a preset needs no code change. Claim differences are data: Google has no groups claim; Auth0 groups use a namespaced custom claim. |
 | Other protocols and provider quirks | Extensions | Register through the same hook, without Core depending on them. Examples include SAML, LDAP and fetching omitted Entra groups through Microsoft Graph. |
 
 ### Behaviour and defaults
@@ -41,7 +41,7 @@
 
 ## Consequences
 
-**Entra ID and Keycloak use configuration rather than separate plug-ins.** Keycloak is the provider to test against a disposable instance. Entra ID ships as a documentation-based preset, marked not yet verified against a live tenant; live verification waits for an adopter. Extensions are needed only for another protocol or genuine provider-specific behaviour. The hook keeps those additions optional.
+**All five providers use configuration rather than separate plug-ins.** Keycloak is the provider to test against a disposable instance. Entra ID, Google, Okta and Auth0 ship as documented presets marked not yet verified against a live account; live verification waits for adopters. Extensions are needed only for another protocol or genuine provider-specific behaviour. The hook keeps those additions optional.
 
 Implementation must prove provider and account isolation between companies and tenants, unchanged behaviour with SSO off, and the sign-in and token-refusal cases in [issue 109's acceptance criteria](https://github.com/BelimbingApp/bilibi/issues/109). Browser evidence follows [runtime parity](../../runtime-parity.md).
 
