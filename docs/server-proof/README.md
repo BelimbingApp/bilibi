@@ -118,12 +118,12 @@ The driver works around an AXI limit: it fills the real file input through brows
 
 ## Install from GitHub
 
-Use a throwaway release in a repository you own, such as `BelimbingApp/bilibi-setup-template`. Publish it as a pre-release with the archive attached, and delete it afterwards. GitHub allows only 60 unauthenticated calls an hour per address, and the lab shares the host's address, so refresh sparingly.
+Use a throwaway release in a repository you own, such as `BelimbingApp/bilibi-app`. Publish it as a pre-release with the archive attached, and delete it afterwards. GitHub allows only 60 unauthenticated calls an hour per address, and the lab shares the host's address, so refresh sparingly.
 
 ```sh
 docs/server-proof/pack-setup.sh target/release/bilibi-web "$BILIBI_PROOF_DATA/assets/bilibi-setup-proof1-x86_64-unknown-linux-gnu.tar.gz"
-gh-axi release create proof-github-source-1 --draft --prerelease -R BelimbingApp/bilibi-setup-template <archive>
-gh-axi release edit proof-github-source-1 --draft=false --prerelease=true -R BelimbingApp/bilibi-setup-template
+gh-axi release create proof-github-source-1 --draft --prerelease -R BelimbingApp/bilibi-app <archive>
+gh-axi release edit proof-github-source-1 --draft=false --prerelease=true -R BelimbingApp/bilibi-app
 ```
 
 Name the repository and accept it on Software › Releases, choose **Show pre-releases**, then drive the same reviewed install the page offers:

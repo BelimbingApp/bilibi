@@ -443,7 +443,7 @@ impl ReleaseFiles {
                 .id("release-files-github-repository")
                 .label("GitHub repository")
                 .value(repository)
-                .hint("owner/name, like BelimbingApp/bilibi-setup-template. Saving or accepting asks for your authenticator code.")
+                .hint("owner/name, like your-company/my-bilibi. Saving or accepting asks for your authenticator code.")
                 .wrapper_class("mb-0 w-full sm:w-96");
             if let Some(error) = &self.github_error {
                 repository_field = repository_field.error(error.clone());
