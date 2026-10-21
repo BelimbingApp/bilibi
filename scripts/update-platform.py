@@ -217,6 +217,9 @@ def component_update(folder, facts, platform_version, platform_head, tested):
     if head == target:
         print(f'{folder}: already at recommended {version} ({head[:12]}).', flush=True)
         return None
+    installed = max((v for v, release in facts['versions'].items() if release['commit'] == head), key=catalogue.version_tuple)
+    if catalogue.version_tuple(version) < catalogue.version_tuple(installed):
+        return f'recommended {version} is older than installed {installed}; update never downgrades'
     git(folder, 'fetch', '--prune', '--tags', 'origin')
     if run(folder, 'git', 'cat-file', '-e', f'{target}^{{commit}}', check=False).returncode:
         return f'recommended commit {target} is unavailable; ask the component owner to publish it'
