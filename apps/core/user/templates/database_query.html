@@ -1,4 +1,4 @@
-{# The marker keeps the temporary legacy element rules outside shared components. #}
+{# Mirrors Bilimbi.Core.User.Web.DatabaseQueriesLive.Show; shared components own page layout. #}
 <div data-shared-ui class="text-base">
 {% import "components.html" as ui %}
 {{ flash }}
@@ -6,9 +6,9 @@
   <span data-history="params" hidden></span>
   {{ header }}
   <div class="space-y-6">
-    {% call ui::card(id="prompt-card", inner_class="p-5 sm:p-6", role="region", labelledby="prompt-heading") %}
-      {% call ui::section_heading(id="prompt-heading", title="Prompt") %}{% endcall %}
-      <form id="query-prompt-form" data-event="change_field" data-change>{{ prompt }}</form>
+    {% call ui::card(id="query-details-card", role="region", labelledby="query-details-heading") %}
+      {% call ui::section_heading(id="query-details-heading", title="Query details") %}{% endcall %}
+      {{ details }}
     {% endcall %}
     {% call ui::card(id="sql-editor-card", inner_class="p-5 sm:p-6", role="region", labelledby="sql-editor-heading") %}
       {% call ui::section_heading(id="sql-editor-heading", title="SQL Query", actions=run) %}{% endcall %}

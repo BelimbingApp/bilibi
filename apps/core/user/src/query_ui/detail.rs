@@ -169,7 +169,6 @@ impl Detail {
         for (key, target, max) in [
             ("name", &mut self.draft.name, 600),
             ("description", &mut self.draft.description, 400_000),
-            ("prompt", &mut self.draft.prompt, 400_000),
             ("sql_query", &mut self.draft.sql_query, 400_000),
         ] {
             if let Some(value) = value.get(key) {
@@ -188,7 +187,6 @@ impl Detail {
         self.dirty = self.saved.as_ref().is_none_or(|old| {
             old.name != self.draft.name
                 || old.description != self.draft.description
-                || old.prompt != self.draft.prompt
                 || old.sql_query != self.draft.sql_query
         });
         // A new projection may no longer contain the selected result column.

@@ -1,4 +1,5 @@
-//! User-owned saved SQL. C10 composes these services; it never runs SQL itself.
+//! Mirrors Bilimbi.Core.User.DatabaseQueries: user-owned saved SQL.
+//! C10 composes these services; it never runs SQL itself.
 //! Operator identity and capabilities are rechecked on each call, and every
 //! execution outcome uses Audit's recorder (which cannot receive result rows).
 use bilibi_audit::console::{self, Guard, Outcome};
@@ -23,6 +24,11 @@ pub const EDIT: &str = "admin.system.database-table.edit";
 pub const MIGRATION: (&str, &str) = (
     "core-user-004-database-queries",
     include_str!("../migrations/004-database-queries.sql"),
+);
+
+pub(crate) const DROP_PROMPT: (&str, &str) = (
+    "core-user-014-drop-query-prompt",
+    include_str!("../migrations/014-drop-query-prompt.sql"),
 );
 
 inventory::submit! { Contribution::new(VOCABULARY, "core/user.database-queries", Provenance {
@@ -62,8 +68,6 @@ pub struct QueryInput {
     pub name: String,
     /// None generates a unique slug at creation; None preserves it on update.
     pub slug: Option<String>,
-    #[serde(default)]
-    pub prompt: String,
     pub sql_query: String,
     #[serde(default)]
     pub description: String,
@@ -75,7 +79,6 @@ impl QueryInput {
         for (field, value, max, required) in [
             ("name", self.name.as_str(), 150, true),
             ("sql_query", self.sql_query.as_str(), 100_000, true),
-            ("prompt", self.prompt.as_str(), 100_000, false),
             ("description", self.description.as_str(), 100_000, false),
             ("icon", self.icon.as_str(), 100, false),
         ] {
@@ -110,7 +113,6 @@ pub struct SavedQuery {
     pub id: i64,
     pub name: String,
     pub slug: String,
-    pub prompt: String,
     pub sql_query: String,
     pub description: String,
     pub icon: String,
@@ -123,14 +125,13 @@ impl SavedQuery {
         QueryInput {
             name: self.name.clone(),
             slug: Some(self.slug.clone()),
-            prompt: self.prompt.clone(),
             sql_query: self.sql_query.clone(),
             description: self.description.clone(),
             icon: self.icon.clone(),
         }
     }
     fn snapshot(&self) -> Value {
-        json!({"name": self.name, "slug": self.slug, "prompt": self.prompt, "sql_query": self.sql_query,
+        json!({"name": self.name, "slug": self.slug, "sql_query": self.sql_query,
             "description": self.description, "icon": self.icon, "version": self.version})
     }
 }
@@ -139,7 +140,6 @@ fn saved(row: &Row) -> SavedQuery {
         id: row.get("id"),
         name: row.get("name"),
         slug: row.get("slug"),
-        prompt: row.get("prompt"),
         sql_query: row.get("sql_query"),
         description: row.get("description"),
         icon: row.get("icon"),
@@ -302,7 +302,7 @@ impl QueryService {
             return Err(Error::Conflict.into());
         }
         let slug = input.slug.as_deref().unwrap_or(&old.slug);
-        let row = tx.sql().query_one("UPDATE user_database_queries SET name=$4,slug=$5,prompt=$6,sql_query=$7,description=$8,icon=$9,version=version+1,updated_at=now() WHERE tenant_id=$1 AND user_id=$2 AND id=$3 RETURNING *", &[&actor.tenant(), &actor.user(), &old.id, &input.name.trim(), &slug, &input.prompt, &input.sql_query, &input.description, &input.icon]).await?;
+        let row = tx.sql().query_one("UPDATE user_database_queries SET name=$4,slug=$5,sql_query=$6,description=$7,icon=$8,version=version+1,updated_at=now() WHERE tenant_id=$1 AND user_id=$2 AND id=$3 RETURNING *", &[&actor.tenant(), &actor.user(), &old.id, &input.name.trim(), &slug, &input.sql_query, &input.description, &input.icon]).await?;
         let updated = saved(&row);
         tx.record(Change {
             kind: "user_database_query".into(),
@@ -440,7 +440,7 @@ async fn insert(
             slug
         }
     };
-    let row = tx.sql().query_one("INSERT INTO user_database_queries(tenant_id,user_id,name,slug,prompt,sql_query,description,icon) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *", &[&actor.tenant(), &actor.user(), &input.name.trim(), &slug, &input.prompt, &input.sql_query, &input.description, &input.icon]).await?;
+    let row = tx.sql().query_one("INSERT INTO user_database_queries(tenant_id,user_id,name,slug,sql_query,description,icon) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *", &[&actor.tenant(), &actor.user(), &input.name.trim(), &slug, &input.sql_query, &input.description, &input.icon]).await?;
     let result = saved(&row);
     tx.record(Change {
         kind: "user_database_query".into(),

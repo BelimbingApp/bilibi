@@ -79,7 +79,6 @@ async fn main() -> Result<()> {
     let input = QueryInput {
         name: "C9 owned report".into(),
         sql_query: "SELECT :minimum::int AS minimum, :minimum::int + 1 AS next".into(),
-        prompt: "Find minimum".into(),
         description: "A named-parameter query".into(),
         icon: "table-cells".into(),
         ..Default::default()

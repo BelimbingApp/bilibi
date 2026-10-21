@@ -395,15 +395,7 @@ executing require `admin.system.database-table.list`; saving, duplicating and
 deleting require `admin.system.database-table.edit`. Admin grants alone do not
 make a tenant the operator. The UI must also gate routes and events (C10).
 
-Saved records belong to `(tenant_id, user_id)` on every operation, including
-integer IDs; a foreign owner's record is never returned. `QueryInput` contains
-name (required, 150 characters), SQL (required, 100,000 characters), optional
-slug, description, prompt and icon. A missing slug generates a unique readable
-slug on creation and preserves the slug on update. Creation/duplication slug
-selection is serialized per owner. Updates/deletes require the returned
-`version` and refuse stale drafts with `Error::Conflict`. All saved-query
-writes use the mutation boundary, so audit refusal rolls back the data. List
-search/sort/page are SQL operations; page sizes are bounded to 300.
+Saved records belong to `(tenant_id, user_id)` on every operation, including integer IDs; a foreign owner's record is never returned. `QueryInput` contains name (required, 150 characters), SQL (required, 100,000 characters), optional slug, description and icon. A missing slug generates a unique readable slug on creation and preserves the slug on update. Creation/duplication slug selection is serialized per owner. Updates/deletes require the returned `version` and refuse stale drafts with `Error::Conflict`. All saved-query writes use the mutation boundary, so audit refusal rolls back the data. List search/sort/page are SQL operations; page sizes are bounded to 300.
 
 `execute` accepts `ConsoleRequest` (SQL, display name, page, per-page) and
 `ConsoleOptions` (named parameters, optional output-column sort and direction).
@@ -437,24 +429,10 @@ private-result exclusion; it is not a unit-test suite. It explicitly makes
 fixture tenant 1 the operator, grants fixture capabilities and installs private
 fixture functions/triggers. Never run it against normal data.
 
-The operator's saved-query screens live at `/admin/system/database-queries`
-(and `/{slug}`, with `/_new` for creation). They compose the shared list,
-form, confirmation and FlexTable components in `src/query_ui`; all storage and
-execution go through `database_queries::QueryService`. The list's column labels come from the detail's `query_ui::fields`; the prompt and SQL text stay on the detail page. Both routes require
-explicit operator identity plus `admin.system.database-table.list`; saving,
-duplicating and deleting additionally require `admin.system.database-table.edit`.
-Every live action and refresh checks these requirements again. Queries remain
-private to their account, including for administrators.
+The operator's saved-query screens live at `/admin/system/database-queries` (and `/{slug}`, with `/_new` for creation). They compose the shared list, form, confirmation and FlexTable components in `src/query_ui`; all storage and execution go through `database_queries::QueryService`. The list's column labels come from the detail's `query_ui::fields`; SQL text stays on the detail page. Both routes require explicit operator identity plus `admin.system.database-table.list`; saving, duplicating and deleting additionally require `admin.system.database-table.edit`. Every live action and refresh checks these requirements again. Queries remain private to their account, including for administrators.
 
-The editor keeps SQL, prompt, description and named parameter values in its
-mounted state. Run executes the current draft; result sorting, rows-per-page,
-Back and page navigation retain that draft. A full reload loads saved SQL.
-Parameters bind as PostgreSQL values (a blank input binds NULL). The result
-pager of a saved query reflects `page` and `page_size` in the URL; periodic refresh does not rerun
-SQL. Save uses the loaded version, so a competing save is refused without
-replacing the draft. Deletion names the saved query in a shared confirmation
-and checks that same saved version. Result values are escaped text; only column
-names from the returned projection may be used for sorting. Read-only execution
-and its success/refusal/failure audit remain C9's responsibility.
+The editor keeps SQL, name, description and named parameter values in its mounted state. Run executes the current draft; result sorting, rows-per-page, Back and page navigation retain that draft. A full reload loads saved SQL. Parameters bind as PostgreSQL values (a blank input binds NULL). The result pager of a saved query reflects `page` and `page_size` in the URL; periodic refresh does not rerun SQL. Save uses the loaded version, so a competing save is refused without replacing the draft. Deletion names the saved query in a shared confirmation and checks that same saved version. Result values are escaped text; only column names from the returned projection may be used for sorting. Read-only execution and its success/refusal/failure audit remain C9's responsibility.
+
+The query editor uses the shared page header for its title, description and Back link. Query name and description use shared form fields; Discard, Save and saved-query actions sit in the form action row. Migration `core-user-014-drop-query-prompt` removes the unused prompt column while preserving saved queries and their SQL.
 
 The [Base Step-up provider contract](../../base/step_up/README.md#provider) owns method registration, challenge starts and lifecycle hooks. Core User registers TOTP beside Extensions. With one method the existing routes retain their original flow. Reset (including the server command) reads enrollment across all methods in the owner's transaction, removes all factor state, revokes challenges and signs out the target. Account deletion also calls every method's deletion hook. Password changes/resets and account reassignment use `Sessions::revoke`; they retain enrollment. Every provider change shares the owner's mutation transaction and audit trace. Sign-in admission is unchanged.

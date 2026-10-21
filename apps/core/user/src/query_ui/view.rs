@@ -1,3 +1,4 @@
+//! Mirrors Bilimbi.Core.User.Web.DatabaseQueriesLive.Show; shared Header and Form own layout.
 use super::*;
 use askama::Template;
 use bilibi_audit::console::ConsoleResult;
@@ -5,9 +6,9 @@ use bilibi_datetime::{Format, Precision};
 use bilibi_ui::{
     flex_table::{FlexColumn, FlexRow, FlexTable, Instant},
     list_columns::ListColumns,
-    Alert, BackLink, Button, ButtonVariant, ConfirmDialog, CreateButton, EmptyState, Field,
-    FilterToolbar, FlashGroup, FlashMap, Header, Icon, IconButton, IconKind, InputKind, PageCounts,
-    Pagination, StatusKind, TableEmpty, ToolbarControl,
+    Alert, BackLink, Badge, BadgeKind, Button, ButtonVariant, ConfirmDialog, CreateButton,
+    EmptyState, Field, FilterToolbar, FlashGroup, FlashMap, Form, Header, Icon, IconButton,
+    IconKind, InputKind, PageCounts, Pagination, StatusKind, TableEmpty, ToolbarControl,
 };
 use serde_json::Value;
 
@@ -231,40 +232,13 @@ struct DetailView {
     flash: Html,
     header: Html,
     run: Html,
-    prompt: Html,
+    details: Html,
     sql: Html,
     caution: Html,
     error: Html,
     parameters: Vec<Html>,
     results: Html,
     confirm: Html,
-}
-#[derive(Template)]
-#[template(
-    source = r#"<div class="flex items-center gap-3"><form id="query-title-form" data-event="change_field" data-change class="inline-block">{{ name }}</form>{% if dirty %}<span class="inline-flex items-center rounded-full bg-warning-surface px-2 py-0.5 text-xs font-medium text-warning-ink border border-warning-line">Unsaved changes</span>{% endif %}</div>"#,
-    ext = "html"
-)]
-struct Title {
-    name: Html,
-    dirty: bool,
-}
-#[derive(Template)]
-#[template(
-    source = r#"<form id="query-desc-form" data-event="change_field" data-change class="w-full">{{ description }}</form>"#,
-    ext = "html"
-)]
-struct DescriptionForm {
-    description: Html,
-}
-#[derive(Template)]
-#[template(
-    source = r#"{% import "components.html" as ui %}{% call ui::header(subtitle_html=description, actions=actions) %}{{ title }}{% endcall %}"#,
-    ext = "html"
-)]
-struct QueryHeader {
-    title: Html,
-    description: Html,
-    actions: Html,
 }
 #[derive(Template)]
 #[template(
@@ -299,6 +273,7 @@ fn action(id: &str, event: &str, label: &str, icon: &str, variant: ButtonVariant
     fragment(&Button {
         id,
         event,
+        button_type: "button",
         body,
         variant,
         ..Default::default()
@@ -314,15 +289,15 @@ fn editor_field(name: &str, id: &str, value: &str, placeholder: &str, class: &st
         .class(class)
 }
 pub(super) fn detail(state: &detail::Detail, editor: bool) -> Result<String> {
-    let mut actions = fragment(&BackLink {
+    let back = fragment(&BackLink {
         id: "database-query-back",
         href: ROOT,
         title: "Back to database queries",
         ..Default::default()
     })?;
+    let mut actions = Html::EMPTY;
     if editor {
         if state.saved.is_some() {
-            actions.push(&Html::text(" "));
             actions.push(&action(
                 "btn-duplicate-query",
                 "duplicate",
@@ -330,7 +305,6 @@ pub(super) fn detail(state: &detail::Detail, editor: bool) -> Result<String> {
                 "duplicate",
                 ButtonVariant::Secondary,
             )?);
-            actions.push(&Html::text(" "));
             actions.push(&action(
                 "btn-delete-query",
                 "request_delete",
@@ -339,7 +313,6 @@ pub(super) fn detail(state: &detail::Detail, editor: bool) -> Result<String> {
                 ButtonVariant::Danger,
             )?);
         } else {
-            actions.push(&Html::text(" "));
             actions.push(&action(
                 "btn-discard-query",
                 "delete",
@@ -348,7 +321,6 @@ pub(super) fn detail(state: &detail::Detail, editor: bool) -> Result<String> {
                 ButtonVariant::Secondary,
             )?);
         }
-        actions.push(&Html::text(" "));
         actions.push(&action(
             "btn-save-query",
             "save",
@@ -357,15 +329,37 @@ pub(super) fn detail(state: &detail::Detail, editor: bool) -> Result<String> {
             ButtonVariant::Primary,
         )?);
     }
-    let title = fragment(&Title {
-        name: fragment(&editor_field("name", "query-name-input", &state.draft.name, "Untitled Query", "bg-transparent text-xl font-bold text-ink border-0 border-b border-transparent hover:border-high-contrast-line focus:border-brand-strong focus:ring-0 px-1 py-0.5").aria_label("Query name"))?,
-        dirty: state.dirty,
+    let mut fields = fragment(
+        &Field::named("name")
+            .id("query-name-input")
+            .label("Query name")
+            .value(&state.draft.name)
+            .attr("data-debounce", "150"),
+    )?;
+    fields.push(&fragment(
+        &Field::named("description")
+            .id("query-description-input")
+            .label("Description")
+            .value(&state.draft.description)
+            .attr("data-debounce", "150"),
+    )?);
+    let details = fragment(&Form {
+        id: "query-details-form",
+        event: "change_field",
+        change: true,
+        body: fields,
+        actions,
+        ..Default::default()
     })?;
-    let description = fragment(&DescriptionForm { description: fragment(&editor_field(
-        "description", "query-description-input", &state.draft.description, "Add a description...",
-        "w-full bg-transparent text-sm text-ink-subtle border-0 border-b border-transparent hover:border-high-contrast-line focus:border-brand-strong focus:ring-0 px-1 py-0.5",
-    ).aria_label("Query description"))? })?;
-    let prompt = editor_field("prompt", "query-prompt-textarea", &state.draft.prompt, "Describe the data or query in natural language...", "block w-full rounded-md border border-line bg-surface px-3 py-1.5 text-sm text-ink placeholder:text-ink-faint focus:border-brand-strong focus:outline-none focus:ring-1 focus:ring-brand-strong/30").kind(InputKind::Textarea).attr("rows", "2").aria_label("Prompt");
+    let dirty = if state.dirty {
+        fragment(&Badge {
+            kind: BadgeKind::Warning,
+            body: Html::text("Unsaved changes"),
+            ..Default::default()
+        })?
+    } else {
+        Html::EMPTY
+    };
     let sql = editor_field("sql_query", "query-sql-textarea", &state.draft.sql_query, "SELECT * FROM users WHERE id = :id LIMIT 25;", "block w-full rounded-md border border-line bg-surface-sunken font-mono text-xs text-ink px-3 py-1.5 placeholder:text-ink-faint focus:border-brand-strong focus:outline-none focus:ring-1 focus:ring-brand-strong/30").kind(InputKind::Textarea).attr("rows", "5").aria_label("SQL query");
     let parameters = state.detected.iter().map(|key| fragment(&Field::in_form("parameters", key)
         .id(format!("param-input-{key}")).label(format!(":{key}")).label_class("block text-xs font-mono text-ink mb-1")
@@ -375,13 +369,19 @@ pub(super) fn detail(state: &detail::Detail, editor: bool) -> Result<String> {
         .collect::<Result<Vec<_>>>()?;
     DetailView {
         flash: flash(&state.success, "")?,
-        header: fragment(&QueryHeader { title, description, actions })?,
+        header: fragment(&Header {
+            title: Html::text(&state.draft.name),
+            subtitle: &state.draft.description,
+            title_actions: dirty,
+            actions: back,
+        })?,
+        details,
         run: {
             let mut body = fragment(&Icon { name: "play", class: "size-3.5 mr-1" })?;
             body.push(&Html::text("Run Query"));
             fragment(&Button { id: "btn-run-query", event: "run_query", variant: ButtonVariant::Primary, body, ..Default::default() })?
         },
-        prompt: fragment(&prompt)?, sql: fragment(&sql)?, parameters,
+        sql: fragment(&sql)?, parameters,
         caution: fragment(&Alert { id: "database-query-reach-caution", kind: StatusKind::Warning, class: "mt-2", body: Html::text("Not limited to your company: SQL here can read every company's data in the database.") })?,
         error: if state.error.is_empty() { Html::EMPTY } else { fragment(&Alert { id: "query-execution-error", kind: StatusKind::Error, class: "", body: Html::text(&state.error) })? },
         results: match &state.result { Some(result) => results(state, result)?, None => Html::EMPTY },
