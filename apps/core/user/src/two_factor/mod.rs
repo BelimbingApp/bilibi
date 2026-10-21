@@ -24,7 +24,7 @@ pub(crate) use agent::bind;
 pub use agent::{TwoFactorEmailError, TwoFactorEmailReset};
 pub use provider::{Authenticator, METHOD};
 
-use crate::{password, UserService};
+use crate::{credential_attempts, password, UserService};
 use bilibi_audit::{record_action, Attribution};
 use bilibi_database::{Change, Error, Result};
 use bilibi_tenancy::Scope;
@@ -46,10 +46,15 @@ pub(crate) const PAGES: &str = "core/user.pages";
 /// The record the sealed secret is bound to (`Settings::seal_owned`).
 const OWNER: &str = "core/user.two_factor";
 const KIND: &str = "user_two_factor";
-/// Failed checks allowed per window before every check of the account locks.
-const MAX_FAILURES: i32 = 5;
-const WINDOW_SECONDS: f64 = 900.0;
-const LOCK_SECONDS: f64 = 900.0;
+/// The two-factor counter: five failed checks within fifteen minutes lock
+/// every check of the account for fifteen minutes.
+const STEP_UP: credential_attempts::Kind = credential_attempts::Kind::StepUp;
+const LIMITS: credential_attempts::Limits = credential_attempts::Limits {
+    max_failures: 5,
+    window_seconds: 900.0,
+    lock_seconds: 900.0,
+    growing: false,
+};
 const MAX_RETURN: usize = 2048;
 
 /// Why a two-factor operation was refused; pages map each to a field error.
@@ -528,14 +533,13 @@ impl UserService {
     /// Refuses while the account's checks are locked, recording the refusal.
     async fn unlocked(&self, scope: &Scope) -> Outcome<()> {
         let client = self.db.get().await.map_err(Error::from)?;
-        let remaining: Option<i64> = client
-            .query_opt(
-                "SELECT ceil(extract(epoch FROM locked_until-now()))::bigint FROM user_two_factor_attempts WHERE tenant_id=$1 AND user_id=$2 AND locked_until>now()",
-                &[&scope.tenant(), &scope.user()],
-            )
-            .await
-            .map_err(Error::from)?
-            .map(|row| row.get(0));
+        let remaining = credential_attempts::locked(
+            &**client,
+            scope.tenant(),
+            scope.user(),
+            credential_attempts::Kind::StepUp,
+        )
+        .await?;
         let Some(seconds) = remaining else {
             return Ok(());
         };
@@ -556,7 +560,7 @@ impl UserService {
     /// Counts one failed check (`check` names which: password or authenticator
     /// code), audited as `user.two_factor.failed`; the failure that
     /// reaches the limit then locks the account's checks, audited as
-    /// `user.two_factor.locked`.
+    /// `user.two_factor.locked`. The shared rule is `credential_attempts`.
     async fn failed(&self, scope: &Scope, check: &'static str) -> Result<()> {
         let (tenant, user) = (scope.tenant(), scope.user());
         let mut client = self.db.get().await?;
@@ -567,25 +571,32 @@ impl UserService {
                 scope.mutation_context("user.two_factor.failed"),
             )
             .await?;
-        let failures = tx
+        let counted = tx
             .mutate(move |sql| {
                 Box::pin(async move {
-                    let failures: i32 = sql
-                        .query_one(
-                            "INSERT INTO user_two_factor_attempts AS a(tenant_id,user_id,failures) VALUES($1,$2,1) ON CONFLICT ON CONSTRAINT user_two_factor_attempts_pkey DO UPDATE SET failures=CASE WHEN a.window_started_at<=now()-make_interval(secs => $3::double precision) THEN 1 ELSE a.failures+1 END, window_started_at=CASE WHEN a.window_started_at<=now()-make_interval(secs => $3::double precision) THEN now() ELSE a.window_started_at END RETURNING failures",
-                            &[&tenant, &user, &WINDOW_SECONDS],
-                        )
+                    // Already locked: nothing is counted.
+                    let failures = credential_attempts::count(sql, tenant, user, STEP_UP, LIMITS)
                         .await?
-                        .get(0);
+                        .ok_or(Error::Conflict)?;
                     Ok((
                         failures,
-                        vec![attempts_change(user, json!({"failures": failures, "check": check}))],
+                        vec![credential_attempts::change(
+                            user,
+                            STEP_UP,
+                            json!({}),
+                            json!({"failures": failures, "check": check}),
+                        )],
                     ))
                 })
             })
-            .await?;
+            .await;
+        let failures = match counted {
+            Ok(failures) => failures,
+            Err(Error::Conflict) => return tx.rollback().await,
+            Err(error) => return Err(error),
+        };
         tx.commit().await?;
-        if failures < MAX_FAILURES {
+        if failures < LIMITS.max_failures {
             return Ok(());
         }
         let mut tx = self
@@ -597,14 +608,17 @@ impl UserService {
             .await?;
         tx.mutate(move |sql| {
             Box::pin(async move {
-                let until: String = sql
-                    .query_one(
-                        "UPDATE user_two_factor_attempts SET failures=0,window_started_at=now(),locked_until=now()+make_interval(secs => $3::double precision) WHERE tenant_id=$1 AND user_id=$2 RETURNING locked_until::text",
-                        &[&tenant, &user, &LOCK_SECONDS],
-                    )
-                    .await?
-                    .get(0);
-                Ok(((), vec![attempts_change(user, json!({"locked_until": until}))]))
+                let (until, _) =
+                    credential_attempts::lock(sql, tenant, user, STEP_UP, LIMITS).await?;
+                Ok((
+                    (),
+                    vec![credential_attempts::change(
+                        user,
+                        STEP_UP,
+                        json!({}),
+                        json!({"locked_until": until}),
+                    )],
+                ))
             })
         })
         .await?;
@@ -631,20 +645,6 @@ fn change(user: i64, old: serde_json::Value, new: serde_json::Value) -> Change {
         new,
     }
 }
-fn attempts_change(user: i64, new: serde_json::Value) -> Change {
-    Change {
-        kind: "user_two_factor_attempts".into(),
-        id: user,
-        old: json!({}),
-        new,
-    }
-}
-
 async fn clear_failures(sql: &impl GenericClient, tenant: i64, user: i64) -> Result<()> {
-    sql.execute(
-        "UPDATE user_two_factor_attempts SET failures=0,window_started_at=now() WHERE tenant_id=$1 AND user_id=$2 AND failures>0",
-        &[&tenant, &user],
-    )
-    .await?;
-    Ok(())
+    credential_attempts::reset_count(sql, tenant, user, STEP_UP).await
 }

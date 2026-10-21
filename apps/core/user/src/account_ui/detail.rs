@@ -47,6 +47,7 @@ struct View {
     password: Html,
     links: Html,
     two_factor: Html,
+    sign_in: Html,
     danger: Html,
     dialog: Html,
 }
@@ -85,6 +86,12 @@ struct PasswordCard {
     password: Html,
     confirmation: Html,
     submit: Html,
+}
+#[derive(Template)]
+#[template(path = "account_sign_in.html")]
+struct SignInCard {
+    until: Html,
+    button: Html,
 }
 #[derive(Template)]
 #[template(path = "account_two_factor.html")]
@@ -1179,6 +1186,35 @@ impl Detail {
         Ok((card, enrolled))
     }
 
+    /// The sign-in lock, for an administrator who may edit the account, only
+    /// while it holds.
+    async fn sign_in_card(&self, scope: &Scope, loaded: &Loaded) -> Result<Html> {
+        if !loaded.can_edit() {
+            return Ok(Html::EMPTY);
+        }
+        let Some(until) = self
+            .pages
+            .users
+            .sign_in_locked_until(scope, self.id)
+            .await?
+        else {
+            return Ok(Html::EMPTY);
+        };
+        let display = self.pages.display(scope).await?;
+        render(&SignInCard {
+            until: datetime(&display, "user-sign-in-locked-until", until)?,
+            button: render(&Button {
+                id: "user-unlock-sign-in",
+                button_type: "button",
+                event: "unlock-sign-in",
+                variant: ButtonVariant::Secondary,
+                working: "Unlocking…",
+                body: Html::text("Unlock"),
+                ..Button::default()
+            })?,
+        })
+    }
+
     fn reset_dialog(
         &self,
         loaded: &Loaded,
@@ -1379,6 +1415,7 @@ impl Detail {
         };
         let links = self.links_card(&loaded)?;
         let (two_factor, admin_enrolled) = self.two_factor_card(scope, &loaded).await?;
+        let sign_in = self.sign_in_card(scope, &loaded).await?;
         let methods = self
             .pages
             .users
@@ -1415,6 +1452,7 @@ impl Detail {
             password,
             links,
             two_factor,
+            sign_in,
             danger,
             dialog: self.dialog(&loaded, admin_enrolled, &methods)?,
         })?;
@@ -1729,6 +1767,12 @@ impl Detail {
                 self.reset_error.clear();
             }
             "reset-two-factor" => self.reset_two_factor(scope, credential, value).await?,
+            "unlock-sign-in" => match self.pages.users.unlock_sign_in(scope, self.id).await {
+                Ok(()) => self.flash.success("Sign-in unlocked."),
+                Err(AccountError::NotFound) => self.flash.error("Sign-in is no longer locked."),
+                Err(AccountError::Access(Error::Forbidden)) => self.flash.error(FORBIDDEN),
+                Err(_) => self.flash.error("Failed to unlock sign-in."),
+            },
             "cancel_delete" | "cancel_unlink" | "cancel_authz" => self.pending = None,
             "delete" => {
                 if matches!(self.pending, Some(Pending::Delete)) {

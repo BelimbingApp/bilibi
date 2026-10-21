@@ -1,0 +1,2 @@
+{#- The account's sign-in lock (src/sign_in.rs), shown to an administrator only while it holds: when it ends, and Unlock. The public sign-in form never says an account is locked. -#}
+<section id="user-sign-in" class="rounded-xl border border-line bg-surface px-5 py-4"><div class="flex items-center justify-between gap-4"><div><h2 class="text-sm font-semibold text-ink">Sign-in</h2><p class="mt-0.5 text-xs text-ink-muted">Locked after repeated wrong passwords until {{ until }}. The owner was emailed a reset link.</p></div>{{ button }}</div></section>

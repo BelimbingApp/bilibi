@@ -1,7 +1,11 @@
 //! Neutral admission around Bilimbi `UserAuth.complete_login`. Bilimbi has
 //! no pending-sign-in counterpart. Pending credentials live outside sessions;
 //! only this facade can turn their freshly proved identity into a session.
-use crate::{CredentialError, Login, UserService};
+use crate::{
+    accounts::AccountError,
+    credential_attempts::{self, Kind, Limits},
+    CredentialError, Login, UserService,
+};
 use bilibi_database::{Change, Context, Error, MutationTransaction, Result};
 use bilibi_module_registry::{Contribution, Provenance};
 use bilibi_settings::{Definition, Editor, ScopeKind, Setting, ValueType, DEFINITIONS};
@@ -9,6 +13,8 @@ use bilibi_step_up::{Availability, Challenge, Method, Purpose, Spent};
 use bilibi_tenancy::{Channel, Scope};
 use serde_json::json;
 use sha2::{Digest, Sha256};
+use std::time::SystemTime;
+use tokio_postgres::GenericClient;
 
 pub const SIGN_IN: &str = "core.user.sign_in";
 const LIFETIME: &str = "user.sign_in_minutes";
@@ -84,7 +90,7 @@ impl UserService {
         password: &str,
     ) -> std::result::Result<Login, CredentialError> {
         let (tenant, user, stored) =
-            crate::identity::password_identity(&self.db, email, password).await?;
+            crate::identity::password_identity(self, email, password).await?;
         let pending = {
             let client = self.db.get().await.map_err(Error::from)?;
             let scope = self
@@ -437,4 +443,279 @@ pub(crate) async fn revoke(
     user: i64,
 ) -> Result<Vec<Change>> {
     Ok(sql.query("UPDATE user_sign_ins SET state='revoked' WHERE tenant_id=$1 AND user_id=$2 AND state='pending' RETURNING id", &[&tenant,&user]).await?.into_iter().map(|row| change(row.get(0),"pending","revoked")).collect())
+}
+
+// ---- wrong-password limit (password step) ----------------------------------
+// The sign-in attempt limit: wrong passwords are counted per account in the
+// shared credential counter (`credential_attempts`, kind `sign_in`), and the
+// one that reaches the limit locks that account's sign-in. The lock starts at
+// one minute and doubles with each lock in a row up to the operator's limit;
+// a wrong password while locked is not counted and never extends it. The
+// public answer stays that of a wrong password, so the form never says
+// whether an account exists or is locked. The owner and administrators do
+// see it: every failure and lock is audited, the owner is mailed a reset
+// link when a lock starts, and an administrator sees and lifts it on the
+// account page. The numbers are operator settings (below). Before
+// a session exists the actor is the system principal `sign-in`, as the
+// server command `two-factor-reset` is for its own writes.
+
+/// Sign-in limits (`credential_attempts`, kind `sign_in`), installation-wide
+/// operator settings beside the sign-in challenge lifetime.
+pub(crate) const SIGN_IN_MAX_FAILURES: &str = "user.sign_in.max_failures";
+pub(crate) const SIGN_IN_WINDOW_MINUTES: &str = "user.sign_in.window_minutes";
+pub(crate) const SIGN_IN_LOCK_MINUTES: &str = "user.sign_in.lock_minutes";
+pub(crate) const SIGN_IN_PER_SENDER: &str = "user.sign_in.per_sender_per_minute";
+const GLOBAL: &[ScopeKind] = &[ScopeKind::Global];
+macro_rules! sign_in_setting {
+    ($key:expr, $default:expr, $min:expr, $max:expr, $label:expr, $help:expr) => {
+        inventory::submit! { Contribution::new(DEFINITIONS, $key, Provenance { module: "core/user", source: file!(), line: line!() }, &Setting::Definition(Definition {
+            value_type: ValueType::Integer, scopes: GLOBAL, default: || json!($default), nullable: false, encrypted: false,
+            minimum: Some($min), maximum: Some($max), validator: None,
+            editor: Some(Editor { group: "Session", label: $label, help: $help, capability: Some(crate::contributions::UPDATE), reveal_duration_ms: 5_000 }),
+        })) }
+    };
+}
+sign_in_setting!(
+    SIGN_IN_MAX_FAILURES,
+    5,
+    1.0,
+    100.0,
+    "Wrong passwords before a lock",
+    "How many wrong passwords within the window lock an account's sign-in."
+);
+sign_in_setting!(
+    SIGN_IN_WINDOW_MINUTES,
+    15,
+    1.0,
+    1_440.0,
+    "Wrong-password window",
+    "Minutes in which wrong passwords are counted toward a lock."
+);
+sign_in_setting!(
+    SIGN_IN_LOCK_MINUTES,
+    15,
+    1.0,
+    1_440.0,
+    "Longest sign-in lock",
+    "The first lock lasts one minute and doubles with each lock in a row, up to this many minutes."
+);
+sign_in_setting!(
+    SIGN_IN_PER_SENDER,
+    10,
+    1.0,
+    10_000.0,
+    "Sign-in attempts per minute",
+    "Most sign-in attempts one address can make per minute, on each server."
+);
+
+const KIND: Kind = Kind::SignIn;
+/// The system principal behind writes made before anyone is signed in.
+const PRINCIPAL: &str = "sign-in";
+
+impl UserService {
+    /// The operator's sign-in limits, read on every attempt.
+    pub(crate) async fn sign_in_limits(
+        &self,
+        client: &(impl GenericClient + Sync),
+    ) -> Result<Limits> {
+        let number =
+            |value: serde_json::Value| value.as_i64().filter(|n| *n > 0).ok_or(Error::Internal);
+        Ok(Limits {
+            max_failures: number(
+                self.settings
+                    .get_global(client, SIGN_IN_MAX_FAILURES)
+                    .await?,
+            )?,
+            window_seconds: number(
+                self.settings
+                    .get_global(client, SIGN_IN_WINDOW_MINUTES)
+                    .await?,
+            )? as f64
+                * 60.0,
+            lock_seconds: number(
+                self.settings
+                    .get_global(client, SIGN_IN_LOCK_MINUTES)
+                    .await?,
+            )? as f64
+                * 60.0,
+            growing: true,
+        })
+    }
+
+    /// Most sign-in attempts one address may make per minute.
+    pub async fn sign_in_per_sender(&self) -> Result<u32> {
+        let client = self.db.get().await?;
+        self.settings
+            .get_global(&**client, SIGN_IN_PER_SENDER)
+            .await?
+            .as_u64()
+            .and_then(|limit| u32::try_from(limit).ok())
+            .ok_or(Error::Internal)
+    }
+
+    /// Counts one wrong password (`user.sign_in.failed`); the one that
+    /// reaches the limit locks sign-in (`user.sign_in.locked`) and mails the
+    /// owner a reset link. Nothing is counted while locked.
+    pub(crate) async fn sign_in_failed(
+        &self,
+        tenant: i64,
+        user: i64,
+        limits: Limits,
+    ) -> Result<()> {
+        let mut client = self.db.get().await?;
+        let mut tx = self
+            .mutations
+            .begin(
+                &mut client,
+                Context::system(tenant, PRINCIPAL, "user.sign_in.failed"),
+            )
+            .await?;
+        let counted = tx
+            .mutate(move |sql| {
+                Box::pin(async move {
+                    let failures = credential_attempts::count(sql, tenant, user, KIND, limits)
+                        .await?
+                        .ok_or(Error::Conflict)?;
+                    Ok((
+                        failures,
+                        vec![credential_attempts::change(
+                            user,
+                            KIND,
+                            json!({}),
+                            json!({"failures": failures}),
+                        )],
+                    ))
+                })
+            })
+            .await;
+        let failures = match counted {
+            Ok(failures) => failures,
+            Err(Error::Conflict) => return tx.rollback().await,
+            Err(error) => return Err(error),
+        };
+        tx.commit().await?;
+        if failures < limits.max_failures {
+            return Ok(());
+        }
+        let mut tx = self
+            .mutations
+            .begin(
+                &mut client,
+                Context::system(tenant, PRINCIPAL, "user.sign_in.locked"),
+            )
+            .await?;
+        let minutes = tx
+            .mutate(move |sql| {
+                Box::pin(async move {
+                    let (until, minutes) =
+                        credential_attempts::lock(sql, tenant, user, KIND, limits).await?;
+                    let change = credential_attempts::change(
+                        user,
+                        KIND,
+                        json!({}),
+                        json!({"locked_until": until}),
+                    );
+                    Ok((minutes, vec![change]))
+                })
+            })
+            .await?;
+        tx.commit().await?;
+        let text = format!(
+            "Several wrong passwords were entered for your Bilibi account, so its sign-in is locked for about {minutes} minute{}.\n\nIf this was you, wait and try again, or reset your password now to unlock it. If it was not you, your password is still safe; resetting it is a good idea.",
+            if minutes == 1 { "" } else { "s" }
+        );
+        self.mail_with_reset_link(tenant, user, "Your Bilibi sign-in is locked", &text)
+            .await
+    }
+
+    /// After the right password: a count or a finished lock is forgotten
+    /// (`user.sign_in.passed`), so the next lock starts at one minute again.
+    pub(crate) async fn sign_in_passed(&self, tenant: i64, user: i64) -> Result<()> {
+        let mut client = self.db.get().await?;
+        let mut tx = self
+            .mutations
+            .begin(
+                &mut client,
+                Context::user(tenant, user, "user.sign_in.passed"),
+            )
+            .await?;
+        let forgotten = tx
+            .mutate(move |sql| {
+                Box::pin(async move {
+                    if !credential_attempts::forget(sql, tenant, user, KIND).await? {
+                        return Err(Error::Conflict);
+                    }
+                    let change = credential_attempts::change(
+                        user,
+                        KIND,
+                        json!({}),
+                        json!({"cleared_by": "sign_in"}),
+                    );
+                    Ok(((), vec![change]))
+                })
+            })
+            .await;
+        match forgotten {
+            Ok(()) => tx.commit().await,
+            Err(Error::Conflict) => tx.rollback().await,
+            Err(error) => Err(error),
+        }
+    }
+
+    /// When the account's sign-in lock ends, for an administrator's view of
+    /// the account (`admin.user.view` is the page's own access).
+    pub async fn sign_in_locked_until(
+        &self,
+        scope: &Scope,
+        user: i64,
+    ) -> Result<Option<SystemTime>> {
+        let client = self.db.get().await?;
+        Ok(client
+            .query_opt(
+                "SELECT locked_until FROM user_credential_attempts WHERE tenant_id=$1 AND user_id=$2 AND kind='sign_in' AND locked_until>now()",
+                &[&scope.tenant(), &user],
+            )
+            .await?
+            .map(|row| row.get(0)))
+    }
+
+    /// An administrator lifts another account's sign-in lock
+    /// (`admin.user.update`, rechecked here; `user.sign_in.unlocked`).
+    pub async fn unlock_sign_in(
+        &self,
+        scope: &Scope,
+        user: i64,
+    ) -> std::result::Result<(), AccountError> {
+        let mut client = self.db.get().await.map_err(Error::from)?;
+        let mut tx = self
+            .mutations
+            .begin(&mut client, scope.mutation_context("user.sign_in.unlocked"))
+            .await?;
+        bilibi_authz::authorize_key(tx.sql(), scope, crate::contributions::UPDATE).await?;
+        let tenant = scope.tenant();
+        let unlocked = tx
+            .mutate(move |sql| {
+                Box::pin(async move {
+                    if !credential_attempts::forget(sql, tenant, user, KIND).await? {
+                        return Err(Error::NotFound);
+                    }
+                    let change = credential_attempts::change(
+                        user,
+                        KIND,
+                        json!({}),
+                        json!({"cleared_by": "administrator"}),
+                    );
+                    Ok(((), vec![change]))
+                })
+            })
+            .await;
+        match unlocked {
+            Ok(()) => Ok(tx.commit().await?),
+            Err(Error::NotFound) => {
+                tx.rollback().await?;
+                Err(AccountError::NotFound)
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
 }

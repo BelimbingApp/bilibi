@@ -5,7 +5,10 @@
 //! validation mirrors the source changesets. The address alone names the
 //! account, as in Bilimbi; a right credential on a frozen account (archived
 //! company, no live workspace identity) is told so above the form, as
-//! Bilimbi's `complete_login` does. Sign-in has no attempt throttle yet.
+//! Bilimbi's `complete_login` does. Sign-in attempts are limited per sender
+//! here (the OAuth/MCP throttle) and per account in Core User (`sign_in`):
+//! wrong passwords lock an account's sign-in for a growing while, answered
+//! like a wrong password. The limits are operator settings.
 use crate::{api, document_titled, origin, token, App, HttpError};
 use askama::Template;
 use axum::{
@@ -17,7 +20,7 @@ use bilibi_database::Error;
 use bilibi_ui::{
     AuthLayout, FlashMap, ForgotForm, ForgotPasswordPage, Html, LoginForm, LoginPage,
     LoginWorkspace, ResetForm, ResetPasswordPage, COMPANY_ARCHIVED, CREDENTIALS_REJECTED,
-    PASSWORD_RESET, RESET_LINK_INVALID, RESET_REQUESTED, WORKSPACE_UNAVAILABLE,
+    PASSWORD_RESET, RESET_LINK_INVALID, RESET_REQUESTED, SIGN_IN_THROTTLED, WORKSPACE_UNAVAILABLE,
 };
 use bilibi_user::{password::check_policy, CredentialError};
 use serde::Deserialize;
@@ -427,6 +430,29 @@ pub async fn login(
             form,
             FlashMap::default(),
             StatusCode::UNPROCESSABLE_ENTITY,
+        )
+        .await;
+    }
+    // Per sender, before any account is looked at, so trying one password
+    // across many accounts (or unknown ones) is bounded too. The OAuth and
+    // MCP edges use the same throttle.
+    let address = api::client_address(
+        peer.as_ref().map(|Extension(ConnectInfo(peer))| *peer),
+        &headers,
+    );
+    let sender = address.map_or_else(|| "unknown".into(), |ip| ip.to_string());
+    let per_minute = app.user.sign_in_per_sender().await?;
+    if !app
+        .api
+        .throttle
+        .allow(&format!("sign-in:{sender}"), per_minute)
+    {
+        form.form_error = SIGN_IN_THROTTLED.into();
+        return login_card(
+            &app,
+            form,
+            FlashMap::default(),
+            StatusCode::TOO_MANY_REQUESTS,
         )
         .await;
     }

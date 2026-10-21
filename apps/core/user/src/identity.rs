@@ -16,7 +16,7 @@ use bilibi_affiliation::identity::account_standing as affiliation_standing;
 use bilibi_company::eligibility::{
     account_eligibility, lock_account_company, lock_writable_companies, AccountEligibility,
 };
-use bilibi_database::{Change, Db, Error, MutationTransaction, Result};
+use bilibi_database::{Change, Error, MutationTransaction, Result};
 use bilibi_party_ids::{AffiliationId, OrganisationId, PersonId};
 use bilibi_person::identity::account_standing as person_standing;
 use bilibi_security::{AccountIdentity, ActorVerifier, ProofClient, ProofFuture, Scope};
@@ -186,9 +186,12 @@ impl ActorVerifier for AccountVerifier {
 /// Bilimbi's sign-in: the email is unique platform-wide, so no tenant is
 /// asked. The password is verified first, at the same cost for an unknown
 /// address, and only then is the account's standing judged, so a frozen
-/// account is named only to someone holding its credential.
+/// account is named only to someone holding its credential. A locked account
+/// (`sign_in`) is refused like a wrong password, even with the right one, and
+/// a wrong password while locked is not counted: this is the password step,
+/// before any second-factor challenge.
 pub(crate) async fn password_identity(
-    db: &Db,
+    users: &UserService,
     email: &str,
     password: &str,
 ) -> std::result::Result<(i64, i64, String), CredentialError> {
@@ -196,7 +199,7 @@ pub(crate) async fn password_identity(
     if password.len() > password::MAX_LENGTH {
         return Err(CredentialError::Rejected);
     }
-    let client = db.get().await.map_err(Error::from)?;
+    let client = users.db.get().await.map_err(Error::from)?;
     let row = client
         .query_opt(
             "SELECT u.id,u.tenant_id,u.password_hash,t.status='active' AND t.deleted_at IS NULL FROM users u JOIN tenants t ON t.id=u.tenant_id WHERE lower(u.email)=$1 AND u.deleted_at IS NULL AND u.status='active'",
@@ -206,11 +209,22 @@ pub(crate) async fn password_identity(
         .map_err(Error::from)?;
     // An unknown account still pays for one verification.
     let stored: Option<String> = row.as_ref().map(|row| row.get(2));
-    if !password::verify(password, stored.as_deref()).await? {
-        return Err(CredentialError::Rejected);
-    }
+    let matched = password::verify(password, stored.as_deref()).await?;
     let row = row.ok_or(CredentialError::Rejected)?;
     let (user, tenant, workspace): (i64, i64, bool) = (row.get(0), row.get(1), row.get(3));
+    let kind = crate::credential_attempts::Kind::SignIn;
+    if crate::credential_attempts::locked(&**client, tenant, user, kind)
+        .await?
+        .is_some()
+    {
+        return Err(CredentialError::Rejected);
+    }
+    if !matched {
+        let limits = users.sign_in_limits(&**client).await?;
+        drop(client);
+        users.sign_in_failed(tenant, user, limits).await?;
+        return Err(CredentialError::Rejected);
+    }
     if !workspace {
         return Err(CredentialError::WorkspaceUnavailable);
     }
@@ -221,6 +235,8 @@ pub(crate) async fn password_identity(
             return Err(CredentialError::WorkspaceUnavailable)
         }
     }
+    drop(client);
+    users.sign_in_passed(tenant, user).await?;
     Ok((tenant, user, stored.ok_or(CredentialError::Rejected)?))
 }
 

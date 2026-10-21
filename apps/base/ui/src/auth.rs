@@ -24,6 +24,9 @@ pub struct AuthLayout<'a> {
 /// The one reason sign-in refuses, worded as Bilimbi does and never saying
 /// which part was wrong.
 pub const CREDENTIALS_REJECTED: &str = "These credentials do not match our records.";
+/// Sign-in refused before any account is looked at: one address sent more
+/// attempts in a minute than the operator allows. Names no account.
+pub const SIGN_IN_THROTTLED: &str = "Too many sign-in attempts. Wait a minute and try again.";
 /// What the sign-in page says when an expired session bounced the visitor here.
 pub const SESSION_EXPIRED: &str = "Your session expired. Sign in again to continue.";
 /// The forgotten-password confirmation, the same whether the account exists.

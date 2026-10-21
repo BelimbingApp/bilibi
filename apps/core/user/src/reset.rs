@@ -10,6 +10,7 @@ use bilibi_mail::{Address, Message};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
+use tokio_postgres::GenericClient;
 
 /// A reset link stays valid this long and a new one may be requested this often.
 const RESET_LIFETIME_SECONDS: f64 = 3600.0;
@@ -31,6 +32,33 @@ pub(crate) fn random_token() -> Result<String, Error> {
 fn digest(token: &str) -> Vec<u8> {
     Sha256::digest(token.as_bytes()).to_vec()
 }
+/// A new one-time reset token for the account, stored hashed, unless one was
+/// issued within the throttle (one a minute); expired rows are swept here,
+/// which keeps storage bounded without a scheduler.
+async fn issue_reset_token(
+    client: &impl GenericClient,
+    tenant: i64,
+    user: i64,
+) -> Result<Option<String>, Error> {
+    let token = random_token()?;
+    let claimed = client
+        .query_opt(
+            "INSERT INTO password_reset_tokens(tenant_id,user_id,token_hash,created_at,expires_at) VALUES($1,$2,$3,now(),now()+make_interval(secs => $4::double precision)) ON CONFLICT (tenant_id,user_id) DO UPDATE SET token_hash=excluded.token_hash,created_at=excluded.created_at,expires_at=excluded.expires_at WHERE password_reset_tokens.created_at<=now()-make_interval(secs => $5::double precision) RETURNING user_id",
+            &[&tenant, &user, &digest(&token), &RESET_LIFETIME_SECONDS, &RESET_THROTTLE_SECONDS],
+        )
+        .await?;
+    if claimed.is_none() {
+        return Ok(None);
+    }
+    client
+        .execute(
+            "DELETE FROM password_reset_tokens WHERE expires_at<now()",
+            &[],
+        )
+        .await?;
+    Ok(Some(token))
+}
+
 async fn finish_reset_request() -> Result<(), CredentialError> {
     // Every normal outcome pays for this same expensive check so the public
     // response reveals less about whether the address has an active account.
@@ -155,25 +183,9 @@ impl UserService {
         ) {
             return finish_reset_request().await;
         }
-        let token = random_token()?;
-        let claimed = client
-            .query_opt(
-                "INSERT INTO password_reset_tokens(tenant_id,user_id,token_hash,created_at,expires_at) VALUES($1,$2,$3,now(),now()+make_interval(secs => $4::double precision)) ON CONFLICT (tenant_id,user_id) DO UPDATE SET token_hash=excluded.token_hash,created_at=excluded.created_at,expires_at=excluded.expires_at WHERE password_reset_tokens.created_at<=now()-make_interval(secs => $5::double precision) RETURNING user_id",
-                &[&tenant, &user, &digest(&token), &RESET_LIFETIME_SECONDS, &RESET_THROTTLE_SECONDS],
-            )
-            .await
-            .map_err(Error::from)?;
-        if claimed.is_none() {
+        let Some(token) = issue_reset_token(&**client, tenant, user).await? else {
             return finish_reset_request().await;
-        }
-        // Housekeeping keeps storage bounded without a scheduler.
-        client
-            .execute(
-                "DELETE FROM password_reset_tokens WHERE expires_at<now()",
-                &[],
-            )
-            .await
-            .map_err(Error::from)?;
+        };
         let message = Message {
             to: Address::new(Some(&name), &address).map_err(|_| Error::Invalid)?,
             subject: "Reset your Bilibi password".into(),
@@ -198,6 +210,64 @@ impl UserService {
             }
         });
         finish_reset_request().await
+    }
+
+    /// Mails `text` to the account with a reset link appended, when a token
+    /// can be issued now (a request within the last minute already holds
+    /// one; the mail then points to "Forgot your password?"). A failed
+    /// delivery releases the token, as for a requested reset.
+    pub(crate) async fn mail_with_reset_link(
+        &self,
+        tenant: i64,
+        user: i64,
+        subject: &str,
+        text: &str,
+    ) -> Result<(), Error> {
+        let client = self.db.get().await?;
+        let Some(row) = client
+            .query_opt(
+                "SELECT name,email FROM users WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL AND status='active'",
+                &[&tenant, &user],
+            )
+            .await?
+        else {
+            return Ok(());
+        };
+        let (name, address): (String, String) = (row.get(0), row.get(1));
+        let token = issue_reset_token(&**client, tenant, user).await?;
+        let link = match &token {
+            Some(token) => format!(
+                "Reset your password with this link:\n\n{}\n",
+                self.reset_link(&address, token)
+            ),
+            None => {
+                "Reset your password with \"Forgot your password?\" on the sign-in page.\n".into()
+            }
+        };
+        let message = Message {
+            to: Address::new(Some(&name), &address).map_err(|_| Error::Invalid)?,
+            subject: subject.into(),
+            text: format!("{text}\n\n{link}"),
+        };
+        let (mailer, db, hash) = (
+            self.mailer.clone(),
+            self.db.clone(),
+            token.as_deref().map(digest),
+        );
+        tokio::spawn(async move {
+            if let Err(error) = mailer.deliver(&message).await {
+                eprintln!("mail: notice for user {user} was not delivered: {error}");
+                if let (Some(hash), Ok(client)) = (hash, db.get().await) {
+                    let _ = client
+                        .execute(
+                            "DELETE FROM password_reset_tokens WHERE tenant_id=$1 AND user_id=$2 AND token_hash=$3",
+                            &[&tenant, &user, &hash],
+                        )
+                        .await;
+                }
+            }
+        });
+        Ok(())
     }
 
     /// Where the emailed link points; the reset page reads both values.
@@ -276,16 +346,23 @@ impl UserService {
                         &[&tenant, &user, &replacement],
                     )
                     .await?;
-
-                    Ok((
-                        (),
-                        vec![Change {
-                            kind: "user".into(),
-                            id: user,
-                            old: json!({"password_hash":"previous"}),
-                            new: json!({"password_hash":"replaced"}),
-                        }],
-                    ))
+                    let mut changes = vec![Change {
+                        kind: "user".into(),
+                        id: user,
+                        old: json!({"password_hash":"previous"}),
+                        new: json!({"password_hash":"replaced"}),
+                    }];
+                    // The emailed link proves the holder: a sign-in lock ends.
+                    let kind = crate::credential_attempts::Kind::SignIn;
+                    if crate::credential_attempts::forget(sql, tenant, user, kind).await? {
+                        changes.push(crate::credential_attempts::change(
+                            user,
+                            kind,
+                            json!({}),
+                            json!({"cleared_by": "password_reset"}),
+                        ));
+                    }
+                    Ok(((), changes))
                 })
             })
             .await;

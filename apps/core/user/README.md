@@ -16,7 +16,7 @@ pages belong to the Web host, as Bilimbi's do.
 
 | Method | Purpose |
 |---|---|
-| `login(email, password)` / `logout` | Bilimbi's global sign-in: the address alone names the account; the password is verified first, then the account's standing. Refusals are `CredentialError::{Rejected, CompanyArchived, WorkspaceUnavailable}`. A required second factor returns a pending credential, not a session; see [Sign-in admission](#sign-in-admission) |
+| `login(email, password)` / `logout` | Bilimbi's global sign-in: the address alone names the account; the sign-in lock is checked, the password verified, then the account's standing. Refusals are `CredentialError::{Rejected, CompanyArchived, WorkspaceUnavailable}`. A required second factor returns a pending credential, not a session; see [Sign-in admission](#sign-in-admission) |
 | `change_password(token, csrf, current, new)` | Signed-in change. Needs the current password; ends the account's other sessions |
 | `request_password_reset(email)` | Always `Ok` for unknown, frozen or throttled accounts. Mail is sent after returning |
 | `reset_password(email, token, new)` | Consumes the one-time token, replaces the password, ends every session; a frozen account's link is as invalid as an unknown one |
@@ -374,7 +374,7 @@ Security rules:
 - **Pending until proved.** A secret is unconfirmed until a current code arrives. Leaving setup keeps the pending row; the next setup replaces it.
 - **Verification.** Steps −1, 0 and +1 are each computed and compared in constant time (`subtle`). `last_step` only moves forward, by compare-and-set in the spending transaction, so a code is never accepted twice, even by two racing requests.
 - **No recovery codes.** People lose where they saved them, so there are none (migration `013-drop-two-factor-recovery.sql` drops the table). After a lost phone, another admin resets the account's 2FA, or the server owner runs the command below.
-- **Throttle.** Applies per account to every failed check: password, code, and an agent's code too. The fifth failure within 15 minutes locks every check for 15 minutes (`user_two_factor_attempts`). A success resets the count.
+- **Throttle.** Applies per account to every failed check: password, code, and an agent's code too. The fifth failure within 15 minutes locks every check for 15 minutes (`user_credential_attempts`, kind `step_up`; the shared rule is `src/credential_attempts.rs`). A success resets the count.
 - **Impersonation.** An impersonated session cannot enroll, change or check two-factor.
 - **Audit.** Each write is a `MutationBoundary` transaction: `user.two_factor.enrollment_started`, `.enabled`, `.verified`, `.moved`, `.failed` and `.locked`. A reset is `core.user.two_factor.reset` (an admin; the change names both people) or `user.two_factor.reset` (the server command, system principal `two-factor-reset`). A code spent for an agent records the purpose's operation key and channel (`for`, `channel`). A check refused while locked is the action `user.two_factor.refused`. No code, secret or recovery code is ever in a change, payload or log.
 
@@ -396,10 +396,25 @@ Credential writes are audited as kind `user` with marker values
 name as well. Reset and verification are attributed to the account that proved
 the token.
 
+## Sign-in attempt limits
+
+Two limits, both operator settings (Settings › Session), with these defaults:
+
+| Limit | Default | Setting |
+|---|---|---|
+| Wrong passwords per account before a lock | 5 within 15 minutes | `user.sign_in.max_failures`, `user.sign_in.window_minutes` |
+| Lock length | 1 minute, doubling with each lock in a row, up to 15 | `user.sign_in.lock_minutes` |
+| Attempts per sender address, any account | 10 per minute | `user.sign_in.per_sender_per_minute` |
+
+- **One counter:** wrong passwords share `user_credential_attempts` with two-factor (migration `018-credential-attempts.sql`), kind `sign_in`, counted apart from kind `step_up` so guessing at the form never blocks the owner's own 2FA checks. One window/lock rule: `src/credential_attempts.rs`; sign-in side: the password step in `src/identity.rs` (`password_identity`) and the limit in `src/sign_in.rs`, before any second-factor challenge.
+- **A stranger cannot keep it locked:** a wrong password while locked is not counted and never extends the lock.
+- **Hidden from strangers:** a locked account gets the same answer as a wrong password, even with the right one; unknown addresses are not counted per account (the per-sender limit covers them). Over the per-sender limit the form says "Too many sign-in attempts", naming no account.
+- **Visible to the owner and administrators:** failures and locks are audited (`user.sign_in.failed`, `user.sign_in.locked`, actor the system principal `sign-in`); the owner is emailed a reset link when a lock starts; an administrator sees "Locked until" on the account page and can Unlock (`admin.user.update`, `user.sign_in.unlocked`).
+- **Ends:** when the lock expires, after a password reset or an administrator's unlock. A successful sign-in forgets the count and the run of locks.
+
 ## Known gaps
 
-No throttle exists on guessing a password at login. Authorization of the link
-commands is tenant-scoped (K15).
+Authorization of the link commands is tenant-scoped (K15).
 
 ## Walkthrough
 

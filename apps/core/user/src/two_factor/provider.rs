@@ -100,20 +100,17 @@ impl Provider for Authenticator {
             if let Some(row) = sql.query_opt("DELETE FROM user_two_factor WHERE tenant_id=$1 AND user_id=$2 RETURNING confirmed_at IS NOT NULL", &[&account.tenant(), &account.user()]).await? {
                 changes.push(Change { kind: "user_two_factor".into(), id: account.user(), old: json!({"status": if row.get::<_, bool>(0) { "enabled" } else { "pending" }}), new: json!({"status": "off"}) });
             }
-            if sql
-                .execute(
-                    "DELETE FROM user_two_factor_attempts WHERE tenant_id=$1 AND user_id=$2",
-                    &[&account.tenant(), &account.user()],
-                )
+            // Only the two-factor counter: a sign-in lock is not a 2FA matter.
+            let kind = crate::credential_attempts::Kind::StepUp;
+            if crate::credential_attempts::forget(sql, account.tenant(), account.user(), kind)
                 .await?
-                > 0
             {
-                changes.push(Change {
-                    kind: "user_two_factor_attempts".into(),
-                    id: account.user(),
-                    old: json!({}),
-                    new: json!({"reset": true}),
-                });
+                changes.push(crate::credential_attempts::change(
+                    account.user(),
+                    kind,
+                    json!({}),
+                    json!({"reset": true}),
+                ));
             }
             Ok(changes)
         })
