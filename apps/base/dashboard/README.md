@@ -1,6 +1,6 @@
 # bilibi-dashboard
 
-The workspace landing page at `/dashboard`. Installed modules contribute its
+The workspace landing page at `/dashboard`, first in the sidebar. Installed modules contribute its
 widgets and sections; this module owns the catalogue, the page and each
 account's arrangement, and reads no contributor's tables (Bilimbi ADR 0009).
 

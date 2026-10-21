@@ -920,6 +920,12 @@ body:has(dialog:modal) #flash-group > #connection-server-error {
   background-color: var(--color-surface);
 }
 
+/* A leading page (Dashboard) stays bold, also while active */
+.app-nav-menu .app-nav-item.app-nav-lead,
+.app-nav-menu .app-nav-parent-link.app-nav-lead {
+  font-weight: 700;
+}
+
 /* Parent branch ascent when it contains the active menu item */
 .app-nav-menu .app-nav-parent.text-brand-strong,
 .app-nav-menu .app-nav-parent.text-brand-strong .app-nav-container,

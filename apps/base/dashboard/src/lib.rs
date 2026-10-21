@@ -346,5 +346,11 @@ inventory::submit! {
 inventory::submit! { Contribution::new(bilibi_module_registry::contributions::ROUTES, "dashboard.index",
 Provenance { module: "base/dashboard", source: file!(), line: line!() },
 &bilibi_module_registry::contributions::Route { method: bilibi_module_registry::contributions::Method::Get, path: "/dashboard", service: "base/dashboard.pages", operation: "index", access: bilibi_module_registry::contributions::Access::SignedIn, framed: true }) }
-// No menu item: as in Bilimbi, the status-bar brand link (`app-brand`) and
-// sign-in reach the dashboard, and the sidebar holds no `nav-dashboard`.
+// Bilibi departs from Bilimbi here: besides the status-bar brand link
+// (`app-brand`) and sign-in, the sidebar leads with `nav-dashboard`.
+bilibi_menu::contribute!(
+    "base/dashboard",
+    bilibi_menu::MenuItem::page("dashboard", "Dashboard", "/dashboard")
+        .icon("squares-2x2")
+        .leading()
+);

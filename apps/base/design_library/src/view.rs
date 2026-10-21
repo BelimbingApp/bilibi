@@ -490,10 +490,15 @@ impl View<'_> {
             label: label.into(),
             icon: icon.into(),
             active,
+            leading: false,
             route: Some(format!("{}/components", crate::BASE)),
             children: Vec::new(),
         };
         let rows = bilibi_ui::navigation_unpinned(&[
+            bilibi_ui::NavNode {
+                leading: true,
+                ..leaf("example.dashboard", "Dashboard", "hero-squares-2x2", false)
+            },
             leaf(
                 "example.companies",
                 "Companies",
@@ -506,6 +511,7 @@ impl View<'_> {
                 icon: "hero-cog-6-tooth".into(),
                 route: None,
                 active: false,
+                leading: false,
                 children: vec![leaf(
                     "example.system.design-library",
                     "Design Library",

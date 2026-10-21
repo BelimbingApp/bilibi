@@ -309,6 +309,7 @@ fn nav_node(node: &menu::Node, active: Option<&str>) -> NavNode {
         icon,
         route: item.route.map(str::to_owned),
         active: active == Some(item.id),
+        leading: item.leading,
         children: node
             .children
             .iter()

@@ -53,13 +53,15 @@ pub struct NavNode {
     pub icon: String,
     pub route: Option<String>,
     pub active: bool,
+    /// A leading page: bold, with a rule before the first section.
+    pub leading: bool,
     pub children: Vec<NavNode>,
 }
 impl NavNode {
     fn contains_active(&self) -> bool {
         self.active || self.children.iter().any(Self::contains_active)
     }
-    fn render(&self, tileable: bool, pinnable: bool) -> askama::Result<Html> {
+    fn render(&self, tileable: bool, pinnable: bool, rule: bool) -> askama::Result<Html> {
         let children = navigation_options(&self.children, tileable, pinnable)?;
         Html::render(&NavBranch {
             node: self,
@@ -68,6 +70,7 @@ impl NavNode {
             children,
             pinnable,
             tileable: tileable && self.route.as_deref() != Some("/workspace"),
+            rule,
         })
     }
 }
@@ -81,7 +84,12 @@ pub fn navigation_unpinned(nodes: &[NavNode]) -> askama::Result<Html> {
 fn navigation_options(nodes: &[NavNode], tileable: bool, pinnable: bool) -> askama::Result<Html> {
     nodes
         .iter()
-        .map(|node| node.render(tileable, pinnable))
+        .enumerate()
+        .map(|(at, node)| {
+            // The rule closes the leading pages, above the first section.
+            let rule = node.leading && nodes.get(at + 1).is_some_and(|next| !next.leading);
+            node.render(tileable, pinnable, rule)
+        })
         .collect()
 }
 #[derive(Template)]
@@ -93,6 +101,7 @@ struct NavBranch<'a> {
     children: Html,
     tileable: bool,
     pinnable: bool,
+    rule: bool,
 }
 
 /// Display-only scope. The host must obtain operator standing from an explicit

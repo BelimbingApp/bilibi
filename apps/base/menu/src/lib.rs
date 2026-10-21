@@ -69,6 +69,9 @@ pub struct MenuItem {
     pub parent: Option<&'static str>,
     pub requirement: Requirement,
     pub order: i32,
+    /// Drawn first, in bold, with a rule before the sections (the Dashboard).
+    /// Only a root page may lead.
+    pub leading: bool,
 }
 impl MenuItem {
     pub const fn container(id: &'static str, label: &'static str) -> Self {
@@ -80,6 +83,7 @@ impl MenuItem {
             parent: None,
             requirement: Requirement::Open,
             order: 0,
+            leading: false,
         }
     }
     pub const fn page(id: &'static str, label: &'static str, route: &'static str) -> Self {
@@ -108,6 +112,12 @@ impl MenuItem {
     }
     pub const fn order(self, order: i32) -> Self {
         Self { order, ..self }
+    }
+    pub const fn leading(self) -> Self {
+        Self {
+            leading: true,
+            ..self
+        }
     }
     pub fn is_container(&self) -> bool {
         self.route.is_none()
@@ -195,6 +205,7 @@ impl Menu {
                 || item.parent.is_some_and(|parent| !id_valid(parent))
                 || item.label.trim().is_empty()
                 || item.route.is_some_and(|route| !route.starts_with('/'))
+                || item.leading && (item.parent.is_some() || item.route.is_none())
                 || !item.requirement.is_valid()
             {
                 return Err(invalid(format!(
@@ -305,8 +316,9 @@ fn build(items: &[Item], parent: Option<&str>) -> Vec<Node> {
             children: build(items, Some(current.item.id)),
         })
         .collect();
-    // Source siblings sort by label; the stable sort keeps `(order, id)` ties.
-    nodes.sort_by_key(|node| node.item.item.label.to_lowercase());
+    // Leading pages come first, then source siblings sort by label; the stable
+    // sort keeps `(order, id)` ties.
+    nodes.sort_by_key(|node| (!node.item.item.leading, node.item.item.label.to_lowercase()));
     nodes
 }
 fn prune(nodes: Vec<Node>) -> Vec<Node> {
