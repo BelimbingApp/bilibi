@@ -24,8 +24,8 @@ Data display demonstrates the canonical list toolbar: search first, filter boxes
 Inputs keeps the single select, checkbox and radio group in Choice controls. The separate Multi-select card demonstrates the canonical inset label, selected count and chips: single-line overflow by default, explicit wrapping, and an empty selection. The live-state preview reads the first multi-select. Code input shows the device code and a bare 2FA code field.
 
 For manual runtime evidence, follow
-[`design-library-v1.json`](../../../../fixtures/parity/design-library-v1.json) and
-[`runtime-parity.md`](../../../../docs/runtime-parity.md). Use an isolated migrated
+[`design-library-v1.json`](../../../fixtures/parity/design-library-v1.json) and
+[`runtime-parity.md`](../../../docs/runtime-parity.md). Use an isolated migrated
 database holding the walkthrough fixture (`cargo run -p bilibi-walkthrough-fixture`),
 then visit `/system/design-library/components` as its `admin@example.test`. Try the action link, modal/confirmation flow, live form, the File input card
 (stream two small files, Keep files, and watch a file over 256 KiB refused),
