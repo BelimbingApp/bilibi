@@ -31,6 +31,7 @@ mod instance;
 pub mod list_columns;
 pub mod list_state;
 pub mod lists;
+mod page_search;
 pub mod params;
 mod record_fields;
 pub use record_fields::RecordField;
@@ -88,7 +89,8 @@ pub use lists::{
     Column, EmptyState, FilterToolbar, Pagination, RecordLink, Row, SortView, Table, TableEmpty,
     ToolbarControl,
 };
-pub use settings::SettingsTab;
+pub use page_search::{page_search, SearchPage};
+pub use settings::{SettingsTab, SETTINGS_LOCATION};
 pub use specimen::ComponentsSpecimen;
 pub use upload::{
     ChunkOutcome, ClientEntry, FileInput, Registration, UploadEntry, UploadError, UploadSpec,

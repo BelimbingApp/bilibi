@@ -327,6 +327,16 @@ impl ModalWidth {
             Self::Wide => "max-w-2xl",
         }
     }
+    /// The rounded dialog surface every modal shares, at this width.
+    pub fn dialog_class(&self) -> String {
+        format!(
+            "mx-auto mt-16 mb-4 max-h-[calc(100%-5rem)] w-[calc(100%-2rem)] flex-col overflow-hidden \
+             open:flex rounded-xl border border-line bg-surface py-2 text-sm text-ink shadow-lg \
+             focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-strong/30 \
+             backdrop:bg-ink/40 {}",
+            self.class()
+        )
+    }
 }
 
 /// A modal dialog. The server decides whether it exists: render it while the

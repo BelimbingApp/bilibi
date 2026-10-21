@@ -14,44 +14,53 @@ pub enum SettingsTab {
     AiConnections,
 }
 
+/// One navigation source for every personal settings page: its tab, id, label
+/// and address.
+const PAGES: [(SettingsTab, &str, &str, &str); 5] = [
+    (
+        SettingsTab::Profile,
+        "settings-nav-profile",
+        "Profile",
+        "/settings/profile",
+    ),
+    (
+        SettingsTab::Password,
+        "settings-nav-password",
+        "Password",
+        "/settings/password",
+    ),
+    (
+        SettingsTab::TwoFactor,
+        "settings-nav-two-factor",
+        "2FA",
+        "/settings/two-factor",
+    ),
+    (
+        SettingsTab::Appearance,
+        "settings-nav-appearance",
+        "Appearance",
+        "/settings/appearance",
+    ),
+    (
+        SettingsTab::AiConnections,
+        "settings-nav-ai-connections",
+        "AI connections",
+        "/settings/ai-connections",
+    ),
+];
+
+/// Where the personal settings pages live, as the page search names it.
+pub const SETTINGS_LOCATION: [&str; 2] = ["Account", "My Settings"];
+
 impl SettingsTab {
-    /// One navigation source for every personal settings page.
     pub fn tabs(&self) -> [Tab<'static>; 5] {
-        [
-            (
-                Self::Profile,
-                "settings-nav-profile",
-                "Profile",
-                "/settings/profile",
-            ),
-            (
-                Self::Password,
-                "settings-nav-password",
-                "Password",
-                "/settings/password",
-            ),
-            (
-                Self::TwoFactor,
-                "settings-nav-two-factor",
-                "2FA",
-                "/settings/two-factor",
-            ),
-            (
-                Self::Appearance,
-                "settings-nav-appearance",
-                "Appearance",
-                "/settings/appearance",
-            ),
-            (
-                Self::AiConnections,
-                "settings-nav-ai-connections",
-                "AI connections",
-                "/settings/ai-connections",
-            ),
-        ]
-        .map(|(section, id, label, href)| Tab {
+        PAGES.map(|(section, id, label, href)| Tab {
             id,
             ..Tab::link(href, label, *self == section)
         })
+    }
+    /// Every personal settings page as (label, address), in tab order.
+    pub fn pages() -> [(&'static str, &'static str); 5] {
+        PAGES.map(|(_, _, label, href)| (label, href))
     }
 }

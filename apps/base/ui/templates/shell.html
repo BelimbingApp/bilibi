@@ -12,6 +12,7 @@
 </nav>
 <div class="ml-auto flex shrink-0 items-center justify-end gap-3">
 {{ context.topbar_actions|safe }}
+<button type="button" id="app-search-toggle" data-page-search-toggle aria-haspopup="dialog" aria-controls="app-search" aria-keyshortcuts="/" aria-label="Search" title="Search (/)" class="inline-flex size-6 shrink-0 items-center justify-center rounded-sm text-action transition hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-strong">{% call ui::icon(name="search", class="size-4") %}{% endcall %}</button>
 {{ context.notifications|safe }}
 <div id="app-display" class="flex min-w-0 items-center gap-1" data-display-controls>
 {% if context.impersonator.is_some() %}<p id="app-display-locked" class="inline-flex min-w-0 items-center gap-1.5 text-xs text-muted">{% call ui::icon(name=bilibi_ui::icons::shell("clock"), class="size-4 shrink-0") %}{% endcall %}<span class="truncate">{{ context.preferences.mode_label() }} time · display preferences are not editable while viewing as another user</span></p>{% else %}
@@ -53,5 +54,6 @@
 <main id="app-content" class="min-h-0 min-w-0 flex-1 overflow-y-auto px-1 py-2 sm:px-4 sm:py-1">{{ body|safe }}</main>
 </div>
 <footer id="app-statusbar" class="flex h-6 shrink-0 items-center justify-between border-t border-line bg-surface px-4 text-xs text-ink-subtle"><div class="flex min-w-0 items-center gap-4 overflow-hidden"><a href="{{ context.home }}" id="app-brand" class="flex shrink-0 items-center transition hover:opacity-90" aria-label="Bilibi dashboard"><img src="{{ bilibi_ui::Assets::url("/favicon.svg") }}" alt="" class="shrink-0 object-contain size-4" width="16" height="16" decoding="async" loading="eager" aria-hidden="true"></a><span id="app-mode" data-live-ignore hidden role="status" aria-live="polite" class="shrink-0 rounded-sm bg-brand-surface px-1.5 font-medium text-brand-ink"></span>{{ context.instance_status|safe }}{% if let Some(address) = context.listen_address %}<span id="app-listen" class="shrink-0 tabular-nums">{{ address }}</span>{% endif %}{% if context.operator_company_missing %}<a href="/setup/platform-operator" id="app-operator-company-missing" class="inline-flex items-center gap-1 font-medium text-danger hover:underline">{% call ui::icon(name=bilibi_ui::icons::shell("warning"), class="size-3.5") %}{% endcall %}<span>Operator company not set</span></a>{% endif %}</div><div id="app-versions" class="flex min-w-0 shrink items-center gap-3 overflow-hidden whitespace-nowrap">{% for badge in context.versions %}<span id="{{ badge.id }}" class="shrink-0 tabular-nums" title="{{ badge.title }}">{{ badge.text }}</span>{% endfor %}</div></footer>
+{{ context.page_search|safe }}
 </div>
 </div>

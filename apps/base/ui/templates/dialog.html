@@ -12,7 +12,7 @@
     a dialog that renders the page's flash itself (the layout copy is hidden by
     app.css while it is open). role is "alertdialog" for a confirmation. -#}
 {% macro modal(id, title, cancel_event, width=bilibi_ui::ModalWidth::Narrow, description="", role="", owns_flash=false, messages=bilibi_ui::NO_FLASH) %}
-<dialog id="{{ id }}" open data-hook="Modal" data-cancel="{{ cancel_event }}"{% if owns_flash %} data-owns-flash="true"{% endif %} aria-modal="true" aria-labelledby="{{ id }}-title"{% if !description.is_empty() %} aria-describedby="{{ id }}-description"{% endif %} tabindex="-1"{% if !role.is_empty() %} role="{{ role }}"{% endif %} class="mx-auto mt-16 mb-4 max-h-[calc(100%-5rem)] w-[calc(100%-2rem)] flex-col overflow-hidden open:flex rounded-xl border border-line bg-surface py-2 text-sm text-ink shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-strong/30 backdrop:bg-ink/40 {{ width.class() }}">
+<dialog id="{{ id }}" open data-hook="Modal" data-cancel="{{ cancel_event }}"{% if owns_flash %} data-owns-flash="true"{% endif %} aria-modal="true" aria-labelledby="{{ id }}-title"{% if !description.is_empty() %} aria-describedby="{{ id }}-description"{% endif %} tabindex="-1"{% if !role.is_empty() %} role="{{ role }}"{% endif %} class="{{ width.dialog_class() }}">
 <div id="{{ id }}-body" class="min-h-0 overflow-y-auto px-panel py-2"><h2 id="{{ id }}-title" class="text-base font-semibold tracking-tight text-ink-strong">{{ title }}</h2>
 {%- if owns_flash -%}
 {% call f::flash(kind=bilibi_ui::StatusKind::Error, id="{}-flash-error"|format(id), message=messages.error) %}{% endcall %}

@@ -203,6 +203,161 @@
     }
   }
 
+  // ---- Page search (templates/page_search.html) ----------------------------
+  // The top bar's search button, or `/` outside a field, opens #app-search as
+  // a modal dialog (showModal: the page behind is inert and focus stays in
+  // it). The server renders every page the person may open, hidden; this shows
+  // those with a label containing the query, ignoring case, and keeps one
+  // highlighted for the arrow keys and Enter. Escape, a click outside, Close or
+  // a chosen page closes it and returns focus to the button. A live patch
+  // renders the rows hidden again, so updated() calls apply().
+  const TYPING = 'input, textarea, select, [contenteditable]:not([contenteditable="false"])';
+
+  class PageSearch {
+    constructor(shell) {
+      this.shell = shell;
+      this.root = shell.el;
+      this.active = null;
+      this.onClick = (event) => this.click(event);
+      this.onInput = (event) => { if (event.target === this.input()) this.apply(); };
+      this.onKey = (event) => this.key(event);
+      this.onClose = () => this.toggle()?.focus();
+      this.dialogEl = this.dialog();
+      this.root.addEventListener('click', this.onClick);
+      this.root.addEventListener('input', this.onInput);
+      document.addEventListener('keydown', this.onKey);
+      this.dialogEl?.addEventListener('close', this.onClose);
+      this.apply();
+    }
+
+    destroy() {
+      this.root.removeEventListener('click', this.onClick);
+      this.root.removeEventListener('input', this.onInput);
+      document.removeEventListener('keydown', this.onKey);
+      this.dialogEl?.removeEventListener('close', this.onClose);
+    }
+
+    dialog() { return this.root.querySelector('#app-search'); }
+    input() { return this.root.querySelector('#app-search-input'); }
+    toggle() { return this.root.querySelector('#app-search-toggle'); }
+    options() { return [...this.root.querySelectorAll('[data-page-search-option]')]; }
+    isOpen() { return !!this.dialog()?.open; }
+
+    open() {
+      const dialog = this.dialog();
+      if (!dialog || dialog.open) return;
+      this.shell.controls?.closeAll();
+      this.shell.setPinnedMenu(false);
+      this.shell.closeDrawer();
+      dialog.showModal();
+      this.input()?.focus();
+      this.input()?.select();
+      this.apply();
+    }
+
+    close() {
+      if (this.isOpen()) this.dialog().close();
+    }
+
+    // Shows the matching rows and their groups, then the hint or "No pages
+    // found"; writes only what changed.
+    apply() {
+      const query = (this.input()?.value ?? '').trim().toLowerCase();
+      const shown = [];
+      for (const option of this.options()) {
+        const labels = (option.dataset.pageSearchLabels ?? '').toLowerCase().split('\n');
+        const hit = query !== '' && labels.some((label) => label.includes(query));
+        if (option.hidden === hit) option.hidden = !hit;
+        if (hit) shown.push(option);
+      }
+      for (const group of this.root.querySelectorAll('[data-page-search-group]')) {
+        const empty = !group.querySelector('[data-page-search-option]:not([hidden])');
+        if (group.hidden !== empty) group.hidden = empty;
+      }
+      const hint = this.root.querySelector('#app-search-hint');
+      if (hint && hint.hidden !== (query !== '')) hint.hidden = query !== '';
+      const none = this.root.querySelector('#app-search-empty');
+      const nothing = query === '' || shown.length > 0;
+      if (none && none.hidden !== nothing) none.hidden = nothing;
+      this.highlight(shown.find((option) => option.id === this.active) ?? shown[0] ?? null, false);
+    }
+
+    highlight(option, scroll = true) {
+      this.active = option?.id ?? null;
+      for (const each of this.options()) {
+        const selected = each === option ? 'true' : 'false';
+        if (each.getAttribute('aria-selected') !== selected) each.setAttribute('aria-selected', selected);
+      }
+      const input = this.input();
+      if (input) {
+        if (option) {
+          if (input.getAttribute('aria-activedescendant') !== option.id) input.setAttribute('aria-activedescendant', option.id);
+        } else if (input.hasAttribute('aria-activedescendant')) {
+          input.removeAttribute('aria-activedescendant');
+        }
+        const expanded = option ? 'true' : 'false';
+        if (input.getAttribute('aria-expanded') !== expanded) input.setAttribute('aria-expanded', expanded);
+      }
+      if (scroll) option?.scrollIntoView({block: 'nearest'});
+    }
+
+    key(event) {
+      if (!this.isOpen()) {
+        if (event.key !== '/' || event.ctrlKey || event.metaKey || event.altKey || event.defaultPrevented) return;
+        const target = event.target instanceof Element ? event.target : null;
+        if (target?.closest(TYPING) || target?.isContentEditable || document.querySelector('dialog[open]')) return;
+        event.preventDefault();
+        this.open();
+        return;
+      }
+      // Escape closes at once: a search field would spend it clearing its text.
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        this.close();
+        return;
+      }
+      if (event.target !== this.input()) return;
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        const shown = this.options().filter((option) => !option.hidden);
+        if (shown.length === 0) return;
+        const at = shown.findIndex((option) => option.id === this.active);
+        const step = event.key === 'ArrowDown' ? 1 : -1;
+        this.highlight(shown[(at + step + shown.length) % shown.length]);
+      } else if (event.key === 'Enter') {
+        const option = this.active && this.root.querySelector(`#${CSS.escape(this.active)}`);
+        if (!option || option.hidden) return;
+        event.preventDefault();
+        option.click();
+      }
+    }
+
+    click(event) {
+      const target = event.target instanceof Element ? event.target : null;
+      if (!target) return;
+      if (target.closest('[data-page-search-toggle]')) {
+        event.preventDefault();
+        this.open();
+        return;
+      }
+      const dialog = this.dialog();
+      if (!dialog?.open) return;
+      // A chosen page closes the search and the browser follows the link.
+      if (target.closest('[data-page-search-close], [data-page-search-option]')) {
+        this.close();
+        return;
+      }
+      // The dialog itself is the target only for a click on its backdrop or
+      // its own edge; inside the rounded surface counts as inside.
+      if (target === dialog) {
+        const box = dialog.getBoundingClientRect();
+        const inside = event.clientX >= box.left && event.clientX <= box.right
+          && event.clientY >= box.top && event.clientY <= box.bottom;
+        if (!inside) this.close();
+      }
+    }
+  }
+
   // ---- Sidebar, drawer and pins (Bilimbi AppShell) --------------------------
   const AppShell = {
     mounted() {
@@ -258,18 +413,21 @@
       window.addEventListener('keydown', this.onKey);
       this.mq.addEventListener('change', this.onMq);
       this.controls = new ShellControls(this);
+      this.search = new PageSearch(this);
       this.apply();
     },
 
     // A live patch rewrites the server-rendered state (hidden panels, sidebar
-    // data attributes); the browser's own state is re-applied over it.
+    // data attributes, search rows); the browser's own state is re-applied over it.
     updated() {
       this.controls?.apply();
+      this.search?.apply();
       this.apply();
     },
 
     destroyed() {
       this.controls?.destroy();
+      this.search?.destroy();
       this.toggle?.removeEventListener('click', this.onToggle);
       this.backdrop?.removeEventListener('click', this.onBackdrop);
       this.root?.removeEventListener('click', this.onNav);
@@ -445,6 +603,8 @@
     },
 
     onGlobalKey(event) {
+      // The open search is a modal dialog: Escape and Tab are its own.
+      if (this.search?.isOpen()) return;
       if (event.key === 'Escape') {
         if (this.pinnedMenuOpen()) {
           this.setPinnedMenu(false);

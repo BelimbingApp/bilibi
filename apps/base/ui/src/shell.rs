@@ -140,6 +140,9 @@ pub struct ShellContext<'a> {
     /// The open page's controls in the top bar, left of the bell (Bilimbi's
     /// `topbar_actions` slot), from `Page::topbar_actions`.
     pub topbar_actions: Html,
+    /// The page search dialog (`page_search`) over the pages the person may
+    /// open, opened by the top bar's search button or `/`.
+    pub page_search: Html,
 }
 impl ShellContext<'_> {
     pub fn initials(&self) -> String {

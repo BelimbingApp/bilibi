@@ -185,12 +185,13 @@ Width is a shared decision. Every page uses `PageVariant`. All three share one c
 
 - **Credential layout:** a centered card for sign-in and password recovery. No navigation.
 - **Workspace shell:** `h-7` top bar, sidebar menu, status bar.
-  - Top bar: sidebar toggle, brand mark, notification bell, timezone and clock selector, theme selector.
+  - Top bar: sidebar toggle, brand mark, search, notification bell, timezone and clock selector, theme selector.
   - Sidebar: the menu, pinned items, account entry at the bottom.
   - Status bar: the Platform version, then each mounted Domain's version (`finance 0.1.0`), with commits in the tooltip (`docs/versions.md`). It also shows the server role and instance label in the configured colour, plus the listen address when the role is Dev. The role comes from `instance.role`, never the build mode.
   - Below `lg` the menu is an off-canvas drawer.
 - Pages never render chrome. The host wraps them (`apps/web/src/shell.rs`).
 - The bell shows the unread count and follows new notifications live. It opens recent items.
+- Search is the button before the bell, or `/` when not typing in a field. It opens a dialog that finds every page the person may open: menu pages, account pages and pages with no menu row. A query matches a page's name or any place it lives under, ignoring case, and each result shows where it lives (`Administration › Authorization › Roles`, `Account › My Settings › Password`). ↑/↓ and Enter open one; Esc or a click outside closes it. On a phone it fills the screen.
 - Theme, clock mode and pins belong to the account. They are not `localStorage`.
 - "Viewing as … · Stop" appears only while impersonating.
 - A platform-operator row appears in the account menu. Operator-only screens carry their own caution where reach is unfiltered.
