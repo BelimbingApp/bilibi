@@ -18,7 +18,14 @@ pub const CREATE: &str = "admin.user.create";
 pub const UPDATE: &str = "admin.user.update";
 pub const DELETE: &str = "admin.user.delete";
 const READ: &[&str] = &[LIST, VIEW];
-const ALL: &[&str] = &[LIST, VIEW, CREATE, UPDATE, DELETE];
+const ALL: &[&str] = &[
+    LIST,
+    VIEW,
+    CREATE,
+    UPDATE,
+    DELETE,
+    crate::sso::config::MANAGE,
+];
 const fn role(
     code: &'static str,
     name: &'static str,
@@ -36,7 +43,7 @@ const fn role(
 // Bilimbi's two user-management roles, and the tenant owner's share.
 inventory::submit! { Contribution::new(VOCABULARY, "core/user", Provenance { module: "core/user", source: file!(), line: line!() }, &VocabularyContribution {
     domains: &[], verbs: &[],
-    capabilities: &[C::tenant(LIST), C::tenant(VIEW), C::tenant(CREATE), C::tenant(UPDATE), C::tenant(DELETE)],
+    capabilities: &[C::tenant(LIST), C::tenant(VIEW), C::tenant(CREATE), C::tenant(UPDATE), C::tenant(DELETE),C::tenant(crate::sso::config::MANAGE)],
     roles: &[
         role("user_viewer", "User Viewer", "Read-only access to user management.", READ),
         role("user_editor", "User Editor", "Read-write access to user management.", ALL),

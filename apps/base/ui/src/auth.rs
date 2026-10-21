@@ -51,6 +51,8 @@ pub struct LoginForm {
     pub form_error: String,
     pub session_expired: bool,
     pub workspace: LoginWorkspace,
+    pub sso_public: String,
+    pub sso_label: String,
 }
 
 /// The workspace strip under the sign-in card (Bilimbi `assign_workspace`):
@@ -84,6 +86,8 @@ pub struct LoginPage {
     pub session_expired: bool,
     pub form_error: String,
     pub workspace: LoginWorkspace,
+    pub sso_public: String,
+    pub sso_label: String,
     pub email: Html,
     pub password: Html,
 }
@@ -94,6 +98,8 @@ impl LoginPage {
             session_expired: form.session_expired,
             form_error: form.form_error.clone(),
             workspace: form.workspace.clone(),
+            sso_public: form.sso_public.clone(),
+            sso_label: form.sso_label.clone(),
             email: Html::render(
                 &Field::in_form("login", "email")
                     .id("login-email")

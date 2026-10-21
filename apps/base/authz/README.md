@@ -134,3 +134,11 @@ rollback. It uses the walkthrough fixture, whose tenant 1 is the operator, and i
 refusal trigger, then removes both; never run against a real database. Decision
 and audit rows remain as evidence. It requires the real installed owner services.
 Compile with the workspace discovery/fmt/clippy checks; do not add a test runner.
+
+## External identity roles
+
+Keep provider-managed roles separate from administrator assignments.
+
+`Grants::configure_identity_roles_in` authorizes and audits a company-scoped source's complete role bound, using ordinary role-update capability and Step-up checks. `apply_identity_roles_in` can then apply only roles in that stored bound for an account proved to belong to the policy's company. Both use the caller's `MutationTransaction`; the identity owner supplies the verified claims and calls the latter during admission. Narrowing a bound removes obsolete grants immediately.
+
+Automatic memberships live in `authz_identity_roles`, while manual memberships remain in `principal_roles`. `effective_principal_roles` combines them for decisions, masking, role displays, agent reach and saved-layout eligibility. Use the Authz read APIs or that view for effective memberships. Never write the view or delete manual assignments to reflect a provider group change. Direct denies retain precedence over both kinds of role grant.

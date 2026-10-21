@@ -1,0 +1,56 @@
+[
+  {
+    "id": "generic",
+    "name": "OpenID Connect",
+    "issuer": "https://identity.example.com",
+    "email_claim": "email",
+    "name_claim": "name",
+    "groups_claim": "",
+    "live_verified": false
+  },
+  {
+    "id": "entra",
+    "name": "Microsoft Entra ID",
+    "issuer": "https://login.microsoftonline.com/<tenant-id>/v2.0",
+    "email_claim": "email",
+    "name_claim": "name",
+    "groups_claim": "groups",
+    "live_verified": false
+  },
+  {
+    "id": "keycloak",
+    "name": "Keycloak",
+    "issuer": "https://identity.example.com/realms/<realm>",
+    "email_claim": "email",
+    "name_claim": "name",
+    "groups_claim": "realm_access.roles",
+    "live_verified": true
+  },
+  {
+    "id": "google",
+    "name": "Google",
+    "issuer": "https://accounts.google.com",
+    "email_claim": "email",
+    "name_claim": "name",
+    "groups_claim": "",
+    "live_verified": false
+  },
+  {
+    "id": "okta",
+    "name": "Okta",
+    "issuer": "https://<organisation>.okta.com/oauth2/default",
+    "email_claim": "email",
+    "name_claim": "name",
+    "groups_claim": "groups",
+    "live_verified": false
+  },
+  {
+    "id": "auth0",
+    "name": "Auth0",
+    "issuer": "https://<tenant>.<region>.auth0.com/",
+    "email_claim": "email",
+    "name_claim": "name",
+    "groups_claim": "https://example.com/groups",
+    "live_verified": false
+  }
+]

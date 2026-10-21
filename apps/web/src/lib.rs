@@ -321,6 +321,12 @@ pub fn router(app: App) -> Router {
             "/reset-password/{token}",
             get(auth::reset_page).post(auth::reset),
         )
+        .route("/login/sso/{provider}/start", get(auth::sso_start))
+        .route("/login/sso/callback", get(auth::sso_callback))
+        .route(
+            "/login/sso/backchannel/{provider}",
+            post(auth::sso_backchannel),
+        )
         .route("/logout", post(logout))
         .route(impersonation::LEAVE, post(impersonation::leave))
         .route(impersonation::ENTER, post(impersonation::enter))
@@ -524,8 +530,25 @@ async fn logout(
     Form(form): Form<Logout>,
 ) -> std::result::Result<Response, HttpError> {
     origin(&app, &headers)?;
-    app.user.logout(&token(&headers)?, &form.csrf).await?;
-    let mut response = Redirect::to("/").into_response();
+    let bearer = token(&headers)?;
+    let scope = {
+        let client = app.db.get().await.map_err(Error::from)?;
+        app.user.sessions.check(&**client, &bearer).await?
+    };
+    if scope.csrf != form.csrf {
+        return Err(Error::Forbidden.into());
+    }
+    let destination = app
+        .user
+        .external_logout_destination(&scope, &bearer)
+        .await
+        .unwrap_or(None);
+    app.user.logout(&bearer, &form.csrf).await?;
+    let mut response = if let Some(destination) = destination {
+        auth::provider_signed_out(&app, &destination).await?
+    } else {
+        Redirect::to("/").into_response()
+    };
     response.headers_mut().insert(
         header::SET_COOKIE,
         HeaderValue::from_static("bilibi_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0"),

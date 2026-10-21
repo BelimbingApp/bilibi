@@ -48,8 +48,8 @@ pub async fn capabilities(client: &impl GenericClient, scope: &Scope) -> Result<
             deny.insert(row.get::<_, String>(0));
         }
     }
-    let all = client.query_one("SELECT EXISTS(SELECT 1 FROM principal_roles p JOIN roles r ON r.tenant_id=p.tenant_id AND r.id=p.role_id WHERE p.tenant_id=$1 AND p.user_id=$2 AND r.grant_all)",&[&scope.tenant(),&scope.user()]).await?.get::<_,bool>(0);
-    for row in client.query("SELECT r.capability FROM principal_roles p JOIN role_capabilities r ON r.tenant_id=p.tenant_id AND r.role_id=p.role_id WHERE p.tenant_id=$1 AND p.user_id=$2", &[&scope.tenant(),&scope.user()]).await? { allow.insert(row.get::<_,String>(0)); }
+    let all = client.query_one("SELECT EXISTS(SELECT 1 FROM effective_principal_roles p JOIN roles r ON r.tenant_id=p.tenant_id AND r.id=p.role_id WHERE p.tenant_id=$1 AND p.user_id=$2 AND r.grant_all)",&[&scope.tenant(),&scope.user()]).await?.get::<_,bool>(0);
+    for row in client.query("SELECT r.capability FROM effective_principal_roles p JOIN role_capabilities r ON r.tenant_id=p.tenant_id AND r.role_id=p.role_id WHERE p.tenant_id=$1 AND p.user_id=$2", &[&scope.tenant(),&scope.user()]).await? { allow.insert(row.get::<_,String>(0)); }
     Ok(bilibi_authz::vocabulary()?
         .capabilities
         .iter()

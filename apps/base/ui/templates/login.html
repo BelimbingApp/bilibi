@@ -12,6 +12,10 @@
 <div class="flex flex-col gap-5">
 {% if session_expired %}<div id="login-session-expired">{% call feedback::alert(kind=bilibi_ui::StatusKind::Warning) %}Your session expired. Sign in again to continue.{% endcall %}</div>{% endif %}
 {% if !form_error.is_empty() %}<div id="login-form-error">{% call feedback::alert(kind=bilibi_ui::StatusKind::Error, id="login-form-error-1") %}{{ form_error }}{% endcall %}</div>{% endif %}
+{% if !sso_public.is_empty() %}
+{% let destination = "/login/sso/{}/start"|format(sso_public) %}
+{% call ui::button(variant=bilibi_ui::ButtonVariant::Primary, href=destination, id="sso-start") %}{{ sso_label }}{% endcall %}
+{% endif %}
 <form id="login-form" method="post" class="flex flex-col gap-4">
 {{ email }}
 <div class="flex flex-col gap-1">

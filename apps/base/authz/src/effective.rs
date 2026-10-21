@@ -55,13 +55,13 @@ pub async fn effective_capabilities_of(
         .await?;
     let granted = client
         .query(
-            "SELECT DISTINCT r.capability FROM principal_roles p JOIN role_capabilities r ON r.tenant_id=p.tenant_id AND r.role_id=p.role_id WHERE p.tenant_id=$1 AND p.user_id=$2",
+            "SELECT DISTINCT r.capability FROM effective_principal_roles p JOIN role_capabilities r ON r.tenant_id=p.tenant_id AND r.role_id=p.role_id WHERE p.tenant_id=$1 AND p.user_id=$2",
             &[&scope.tenant(), &user],
         )
         .await?;
     let grant_all: bool = client
         .query_one(
-            "SELECT EXISTS(SELECT 1 FROM principal_roles p JOIN roles r ON r.tenant_id=p.tenant_id AND r.id=p.role_id WHERE p.tenant_id=$1 AND p.user_id=$2 AND r.grant_all)",
+            "SELECT EXISTS(SELECT 1 FROM effective_principal_roles p JOIN roles r ON r.tenant_id=p.tenant_id AND r.id=p.role_id WHERE p.tenant_id=$1 AND p.user_id=$2 AND r.grant_all)",
             &[&scope.tenant(), &user],
         )
         .await?

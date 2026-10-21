@@ -78,6 +78,17 @@ impl AffiliationService {
         tx.commit().await?;
         Ok(result)
     }
+    /// Compose account provisioning in the caller's audited transaction.
+    /// The same owner authorization, validation and notifications apply.
+    pub async fn create_in(
+        &self,
+        tx: &mut bilibi_database::MutationTransaction<'_>,
+        scope: &Scope,
+        input: &AffiliationInput,
+    ) -> std::result::Result<Affiliation, Error> {
+        let scope = self.fresh(tx.sql(), scope).await?;
+        identity::create(tx, &scope, input).await
+    }
     pub async fn update(
         &self,
         scope: &Scope,

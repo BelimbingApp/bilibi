@@ -43,7 +43,7 @@ const STATEMENT: &str = "WITH tenant_companies AS (
   WHERE u.tenant_id = $1 AND u.deleted_at IS NULL
     AND ($2::text IS NULL OR u.name ILIKE $2 OR u.email ILIKE $2)
     AND (cardinality($3::bigint[]) = 0 OR EXISTS (
-      SELECT 1 FROM principal_roles pr WHERE pr.tenant_id = u.tenant_id AND pr.user_id = u.id AND pr.role_id = ANY($3)))
+      SELECT 1 FROM effective_principal_roles pr WHERE pr.tenant_id = u.tenant_id AND pr.user_id = u.id AND pr.role_id = ANY($3)))
 ), user_total AS (
   SELECT count(*) AS total FROM filtered_users
 ), page_users AS (
@@ -54,7 +54,7 @@ const STATEMENT: &str = "WITH tenant_companies AS (
          array_agg(r.name ORDER BY r.name, r.code, r.id) AS role_names,
          array_agg(r.code ORDER BY r.name, r.code, r.id) AS role_codes,
          array_agg(r.is_system ORDER BY r.name, r.code, r.id) AS role_system
-  FROM principal_roles pr JOIN roles r ON r.tenant_id = pr.tenant_id AND r.id = pr.role_id
+  FROM effective_principal_roles pr JOIN roles r ON r.tenant_id = pr.tenant_id AND r.id = pr.role_id
   WHERE pr.tenant_id = $1 AND pr.user_id IN (SELECT id FROM page_users)
     AND (r.company_id IS NULL OR r.company_id = ANY($6))
   GROUP BY pr.user_id

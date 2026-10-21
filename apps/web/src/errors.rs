@@ -30,7 +30,7 @@ pub fn status_of(error: &Error) -> StatusCode {
         Error::Unauthorized => StatusCode::UNAUTHORIZED,
         Error::Forbidden | Error::StepUpRequired { .. } => StatusCode::FORBIDDEN,
         Error::NotFound => StatusCode::NOT_FOUND,
-        Error::Invalid => StatusCode::BAD_REQUEST,
+        Error::Invalid | Error::InvalidReason(_) => StatusCode::BAD_REQUEST,
         Error::Conflict => StatusCode::CONFLICT,
         // The pool could not hand out a connection: retry later.
         Error::Pool(_) => StatusCode::SERVICE_UNAVAILABLE,

@@ -178,3 +178,5 @@ the same record from either side.
 ## Postal addresses
 
 Companies and contacts have linked postal addresses, owned by [Core Address](../address/README.md). The `core.address` guide explains saving an office or billing address and attaching it to a company or person. Use `core.address.company.list` or `core.address.person.list` to read those links. Address creation and attachment are reviewed writes; a namecard contact can be created first, then linked to its office address. An affiliation holds a position and work email/phone, not a postal address.
+
+`AffiliationService::create_in` composes the same authorized creation inside a caller-owned `MutationTransaction`, so atomic account provisioning never opens an inner transaction. It retains owner locks, validation and after-commit notifications.

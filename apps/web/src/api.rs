@@ -434,7 +434,7 @@ pub(crate) fn client_address(peer: Option<SocketAddr>, headers: &HeaderMap) -> O
     Some(peer)
 }
 
-async fn allowed(app: &App, kind: &str, sender: &str) -> Result<bool, Error> {
+pub(crate) async fn allowed(app: &App, kind: &str, sender: &str) -> Result<bool, Error> {
     let client = app.db.get().await?;
     let limit = app
         .api
@@ -757,6 +757,10 @@ fn api_error(error: bilibi_base::agent_api::Error) -> Refusal {
         ),
         // The grant stopped proving live between the edge and the commit.
         E::Backend(Error::Unauthorized) => refused(),
+        E::Backend(Error::InvalidReason(reason)) => refusal(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            json!({"error":"rejected", "message":reason}),
+        ),
         E::Backend(Error::Conflict | Error::Invalid) => {
             self::error(StatusCode::UNPROCESSABLE_ENTITY, "rejected")
         }

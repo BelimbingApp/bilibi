@@ -523,6 +523,14 @@
   }
   document.addEventListener('submit', (event) => {
     const form = event.target;
+    // The native logout response owns the next navigation, including optional
+    // provider sign-out. Its session-termination wake must not race that reply.
+    if (!form.dataset.event && new URL(form.getAttribute('action') || location.href, location.href).pathname === '/logout') {
+      stopped = true;
+      clearTimeout(retryTimer);
+      if (socket) { socket.onmessage = null; socket.close(); }
+      return;
+    }
     if (!form.dataset.event) return;
     event.preventDefault();
     if (form.hasAttribute('data-change') && !form.dataset.submitEvent) return sendChange(form);

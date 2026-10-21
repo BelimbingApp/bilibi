@@ -94,6 +94,17 @@ impl PersonService {
         tx.commit().await?;
         Ok(person)
     }
+    /// Compose account provisioning in the caller's audited transaction.
+    /// The same owner authorization, validation and notifications apply.
+    pub async fn create_in(
+        &self,
+        tx: &mut bilibi_database::MutationTransaction<'_>,
+        scope: &Scope,
+        input: &PersonInput,
+    ) -> std::result::Result<Person, WriteError> {
+        let scope = self.fresh(tx.sql(), scope).await?;
+        identity::create(tx, &scope, input).await
+    }
     pub async fn update(
         &self,
         scope: &Scope,

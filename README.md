@@ -15,7 +15,7 @@ Bilibi is MIT-licensed, like the earlier iterations. The architecture is the sam
 
 ## Who it is for
 
-- Small and medium businesses now; larger organisations as enterprise sign-in and compliance arrive.
+- Small and medium businesses, and larger organisations connecting their existing identity provider.
 - Developers and builders serving businesses.
 - IT service providers.
 - SaaS founders and builders.
@@ -35,7 +35,7 @@ Bilibi is MIT-licensed, like the earlier iterations. The architecture is the sam
 
 ## What works today
 
-- **Sign-in:** server-held sessions, Argon2id passwords, password reset.
+- **Sign-in:** server-held sessions, Argon2id passwords, password reset, and optional [company OIDC single sign-on](apps/core/user/sso.md) with provider 2FA and role mapping.
 - **Permissions:** roles, capabilities and direct grants; a deny always wins; sensitive fields can be masked.
 - **Companies, people and addresses:** lists, details and inline edits, scoped to the tenant.
 - **Audit:** every change records old and new values and who made it, in the same save; append-only.

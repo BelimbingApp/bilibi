@@ -1,4 +1,6 @@
 //! Authenticated grant writes and explicit authoritative system-role reconciliation.
+#[path = "identity_roles.rs"]
+mod identity_roles;
 use crate::step_up;
 use crate::{
     authorize_key,

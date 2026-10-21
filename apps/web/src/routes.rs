@@ -34,11 +34,14 @@ pub struct BoundDownload {
 }
 
 /// The host paths no discovered route, download or moved path may overlap.
-const HOST_PATHS: [&str; 18] = [
+const HOST_PATHS: [&str; 21] = [
     "/",
     "/login",
     "/login/challenge",
     "/logout",
+    "/login/sso/{provider}/start",
+    "/login/sso/callback",
+    "/login/sso/backchannel/{provider}",
     "/preferences",
     "/forgot-password",
     "/reset-password/{token}",

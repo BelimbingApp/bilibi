@@ -111,6 +111,9 @@ impl UserService {
             .authentication
             .authenticate(tx.sql(), tenant, user, String::new())
             .await?;
+        if !self.password_sso_allowed(tx.sql(), &scope).await? {
+            return Err(CredentialError::Rejected);
+        }
         let login = credential(pending);
         if pending {
             let minutes = self
@@ -130,6 +133,58 @@ impl UserService {
         }
         tx.commit().await?;
         Ok(login)
+    }
+
+    /// Both credential methods enter the same pending/session storage and use
+    /// the same second-factor completion, standing and password-version checks.
+    pub(crate) async fn external_admission(
+        &self,
+        tx: &mut MutationTransaction<'_>,
+        scope: &Scope,
+        pending: bool,
+        provider: i64,
+    ) -> Result<Login> {
+        let login = credential(pending);
+        if pending {
+            let tenant = scope.tenant();
+            let user = scope.user();
+            let stored: String = tx
+                .sql()
+                .query_one(
+                    "SELECT password_hash FROM users WHERE tenant_id=$1 AND id=$2 FOR SHARE",
+                    &[&tenant, &user],
+                )
+                .await?
+                .get(0);
+            let credential_hash = fingerprint(&stored);
+            let token_hash = fingerprint(&login.token);
+            let csrf = login.csrf.clone();
+            let minutes = self
+                .settings
+                .get_global(tx.sql(), LIFETIME)
+                .await?
+                .as_i64()
+                .ok_or(Error::Internal)? as i32;
+            tx.mutate(move|sql|Box::pin(async move{
+                let id=sql.query_one("INSERT INTO user_sign_ins(tenant_id,user_id,token_hash,csrf,credential_hash,state,expires_at,identity_provider_id) VALUES($1,$2,$3,$4,$5,'pending',now()+make_interval(mins=>$6),$7) RETURNING id",&[&tenant,&user,&token_hash,&csrf,&credential_hash,&minutes,&provider]).await?.get(0);
+                Ok(((),vec![change(id,"external_identity_verified","pending")]))
+            })).await?;
+        } else {
+            admit(tx, scope, &login).await?;
+        }
+        Ok(login)
+    }
+    async fn external_pending_live(
+        &self,
+        sql: &impl tokio_postgres::GenericClient,
+        scope: &Scope,
+        id: i64,
+    ) -> Result<()> {
+        let live:bool=sql.query_one("SELECT p.identity_provider_id IS NULL OR EXISTS(SELECT 1 FROM user_identity_providers c JOIN user_external_identities i ON i.tenant_id=c.tenant_id AND i.provider_id=c.id JOIN user_external_sessions e ON e.tenant_id=c.tenant_id AND e.provider_id=c.id WHERE c.tenant_id=p.tenant_id AND c.id=p.identity_provider_id AND c.enabled AND i.user_id=p.user_id AND e.user_id=p.user_id AND c.company_id=$3 AND e.id=p.external_session_id) FROM user_sign_ins p WHERE p.tenant_id=$1 AND p.id=$2",&[&scope.tenant(),&id,&scope.actor().organisation().map(|id|id.get())]).await?.get(0);
+        if !live {
+            return Err(Error::Unauthorized);
+        }
+        Ok(())
     }
 
     // An opaque credential lookup is the same bootstrap exception as Session.
@@ -180,6 +235,7 @@ impl UserService {
         if !current.is_some_and(|row| fingerprint(&row.get::<_, String>(0)) == stored) {
             return Err(Error::Unauthorized);
         }
+        self.external_pending_live(&**client, &scope, id).await?;
         Ok(Pending { id, scope, hash })
     }
 
@@ -205,6 +261,8 @@ impl UserService {
         {
             return Err(Error::Unauthorized);
         }
+        self.external_pending_live(tx.sql(), &pending.scope, pending.id)
+            .await?;
         self.authentication
             .reprove(tx.sql(), &pending.scope)
             .await?;
@@ -328,6 +386,23 @@ impl UserService {
         let login = credential(false);
         transition(&mut tx, &pending.scope, pending.id, "admitted").await?;
         admit(&mut tx, &pending.scope, &login).await?;
+        let tenant = pending.scope.tenant();
+        let id = pending.id;
+        let session_hash = crate::sso::hash(&login.token);
+        let external: Option<i64> = tx
+            .sql()
+            .query_one(
+                "SELECT external_session_id FROM user_sign_ins WHERE tenant_id=$1 AND id=$2",
+                &[&tenant, &id],
+            )
+            .await?
+            .get(0);
+        if external.is_some() {
+            tx.mutate(move|sql|Box::pin(async move{
+            let rows=sql.query("UPDATE user_external_sessions SET session_hash=$3 WHERE tenant_id=$1 AND id=(SELECT external_session_id FROM user_sign_ins WHERE tenant_id=$1 AND id=$2) RETURNING id",&[&tenant,&id,&session_hash]).await?;
+            Ok(((),rows.iter().map(|r|crate::sso::change("user.external_session",r.get(0),json!({"pending":true}),json!({"pending":false}))).collect()))
+        })).await?;
+        }
         tx.commit().await?;
         Ok(Some(login))
     }

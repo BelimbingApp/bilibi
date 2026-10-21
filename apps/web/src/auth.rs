@@ -244,6 +244,46 @@ async fn card<T: Template>(
     Ok(response)
 }
 
+/// A completed local logout is a new document navigation. Refresh avoids
+/// treating the provider destination as a cross-origin form submission under
+/// form-action 'self'; the ordinary link remains usable without automatic navigation.
+pub(crate) async fn provider_signed_out(
+    app: &App,
+    destination: &str,
+) -> std::result::Result<Response, HttpError> {
+    let link = bilibi_ui::Button {
+        href: destination,
+        body: Html::text("Continue signing out"),
+        ..Default::default()
+    };
+    let mut body =
+        Html::text("You are signed out of Bilibi. Continuing to your company's sign-out page.");
+    body.push(&Html::render(&link).map_err(|_| Error::Internal)?);
+    let mut response = card(
+        app,
+        "Signed out",
+        bilibi_ui::Card {
+            body,
+            ..Default::default()
+        },
+        FlashMap::default(),
+        StatusCode::OK,
+    )
+    .await?;
+    response.headers_mut().insert(
+        "refresh",
+        HeaderValue::from_str(&format!("0;url={destination}")).map_err(|_| Error::Internal)?,
+    );
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response.headers_mut().insert(
+        header::REFERRER_POLICY,
+        HeaderValue::from_static("no-referrer"),
+    );
+    Ok(response)
+}
+
 // ---- validation, worded as the source changesets are --------------------
 
 fn validate_email(value: &str) -> Vec<String> {
@@ -295,15 +335,20 @@ fn bounded(value: &str) -> String {
 pub async fn home(
     State(app): State<App>,
     headers: HeaderMap,
+    Query(query): Query<HashMap<String, String>>,
 ) -> std::result::Result<Response, HttpError> {
     if signed_in(&app, &headers).await {
         return Ok(Redirect::to(WORKSPACE).into_response());
     }
     let key = flash_key(&headers);
-    let form = LoginForm {
+    let mut form = LoginForm {
         session_expired: key == Some(FLASH_EXPIRED),
         ..LoginForm::default()
     };
+    if let Some(public) = query.get("sso") {
+        form.sso_label = app.user.identity_label(public).await?;
+        form.sso_public = public.clone();
+    }
     let flash = FlashMap {
         success: if key == Some(FLASH_RESET) {
             PASSWORD_RESET
@@ -428,7 +473,10 @@ fn set_pending(
     token: &str,
 ) -> std::result::Result<(), HttpError> {
     let value = format!(
-        "{PENDING_COOKIE}={token}; HttpOnly; SameSite=Strict; Path=/login/challenge{}",
+        // The first-factor response can arrive through a cross-site OIDC
+        // redirect chain. Lax lets the challenge GET receive its new cookie;
+        // completion still requires the pending credential's own CSRF proof.
+        "{PENDING_COOKIE}={token}; HttpOnly; SameSite=Lax; Path=/login/challenge{}",
         secure(app)
     );
     response.headers_mut().append(
@@ -439,7 +487,7 @@ fn set_pending(
 }
 fn clear_pending(app: &App, response: &mut Response) {
     let value = format!(
-        "{PENDING_COOKIE}=; HttpOnly; SameSite=Strict; Path=/login/challenge; Max-Age=0{}",
+        "{PENDING_COOKIE}=; HttpOnly; SameSite=Lax; Path=/login/challenge; Max-Age=0{}",
         secure(app)
     );
     if let Ok(value) = HeaderValue::from_str(&value) {
@@ -727,5 +775,139 @@ pub async fn reset(
         }
         Err(CredentialError::Other(error)) => Err(error.into()),
         Err(_) => Err(Error::Internal.into()),
+    }
+}
+
+// Optional external credentials share the same anonymous host adapter and
+// pending/admitted cookie handling as Bilimbi's password sign-in.
+#[derive(Deserialize)]
+pub struct SsoStart {
+    #[serde(default)]
+    purpose: String,
+    #[serde(default)]
+    back: String,
+}
+fn sso_browser(headers: &HeaderMap) -> &str {
+    headers
+        .get(header::COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| {
+            v.split(';')
+                .find_map(|part| part.trim().strip_prefix("bilibi_sso="))
+        })
+        .unwrap_or("")
+}
+async fn sso_scope(
+    app: &App,
+    headers: &HeaderMap,
+) -> Result<Option<bilibi_security::Scope>, HttpError> {
+    let Ok(bearer) = token(headers) else {
+        return Ok(None);
+    };
+    let client = app.db.get().await.map_err(Error::from)?;
+    Ok(app.user.sessions.check(&**client, &bearer).await.ok())
+}
+pub async fn sso_start(
+    State(app): State<App>,
+    headers: HeaderMap,
+    Path(provider): Path<String>,
+    peer: Option<Extension<ConnectInfo<SocketAddr>>>,
+    Query(form): Query<SsoStart>,
+) -> Result<Response, HttpError> {
+    let sender = api::client_address(peer.map(|Extension(ConnectInfo(peer))| peer), &headers)
+        .map_or_else(|| "unknown".into(), |ip| ip.to_string());
+    if !api::allowed(&app, "sso_start", &sender).await? {
+        return Ok(StatusCode::TOO_MANY_REQUESTS.into_response());
+    }
+    let purpose = match form.purpose.as_str() {
+        "" | "sign_in" => bilibi_user::IdentityPurpose::SignIn,
+        "link" => bilibi_user::IdentityPurpose::Link,
+        "step_up" => bilibi_user::IdentityPurpose::StepUp,
+        _ => return Err(Error::Invalid.into()),
+    };
+    let scope = sso_scope(&app, &headers).await?;
+    if purpose != bilibi_user::IdentityPurpose::SignIn && scope.is_none() {
+        return Err(Error::Unauthorized.into());
+    }
+    let start = app
+        .user
+        .begin_external_sign_in(&provider, purpose, scope.as_ref(), &form.back)
+        .await?;
+    let mut response = Redirect::to(&start.url).into_response();
+    response.headers_mut().append(
+        header::SET_COOKIE,
+        HeaderValue::from_str(&format!(
+            "bilibi_sso={}; HttpOnly; SameSite=Lax; Path=/login/sso; Max-Age=1800{}",
+            start.browser_binding,
+            secure(&app)
+        ))
+        .map_err(|_| Error::Internal)?,
+    );
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    Ok(response)
+}
+pub async fn sso_callback(
+    State(app): State<App>,
+    headers: HeaderMap,
+    peer: Option<Extension<ConnectInfo<SocketAddr>>>,
+    Query(query): Query<HashMap<String, String>>,
+) -> Result<Response, HttpError> {
+    let scope = sso_scope(&app, &headers).await?;
+    let outcome = app
+        .user
+        .finish_external_sign_in(
+            query.get("state").map(String::as_str).unwrap_or(""),
+            sso_browser(&headers),
+            query.get("code").map(String::as_str).unwrap_or(""),
+            scope.as_ref(),
+        )
+        .await;
+    let mut response=match outcome{
+        Ok(bilibi_user::IdentityOutcome::SignIn(login)) if login.pending=>{let mut response=Redirect::to("/login/challenge").into_response();set_pending(&app,&mut response,&login.token)?;response},
+        Ok(bilibi_user::IdentityOutcome::SignIn(login))=>admitted(&app,&headers,peer,login).await?,
+        Ok(bilibi_user::IdentityOutcome::Proof{code,back})=>{
+            let secret=bilibi_ui::SecretInput::new("provider-proof","provider-proof","Confirmation code").label("Confirmation code").value(code).hint("Use this once for the access you requested. It expires in two minutes.");
+            let link=bilibi_ui::Button{href:&back,body:Html::text("Continue"),..Default::default()};
+            let mut body=Html::render(&secret).map_err(|_|Error::Internal)?;body.push(&Html::render(&link).map_err(|_|Error::Internal)?);
+            card(&app,"Confirm access",bilibi_ui::Card{body,..Default::default()},FlashMap::default(),StatusCode::OK).await?
+        },
+        Ok(bilibi_user::IdentityOutcome::Linked(back)|bilibi_user::IdentityOutcome::StepUp(back))=>Redirect::to(&back).into_response(),
+        Err(_)=>login_card(&app,LoginForm{form_error:"Company sign-in was refused or expired. Start again, or ask your company administrator for help.".into(),..LoginForm::default()},FlashMap::default(),StatusCode::UNAUTHORIZED).await?,
+    };
+    response.headers_mut().append(
+        header::SET_COOKIE,
+        HeaderValue::from_str(&format!(
+            "bilibi_sso=; HttpOnly; SameSite=Lax; Path=/login/sso; Max-Age=0{}",
+            secure(&app)
+        ))
+        .map_err(|_| Error::Internal)?,
+    );
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response.headers_mut().insert(
+        header::REFERRER_POLICY,
+        HeaderValue::from_static("no-referrer"),
+    );
+    Ok(response)
+}
+#[derive(Deserialize)]
+pub struct LogoutDelivery {
+    logout_token: String,
+}
+pub async fn sso_backchannel(
+    State(app): State<App>,
+    Path(provider): Path<String>,
+    Form(delivery): Form<LogoutDelivery>,
+) -> Response {
+    match app
+        .user
+        .external_backchannel_logout(&provider, &delivery.logout_token)
+        .await
+    {
+        Ok(()) => StatusCode::OK.into_response(),
+        Err(_) => StatusCode::BAD_REQUEST.into_response(),
     }
 }

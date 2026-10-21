@@ -36,6 +36,10 @@ calling `argon2` directly. It runs Argon2id on the blocking pool, bounds input
 (8 characters to 1024 bytes) and `verify(.., None)` costs the same as a real
 check, so timing does not reveal which emails exist.
 
+## Company sign-in
+
+Optional company OIDC, linking, provisioning, role mapping and provider re-authentication are documented in [Company sign-in](sso.md). With no enabled connection, password sign-in and existing factor settings keep their behavior.
+
 ## Sign-in admission
 
 Enable **Sign in** on the tenant's 2FA requirements page to ask for a second factor before admitting a session.
