@@ -9,7 +9,7 @@
 //! harness gets three plugins that do not collide, each naming the server it
 //! reaches. Bilimbi has one installation and names its package `bilimbi`.
 use crate::PluginError;
-use bilibi_agent_access::{PublicClient, OAUTH_SCOPE};
+use bilibi_agent_access::OAUTH_SCOPE;
 use bilibi_agent_api::{mcp, Registry, BUSINESS_CONTEXT, INSTANCE_INSTRUCTIONS};
 use bilibi_system::Instance;
 use bilibi_tenancy::SelfReport;
@@ -48,30 +48,20 @@ pub fn https_origin(origin: &str) -> bool {
             .any(|c| c.is_control() || c.is_whitespace())
 }
 
-/// Where and how an agent connects: the canonical origin and a registered
-/// public client. Holds no secret; the OAuth consent still names the person.
+/// Where and how an agent connects: the canonical origin and automatic
+/// public client registration. Holds no secret; the OAuth consent still names the person.
 #[derive(Clone, Debug)]
 pub struct Connection {
     origin: String,
-    pub client_id: String,
 }
 impl Connection {
-    /// Refuses an origin that is not bare HTTPS and a client ID that the
-    /// operator has not registered.
-    pub fn new(
-        origin: &str,
-        client_id: &str,
-        clients: &[PublicClient],
-    ) -> Result<Self, PluginError> {
+    /// The app discovers OAuth endpoints and registers itself.
+    pub fn new(origin: &str) -> Result<Self, PluginError> {
         if !https_origin(origin) {
             return Err(PluginError::HttpsRequired);
         }
-        if !clients.iter().any(|client| client.id == client_id) {
-            return Err(PluginError::InvalidClient);
-        }
         Ok(Self {
             origin: origin.trim_end_matches('/').to_owned(),
-            client_id: client_id.to_owned(),
         })
     }
     pub fn origin(&self) -> &str {
@@ -329,13 +319,12 @@ fn setup(package: &str, connection: &Connection, instance: &Instance) -> Skill {
         description: format!("Set up or diagnose the Bilibi {} connection: check the MCP tools, complete OAuth linking through the host, and report what is available.", instance.label),
         body: format!(
             "Read the `{package}` skill's workflow first, including how to report yourself.\n\n\
-This plugin connects to **{label}** ({consequence}). Its MCP server is `{server}`. It uses OAuth with PKCE (S256) and the registered public client `{client}`, with no client secret and the scope `{scope}`.\n\n\
+This plugin connects to **{label}** ({consequence}). Its MCP server is `{server}`. It uses OAuth with PKCE (S256) and automatic client registration, with no client secret and the scope `{scope}`.\n\n\
 If Bilibi MCP tools are connected, call `search` for the requested task (or `search` for `company` as a connection test) and complete OAuth linking through the host if prompted. Report the operations actually returned, then continue the task. Authentication refusals, permission refusals and empty results are distinct outcomes; report which one happened.\n\n\
-If no Bilibi tools are connected, explain that the server must be added in the host as a remote MCP server with the address and client above, and that the person signs in to Bilibi to approve the connection and sees its end date there. A skill package alone cannot register a server, and the person never sends a Bilibi password or token in a message.\n",
+If no Bilibi tools are connected, explain that the server must be added in the host as a remote MCP server with the address above, and that the person signs in to Bilibi to approve the connection and sees its end date there. A skill package alone cannot register a server, and the person never sends a Bilibi password or token in a message.\n",
             label = instance.label,
             consequence = instance.role.consequence(),
             server = connection.server_url(),
-            client = connection.client_id,
             scope = connection.scope(),
         ),
     }

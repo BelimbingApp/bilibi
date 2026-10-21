@@ -14,7 +14,6 @@ mod pdf;
 mod perf;
 mod routes;
 mod shell;
-mod transport;
 mod two_factor_reset;
 mod webhooks;
 use askama::Template;
@@ -61,7 +60,6 @@ pub struct App {
     pub landing: Arc<landing::Landing>,
     api: Arc<api::Edge>,
     webhooks: Arc<webhooks::Boundary>,
-    transport: Arc<transport::Boundary>,
 }
 impl App {
     /// Which instance this is, with the operator's label and colour
@@ -70,6 +68,28 @@ impl App {
     pub async fn instance(&self) -> Result<bilibi_base::system::Instance> {
         let client = self.db.get().await?;
         bilibi_base::system::Instance::resolve(&self.settings, &**client).await
+    }
+    /// Public OAuth origin policy. Rechecked at issuance so a live role change
+    /// cannot keep issuing tokens on a development HTTP origin.
+    /// `Ok(false)` is a policy refusal; instance settings that cannot be read
+    /// are an `Err`, so callers can report that separately.
+    pub async fn secure_origin(&self) -> Result<bool> {
+        let instance = self.instance().await?;
+        let uri: axum::http::Uri = self.origin.parse().map_err(|_| Error::Invalid)?;
+        let host = uri.host().ok_or(Error::Invalid)?.trim_matches(['[', ']']);
+        let loopback = host == "localhost"
+            || host
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|ip| ip.is_loopback());
+        let bare = uri
+            .authority()
+            .is_some_and(|authority| !authority.as_str().contains('@'))
+            && uri.path_and_query().is_none_or(|path| path.as_str() == "/");
+        Ok(bare
+            && (uri.scheme_str() == Some("https")
+                || (instance.role == bilibi_base::system::Role::Dev
+                    && uri.scheme_str() == Some("http")
+                    && loopback)))
     }
     pub fn new(db: Db, origin: &str) -> Result<Self> {
         let modules = modules()?;
@@ -99,7 +119,6 @@ impl App {
         let moved = Arc::new(routes::bind_moved(&services, &routes, &downloads)?);
         let api = Arc::new(api::Edge::new(&services)?);
         let webhooks = Arc::new(webhooks::Boundary::bind(&services)?);
-        let transport = Arc::new(transport::Boundary::bind(&services)?);
         Ok(Self {
             routes,
             downloads,
@@ -121,7 +140,6 @@ impl App {
             landing: Arc::default(),
             api,
             webhooks,
-            transport,
             services: Arc::new(services),
         })
     }
@@ -297,7 +315,6 @@ pub fn router(app: App) -> Router {
     routes::install_moved(pages, &app.moved)
         .merge(api::router(app.clone()))
         .merge(webhooks::router())
-        .merge(transport::router())
         .route("/", get(auth::home).post(auth::login))
         .route("/login", get(auth::home).post(auth::login))
         .route("/login/verify", get(auth::verify_page).post(auth::verify))

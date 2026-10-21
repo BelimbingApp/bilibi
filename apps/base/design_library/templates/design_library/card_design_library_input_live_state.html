@@ -12,7 +12,7 @@
                   {% endcall %}
                   {% call ui::fact(title="Select") %}{{ self.text("@sample_form[:select_field].value") }}{% endcall %}
                   {% call ui::fact(title="Multi-select") %}
-                    {{ self.text("Enum.join(List.wrap(@sample_form[:roles].value), \", \")") }}
+                    {{ self.text("@sample_form[:required_roles].value") }}
                   {% endcall %}
                   {% call ui::fact(title="Checkbox") %}{{ self.text("@sample_form[:checkbox_field].value") }}{% endcall %}
                   {% call ui::fact(title="Radio") %}{{ self.text("@sample_form[:radio_field].value") }}{% endcall %}
@@ -20,4 +20,4 @@
                     {{ self.control("design-library-input-datetime")? }}
                   {% endcall %}
                 {% endcall %}
-              
+

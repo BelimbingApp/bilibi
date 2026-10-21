@@ -13,8 +13,7 @@ use tokio_postgres::GenericClient;
 pub const INSTANCE_ROLE_KEY: &str = "instance.role";
 pub const INSTANCE_LABEL_KEY: &str = "instance.label";
 pub const INSTANCE_COLOUR_KEY: &str = "instance.colour";
-pub const INSTANCE_INSTALLS_FROM_KEY: &str = "instance.installs_from";
-/// Changing how the instance announces itself and where it installs from.
+/// Changing how the instance announces itself.
 pub const INSTANCE_MANAGE: &str = "admin.system.instance.manage";
 
 /// What this server is for. Software is built locally; servers install tested releases.
@@ -127,32 +126,6 @@ impl Colour {
     }
 }
 
-/// Where an instance takes releases from: another instance on this machine
-/// (its folder name under `/opt/bilibi`) or one reached over HTTPS.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum Source {
-    SameMachine(String),
-    Https(String),
-}
-impl Source {
-    /// An instance name is 1 to 32 lower-case letters, digits or hyphens, so
-    /// it can only ever name a sibling folder. An address is `https://host`
-    /// with an optional port and no path, user or query.
-    pub fn parse(value: &str) -> Option<Self> {
-        let value = value.trim();
-        if let Some(rest) = value.strip_prefix("https://") {
-            let (host, port) = rest.split_once(':').unwrap_or((rest, ""));
-            let host_ok = !host.is_empty()
-                && host.len() <= 253
-                && host
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.');
-            let port_ok = port.is_empty() || port.parse::<u16>().is_ok_and(|p| p > 0);
-            return (host_ok && port_ok).then(|| Self::Https(value.to_owned()));
-        }
-        valid_instance_name(value).then(|| Self::SameMachine(value.to_owned()))
-    }
-}
 /// The same rule `scripts/install-server.sh` applies to an instance name.
 pub fn valid_instance_name(name: &str) -> bool {
     (1..=32).contains(&name.len())
@@ -170,7 +143,6 @@ pub struct Instance {
     pub role: Role,
     pub label: String,
     pub colour: Colour,
-    pub installs_from: Option<Source>,
 }
 impl Instance {
     /// Resolve identity from global settings. Unset label and colour follow the stored role.
@@ -197,11 +169,6 @@ impl Instance {
             .as_str()
             .and_then(Colour::parse)
             .unwrap_or_else(|| role.colour());
-        let installs_from = settings
-            .get_global(client, INSTANCE_INSTALLS_FROM_KEY)
-            .await?
-            .as_str()
-            .and_then(Source::parse);
         Ok(Self {
             origin: std::env::var("APP_ORIGIN")
                 .unwrap_or_else(|_| "http://localhost:3000".into())
@@ -210,7 +177,6 @@ impl Instance {
             role,
             label,
             colour,
-            installs_from,
         })
     }
     /// The label as an identifier: lower-case letters, digits and hyphens,
@@ -332,15 +298,6 @@ inventory::submit! { Contribution::new(DEFINITIONS, INSTANCE_COLOUR_KEY, provena
         help: "info (blue), success (green), warning (amber) or danger (red). The default follows the role: Dev is info, Staging is warning, Production is danger (server owner only).",
         capability: Some(INSTANCE_MANAGE), reveal_duration_ms: 5_000 }),
 })) }
-inventory::submit! { Contribution::new(DEFINITIONS, INSTANCE_INSTALLS_FROM_KEY, provenance!(), &Setting::Definition(Definition {
-    value_type: ValueType::String, scopes: GLOBAL, default: || json!(null), nullable: true, encrypted: false,
-    minimum: None, maximum: None,
-    validator: Some(Validator { accepts: |value: &Value| value.is_null() || value.as_str().is_some_and(|source| Source::parse(source).is_some()), message: "Name an instance on this machine, like dev, or an address, like https://dev.erp.example.com." }),
-    editor: Some(Editor { group: "Instance", label: "Install releases tested on",
-        help: "The instance whose tested release this one installs: a name on this machine, like dev, or an address, like https://staging.erp.example.com. Leave empty to install only releases uploaded here (server owner only).",
-        capability: Some(INSTANCE_MANAGE), reveal_duration_ms: 5_000 }),
-})) }
-
 // The dedicated Core Administrator page guards this setting; the generic editor cannot change it.
 inventory::submit! { Contribution::new(DEFINITIONS, INSTANCE_ROLE_KEY, provenance!(), &Setting::Definition(Definition {
     value_type: ValueType::String, scopes: GLOBAL, default: || json!("production"), nullable: false, encrypted: false,

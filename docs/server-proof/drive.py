@@ -24,7 +24,7 @@ ORIGIN = os.environ.get('LAB_ORIGIN', 'https://prod.10.77.61.2.sslip.io')
 LABEL = urllib.parse.urlparse(ORIGIN).hostname.split('.')[0]
 STATE = PRIVATE / f'{LABEL}.json'
 OUT = DATA / 'proof/answers'
-ENV = dict(os.environ, CHROME_DEVTOOLS_AXI_SESSION='bilibi-fresh-server-proof',
+ENV = dict(os.environ, CHROME_DEVTOOLS_AXI_SESSION=os.environ.get('CHROME_DEVTOOLS_AXI_SESSION', 'bilibi-fresh-server-proof'),
            CHROME_DEVTOOLS_AXI_USER_DATA_DIR=str(DATA / 'chrome'),
            CHROME_DEVTOOLS_AXI_CHROME_ARGS='--ignore-certificate-errors')
 CTX = ssl._create_unverified_context()  # Only the disposable lab's internal CA.
@@ -194,6 +194,17 @@ elif cmd == 'read':
     status, value = request('POST', '/api/v1/operations/' + args[0] + '/call', {'input': {}})
     answer(args[0], {'status': status, 'body': value})
     print(status, json.dumps(redact(value), indent=1))
+elif cmd == 'plan':
+    # Any lab operation from task material, including a retained Staging report.
+    op = json.loads(Path(args[0]).read_text())
+    plan_commit(op, no_code=('no-code' in args[1:]), refuse_first=('refuse-first' in args[1:]))
+elif cmd == 'plan-only':
+    op = json.loads(Path(args[0]).read_text())
+    status, value = request('POST', '/api/v1/plans', {'operations': [op]})
+    answer(Path(args[0]).stem, {'status': status, 'body': value})
+    assert status == 200, status
+    assert value.get('valid') == ('refused' not in args[1:]), redact(value)
+    print(json.dumps(redact(value.get('results')), indent=1))
 elif cmd == 'install':
     plan_commit({'key': 'base.software.install', 'input': {'bundle': args[0], 'switch': 'auto'}}, refuse_first=True)
 elif cmd == 'refuse-install':
@@ -230,10 +241,12 @@ elif cmd == 'confirm':
     click('#software-review-confirm')
     print('Submitted the reviewed install with a fresh authenticator code.')
 elif cmd == 'receive':
+    before = js('return Array.from(document.querySelectorAll("#software-bundle option")).map(e=>e.value);')
     click('#release-files-upload-submit')
     deadline = time.time() + 60
     while time.time() < deadline:
-        if js('return document.body.textContent.includes("Received release");'):
+        waiting = js('return Array.from(document.querySelectorAll("#software-bundle option")).map(e=>e.value);')
+        if any(bundle.startswith('upload-') and bundle not in before for bundle in waiting):
             break
         time.sleep(0.5)
     else:
@@ -263,36 +276,21 @@ elif cmd == 'wait':
         time.sleep(1)
     else:
         raise SystemExit('Job did not finish within 180 seconds')
-elif cmd == 'download':
-    browser('open', ORIGIN + '/system/software?tab=releases')
-    result = js('const link=document.querySelector(\'a[href$="/1/download"]\'); if(!link) throw Error("No release download link"); const r=await fetch(link.href); const b=await r.blob(); window.proofBlob=b; return {status:r.status,bytes:b.size};', asynchronous=True)
-    assert result['status'] == 200, result
-    # DevTools evicts a large response body. Keep the Blob in the page and
-    # export bounded chunks through AXI's raw script stdout instead.
-    length = js('return await new Promise((resolve,reject)=>{const r=new FileReader();r.onerror=reject;r.onload=()=>{window.proofBase64=r.result.split(",")[1];resolve(window.proofBase64.length);};r.readAsDataURL(window.proofBlob);});', asynchronous=True)
-    target = DATA / 'proof/finance-release.tar.gz'
-    with target.open('wb') as out:
-        for start in range(0, length, 1024 * 1024):
-            script = f'console.log(await page.eval(() => window.proofBase64.slice({start},{start + 1024 * 1024})));'
-            chunk = browser_script(script)
-            out.write(base64.b64decode(chunk, validate=True))
-    js('delete window.proofBlob; delete window.proofBase64; return true;')
-    assert target.stat().st_size == result['bytes'], 'Download body size differs'
-    print('Downloaded through the browser:', result['bytes'], 'bytes, HTTP 200.')
 elif cmd == 'upload':
     browser('open', ORIGIN + '/system/software?tab=releases')
     # AXI's native upload currently sends filePath; newer DevTools expects
     # filePaths. Populate the real input with a File through AXI instead.
-    target = DATA / 'proof/finance-release.tar.gz'
+    js('const fold=document.getElementById("software-offline-upload");if(fold) fold.open=true;return true;')
+    target = Path(args[0]).resolve() if args else DATA / 'proof/release.tar.gz'
     js('window.proofUploadParts=[]; return true;')
     with target.open('rb') as source:
         while chunk := source.read(256 * 1024):
             encoded = base64.b64encode(chunk).decode()
             script = 'await page.eval(() => {const s=atob(' + json.dumps(encoded) + ');window.proofUploadParts.push(Uint8Array.from(s,c=>c.charCodeAt(0)));});'
             browser_script(script)
-    size = js('const f=new File(window.proofUploadParts,"bilibi-release-1.tar.gz",{type:"application/gzip"});const t=new DataTransfer();t.items.add(f);const e=document.querySelector("input[type=file]");e.files=t.files;e.dispatchEvent(new Event("change",{bubbles:true}));delete window.proofUploadParts;return f.size;')
+    size = js('const f=new File(window.proofUploadParts,"bilibi-setup-upload.tar.gz",{type:"application/gzip"});const t=new DataTransfer();t.items.add(f);const e=document.querySelector("input[type=file]");e.files=t.files;e.dispatchEvent(new Event("change",{bubbles:true}));delete window.proofUploadParts;return f.size;')
     assert size == target.stat().st_size
-    print('Selected the downloaded release in the browser:', size, 'bytes.')
+    print('Selected the release archive in the browser:', size, 'bytes.')
 elif cmd == 'snapshot':
     print(browser('snapshot'))
 elif cmd == 'shot':

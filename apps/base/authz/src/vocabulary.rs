@@ -62,10 +62,6 @@ pub struct Vocabulary {
     pub capabilities: BTreeMap<&'static str, OwnedCapability>,
     pub roles: BTreeMap<&'static str, SystemRole>,
     pub system_principals: BTreeMap<&'static str, SystemPrincipalDefinition>,
-    /// The module that declared each system principal, for the one thing a
-    /// principal may do on its module's behalf without a session: read that
-    /// module's own secret setting (`SystemScope::read_own_secret`).
-    pub system_principal_owners: BTreeMap<&'static str, &'static str>,
 }
 pub fn segment(key: &str) -> bool {
     let mut chars = key.bytes();
@@ -148,9 +144,6 @@ impl Vocabulary {
                         principal.name
                     )));
                 }
-                result
-                    .system_principal_owners
-                    .insert(principal.name, entry.provenance.module);
             }
         }
         for cap in result.capabilities.values() {

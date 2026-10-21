@@ -403,27 +403,46 @@ function discoveryView() {
 
 // --- Install a tested release ------------------------------------------
 function sourceText(source) {
-  if (!source) return null;
-  if (source.kind === 'same_machine') return source.instance + ' (on this machine)';
-  if (source.kind === 'https') return source.address;
-  return null;
+  if (!source) return '';
+  if (source.kind === 'github') return 'GitHub ' + source.repository + ' tag ' + source.tag + ' asset ' + source.asset_id + ' (' + source.target + ', SHA-256 ' + source.digest + ')';
+  if (source.kind === 'upload') return 'uploaded file ' + source.bundle;
+  return '';
+}
+async function refreshReleases() {
+  try {
+    const answer = await tool('read', { key: 'base.software.releases', input: { prerelease: true } });
+    if (answer.failed) return showError('The release list could not be read.');
+    state.releases = unwrap(answer.body);
+    renderHome();
+  } catch (_) { showError('The release list could not be read.'); }
 }
 function installView() {
-  const inst = instance();
-  const source = sourceText(inst.installs_from);
-  const release = el('input', { type: 'number', min: '1', step: '1', id: 'release-number', 'aria-label': 'Release number', placeholder: 'release number' });
-  const go = el('button', { class: 'primary', id: 'review-install', disabled: !source, text: 'Review install', onclick: () => {
-    const n = parseInt(release.value, 10);
-    if (!(n >= 1)) return show(alertBox('warning', 'Enter the release number currently running on your update server.'), renderHomeButton());
-    review('base.software.install', { release: n, switch: state.switchMode }, 'Install on ' + inst.label);
-  } });
-  return el('div', { class: 'stack', id: 'install' }, [
-    el('h1', { text: 'Software update' }),
-    el('p', { class: 'small muted', text: 'Bilibi checks and copies the update, then backs up and installs it. This server pauses for about a minute.' }),
-    source
-      ? el('div', { class: 'card stack' }, [el('h2', { text: 'Update server: ' + source }), el('p', { class: 'small muted', text: 'Enter the release number currently running on ' + source + '. Its Software page shows the number.' }), el('div', { class: 'row' }, [release, go])])
-      : alertBox('warning', 'No update server is chosen. Choose one in Settings › Instance › Install releases tested on. You can also upload a tested file on Software’s Releases tab and install it from the Software page.', 'no-source'),
-  ]);
+  const listing = state.releases;
+  const installed = state.data.installed_asset || {};
+  const pin = installed.github;
+  const children = [
+    el('h2', { text: 'Releases' }),
+    el('p', { class: 'small', text: 'Local release: ' + (installed.local_release || 'not recorded') }),
+    el('p', { class: 'small', text: pin ? 'Installed: ' + pin.repository + ' tag ' + pin.tag + ', repository ' + pin.repository_id + ' / release ' + pin.release_id + ' / asset ' + pin.asset_id + ', ' + pin.target + ', archive SHA-256 ' + pin.archive_sha256 + ', program SHA-256 ' + pin.program_sha256 + ', setup commit ' + (pin.setup_commit || 'not recorded') : 'Installed GitHub asset: not recorded' }),
+    el('button', { text: 'Refresh releases', onclick: refreshReleases }),
+  ];
+  if (listing) {
+    const github = listing.github || {};
+    if (github.message) children.push(alertBox('info', github.message));
+    for (const asset of github.releases || []) {
+      children.push(el('div', { class: 'card stack' }, [
+        el('h3', { text: asset.tag + ' · ' + asset.target + (asset.installed ? ' · Installed' : '') }),
+        el('p', { class: 'small', text: asset.name + ' · repository ' + github.repository_id + ' / release ' + asset.release_id + ' / asset ' + asset.asset_id }),
+        el('p', { class: 'small', text: 'Archive SHA-256: ' + asset.digest }),
+        el('button', { class: 'primary', text: 'Review install', disabled: !github.accepted || github.identity_changed || asset.installed, onclick: () => review('base.software.install', { asset: asset.asset_id, repository_id: github.repository_id, release_id: asset.release_id, tag: asset.tag, target: asset.target, digest: asset.digest, switch: state.switchMode }, 'Install on ' + instance().label) }),
+      ]));
+    }
+    for (const upload of listing.uploads || []) {
+      children.push(el('button', { text: 'Review uploaded file ' + upload.bundle, onclick: () => review('base.software.install', { bundle: upload.bundle, switch: state.switchMode }, 'Install on ' + instance().label) }));
+    }
+  }
+  children.push(el('p', { class: 'small muted', text: 'Configure GitHub or upload a release file on Software’s Releases tab. Every install requires its own review and a fresh 2FA code.' }));
+  return el('div', { class: 'stack', id: 'install' }, children);
 }
 function renderHomeButton() { return el('button', { onclick: renderHome, text: 'Back' }); }
 
@@ -526,7 +545,7 @@ async function review(key, input, verb) {
 function factsList(key, facts) {
   const items = [];
   if (key === 'base.software.install') {
-    items.push(el('li', { text: 'Release ' + facts.release + ' from ' + (sourceText(facts.source) || 'the source') }));
+    items.push(el('li', { text: 'Install from ' + (sourceText(facts.source) || 'the source') }));
     const running = facts.running || {};
     items.push(el('li', { class: 'muted small', text: 'Running now: Bilibi ' + (running.platform || '') + (running.domains && running.domains.length ? ' with ' + running.domains.map((d) => d.id + ' ' + d.version).join(', ') : '') }));
     for (const check of facts.checks || []) items.push(el('li', { class: 'small', text: '✓ ' + check }));
@@ -639,7 +658,7 @@ async function refreshHome() {
     const opened = await tool('read', { key: 'base.software.status', input: {} });
     if (!opened.failed) {
       const status = unwrap(opened.body) || {};
-      Object.assign(state.data, { instance: status.instance || state.data.instance, installed: status.installed, plugins: status.plugins, job: status.job, undo: status.undo, jobs: status.jobs });
+      Object.assign(state.data, { instance: status.instance || state.data.instance, installed: status.installed, installed_asset: status.installed_asset, plugins: status.plugins, job: status.job, undo: status.undo, jobs: status.jobs });
       banner(state.data.instance);
     }
   } catch (_) {}
@@ -666,6 +685,8 @@ async function pollOnce() {
     state.data.undo = status.undo;
     state.data.job = status.job;
     state.data.installed = status.installed || state.data.installed;
+    state.data.installed_asset = status.installed_asset;
+    state.releases = null;
     renderJob();
     if (!(status.job.state === 'queued' || status.job.state === 'running')) stopPolling();
   }

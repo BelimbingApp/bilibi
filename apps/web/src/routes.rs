@@ -650,7 +650,7 @@ fn flash_group(page: &str, kind: StatusKind, message: &str) -> Result<String> {
         StatusKind::Success => flash.success = message,
         StatusKind::Info => flash.info = message,
     }
-    let group = bilibi_ui::Html::render(&bilibi_ui::FlashGroup {
+    let group = bilibi_ui::Html::render(&bilibi_ui::FloatingFlashGroup {
         id: "flash-redirect",
         flash,
     })

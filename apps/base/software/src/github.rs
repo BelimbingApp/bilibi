@@ -491,6 +491,7 @@ pub(crate) struct Pin {
     pub name: String,
     pub bytes: u64,
     pub prerelease: bool,
+    pub setup_commit: Option<String>,
 }
 impl Pin {
     pub(crate) fn from_request(source: &Value) -> std::result::Result<Self, String> {
@@ -529,8 +530,32 @@ impl Pin {
                 .to_owned(),
             bytes: source["bytes"].as_u64().unwrap_or(0),
             prerelease: source["prerelease"].as_bool().unwrap_or(false),
+            setup_commit: source["setup_commit"].as_str().map(str::to_owned),
         })
     }
+}
+
+/// Read the setup tag's commit only for a Staging comparison. A missing
+/// answer leaves the comparison unknown and never blocks installation.
+pub(crate) async fn setup_commit(software: &Software, scope: &Scope, pin: &Pin) -> Option<String> {
+    let token = software.github_token(scope).await.ok()?;
+    let mut url = url::Url::parse(&format!("{API}/repos/{}/commits", pin.repository)).ok()?;
+    url.path_segments_mut()
+        .ok()?
+        .push(&format!("refs/tags/{}", pin.tag));
+    let commit = get_json(
+        &software.integration,
+        scope,
+        url.as_str(),
+        token.as_deref(),
+        "commits.get",
+    )
+    .await
+    .ok()?;
+    commit["sha"]
+        .as_str()
+        .filter(|sha| sha.len() == 40 && sha.bytes().all(|b| b.is_ascii_hexdigit()))
+        .map(|sha| sha.to_ascii_lowercase())
 }
 
 /// Read the release GitHub has now and refuse when it is not the reviewed file.
@@ -1184,10 +1209,30 @@ pub(crate) fn pin_from_listing(listing: &Value, input: &Value) -> SoftwareResult
         name: row["name"].as_str().unwrap_or("setup").to_owned(),
         bytes: row["bytes"].as_u64().unwrap_or(0),
         prerelease: row["prerelease"].as_bool().unwrap_or(false),
+        setup_commit: row["setup_commit"].as_str().map(str::to_owned),
     })
 }
 
 /// The archive check code, lowercase hex without a `sha256:` prefix.
 pub(crate) fn digest_of(path: &std::path::Path) -> std::io::Result<String> {
     transport::sha256_of(path)
+}
+
+/// Compare exact published assets across instances. Local release numbers
+/// and tags alone cannot establish equal bytes.
+pub(crate) fn same_asset(a: &Value, b: &Value) -> bool {
+    let digest = |value: &Value| {
+        value["digest"]
+            .as_str()
+            .or_else(|| value["archive_sha256"].as_str())
+            .and_then(normalize_digest)
+    };
+    ["repository_id", "release_id", "asset_id"]
+        .iter()
+        .all(|key| a[key].as_i64().is_some_and(|id| id > 0) && a[key] == b[key])
+        && ["tag", "target"]
+            .iter()
+            .all(|key| a[key].as_str().is_some_and(|text| !text.is_empty()) && a[key] == b[key])
+        && digest(a).is_some()
+        && digest(a) == digest(b)
 }

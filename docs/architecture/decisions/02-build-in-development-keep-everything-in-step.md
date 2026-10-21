@@ -24,7 +24,7 @@ Much industry practice supports independently evolving plugins through version r
 
 ### Development builds
 
-- Building happens in development, on the operator's own machine with a local Bilibi repository and a coding agent. A local repository is the minimum requirement for building.
+- Development uses the operator's local Bilibi repository and coding agent. The public setup template also builds the pinned composition in GitHub Actions and publishes release assets.
 - Servers never build, including servers labelled Dev or Staging. A Dev role does not enable a compiler or a build job.
 - Production never changes code in place. It receives a release built and tested elsewhere, for its operating system, processor and system libraries.
 - Adding or updating a Domain or Extension means preparing a new composition in development, keeping the other mounted software, then building and checking it before installation.
@@ -88,4 +88,4 @@ This table describes the checkout on 2026-10-20. Accepted direction does not mea
 | --- | --- |
 | Catalogue-wide CI cross-check | Built. Every official Domain and Extension is checked, and a breaking change still needs a companion pull request. |
 | Coordinated release train | Release gating, automatic catalogue entries and upgrade notes for agents are built. The Software page's Update available state is still open. |
-| GitHub Actions builds and GitHub release assets | Open direction, not decided. Building releases in Actions and installing its published assets needs a separate decision; this record does not select that delivery path. |
+| GitHub Actions builds and GitHub release assets | Built through the public [setup template](https://github.com/BelimbingApp/bilibi-setup-template). Servers install an exact asset or upload; [Software](../../../apps/base/software/README.md) owns the identity, Staging report and install contract. |

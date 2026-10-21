@@ -50,6 +50,8 @@ contacted, private and local addresses are refused, credential headers are
 removed when the host changes, and the exchange row keeps the original URL.
 The `Location` target, including a signed download query, is not stored.
 
+For URLs supplied by an untrusted caller, use `Outgoing::public_https()`. It accepts HTTPS only, resolves the host once, refuses non-public addresses, pins the accepted addresses for the TLS connection and disables proxies and redirects. Public certificate roots still verify the original host. Set a short timeout and body limit for metadata documents; never fetch an untrusted URL with the ordinary redirecting client.
+
 ## Incoming calls
 
 ```rust

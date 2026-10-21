@@ -28,8 +28,8 @@ use bilibi_base::{
     tenancy::{ClientIdentity, ProofFuture, Scope, SelfReport},
 };
 use bilibi_core::agent_access::{
-    AgentAccess, AgentClaims, CodeExchange, OAuthError, Throttle, CLIENT_ID, DEVICE_GRANT,
-    OAUTH_REQUESTS_PER_MINUTE, OAUTH_SCOPE,
+    AgentAccess, AgentClaims, ClientRegistration, CodeExchange, OAuthError, Throttle, CLIENT_ID,
+    DEVICE_GRANT, OAUTH_REQUESTS_PER_MINUTE, OAUTH_SCOPE,
 };
 use bilibi_database::Error;
 use serde_json::{json, Map, Value};
@@ -54,8 +54,13 @@ pub fn reserved(path: &str) -> bool {
         || path.starts_with("/.well-known/")
         || path == "/webhooks"
         || path.starts_with("/webhooks/")
-        || crate::transport::reserved(path)
-        || ["/oauth/device_authorization", "/oauth/token", "/mcp"].contains(&path)
+        || [
+            "/oauth/device_authorization",
+            "/oauth/token",
+            "/oauth/register",
+            "/mcp",
+        ]
+        .contains(&path)
 }
 
 /// Services this edge composes; built once at boot from the registry.
@@ -103,6 +108,7 @@ pub fn router(app: App) -> Router<App> {
         .route("/.well-known/bilibi", get(descriptor))
         .route("/oauth/device_authorization", post(device))
         .route("/oauth/token", post(token))
+        .route("/oauth/register", post(register))
         .merge(api)
         .merge(crate::mcp::router())
         .method_not_allowed_fallback(method_not_allowed)
@@ -314,6 +320,8 @@ async fn metadata(State(app): State<App>) -> Response {
             "device_authorization_endpoint": format!("{base}/oauth/device_authorization"),
             "authorization_endpoint": format!("{base}/oauth/authorize"),
             "token_endpoint": format!("{base}/oauth/token"),
+            "registration_endpoint": format!("{base}/oauth/register"),
+            "client_id_metadata_document_supported": true,
             "response_types_supported": ["code"],
             "grant_types_supported": [DEVICE_GRANT, "authorization_code", "refresh_token"],
             "code_challenge_methods_supported": ["S256"],
@@ -452,6 +460,33 @@ fn oauth(result: Result<Value, OAuthError>) -> Response {
     response
 }
 
+/// RFC 7591 registration is intentionally unauthenticated. The same direct
+/// sender attribution and operator-set limiter as the token edge apply.
+async fn register(State(app): State<App>, request: Request) -> Response {
+    let sender = sender(&request);
+    match allowed(&app, "register", &sender).await {
+        Ok(true) => {}
+        Ok(false) => return oauth(Err(OAuthError::SlowDown)),
+        Err(error) => return oauth(Err(error.into())),
+    }
+    let Ok(Json(value)) = Json::<Value>::from_request(request, &app).await else {
+        return oauth(Err(OAuthError::InvalidClientMetadata));
+    };
+    if value.get("client_secret").is_some() || value.get("client_secret_expires_at").is_some() {
+        return oauth(Err(OAuthError::InvalidClientMetadata));
+    }
+    let Ok(registration) = serde_json::from_value::<ClientRegistration>(value) else {
+        return oauth(Err(OAuthError::InvalidClientMetadata));
+    };
+    let result = app.api.access.register_client(&registration).await;
+    let success = result.is_ok();
+    let mut response = oauth(result);
+    if success {
+        *response.status_mut() = StatusCode::CREATED;
+    }
+    response
+}
+
 async fn device(State(app): State<App>, request: Request) -> Response {
     let sender = sender(&request);
     match allowed(&app, "device", &sender).await {
@@ -494,6 +529,16 @@ fn query_value(value: &str) -> String {
 }
 
 async fn token(State(app): State<App>, request: Request) -> Response {
+    match app.secure_origin().await {
+        Ok(true) => {}
+        Ok(false) => {
+            return reply(
+                StatusCode::BAD_REQUEST,
+                json!({"error":"invalid_request", "error_description":"APP_ORIGIN must use HTTPS. Only a Dev copy on this computer may use HTTP on a loopback address."}),
+            )
+        }
+        Err(error) => return unavailable(&error).into_response(),
+    }
     let client_identity = client_identity(request.headers(), false);
     let sender = sender(&request);
     match allowed(&app, "token", &sender).await {

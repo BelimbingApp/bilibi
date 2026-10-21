@@ -90,7 +90,7 @@ return `live: false`. F6 owns queued events and retained fragment/iframe lifecyc
 
 The host owns the machine endpoints; discovered pages cannot claim them
 (`api::reserved`: `/api/v1/…`, `/.well-known/…`, `/oauth/device_authorization`,
-`/oauth/token`, `/mcp`, `/webhooks/…`, `/transport/…`).
+`/oauth/token`, `/mcp`, `/webhooks/…`).
 
 - Discovery: `/.well-known/oauth-authorization-server`,
   `/.well-known/oauth-protected-resource[/mcp]` and `/.well-known/bilibi`, all
@@ -170,14 +170,14 @@ The status bar shows the same facts through `bilibi_ui::version_badges`. The sch
 AI connections (`/settings/ai-connections`) is a `core/agent_access` page, not a host route. `/settings/mcp`, `/settings/agent-connections` and `/settings/chatgpt-plugin` redirect there. The page shows this `/mcp` edge from `APP_ORIGIN`. The ChatGPT plugin download stays a `core/agent_plugins` contribution. The package is named after the instance (`bilibi-staging`, "Bilibi Staging", `bilibi-staging-chatgpt-plugin.zip`), so a person can hold a Dev, a Staging and a Production connection in one harness. The host only parses the exporter subcommand:
 
 ```sh
-bilibi-web plugin-export --harness chatgpt --client <registered-id> --output <new-directory>
+bilibi-web plugin-export --harness chatgpt --output <new-directory>
 ```
 
 See `apps/core/agent_plugins/README.md`.
 
 # Webhooks (`src/webhooks.rs`)
 
-`POST /webhooks/{identifier}` is the only signed machine namespace (`/transport/…` below takes a pairing key, not a signature). Register a
+`POST /webhooks/{identifier}` is the only signed machine namespace. Register a
 handler with `Contribution::new(WEBHOOKS, …, &Webhook { identifier, service })`
 from `bilibi_base::integration::webhooks`; the service must resolve to a
 `WebhookService` wrapping a `WebhookHandler` (`verify`, then `handle`). Boot
@@ -205,10 +205,6 @@ the window closes. No body, header, signature, callback error or verified
 context is ever recorded, and webhooks do not enter the exchange log. A
 delivery whose audit row cannot be written is refused.
 
-# Release transport (`src/transport.rs`)
-
-`GET /transport/releases` lists the releases kept on this instance and `GET /transport/releases/{n}` streams one release file, for a paired instance that installs from this one. GET only: the target pulls, so nothing is ever pushed to an instance. The request carries the pairing key in `X-Bilibi-Pairing-Key` and nothing else (no cookie, CSRF or Origin); `base/software` decides admission and compares the key in constant time. The host throttles per sender, answers with fixed JSON errors and records one system incoming exchange per request, never the key. The contract, the checks and the pairing key: `apps/base/software/README.md`, "Release transport".
-
 ## Sign-in's second step and the SMS inbox
 
 Host routes in `src/auth.rs` (Core User owns the rules, [ADR 03](../../docs/architecture/decisions/03-sms-second-factor.md)):
@@ -225,7 +221,7 @@ Host routes in `src/auth.rs` (Core User owns the rules, [ADR 03](../../docs/arch
 
 The host compresses textual responses (`text/*`, JSON, JavaScript, XML and `+json`/`+xml` types such as SVG) with gzip or Brotli according to `Accept-Encoding`.
 
-- Compression runs at a fixed balanced quality (level 4) so a cold stylesheet request does not spend seconds of CPU. Any response with a `Content-Disposition` (private attachments, signed media, release bundles) and any non-text body (PDF, archives, fonts, images, octet-stream) is never recompressed and keeps its bytes and `Content-Length`, whatever its MIME type.
+- Compression runs at a fixed balanced quality (level 4) so a cold stylesheet request does not spend seconds of CPU. Any response with a `Content-Disposition` (private attachments, signed media, archives) and any non-text body (PDF, archives, fonts, images, octet-stream) is never recompressed and keeps its bytes and `Content-Length`, whatever its MIME type.
 - Compression adds `Vary: Accept-Encoding`; already encoded responses and streams such as server-sent events retain their existing handling.
 - Pages and API responses default to `cache-control: no-store`. Private downloads retain `private, no-store` and their sandboxing policy.
 - Only an embedded asset served with its matching content version receives `public, max-age=31536000, immutable`. Unversioned assets keep `no-store`; an unknown asset or incorrect version returns 404 with `no-store`.
@@ -233,3 +229,5 @@ The host compresses textual responses (`text/*`, JSON, JavaScript, XML and `+jso
 - CSP, `nosniff` and the referrer policy still apply to every response. A handler's stricter policy is preserved.
 
 Shared templates use `bilibi_ui::Assets::url` for CSS, scripts and icons; CSS also links versioned fonts. See [the UI asset contract](../base/ui/assets/README.md#urls-and-browser-caching) for the catalogue and hashing rules.
+
+OAuth discovery advertises `/oauth/register` and client ID metadata documents. Public client registration, redirect matching and receipt retention belong to [Agent Access](../core/agent_access/README.md#client-registration). Startup requires HTTPS for Staging and Production; Dev permits HTTP only on loopback. Token issuance rechecks the same policy if the stored instance role changes.

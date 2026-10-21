@@ -1,12 +1,12 @@
 {%- import "components.html" as ui -%}
 {%- import "forms.html" as form -%}
 {% call ui::card(id="specimen-multi-select", title="Multi-select", inner_class="p-4") %}
-<p class="mb-2 text-xs text-ink-muted">Required, with helper text</p>
+<p class="mb-2 text-xs text-ink-muted">One line (default), with overflow</p>
 {% call form::multi_select(control=controls.required_roles) %}{% endcall %}
-<div class="border-t border-line pt-3"><p class="mb-2 text-xs text-ink-muted">With chips: each choice is shown and removed in place, and the trigger keeps its verb</p>
+<div class="border-t border-line pt-3"><p class="mb-2 text-xs text-ink-muted">Multiple lines: the field grows to show every selected chip</p>
 {% call form::multi_select(control=controls.chip_roles) %}{% endcall %}
 </div>
-<div class="border-t border-line pt-3"><p class="mb-2 text-xs text-ink-muted">Optional, on its own</p>
+<div class="border-t border-line pt-3"><p class="mb-2 text-xs text-ink-muted">Empty selection</p>
 {% call form::multi_select(control=controls.plain_roles) %}{% endcall %}
 </div>
 {% endcall %}

@@ -91,14 +91,14 @@ LAB_ORIGIN=https://dev.10.77.61.2.sslip.io docs/server-proof/drive.py login
 chrome-devtools-axi open https://dev.10.77.61.2.sslip.io/finance/payroll
 ```
 
-Open Finance and use its Payroll page before downloading the release. An empty payroll list states that People is not mounted; it is not fixture data.
+Open Finance and use its Payroll page before packaging the release. An empty payroll list states that People is not mounted; it is not fixture data.
 
 ## Upload and install
 
-Download through Dev's Software › Releases tab and upload the resulting file on Production:
+Package the checked build locally and upload that archive on Production:
 
 ```sh
-LAB_ORIGIN=https://dev.10.77.61.2.sslip.io docs/server-proof/drive.py download
+docs/server-proof/pack-setup.sh "$BILIBI_PROOF_DATA/bin/finance/bilibi-web" "$BILIBI_PROOF_DATA/proof/release.tar.gz"
 docs/server-proof/drive.py upload
 docs/server-proof/drive.py receive
 docs/server-proof/drive.py refuse-install upload-1
@@ -115,7 +115,7 @@ docs/server-proof/lab.sh run '/src/docs/server-proof/rows.sh'
 
 The documented release folder has no `release.json`; the review warns that the change list is known only after the installer reads the program. The install result must then identify Finance and its pinned commit.
 
-The driver works around two AXI limits: it retains a downloaded Blob and exports bounded chunks because DevTools evicts large response bodies; it fills the real file input through browser scripting because the native upload command's argument shape differs from the installed DevTools tool. Bilibi still streams, receives and validates the file through its ordinary page.
+The driver works around an AXI limit: it fills the real file input through browser scripting because the native upload command's argument shape differs from the installed DevTools tool. Bilibi still streams, receives and validates the file through its ordinary page.
 
 ## Install from GitHub
 
@@ -139,6 +139,20 @@ docs/server-proof/drive.py wait <job>
 ```
 
 To make the download last long enough to cancel or interrupt, slow the lab's veth on the host for the run: `sudo -n tc qdisc add dev ve-fsproof root tbf rate 3mbit burst 64kb latency 500ms`, and `tc qdisc del` it afterwards. Restart `bilibi@production` inside the lab during the download to see an interrupted job. `fail-check.sh <in-service-release> <failing-release>` arms the failed check for the release the GitHub install will create.
+
+## Promote the same asset
+
+Create a Staging instance with its own database and exact origin. Put one additional bootstrap release there so its next local release number differs from Production's. Configure the same GitHub repository independently on each instance.
+
+1. Install one GitHub asset on Staging with its own fresh 2FA. Save its completed `status.installed_asset`, including the local release number and complete `github` object.
+2. Use the installed app in the browser and check a business workflow. Record the named checks, outcome, Staging origin, job and UTC time. A failed check stops promotion.
+3. Make a separate Production operation file outside the checkout. Use the same GitHub IDs, target, tag and archive digest, with `staging` shaped as documented in [Software](../../apps/base/software/README.md#staging-and-production).
+4. Use `drive.py plan-only <file>` to inspect that review, then `drive.py plan <file> refuse-first` for a separately approved install with fresh 2FA. Check that the Staging result survives in the completed job.
+5. Compare both installed GitHub objects after restart. Archive and program SHA-256 and GitHub IDs must match; local release numbers must differ.
+6. Use `drive.py plan-only <file>` with the matching report, a report for another target of the same setup tag and commit, a report for a different setup, and a report for the same tag and another target that omits `setup_commit`. Check the four GitHub relation messages documented in Software; all plans remain reviewable. Check a failed Staging outcome with `drive.py plan-only <file> refused`. Confirm that planning left Production unchanged. Then upload the saved archive through the folded file section, check that its review says an uploaded file cannot be compared with the Staging report, and complete an upload install.
+7. Request the retired listing, archive and export addresses: `/transport/releases`, `/transport/releases/1` and `/system/software/releases/1/download`. Each must answer 404. The old page bookmark may redirect to the Releases tab.
+
+Do not put authenticator seeds, passwords, API credentials or plan codes in operation files or evidence. The driver stores its lab credentials privately and redacts plan answers.
 
 ## Undo and fail a check
 

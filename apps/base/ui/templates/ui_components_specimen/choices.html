@@ -2,7 +2,6 @@
 {%- import "forms.html" as form -%}
 {% call ui::card(id="specimen-choice-controls", title="Choice controls", inner_class="p-4") %}
 {% call form::input(field=controls.select) %}{% endcall %}
-{% call form::multi_select(control=controls.roles) %}{% endcall %}
 {% call form::input(field=controls.checkbox) %}{% endcall %}
 {% call form::radio_group(group=controls.radio) %}{% endcall %}
 {% endcall %}

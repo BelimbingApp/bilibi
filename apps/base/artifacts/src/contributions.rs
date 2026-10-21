@@ -1,8 +1,8 @@
-//! Installation policy, editable only through operator-authorized Settings.
+//! Installation policy, mirroring Bilimbi Artifacts settings through operator-authorized Settings.
 use bilibi_authz::{CapabilityDefinition, VocabularyContribution, VOCABULARY};
 use bilibi_module_registry::{Contribution, Provenance};
 use bilibi_settings::{Definition, Editor, ScopeKind, Setting, Validator, ValueType, DEFINITIONS};
-use serde_json::{json, Value};
+use serde_json::json;
 const MANAGE: &str = "admin.system.artifacts.manage";
 macro_rules! provenance {
     () => {
@@ -34,19 +34,23 @@ setting!(
     false,
     None,
     None,
-    "Private document directory",
-    "A full folder path with permission 0700, outside any public web folder."
+    "Private document folder",
+    "Stores sensitive documents generated or uploaded. The default data/artifacts folder is created on first use; a custom folder must already exist with permission 0700, outside publicly served folders."
 );
 setting!(
     "artifacts.retention_days",
     Integer,
-    Value::Null,
+    json!(2557),
     true,
     Some(1.0),
     Some(36500.0),
     "Document retention days",
-    "Must be set before documents can be stored; a change applies only to new documents."
+    "Defaults to 2557 days (7 years); changes apply only to new documents (server owner only)."
 );
+inventory::submit! { Contribution::new(bilibi_module_registry::contributions::SEEDS, "base/artifacts.storage-policy", provenance!(), &bilibi_module_registry::contributions::Seed {
+    version: "artifacts-storage-policy-v1", mode: bilibi_module_registry::contributions::SeedMode::Production,
+    action: bilibi_module_registry::contributions::SeedAction::Service { service: "base/artifacts.install-policy", operation: "initialize" },
+}) }
 setting!(
     "artifacts.max_bytes",
     Integer,

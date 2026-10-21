@@ -1,6 +1,6 @@
 // Browser behaviour for the shared form controls in templates/forms.html:
 // CodeInput, ColourInput, Combobox, SecretReveal, SecretClear, SecretStored and
-// DisclosureDismiss (plus the dashboard's DashboardSort and the form Fold), adapted from Bilimbi's Phoenix hooks (apps/web/assets/js
+// DisclosureDismiss, MultiSelect (plus the dashboard's DashboardSort and the form Fold), adapted from Bilimbi's Phoenix hooks (apps/web/assets/js
 // at the pinned source) with the LiveView JS commands folded into the hooks.
 // Each registers with the shared `data-hook` runtime in ui.js
 // (BilibiUI.registerHook), which mounts a control when it enters the
@@ -11,6 +11,36 @@
 // `bilibi:event` CustomEvent, and hears a server push as a `window` event
 // `bilibi:<name>` with the payload in detail. ui.js must load first.
 (() => {
+  // The server owns opening/closing; this hook owns keyboard and focus only.
+  window.BilibiUI.registerHook("InlineForm", {
+    mounted() {
+      this.keydown = event => {
+        if (this.el.dataset.editing !== "true") return
+        if (event.key === "Escape") {
+          event.preventDefault()
+          event.stopPropagation()
+          this.emit(this.el.dataset.cancelEvent, {key: this.el.dataset.key})
+        } else if (event.key === "Enter" && !event.isComposing &&
+                   event.target.matches("input:not([type=button]):not([type=submit])")) {
+          event.preventDefault()
+          this.el.querySelector("form")?.requestSubmit()
+        }
+      }
+      this.el.addEventListener("keydown", this.keydown)
+      this.updated()
+    },
+    updated() {
+      const editing = this.el.dataset.editing === "true"
+      if (editing !== this.editing) {
+        this.editing = editing
+        const target = editing ? this.el.querySelector("input:not([type=hidden]):not([disabled]), select, textarea") : this.el.querySelector("button")
+        if (editing || this.wasEditing) target?.focus()
+        this.wasEditing = editing
+      }
+    },
+    destroyed() { this.el.removeEventListener("keydown", this.keydown) },
+  })
+
   // One native input is the keyboard and accessibility contract. Decorative
   // boxes follow its caret, so editing never adds eight tab stops or labels.
   const CodeInput = {
@@ -673,6 +703,76 @@
     },
   }
 
+  // Bilimbi multi_select disclosure with Bilibi's inset chip presentation.
+  // Values remain the owner's; overflow is measured from the actual field width.
+  const MultiSelect = {
+    mounted() {
+      DisclosureDismiss.mounted.call(this)
+      this.paintChips = () => {
+        const row = this.el.querySelector("[data-chip-row]")
+        if (!row || !row.clientWidth) return
+        const chips = [...row.querySelectorAll("[data-selected-chip]")]
+        const marker = row.querySelector("[data-chip-overflow]")
+        const gap = parseFloat(getComputedStyle(row).columnGap) || 0
+        const widths = chips.map(chip => chip.getBoundingClientRect().width)
+        const total = widths.reduce((sum, width) => sum + width, 0) + Math.max(0, chips.length - 1) * gap
+        let visible = chips.length
+        if (!this.el.hasAttribute("data-wrap-chips") && total > row.clientWidth) {
+          const budget = row.clientWidth - parseFloat(getComputedStyle(marker).width) - gap
+          let used = 0
+          visible = 0
+          for (const width of widths) {
+            const next = used + (visible ? gap : 0) + width
+            if (next > budget) break
+            used = next
+            visible++
+          }
+        }
+        chips.forEach((chip, index) => {
+          const hidden = index >= visible
+          if (chip.hasAttribute("data-overflow") !== hidden) chip.toggleAttribute("data-overflow", hidden)
+          if (chip.getAttribute("aria-hidden") !== String(hidden)) chip.setAttribute("aria-hidden", String(hidden))
+        })
+        const hidden = visible === chips.length
+        if (marker.hidden !== hidden) marker.hidden = hidden
+        const title = hidden ? "" : `${chips.length - visible} more selected`
+        if (marker.title !== title) marker.title = title
+      }
+      this.scheduleChips = () => {
+        if (this.chipFrame) return
+        this.chipFrame = requestAnimationFrame(() => {
+          this.chipFrame = null
+          this.paintChips()
+        })
+      }
+      this.removeChip = event => {
+        const button = event.target.closest(".ui-multi-remove")
+        if (!button || button.disabled) return
+        if (!button.hasAttribute("data-remove-value")) {
+          this.trigger.focus()
+          return
+        }
+        const input = [...this.el.querySelectorAll('input[type="checkbox"]')]
+          .find(option => option.value === button.dataset.removeValue)
+        if (!input || input.disabled) return
+        input.checked = false
+        input.dispatchEvent(new Event("change", {bubbles: true}))
+        this.trigger.focus()
+      }
+      this.el.addEventListener("click", this.removeChip)
+      this.chipResize = new ResizeObserver(this.scheduleChips)
+      this.chipResize.observe(this.el)
+      this.scheduleChips()
+    },
+    updated() { this.scheduleChips?.() },
+    destroyed() {
+      DisclosureDismiss.destroyed.call(this)
+      this.chipResize.disconnect()
+      cancelAnimationFrame(this.chipFrame)
+      this.el.removeEventListener("click", this.removeChip)
+    },
+  }
+
   // Drag-to-reorder for the dashboard widget grid (Bilimbi DashboardSort).
   // Server-driven: the hook only computes the DOM order after a drop and
   // reports it as `reorder_widgets`; the dashboard validates the order is a
@@ -744,7 +844,7 @@
 
   const registry = window.BilibiUI
   if (!registry) throw new Error("hooks.js needs ui.js loaded first")
-  for (const [name, hook] of Object.entries({CodeInput, ColourInput, Combobox, SecretReveal, SecretClear, SecretStored, DisclosureDismiss, DashboardSort, Fold})) {
+  for (const [name, hook] of Object.entries({CodeInput, ColourInput, Combobox, SecretReveal, SecretClear, SecretStored, DisclosureDismiss, MultiSelect, DashboardSort, Fold})) {
     registry.registerHook(name, hook)
   }
 })()

@@ -17,7 +17,7 @@
             <form id="design-library-fields" data-event="sample_change" data-change class="grid gap-3 lg:grid-cols-2">
               {% call ui::card(title="Text and long-form inputs", inner_class="p-4") %}{{ self.card_text_and_long_form_inputs()? }}{% endcall %}
 
-              {% call ui::card(title="Choice controls", inner_class="p-4") %}{{ self.card_choice_controls()? }}{% endcall %}
+              {% call ui::card(id="component-choice-controls", title="Choice controls", inner_class="p-4") %}{{ self.card_choice_controls()? }}{% endcall %}
 
               {% call ui::card(id="component-multi-select", title="Multi-select", inner_class="p-4") %}{{ self.card_component_multi_select()? }}{% endcall %}
 

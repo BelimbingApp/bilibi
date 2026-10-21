@@ -25,3 +25,7 @@
 </div>
 {% endcall %}
 </section>
+
+{% call ui::card(id="specimen-inline-form", title="Inline form") %}
+{{ inline.form_read }}{{ inline.form_edit }}
+{% endcall %}

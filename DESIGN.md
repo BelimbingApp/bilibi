@@ -108,11 +108,13 @@ Width is a shared decision. Every page uses `PageVariant`. All three share one c
 
 - **Text fields float the label.** Empty, it rests where the value goes. On focus, once filled, or when the browser autofills, it moves up small in muted ink. It never leaves the box.
 - **Selects, textareas, date-like inputs and the combobox pin it small at the top.** They always show something (a prompt, a mask, a selection) that a resting label would cover.
+- **Multi-selects:** one box holds the inset label and `(N selected)` count, with removable selected chips beneath. The default keeps complete chips on one line and shows “…” for overflow; `wrap_chips` expands the box onto multiple lines. The chevron stays beside the label. Empty fields show the label, `(0 selected)` and a selection prompt. The dropdown always exposes every option.
+- **Choice chevrons:** selects and multi-selects use the same 16 px outline chevron, aligned 11 px inside the field's right edge.
 - **Colour choices use `ColourInput`.** Each named choice and the selected value are one chip: that status role's banner surface, border and text colour, with the name inside, including the default choice. Chips follow the light and dark themes. The pinned label, keyboard controls and native select keep it usable with assistive technology and without JavaScript.
-- **Compact.** An inset box is 40 px with a 14 px value (`text-base`); the floated or pinned label is 11 px. Inset fields sit 12 px apart. Phones get a 16 px value so iOS does not zoom.
+- **Compact.** A single-value inset box is 40 px with a 14 px value (`text-base`); the floated or pinned label is 11 px. A multi-select starts at 48 px to hold its label and chip row, and grows when wrapping is enabled. Inset fields sit 12 px apart. Phones get a 16 px input value so iOS does not zoom.
 - **2FA before saving:** use `StepUp` (`base/ui`) for the code and protected submit actions. Without 2FA, show a plain setup notice and link first. Keep unrelated changes available.
 - **Sections:** draw a bordered part of a form with `forms::section` (one shared 12 px box and heading), not page-owned box classes. Create Address uses it.
-- **Classic label above** stays for a field with no visible label (toolbars, `sr-only`), a field with its own `class` or `label_class`, checkboxes, radio groups and multi-selects.
+- **Classic label above** stays for a field with no visible label (toolbars, `sr-only`), a field with its own `class` or `label_class`, checkboxes and radio groups. Multi-selects keep their canonical inset label.
 - Placeholder text shows only once the person is in the field, as an example, never as the label.
 - Help and error lines sit under the box. An error is a sentence that names its field (`error_sentence`): "Parse confidence must be a number from 0 to 1…".
 - After a refused save, `ErrorSummary` lists the problems above the form, each linking to its field. Inline errors stay.
@@ -125,11 +127,12 @@ Width is a shared decision. Every page uses `PageVariant`. All three share one c
 *Every list is a `FlexTable`.* Never the plain `Table`.
 
 - **State:** `ListState` keeps page, search, filters, sort and page size in the URL. Reload and shared links reopen the same view.
-- **Toolbar:** search and filters sit above the table in the open. No second card.
+- **Toolbar:** search sits first, with filter boxes to its right, above the table in the open. On narrow screens filters wrap below search in the same order. No second card.
 - **Rows:** `py-0.5`, `px-2`. Headers `py-1`, sunken background, `text-xs font-semibold`.
 - **Numbers:** tabular numerals for IDs, counts, dates and amounts.
 - **Corners:** table frames are square. A card is flat only where it frames the table.
 - **Pagination:** shown only when another page exists. The rows-per-page selector lives in the component.
+- **Settings:** the operator and company settings table opens each Value cell as a form with Save and Cancel (`InlineForm`). Enter saves; Escape cancels. Protected values ask for 2FA in the row.
 - **Empty:** `EmptyState` says why and what to do next.
 
 ### Flexible columns
@@ -148,7 +151,7 @@ Width is a shared decision. Every page uses `PageVariant`. All three share one c
 
 - A detail page is the header plus a stack of sections.
 - A section is a card with a heading, optional count, description and actions, then its facts or table.
-- Facts read like the filled-in form without its boxes: a small muted label (the floated label's size and ink) over the value, no dividers. They flow on a grid that follows the card's width: one column on a phone, two on a normal screen, three on a wide one. A long text or `pre` value takes the whole row. Split a card's facts into several `Facts` to start a new row, as Address Details does for its street lines.
+- Facts wrap long identifiers without changing the copied text. They read like the filled-in form without its boxes: a small muted label (the floated label's size and ink) over the value, no dividers. They flow on a grid that follows the card's width: one column on a phone, two on a normal screen, three on a wide one. A long text or `pre` value takes the whole row. Split a card's facts into several `Facts` to start a new row, as Address Details does for its street lines.
 - An inline editor opens as the floating field in the fact's place and size, so nothing moves between reading and editing (`[data-fact]` in `assets/css/app.css`).
 - **Text facts:** `InlineEdit`. Enter or leaving commits. Escape cancels.
 - **Long text:** `InlineLongText`. Saves on blur.
@@ -164,7 +167,7 @@ Width is a shared decision. Every page uses `PageVariant`. All three share one c
 | --- | --- |
 | Modal | Native `<dialog>`. Focus enters, stays, and returns. Escape and Cancel are one action. A click on the backdrop does nothing |
 | Confirmation | `ConfirmDialog` for irreversible actions: consequence first, Cancel beside the destructive verb. Never `window.confirm` |
-| Flash | Stacks top right, most severe first. Info, warning and error stay until dismissed. Success clears after 8 s |
+| Flash | Stacks at the right above the page, most severe first, reserving space so messages never cover page actions. A message that arrives with a redirect floats top right instead. Info, warning and error stay until dismissed. Success clears after 8 s |
 | Success | Only for a completed write |
 | Info | Informs without confirming a write |
 | Panel notice | Where a panel cannot reach the page flash |

@@ -54,20 +54,19 @@ from the repository root for disposable database and browser procedures.
 
 ## Instance identity (`src/instance.rs`)
 
-`Instance::resolve(settings, client)` reads the server role, label, colour and update source from global settings. **`instance.role` is the single source of the role**, shared by the status bar, banners, Software, agent discovery and MCP initialize.
+`Instance::resolve(settings, client)` reads the server role, label and colour from global settings. **`instance.role` is the single source of the role**, shared by the status bar, banners, Software, agent discovery and MCP initialize.
 
 The explicit production seed initializes `instance.role` from `BILIBI_ENV`: `development`, `staging` or `production` (unset means Production). It refuses other values. `install-server.sh` supplies this first value for servers; `start-app.sh` supplies Development for local copies. Seeding again preserves the saved role. Boot never seeds, and changing the environment after install cannot override the setting.
 
-Click the status-bar role to open `/system/instance`. A **Core Administrator in the platform-operator organisation** can change the role, label, colour and update source, with `admin.system.instance.manage` and no impersonation. The page and the `Instances::save` facade recheck these rules; writes recheck inside the audited mutation transaction. Every role change requires a fresh 2FA code through `base.system.instance.role.change`, declared `.always()`, including on Dev. Its `require_code` check refuses a missing submitted code even immediately after enrollment or another browser confirmation. The page warns that changing to or from Production changes warnings and 2FA rules without moving any data. A stale page cannot overwrite a newer role. The shell chooses whether to link the role with the unlogged `Instances::is_core_administrator` read plus its own capability set, so ordinary page renders write no authorization decisions.
+Click the status-bar role to open `/system/instance`. A **Core Administrator in the platform-operator organisation** can change the role, label and colour, with `admin.system.instance.manage` and no impersonation. The page and the `Instances::save` facade recheck these rules; writes recheck inside the audited mutation transaction. Every role change requires a fresh 2FA code through `base.system.instance.role.change`, declared `.always()`, including on Dev. Its `require_code` check refuses a missing submitted code even immediately after enrollment or another browser confirmation. The page warns that changing to or from Production changes warnings and 2FA rules without moving any data. A stale page cannot overwrite a newer role. The shell chooses whether to link the role with the unlogged `Instances::is_core_administrator` read plus its own capability set, so ordinary page renders write no authorization decisions.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
 | `instance.role` | Install input | Dev, Staging or Production; only the protected instance page changes it |
 | `instance.label` | Current role word | The name shown to people and agents |
 | `instance.colour` | Blue for Dev, amber for Staging, red for Production | A shared status colour |
-| `instance.installs_from` | Empty | A sibling instance name or HTTPS address to install tested releases from |
 
-The label, colour and source also remain in the generic settings editor behind `admin.system.instance.manage`. Empty label and colour follow the stored role. The role has no generic editor, so delegated operators cannot bypass its Core Administrator and 2FA checks.
+The label and colour also remain in the generic settings editor behind `admin.system.instance.manage`. Empty label and colour follow the stored role. The role has no generic editor, so delegated operators cannot bypass its Core Administrator and 2FA checks.
 
 The Banner colour field uses the shared `ColourInput`: Blue, Green, Amber and Red each show their name inside that banner colour. “Use role colour (Blue)” (or Green, Amber or Red for the stored role) shows the role's default colour and clears the override when saved. `src/instance.rs` owns the role-to-colour rule.
 
@@ -123,4 +122,4 @@ Controls:
   page and 120 characters a cell; a count past the timeout leaves the total
   unknown rather than failing the page.
 
-Without 2FA, the shared `bilibi_ui::StepUp` form disables the role selector and links to setup with a return address. Name, colour and update-source changes can still be saved. After setup, the role selector and optional code input are available.
+Without 2FA, the shared `bilibi_ui::StepUp` form disables the role selector and links to setup with a return address. Name and colour changes can still be saved. After setup, the role selector and optional code input are available.

@@ -15,7 +15,6 @@ mod web;
 pub use harness::{Harness, PackageFile};
 pub use package::https_origin;
 
-use bilibi_agent_access::{AgentAccess, OAuthError, PublicClient};
 use bilibi_agent_api::Registry;
 use bilibi_database::{Db, Error};
 use bilibi_settings::Settings;
@@ -34,24 +33,12 @@ pub enum PluginError {
     PersonRequired,
     #[error("unknown_harness")]
     UnknownHarness,
-    /// The client ID is not in `agent_access.oauth_clients`.
-    #[error("invalid_client")]
-    InvalidClient,
     /// `APP_ORIGIN` is not a bare HTTPS origin.
     #[error("https_required")]
     HttpsRequired,
     #[error(transparent)]
     Other(#[from] Error),
 }
-impl From<OAuthError> for PluginError {
-    fn from(error: OAuthError) -> Self {
-        match error {
-            OAuthError::Other(error) => Self::Other(error),
-            _ => Self::PersonRequired,
-        }
-    }
-}
-
 /// A built archive, ready to serve.
 pub struct Archive {
     pub filename: String,
@@ -59,7 +46,6 @@ pub struct Archive {
 }
 
 pub struct AgentPlugins {
-    access: Arc<AgentAccess>,
     registry: Arc<Registry>,
     /// For the instance the package is named after.
     db: Db,
@@ -81,36 +67,22 @@ impl AgentPlugins {
     pub fn harness(key: &str) -> Result<&'static dyn Harness, PluginError> {
         harness::find(key).ok_or(PluginError::UnknownHarness)
     }
-    /// Registered public clients for the person's own setup page.
-    pub async fn clients(&self, scope: &Scope) -> Result<Vec<PublicClient>, PluginError> {
-        Ok(self.access.clients_for(scope).await?)
-    }
-    /// The package for this instance, named after it. Which instance this
-    /// is comes from `Instance::resolve` like every other place that names
-    /// it, so the plugin, the banner and the MCP answers agree.
-    async fn package(
-        &self,
-        client_id: &str,
-        clients: &[PublicClient],
-    ) -> Result<Package, PluginError> {
-        let connection = Connection::new(&self.origin, client_id, clients)?;
+    /// Build a package that lets the harness register itself through discovery.
+    async fn package(&self) -> Result<Package, PluginError> {
+        let connection = Connection::new(&self.origin)?;
         let instance = {
             let client = self.db.get().await.map_err(Error::from)?;
             Instance::resolve(&self.settings, &**client).await?
         };
         Ok(Package::build(connection, &self.registry, &instance))
     }
-    /// The person's download. The client registration and the HTTPS origin
-    /// are checked again here, whatever the page showed.
-    pub async fn download(
-        &self,
-        scope: &Scope,
-        harness: &str,
-        client_id: &str,
-    ) -> Result<Archive, PluginError> {
+    /// The person's download. Recheck self-service and the HTTPS origin.
+    pub async fn download(&self, scope: &Scope, harness: &str) -> Result<Archive, PluginError> {
         let harness = Self::harness(harness)?;
-        let clients = self.clients(scope).await?;
-        let package = self.package(client_id, &clients).await?;
+        if scope.agent().is_some() || scope.impersonator().is_some() {
+            return Err(PluginError::PersonRequired);
+        }
+        let package = self.package().await?;
         let files = harness.files(&package);
         let bytes = archive::zip(&package.name, &files).map_err(|_| Error::Internal)?;
         Ok(Archive {
@@ -120,19 +92,9 @@ impl AgentPlugins {
     }
     /// The administrative exporter (Bilimbi `mix bilimbi.mcp.plugin`): global,
     /// non-secret configuration written into a new directory.
-    pub async fn export(
-        &self,
-        harness: &str,
-        client_id: &str,
-        output: &Path,
-    ) -> Result<&'static str, ExportError> {
+    pub async fn export(&self, harness: &str, output: &Path) -> Result<&'static str, ExportError> {
         let harness = Self::harness(harness)?;
-        let clients = self
-            .access
-            .public_clients()
-            .await
-            .map_err(PluginError::from)?;
-        let package = self.package(client_id, &clients).await?;
+        let package = self.package().await?;
         let files = harness.files(&package);
         if output.exists() {
             return Err(ExportError::OutputExists);
@@ -154,7 +116,7 @@ pub enum ExportError {
 
 /// The exporter's usage line, shown by the host for a malformed command.
 pub const USAGE: &str =
-    "usage: bilibi-web plugin-export --harness <harness> --client <registered-client-id> --output <new-directory>";
+    "usage: bilibi-web plugin-export --harness <harness> --output <new-directory>";
 
 inventory::submit! {
     bilibi_module_registry::Module {
@@ -163,7 +125,6 @@ inventory::submit! {
         migrations: &[],
         services: &[
             bilibi_module_registry::Service { id: SERVICE, factory: |services| Ok(Arc::new(AgentPlugins {
-                access: services.get("core/agent_access.grants")?,
                 registry: services.get("base/agent_api.registry")?,
                 db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
                 settings: services.get("base/settings.store")?,

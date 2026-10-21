@@ -26,8 +26,6 @@ const PLUGINS_ENABLED: &str = "enabled.json";
 
 #[derive(Clone, Debug)]
 pub struct Layout {
-    /// `/opt/bilibi`
-    pub root: PathBuf,
     /// The instance's folder name: `production`, `dev`.
     pub name: String,
     /// `/opt/bilibi/<name>`
@@ -51,24 +49,13 @@ impl Layout {
                 )
             })?
             .to_owned();
-        let root = dir
-            .parent()
-            .ok_or_else(|| format!("{} has no parent folder", dir.display()))?
-            .to_path_buf();
         if !dir.join("env").is_file() {
             return Err(format!(
                 "{} has no env file; create the instance with scripts/install-server.sh create {name} first",
                 dir.display()
             ));
         }
-        Ok(Self { root, name, dir })
-    }
-    /// Another instance on this machine, by its folder name.
-    pub fn sibling(&self, name: &str) -> Result<Self, String> {
-        if !valid_instance_name(name) {
-            return Err(format!("{name} is not an instance name"));
-        }
-        Self::open(&self.root.join(name))
+        Ok(Self { name, dir })
     }
     pub fn releases(&self) -> PathBuf {
         self.dir.join("releases")
@@ -204,7 +191,7 @@ pub fn verify_checksum(dir: &Path) -> Result<String, String> {
             dir.display()
         ));
     }
-    Ok(sha)
+    Ok(sha.to_ascii_lowercase())
 }
 
 /// Copies a release folder's files, and its add-ons, into `dst` and

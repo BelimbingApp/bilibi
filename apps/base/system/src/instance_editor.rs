@@ -1,8 +1,8 @@
 //! Core Administrator settings for instance identity. No Bilimbi counterpart: Bilimbi's
 //! status bar only shows a build-time development marker.
 use super::{
-    render, Colour, Instance, Pages, Role, Source, INSTANCE_COLOUR_KEY, INSTANCE_INSTALLS_FROM_KEY,
-    INSTANCE_LABEL_KEY, INSTANCE_MANAGE, INSTANCE_ROLE_KEY,
+    render, Colour, Instance, Pages, Role, INSTANCE_COLOUR_KEY, INSTANCE_LABEL_KEY,
+    INSTANCE_MANAGE, INSTANCE_ROLE_KEY,
 };
 use bilibi_database::{Db, Error, MutationBoundary, Result};
 use bilibi_settings::{Settings, Target};
@@ -38,7 +38,6 @@ pub struct InstanceSettings {
     pub role: Role,
     pub label: String,
     pub colour: String,
-    pub installs_from: String,
 }
 impl Instances {
     async fn core_administrator(
@@ -117,7 +116,6 @@ impl Instances {
         for (key, value) in [
             (INSTANCE_LABEL_KEY, input.label),
             (INSTANCE_COLOUR_KEY, input.colour),
-            (INSTANCE_INSTALLS_FROM_KEY, input.installs_from),
         ] {
             if value.trim().is_empty() {
                 self.settings
@@ -199,11 +197,34 @@ impl Editor {
         )?;
         let mut body = render(role_step)?;
         body.push(&render(bilibi_ui::Alert { kind: StatusKind::Warning, body: Html::text("Production is the live system. Changing to or from Production changes the server's warnings and 2FA rules. It does not copy or remove any data. Every role change needs a fresh 2FA code."), ..Default::default() })?);
-        for (key, label, hint) in [(INSTANCE_LABEL_KEY, "Instance name", "Leave empty to use the server role."), (INSTANCE_COLOUR_KEY, "Banner colour", "Choose a colour, or follow the server role."), (INSTANCE_INSTALLS_FROM_KEY, "Install updates from", "Optional. Another Bilibi server to get tested releases from, like your Staging server's address. Both servers need the same pairing key. Leave empty to upload release files by hand.")] {
-            let value = self.pages.instances.settings.get_global(&**client, key).await?;
-            let field = Field::named(format!("instance[{key}]" )).id(key.replace('.', "-")).label(label).hint(hint).value(draft(key).unwrap_or_else(|| value.as_str().unwrap_or("")));
+        for (key, label, hint) in [
+            (
+                INSTANCE_LABEL_KEY,
+                "Instance name",
+                "Leave empty to use the server role.",
+            ),
+            (
+                INSTANCE_COLOUR_KEY,
+                "Banner colour",
+                "Choose a colour, or follow the server role.",
+            ),
+        ] {
+            let value = self
+                .pages
+                .instances
+                .settings
+                .get_global(&**client, key)
+                .await?;
+            let field = Field::named(format!("instance[{key}]"))
+                .id(key.replace('.', "-"))
+                .label(label)
+                .hint(hint)
+                .value(draft(key).unwrap_or_else(|| value.as_str().unwrap_or("")));
             if key == INSTANCE_COLOUR_KEY {
-                body.push(&render(super::instance::colour_input(field, self.role.env_value()))?);
+                body.push(&render(super::instance::colour_input(
+                    field,
+                    self.role.env_value(),
+                ))?);
             } else {
                 body.push(&render(field)?);
             }
@@ -223,7 +244,7 @@ impl Editor {
         })?;
         let mut content = render(Header {
             title: Html::text("Instance settings"),
-            subtitle: "Set this server's role, name, colour and update source.",
+            subtitle: "Set this server's role, name and colour.",
             ..Default::default()
         })?;
         content.push(
@@ -265,10 +286,7 @@ impl Editor {
             _ => return Err(Error::Invalid),
         };
         let colour = text(INSTANCE_COLOUR_KEY);
-        let source = text(INSTANCE_INSTALLS_FROM_KEY);
-        if !colour.is_empty() && Colour::parse(colour).is_none()
-            || !source.is_empty() && Source::parse(source).is_none()
-        {
+        if !colour.is_empty() && Colour::parse(colour).is_none() {
             return Err(Error::Invalid);
         }
         let scope = scope.clone().presenting_step_up(text("code"));
@@ -281,7 +299,6 @@ impl Editor {
                     role,
                     label: text(INSTANCE_LABEL_KEY).into(),
                     colour: colour.into(),
-                    installs_from: source.into(),
                 },
             )
             .await

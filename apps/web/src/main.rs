@@ -65,9 +65,7 @@ async fn main() -> Result<()> {
                 AgentPlugins, ExportError, PluginError, SERVICE, USAGE,
             };
             let args: Vec<String> = std::env::args().skip(2).collect();
-            let Some([harness, client, output]) =
-                flags(&args, ["--harness", "--client", "--output"])
-            else {
+            let Some([harness, output]) = flags(&args, ["--harness", "--output"]) else {
                 eprintln!("{USAGE}");
                 return Err(Error::Invalid);
             };
@@ -79,11 +77,11 @@ async fn main() -> Result<()> {
             let app = bilibi_web::App::new(db.clone(), &origin)?;
             let plugins = app.services.get::<AgentPlugins>(SERVICE)?;
             match plugins
-                .export(harness, client, std::path::Path::new(output))
+                .export(harness, std::path::Path::new(output))
                 .await
             {
                 Ok(name) => println!(
-                    "Exported {output}. Connect {}/mcp in {name} using client {client} and OAuth without a client secret.",
+                    "Exported {output}. Connect {}/mcp in {name} using OAuth with automatic client registration.",
                     plugins.origin()
                 ),
                 Err(error) => {
@@ -97,8 +95,6 @@ async fn main() -> Result<()> {
                                 ),
                             ExportError::Plugin(PluginError::HttpsRequired) =>
                                 "Configure the host's public HTTPS URL (APP_ORIGIN) first".into(),
-                            ExportError::Plugin(PluginError::InvalidClient) =>
-                                "Register this public OAuth client in Settings first".into(),
                             other => other.to_string(),
                         }
                     );
@@ -139,6 +135,18 @@ async fn main() -> Result<()> {
             let origin =
                 std::env::var("APP_ORIGIN").unwrap_or_else(|_| "http://localhost:3000".into());
             let bind = std::env::var("BIND_ADDR").unwrap_or_else(|_| "127.0.0.1:3000".into());
+            let mut app = bilibi_web::App::new(db, &origin)?;
+            match app.secure_origin().await {
+                Ok(true) => {}
+                Ok(false) => {
+                    eprintln!("APP_ORIGIN must use HTTPS. Only a Dev copy on this computer may use HTTP on a loopback address.");
+                    return Err(Error::Invalid);
+                }
+                Err(error) => {
+                    eprintln!("Cannot read the instance settings ({error}). Run `bilibi-web migrate` and `bilibi-web seed-production` first; APP_ORIGIN must also be a valid address.");
+                    return Err(error);
+                }
+            }
             let listener = tokio::net::TcpListener::bind(&bind)
                 .await
                 .map_err(|_| Error::Internal)?;
@@ -148,7 +156,6 @@ async fn main() -> Result<()> {
             } else {
                 println!("Bilibi listening at {origin}");
             }
-            let mut app = bilibi_web::App::new(db, &origin)?;
             app.listen_address = Some(listen_host(&bind).into());
             let executor = bilibi_base::queue::execution::Executor::from_services(
                 &app.services,
@@ -164,9 +171,9 @@ async fn main() -> Result<()> {
                 app.services.get(bilibi_base::software::SERVICE)?;
             let (stop, stopped) = tokio::sync::watch::channel(false);
             let settling = tokio::spawn(software.clone().run_settling(stopped.clone()));
-            // A release on its way from another machine is downloaded by this
-            // program, then handed to the installer (release transport).
-            let transporting = tokio::spawn(software.run_transport(stopped.clone()));
+            // This program downloads a GitHub release, then hands the checked
+            // folder to the installer.
+            let downloading = tokio::spawn(software.run_downloads(stopped.clone()));
             let history = tokio::spawn(app.perf.clone().run(stopped.clone()));
             let worker = tokio::spawn(executor.run(stopped.clone()));
             let ticker = tokio::spawn(scheduler.run(stopped));
@@ -185,7 +192,7 @@ async fn main() -> Result<()> {
             .map_err(|_| Error::Internal);
             let _ = stop.send(true);
             settling.await.map_err(|_| Error::Internal)??;
-            transporting.await.map_err(|_| Error::Internal)??;
+            downloading.await.map_err(|_| Error::Internal)??;
             worker.await.map_err(|_| Error::Internal)??;
             history.await.map_err(|_| Error::Internal)??;
             ticker.await.map_err(|_| Error::Internal)??;

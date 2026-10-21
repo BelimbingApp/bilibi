@@ -182,6 +182,7 @@ impl ToolbarControl {
 
 /// The filter toolbar framed above a list. The form raises `event` on change
 /// and on submit (Enter filters in place), carrying `filters[...]` values.
+/// Search comes first, with filters to its right and wrapping below on narrow screens.
 #[derive(Template, Clone, Debug)]
 #[template(
     source = r#"{% import "lists.html" as lists %}{% call lists::filter_toolbar(toolbar=self) %}{% endcall %}"#,
@@ -198,8 +199,9 @@ pub struct FilterToolbar<'a> {
 
 impl<'a> FilterToolbar<'a> {
     /// A toolbar needs at least one control; an empty one panics on purpose.
-    pub fn new(id: &'a str, controls: Vec<ToolbarControl>) -> Self {
+    pub fn new(id: &'a str, mut controls: Vec<ToolbarControl>) -> Self {
         assert!(!controls.is_empty(), "a filter toolbar needs a control");
+        controls.sort_by_key(|control| !control.is_search());
         Self {
             id,
             event: "filters",

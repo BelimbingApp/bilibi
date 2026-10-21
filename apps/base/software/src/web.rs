@@ -201,7 +201,6 @@ struct View {
     backups: ListColumns,
     backup_list: ListState,
     propose: Vec<String>,
-    release: String,
     bundle: String,
     dialog: Option<Dialog>,
     flash: Option<(StatusKind, String)>,
@@ -287,7 +286,6 @@ impl View {
             pages,
             query: query.clone(),
             propose,
-            release: String::new(),
             bundle: String::new(),
             dialog: None,
             flash: None,
@@ -335,7 +333,6 @@ impl View {
         let get = |key: &str| value.get(key).and_then(Value::as_str);
         match get("type").ok_or(Error::Invalid)? {
             "request_install" => {
-                self.release = values.get("release").cloned().unwrap_or_default();
                 self.bundle = values.get("bundle").cloned().unwrap_or_default();
                 if value.get("asset").is_some() {
                     match (
@@ -373,18 +370,8 @@ impl View {
                     self.preview(scope, credential, Kind::Install, input)
                         .await?;
                 } else {
-                    match self.release.trim().parse::<i64>() {
-                        Ok(release) if release >= 1 => {
-                            self.install_error = None;
-                            let input = json!({"release": release, "switch": "auto"});
-                            self.preview(scope, credential, Kind::Install, input)
-                                .await?;
-                        }
-                        _ => self.install_error = Some(
-                            "Enter the release number shown on the update server, like 42, or pick a release file uploaded here."
-                                .into(),
-                        ),
-                    }
+                    self.install_error =
+                        Some("Choose a GitHub release or an uploaded file.".into());
                 }
             }
             "request_undo" => {
@@ -705,7 +692,7 @@ impl View {
             content.push(&self.backups_card(&display, &status)?);
             content.push(&render(SectionHeading {
                 title: "Get an update",
-                description: "Install a setup file from GitHub, upload a tested release file, or get one from the update server.",
+                description: "Install a setup file from GitHub or upload a tested release file.",
                 ..SectionHeading::default()
             })?);
             content.push(&transfer);
@@ -817,19 +804,7 @@ impl View {
     /// What runs now, from the program itself.
     fn instance_card(&self, instance: &Instance, status: &Value) -> Result<Html> {
         let installed = &status["installed"];
-        let role = format!(
-            "{} · {}",
-            instance.label,
-            match &status["instance"]["installs_from"] {
-                Value::Null =>
-                    "no update server chosen; you can upload a tested release file".to_owned(),
-                source if source["kind"] == "same_machine" => format!(
-                    "gets tested updates from {} on this machine",
-                    text(&source["instance"])
-                ),
-                source => format!("gets tested updates from {}", text(&source["address"])),
-            }
-        );
+        let role = instance.notice();
         let platform = &installed["platform"];
         let mut bilibi = format!("Bilibi {}", text(&platform["version"]));
         if let Some(release) = platform["release"].as_str() {
@@ -1317,62 +1292,37 @@ impl View {
     }
 
     fn install_card(&self, instance: &Instance, status: &Value, busy: bool) -> Result<Html> {
-        let source = &status["instance"]["installs_from"];
-        let source_text = match source {
-            Value::Null => None,
-            s if s["kind"] == "same_machine" => {
-                Some(format!("{} on this machine", text(&s["instance"])))
-            }
-            s => Some(text(&s["address"]).to_owned()),
-        };
         let uploads: Vec<&Value> = status["uploads"]
             .as_array()
             .map(|list| list.iter().collect())
             .unwrap_or_default();
-        let usable = source_text.is_some() || !uploads.is_empty();
-        let file_chosen = !self.bundle.trim().is_empty();
-        let release = Field::named("release")
-            .id("software-release")
-            .label("Release number on the update server")
-            .kind(InputKind::Number)
-            .value(self.release.clone())
-            .hint("Use the release number currently running on the server you get updates from.")
-            .wrapper_class("mb-0 w-full sm:w-72")
-            .attr("min", "1");
-        let release = match (&self.install_error, file_chosen) {
-            (Some(message), false) => release.error(message.clone()),
-            _ => release,
-        };
-        let release = if busy || source_text.is_none() {
-            release.disabled()
-        } else {
-            release
-        };
+        let usable = !uploads.is_empty();
         let file = if uploads.is_empty() {
             None
         } else {
-            let mut options = vec![Choice::new("No file: use the release number", "")];
+            let mut options = vec![Choice::new("Choose an uploaded file", "")];
             options.extend(uploads.iter().map(|upload| {
                 let bundle = text(&upload["bundle"]);
                 let what = match upload["release"].as_u64() {
                     Some(n) => format!("release {n}"),
                     None => "a release".to_owned(),
                 };
-                Choice::new(
-                    format!("{bundle}: {what} from {}", text(&upload["from"])),
-                    bundle,
-                )
+                let label = match upload["from"].as_str() {
+                    Some(from) => format!("{bundle}: {what} from {from}"),
+                    None => format!("{bundle}: {what}"),
+                };
+                Choice::new(label, bundle)
             }));
             let file = Field::named("bundle")
                 .id("software-bundle")
-                .label("Or a release file uploaded here")
+                .label("Uploaded release file")
                 .kind(InputKind::Select)
                 .options(options)
                 .value(self.bundle.clone())
-                .hint("A file picked here is installed instead of the release number.")
+                .hint("Review this file before installing it.")
                 .wrapper_class("mb-0 w-full sm:w-72");
-            let file = match (&self.install_error, file_chosen) {
-                (Some(message), true) => file.error(message.clone()),
+            let file = match &self.install_error {
+                Some(message) => file.error(message.clone()),
                 _ => file,
             };
             Some(if busy { file.disabled() } else { file })
@@ -1386,7 +1336,7 @@ impl View {
             body: Html::text("Review the install"),
             ..Button::default()
         })?;
-        let mut fields = render(release)?;
+        let mut fields = Html::EMPTY;
         if let Some(file) = file {
             fields.push(&render(file)?);
         }
@@ -1401,13 +1351,37 @@ impl View {
         } else {
             Html::EMPTY
         };
-        let body = render(InstallForm {
-            label: &instance.label,
-            source: source_text.as_deref(),
-            form,
-            busy,
-            production: instance.role == bilibi_system::Role::Production,
-        })?;
+        let mut body = Html::EMPTY;
+        if !usable {
+            body.push(&render(Alert {
+                kind: StatusKind::Info,
+                id: "software-no-upload",
+                body: Html::text(&format!(
+                    "Upload a release file to review and install it on {}.",
+                    instance.label
+                )),
+                ..Alert::default()
+            })?);
+        }
+        body.push(&form);
+        if instance.role == bilibi_system::Role::Production {
+            body.push(&render(Alert {
+                kind: StatusKind::Warning,
+                id: "software-upload-production",
+                body: Html::text("Pick a quiet time: this server pauses for about a minute."),
+                ..Alert::default()
+            })?);
+        }
+        if busy {
+            body.push(&render(Alert {
+                kind: StatusKind::Info,
+                id: "software-upload-busy",
+                body: Html::text(
+                    "Wait for the current job to finish, or cancel it, before installing.",
+                ),
+                ..Alert::default()
+            })?);
+        }
         render(Card {
             id: "software-install",
             title: "Install",
@@ -1795,16 +1769,6 @@ struct JobBody {
 #[template(path = "software_job_steps.html")]
 struct JobSteps {
     steps: Vec<StepView>,
-}
-
-#[derive(Template)]
-#[template(path = "software_install.html")]
-struct InstallForm<'a> {
-    label: &'a str,
-    source: Option<&'a str>,
-    form: Html,
-    busy: bool,
-    production: bool,
 }
 
 #[derive(Template)]

@@ -30,9 +30,11 @@
 {% endmacro %}
 
 {#- The layout's flash outlet: a permanent polite live region stacking the
-    messages most severe first. Only a success times out. -#}
-{% macro flash_group(id="flash-group", messages=bilibi_ui::NO_FLASH) %}
-<div id="{{ id }}" aria-live="polite" class="fixed right-4 top-4 z-50 flex w-[min(24rem,calc(100vw-2rem))] flex-col gap-2">
+    messages most severe first. Only a success times out. In flow by default so
+    an approval notice cannot cover the next action (for example Post); floating
+    pins it top right for the outlet that sits outside the page body. -#}
+{% macro flash_group(id="flash-group", messages=bilibi_ui::NO_FLASH, floating=false) %}
+<div id="{{ id }}" aria-live="polite" class="{% if floating %}fixed right-4 top-4{% else %}relative ml-auto mr-4{% endif %} z-50 flex w-[min(24rem,calc(100vw-2rem))] flex-col gap-2">
 {% call flash(kind=bilibi_ui::StatusKind::Error, message=messages.error) %}{% endcall %}
 {% call flash(kind=bilibi_ui::StatusKind::Warning, message=messages.warning) %}{% endcall %}
 {% call flash(kind=bilibi_ui::StatusKind::Success, message=messages.success, auto_dismiss=true) %}{% endcall %}

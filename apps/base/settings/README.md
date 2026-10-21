@@ -14,24 +14,28 @@ a secret: use an encrypted definition for secrets. Undeclared keys, wildcard
 requests, overlong keys, wrong types and forbidden scopes refuse before writing.
 Writes are bounded to 1 MiB of JSON.
 
-Resolve using `Settings::get` or `resolve_many` from `base/settings.store`.
+Resolve using `Settings::get` or `resolve_many` from `base/settings.store`. Reads accept `&dyn bilibi_tenancy::ReadClient`, including PostgreSQL clients and transactions and the operation handler's `&dyn OperationClient`. Pass the handed client so a plan sees its earlier writes and rollback keeps every change together.
 Resolution is user → selected company → tenant → global → declared default,
 filtering to the definition's allowed scopes. A stored JSON null is a real
 nullable override; missing runtime state resolves to null. `Resolved.source`
 is absent for a default; `overridden` means a row at the exact requested target.
 Bulk reads use one uncached SQL snapshot and only the requested scope identities.
 
+When upgrading a wrapper that reads Settings, change its client argument so it also accepts an operation's handed transaction:
+
+```rust,ignore
+// Before
+async fn layout(client: &(impl tokio_postgres::GenericClient + Sync), settings: &Settings) { /* ... */ }
+// After
+async fn layout(client: &dyn bilibi_tenancy::ReadClient, settings: &Settings) { /* ... */ }
+```
+
+Normal PostgreSQL clients and transactions implement `ReadClient` automatically. A custom `OperationClient` implementation must move its `query` method into an implementation of `ReadClient`; `OperationClient` is now a marker extending that trait. Keep its existing `ProofClient` implementation. Writes still take `MutationTransaction`.
+
 `Settings::get_global` is the one ambient read: a non-secret, global-scope value
 for consumers with no session (signed links, workers). Encrypted definitions,
 runtime claims and keys without a global scope refuse; a secret needs an
 explicit, authorized `get`.
-The one exception is `Settings::get_own_global_secret(client, owner, key)`:
-a module's own encrypted, global definition (the definition's contributing
-module must be `owner`), for a request that comes from a machine and so has
-no session. Its intended caller is `bilibi_authz::SystemScope::read_own_secret`,
-which proves the caller is a system principal that module declared; nothing
-else should name a module there, and no other key, scope or module is readable
-that way.
 
 `Target` is a request, not permission. The actor is a sealed Tenancy `Scope`.
 User means the actor's own account; tenant means their tenant. Each company read,

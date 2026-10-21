@@ -61,9 +61,9 @@ pub use error_page::{
     copy_for, debug_document, error_document, DebugFrame, DebugReport, ErrorCopy,
 };
 pub use feedback::{
-    Alert, ConfirmDialog, ConnectionBanners, ErrorSummary, Flash, FlashGroup, FlashMap, Modal,
-    ModalWidth, NoticeKind, PanelNotice, Revealed, StatusKind, SummaryItem, Tab, Tabs,
-    AUTO_DISMISS_MS, NO_FLASH,
+    Alert, ConfirmDialog, ConnectionBanners, ErrorSummary, Flash, FlashGroup, FlashMap,
+    FloatingFlashGroup, Modal, ModalWidth, NoticeKind, PanelNotice, Revealed, StatusKind,
+    SummaryItem, Tab, Tabs, AUTO_DISMISS_MS, NO_FLASH,
 };
 pub use feedback_specimen::FeedbackSpecimen;
 pub use flex_table::{
@@ -78,7 +78,7 @@ pub use forms::{
 };
 pub use html::Html;
 pub use inline::{
-    CommitOutcome, CommitStates, CommitStatus, InlineChoice, InlineEdit, InlineField,
+    CommitOutcome, CommitStates, CommitStatus, InlineChoice, InlineEdit, InlineField, InlineForm,
     InlineLongText,
 };
 pub use inline_specimen::{inline_specimen_values, InlineSpecimen};

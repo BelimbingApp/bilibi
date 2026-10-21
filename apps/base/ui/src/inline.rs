@@ -214,3 +214,25 @@ pub struct InlineChoice {
     pub display: Html,
     pub editor: Html,
 }
+
+/// Read-first cell with an owner-rendered form (including secrets and 2FA).
+/// Unlike text facts, Save is explicit. The owner holds editing state, validates
+/// each submission and closes only on success. No Bilimbi counterpart.
+#[derive(Template, Debug)]
+#[template(
+    source = r#"{% import "inline.html" as inline %}{% call inline::inline_form(cell=self) %}{% endcall %}"#,
+    ext = "html"
+)]
+pub struct InlineForm {
+    pub compact: bool,
+    pub id: String,
+    pub key: String,
+    pub label: String,
+    pub value: String,
+    pub hint: String,
+    pub editing: bool,
+    pub open_event: String,
+    pub cancel_event: String,
+    pub form: Html,
+    pub status: CommitStatus,
+}

@@ -86,14 +86,9 @@ pub struct Step {
     pub pauses: bool,
 }
 pub fn install_steps(downloads: bool) -> Vec<Step> {
-    download_steps(downloads, "Download the update from the update server")
-}
-/// `label` is the download step's sentence. It is "Download the release from GitHub"
-/// for a GitHub file, and the update-server sentence for a paired instance.
-pub fn download_steps(downloads: bool, label: &'static str) -> Vec<Step> {
     let mut list: Vec<(&'static str, &'static str, bool)> = Vec::new();
     if downloads {
-        list.push(("download", label, false));
+        list.push(("download", "Download the release from GitHub", false));
     }
     list.extend([
         ("fetch", "Check the release and copy it into place", false),

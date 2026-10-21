@@ -60,7 +60,8 @@ fi
 
 step 'Migrate a fresh database and apply the production seeds'
 "$app" migrate
-"$app" seed-production
+# This disposable boot uses HTTP loopback, so install it explicitly as Dev.
+BILIBI_ENV=development "$app" seed-production
 
 step 'Boot the composed app and load /'
 port=${DOMAIN_CI_PORT:-3000}

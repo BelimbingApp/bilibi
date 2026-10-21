@@ -306,6 +306,7 @@ dependencies = [
  "bilibi-core",
  "bilibi-database",
  "bilibi-datetime",
+ "bilibi-integration",
  "bilibi-locale",
  "bilibi-module-registry",
  "bilibi-party-ids",
@@ -1127,10 +1128,10 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "subtle",
  "tar",
  "tokio",
  "tokio-postgres",
+ "url",
 ]
 
 [[package]]

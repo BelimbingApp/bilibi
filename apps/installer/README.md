@@ -4,16 +4,16 @@
 
 ## One example
 
-Production is set to install releases tested on Dev. The owner opens the Software page on Production, chooses "Install release 3 from dev", types their 2FA code, and confirms. Over the next two minutes the page shows:
+The owner opens Software on Production, reviews the exact GitHub asset already checked on Staging, types a fresh 2FA code, and confirms. Over the next two minutes the page shows:
 
 ```
-1. Copy the release and check it           done    Copied dev release 3 as release 2 here: Bilibi 0.1.1, ...
+1. Copy the release and check it           done    Copied the GitHub asset as release 2 here: Bilibi 0.1.1, ...
 2. Back up the database (Production pauses from here)
                                            done    production is paused. Backed up the database (14 MB).
 3. Update the database                     done    Applied 1 migration as one piece.
 4. Switch to the new program               done    current points at release 2; the service is starting
 5. Check that it works                     done    Release 2 answered after 2 s
-Done: Release 2 is in service, installed from dev release 3. The database was updated.
+Done: Release 2 is in service, installed from GitHub. The database was updated.
 ```
 
 Notice what the owner did **not** do: copy a file, stop a service, run `pg_dump`, run `migrate`, or watch a terminal. Notice also what happened to the people using Production: for about a minute every page showed "Production is updating" and then reloaded where they were.
@@ -24,7 +24,7 @@ You may already have questions: what if the new release does not work, what does
 
 | Step | What we do | If it fails |
 | --- | --- | --- |
-| **Check the release and copy it into place** | Find the release: the source instance's folder on this machine (`/opt/bilibi/dev/releases/3`), the folder the program downloaded it into from a source on another machine (`incoming/job-<n>/`), or an uploaded release file (`incoming/upload-<n>/`). Check its checksum; check it was built for this kind of server (a Linux program for this processor, and a system library this server has); for a sibling, check that it still runs the release and answers; check it is not already the program in service; check there is disk for the program and a backup. Copy it into the next number here (`releases/2`), check the copy, run its `status` to prove it runs on this server, and remove it from `incoming/`. A downloaded `incoming/job-<n>/` is removed whatever the outcome; an uploaded `incoming/upload-<n>/` is removed once installed or when it fails its checks, and stays for another try otherwise. | Nothing changed. The instance never paused. The message says what to fix. |
+| **Check the release and copy it into place** | Find the release: the folder the program downloaded from GitHub (`incoming/job-<n>/`), or an uploaded release file (`incoming/upload-<n>/`). Check its checksum; check it was built for this kind of server (a Linux program for this processor, and a system library this server has); check it is not already the program in service; check there is disk for the program and a backup. Copy it into the next number here (`releases/2`), check the copy, run its `status` to prove it runs on this server, and remove it from `incoming/`. A downloaded `incoming/job-<n>/` is removed whatever the outcome; an uploaded `incoming/upload-<n>/` is removed once installed or when it fails its checks, and stays for another try otherwise. | Nothing changed. The instance never paused. The message says what to fix. |
 | **Back up the database** (the pause starts) | Stop the service. Caddy shows the waiting page from here. Dump the database with PostgreSQL's own `pg_dump` into `backups/job-<n>/`. | The service is started again. Nothing changed. |
 | **Update the database** | Run the new program's `migrate` and then its production seeds, as one step. `migrate` is one transaction: all of it or none of it. The step is judged on the migration ledger (the table that lists the migrations applied): we count it before and after. | If the ledger did not grow, nothing changed: the previous release is started again. If it grew (`migrate` committed and a seed then failed), the database has changed shape, so the step goes back like a failed check: restore the backup, then start the previous release. |
 | **Switch to the new program** | Point `releases/current` at the new release (the instance's `current` is a fixed link to it) and start the service. | **Switch back by itself.** See below. |
@@ -36,9 +36,9 @@ When the switch or the check fails, or the database update failed after it chang
 
 If the backup cannot be restored, the job ends `failed` with the service **left stopped** and a message that names the dump to restore by hand. It does not try again by itself.
 
-How a release reaches this machine from another one, with the pairing key and the release file, is the program's side: `apps/base/software/README.md`, "Release transport". An install from another machine has a **Download the release from the source** step before this one, which the program carries out; the installer leaves such a job alone until that step is done.
+The app downloads GitHub assets before the installer claims the job. The installer leaves a queued download alone until that step is complete. See [release archives](../base/software/README.md#release-archives).
 
-A GitHub download is another folder under `incoming/job-<n>/`. The download step checks that the archive still matches the reviewed check code before it is opened. The installer then checks the files inside against their own check codes, the same way as an upload. The job result keeps the GitHub repository number, release, file, tag, target, archive check code and program check code. Undo does not call GitHub.
+A GitHub download is another folder under `incoming/job-<n>/`. The download step checks that the archive still matches the reviewed check code before it is opened. The installer compares the program with the downloader’s recorded SHA-256 before executing it. The files inside are checked against their own check codes, the same way as an upload. The job result keeps the GitHub repository number, release, file, tag, target, archive SHA-256, program SHA-256 and setup commit from `release.json`. It also retains any agent-supplied Staging report for the owner, without enforcing its program checksum or setup commit. Undo does not call GitHub.
 
 ### "Switch as soon as it is ready" or "ask me first"
 
@@ -110,7 +110,7 @@ The result carries what Undo and the page need:
 | `migrated` | whether the database changed shape; Undo then restores the backup |
 | `backup`, `backup_at` | where the backup is and when (UTC) it was taken |
 | `source`, `source_release`, `sha256`, `program` | where the release came from, its number there, its checksum and its first `status` line |
-| `github` | on a GitHub install: repository, repository number, release number, file number, tag, target, archive check code and program check code. Undo does not need GitHub |
+| `github` | on a GitHub install: repository, repository number, release number, file number, tag, target, archive SHA-256, program SHA-256 and setup commit from `release.json`. It also retains any agent-supplied Staging report for the owner, without enforcing its program checksum or setup commit. Undo does not need GitHub |
 | `switched_back`, `restored`, `previous_healthy` | on a failure: what the installer did to put things back |
 | `platform`, `domains`, `extensions` | what the release in service is made of, read from its own `bilibi-web status`: the Platform `{"version", "release", "commit"}` and each Domain or Extension `{"id", "version", "commit"}`; null when the program could not say |
 | `changes` | what differs from the release it replaced (an install) or the release it left (an Undo): `{"platform": {"from", "to"} or null, "containers": [{"layer", "id", "change", "from", "to", "from_commit", "to_commit"}]}`, where `change` is `added`, `removed`, `updated`, `downgraded` or `moved` (same version or none, new commit; the commits are short); null when either release could not say |
