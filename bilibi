@@ -57,7 +57,7 @@ Usage: ./bilibi <command>
   add <component>   Mount an official Domain or Extension (from catalogue.json, or the
                     --kind, --source and --commit that Software shows)
   status            Show component repositories, branches and local changes
-  update            Pull safe Platform changes and recommended component releases
+  update            Pull safe Platform changes and move release mounts to recommended ones
   new <name>        Keep this source composition in a sibling application repository
   check, pin, build Require an application repository
   help              Show this command list (-h and --help also work)

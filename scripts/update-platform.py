@@ -5,7 +5,6 @@ Only discovery's exact output and a lock reproduced from the committed lock
 may be put aside. All branch decisions happen before changing the index or files.
 """
 import importlib.util
-import json
 import os
 from pathlib import Path
 import shlex
@@ -186,9 +185,12 @@ def branch_plan():
 
 
 def component_update(folder, facts, platform_version, platform_head, tested):
-    """Return a plain reason when a mount cannot safely move to its release."""
+    """Return a plain reason when a mount is left alone; move only a clean release checkout."""
     if folder.is_symlink() or Path(git(folder, 'rev-parse', '--show-toplevel')).resolve() != folder:
         return 'not an independent real checkout; preserve it and follow its mounting guide'
+    branch = git(folder, 'branch', '--show-current')
+    if branch:
+        return f'on branch {branch}, left as is; update it in its own repository'
     if changes(folder):
         return f'local changes; review {action(folder, "status", "--short")} and commit your work before retrying'
     if not facts:
@@ -197,6 +199,9 @@ def component_update(folder, facts, platform_version, platform_head, tested):
     origin = git(folder, 'remote', 'get-url', 'origin').removesuffix('.git').rstrip('/')
     if not repository.startswith('https://github.com/BelimbingApp/') or origin != repository:
         return f'origin differs from the official catalogue; inspect {action(folder, "remote", "-v")} and reconcile it deliberately'
+    head = git(folder, 'rev-parse', 'HEAD')
+    if head not in {release['commit'] for release in facts['versions'].values()}:
+        return f'detached at {head[:12]}, which is not an official release commit; left as is'
     choices = []
     for version, release in facts['versions'].items():
         if catalogue.satisfies(platform_version, catalogue.parse_requirement(release['platform'], str(folder))):
@@ -209,42 +214,33 @@ def component_update(folder, facts, platform_version, platform_head, tested):
     if not choices:
         return f'no release supports Platform {platform_version}; ask the component owner to publish a compatible release'
     _, _, version, target = max(choices)
-    head = git(folder, 'rev-parse', 'HEAD')
     if head == target:
         print(f'{folder}: already at recommended {version} ({head[:12]}).', flush=True)
         return None
     git(folder, 'fetch', '--prune', '--tags', 'origin')
     if run(folder, 'git', 'cat-file', '-e', f'{target}^{{commit}}', check=False).returncode:
         return f'recommended commit {target} is unavailable; ask the component owner to publish it'
-    published = git(folder, 'for-each-ref', '--contains', head, '--format=%(refname)', 'refs/remotes/origin/')
-    if not ancestor(folder, head, target) and not published:
-        return f'current commits are unpublished and absent from recommended {version}; inspect {action(folder, "log", "--oneline", target + "..HEAD")} and publish your work before retrying'
-    # A detached checkout keeps any named development branch intact. Git's normal
-    # checkout protection still applies if a file changes after the preflight.
     git(folder, 'checkout', '--no-overwrite-ignore', '--detach', target)
-    print(f'{folder}: {head[:12]} -> recommended {version} ({target[:12]}); existing branches kept.', flush=True)
+    print(f'{folder}: {head[:12]} -> recommended {version} ({target[:12]}).', flush=True)
     return None
 
 
 def update_components(remote):
-    data = catalogue.load(ROOT / 'catalogue.json')
-    # main owns membership; the published catalogue branch supplies newer releases.
-    published = run(ROOT, 'git', 'show', f'refs/remotes/{remote}/catalogue:catalogue.json', check=False)
-    if published.returncode == 0:
-        earlier = json.loads(published.stdout)
-        catalogue.check(earlier)
-        for role in ('domains', 'extensions'):
-            for identity, facts in data.get(role, {}).items():
-                old = earlier.get(role, {}).get(identity, {})
-                if old.get('repository') == facts['repository']:
-                    for version, release in old.get('versions', {}).items():
-                        facts['versions'].setdefault(version, release)
-        data['tested'] += [item for item in earlier['tested'] if item not in data['tested']
-                           and item['domain']['id'] in data['domains']]
-    catalogue.check(data)
+    """Best effort once the Platform has moved: a catalogue problem skips this step only."""
+    with tempfile.TemporaryDirectory(prefix='bilibi-update-catalogue-') as temporary:
+        # main owns membership; the published catalogue branch supplies newer releases and tested sets.
+        published = Path(temporary) / 'catalogue.json'
+        shown = run(ROOT, 'git', 'show', f'refs/remotes/{remote}/catalogue:catalogue.json', check=False)
+        if shown.returncode == 0:
+            published.write_bytes(shown.stdout)
+        try:
+            data = catalogue.combined(ROOT / 'catalogue.json', published, [])
+        except (catalogue.Refused, KeyError, TypeError) as error:
+            print(f'Component updates skipped: the catalogue cannot be read ({error}). '
+                  'Components were left as they are; retry ./bilibi update later.', flush=True)
+            return
     version = discovery.workspace_version(ROOT)
     head = git(ROOT, 'rev-parse', 'HEAD')
-    left = 0
     for layer in ('domains', 'extensions'):
         for folder in sorted((ROOT / 'apps' / layer).iterdir()):
             if not (folder.is_dir() or folder.is_symlink()) or folder.name == 'src' or folder.name.startswith('.'):
@@ -255,9 +251,7 @@ def update_components(remote):
             except (Refused, catalogue.Refused) as error:
                 reason = str(error)
             if reason:
-                left += 1
                 print(f'Left alone: {folder}: {reason}.', flush=True)
-    return left
 
 
 def update():
@@ -293,15 +287,13 @@ def update():
           else f'Platform: already up to date on {branch} ({after[:12]}).', flush=True)
     if before != after:
         print(git(ROOT, 'diff', '--stat', before, after), flush=True)
-    left = update_components(remote)
+    update_components(remote)
     subprocess.run([sys.executable, str(ROOT / 'scripts/discover-modules.py')], cwd=ROOT, check=True)
     resolved = subprocess.run(['cargo', 'metadata', '--format-version', '1'], cwd=ROOT, stdout=subprocess.DEVNULL)
     if resolved.returncode:
         raise Refused(f'{ROOT}: Platform updated, but Cargo could not resolve the mounted composition. '
                       'Resolve the diagnostics above, run cargo metadata --format-version 1, then ./bilibi start.')
     print('Composition regenerated for the mounted components.\nNext: ./bilibi start', flush=True)
-    if left:
-        raise Refused(f'{left} component(s) were left alone; follow the actions above, then retry ./bilibi update.')
 
 
 if __name__ == '__main__':

@@ -78,14 +78,14 @@ Run commands from the clone's root. Use `./bilibi help` to see the command list.
 | `./bilibi setup` | Run the repeatable setup and install the commit safeguard without starting the app |
 | `./bilibi add <component>` | Install or verify the safeguard, then mount an official Domain or Extension from `catalogue.json`, or at the `--kind`, `--source` and `--commit` that Software shows |
 | `./bilibi status` | Show each component's path, branch, commit and local changes |
-| `./bilibi update` | Pull safe Platform changes, update clean official components to recommended releases, and rebuild local composition |
+| `./bilibi update` | Pull safe Platform changes, move clean official components installed at a release to the recommended one, and rebuild local composition |
 | `./bilibi help` | Show the command list; `-h`, `--help` and no command also work |
 | `./bilibi new <name>` | Keep this source composition in a separate sibling application repository |
 | `./bilibi check`, `pin`, `build` | Require an application repository; create one with `new` |
 
 The [application workspace guide](docs/application-workspaces.md) covers the next step, Git ownership and migration; [ADR 03](docs/architecture/decisions/03-application-workspaces-one-front-door.md) records the decision. `scripts/setup.sh` and `scripts/start-app.sh` remain available directly. Direct setup also installs the safeguard; after installing tools directly, load `$HOME/.cargo/env` before using the direct launcher.
 
-Run `./bilibi update` before `./bilibi start` to bring an existing clone up to date. It fast-forwards your branch from its upstream. A published branch whose changes already reached the default branch, including an exact squash merge, can safely return to that default branch. Other local commits and source edits stop the update with a concrete next step. Recognised generated composition and its reproduced dependency lock are regenerated; real edits are never discarded or silently stashed. Dirty, private or divergent components stay where they are, with their paths and actions printed.
+Run `./bilibi update` before `./bilibi start` to bring an existing clone up to date. It fast-forwards your branch from its upstream. A published branch whose changes already reached the default branch, including an exact squash merge, can safely return to that default branch. Other local commits and source edits stop the update with a concrete next step. Recognised generated composition and its reproduced dependency lock are regenerated; real edits are never discarded or silently stashed. A component on a branch, dirty, private, unlisted or off its official origin stays where it is, with its path and reason printed; this does not fail the update.
 
 ### Commit safeguard
 

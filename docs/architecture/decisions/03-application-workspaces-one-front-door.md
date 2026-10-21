@@ -42,7 +42,7 @@ The setup template supplies content to `new`; it is no longer a user-facing star
 | `./bilibi new <name>` | Create an application from the trial under the refusal rules above | Not applicable; the application already exists |
 | `./bilibi setup` | Check prerequisites and install repository safeguards | Also obtain missing sources; preserve existing work |
 | `./bilibi status` | Show component paths, branches and changes; say no saved application recipe exists and point to `new` | Also show differences from saved versions |
-| `./bilibi update` | Pull safe Platform changes, update clean official mounts to recommended releases and regenerate composition | Pull the application and restore sources to saved commits; never advance pins |
+| `./bilibi update` | Pull safe Platform changes, move clean official mounts detached at a release to the recommended one, leave branches and other mounts alone, and regenerate composition | Pull the application and restore sources to saved commits; never advance pins |
 | `./bilibi help` | Show the command list; no command and `-h` also work | Same |
 | `./bilibi check` | Refuse and point to `new` | Run strict composition and build checks against saved versions |
 | `./bilibi pin` | Refuse and point to `new` | Explicitly record selected component commits and resolved dependencies |

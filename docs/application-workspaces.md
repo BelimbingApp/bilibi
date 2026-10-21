@@ -79,10 +79,10 @@ Run `./bilibi update`, then `./bilibi start`, from your workspace root. Use `./b
 
 | Workspace | What `update` does |
 | --- | --- |
-| Platform clone | Fast-forward the current branch from its upstream, update clean official Domains and Extensions to the catalogue's recommended compatible releases, then regenerate composition and `Cargo.lock` |
+| Platform clone | Fast-forward the current branch from its upstream, move clean official Domains and Extensions that sit detached at a release (as `add` leaves them) to the catalogue's recommended compatible release, then regenerate composition and `Cargo.lock` |
 | Application repository | Pull the application repository and bring `sources/` to its saved commits; saved pins advance only when you run `pin` |
 
-A published branch whose changes already reached the default branch can return there safely, including an exact squash merge. Updates stop for source edits or commits that would be lost. Recognised generated composition files and a dependency lock reproduced from the committed lock may be regenerated. Updates never reset source work, silently stash edits or force a checkout. A component that cannot move safely stays in place; the command prints its path, why it stayed and the action needed. Review and commit real edits in their owning repository, follow the printed action, then retry.
+A published branch whose changes already reached the default branch can return there safely, including an exact squash merge. Updates stop for source edits or commits that would be lost. Recognised generated composition files and a dependency lock reproduced from the committed lock may be regenerated. Updates never reset source work, silently stash edits or force a checkout. A component on a branch, or one that is dirty, symlinked, unlisted or off its official origin, stays in place; the command prints its path and why, and still succeeds once the Platform is updated. A branch is never detached: update it in its own repository. If the catalogue cannot be read, component updates are skipped and composition is still regenerated.
 
 An application created before `update` was available needs the deliberate tooling update below first. Its wrapper belongs to the application repository.
 
