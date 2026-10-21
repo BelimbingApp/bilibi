@@ -23,6 +23,7 @@ use tokio_postgres::GenericClient;
 /// read masked, so plaintext never enters the plan.
 pub struct Field {
     pub key: &'static str,
+    pub module: &'static str,
     pub definition: &'static Definition,
     pub editor: &'static Editor,
     pub value: Value,
@@ -88,19 +89,20 @@ pub async fn plan(
             Some(capability) if !capabilities.contains(capability) => {
                 withheld.insert(capability);
             }
-            _ => visible.push((owned.pattern, definition, editor)),
+            _ => visible.push((owned.pattern, owned.owner, definition, editor)),
         }
     }
-    let keys: Vec<&str> = visible.iter().map(|(key, _, _)| *key).collect();
+    let keys: Vec<&str> = visible.iter().map(|(key, _, _, _)| *key).collect();
     let mut resolved = settings
         .resolve_masked(client, scope, target, &keys)
         .await?;
     let fields = visible
         .into_iter()
-        .filter_map(|(key, definition, editor)| {
+        .filter_map(|(key, module, definition, editor)| {
             let resolved = resolved.remove(key)?;
             Some(Field {
                 key,
+                module,
                 definition,
                 editor,
                 stored_secret: definition.encrypted

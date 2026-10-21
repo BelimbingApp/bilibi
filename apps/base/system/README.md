@@ -89,6 +89,8 @@ list is a FlexTable through `ListColumns`; Data sorts, pages (25/50/100) and
 searches text columns through `ListState`, and a referenced value links to the
 other table filtered by `col`/`eq`. The tables list also offers the table's column count as an optional column (`database_tables::fields`); Table, Module, Migration and Rows stay the defaults.
 
+The search and masking hint sit above the framed table on the page canvas. The title pin saves the tables list or an individual table's address. Data shows only stored rows: `base_settings` contains saved overrides and runtime state, while module defaults are resolved by Settings without inserting rows. Its masking hint distinguishes always-hidden columns from values hidden only on encrypted rows.
+
 Controls:
 
 - **Owner only.** Routes are `Access::Owner` and the menu item

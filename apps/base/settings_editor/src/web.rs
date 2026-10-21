@@ -42,11 +42,11 @@ use bilibi_ui::{
 };
 use serde_json::{json, Value};
 use std::{
-    collections::HashMap,
+    collections::{BTreeSet, HashMap},
     sync::{Arc, LazyLock},
 };
 
-const TITLE: &str = "Operator Settings";
+const TITLE: &str = "System Settings";
 const COLUMNS: [(&str, &str); 3] = [("setting", "Setting"), ("value", "Value"), ("area", "Area")];
 static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
     Arc::new(ListSpec {
@@ -55,7 +55,12 @@ static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
             .map(|(key, _)| ((*key).into(), SortDir::Asc))
             .collect(),
         default_sort: Some("setting".into()),
-        filters: [("company".into(), Filter::string("global"))].into(),
+        filters: [
+            ("company".into(), Filter::string("global")),
+            ("area".into(), Filter::string("")),
+            ("module".into(), Filter::string("")),
+        ]
+        .into(),
         omit_defaults: true,
         ..ListSpec::default()
     })
@@ -660,6 +665,12 @@ impl Editor {
             .fields
             .iter()
             .filter(|field| {
+                let area = &self.list.filters["area"];
+                let module = &self.list.filters["module"];
+                (area.is_empty() || field.editor.group == area)
+                    && (module.is_empty() || field.module == module)
+            })
+            .filter(|field| {
                 wanted.is_empty()
                     || [field.editor.label, field.key, field.editor.help]
                         .iter()
@@ -828,10 +839,13 @@ impl Editor {
         table.add_query = &self.columns.add_query;
         let empty = if plan.fields.is_empty() && !plan.withheld.is_empty() {
             EmptyState::forbidden(withheld_wording(&plan.withheld))
-        } else if !wanted.is_empty() {
+        } else if !wanted.is_empty()
+            || !self.list.filters["area"].is_empty()
+            || !self.list.filters["module"].is_empty()
+        {
             EmptyState::missing(
-                "No settings match your search.",
-                "Try another name, description or value.",
+                "No settings match your search or filters.",
+                "Try another search or choose All areas and All modules.",
             )
         } else {
             EmptyState::missing("There are no settings to change here.", "")
@@ -845,6 +859,37 @@ impl Editor {
             &self.list.search,
             "Search settings",
         )];
+        // Options come from the current authorized scope, before search or filtering.
+        for (key, label, all, values) in [
+            (
+                "area",
+                "Area",
+                "All areas",
+                plan.fields
+                    .iter()
+                    .map(|field| field.editor.group)
+                    .collect::<BTreeSet<_>>(),
+            ),
+            (
+                "module",
+                "Module",
+                "All modules",
+                plan.fields
+                    .iter()
+                    .map(|field| field.module)
+                    .collect::<BTreeSet<_>>(),
+            ),
+        ] {
+            let mut options = vec![(all, "")];
+            options.extend(values.into_iter().map(|value| (value, value)));
+            controls.push(ToolbarControl::select(
+                &format!("settings-{key}"),
+                key,
+                label,
+                &self.list.filters[key],
+                choices(&options),
+            ));
+        }
         let pagination = render(Pagination::new(
             "settings-pagination",
             counts,
@@ -857,7 +902,7 @@ impl Editor {
                 context: IconContext::Inline,
                 id: "settings-pin",
                 nav_pin: "nav-admin-system-settings",
-                ..IconButton::new("bilimbi-pin", "Pin Operator Settings to sidebar")
+                ..IconButton::new("bilimbi-pin", "Pin System Settings to sidebar")
             })?,
             ..Header::default()
         })?;
@@ -912,7 +957,7 @@ impl Editor {
                     None => "Server settings".to_owned(),
                 };
                 let consequence = format!(
-                    "This resets {} in {scope_name} to their defaults, including any hidden by your search.",
+                    "This resets {} in {scope_name} to their defaults, including any hidden by your search or filters.",
                     form::count(held.len(), "changed setting").unwrap_or_default()
                 );
                 render(ConfirmDialog {

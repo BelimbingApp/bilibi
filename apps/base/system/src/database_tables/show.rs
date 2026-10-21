@@ -2,7 +2,7 @@
 //! Relationships tabs, each addressable through `tab`. Data reads one page of
 //! live rows across every tenant (only the installation owner gets here),
 //! with search over text columns, sort, paging and followed references;
-//! sensitive columns are never read.
+//! sensitive columns are never read. Shared controls mirror Bilimbi base/ui.
 use super::sensitive::Mask;
 use super::{
     badges, catalog, layout, link, plural, table_path, text, titled, wrap, DatabaseTables, INDEX,
@@ -299,8 +299,11 @@ impl Show {
             Header {
                 title: Html::text(&table.name),
                 subtitle: &subtitle,
+                title_actions: render(TablePin {
+                    pin_label: &table.name,
+                    url: &table_path(&table.name),
+                })?,
                 actions: back,
-                ..Header::default()
             },
             body,
         )
@@ -396,7 +399,7 @@ impl Show {
                     Cell::Masked => titled(
                         "••••••",
                         "font-mono text-xs text-ink-muted",
-                        "Sensitive column: the value is not read",
+                        "Sensitive value is hidden",
                     )?,
                     Cell::Null => text("—", "text-ink-muted")?,
                     Cell::Text { text: value, cut } => {
@@ -428,6 +431,16 @@ impl Show {
             }
             flex_rows.push(flex);
         }
+        let masking = found
+            .iter()
+            .zip(masks)
+            .filter_map(|(column, mask)| match mask {
+                Mask::Clear => None,
+                Mask::Always => Some(format!("{} values are hidden.", column.name)),
+                Mask::WhenTrue(_) => Some("Encrypted values are hidden.".to_owned()),
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
         let mut content = render(FilterToolbar {
             event: "filter",
             ..FilterToolbar::new(
@@ -438,7 +451,8 @@ impl Show {
                     "Search rows",
                     &self.list.search,
                     "Search across text columns…",
-                )],
+                )
+                .hint(&masking)],
             )
         })?;
         if let Some(column) = filtered {
@@ -453,18 +467,6 @@ impl Show {
                 clear: params::address(&table_path(&table.name), &query),
             })?);
         }
-        let masked: Vec<&str> = found
-            .iter()
-            .zip(masks)
-            .filter(|(_, mask)| **mask != Mask::Clear)
-            .map(|(column, _)| column.name.as_str())
-            .collect();
-        if !masked.is_empty() {
-            content.push(&text(
-                &format!("Masked as sensitive, never read: {}.", masked.join(", ")),
-                "block px-4 pb-2 text-xs text-ink-muted",
-            )?);
-        }
         let mut flex = FlexTable::new("database-table-data", data.flex_columns(), flex_rows)
             .sorted(
                 order.map(|(column, _)| column.name.as_str()),
@@ -472,7 +474,7 @@ impl Show {
             );
         flex.caption = "Table data";
         flex.event = "grid";
-        flex.framed = false;
+        flex.framed = true;
         flex.zoom = data.zoom;
         flex.suggestions = data.flex_suggestions();
         flex.add_query = &data.add_query;
@@ -512,13 +514,7 @@ impl Show {
                 "block px-4 pb-2 text-xs text-ink-muted",
             )?);
         }
-        render(Card {
-            id: "database-table-data-card",
-            class: "mt-4",
-            inner_class: "p-0",
-            body: content,
-            ..Card::default()
-        })
+        wrap("mt-4", content)
     }
 
     fn schema_tab(
@@ -834,6 +830,17 @@ fn section(id: &str, title: &str, description: &str, table: Html) -> Result<Html
         body,
         ..Card::default()
     })
+}
+
+// Bilimbi base/ui page-header pin control, targeting this table's own address.
+#[derive(Template)]
+#[template(
+    source = r#"{% import "components.html" as ui %}{% call ui::icon_button(icon="bilimbi-pin", label="Pin this table to sidebar", context=bilibi_ui::IconContext::Inline, id="database-table-pin", nav_pin="record", record_label=pin_label, record_url=url) %}{% endcall %}"#,
+    ext = "html"
+)]
+struct TablePin<'a> {
+    pin_label: &'a str,
+    url: &'a str,
 }
 
 #[derive(Template)]

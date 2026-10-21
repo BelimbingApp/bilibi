@@ -1,14 +1,15 @@
 //! The tables of the application schema with their owning module (Belimbing
 //! `DatabaseTables\Index`): search with `*`/`?` wildcards, sort and paging
-//! through `ListState`, rows on the shared FlexTable.
+//! through `ListState`, rows on the shared FlexTable (Bilimbi base/ui).
 use super::{catalog, layout, table_path, text, DatabaseTables};
 use crate::render;
 use bilibi_database::{Error, Result};
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, PageRequest},
-    params, BuiltinColumn, Card, ColumnType, FilterToolbar, FlexRow, FlexTable, Header, Html,
-    ListColumns, ListSpec, ListState, PageCounts, Pagination, SortDir, TableEmpty, ToolbarControl,
+    params, BuiltinColumn, ColumnType, FilterToolbar, FlexRow, FlexTable, Header, Html, IconButton,
+    IconContext, ListColumns, ListSpec, ListState, PageCounts, Pagination, SortDir, TableEmpty,
+    ToolbarControl,
 };
 use serde_json::{json, Value};
 use std::sync::{Arc, LazyLock};
@@ -84,6 +85,12 @@ impl Index {
         let header = Header {
             title: Html::text("Database Tables"),
             subtitle: "Browse the database tables; nothing can be changed here.",
+            title_actions: render(IconButton {
+                id: "database-tables-pin",
+                context: IconContext::Inline,
+                nav_pin: "nav-admin-system-database-table",
+                ..IconButton::new("bilimbi-pin", "Pin Database Tables to sidebar")
+            })?,
             ..Header::default()
         };
         let view = json!({
@@ -208,7 +215,7 @@ impl Index {
             );
         table.caption = "Database tables";
         table.event = "grid";
-        table.framed = false;
+        table.framed = true;
         table.zoom = self.columns.zoom;
         table.suggestions = self.columns.flex_suggestions();
         table.add_query = &self.columns.add_query;
@@ -227,13 +234,7 @@ impl Index {
         );
         pagination.filters_event = "filter";
         content.push(&render(pagination)?);
-        let card = render(Card {
-            id: "database-tables-card",
-            inner_class: "p-0",
-            body: content,
-            ..Card::default()
-        })?;
-        layout("database-tables-index", header, card)
+        layout("database-tables-index", header, content)
     }
 }
 

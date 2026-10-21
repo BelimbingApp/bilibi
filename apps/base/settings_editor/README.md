@@ -1,14 +1,14 @@
 # Settings editor (P3)
 
-`/system/settings` is the operator page for contributed settings (Bilimbi `Settings.Web.GroupLive` + `Settings.Form` + the host's `SecretReveal`). It is its own module because it needs Authz, and Authz depends on `base/settings`: storage stays below Authz, the screen sits above it.
+`/system/settings`, titled **System Settings**, is the operator page for contributed settings (Bilimbi `Settings.Web.GroupLive` + `Settings.Form` + the host's `SecretReveal`). It is its own module because it needs Authz, and Authz depends on `base/settings`: storage stays below Authz, the screen sits above it.
 
 ## Table
 
 Settings appear in the shared `FlexTable`, with Setting, Value and Area columns. The company picker uses the same table; per-person settings do not use this module.
 
 - Search matches a setting's name, key, description and current non-secret value as you type. Secret values are never searched or decrypted for the table.
-- The Settings scope filter sits to the right of search in the shared toolbar, wrapping below it on narrow screens.
-- Click a heading to sort; click again to reverse. `ListState` keeps search, sort, company and pagination in the URL.
+- Area and Module filters follow search, then Settings scope, in the shared toolbar, wrapping below it on narrow screens. Options come only from settings the person may see in the selected scope; search and both filters combine before sorting and pagination.
+- Click a heading to sort; click again to reverse. `ListState` keeps search, area, module, sort, company and pagination in the URL.
 - Click a Value cell to open only its editor. Save or Enter saves; Cancel or Escape discards the draft. A successful save returns to reading. Validation and 2FA refusals stay beside the value.
 - Protected values use the shared `StepUp` form, with setup guidance before enrollment and an inline authenticator code afterwards.
 
@@ -17,6 +17,8 @@ Settings appear in the shared `FlexTable`, with Setting, Value and Area columns.
 A field is every `base/settings.definitions` contribution with `editor` metadata, a concrete key (no wildcard) and the global scope, shown as rows in the table. Declaring such a setting is all a module does to appear here. A field whose `editor.capability` the actor does not hold right now is withheld: it is not rendered and a forged submission naming it is ignored. When every field is withheld the page names the missing capabilities instead of claiming nothing was contributed.
 
 Values are read with `Settings::resolve_masked`, so an encrypted value is never decrypted to draw the page; a stored secret shows the keep-current mask. Without a valid `BILIBI_SETTINGS_KEY` an encrypted field is read-only (it can still be cleared by Restore Defaults, which needs no key).
+
+Saved overrides and runtime state live in `base_settings`; inherited module defaults have no stored row.
 
 ## Writes
 
