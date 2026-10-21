@@ -40,7 +40,7 @@ pub enum Error {
     Storage(#[from] std::io::Error),
     #[error("Storage root must be an existing private 0700 absolute directory")]
     UnsafeRoot,
-    #[error("The storage folder {0} does not exist. Check the drive is connected, or change Storage folder in Settings.")]
+    #[error("The storage folder {0} does not exist. Check the drive is connected, or change Private document folder in Settings.")]
     MissingRoot(String),
     #[error("Configure storage and a positive retention period first")]
     Policy,

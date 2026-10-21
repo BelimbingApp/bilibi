@@ -282,9 +282,17 @@ impl Editor {
         let get = |key: &str| payload.get(key).and_then(Value::as_str);
         match get("type").ok_or(Error::Invalid)? {
             "clear-flash" => self.flash = None,
-            "filters" => self
-                .list
-                .apply_filters(&bilibi_ui::params::form_values(payload, "filters")),
+            "filters" => {
+                self.list
+                    .apply_filters(&bilibi_ui::params::form_values(payload, "filters"));
+                self.apply_scope(scope).await?;
+                self.list.filters.insert(
+                    "company".into(),
+                    self.company
+                        .as_ref()
+                        .map_or("global".into(), |company| company.id.get().to_string()),
+                );
+            }
             "page" => self.list.put_page(get("page")),
             "grid" => {
                 if let ColumnsOutcome::Sort(key) = self
@@ -830,16 +838,13 @@ impl Editor {
         };
         table.empty = Some(bilibi_ui::TableEmpty::State(empty));
         let table = render(table)?;
-        let toolbar = render(FilterToolbar::new(
-            "settings-search-form",
-            vec![ToolbarControl::search(
-                "settings-search",
-                "search",
-                "Search settings",
-                &self.list.search,
-                "Search settings",
-            )],
-        ))?;
+        let mut controls = vec![ToolbarControl::search(
+            "settings-search",
+            "search",
+            "Search settings",
+            &self.list.search,
+            "Search settings",
+        )];
         let pagination = render(Pagination::new(
             "settings-pagination",
             counts,
@@ -872,36 +877,34 @@ impl Editor {
                 .iter()
                 .map(|(label, value)| (label.as_str(), value.as_str()))
                 .collect();
-            let picker = Control::named("scope[company_id]")
-                .id("settings-company")
-                .kind(InputKind::Select)
-                .label("Settings scope")
-                .options(choices(&options))
-                .value(
-                    self.company
-                        .as_ref()
-                        .map_or("global".to_owned(), |company| company.id.get().to_string()),
-                );
-            render(ScopePicker {
-                picker,
-                none: if companies.is_empty() {
-                    Some(
-                        EmptyState::missing(
-                            "No companies are available to manage.",
-                            "Ask an administrator for access to a company.",
-                        )
-                        .id("company-settings-no-targets"),
+            controls.push(ToolbarControl::select(
+                "settings-company",
+                "company",
+                "Settings scope",
+                &self
+                    .company
+                    .as_ref()
+                    .map_or("global".to_owned(), |company| company.id.get().to_string()),
+                choices(&options),
+            ));
+            if companies.is_empty() {
+                render(Withheld {
+                    state: EmptyState::missing(
+                        "No companies are available to manage.",
+                        "Ask an administrator for access to a company.",
                     )
-                } else {
-                    None
-                },
-            })?
+                    .id("company-settings-no-targets"),
+                })?
+            } else {
+                Html::default()
+            }
         } else {
             render(Withheld {
                 state: EmptyState::forbidden("manage company settings")
                     .id("company-settings-withheld"),
             })?
         };
+        let toolbar = render(FilterToolbar::new("settings-search-form", controls))?;
         let dialog = match &self.pending_restore {
             Some(held) => {
                 let scope_name = match &self.company {
@@ -1034,15 +1037,6 @@ struct SettingsView<'a> {
     pagination: Html,
     restore: Html,
     dialog: Html,
-}
-#[derive(Template)]
-#[template(
-    source = r#"{% import "forms.html" as forms %}{% import "lists.html" as lists %}{% call forms::form(id="settings-scope-form", event="switch_scope", change=true, class="mt-4") %}{% call forms::input(field=picker) %}{% endcall %}{% endcall %}{% if let Some(e) = none %}{% call lists::empty_state(e=e) %}{% endcall %}{% endif %}"#,
-    ext = "html"
-)]
-struct ScopePicker {
-    picker: Control,
-    none: Option<EmptyState>,
 }
 #[derive(Template)]
 #[template(

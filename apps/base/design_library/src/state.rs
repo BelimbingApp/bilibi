@@ -29,6 +29,7 @@ static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
             ("updated_at".into(), SortDir::Desc),
         ]),
         default_sort: Some("name".into()),
+        filters: [("status".into(), bilibi_ui::Filter::string(""))].into(),
         page_sizes: vec![25, 50, 100, 300],
         page_size_param: "perPage".into(),
         omit_blank: vec!["search".into()],
@@ -482,6 +483,11 @@ pub fn companies(list: &ListState) -> Vec<Company> {
     let search = list.search.trim().to_lowercase();
     let mut rows: Vec<_> = (1..=120)
         .map(Company::new)
+        .filter(|row| {
+            list.filters
+                .get("status")
+                .is_none_or(|status| status.is_empty() || row.status == status)
+        })
         .filter(|row| {
             format!("{} {}", row.name, row.code)
                 .to_lowercase()

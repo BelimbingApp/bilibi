@@ -7,6 +7,7 @@
 Settings appear in the shared `FlexTable`, with Setting, Value and Area columns. The company picker uses the same table; per-person settings do not use this module.
 
 - Search matches a setting's name, key, description and current non-secret value as you type. Secret values are never searched or decrypted for the table.
+- The Settings scope filter sits to the right of search in the shared toolbar, wrapping below it on narrow screens.
 - Click a heading to sort; click again to reverse. `ListState` keeps search, sort, company and pagination in the URL.
 - Click a Value cell to open only its editor. Save or Enter saves; Cancel or Escape discards the draft. A successful save returns to reading. Validation and 2FA refusals stay beside the value.
 - Protected values use the shared `StepUp` form, with setup guidance before enrollment and an inline authenticator code afterwards.

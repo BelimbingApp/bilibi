@@ -4,7 +4,7 @@
 {% import "tiling.html" as tile %}
 
               <p class="text-sm text-ink-muted">
-                One composition for every list's search, selects, multi-selects, and compact period filter. Every search box carries the same leading magnifier; labels are screen-reader only; helper text sits below its control; cells wrap on narrow screens.
+                Search comes first, with selects, multi-selects, and period filters to its right. Filters wrap below search on narrow screens. Every search box carries the same leading magnifier; labels are screen-reader only; helper text sits below its control.
               </p>
               <div id="filter-toolbar-full">
                 <h3 class="mb-2 text-sm font-semibold text-ink">
@@ -19,4 +19,4 @@
                 <h3 class="mb-2 text-sm font-semibold text-ink">Search alone</h3>
                 {{ self.control("design-library-filter-search-only")? }}
               </div>
-            
+

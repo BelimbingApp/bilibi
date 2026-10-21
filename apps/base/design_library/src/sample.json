@@ -8,13 +8,7 @@
   "password_field": "secret-value",
   "api_key_field": "sk-sample-0000",
   "select_field": "standard",
-  "roles": [
-    "admin",
-    "reviewer"
-  ],
-  "required_roles": [
-    "admin"
-  ],
+  "required_roles": ["admin", "operator", "reviewer", "auditor", "support"],
   "plain_roles": [],
   "example_interests": [
     "platform"
@@ -27,10 +21,7 @@
   "datetime_field": "2026-08-17T14:30",
   "month_field": "2026-08",
   "week_field": "2026-W34",
-  "chip_roles": [
-    "admin",
-    "reviewer"
-  ],
+  "chip_roles": ["admin", "operator", "reviewer", "auditor", "support"],
   "example_teams_chips": [
     "platform"
   ]

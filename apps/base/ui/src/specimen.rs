@@ -73,8 +73,6 @@ pub struct FormControls {
     pub authenticator: CodeInput,
     pub optional_authenticator: CodeInput,
     pub invalid_authenticator: CodeInput,
-    pub enrollment_first: crate::StepUp,
-    pub enrolled_step_up: crate::StepUp,
     pub text: Field,
     pub search: Field,
     pub email: Field,
@@ -83,7 +81,6 @@ pub struct FormControls {
     pub url: Field,
     pub textarea: Field,
     pub select: Field,
-    pub roles: MultiSelect,
     pub checkbox: Field,
     pub radio: RadioGroup,
     pub required_roles: MultiSelect,
@@ -120,10 +117,12 @@ pub struct FormControls {
     pub folded: Field,
 }
 
-const ROLES: [(&str, &str); 3] = [
+const ROLES: [(&str, &str); 5] = [
     ("Administrator", "admin"),
     ("Operator", "operator"),
     ("Reviewer", "reviewer"),
+    ("Auditor", "auditor"),
+    ("Support coordinator", "support"),
 ];
 const TEAMS: [(&str, &str); 3] = [
     ("Platform", "platform"),
@@ -142,25 +141,9 @@ fn strings(values: &[&str]) -> Vec<String> {
 }
 
 impl FormControls {
-    fn step_up(enrolled: bool) -> crate::StepUp {
-        let mut step = crate::StepUp::new(enrolled, "/assets/ui-components.html");
-        step.code = Html::render(
-            &CodeInput::new("specimen-step-up", "specimen[step_up]", "2FA code", 6).numeric(),
-        )
-        .expect("shared code input");
-        step.actions = Html::render(&Button {
-            button_type: "submit",
-            body: Html::text("Save"),
-            ..Default::default()
-        })
-        .expect("shared button");
-        step
-    }
     fn new() -> Self {
         let sample = |key: &str, value: &str| Field::in_form("sample", key).value(value);
         Self {
-            enrollment_first: Self::step_up(false),
-            enrolled_step_up: Self::step_up(true),
             code: CodeInput::new("specimen_code", "specimen[code]", "Device code", 8)
                 .value("ABCD-EF23")
                 .group_size(4),
@@ -215,12 +198,6 @@ impl FormControls {
                     ("Standard", "standard"),
                     ("Advanced", "advanced"),
                 ])),
-            roles: MultiSelect::in_form("sample", "roles")
-                .id("specimen-multi-select")
-                .label("Multi-select")
-                .options(choices(&ROLES))
-                .values(strings(&["admin", "reviewer"]))
-                .selection_label(":count role selected|:count roles selected"),
             checkbox: Field::in_form("sample", "checkbox_field")
                 .kind(InputKind::Checkbox)
                 .label("Enable synchronization")
@@ -236,15 +213,19 @@ impl FormControls {
                 .hint("Everyone needs at least one role.")
                 .required()
                 .options(choices(&ROLES))
-                .values(strings(&["admin"]))
+                .values(strings(&[
+                    "admin", "operator", "reviewer", "auditor", "support",
+                ]))
                 .selection_label(":count role selected|:count roles selected"),
             chip_roles: MultiSelect::in_form("sample", "chip_roles")
                 .id("specimen-multi-select-chips")
-                .aria_label("Roles with chips")
-                .placeholder("Add roles")
+                .label("Wrapping roles")
+                .wrap_chips()
                 .chips("sample_chip_remove")
                 .options(choices(&ROLES))
-                .values(strings(&["admin", "reviewer"])),
+                .values(strings(&[
+                    "admin", "operator", "reviewer", "auditor", "support",
+                ])),
             plain_roles: MultiSelect::in_form("sample", "plain_roles")
                 .id("specimen-multi-select-plain")
                 .aria_label("Optional roles")

@@ -5,8 +5,8 @@
 {% call feedback::flash_group(messages=flash) %}{% endcall %}
 {% call ui::page(id="settings-group", variant=bilibi_ui::PageVariant::List) %}
 {{ header }}
-{{ scopes }}
 {{ toolbar }}
+{{ scopes }}
 {{ table }}
 {{ pagination }}
 {{ restore }}

@@ -51,6 +51,7 @@ pub fn value_text(value: Option<&Value>) -> String {
         Some(Value::Array(v)) => v
             .iter()
             .filter_map(Value::as_str)
+            .filter(|value| !value.is_empty())
             .collect::<Vec<_>>()
             .join(", "),
         Some(Value::Bool(v)) => v.to_string(),
@@ -166,26 +167,8 @@ fn field(c: &Value, state: &State) -> Field {
     field
 }
 impl View<'_> {
-    pub(crate) fn step_up_samples(&self) -> askama::Result<Html> {
-        let mut samples = Html::EMPTY;
-        for enrolled in [false, true] {
-            let mut step = bilibi_ui::StepUp::new(enrolled, "/system/design-library/components");
-            step.code = render(
-                CodeInput::new("library-step-up", "specimen[step_up]", "2FA code", 6).numeric(),
-            )?;
-            step.actions = render(bilibi_ui::Button {
-                button_type: "submit",
-                body: Html::text("Save"),
-                ..Default::default()
-            })?;
-            samples.push(&render(step)?);
-        }
-        render(bilibi_ui::Card {
-            id: "library-step-up-card",
-            title: "2FA before saving",
-            body: samples,
-            ..Default::default()
-        })
+    pub(crate) fn authenticator_sample(&self) -> askama::Result<Html> {
+        render(CodeInput::new("library-step-up", "specimen[step_up]", "2FA code", 6).numeric())
     }
 
     pub(crate) fn control(&self, id: &str) -> askama::Result<Html> {
@@ -225,6 +208,9 @@ impl View<'_> {
                     .unwrap_or_default();
                 if flag(c, "chips") {
                     m = m.chips("sample_chip_remove");
+                }
+                if flag(c, "wrap_chips") {
+                    m = m.wrap_chips();
                 }
                 render(m)
             }
@@ -457,7 +443,16 @@ impl View<'_> {
                     .unwrap_or("search]")
                     .trim_end_matches(']');
                 let value = if id.starts_with("design-library-table-search") {
-                    self.state.list.search.as_str()
+                    if key == "search" {
+                        self.state.list.search.as_str()
+                    } else {
+                        self.state
+                            .list
+                            .filters
+                            .get(key)
+                            .map(String::as_str)
+                            .unwrap_or("")
+                    }
                 } else {
                     self.state
                         .toolbar

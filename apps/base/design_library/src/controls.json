@@ -182,28 +182,6 @@
       ]
     ]
   },
-  "design-library-multi-select": {
-    "kind": "multi_select",
-    "form": "sample",
-    "key": "roles",
-    "id": "design-library-multi-select",
-    "label": "Multi-select",
-    "options": [
-      [
-        "Administrator",
-        "admin"
-      ],
-      [
-        "Operator",
-        "operator"
-      ],
-      [
-        "Reviewer",
-        "reviewer"
-      ]
-    ],
-    "selection_label": ":count role selected|:count roles selected"
-  },
   "sample_checkbox_field": {
     "kind": "input",
     "form": "sample",
@@ -253,17 +231,26 @@
       [
         "Reviewer",
         "reviewer"
+      ],
+      [
+        "Auditor",
+        "auditor"
+      ],
+      [
+        "Support coordinator",
+        "support"
       ]
     ],
-    "selection_label": ":count role selected|:count roles selected"
+    "selection_label": ":count role selected|:count roles selected",
+    "placeholder": "Select roles…"
   },
   "design-library-multi-select-chips": {
     "kind": "multi_select",
     "form": "sample",
     "key": "chip_roles",
     "id": "design-library-multi-select-chips",
-    "aria-label": "Roles with chips",
-    "placeholder": "Add roles",
+    "aria-label": "Wrapping roles",
+    "placeholder": "Select roles…",
     "chips": true,
     "options": [
       [
@@ -277,8 +264,18 @@
       [
         "Reviewer",
         "reviewer"
+      ],
+      [
+        "Auditor",
+        "auditor"
+      ],
+      [
+        "Support coordinator",
+        "support"
       ]
-    ]
+    ],
+    "label": "Wrapping roles",
+    "wrap_chips": true
   },
   "design-library-multi-select-plain": {
     "kind": "multi_select",
@@ -755,6 +752,13 @@
         "label": "Search the example company table",
         "placeholder": "Search by name or code…",
         "options": []
+      },
+      {
+        "type": "EXPR::select",
+        "field": "EXPR:@sample_filter_form[:status]",
+        "id": "design-library-table-search-status",
+        "label": "Company status",
+        "options": [["All statuses", ""], ["Active", "active"], ["Pending", "pending"], ["Suspended", "suspended"]]
       }
     ]
   },

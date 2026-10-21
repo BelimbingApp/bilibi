@@ -1,4 +1,4 @@
-//! Installation policy, editable only through operator-authorized Settings.
+//! Installation policy, mirroring Bilimbi Artifacts settings through operator-authorized Settings.
 use bilibi_authz::{CapabilityDefinition, VocabularyContribution, VOCABULARY};
 use bilibi_module_registry::{Contribution, Provenance};
 use bilibi_settings::{Definition, Editor, ScopeKind, Setting, Validator, ValueType, DEFINITIONS};
@@ -34,8 +34,8 @@ setting!(
     false,
     None,
     None,
-    "Storage folder",
-    "Defaults to the server's data/artifacts folder, which is created on first use. A folder you choose must already exist, with permission 0700, outside any public web folder."
+    "Private document folder",
+    "Stores sensitive documents generated or uploaded. The default data/artifacts folder is created on first use; a custom folder must already exist with permission 0700, outside publicly served folders."
 );
 setting!(
     "artifacts.retention_days",

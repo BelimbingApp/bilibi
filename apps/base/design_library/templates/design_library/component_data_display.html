@@ -13,7 +13,7 @@
             </div>
             <div class="space-y-2">
               <p class="text-xs text-ink-muted">
-                Example companies; search, sort by any heading, and page below. Changes stay in this preview.
+                Search comes first, with filter boxes to its right; filters wrap below search on narrow screens. Search and filter these example companies, sort by any heading, and page below. Changes stay in this preview.
               </p>
               {{ self.control("design-library-table-search")? }}
               {% call ui::card(id="component-table", inner_class="p-0") %}{{ self.card_component_table()? }}{% endcall %}
