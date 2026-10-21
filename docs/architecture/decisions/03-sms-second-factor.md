@@ -40,7 +40,7 @@
 | Phone | One per account, E.164. A second factor only once its holder accepted a code sent to it |
 
 - **The holder adds a number** in My settings: password again, a code to the new number, then the code back.
-- **An administrator may set or change a number** on the user's page, behind step-up `core.user.phone.update` (on by default). It is then unverified until the holder confirms it.
+- **An administrator may enter a number** when creating the account (unverified), and **set or change it** on the user's page, behind step-up `core.user.phone.update` (on by default). It is then unverified until the holder confirms it.
 - The existing **2FA reset** (`core.user.two_factor.reset`: an admin's fresh code every time, or the server command) now also unverifies the phone and ends codes already sent.
 - A person with no verified method is told to contact an administrator. Nobody is locked out silently.
 
@@ -83,7 +83,6 @@
 |---|---|
 | Real SMS driver | Not built; needs a provider choice and an account |
 | Sign-in attempt limit on the password itself | Not built (`apps/web/src/auth.rs` says so) |
-| Phone field on the create-user form | Not built; set it on the user's page after creating |
 | Live countdown on "Resend code" | The server states the wait; no ticking timer |
 | Warning on the policy page before turning sign-in 2FA on | Not built |
 | Prompt injection | Still deferred (ADR 01 section 5) |

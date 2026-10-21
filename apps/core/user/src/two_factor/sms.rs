@@ -397,7 +397,7 @@ impl UserService {
             Some(PhoneNumber::parse(number).ok_or_else(|| {
                 crate::AccountError::Validation(vec![crate::FieldError {
                     field: "phone",
-                    message: "must be in international format, such as +94771234567".into(),
+                    message: super::PHONE_FORMAT.into(),
                 }])
             })?)
         };

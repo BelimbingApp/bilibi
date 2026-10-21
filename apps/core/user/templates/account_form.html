@@ -1,8 +1,9 @@
 {#- The create-user form (Bilimbi `FormLive`): one card of shared form
     controls. The form is `data-change`, so each change raises `validate`
     (refreshing the affiliation choices of the chosen person) and the submit
-    raises `create`. -#}
+    raises `create`. The optional mobile number (SMS 2FA) is stored
+    unverified until its holder confirms it. -#}
 <form id="user-form" data-event="validate" data-change data-submit-event="create" class="rounded-xl border border-line bg-surface px-6 py-5" novalidate>
-{{ person }}{{ affiliation }}{{ name }}{{ email }}{{ password }}
+{{ person }}{{ affiliation }}{{ name }}{{ email }}{{ phone }}{{ password }}
 <div class="mt-2 flex items-center gap-4">{{ submit }}{{ cancel }}</div>
 </form>

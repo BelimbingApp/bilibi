@@ -89,6 +89,9 @@ pub struct AccountInput {
     pub name: String,
     pub email: String,
     pub password: String,
+    /// Optional mobile number for SMS 2FA (E.164). It is stored unverified:
+    /// a second factor only once its holder accepts a code sent to it.
+    pub phone: String,
     pub person: Option<PersonId>,
     pub affiliation: Option<AffiliationId>,
 }
@@ -213,6 +216,17 @@ impl UserService {
             }
         };
         errors.extend(validate_password(&input.password));
+        let phone = if input.phone.trim().is_empty() {
+            None
+        } else {
+            match bilibi_sms::PhoneNumber::parse(&input.phone) {
+                Some(phone) => Some(phone),
+                None => {
+                    errors.push(field_error("phone", crate::two_factor::PHONE_FORMAT));
+                    None
+                }
+            }
+        };
         if !errors.is_empty() {
             return Err(AccountError::Validation(errors));
         }
@@ -255,9 +269,23 @@ impl UserService {
                         )
                         .await?;
                     let id: i64 = row.get(0);
+                    let mut changes = Vec::new();
+                    if let Some(phone) = &phone {
+                        sql.execute(
+                            "INSERT INTO user_phones(tenant_id,user_id,phone_number) VALUES($1,$2,$3)",
+                            &[&tenant, &id, &phone.as_str()],
+                        )
+                        .await?;
+                        changes.push(Change {
+                            kind: "user_phone".into(),
+                            id,
+                            old: json!({}),
+                            new: json!({"phone": phone.masked(), "verified": false}),
+                        });
+                    }
                     Ok((
                         id,
-                        vec![Change {
+                        std::iter::once(Change {
                             kind: "user".into(),
                             id,
                             old: json!(null),
@@ -269,7 +297,9 @@ impl UserService {
                                 "affiliation_id": links.affiliation.map(AffiliationId::get),
                                 "organisation_id": links.organisation.map(OrganisationId::get),
                             }),
-                        }],
+                        })
+                        .chain(changes)
+                        .collect(),
                     ))
                 })
             })

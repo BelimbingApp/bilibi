@@ -345,6 +345,7 @@ Pages (signed in only, live, `Cache-Control: no-store` like every page):
 - `/settings/two-factor`: set up (password, QR code, setup key, first code), or move to a new phone (a code from the old phone, a new QR code, the new phone's first code). There is no turn-off: Bilibi asks everyone for 2FA. The description is two bullets; the second says to ask an admin to reset 2FA after a lost phone.
 - `/settings/two-factor/confirm?return=<path>`: the step-up prompt, with **Text me a code** for an account with a phone. Success returns to `return`, which must be a local path (`safe_return`).
 - The settings page's **Text message (SMS)** section: add a number (password, number, code), or remove it with a current code while the authenticator app stays on (2FA cannot be turned off).
+- `/users/new` (administrators): an optional **Mobile number**, checked as E.164 and stored unverified with the account.
 - `/users/{id}` (administrators): the **Phone** fact (edited in place, step-up `core.user.phone.update`) and the **2FA** fact (App, SMS, both or Off). A reset also unverifies the phone.
 - `/login/verify` (Web): the sign-in's code card. See `apps/web/README.md`.
 

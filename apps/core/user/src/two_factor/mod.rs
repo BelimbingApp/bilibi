@@ -50,6 +50,9 @@ pub(crate) const RESET_KEY: &str = "core.user.two_factor.reset";
 pub(crate) const RESET_EVENT: &str = "reset-two-factor";
 /// The page service that owns [`RESET_EVENT`].
 pub(crate) const PAGES: &str = "core/user.pages";
+/// What a malformed phone number is told, on every form that takes one.
+pub(crate) const PHONE_FORMAT: &str = "must be in international format, such as +94771234567";
+
 /// Sign-in asks for a code when the tenant turns this on (off by default).
 pub const SIGN_IN: &str = "core.user.sign_in";
 /// An administrator sets or changes another account's phone number.
@@ -95,7 +98,7 @@ pub enum TwoFactorError {
     Unavailable,
     #[error("No verified phone is set up for this account. Contact your administrator.")]
     NoPhone,
-    #[error("must be in international format, such as +94771234567")]
+    #[error("{}", PHONE_FORMAT)]
     InvalidPhone,
     #[error("Set up the authenticator app first: 2FA cannot be turned off.")]
     LastMethod,
