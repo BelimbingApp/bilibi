@@ -15,7 +15,7 @@ for step in "$root"/scripts/setup-steps/[0-9]*.sh; do
     SETUP_STEP=$(basename -- "$step" .sh) bash "$step" || exit 1
 done
 
-python3 "$root/scripts/install-platform-hook.py"
+python3 "$root/scripts/install-platform-hook.py" --warn
 
 # shellcheck source=scripts/lib/install.sh
 source "$root/scripts/lib/install.sh"

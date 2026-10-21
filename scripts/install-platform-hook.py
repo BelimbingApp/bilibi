@@ -10,6 +10,7 @@ import fcntl
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -32,9 +33,13 @@ def git(*args):
     return subprocess.check_output(['git', '-C', str(ROOT), *args], text=True).strip()
 
 
+class Refused(Exception):
+    pass
+
+
 def refuse(reason):
-    raise SystemExit(f'Platform safeguard: {reason}. Left existing hooks and core.hooksPath unchanged. '
-                     'See README.md (Commit safeguard) for the repository-local integration steps.')
+    raise Refused(f'Platform safeguard: {reason}. Left existing hooks and core.hooksPath unchanged. '
+                  'See README.md (Commit safeguard) for the repository-local integration steps.')
 
 
 def install():
@@ -85,8 +90,16 @@ def install():
 
 
 if __name__ == '__main__':
-    argparse.ArgumentParser(description=__doc__).parse_args()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--warn', action='store_true',
+                        help='report a conflict and exit 0, for commands that do not mount components')
+    arguments = parser.parse_args()
     try:
         install()
-    except (OSError, subprocess.CalledProcessError) as error:
-        raise SystemExit(f'Platform safeguard installation failed: {error}. See README.md (Commit safeguard).') from None
+    except (Refused, OSError, subprocess.CalledProcessError) as error:
+        message = str(error) if isinstance(error, Refused) else (
+            f'Platform safeguard installation failed: {error}. See README.md (Commit safeguard).')
+        if not arguments.warn:
+            raise SystemExit(message) from None
+        print(f'{message}\nContinuing without the safeguard: ./bilibi add refuses until this is resolved, '
+              'and CI still rejects mounted composition files.', file=sys.stderr)

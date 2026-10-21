@@ -76,7 +76,7 @@ Run commands from the clone's root. Local branches, staged files and uncommitted
 | --- | --- |
 | `./bilibi start` | Prepare missing tools, install the commit safeguard, show local changes and start the development app |
 | `./bilibi setup` | Run the repeatable setup and install the commit safeguard without starting the app |
-| `./bilibi add <component>` | Install or verify the safeguard, then mount an official Domain or Extension from `catalogue.json` |
+| `./bilibi add <component>` | Install or verify the safeguard, then mount an official Domain or Extension from `catalogue.json`, or at the `--kind`, `--source` and `--commit` that Software shows |
 | `./bilibi status` | Show each component's path, branch, commit and local changes |
 | `./bilibi new <name>` | Planned next step for keeping your composition in your own application repository; currently prints this guidance |
 | `./bilibi check`, `pin`, `build` | Require that future application repository; currently refuse and point to `new` |
@@ -87,7 +87,7 @@ The application workspace is being delivered in stages; see [ADR 03](docs/archit
 
 **Commit component changes in their own repositories.** The Platform pre-commit hook runs `python3 scripts/discover-modules.py --check`, including its staged-file checks. It rejects mounted Domain or Extension linkage and foreign path packages in `Cargo.lock`. CI remains authoritative because Git hooks can be bypassed.
 
-Installation is local to this repository and safe to repeat. An existing executable `pre-commit` is retained as `pre-commit.bilibi-original` and runs after the discovery check; other hooks and `core.hooksPath` stay unchanged. Relative and absolute hook paths inside the repository are supported. Installation refuses external shared directories, symlinks, tracked hooks and a conflicting backup rather than overwrite them.
+Installation is local to this repository and safe to repeat. An existing executable `pre-commit` is retained as `pre-commit.bilibi-original` and runs after the discovery check; other hooks and `core.hooksPath` stay unchanged. Relative and absolute hook paths inside the repository are supported. Installation refuses external shared directories, symlinks, tracked hooks and a conflicting backup rather than overwrite them. `start` and `setup` print that refusal and carry on; `add` stops until you resolve it.
 
 For an unsafe hook location, create an untracked directory inside this checkout (for example `.local/hooks`), copy your existing hooks into it, then deliberately set `git config --local core.hooksPath .local/hooks` and run `python3 scripts/install-platform-hook.py`. Keep any existing backup for inspection; do not overwrite it. If your project tracks hooks, keep its originals and use this local copy for chaining. Do not point the local setting at a shared directory.
 
@@ -139,7 +139,7 @@ A Domain such as Finance is its own repository, mounted as a real folder (not a 
 ./bilibi start
 ```
 
-`add` uses the official repository's default branch. Repeating it keeps an existing checkout, branch and edits, and refreshes discovery and the working dependency lock. A conflicting destination or different origin is refused for you to inspect. Generated composition and lock changes stay local to Platform. Software's developer commands include the recommended release commit when preparing an update for a server.
+`add` uses the official repository's default branch. Repeating it keeps an existing checkout, branch and edits, and refreshes discovery and the working dependency lock. A conflicting destination or different origin is refused for you to inspect. Generated composition and lock changes stay local to Platform. Software's developer commands add `--kind`, `--source` and `--commit` so the clone is the exact repository and release commit it shows; an existing folder at another commit is left unchanged with the steps to move it.
 
 Rules for manual mounting, private repositories and unmounting: [`apps/domains/AGENTS.md`](apps/domains/AGENTS.md) and [`apps/extensions/AGENTS.md`](apps/extensions/AGENTS.md). Extensions use the same `add` command and mount under `apps/extensions/`.
 

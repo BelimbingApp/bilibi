@@ -230,8 +230,7 @@ The page is rendered once per instance from `scripts/waiting-page.html` into `si
 A local Bilibi checkout and a coding agent are the operator’s build tools. Find a Domain or Extension in Software or through MCP, read which release accepts this server and which commits CI recorded as tested together, then follow its `local_steps` in that checkout. For example:
 
 ```sh
-git clone -- https://github.com/BelimbingApp/bilibi-dom-finance apps/domains/finance
-git -C apps/domains/finance checkout --detach <recommended-commit>
+./bilibi add finance --kind domains --source https://github.com/BelimbingApp/bilibi-dom-finance --commit <recommended-commit>
 python3 scripts/discover-modules.py
 ./scripts/build-assets.sh --check
 cargo metadata --format-version 1 > /dev/null
@@ -240,7 +239,7 @@ cargo build --release --locked -p bilibi-web
 ./target/release/bilibi-web status
 ```
 
-Keep other mounted Domains and Extensions. For an existing clone, fetch and check out the chosen commit instead. Run the composition locally against its own database and check its pages in the browser. Build for the server’s operating system, processor and system library version.
+Keep other mounted Domains and Extensions. For an existing clone at another commit, `add` changes nothing and prints the fetch and checkout steps to run once your work is saved. Run the composition locally against its own database and check its pages in the browser. Build for the server’s operating system, processor and system library version.
 
 Copy `target/release/bilibi-web`, `.local/composition/manifest.txt` and `.local/composition/Cargo.lock` into a release folder, then write its checksum and archive it:
 

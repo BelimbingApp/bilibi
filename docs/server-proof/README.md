@@ -69,8 +69,7 @@ The script installs a lab-only legacy worker unit and old sudoers contents, then
 Mount the chosen Domain in the local checkout and pin before building:
 
 ```sh
-git clone -- https://github.com/BelimbingApp/bilibi-dom-finance apps/domains/finance
-git -C apps/domains/finance checkout --detach 24938fb69a4da94275ae74085ec03671a8efd51e
+./bilibi add finance --kind domains --source https://github.com/BelimbingApp/bilibi-dom-finance --commit 24938fb69a4da94275ae74085ec03671a8efd51e
 python3 scripts/discover-modules.py
 ./scripts/build-assets.sh --check
 cargo metadata --format-version 1 > /dev/null

@@ -15,8 +15,7 @@ The answer includes Finance’s description, official repository, a release that
 **Ask your developer to add the modules you need, build Bilibi on their computer, and test it before installing it here.** Follow the entry’s repository and commit, keeping any other mounted Domains and Extensions:
 
 ```sh
-./bilibi add finance
-git -C apps/domains/finance checkout --detach <recommended-commit>
+./bilibi add finance --kind domains --source <repository> --commit <recommended-commit>
 python3 scripts/discover-modules.py
 ./scripts/build-assets.sh --check
 cargo metadata --format-version 1 > /dev/null
@@ -25,7 +24,7 @@ cargo build --release --locked -p bilibi-web
 ./target/release/bilibi-web status
 ```
 
-If it is already cloned, fetch and check out the chosen commit there instead. Extensions mount under `apps/extensions/<id>`. Run the composition locally with its own database and check its pages in the browser. Prepare a release using [`docs/server-install.md`](../../../docs/server-install.md), then upload it on **Software › Releases**, or publish the setup archive on GitHub.
+`add` clones that repository at that commit, whether or not this checkout’s `catalogue.json` lists it. If the folder already exists at another commit, `add` changes nothing and prints the commit and fetch steps to run after you have saved your work. Extensions mount under `apps/extensions/<id>`. Run the composition locally with its own database and check its pages in the browser. Prepare a release using [`docs/server-install.md`](../../../docs/server-install.md), then upload it on **Software › Releases**, or publish the setup archive on GitHub.
 
 ## Compatibility
 
