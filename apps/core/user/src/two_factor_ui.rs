@@ -42,10 +42,11 @@ fn code_field(id: &str, errors: &[String]) -> Result<Html, Error> {
     ))
 }
 
-/// The SMS section's code field: six digits from the text.
-fn sms_code_field(id: &str, errors: &[String]) -> Result<Html, Error> {
+/// The SMS section's code field: six digits. Proving a number takes the
+/// texted code; turning SMS off takes any current code, so its label says so.
+fn sms_code_field(id: &str, label: &str, errors: &[String]) -> Result<Html, Error> {
     fragment(Html::render(
-        &CodeInput::new(id, "sms[code]", "Code from the text message", 6)
+        &CodeInput::new(id, "sms[code]", label, 6)
             .numeric()
             .errors(errors.to_vec()),
     ))
@@ -517,7 +518,14 @@ impl TwoFactorPage {
                         ..Attrs::default()
                     }),
             ))?,
-            sms_code: sms_code_field("sms_code", &self.sms_errors)?,
+            sms_code: sms_code_field(
+                "sms_code",
+                match self.sms_stage {
+                    SmsStage::On => "Authentication code",
+                    _ => "Code from the text message",
+                },
+                &self.sms_errors,
+            )?,
             sms_send: fragment(Html::render(&match self.sms_stage {
                 SmsStage::Verify { .. } => SendCode {
                     id: "two-factor-sms-resend",
