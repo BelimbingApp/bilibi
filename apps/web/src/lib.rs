@@ -310,6 +310,10 @@ pub fn router(app: App) -> Router {
         .route("/", get(auth::home).post(auth::login))
         .route("/login", get(auth::home).post(auth::login))
         .route(
+            "/login/challenge",
+            get(auth::challenge_page).post(auth::challenge),
+        )
+        .route(
             "/forgot-password",
             get(auth::forgot_page).post(auth::forgot),
         )

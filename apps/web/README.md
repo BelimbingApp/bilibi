@@ -1,3 +1,9 @@
+# Sign-in
+
+The host's `/` and `/login` forms continue to `/login/challenge` when [Core User's sign-in policy](../core/user/README.md#sign-in-admission) requires 2FA.
+
+The pending credential uses a separate HttpOnly, SameSite=Strict cookie scoped to `/login/challenge`. It never becomes `bilibi_session`. GET reads enrolled methods only. POST checks Origin and the pending CSRF before starting a challenge, verifying a code or cancelling. Admission replaces it with a fresh session cookie and follows the account's normal landing page; expiry returns to sign-in. The anonymous shared card has no shell or live transport.
+
 # Discovered pages
 
 Register HTTP pages with `Contribution::new(ROUTES, ...)` from

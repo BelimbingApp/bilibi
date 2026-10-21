@@ -10,7 +10,7 @@
 //! in, be impersonated, or keep a session"). Nothing here grants a capability.
 use crate::{
     contributions::{UPDATE, VIEW},
-    password, CredentialError, Login, UserService,
+    password, CredentialError, UserService,
 };
 use bilibi_affiliation::identity::account_standing as affiliation_standing;
 use bilibi_company::eligibility::{
@@ -187,11 +187,11 @@ impl ActorVerifier for AccountVerifier {
 /// asked. The password is verified first, at the same cost for an unknown
 /// address, and only then is the account's standing judged, so a frozen
 /// account is named only to someone holding its credential.
-pub async fn login(
+pub(crate) async fn password_identity(
     db: &Db,
     email: &str,
     password: &str,
-) -> std::result::Result<Login, CredentialError> {
+) -> std::result::Result<(i64, i64, String), CredentialError> {
     let email = crate::reset::normalize_email(email).map_err(|_| CredentialError::Rejected)?;
     if password.len() > password::MAX_LENGTH {
         return Err(CredentialError::Rejected);
@@ -221,12 +221,7 @@ pub async fn login(
             return Err(CredentialError::WorkspaceUnavailable)
         }
     }
-    let result = Login {
-        token: uuid::Uuid::new_v4().simple().to_string(),
-        csrf: uuid::Uuid::new_v4().simple().to_string(),
-    };
-    client.execute("INSERT INTO sessions(id,tenant_id,user_id,csrf,expires_at) VALUES($1,$2,$3,$4,now()+interval '24 hours')", &[&result.token,&tenant,&user,&result.csrf]).await.map_err(Error::from)?;
-    Ok(result)
+    Ok((tenant, user, stored.ok_or(CredentialError::Rejected)?))
 }
 
 /// Why a link command did not happen. `Access` is an authorization denial,

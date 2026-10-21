@@ -142,6 +142,12 @@ Use `Method::new(id, label).code(length, numeric)` for a different code format (
 
 A single enrolled method accepts the existing plain `step_up_code`. With several enrolled methods, send `"method_id:code"`. Base routes to exactly one provider; it never tries the same code against every method. Missing enrollment and unknown methods fail closed. An accepted code still covers the remaining checks in the same request.
 
+### Sign-in proof
+
+`StepUp::verify(scope, method_id, code, purpose)` consumes one enrolled method's proof independently of session windows or policy bypasses. It validates the declared purpose and channel, audits the result, and returns `Spent`. It creates no window or session. Only the identity owner uses it to finish a separately sealed pending sign-in; ordinary protected actions continue to use `require` or `require_code`.
+
+For `core.user.sign_in`, provider `start` and `spend` receive an internally proved holder scope without an admitted session row. Bind delivered codes to the complete purpose, including the pending-entry target. Finish verification through the provider's own audited transaction; the identity owner rechecks pending state before admission. The shared credential card reads only enrollment and code formats; it never follows signed-in setup or prompt routes.
+
 ### Shared browser proof
 
 The identity owner binds `SessionProvider` once with `bind_session`, independently of factor registration. Core User supplies the existing session window and the neutral choice-page destination. A method opens browser proof with `Sessions::step_up` only after consuming its own valid challenge in an audited transaction. Factors do not implement session storage.
@@ -169,7 +175,7 @@ Extension owners implementing the former `Provider` must:
 5. Handle `SessionProof::Fresh`'s new `consume` field if implementing the session adapter. Update account-wide sign-out callers from `Sessions::end_user_sessions(sql, tenant, user, except)` to `sessions.revoke(tx, user, except)` on a service wired with `with_factors(step_up)`.
 6. Qualify codes as `method_id:code` when several methods are enrolled. Keep `require`/`require_code` at the protected owner's boundary.
 
-The sign-in admission flow is unchanged. A second-factor sign-in stage is a separate task. This contract adds no delivery method, secret reader or company policy.
+Core User owns [pending sign-in admission](../../core/user/README.md#sign-in-admission). Its anonymous card uses these registered methods without opening a session. This contract adds no delivery method, secret reader or company policy.
 
 ## Try it
 

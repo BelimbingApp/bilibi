@@ -386,40 +386,19 @@ pub async fn login(
         .await;
     }
     match app.user.login(&form.email, &submission.password).await {
-        Ok(session) => {
-            let client = app.db.get().await.map_err(Error::from)?;
-            app.security
-                .sessions
-                .describe(
-                    &**client,
-                    &session.token,
-                    api::client_address(peer.map(|Extension(ConnectInfo(peer))| peer), &headers)
-                        .map(|ip| ip.to_string())
-                        .as_deref(),
-                    headers
-                        .get(header::USER_AGENT)
-                        .and_then(|value| value.to_str().ok()),
-                )
-                .await?;
-            let cookie = format!(
-                "bilibi_session={}; HttpOnly; SameSite=Lax; Path=/; Max-Age=86400{}",
-                session.token,
-                secure(&app)
-            );
-            // The account's chosen landing page (Bilimbi `ui.landing_menu_id`),
-            // when it still may open it; else the workspace.
-            let destination = app
-                .user
-                .landing_route(&session.token)
-                .await?
-                .unwrap_or_else(|| WORKSPACE.to_owned());
-            let mut response = Redirect::to(&destination).into_response();
-            response.headers_mut().insert(
+        Ok(session) if session.pending => {
+            let mut response = Redirect::to("/login/challenge").into_response();
+            set_pending(&app, &mut response, &session.token)?;
+            response.headers_mut().append(
                 header::SET_COOKIE,
-                HeaderValue::from_str(&cookie).map_err(|_| Error::Internal)?,
+                HeaderValue::from_static(
+                    "bilibi_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0",
+                ),
             );
             Ok(response)
         }
+        Ok(session) => admitted(&app, &headers, peer, session).await,
+
         Err(CredentialError::Rejected) => {
             // Reported twice over, as Bilimbi does: the announced alert for
             // assistive technology and the email field's own error line.
@@ -439,6 +418,172 @@ pub async fn login(
         }
         Err(CredentialError::Other(error)) => Err(error.into()),
         Err(_) => Err(Error::Internal.into()),
+    }
+}
+
+const PENDING_COOKIE: &str = "bilibi_sign_in";
+fn set_pending(
+    app: &App,
+    response: &mut Response,
+    token: &str,
+) -> std::result::Result<(), HttpError> {
+    let value = format!(
+        "{PENDING_COOKIE}={token}; HttpOnly; SameSite=Strict; Path=/login/challenge{}",
+        secure(app)
+    );
+    response.headers_mut().append(
+        header::SET_COOKIE,
+        HeaderValue::from_str(&value).map_err(|_| Error::Internal)?,
+    );
+    Ok(())
+}
+fn clear_pending(app: &App, response: &mut Response) {
+    let value = format!(
+        "{PENDING_COOKIE}=; HttpOnly; SameSite=Strict; Path=/login/challenge; Max-Age=0{}",
+        secure(app)
+    );
+    if let Ok(value) = HeaderValue::from_str(&value) {
+        response.headers_mut().append(header::SET_COOKIE, value);
+    }
+}
+async fn admitted(
+    app: &App,
+    headers: &HeaderMap,
+    peer: Option<Extension<ConnectInfo<SocketAddr>>>,
+    session: bilibi_user::Login,
+) -> std::result::Result<Response, HttpError> {
+    let client = app.db.get().await.map_err(Error::from)?;
+    app.security
+        .sessions
+        .describe(
+            &**client,
+            &session.token,
+            api::client_address(peer.map(|Extension(ConnectInfo(peer))| peer), headers)
+                .map(|ip| ip.to_string())
+                .as_deref(),
+            headers
+                .get(header::USER_AGENT)
+                .and_then(|value| value.to_str().ok()),
+        )
+        .await?;
+    let cookie = format!(
+        "bilibi_session={}; HttpOnly; SameSite=Lax; Path=/; Max-Age=86400{}",
+        session.token,
+        secure(app)
+    );
+    // The account's chosen landing page (Bilimbi `ui.landing_menu_id`),
+    // when it still may open it; else the workspace.
+    let destination = app
+        .user
+        .landing_route(&session.token)
+        .await?
+        .unwrap_or_else(|| WORKSPACE.to_owned());
+    let mut response = Redirect::to(&destination).into_response();
+    response.headers_mut().insert(
+        header::SET_COOKIE,
+        HeaderValue::from_str(&cookie).map_err(|_| Error::Internal)?,
+    );
+    clear_pending(app, &mut response);
+    Ok(response)
+}
+fn pending_ended(app: &App) -> Response {
+    let mut response = sign_in_redirect(app, true);
+    clear_pending(app, &mut response);
+    response
+}
+async fn challenge_card(
+    app: &App,
+    token: &str,
+    method: &str,
+    message: &str,
+    error: &str,
+) -> std::result::Result<Response, HttpError> {
+    let pending = match app.user.pending_sign_in(token).await {
+        Ok(pending) => pending,
+        Err(Error::Unauthorized) => return Ok(pending_ended(app)),
+        Err(error) => return Err(error.into()),
+    };
+    let methods = pending
+        .methods
+        .into_iter()
+        .map(|m| bilibi_ui::ProofMethod::new(m.id, m.label, m.code_length, m.numeric))
+        .collect::<Vec<_>>();
+    card(
+        app,
+        "Confirm sign-in",
+        bilibi_ui::SignInChallengePage::new(&pending.csrf, &methods, method, message, error)
+            .map_err(|_| Error::Internal)?,
+        FlashMap::default(),
+        StatusCode::OK,
+    )
+    .await
+}
+pub async fn challenge_page(
+    State(app): State<App>,
+    headers: HeaderMap,
+    Query(query): Query<HashMap<String, String>>,
+) -> std::result::Result<Response, HttpError> {
+    let Some(token) = cookie(&headers, PENDING_COOKIE) else {
+        return Ok(pending_ended(&app));
+    };
+    challenge_card(
+        &app,
+        token,
+        query.get("method").map_or("", String::as_str),
+        "",
+        "",
+    )
+    .await
+}
+#[derive(Deserialize)]
+pub struct ChallengeSubmission {
+    #[serde(default)]
+    csrf: String,
+    #[serde(default)]
+    method: String,
+    #[serde(default)]
+    code: String,
+    action: String,
+}
+pub async fn challenge(
+    State(app): State<App>,
+    headers: HeaderMap,
+    peer: Option<Extension<ConnectInfo<SocketAddr>>>,
+    Form(submission): Form<ChallengeSubmission>,
+) -> std::result::Result<Response, HttpError> {
+    origin(&app, &headers)?;
+    let Some(token) = cookie(&headers, PENDING_COOKIE) else {
+        return Ok(pending_ended(&app));
+    };
+    let result: std::result::Result<Response,HttpError> = async {
+        match submission.action.as_str() {
+            "cancel" => {
+                app.user.cancel_sign_in(token,&submission.csrf).await?;
+                let mut response = Redirect::to("/").into_response();
+                clear_pending(&app,&mut response);
+                Ok(response)
+            }
+            "start" => {
+                let challenge = app.user.start_sign_in_challenge(token,&submission.csrf,&submission.method).await?;
+                let mut message = match challenge.availability {
+                    bilibi_base::step_up::Availability::Ready => "Enter the current code from your second factor.".to_owned(),
+                    bilibi_base::step_up::Availability::RetryLater => "Wait before requesting another code.".to_owned(),
+                    bilibi_base::step_up::Availability::Unavailable => "This method is unavailable. Choose another method or contact an administrator.".to_owned(),
+                };
+                if let Some(destination) = challenge.masked_destination { message.push_str(&format!(" Destination: {destination}.")); }
+                if let Some(seconds) = challenge.retry_after_seconds { message.push_str(&format!(" Try again in {seconds} seconds.")); }
+                challenge_card(&app,token,&submission.method,&message,"").await
+            }
+            "verify" => match app.user.complete_sign_in(token,&submission.csrf,&submission.method,&submission.code).await? {
+                Some(session) => admitted(&app,&headers,peer,session).await,
+                None => challenge_card(&app,token,&submission.method,"","The code was not accepted. Check it or wait if too many attempts were made.").await,
+            },
+            _ => Err(Error::Invalid.into()),
+        }
+    }.await;
+    match result {
+        Err(HttpError(Error::Unauthorized, _)) => Ok(pending_ended(&app)),
+        other => other,
     }
 }
 

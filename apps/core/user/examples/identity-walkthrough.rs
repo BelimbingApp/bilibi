@@ -6,7 +6,7 @@ use bilibi_company::{CompanyService, SERVICE as COMPANIES};
 use bilibi_database::pool;
 use bilibi_party_ids::{AffiliationId, PersonId};
 use bilibi_tenancy::{Authentication, Scope};
-use bilibi_user::{identity, CredentialError, LinkError, UserService};
+use bilibi_user::{AccountLinks, CredentialError, LinkError, UserService};
 bilibi_walkthrough_fixture::walkthrough_vocabulary!();
 bilibi_walkthrough_fixture::walkthrough_module_roles!();
 
@@ -25,7 +25,7 @@ fn facets(label: &str, scope: &Scope) {
         actor.organisation().map(|id| id.get())
     );
 }
-fn link_outcome(label: &str, outcome: &Result<identity::AccountLinks, LinkError>) {
+fn link_outcome(label: &str, outcome: &Result<AccountLinks, LinkError>) {
     match outcome {
         Ok(links) => println!("{label}: ok {links:?}"),
         Err(error) => println!("{label}: refused {error:?}"),

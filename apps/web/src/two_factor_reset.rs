@@ -11,6 +11,8 @@ use bilibi_user::{TwoFactorEmailError, TwoFactorEmailReset};
 const USAGE: &str = "usage: bilibi-web two-factor-reset --email ADDRESS
 Turns off the authenticator app of the account with that email, signs the account out and
 notifies the person. They sign in with their password and set the app up again in Settings.
+If sign-in requires 2FA, another signed-in administrator must turn that requirement off
+while this account sets up a new method. Reset does not bypass the sign-in policy.
 It prints nothing secret. Run it on the server, in the instance's environment.";
 
 fn parse(args: &[String]) -> Option<&str> {
@@ -29,7 +31,7 @@ pub async fn two_factor_reset(db: &Db, args: &[String]) -> Result<()> {
     let app = crate::App::new(db.clone(), &origin)?;
     match app.user.reset_two_factor_by_email(email).await {
         Ok(TwoFactorEmailReset::Reset) => println!(
-            "2FA is off for {email}. The account was signed out and notified. Sign in at {origin}/login with the password, then set up the authenticator app again."
+            "2FA is off for {email}. The account was signed out and notified. If sign-in requires 2FA and no other method remains, ask another signed-in administrator to turn that requirement off while you set up a new method. Otherwise sign in at {origin}/login and set up the authenticator app again."
         ),
         Ok(TwoFactorEmailReset::AlreadyOff) => {
             println!("2FA is already off for {email}. Nothing changed.")

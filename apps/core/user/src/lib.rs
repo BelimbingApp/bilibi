@@ -8,7 +8,7 @@ pub mod contributions;
 pub mod database_queries;
 mod directory;
 mod factor_choice;
-pub mod identity;
+mod identity;
 pub mod impersonation;
 mod inbox;
 pub mod notifications;
@@ -17,6 +17,7 @@ pub mod password;
 mod preferences;
 mod query_ui;
 mod reset;
+mod sign_in;
 mod two_factor;
 mod two_factor_ui;
 mod verification;
@@ -31,7 +32,7 @@ pub use bootstrap::{
     validate_first_administrator, BootstrapAffiliation, FirstAdministrator,
     FirstAdministratorCreated, FirstAdministratorError, OperatorAccounts, OperatorCompany,
 };
-pub use identity::{Account, AccountLinks, AccountVerifier, Freeze, LinkError, Standing};
+pub use identity::{standing, Account, AccountLinks, AccountVerifier, Freeze, LinkError, Standing};
 pub use notifications::{unread, Notifications};
 pub use password::PolicyViolation;
 pub use preferences::{
@@ -131,18 +132,21 @@ impl From<tokio_postgres::Error> for CredentialError {
     }
 }
 
+/// A credential issued by sign-in. A pending token is never a session.
 pub struct Login {
     pub token: String,
     pub csrf: String,
+    pub pending: bool,
 }
+pub use sign_in::{PendingSignIn, SIGN_IN};
 
-/// Bilimbi's global sign-in: email alone names the account (`identity::login`).
+/// Bilimbi's global sign-in, continued through neutral admission policy.
 pub async fn login(
-    db: &Db,
+    users: &UserService,
     email: &str,
     password: &str,
 ) -> std::result::Result<Login, CredentialError> {
-    identity::login(db, email, password).await
+    users.begin_sign_in(email, password).await
 }
 
 pub async fn logout(db: &Db, token: &str, csrf: &str, sessions: &Sessions) -> Result<()> {
@@ -175,7 +179,7 @@ pub struct UserService {
 inventory::submit! {
     bilibi_module_registry::Module {
         id:"core/user",layer:bilibi_module_registry::Layer::Core,
-        dependencies:&["base/agent_api","base/database","base/security","base/step_up","base/system","base/notifications","base/tenancy","base/session","base/principal_directory","base/mail","base/settings","base/datetime","base/locale","base/ui","base/audit","base/authz","base/menu","base/grid","base/dashboard","base/party_ids","core/company","core/person","core/affiliation"],migrations:&[MIGRATION,CREDENTIALS_MIGRATION,PINS_MIGRATION,NOTIFICATIONS_MIGRATION,database_queries::MIGRATION,database_queries::DROP_PROMPT,BOOTSTRAP_MIGRATION,IDENTITY_MIGRATION,ACCOUNTS_MIGRATION,IMPERSONATION_MIGRATION,BOOTSTRAP_AFFILIATION_MIGRATION,MOVED_PINS_MIGRATION,TWO_FACTOR_MIGRATION,TWO_FACTOR_RECOVERY_DROP],
+        dependencies:&["base/agent_api","base/database","base/security","base/step_up","base/system","base/notifications","base/tenancy","base/session","base/principal_directory","base/mail","base/settings","base/datetime","base/locale","base/ui","base/audit","base/authz","base/menu","base/grid","base/dashboard","base/party_ids","core/company","core/person","core/affiliation"],migrations:&[MIGRATION,CREDENTIALS_MIGRATION,PINS_MIGRATION,NOTIFICATIONS_MIGRATION,database_queries::MIGRATION,database_queries::DROP_PROMPT,BOOTSTRAP_MIGRATION,IDENTITY_MIGRATION,ACCOUNTS_MIGRATION,IMPERSONATION_MIGRATION,BOOTSTRAP_AFFILIATION_MIGRATION,MOVED_PINS_MIGRATION,TWO_FACTOR_MIGRATION,TWO_FACTOR_RECOVERY_DROP,sign_in::MIGRATION],
         services:&[bilibi_module_registry::Service {id:"core/user.database_queries",factory:|services| {
             Ok(std::sync::Arc::new(database_queries::QueryService::new(services.get::<Db>("base/database.pool")?.as_ref().clone(), services.get("base/database.mutations")?, services.get("base/tenancy.authentication")?)))
         }},bilibi_module_registry::Service {id:"core/user.query-pages",factory:|services| {
@@ -207,7 +211,7 @@ impl UserService {
         email: &str,
         password: &str,
     ) -> std::result::Result<Login, CredentialError> {
-        login(&self.db, email, password).await
+        self.begin_sign_in(email, password).await
     }
     pub async fn logout(&self, token: &str, csrf: &str) -> Result<()> {
         logout(&self.db, token, csrf, &self.sessions).await

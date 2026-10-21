@@ -225,3 +225,87 @@ fn new_password() -> Attrs {
         ..Attrs::default()
     }
 }
+
+/// Method-neutral admission card; pending identity never enters the shell or
+/// live transport. No Bilimbi counterpart beyond the credential layout.
+#[derive(Template)]
+#[template(path = "sign_in_challenge.html")]
+pub struct SignInChallengePage {
+    pub selector: Html,
+    pub code: Html,
+    pub start_fields: Html,
+    pub verify_fields: Html,
+    pub cancel_fields: Html,
+    pub has_methods: bool,
+    pub multiple: bool,
+    pub message: String,
+    pub error: String,
+}
+impl SignInChallengePage {
+    pub fn new(
+        csrf: &str,
+        methods: &[crate::ProofMethod],
+        selected: &str,
+        message: &str,
+        error: &str,
+    ) -> askama::Result<Self> {
+        let method = methods
+            .iter()
+            .find(|m| m.id == selected)
+            .or_else(|| methods.first());
+        let selected = method.map_or("", |m| m.id.as_str());
+        let hidden = |form: &str| -> askama::Result<Html> {
+            Ok([
+                Html::render(
+                    &Field::named("csrf")
+                        .id(format!("{form}-csrf"))
+                        .kind(InputKind::Hidden)
+                        .value(csrf),
+                )?,
+                Html::render(
+                    &Field::named("method")
+                        .id(format!("{form}-method"))
+                        .kind(InputKind::Hidden)
+                        .value(selected),
+                )?,
+            ]
+            .into_iter()
+            .collect())
+        };
+        Ok(Self {
+            selector: Html::render(
+                &Field::named("method")
+                    .id("sign-in-method")
+                    .kind(InputKind::Select)
+                    .label("2FA method")
+                    .value(selected)
+                    .options(
+                        methods
+                            .iter()
+                            .map(|m| crate::Choice::new(&m.label, &m.id))
+                            .collect(),
+                    ),
+            )?,
+            code: match method {
+                Some(method) => {
+                    let mut code = crate::CodeInput::new(
+                        "sign-in-code",
+                        "code",
+                        format!("{} code", method.label),
+                        method.length,
+                    );
+                    code.numeric = method.numeric;
+                    Html::render(&code)?
+                }
+                None => Html::default(),
+            },
+            start_fields: hidden("sign-in-start")?,
+            verify_fields: hidden("sign-in-verify")?,
+            cancel_fields: hidden("sign-in-cancel")?,
+            has_methods: !methods.is_empty(),
+            multiple: methods.len() > 1,
+            message: message.to_owned(),
+            error: error.to_owned(),
+        })
+    }
+}

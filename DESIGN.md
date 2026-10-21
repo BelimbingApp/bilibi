@@ -183,7 +183,7 @@ Width is a shared decision. Every page uses `PageVariant`. All three share one c
 
 *Two shells, both minimal.*
 
-- **Credential layout:** a centered card for sign-in and password recovery. No navigation.
+- **Credential layout:** a centered card for sign-in and password recovery. No navigation. When the sign-in policy requires 2FA, a second card shows enrolled methods, explicit start/resend, code entry and Cancel before opening the workspace. Reading it sends no challenge.
 - **Workspace shell:** `h-7` top bar, sidebar menu, status bar.
   - Top bar: sidebar toggle, brand mark, notification bell, timezone and clock selector, theme selector.
   - Sidebar: the menu, pinned items, account entry at the bottom.
