@@ -389,20 +389,26 @@ impl StepUp {
         })
         .await
     }
+    /// Whether one provider holds an enrollment for the scope's account holder.
+    /// The connection is released on return, so a caller may then ask the
+    /// provider for destinations that read through its owner's facade.
+    async fn provider_enrolled(&self, provider: &dyn Provider, scope: &Scope) -> Result<bool> {
+        let client = self.db.get().await?;
+        provider
+            .enrolled(
+                &**client,
+                FactorAccount {
+                    tenant: scope.tenant(),
+                    user: scope.user(),
+                },
+            )
+            .await
+    }
     /// Read-only destinations and enrollment, refreshed on every call.
     pub async fn methods(&self, scope: &Scope, back: &str) -> Result<Vec<MethodChoice>> {
-        let account = FactorAccount {
-            tenant: scope.tenant(),
-            user: scope.user(),
-        };
         let mut choices = Vec::new();
         for (method, provider) in self.providers()? {
-            // Destinations may read through their owner's facade. Release the
-            // enrollment connection before asking for them, even with a small pool.
-            let enrolled = {
-                let client = self.db.get().await?;
-                provider.enrolled(&**client, account).await?
-            };
+            let enrolled = self.provider_enrolled(&*provider, scope).await?;
             let prompt = provider.prompt(scope, back).await?;
             let setup = provider.setup(scope, back).await?;
             if !local_destination(&prompt) || !local_destination(&setup) {
@@ -437,24 +443,13 @@ impl StepUp {
             .find(|(m, _)| m.id == method)
             .ok_or(Error::Invalid)?
             .1;
-        let client = self.db.get().await?;
-        if !provider
-            .enrolled(
-                &**client,
-                FactorAccount {
-                    tenant: scope.tenant(),
-                    user: scope.user(),
-                },
-            )
-            .await?
-        {
+        if !self.provider_enrolled(&*provider, scope).await? {
             return Ok(Challenge {
                 availability: Availability::Unavailable,
                 masked_destination: None,
                 retry_after_seconds: None,
             });
         }
-        drop(client);
         provider.start(scope, purpose).await
     }
     /// Bind once to the installation's live policy, never a process-local role cache.
@@ -488,11 +483,18 @@ impl StepUp {
     /// The bound provider's live enrollment state for this account holder.
     /// Presentation only: mutations still call `require` or `require_code`.
     pub async fn enrolled(&self, scope: &Scope) -> Result<bool> {
-        Ok(self
-            .methods(scope, "")
-            .await?
-            .iter()
-            .any(|method| method.enrolled))
+        Ok(!self.enrolled_methods(scope).await?.is_empty())
+    }
+    /// The registered methods the account holder is enrolled in, with no
+    /// presentation reads: what a check needs, whatever a destination does.
+    async fn enrolled_methods(&self, scope: &Scope) -> Result<Vec<Registered>> {
+        let mut enrolled = Vec::new();
+        for registered in self.providers()? {
+            if self.provider_enrolled(&*registered.1, scope).await? {
+                enrolled.push(registered);
+            }
+        }
+        Ok(enrolled)
     }
     /// Whether policy currently protects an operation, without spending proof.
     /// Used to explain protected fields before a person changes them.
@@ -633,11 +635,10 @@ impl StepUp {
         if scope.impersonator().is_some() {
             return Ok(Outcome::Refused("impersonating"));
         }
-        let methods = self.methods(scope, "").await?;
-        if methods.is_empty() {
+        if self.providers()?.is_empty() {
             return Ok(Outcome::Refused("unavailable"));
         }
-        let enrolled: Vec<_> = methods.iter().filter(|m| m.enrolled).collect();
+        let enrolled = self.enrolled_methods(scope).await?;
         if enrolled.is_empty() {
             return Ok(Outcome::Refused("not_enrolled"));
         }
@@ -651,18 +652,12 @@ impl StepUp {
             // wrong code against every factor (which multiplies lockouts).
             let (method, presented) = match code.expose().split_once(':') {
                 Some((method, code)) => (method, code),
-                None if enrolled.len() == 1 => (enrolled[0].method.id, code.expose()),
+                None if enrolled.len() == 1 => (enrolled[0].0.id, code.expose()),
                 None => return Ok(Outcome::Refused("method_required")),
             };
-            if !enrolled.iter().any(|m| m.method.id == method) {
+            let Some((_, provider)) = enrolled.iter().find(|(m, _)| m.id == method) else {
                 return Ok(Outcome::Refused("not_enrolled"));
-            }
-            let provider = self
-                .providers()?
-                .into_iter()
-                .find(|(m, _)| m.id == method)
-                .ok_or(Error::Invalid)?
-                .1;
+            };
             let purpose = Purpose {
                 operation: declared.operation.key,
                 target,
