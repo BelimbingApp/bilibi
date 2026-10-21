@@ -240,6 +240,24 @@ async fn main() -> DbResult<()> {
             .await
             .map(|r| r.status),
     );
+    // No per-call limit: `integration.outbound_timeout_seconds` decides. At its
+    // default (30) the 3 s route answers; set it to 1 and the call times out.
+    let started = std::time::Instant::now();
+    let operator_limited = integration
+        .send(
+            Origin::User(&admin),
+            &call("items.slow"),
+            Outgoing::get(format!("{base}/slow")),
+        )
+        .await
+        .map(|r| r.status);
+    show(
+        &format!(
+            "operator timeout, no per-call limit ({} ms)",
+            started.elapsed().as_millis()
+        ),
+        operator_limited,
+    );
     show(
         "invalid scheme is not sent",
         integration

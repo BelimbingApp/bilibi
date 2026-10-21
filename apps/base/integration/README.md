@@ -34,7 +34,9 @@ are `Failure::Transport` (`timeout`, `connect`, `redirect`, `body_limit`,
 `sink`, `transport`), recorded before they return. Buffered replies stop at
 `max_body_bytes` (10 MiB by default); `stream` writes chunk by chunk with the
 same bound and leaves cleanup of a partial target to the caller. The whole-call
-timeout defaults to 30 s. `Failure::Invalid` (bad metadata, URL, non-HTTP
+timeout is `Outgoing::timeout` when the caller sets one, else the operator
+setting `integration.outbound_timeout_seconds` (1–600, default 30; 30 s if it
+cannot be read). `Failure::Invalid` (bad metadata, URL, non-HTTP
 scheme or header) sends and records nothing. `Failure::Unrecorded` means the
 remote system may have acted but the row could not be written: never treat it
 as permission to repeat a consequential command. HTTPS trusts the public roots

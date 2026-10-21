@@ -16,6 +16,11 @@ pub const DELETE: &str = "admin.system.outbound-exchange.delete";
 pub const RETENTION_DAYS: &str = "integration.payload_retention_days";
 pub(crate) const RETENTION_DEFAULT: i64 = 30;
 pub(crate) const RETENTION_MAX: i64 = 3650;
+/// Global operator setting: seconds an outgoing call may take when the caller
+/// sets no limit of its own (`Outgoing::timeout` wins).
+pub(crate) const OUTBOUND_TIMEOUT_SECONDS: &str = "integration.outbound_timeout_seconds";
+pub(crate) const OUTBOUND_TIMEOUT_DEFAULT: i64 = 30;
+pub(crate) const OUTBOUND_TIMEOUT_MAX: i64 = 600;
 
 macro_rules! provenance {
     () => {
@@ -42,6 +47,12 @@ inventory::submit! { Contribution::new(DEFINITIONS, RETENTION_DAYS, provenance!(
     minimum: Some(1.0), maximum: Some(RETENTION_MAX as f64), validator: None,
     editor: Some(Editor { group: "Integration", label: "API exchange payload retention",
         help: "Days to keep the saved content of API calls; the call summary stays.", capability: Some(DELETE), reveal_duration_ms: 5_000 }),
+})) }
+inventory::submit! { Contribution::new(DEFINITIONS, OUTBOUND_TIMEOUT_SECONDS, provenance!(), &Setting::Definition(Definition {
+    value_type: ValueType::Integer, scopes: &[ScopeKind::Global], default: || json!(OUTBOUND_TIMEOUT_DEFAULT), nullable: false, encrypted: false,
+    minimum: Some(1.0), maximum: Some(OUTBOUND_TIMEOUT_MAX as f64), validator: None,
+    editor: Some(Editor { group: "Integration", label: "Outgoing API call timeout",
+        help: "Seconds an outgoing API call may take before it stops.", capability: None, reveal_duration_ms: 5_000 }),
 })) }
 // Deleting an exchange is audited with metadata only; these names never carry
 // a second copy of a payload or a raw endpoint into the audit ledger.

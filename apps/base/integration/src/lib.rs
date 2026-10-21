@@ -321,13 +321,19 @@ pub(crate) fn valid_call(call: &Call) -> bool {
 pub struct Integration {
     db: Db,
     boundary: Arc<MutationBoundary>,
+    settings: Arc<bilibi_settings::Settings>,
     clients: transport::Clients,
 }
 impl Integration {
-    pub fn new(db: Db, boundary: Arc<MutationBoundary>) -> Result<Self> {
+    pub fn new(
+        db: Db,
+        boundary: Arc<MutationBoundary>,
+        settings: Arc<bilibi_settings::Settings>,
+    ) -> Result<Self> {
         Ok(Self {
             db,
             boundary,
+            settings,
             clients: transport::Clients::new()?,
         })
     }
@@ -667,7 +673,7 @@ inventory::submit! {
         services: &[Service { id: SERVICE, factory: |services| {
             let db = services.get::<Db>("base/database.pool")?.as_ref().clone();
             let boundary = services.get::<MutationBoundary>("base/database.mutations")?;
-            let integration = Integration::new(db, boundary)
+            let integration = Integration::new(db, boundary, services.get("base/settings.store")?)
                 .map_err(|_| bilibi_module_registry::RegistryError::Service("base/integration HTTP client".into()))?;
             Ok(Arc::new(integration))
         } }, Service { id: "base/integration.pages", factory: |services| {

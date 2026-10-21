@@ -2,6 +2,7 @@
 //! belong to the owning module. Only transport failures become `Failure`
 //! values; a 4xx/5xx is an ordinary `Reply` the caller interprets.
 use crate::{
+    contributions::{OUTBOUND_TIMEOUT_MAX, OUTBOUND_TIMEOUT_SECONDS},
     redaction, redirect, valid_call, Call, Direction, Integration, Origin, Record, RedirectPolicy,
 };
 use bilibi_database::{Error, Result};
@@ -12,7 +13,9 @@ use tokio::io::{AsyncWrite, AsyncWriteExt};
 
 /// Default response bound for buffered calls; raise it per call when needed.
 pub const DEFAULT_MAX_BODY_BYTES: u64 = 10 * 1024 * 1024;
-const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
+/// Used only when `integration.outbound_timeout_seconds` cannot be read; it
+/// matches that setting's default.
+const FALLBACK_TIMEOUT: Duration = Duration::from_secs(30);
 
 fn build_client(
     system_roots: bool,
@@ -78,7 +81,8 @@ pub struct Outgoing {
     headers: Vec<(String, String)>,
     json: Option<Value>,
     body: Option<Vec<u8>>,
-    timeout: Duration,
+    /// `None` takes the operator's `integration.outbound_timeout_seconds`.
+    timeout: Option<Duration>,
     max_body_bytes: u64,
     follow_redirects: bool,
     system_roots: bool,
@@ -95,7 +99,7 @@ impl Outgoing {
             headers: Vec::new(),
             json: None,
             body: None,
-            timeout: DEFAULT_TIMEOUT,
+            timeout: None,
             max_body_bytes: DEFAULT_MAX_BODY_BYTES,
             follow_redirects: true,
             system_roots: false,
@@ -125,9 +129,10 @@ impl Outgoing {
         self.json = None;
         self
     }
-    /// Whole-call limit, including reading or streaming the body.
+    /// Whole-call limit, including reading or streaming the body. Without it
+    /// the call takes the operator's `integration.outbound_timeout_seconds`.
     pub fn timeout(mut self, timeout: Duration) -> Self {
-        self.timeout = timeout;
+        self.timeout = Some(timeout);
         self
     }
     /// Do not follow redirects: a 3xx answer is returned as the reply, so a
@@ -313,6 +318,24 @@ impl Integration {
         }
     }
 
+    /// The operator's limit for a call that sets none. A settings read that
+    /// fails falls back to the default rather than refusing the call.
+    async fn default_timeout(&self) -> Duration {
+        let seconds = async {
+            let client = self.db.get().await.ok()?;
+            self.settings
+                .get_global(&**client, OUTBOUND_TIMEOUT_SECONDS)
+                .await
+                .ok()?
+                .as_i64()
+        }
+        .await;
+        seconds
+            .filter(|seconds| (1..=OUTBOUND_TIMEOUT_MAX).contains(seconds))
+            .and_then(|seconds| u64::try_from(seconds).ok())
+            .map_or(FALLBACK_TIMEOUT, Duration::from_secs)
+    }
+
     async fn perform<'s>(
         &self,
         origin: Origin<'_>,
@@ -327,6 +350,10 @@ impl Integration {
         if !matches!(url.scheme(), "http" | "https") {
             return Err(Failure::Invalid);
         }
+        let timeout = match outgoing.timeout {
+            Some(timeout) => timeout,
+            None => self.default_timeout().await,
+        };
         let started = Instant::now();
         let http = if outgoing.public_https {
             if url.scheme() != "https"
@@ -339,7 +366,7 @@ impl Integration {
             let host = url.host_str().ok_or(Failure::Invalid)?;
             let host = host.trim_matches(['[', ']']);
             let addresses: Vec<_> = tokio::time::timeout(
-                outgoing.timeout,
+                timeout,
                 tokio::net::lookup_host((
                     host,
                     url.port_or_known_default().ok_or(Failure::Invalid)?,
@@ -375,7 +402,7 @@ impl Integration {
         loop {
             let mut builder = http
                 .request(outgoing.method.clone(), hop_url.clone())
-                .timeout(outgoing.timeout.saturating_sub(started.elapsed()));
+                .timeout(timeout.saturating_sub(started.elapsed()));
             for (name, value) in &hop_headers {
                 builder = builder.header(name.as_str(), value.as_str());
             }
