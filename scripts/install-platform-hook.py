@@ -5,6 +5,7 @@ No Bilimbi counterpart. Policy lives in discover-modules.py --check; this file
 only installs it. Never change core.hooksPath or a hook outside this repository.
 See README.md for conflicts and recovery.
 """
+import argparse
 import fcntl
 import os
 from pathlib import Path
@@ -84,6 +85,7 @@ def install():
 
 
 if __name__ == '__main__':
+    argparse.ArgumentParser(description=__doc__).parse_args()
     try:
         install()
     except (OSError, subprocess.CalledProcessError) as error:
