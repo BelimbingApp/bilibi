@@ -15,7 +15,7 @@ The answer includes Finance’s description, official repository, a release that
 **Ask your developer to add the modules you need, build Bilibi on their computer, and test it before installing it here.** Follow the entry’s repository and commit, keeping any other mounted Domains and Extensions:
 
 ```sh
-git clone -- https://github.com/BelimbingApp/bilibi-dom-finance apps/domains/finance
+./bilibi add finance
 git -C apps/domains/finance checkout --detach <recommended-commit>
 python3 scripts/discover-modules.py
 ./scripts/build-assets.sh --check

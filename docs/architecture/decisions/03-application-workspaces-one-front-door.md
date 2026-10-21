@@ -1,7 +1,7 @@
 # ADR 03: Application workspaces: one front door
 
 **Document Type:** Architecture Decision Record
-**Status:** Accepted direction; planned, not implemented. The `./bilibi` commands below do not exist yet.
+**Status:** Accepted direction; Platform step 0 implemented (`start`, `setup`, `add`, `status` and the direct-Platform commit safeguard). `new` and application workspaces remain planned.
 **Agents:** codex/gpt-6 (author)
 **Scope:** Trying Bilibi, creating an application repository, owning source changes and recording a reproducible composition
 **Last Updated:** 2026-10-21
@@ -18,7 +18,7 @@
 
 ### Trial to application
 
-**Clone once to try; create an application repository when you want to keep your own composition.** These are the planned steps, not instructions runnable today:
+**Clone once to try; create an application repository when you want to keep your own composition.** Steps 1–2 work in a Platform clone; steps 3–4 remain planned:
 
 1. Clone `https://github.com/BelimbingApp/bilibi`, enter the clone and run `./bilibi start`. No GitHub account or template step is needed.
 2. To try an official Domain, run `./bilibi add <domain>` in that clone, then `./bilibi start` again. Extensions use the same `add` command and their existing mount location.
@@ -84,4 +84,4 @@ Local startup permits branches and uncommitted edits. It must report those diffe
 
 ## Current implementation
 
-**Only this decision is recorded here.** No wrapper, hook installation, template migration or quick-start change is implemented by this ADR. Continue using the existing scripts and mounting guides until the corresponding parts of [issue 106](https://github.com/BelimbingApp/bilibi/issues/106) are delivered and verified.
+**Platform step 0 is implemented.** The root `./bilibi` provides `start`, `setup`, `add` and `status` over the existing scripts and discovery. Setup, agent setup and `add` install or verify the repository-local Platform safeguard. The README quick start and Software install command use this entry point. `new`, application repositories, template changes and workspace migration remain planned; `new`, `check`, `pin` and `build` currently print the next step instead of performing application work.

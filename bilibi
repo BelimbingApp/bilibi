@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# Platform front door; no Bilimbi module counterpart. Application workspaces: ADR 03.
+set -euo pipefail
+root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+cd "$root"
+# shellcheck source=scripts/lib/prerequisites.sh
+source "$root/scripts/lib/prerequisites.sh"
+case ${1:-help} in
+    start|setup|add)
+        command=$1
+        if [[ $command == add ]]; then
+            [[ $# == 2 ]] || { echo 'Usage: ./bilibi add <component>' >&2; exit 1; }
+        else
+            [[ $# == 1 ]] || { echo "Usage: ./bilibi $command" >&2; exit 1; }
+        fi
+        activate_cargo
+        if [[ $command == setup ]] || ! development_prerequisites; then
+            bash "$root/scripts/setup.sh"
+            # Setup runs in a child shell. Activate newly installed tools here too.
+            activate_cargo
+        fi
+        development_prerequisites || { echo 'Prerequisites still fail. Run ./bilibi setup and check .local/setup.log.' >&2; exit 1; }
+        python3 "$root/scripts/install-platform-hook.py"
+        if [[ $command == start ]]; then
+            python3 "$root/scripts/platform.py" status
+            exec "$root/scripts/start-app.sh"
+        elif [[ $command == add ]]; then
+            exec python3 "$root/scripts/platform.py" "$@"
+        fi
+        ;;
+    status)
+        activate_cargo
+        python3 -c 'import tomllib' 2>/dev/null || { echo 'Python 3.11+ is required. See README.md (supported environment).' >&2; exit 1; }
+        exec python3 "$root/scripts/platform.py" "$@"
+        ;;
+    check|pin|build|new)
+        echo "This is a Platform clone, without a saved application recipe."
+        echo 'Next: ./bilibi new <name> will create your application repository; it is planned in ADR 03 and is not available yet.'
+        echo 'For now, try local sources with ./bilibi start and ./bilibi add <component>.'
+        exit 1
+        ;;
+    help|--help|-h)
+        cat <<'USAGE'
+Usage: ./bilibi <command>
+  start             Set up missing tools and run local sources
+  setup             Prepare tools and install the Platform commit safeguard
+  add <component>   Mount an official Domain or Extension from catalogue.json
+  status            Show component repositories, branches and local changes
+  new <name>        Planned: create your own application repository
+  check, pin, build Require an application repository (planned)
+USAGE
+        ;;
+    *) echo "Unknown command: $1. Run ./bilibi --help." >&2; exit 1 ;;
+esac

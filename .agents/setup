@@ -13,6 +13,7 @@ for step in 10-packages 20-rust 30-postgresql; do
 done
 # shellcheck disable=SC1091
 source "$HOME/.cargo/env"
+python3 scripts/install-platform-hook.py
 
 cargo fetch --locked
 cargo build -p bilibi-web --locked

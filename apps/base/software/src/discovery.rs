@@ -130,7 +130,7 @@ fn local_steps(repository: &str, id: &str, kind: &str, commit: &str) -> Option<V
     let path = format!("apps/{kind}/{id}");
     Some(vec![
         "# For your developer: run in the Bilibi code folder on your computer. Keep existing modules.".into(),
-        format!("git clone -- {repository} {path}"),
+        format!("./bilibi add {id}"),
         format!("git -C {path} checkout --detach {commit}"),
         "python3 scripts/discover-modules.py".into(),
         "./scripts/build-assets.sh --check".into(),

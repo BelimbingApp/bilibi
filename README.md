@@ -45,16 +45,55 @@ Bilibi is MIT-licensed, like the earlier iterations. The architecture is the sam
 
 ## Run it locally
 
-On Ubuntu, Debian or WSL2:
+1. Clone Bilibi and enter its folder:
 
 ```sh
-./scripts/setup.sh
-./scripts/start-app.sh
+git clone https://github.com/BelimbingApp/bilibi
+cd bilibi
 ```
 
-`setup.sh` installs everything once (Rust, PostgreSQL 18, Caddy, mkcert, Node.js) and is safe to rerun.
+2. Start it:
+
+```sh
+./bilibi start
+```
+
+`start` checks the tools, runs the existing setup when needed, activates newly installed Rust tools in the same shell, and launches local sources. Setup installs Rust, PostgreSQL 18, Caddy, mkcert and Node.js. You do not need a GitHub account. An AI agent follows these same steps.
 
 Open the address printed by the launcher and sign in as `ai@agent.my` / `bilibi-dev` (development seed only). One checkout owns <https://bilibi.localhost>; other checkouts use their own `http://127.0.0.1:<port>` address. Setting `BILIBI_DEV_PORT` selects a backend port, without taking over another checkout's HTTPS address.
+
+### Supported environment
+
+Use apt-based Ubuntu or Debian, including either distribution in WSL2, with Git, Bash and network access. Installing missing packages needs root or sudo privileges. Setup may ask for your sudo password in the terminal; one command does not mean unattended installation.
+
+Python 3.11 or newer is required. Ubuntu 20.04 and 22.04, and Debian 11, ship older Python versions. Upgrade to Ubuntu 24.04 or newer, or Debian 12 or newer, before starting; setup does not replace the distribution's Python. If local HTTPS trust needs manual setup (including Windows trust in WSL2), use the printed loopback HTTP address. The launcher falls back to HTTP when local HTTPS is unavailable.
+
+### Commands in a Platform clone
+
+Run commands from the clone's root. Local branches, staged files and uncommitted edits are kept.
+
+| Command | What it does |
+| --- | --- |
+| `./bilibi start` | Prepare missing tools, install the commit safeguard, show local changes and start the development app |
+| `./bilibi setup` | Run the repeatable setup and install the commit safeguard without starting the app |
+| `./bilibi add <component>` | Install or verify the safeguard, then mount an official Domain or Extension from `catalogue.json` |
+| `./bilibi status` | Show each component's path, branch, commit and local changes |
+| `./bilibi new <name>` | Planned next step for keeping your composition in your own application repository; currently prints this guidance |
+| `./bilibi check`, `pin`, `build` | Require that future application repository; currently refuse and point to `new` |
+
+The application workspace is being delivered in stages; see [ADR 03](docs/architecture/decisions/03-application-workspaces-one-front-door.md). `scripts/setup.sh` and `scripts/start-app.sh` remain available directly. Direct setup also installs the safeguard; after installing tools directly, load `$HOME/.cargo/env` before using the direct launcher.
+
+### Commit safeguard
+
+**Commit component changes in their own repositories.** The Platform pre-commit hook runs `python3 scripts/discover-modules.py --check`, including its staged-file checks. It rejects mounted Domain or Extension linkage and foreign path packages in `Cargo.lock`. CI remains authoritative because Git hooks can be bypassed.
+
+Installation is local to this repository and safe to repeat. An existing executable `pre-commit` is retained as `pre-commit.bilibi-original` and runs after the discovery check; other hooks and `core.hooksPath` stay unchanged. Relative and absolute hook paths inside the repository are supported. Installation refuses external shared directories, symlinks, tracked hooks and a conflicting backup rather than overwrite them.
+
+For an unsafe hook location, create an untracked directory inside this checkout (for example `.local/hooks`), copy your existing hooks into it, then deliberately set `git config --local core.hooksPath .local/hooks` and run `python3 scripts/install-platform-hook.py`. Keep any existing backup for inspection; do not overwrite it. If your project tracks hooks, keep its originals and use this local copy for chaining. Do not point the local setting at a shared directory.
+
+A rejected commit names its repository and offending file. Unstage the mounted composition files, commit Domain or Extension edits in their own repositories, and follow the [unmount instructions](apps/domains/AGENTS.md) before preparing Platform composition changes. Do not hide generated changes with index flags.
+
+### Local launcher
 
 The launcher sets `BILIBI_ENV=development` unless you already set it, so the install seed identifies a fresh local copy as Dev. A saved role in Instance settings takes precedence. It starts a private database, builds, migrates, seeds and rebuilds on change. While the HTTPS app is down, its waiting page shows the current build step and elapsed time. A failed build shows the latest diagnostics; fix the error and save a file to rebuild. Cargo output stays in the terminal, and a previous successful build keeps serving until its replacement is ready. Restart it after changing an environment variable.
 
@@ -96,11 +135,13 @@ Terminate TLS at a reverse proxy, and keep the database on a private network: Bi
 A Domain such as Finance is its own repository, mounted as a real folder (not a submodule or symlink):
 
 ```sh
-git clone https://github.com/BelimbingApp/bilibi-dom-finance.git apps/domains/finance
-python3 scripts/discover-modules.py
+./bilibi add finance
+./bilibi start
 ```
 
-Rules for mounting and unmounting: [`apps/domains/AGENTS.md`](apps/domains/AGENTS.md). Extensions mount the same way under `apps/extensions/`.
+`add` uses the official repository's default branch. Repeating it keeps an existing checkout, branch and edits, and refreshes discovery and the working dependency lock. A conflicting destination or different origin is refused for you to inspect. Generated composition and lock changes stay local to Platform. Software's developer commands include the recommended release commit when preparing an update for a server.
+
+Rules for manual mounting, private repositories and unmounting: [`apps/domains/AGENTS.md`](apps/domains/AGENTS.md) and [`apps/extensions/AGENTS.md`](apps/extensions/AGENTS.md). Extensions use the same `add` command and mount under `apps/extensions/`.
 
 ## Checks
 
