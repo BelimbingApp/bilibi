@@ -85,6 +85,15 @@ impl UserService {
     ) -> std::result::Result<Login, CredentialError> {
         let (tenant, user, stored) =
             crate::identity::password_identity(&self.db, email, password).await?;
+        let pending = {
+            let client = self.db.get().await.map_err(Error::from)?;
+            let scope = self
+                .authentication
+                .authenticate(&**client, tenant, user, String::new())
+                .await?;
+            drop(client);
+            self.step_up.required(&scope, SIGN_IN).await?
+        };
         let mut client = self.db.get().await.map_err(Error::from)?;
         let mut tx = self
             .mutations
@@ -102,7 +111,6 @@ impl UserService {
             .authentication
             .authenticate(tx.sql(), tenant, user, String::new())
             .await?;
-        let pending = self.step_up.required(&scope, SIGN_IN).await?;
         let login = credential(pending);
         if pending {
             let minutes = self
