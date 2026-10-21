@@ -111,7 +111,11 @@ async fn context<'a>(
         }
     });
     let active = active_item(&tree, path);
-    let nodes: Vec<_> = tree.iter().map(|node| nav_node(node, active)).collect();
+    let mut nodes: Vec<_> = tree.iter().map(|node| nav_node(node, active)).collect();
+    // The page being visited leads the menu; an empty menu keeps its message.
+    if let Some(current) = current_page(app, path, active).filter(|_| !nodes.is_empty()) {
+        nodes.insert(0, current);
+    }
     // The tenant's standing, from the explicit operator proof only.
     let platform_operator = match tenancy::prove_operator(&**client, scope).await {
         Ok(_) => true,
@@ -295,21 +299,47 @@ fn active_item(tree: &[menu::Node], path: &str) -> Option<&'static str> {
     best.map(|(id, _)| id)
 }
 
-fn nav_node(node: &menu::Node, active: Option<&str>) -> NavNode {
-    let item = node.item.item;
-    // Contributions carry bare Heroicon names; the host adds the set prefix.
-    let icon = match item.icon {
+/// The page being visited, as the menu's leading row: the page's own name (its
+/// `Page::title`), else its menu row's label, linking to the address itself.
+/// A record's own title is left out: the live mount re-renders the shell
+/// without it, and the row must not change under the reader.
+fn current_page(app: &App, path: &str, active: Option<&str>) -> Option<NavNode> {
+    let row = active
+        .and_then(|id| app.menu.fetch(id))
+        .map(|current| current.item);
+    let label = crate::routes::resolve(app, path)
+        .ok()
+        .and_then(|(bound, _)| bound.page.0.title(bound.route.operation))
+        .or(row.map(|item| item.label))?;
+    Some(NavNode {
+        id: "current-page".to_owned(),
+        label: label.to_owned(),
+        icon: nav_icon(row.and_then(|item| item.icon)),
+        route: Some(path.to_owned()),
+        active: false,
+        leading: true,
+        children: Vec::new(),
+    })
+}
+
+/// Contributions carry bare Heroicon names; the host adds the set prefix.
+fn nav_icon(icon: Option<&str>) -> String {
+    match icon {
         None => "hero-square-3-stack-3d".to_owned(),
         Some(name) if name.starts_with("hero-") => name.to_owned(),
         Some(name) => format!("hero-{name}"),
-    };
+    }
+}
+
+fn nav_node(node: &menu::Node, active: Option<&str>) -> NavNode {
+    let item = node.item.item;
     NavNode {
         id: item.id.to_owned(),
         label: item.label.to_owned(),
-        icon,
+        icon: nav_icon(item.icon),
         route: item.route.map(str::to_owned),
         active: active == Some(item.id),
-        leading: item.leading,
+        leading: false,
         children: node
             .children
             .iter()

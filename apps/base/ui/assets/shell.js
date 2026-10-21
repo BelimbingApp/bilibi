@@ -237,6 +237,7 @@
       this.onKey = (event) => this.onGlobalKey(event);
       this.onMq = () => this.onViewportChange();
       this.onNav = (event) => this.onSidebarClick(event);
+      this.onNavSearch = (event) => { if (event.target.id === 'app-nav-search') this.applyNavFilter(); };
       this.onDragStart = (event) => this.startDrag(event);
       this.onDragMove = (event) => this.moveDrag(event);
       this.onDragEnd = () => this.endDrag();
@@ -249,6 +250,7 @@
       this.toggle?.addEventListener('click', this.onToggle);
       this.backdrop?.addEventListener('click', this.onBackdrop);
       this.root.addEventListener('click', this.onNav);
+      this.root.addEventListener('input', this.onNavSearch);
       this.drag?.addEventListener('mousedown', this.onDragStart);
       this.drag?.addEventListener('keydown', this.onDragKey);
       this.pinnedItems?.addEventListener('dragstart', this.onPinnedDragStart);
@@ -273,6 +275,7 @@
       this.toggle?.removeEventListener('click', this.onToggle);
       this.backdrop?.removeEventListener('click', this.onBackdrop);
       this.root?.removeEventListener('click', this.onNav);
+      this.root?.removeEventListener('input', this.onNavSearch);
       this.drag?.removeEventListener('mousedown', this.onDragStart);
       this.drag?.removeEventListener('keydown', this.onDragKey);
       this.pinnedItems?.removeEventListener('dragstart', this.onPinnedDragStart);
@@ -544,19 +547,74 @@
     toggleNavBranch(branch) {
       if (!branch) return;
       const expanded = branch.dataset.navExpanded !== 'true';
-      this.expandedBranches[branch.dataset.navBranch] = expanded;
-      write(NAV_EXPANSION_STORAGE, JSON.stringify(this.expandedBranches));
+      // While the menu is filtered a toggle is not saved, so clearing the
+      // filter brings back the expansion the reader had.
+      if (!this.navQuery()) {
+        this.expandedBranches[branch.dataset.navBranch] = expanded;
+        write(NAV_EXPANSION_STORAGE, JSON.stringify(this.expandedBranches));
+      }
       this.setNavBranch(branch, expanded);
+    },
+
+    // A branch's own expansion: the reader's saved choice, else the server's.
+    branchExpanded(branch) {
+      const id = branch.dataset.navBranch;
+      return Object.hasOwn(this.expandedBranches, id)
+        ? this.expandedBranches[id]
+        : branch.dataset.navDefaultExpanded === 'true';
     },
 
     applyNavBranches() {
       for (const branch of this.sidebar?.querySelectorAll('[data-nav-branch]') ?? []) {
-        const id = branch.dataset.navBranch;
-        const expanded = Object.hasOwn(this.expandedBranches, id)
-          ? this.expandedBranches[id]
-          : branch.dataset.navDefaultExpanded === 'true';
-        this.setNavBranch(branch, expanded);
+        this.setNavBranch(branch, this.branchExpanded(branch));
       }
+    },
+
+    navQuery() {
+      return (this.sidebar?.querySelector('#app-nav-search')?.value ?? '').trim().toLowerCase();
+    },
+
+    // The menu filter only hides rows and opens branches; nothing moves or is
+    // rebuilt. An empty box shows every row with each branch's own expansion.
+    // A live patch restores the server's rows; apply() filters them again.
+    applyNavFilter() {
+      const nav = this.sidebar?.querySelector('#app-nav');
+      if (!nav) return;
+      const query = this.navQuery();
+      if (query) {
+        this.filterNav(nav, query, false);
+        return;
+      }
+      for (const entry of nav.querySelectorAll('.app-nav-item-row, [data-nav-branch]')) {
+        entry.hidden = false;
+      }
+      this.applyNavBranches();
+    },
+
+    // Shows the rows under `list` that match, every row under a matching
+    // branch (`all`), and every branch on the way to a match, opened. Returns
+    // whether anything under `list` matched. The leading row is not a menu
+    // entry and always shows.
+    filterNav(list, query, all) {
+      let matched = false;
+      for (const entry of list.children) {
+        if (entry.matches('.app-nav-item-row')) {
+          const link = entry.querySelector('[data-nav-item]');
+          if (!link || link.classList.contains('app-nav-lead')) continue;
+          const hit = (link.dataset.navLabel ?? '').toLowerCase().includes(query);
+          entry.hidden = !(all || hit);
+          matched ||= hit;
+        } else if (entry.matches('[data-nav-branch]')) {
+          const toggle = entry.querySelector(':scope > .app-nav-parent > [data-nav-toggle]');
+          const hit = (toggle?.title ?? '').toLowerCase().includes(query);
+          const children = entry.querySelector(':scope > .app-nav-children');
+          const below = children ? this.filterNav(children, query, all || hit) : false;
+          entry.hidden = !(all || hit || below);
+          this.setNavBranch(entry, hit || below || this.branchExpanded(entry));
+          matched ||= hit || below;
+        }
+      }
+      return matched;
     },
 
     setNavBranch(branch, expanded) {
@@ -843,7 +901,7 @@
         this.backdrop.setAttribute('aria-hidden', drawerOpen ? 'false' : 'true');
         this.backdrop.style.pointerEvents = drawerOpen ? 'auto' : 'none';
       }
-      this.applyNavBranches();
+      this.applyNavFilter();
       this.renderPinnedItems();
     },
   };

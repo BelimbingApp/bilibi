@@ -14,8 +14,6 @@ navigation in a template.
   one capability; Menu does not depend on Authz. Decide every key in
   `capability_keys()` in one authorization pass for the actor, then filter. A
   container with no visible child is hidden, so unported sections never render.
-- `.leading()` draws a root page first, in bold, with a rule before the
-  sections (Dashboard). A leading item that is not a root page fails boot.
 - `Requirement::AnyOf` opens a combined page only. Hiding a link is presentation:
   the route and each operation must enforce their own capability.
 - `base/menu` contributes the structural roots (`admin`, `admin.system.*`, and the

@@ -585,7 +585,6 @@ dependencies = [
  "askama",
  "bilibi-authz",
  "bilibi-database",
- "bilibi-menu",
  "bilibi-module-registry",
  "bilibi-settings",
  "bilibi-tenancy",

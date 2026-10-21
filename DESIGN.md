@@ -185,7 +185,7 @@ Width is a shared decision. Every page uses `PageVariant`. All three share one c
 - **Credential layout:** a centered card for sign-in and password recovery. No navigation.
 - **Workspace shell:** `h-7` top bar, sidebar menu, status bar.
   - Top bar: sidebar toggle, brand mark, notification bell, timezone and clock selector, theme selector.
-  - Sidebar: the menu, pinned items, account entry at the bottom.
+  - Sidebar: the brand mark (`/favicon.svg`, 30 px high, centred) above a rule, the menu, pinned items, account entry at the bottom.
   - Status bar: the Platform version, then each mounted Domain's version (`finance 0.1.0`), with commits in the tooltip (`docs/versions.md`). It also shows the server role and instance label in the configured colour, plus the listen address when the role is Dev. The role comes from `instance.role`, never the build mode.
   - Below `lg` the menu is an off-canvas drawer.
 - Pages never render chrome. The host wraps them (`apps/web/src/shell.rs`).
@@ -193,7 +193,7 @@ Width is a shared decision. Every page uses `PageVariant`. All three share one c
 - Theme, clock mode and pins belong to the account. They are not `localStorage`.
 - "Viewing as … · Stop" appears only while impersonating.
 - A platform-operator row appears in the account menu. Operator-only screens carry their own caution where reach is unfiltered.
-- Navigation: Dashboard leads in bold, above a hairline rule; the rest is sorted alphabetically, with chevron toggles, the active route in lime text, ancestors accented. A page joins the menu when it ships.
+- Navigation: the page being visited leads in bold between hairline rules, named by its page title (else its menu row) and linking to its own address; a name too long for the sidebar ends in "…". The rest is sorted alphabetically, with chevron toggles, the active route in lime text on a row that is white across its full width, ancestors accented. Top-level entries and rules sit 5 px apart. A "Search menu…" box under the current page filters the menu as the reader types: a match keeps its parents shown and open, a matching parent shows all its children, and an empty box restores the menu as it was. A page joins the menu when it ships.
 - An empty menu says no destinations are available and names the recovery.
 
 ## Tiled workspace

@@ -2,6 +2,7 @@
 //! account metadata; no identity or capability decision is made by a template.
 //! Theme, time display and pins are the account's own (Core User); the
 //! company label is the account's affiliation (Web's `shell.rs`).
+use crate::forms::{field_base_class, Field, InputKind};
 use crate::Html;
 use askama::Template;
 
@@ -53,7 +54,8 @@ pub struct NavNode {
     pub icon: String,
     pub route: Option<String>,
     pub active: bool,
-    /// A leading page: bold, with a rule before the first section.
+    /// A leading row (the page being visited): bold, with a rule before the
+    /// first section.
     pub leading: bool,
     pub children: Vec<NavNode>,
 }
@@ -74,8 +76,33 @@ impl NavNode {
         })
     }
 }
+/// The sidebar's menu: the leading rows, then the menu filter (`#app-nav-search`,
+/// driven by `assets/shell.js`), then the sections.
 pub fn navigation(nodes: &[NavNode], tileable: bool) -> askama::Result<Html> {
-    navigation_options(nodes, tileable, true)
+    let lead = nodes.iter().take_while(|node| node.leading).count();
+    let (leading, sections) = nodes.split_at(lead);
+    let search = if sections.is_empty() {
+        Html::EMPTY
+    } else {
+        Html::render(&nav_search())?
+    };
+    Ok([
+        navigation_options(leading, tileable, true)?,
+        search,
+        navigation_options(sections, tileable, true)?,
+    ]
+    .into_iter()
+    .collect())
+}
+/// Filters the menu in the browser as the reader types; it posts nothing.
+fn nav_search() -> Field {
+    Field::named("app-nav-search")
+        .kind(InputKind::Search)
+        .placeholder("Search menu…")
+        .aria_label("Search menu")
+        .autocomplete("off")
+        .wrapper_class("app-nav-search")
+        .class(field_base_class(false, "px-2"))
 }
 /// The shell's own rows without sidebar-only pin/tile controls, for specimens.
 pub fn navigation_unpinned(nodes: &[NavNode]) -> askama::Result<Html> {
@@ -86,8 +113,8 @@ fn navigation_options(nodes: &[NavNode], tileable: bool, pinnable: bool) -> aska
         .iter()
         .enumerate()
         .map(|(at, node)| {
-            // The rule closes the leading pages, above the first section.
-            let rule = node.leading && nodes.get(at + 1).is_some_and(|next| !next.leading);
+            // The rule closes the leading rows, above the filter and sections.
+            let rule = node.leading && nodes.get(at + 1).is_none_or(|next| !next.leading);
             node.render(tileable, pinnable, rule)
         })
         .collect()

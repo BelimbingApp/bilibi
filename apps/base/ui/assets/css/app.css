@@ -920,10 +920,40 @@ body:has(dialog:modal) #flash-group > #connection-server-error {
   background-color: var(--color-surface);
 }
 
-/* A leading page (Dashboard) stays bold, also while active */
+/* A leading row (the page being visited) stays bold, also while active */
 .app-nav-menu .app-nav-item.app-nav-lead,
 .app-nav-menu .app-nav-parent-link.app-nav-lead {
   font-weight: 700;
+}
+
+/* The active row is white across its whole width, under its tile and pin buttons too */
+.app-nav-menu .app-nav-item-row:has(> .app-nav-item[aria-current="page"]),
+.app-nav-menu .app-nav-parent:has(> .app-nav-parent-link[aria-current="page"]) {
+  background-color: var(--color-surface);
+}
+
+/* The brand mark, its rule and the top-level menu entries sit 5 px apart */
+#app-sidebar-brand {
+  padding-top: 5px;
+}
+
+#app-sidebar-brand > hr,
+nav.app-nav-menu > * {
+  margin-top: 5px;
+}
+
+/* The menu filter is one compact row high, in the sidebar's 12 / 14 px type
+   (phones keep the field's 16 px, which stops the browser zooming in) */
+#app-nav-search {
+  min-height: var(--spacing-button);
+  padding-block: 0.25rem;
+}
+
+@media (min-width: 40rem) {
+  #app-nav-search {
+    font-size: var(--text-sm);
+    line-height: 0.875rem;
+  }
 }
 
 /* Parent branch ascent when it contains the active menu item */
