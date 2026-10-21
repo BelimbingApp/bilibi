@@ -221,7 +221,7 @@ Width is a shared decision. Every page uses `PageVariant`. All three share one c
 
 | Before | After |
 | --- | --- |
-| Which operations ask for the account holder's authenticator code before they go ahead | Set the actions that require 2FA. |
+| Which operations ask for the account holder's 2FA code before they go ahead | Set the actions that require 2FA. |
 | Every live company in this tenant | *(removed: the title says it)* |
 | Lowercase letters, digits and underscores. Unique within this tenant. | Lowercase letters, digits and underscores; must be unique. |
 

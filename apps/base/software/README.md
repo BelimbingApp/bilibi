@@ -57,7 +57,7 @@ Only a server owner with the appropriate platform capability can manage software
 | `admin.system.software.view` | Status, catalogue, release listings, Software page and card |
 | `admin.system.software.manage` | Install, undo, go-ahead, cancel, release upload and GitHub settings |
 
-Install, undo, go-ahead and GitHub settings require the owner’s own fresh authenticator code on every commit, including Dev. The existing step-up key `base.software.change` remains `.always()` to preserve its policy and audit identity; it is **not a build operation**. Cancel requires no code. The facade rechecks authorization inside the mutation transaction. Other organisations fail closed with `denied_platform_scope`; a missing grant is `denied_missing_capability`.
+Install, undo, go-ahead and GitHub settings require the owner’s own fresh 2FA code on every commit, including Dev. The existing step-up key `base.software.change` remains `.always()` to preserve its policy and audit identity; it is **not a build operation**. Cancel requires no code. The facade rechecks authorization inside the mutation transaction. Other organisations fail closed with `denied_platform_scope`; a missing grant is `denied_missing_capability`.
 
 ## Agent contracts
 
@@ -133,9 +133,9 @@ A gzip-compressed tar carries `bilibi-web`, `SHA256SUMS` and optionally `manifes
 
 ### Install from GitHub
 
-Name one repository on **Software › Releases**, as owner/name, for example BelimbingApp/bilibi-setup-template. A public repository needs no token, but GitHub then allows only 60 calls an hour from a server's address, and each install review uses about three. A token raises that to 5,000 an hour. A private repository needs a fine-grained token that can only read that repository. The token is stored encrypted and never shown again. Changing or clearing it asks for your authenticator code, including in the settings editor.
+Name one repository on **Software › Releases**, as owner/name, for example BelimbingApp/bilibi-setup-template. A public repository needs no token, but GitHub then allows only 60 calls an hour from a server's address, and each install review uses about three. A token raises that to 5,000 an hour. A private repository needs a fine-grained token that can only read that repository. The token is stored encrypted and never shown again. Changing or clearing it asks for your 2FA code, including in the settings editor.
 
-The first time you save a repository, Bilibi asks GitHub for its number and remembers that number only when you choose **Accept this repository**. That also asks for your authenticator code. If GitHub later reports a different number for the same name, installs stop until you accept the new number. Bilibi does not replace a remembered number by itself.
+The first time you save a repository, Bilibi asks GitHub for its number and remembers that number only when you choose **Accept this repository**. That also asks for your 2FA code. If GitHub later reports a different number for the same name, installs stop until you accept the new number. Bilibi does not replace a remembered number by itself.
 
 The list shows setup files for this server: names that start with `bilibi-setup-` and end with this computer's target, such as `-x86_64-unknown-linux-gnu.tar.gz`. Drafts stay hidden. Pre-releases stay hidden until you choose **Show pre-releases**. The list is kept on this server and refreshed at most as often as **Check GitHub every this many minutes** (15 by default), and again when you choose **Refresh**. The list is saved in the instance's `data/` folder. If GitHub is limiting this server, or cannot be reached, the saved list stays on the page, and a failed look is not repeated before the interval has passed; **Refresh** asks again. The running program, Undo and a file already downloaded do not call GitHub.
 

@@ -99,7 +99,7 @@ In code, `bilibi_base::system::Instance::resolve` returns the role, label and co
 
 **Dev and Production on two machines** use the same release archive from GitHub or a saved upload. Each instance keeps its own local release numbers, database and backup. No instance serves release files to another.
 
-**Install from GitHub**: on Software › Releases, name the setup repository (for example BelimbingApp/bilibi-setup-template), save a read-only token only when the repository is private, and accept the repository. That asks for your authenticator code. Then review one setup file for this server. The server downloads that file, checks it, backs up, switches and can switch back or Undo, the same way as an upload. Uploading a file still works when you do not want GitHub to supply the release.
+**Install from GitHub**: on Software › Releases, name the setup repository (for example BelimbingApp/bilibi-setup-template), save a read-only token only when the repository is private, and accept the repository. That asks for your 2FA code. Then review one setup file for this server. The server downloads that file, checks it, backs up, switches and can switch back or Undo, the same way as an upload. Uploading a file still works when you do not want GitHub to supply the release.
 
 Staging is optional. When used, install and check the exact GitHub asset there first, then review a separate Production install of that asset with fresh 2FA. See [Staging and Production](../apps/base/software/README.md#staging-and-production) for the agent report and identity checks.
 

@@ -16,7 +16,7 @@ Every contract serves every channel through the operation registry.
 
 The create review shows normalized tenant input, parent facts, company names, generated company codes, status and the primary assignment. Status defaults to `active`; `suspended` is also accepted. At most 99 additional companies may be supplied. All names obey their owning module's validation; names that generate the same company code are refused.
 
-An agent previews, shows the review to its person and commits the single-use plan. If the commit answers `step_up_required`, retry that plan with the person's current authenticator code as `step_up_code`. The step-up key is the create operation key; its declaration is on the installation floor by default. Normal window and tenant policy rules apply.
+An agent previews, shows the review to its person and commits the single-use plan. If the commit answers `step_up_required`, retry that plan with the person's current 2FA code as `step_up_code`. The step-up key is the create operation key; its declaration is on the installation floor by default. Normal window and tenant policy rules apply.
 
 ## Browser
 

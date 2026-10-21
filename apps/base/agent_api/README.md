@@ -148,7 +148,7 @@ Every preview and every successful commit carries `instance` (`bilibi_system::In
 - MCP names it too: `initialize` (`serverInfo.title` and the instructions) and the `plan` and `commit` tool descriptions in `tools/list`. `GET /.well-known/bilibi` carries the same object.
 - The plugin skill (`core/agent_plugins`) tells the agent to open every review and confirmation with it, as a full-width banner in an HTML review. Bilibi draws no plan review page itself; the harness does.
 
-An owner's commit may answer `Error::StepUpRequired` (Base Step-up). The whole commit rolls back, and the plan code stays usable until it expires. The edges answer `step_up_required` with the operation and reason. The client asks its human for a current authenticator code and commits the same plan again with `step_up_code`. That code is used once, for that operation, and opens the agent connection's window (`apps/base/step_up/README.md`).
+An owner's commit may answer `Error::StepUpRequired` (Base Step-up). The whole commit rolls back, and the plan code stays usable until it expires. The edges answer `step_up_required` with the operation and reason. The client asks its human for a current 2FA code and commits the same plan again with `step_up_code`. That code is used once, for that operation, and opens the agent connection's window (`apps/base/step_up/README.md`).
 
 Owners implement deterministic `WriteHandler::preview` without business writes,
 including defaults, versions, reference facts and restricted fields in the
