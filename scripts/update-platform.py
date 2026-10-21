@@ -13,7 +13,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import tomllib
 
 import catalogue
 
@@ -217,7 +216,7 @@ def component_update(folder, facts, platform_version, platform_head, tested):
         return f'current commits are unpublished and absent from recommended {version}; inspect {action(folder, "log", "--oneline", target + "..HEAD")} and publish your work before retrying'
     # A detached checkout keeps any named development branch intact. Git's normal
     # checkout protection still applies if a file changes after the preflight.
-    git(folder, 'checkout', '--detach', target)
+    git(folder, 'checkout', '--no-overwrite-ignore', '--detach', target)
     print(f'{folder}: {head[:12]} -> recommended {version} ({target[:12]}); existing branches kept.', flush=True)
     return None
 
@@ -257,10 +256,13 @@ def update_components(remote):
 
 
 def update():
-    paths = generated_changes()
+    generated_changes()
     branch, upstream = branch_plan()
     before = git(ROOT, 'rev-parse', 'HEAD')
     remote = upstream.removeprefix('refs/remotes/').split('/', 1)[0]
+    # Fetches can take time. Recheck before setting anything aside, so edits
+    # made while the network was busy cannot become disposable composition.
+    paths = generated_changes()
     # Back up exact working and index bytes, including a staged generated form.
     saved = {path: ((ROOT / path).read_bytes(), run(ROOT, 'git', 'show', f':{path}').stdout) for path in paths}
     try:
@@ -269,10 +271,10 @@ def update():
             git(ROOT, 'restore', '--source=HEAD', '--staged', '--worktree', '--', *paths)
         if git(ROOT, 'branch', '--show-current') != branch:
             if run(ROOT, 'git', 'show-ref', '--verify', f'refs/heads/{branch}', check=False).returncode:
-                git(ROOT, 'switch', '--track', '-c', branch, upstream)
+                git(ROOT, 'switch', '--no-overwrite-ignore', '--track', '-c', branch, upstream)
             else:
-                git(ROOT, 'switch', branch)
-        git(ROOT, 'merge', '--ff-only', upstream)
+                git(ROOT, 'switch', '--no-overwrite-ignore', branch)
+        git(ROOT, 'merge', '--ff-only', '--no-overwrite-ignore', upstream)
     except Refused:
         # A failed switch/fast-forward must not consume generated work either.
         for path, (working, staged) in saved.items():
