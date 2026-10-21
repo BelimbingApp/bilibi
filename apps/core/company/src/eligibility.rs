@@ -1,5 +1,5 @@
 //! Company facts for account authentication and owner writes. User owns the
-//! account → Person/Affiliation/Organisation binding (`bilibi_user::identity`):
+//! account → Person/Affiliation/Organisation binding (`bilibi_user::standing`):
 //! no company is inferred for an unlinked account. A business relationship role
 //! grants no login or capability; only the account's proven Organisation is
 //! checked here.

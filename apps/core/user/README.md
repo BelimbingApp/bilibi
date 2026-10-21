@@ -48,7 +48,7 @@ Enable **Sign in** on the tenant's 2FA requirements page to ask for a second fac
 - Password verification, pending entry, challenge starts, admission, cancellation and observed expiry are audited through `MutationBoundary`, without credentials or codes. Providers audit their own checks; Base Step-up also records proof acceptance or refusal for `core.user.sign_in`. Reset, account deletion and session revocation end pending sign-ins through Core User's lifecycle adapter.
 - With no enrolled method, a required sign-in stays pending and explains how to ask an administrator for help. It never admits, enrolls a method or sends a challenge from a GET. Before resetting the last method, keep another administrator signed in to turn off the tenant's sign-in requirement while the holder enrolls again. Reset does not bypass that policy.
 
-Factor Extensions use the [Base provider contract](../../base/step_up/README.md#provider). Sign-in calls the same `start` and `spend` hooks with operation `core.user.sign_in`, a pending-entry ID as target, and channel Web. These hooks must work without a session row. Delivered codes must bind to that complete purpose. Providers finish their own proof transaction before Core User begins admission; an admission failure may consume a code but never create a session.
+Factor Extensions use the [Base provider contract](../../base/step_up/README.md#provider). Sign-in calls the same `start` and `spend` hooks with operation `core.user.sign_in`, a pending-entry ID as target, and channel Web. These hooks must work without a session row. Delivered codes must bind to that complete purpose. Core User does not throttle `start_sign_in_challenge`, and each password sign-in creates a new pending entry. A method's `start` must therefore throttle deliveries per account across all pending entries and step-up targets; `retry_after_seconds` is advice to the page, not enforcement. Providers finish their own proof transaction before Core User begins admission; an admission failure may consume a code but never create a session.
 
 ### Upgrade notes for agents
 
@@ -88,7 +88,7 @@ Web adapters (`apps/web/src/shell.rs`): `POST /preferences` (`{kind,value}`), `G
 `BilimbiWeb.Impersonation`, behind the host's `POST /admin/impersonate/{id}` and
 `/admin/impersonate/leave` (`apps/web/src/impersonation.rs`). Entering needs
 `admin.user.impersonate`, a session that is not already impersonating, another
-account, and a target whose `identity::standing` is live (an archived company is
+account, and a target whose `bilibi_user::standing` is live (an archived company is
 refused). Each switch is one transaction through `Sessions::switch`: the session
 must still hold the identity the request came from, its CSRF secret rotates, and
 the retained `impersonation.started`/`impersonation.stopped` action (operator as
@@ -189,7 +189,7 @@ proof below stays in one place. Reads only and no capability, as in Bilimbi:
 the caller authorizes the company target first. The scope's tenant bounds every
 answer; a missing, deleted or other-tenant company or account is `NotFound`.
 
-An account is listed only while `identity::standing`'s proof holds for the
+An account is listed only while `bilibi_user::standing`'s proof holds for the
 company: live and `active`, its affiliation still linked and naming that
 company, and its Person not retired. An account with no Person or affiliation
 belongs to no company. An archived company stays readable with its accounts,
