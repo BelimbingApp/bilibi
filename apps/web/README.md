@@ -32,7 +32,7 @@ without a valid session redirect to login. Authenticated refusals return 403.
 
 Step-up (`apps/base/step_up/README.md`) is the same on every surface:
 
-- `StepUp { operation, inner }` checks `inner`, then `StepUp::require` for the declared `operation`. A GET that owes a check is redirected to the provider's prompt with `return=<address>`; any other method, an embed or a panel is refused with 403. Boot refuses a step-up of `Public`, of another step-up, or of an undeclared operation. Menus and tile pickers check only `inner`.
+- `StepUp { operation, inner }` checks `inner`, then `StepUp::require` for the declared `operation`. A GET that owes a check is redirected to the 2FA prompt (the method choice when several are enrolled) with `return=<address>`; any other method, an embed or a panel is refused with 403. Boot refuses a step-up of `Public`, of another step-up, or of an undeclared operation. Menus and tile pickers check only `inner`.
 - A live socket on such a page rereads the window on each event and 15 s refresh without extending it. Once the window has run out, the socket reloads its address so the HTTP guard asks again.
 - When an owner's facade answers `Error::StepUpRequired` during a GET render or a live event, the browser goes to the prompt and comes back to the page; nothing acted.
 - `/api/v1` commit and the MCP `commit` tool take an optional `step_up_code` and answer `step_up_required` (`bilibi_step_up::refusal`): 403 on the API, an `isError` result on MCP.

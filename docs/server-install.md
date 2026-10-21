@@ -212,7 +212,7 @@ sudo scripts/install-server.sh two-factor-reset production --email owner@example
 2FA is off for owner@example.com. The account was signed out and notified. Sign in at https://erp.example.com/login with the password, then set up the authenticator app again.
 ```
 
-- It turns off one account's authenticator, signs the account out and notifies the person. Their password is untouched.
+- It turns off every 2FA method of one account, signs the account out and notifies the person. Their password is untouched.
 - Already off is not an error: it says so and changes nothing.
 - It shows in the audit log as **System · two-factor-reset**.
 - The command is `bilibi-web two-factor-reset --email <address>` in the instance's environment.
