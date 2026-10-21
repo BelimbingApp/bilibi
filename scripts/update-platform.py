@@ -26,6 +26,11 @@ Refused = discovery.Refused
 def run(folder, *args, check=True, **kwargs):
     result = subprocess.run(args, cwd=folder, capture_output=True, **kwargs)
     if check and result.returncode:
+        if args[:2] in (('git', 'switch'), ('git', 'merge'), ('git', 'checkout')):
+            detail = result.stderr.decode().strip()
+            raise Refused(f'{folder}: Git stopped the update:\n{detail}\n'
+                          f'Next: {action(folder, "status", "--short", "--ignored")}. '
+                          'Preserve the named blocking files or resolve the branch conflict, then retry ./bilibi update.')
         # Do not echo remote URLs or credential-helper output.
         raise Refused(f'{folder}: {shlex.join(args[:2])} failed. '
                       f'Run {shlex.join(["git", "-C", str(folder), "status"])} and resolve it before retrying.')
