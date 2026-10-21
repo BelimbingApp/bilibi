@@ -12,7 +12,7 @@
 
 ## Context
 
-**Everyone starts in `bilibi`, with or without an AI agent.** Choosing between a Platform checkout and a setup template before trying the software adds an unnecessary decision. A lasting application still needs its own recipe and dependency lock, separate from component source repositories.
+**Everyone starts in `bilibi`, with or without an AI agent.** Choosing between a Platform checkout and the application starting point before trying the software adds an unnecessary decision. A lasting application still needs its own recipe and dependency lock, separate from component source repositories.
 
 ## Decision
 
@@ -29,7 +29,7 @@
 
 **Refuse uncommitted source edits, unpublished commits and an occupied destination.** Recognised generated composition changes are allowed. Give the exact commit or push action needed; never omit edits or substitute revisions. This captures sources only: it does not migrate the trial's database, media, configuration or keys.
 
-The setup template supplies content to `new`; it is no longer a user-facing starting point. Direct Platform, Domain and Extension clones remain supported for focused contributions. There are no adopter, developer or owner modes; repository permissions govern publishing.
+The application starting point supplies content to `new`; people no longer begin there directly. Direct Platform, Domain and Extension clones remain supported for focused contributions. There are no adopter, developer or owner modes; repository permissions govern publishing.
 
 ### Command roots
 
