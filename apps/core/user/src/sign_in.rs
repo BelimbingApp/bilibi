@@ -247,6 +247,7 @@ impl UserService {
             .await?;
         if let Err(error) = self.hold_pending(&tx, &pending, csrf).await {
             tx.rollback().await?;
+            drop(client);
             // Record an expiry observed while delivery/verification was in flight.
             self.pending(token).await?;
             return Err(error);
@@ -318,6 +319,7 @@ impl UserService {
             .await?;
         if let Err(error) = self.hold_pending(&tx, &pending, csrf).await {
             tx.rollback().await?;
+            drop(client);
             // Record an expiry observed while delivery/verification was in flight.
             self.pending(token).await?;
             return Err(error);
@@ -342,6 +344,7 @@ impl UserService {
             .await?;
         if let Err(error) = self.hold_pending(&tx, &pending, csrf).await {
             tx.rollback().await?;
+            drop(client);
             // Record an expiry observed while delivery/verification was in flight.
             self.pending(token).await?;
             return Err(error);
