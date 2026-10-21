@@ -10,6 +10,7 @@ use bilibi_ui::{
 };
 const SERVICE: &str = "core/user.sso-pages";
 const PRESETS: &str = include_str!("../../presets/oidc.json");
+const UNREADABLE: &str = "The saved settings of this connection cannot be read, for example because the installation encryption key changed. Enter its settings and client secret again and save, or turn it off. Until then it cannot sign anyone in, and people linked to it still follow its password rule.";
 pub(crate) struct Pages {
     pub users: Arc<UserService>,
     pub contracts: Arc<bilibi_agent_api::page::PageContracts>,
@@ -79,10 +80,16 @@ impl Pages {
             .get("connection")
             .map(|v| v.parse().map_err(|_| Error::Invalid))
             .transpose()?;
+        let mut unreadable = false;
         let (config, public) = if let Some(company) = company {
-            self.users
-                .identity_configuration(scope, company, id)
-                .await?
+            match self.users.identity_configuration(scope, company, id).await {
+                Ok(read) => read,
+                Err(Error::Invalid) if id.is_some() => {
+                    unreadable = true;
+                    (IdentityConfiguration::default(), String::new())
+                }
+                Err(error) => return Err(error),
+            }
         } else {
             (IdentityConfiguration::default(), String::new())
         };
@@ -93,10 +100,14 @@ impl Pages {
             id,
             config,
             public,
-            editing: id.is_none(),
-            notice: String::new(),
+            editing: id.is_none() || unreadable,
+            notice: if unreadable {
+                UNREADABLE.into()
+            } else {
+                String::new()
+            },
             refused: None,
-            error: false,
+            error: unreadable,
             errors: Default::default(),
             raw_mapping: None,
             confirm: r.operation == "confirm",
@@ -158,11 +169,16 @@ impl State {
             let mut choices = vec![Choice::new("New connection", "")];
             for row in rows {
                 let id: i64 = row.get(0);
-                let (c, _) = self
+                let label = match self
                     .users
                     .identity_configuration(scope, company, Some(id))
-                    .await?;
-                choices.push(Choice::new(c.label, id.to_string()));
+                    .await
+                {
+                    Ok((c, _)) => c.label,
+                    Err(Error::Invalid) => format!("Connection {id} (unreadable)"),
+                    Err(error) => return Err(error),
+                };
+                choices.push(Choice::new(label, id.to_string()));
             }
             let picker = render(
                 &Field::named("connection")
@@ -464,8 +480,13 @@ impl State {
             let connections = self.users.external_identity_connections(scope).await?;
             for (public, label) in connections {
                 if self.confirm {
-                    let c = self.users.sso_connection(&public, true).await?;
-                    if c.config.step_up_acr.is_none() {
+                    let client = self.users.db.get().await?;
+                    let c = self
+                        .users
+                        .readable_connection_in(&**client, &public)
+                        .await?;
+                    drop(client);
+                    if c.is_none_or(|c| c.config.step_up_acr.is_none()) {
                         continue;
                     }
                 }

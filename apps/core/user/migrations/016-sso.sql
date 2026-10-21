@@ -8,6 +8,10 @@ CREATE TABLE user_identity_providers (
  configured_by bigint NOT NULL,
  method text NOT NULL,
  enabled boolean NOT NULL DEFAULT false,
+ -- Plain, non-secret copies of the two password-policy choices, so sign-in applies them
+ -- even when the sealed configuration cannot be opened.
+ enforce_sso boolean NOT NULL DEFAULT false,
+ break_glass_user bigint,
  version bigint NOT NULL DEFAULT 1,
  FOREIGN KEY(tenant_id,company_id) REFERENCES companies(tenant_id,id),
  FOREIGN KEY(tenant_id,configured_by) REFERENCES users(tenant_id,id),

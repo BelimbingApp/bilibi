@@ -162,7 +162,7 @@ impl UserService {
     }
     fn open_connection(&self, tenant: i64, id: i64, sealed: Option<Value>) -> Result<Value> {
         self.settings
-            .open_owned(SEALED, tenant, id, &sealed.ok_or(Error::NotFound)?)
+            .open_owned(SEALED, tenant, id, &sealed.ok_or(Error::Invalid)?)
     }
     pub(super) async fn sso_company(
         &self,
@@ -316,14 +316,11 @@ impl UserService {
         if id.is_none()&&tx.sql().query_one("SELECT count(*) FROM user_identity_providers WHERE tenant_id=$1 AND company_id=$2",&[&tenant,&company]).await?.get::<_,i64>(0)>=100{return Err(ConfigurationError::Refused("This company already has 100 sign-in connections. Reuse an existing connection."));}
         let (id, public_id, previous) = if let Some(id) = id {
             let r=tx.sql().query_opt("SELECT public_id,sealed_runtime FROM user_identity_providers WHERE tenant_id=$1 AND company_id=$2 AND id=$3 FOR UPDATE",&[&tenant,&company,&id]).await?.ok_or(Error::NotFound)?;
-            let previous = self
-                .open_connection(tenant, id, r.get(1))
-                .map_err(|error| {
-                    refuse(
-                        error,
-                        "The saved connection could not be decrypted. Check the installation encryption key.",
-                    )
-                })?;
+            let previous = match self.open_connection(tenant, id, r.get(1)) {
+                Ok(previous) => previous,
+                Err(Error::Invalid) => json!({}),
+                Err(error) => return Err(error.into()),
+            };
             (id, r.get::<_, String>(0), previous)
         } else {
             let public_id = uuid::Uuid::new_v4().simple().to_string();
@@ -345,7 +342,15 @@ impl UserService {
                     .unwrap_or_else(|| json!("auto")),
             ]
         };
-        if previous.get("configuration").is_some_and(|old|old["method"]!=json!(config.method) || trust(&old["protocol"])!=trust(&config.protocol)) && tx.sql().query_opt("SELECT 1 FROM user_external_identities WHERE tenant_id=$1 AND provider_id=$2 LIMIT 1",&[&tenant,&id]).await?.is_some() {return Err(ConfigurationError::Refused("Unlink this connection's accounts before changing its method, issuer, client ID or client authentication. This creates a new identity trust relationship."));}
+        let new_issuer = config.protocol["issuer"].as_str().unwrap_or("").to_owned();
+        let trust_changed = match previous.get("configuration") {
+            Some(old) => {
+                old["method"] != json!(config.method)
+                    || trust(&old["protocol"]) != trust(&config.protocol)
+            }
+            None => tx.sql().query_opt("SELECT 1 FROM user_external_identities WHERE tenant_id=$1 AND provider_id=$2 AND issuer<>$3 LIMIT 1",&[&tenant,&id,&new_issuer]).await?.is_some(),
+        };
+        if trust_changed && tx.sql().query_opt("SELECT 1 FROM user_external_identities WHERE tenant_id=$1 AND provider_id=$2 LIMIT 1",&[&tenant,&id]).await?.is_some() {return Err(ConfigurationError::Refused("Unlink this connection's accounts before changing its method, issuer, client ID or client authentication. This creates a new identity trust relationship."));}
         let secret =
             secret.unwrap_or_else(|| previous["client_secret"].as_str().unwrap_or("").to_owned());
         let roles: Vec<i64> = config
@@ -388,7 +393,8 @@ impl UserService {
             })?;
         let method = config.method.clone();
         let enabled = config.enabled;
-        tx.mutate(move|sql|Box::pin(async move{sql.execute("UPDATE user_identity_providers SET configured_by=$3,method=$4,enabled=$5,sealed_runtime=$6,version=version+1 WHERE tenant_id=$1 AND id=$2",&[&tenant,&id,&owner,&method,&enabled,&sealed]).await?;Ok(((),vec![change("user.identity_provider",id,json!({"configuration":"previous"}),json!({"configuration":config,"enabled":enabled}))]))})).await?;
+        let (enforce, break_glass) = (config.enforce_sso, config.break_glass_user);
+        tx.mutate(move|sql|Box::pin(async move{sql.execute("UPDATE user_identity_providers SET configured_by=$3,method=$4,enabled=$5,sealed_runtime=$6,enforce_sso=$7,break_glass_user=$8,version=version+1 WHERE tenant_id=$1 AND id=$2",&[&tenant,&id,&owner,&method,&enabled,&sealed,&enforce,&break_glass]).await?;Ok(((),vec![change("user.identity_provider",id,json!({"configuration":"previous"}),json!({"configuration":config,"enabled":enabled}))]))})).await?;
         Ok((id, public_id))
     }
     pub(super) async fn sso_connection(&self, public: &str, enabled: bool) -> Result<Connection> {

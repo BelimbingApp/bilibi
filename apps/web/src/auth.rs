@@ -461,6 +461,10 @@ pub async fn login(
             form.form_error = WORKSPACE_UNAVAILABLE.into();
             login_card(&app, form, FlashMap::default(), StatusCode::FORBIDDEN).await
         }
+        Err(error @ CredentialError::CompanySignInRequired) => {
+            form.form_error = error.to_string();
+            login_card(&app, form, FlashMap::default(), StatusCode::FORBIDDEN).await
+        }
         Err(CredentialError::Other(error)) => Err(error.into()),
         Err(_) => Err(Error::Internal.into()),
     }

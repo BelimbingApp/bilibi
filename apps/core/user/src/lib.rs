@@ -116,6 +116,9 @@ pub enum CredentialError {
     /// or its Person/affiliation no longer stands.
     #[error("This account is not attached to an active workspace.")]
     WorkspaceUnavailable,
+    /// Sign-in: the password is right, but the company requires company sign-in for this account.
+    #[error("Your company requires company sign-in for this account. Use your company's sign-in address, or contact your administrator.")]
+    CompanySignInRequired,
     #[error("is incorrect")]
     IncorrectPassword,
     #[error("{0}")]

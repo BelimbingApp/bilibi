@@ -768,12 +768,27 @@ impl UserService {
         };
         let mut enforced = false;
         let mut emergency = false;
-        for row in sql.query("SELECT p.public_id,EXISTS(SELECT 1 FROM user_external_identities i WHERE i.tenant_id=p.tenant_id AND i.provider_id=p.id AND i.user_id=$3) FROM user_identity_providers p WHERE p.tenant_id=$1 AND p.company_id=$2 AND p.enabled ORDER BY p.id LIMIT 100",&[&scope.tenant(),&company,&scope.user()]).await?{
-            let c=self.sso_connection_in(sql,&row.get::<_,String>(0),true).await?;
-            emergency|=c.config.break_glass_user==Some(scope.user());
-            enforced|=c.config.enforce_sso&&row.get::<_,bool>(1);
+        for row in sql.query("SELECT p.break_glass_user,p.enforce_sso AND EXISTS(SELECT 1 FROM user_external_identities i WHERE i.tenant_id=p.tenant_id AND i.provider_id=p.id AND i.user_id=$3) FROM user_identity_providers p WHERE p.tenant_id=$1 AND p.company_id=$2 AND p.enabled ORDER BY p.id LIMIT 100",&[&scope.tenant(),&company,&scope.user()]).await?{
+            emergency|=row.get::<_,Option<i64>>(0)==Some(scope.user());
+            enforced|=row.get::<_,bool>(1);
         }
         Ok(emergency || !enforced)
+    }
+    /// A connection whose sealed settings cannot be opened is left out and logged;
+    /// it never fails the request that merely lists or checks connections.
+    async fn readable_connection_in(
+        &self,
+        client: &dyn bilibi_tenancy::ProofClient,
+        public: &str,
+    ) -> Result<Option<Connection>> {
+        match self.sso_connection_in(client, public, true).await {
+            Ok(connection) => Ok(Some(connection)),
+            Err(error @ (Error::Database(_) | Error::Pool(_))) => Err(error),
+            Err(error) => {
+                eprintln!("sso: connection {public} is unreadable and was skipped: {error}");
+                Ok(None)
+            }
+        }
     }
 }
 impl UserService {
@@ -901,11 +916,14 @@ impl UserService {
             return Ok(Vec::new());
         };
         let rows=client.query("SELECT public_id FROM user_identity_providers WHERE tenant_id=$1 AND company_id=$2 AND enabled ORDER BY id LIMIT 100",&[&scope.tenant(),&company]).await?;
-        drop(client);
         let mut result = Vec::new();
         for row in rows {
-            let c = self.sso_connection(&row.get::<_, String>(0), true).await?;
-            result.push((c.public_id, c.config.label));
+            if let Some(c) = self
+                .readable_connection_in(&**client, &row.get::<_, String>(0))
+                .await?
+            {
+                result.push((c.public_id, c.config.label));
+            }
         }
         Ok(result)
     }

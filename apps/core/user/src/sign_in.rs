@@ -112,7 +112,7 @@ impl UserService {
             .authenticate(tx.sql(), tenant, user, String::new())
             .await?;
         if !self.password_sso_allowed(tx.sql(), &scope).await? {
-            return Err(CredentialError::Rejected);
+            return Err(CredentialError::CompanySignInRequired);
         }
         let login = credential(pending);
         if pending {

@@ -266,6 +266,83 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("Staging sign-in factor policy enabled");
             return Ok(());
         }
+        "unreadable-connection" => {
+            // Simulates a lost or changed settings key by damaging the sealed record.
+            let (mut config, _) = users.identity_configuration(&scope, 1, Some(1)).await?;
+            config.enforce_sso = true;
+            config.break_glass_user = Some(1);
+            users
+                .save_identity_configuration(&scope, 1, Some(1), config.clone(), None)
+                .await?;
+            let client = db.get().await?;
+            let member: i64 = client
+                .query_one(
+                    "SELECT id FROM users WHERE tenant_id=$1 AND email=$2",
+                    &[&1_i64, &"bilibi-a-new@example.test"],
+                )
+                .await?
+                .get(0);
+            let fallback = std::env::var("BILIBI_SSO_LOCAL_PASSWORD")?;
+            users.set_password(&scope, member, &fallback).await?;
+            client
+                .execute(
+                    "UPDATE user_identity_providers SET sealed_runtime='{\"version\":1}'::jsonb WHERE tenant_id=$1 AND id=1",
+                    &[&1_i64],
+                )
+                .await?;
+            drop(client);
+            let password = bilibi_walkthrough_fixture::PASSWORD;
+            println!(
+                "emergency password admitted: {}",
+                users.login("manager@example.test", password).await.is_ok()
+            );
+            println!(
+                "enforced member refused with the company sign-in reason: {}",
+                matches!(
+                    users.login("bilibi-a-new@example.test", &fallback).await,
+                    Err(bilibi_user::CredentialError::CompanySignInRequired)
+                )
+            );
+            println!(
+                "unenforced member password admitted: {}",
+                users
+                    .login("contractor@example.test", password)
+                    .await
+                    .is_ok()
+            );
+            let manager = app
+                .security
+                .guard(&users.login("manager@example.test", password).await?.token)
+                .await?;
+            println!(
+                "unreadable connection left out of the sign-in list: {}",
+                users
+                    .external_identity_connections(&manager)
+                    .await?
+                    .is_empty()
+            );
+            println!(
+                "administrator read reports the connection unreadable: {}",
+                users
+                    .identity_configuration(&scope, 1, Some(1))
+                    .await
+                    .is_err()
+            );
+            config.enabled = false;
+            config.enforce_sso = false;
+            users
+                .save_identity_configuration(&scope, 1, Some(1), config, None)
+                .await?;
+            println!(
+                "re-saved and readable again: {}",
+                users
+                    .identity_configuration(&scope, 1, Some(1))
+                    .await
+                    .is_ok()
+            );
+            println!("open {origin}/companies/1/sso?connection=1 before the re-save to see the unreadable notice");
+            return Ok(());
+        }
         "offboard-configurer" => {
             // Destructive: retires the administrator who last saved the connection.
             let (mut config, public) = users.identity_configuration(&scope, 1, Some(1)).await?;
