@@ -140,7 +140,18 @@ def create(name):
     with tempfile.TemporaryDirectory(prefix='.bilibi-new-', dir=ROOT.parent) as temp:
         application = Path(temp) / 'application'
         independent_clone({'url': TEMPLATE, 'commit': TEMPLATE_COMMIT}, application, env)
-        shutil.rmtree(application / '.git')
+        # Keep the starting point's history so template updates merge later:
+        # it becomes the `upstream` remote, and `main` starts at the pinned
+        # commit, tracking nothing until the application adds its `origin`.
+        # Its tags are not the application's releases.
+        run('git', 'remote', 'rename', 'origin', 'upstream', cwd=application, env=env)
+        branches = git(application, 'for-each-ref', '--format=%(refname:short)', 'refs/heads').split()
+        if branches:
+            run('git', 'branch', '--quiet', '--delete', '--force', *branches, cwd=application, env=env)
+        run('git', 'checkout', '--quiet', '-b', 'main', TEMPLATE_COMMIT, cwd=application, env=env)
+        tags = git(application, 'tag', '--list').split()
+        if tags:
+            run('git', 'tag', '--delete', *tags, cwd=application, capture=True, env=env)
         # Use the starting point's own recipe writer and validators.
         sys.path.insert(0, str(application / 'scripts'))
         workspace = load('application_workspace', application / 'scripts/workspace.py')
@@ -168,7 +179,6 @@ def create(name):
         run('python3', 'scripts/recipe.py', 'restore', cwd=application, env=env)
         if selections()[0] != selected or (ROOT / 'Cargo.lock').read_bytes() != (application / 'composition/Cargo.lock').read_bytes():
             raise Refused('Trial sources changed during reconstruction. Retry ./bilibi new with stable sources.')
-        run('git', 'init', '--initial-branch=main', cwd=application, env=env)
         # Atomic reservation refuses even an empty directory that appeared while
         # reconstructing; never rename over another person's destination.
         destination.mkdir()
@@ -181,7 +191,8 @@ def create(name):
           'Only sources and their dependency lock were captured. Database, media, configuration and keys stay in the trial.\n'
           f'Next:\n  cd {shlex.quote(str(destination))}\n  ./bilibi start\n'
           'Review setup.toml and composition/, then commit your application files.\n'
-          'When ready, create your own remote, run git remote add origin <your-repository-url>, and git push -u origin main.')
+          'When ready, create your own remote, run git remote add origin <your-repository-url>, and git push -u origin main.\n'
+          'The starting point is the upstream remote; its README explains how to take its updates.')
 
 
 if __name__ == '__main__':

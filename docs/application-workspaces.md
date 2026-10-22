@@ -25,7 +25,7 @@ git add .
 git commit -m 'Create application from selected Bilibi sources'
 ```
 
-Create a remote when you are ready, add it with `git remote add origin <your-repository-url>`, then run `git push -u origin main`. Trying Bilibi and creating the local application do not require a GitHub account.
+The application's `main` branch starts at that starting-point revision, and the starting point is its `upstream` remote, so later template updates merge with your changes. Create a remote when you are ready, add it with `git remote add origin <your-repository-url>`, then run `git push -u origin main`. Trying Bilibi and creating the local application do not require a GitHub account.
 
 ## Git ownership
 
@@ -90,7 +90,9 @@ An application created before `update` was available needs the deliberate toolin
 
 The application owns its wrapper, scripts and workflows after creation. `setup` obtains component sources; it does not overwrite application automation from a moving template branch.
 
-For an existing application, compare its automation against a chosen commit of the starting point in a separate clone. Transfer the relevant wrapper, script, builder and workflow changes deliberately, preserving application customizations. Review the full diff, run the application's checks and packaging verification, then commit the tooling update in the application repository. Keep recipe changes separate and explicit; never replace `setup.toml` or `composition/` with the template's example selection.
+An application created by `new` merges the starting point's `upstream/main` on a branch and reviews it as a pull request; the starting point's README, **Take template updates**, gives the commands. Merge with a merge commit, never a squash, so the link to the starting point survives.
+
+An application created before `new` kept that history has no common history with the starting point. Compare its automation against a chosen commit of the starting point in a separate clone. Transfer the relevant wrapper, script, builder and workflow changes deliberately, preserving application customizations. Review the full diff, run the application's checks and packaging verification, then commit the tooling update in the application repository. After that, link the histories once, as the same README section describes, so later updates merge. Keep recipe changes separate and explicit; never replace `setup.toml` or `composition/` with the template's example selection.
 
 ## Inventory an existing checkout
 
