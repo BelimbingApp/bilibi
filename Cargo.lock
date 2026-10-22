@@ -518,6 +518,7 @@ dependencies = [
  "bilibi-notifications",
  "bilibi-party-ids",
  "bilibi-perf",
+ "bilibi-picklists",
  "bilibi-ports",
  "bilibi-principal-directory",
  "bilibi-queue",
@@ -558,6 +559,7 @@ dependencies = [
  "bilibi-party",
  "bilibi-party-ids",
  "bilibi-person",
+ "bilibi-picklists",
  "bilibi-principal-directory",
  "bilibi-security",
  "bilibi-settings",
@@ -942,6 +944,23 @@ dependencies = [
  "serde_json",
  "thiserror",
  "tokio",
+ "tokio-postgres",
+]
+
+[[package]]
+name = "bilibi-picklists"
+version = "0.1.1"
+dependencies = [
+ "bilibi-audit",
+ "bilibi-authz",
+ "bilibi-database",
+ "bilibi-locale",
+ "bilibi-module-registry",
+ "bilibi-tenancy",
+ "bilibi-ui",
+ "inventory",
+ "serde",
+ "serde_json",
  "tokio-postgres",
 ]
 
