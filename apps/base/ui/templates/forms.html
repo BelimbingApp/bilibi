@@ -173,6 +173,22 @@
 <div id="{{ input.id }}-field" class="{{ input.wrapper() }}" data-file-input="{{ input.id }}">{% if !input.label.is_empty() %}{% call label(id=input.id, text=input.label, class="mb-1.5 block text-sm font-medium text-ink", required=false) %}{% endcall %}{% endif %}<input type="file" id="{{ input.id }}" name="{{ input.name() }}"{% if !input.spec.accept.is_empty() %} accept="{{ input.spec.accept_attr() }}"{% endif %}{% if input.multiple() %} multiple{% endif %} data-hook="FileUpload" data-upload="{{ input.name() }}" data-max-entries="{{ input.spec.max_entries }}" data-max-file-size="{{ input.spec.max_file_size }}"{% call aria(invalid=input.invalid(), described_by=input.described_by()) %}{% endcall %}{% if input.disabled %} disabled{% endif %} class="{{ input.control_class() }}" />{% call hint(id=input.id, text=input.hint) %}{% endcall %}<div id="{{ input.id }}-entries">{% for entry in input.entries %}<div id="{{ input.id }}-entry-{{ entry.id }}" data-upload-entry="{{ entry.id }}" class="mt-2 flex flex-wrap items-center gap-2 text-sm"><span class="min-w-0 truncate text-ink">{{ entry.name }}</span><span aria-hidden="true" class="text-ink-muted">·</span><span data-upload-progress class="tabular-nums text-ink-muted">{{ entry.progress() }}%</span>{% call ui::button(button_type="button", name="upload-cancel", value=entry.id.to_string(), aria_label="Cancel upload", disabled=input.disabled) %}Remove{% endcall %}{% if let Some(message) = input.entry_message(entry) %}{% call error(id=input.id, index=0, numbered=false) %}{{ message }}{% endcall %}{% endif %}</div>{% endfor %}</div>{% call errors(id=input.id, errors=input.error_messages()) %}{% endcall %}</div>
 {% endmacro %}
 
+{#- A button that asks the browser for its position before raising its event
+    (Bilimbi's colocated `.ClockLocation` hook in People Attendance
+    `web/my_live.ex`; here the Platform owns the JavaScript, since a Domain owns
+    none); control is a bilibi_ui::LocationAction. The wrapper carries what the
+    LocationAction hook (assets/hooks.js) reads: the event, the control's values
+    in live.js's data-value-* spelling, the working labels, the timeout and the
+    server's disabled state (data-disabled, which the hook reapplies after the
+    busy spell, since a busy button is not patched); the shared button inside
+    it is what the person clicks. The hook raises the event with latitude,
+    longitude and accuracy, or with outcome permission_denied, unavailable or
+    insecure_context; the page decodes it with bilibi_ui::LocationReport. -#}
+{% macro location_action(control) %}
+{%- let button_id = "{}-button"|format(control.id) -%}
+<span id="{{ control.id }}" data-hook="LocationAction" data-event="{{ control.event }}"{% for pair in control.values %} data-value-{{ pair.0 }}="{{ pair.1 }}"{% endfor %} data-working="{{ control.working }}"{% if !control.sending.is_empty() %} data-sending="{{ control.sending }}"{% endif %} data-timeout="{{ control.timeout_ms }}"{% if control.disabled %} data-disabled{% endif %} class="inline-flex">{% call ui::button(id=button_id, button_type="button", variant=control.variant, disabled=control.disabled) %}{{ control.label }}{% endcall %}</span>
+{% endmacro %}
+
 {#- A quiet "+ Add …" button that reveals one more optional field (no Bilimbi
     counterpart); control is a bilibi_ui::AddMore. It acts, so it is a button,
     and type="button" keeps it from submitting the form around it. -#}

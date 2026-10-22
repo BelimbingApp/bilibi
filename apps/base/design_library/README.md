@@ -29,7 +29,9 @@ For manual runtime evidence, follow
 database holding the walkthrough fixture (`cargo run -p bilibi-walkthrough-fixture`),
 then visit `/system/design-library/components` as its `admin@example.test`. Try the action link, modal/confirmation flow, live form, the File input card
 (stream two small files, Keep files, and watch a file over 256 KiB refused),
-inline facts, company search/paging, FlexTable notch and Graphic's icon
-filter/copy tiles.
+the Browser location card (Use my location shows the position Chrome
+reports, and a refused permission, an unavailable position and a page served
+over http off localhost each show their sentence), inline facts, company
+search/paging, FlexTable notch and Graphic's icon filter/copy tiles.
 Theme and Design Spec preserve the source's foundations and accepted decisions.
 No unit tests or test-only infrastructure belong to this module.

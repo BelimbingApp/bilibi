@@ -67,6 +67,30 @@ impl Decision {
 pub async fn authorize_key(client: &impl GenericClient, scope: &Scope, key: &str) -> Result<()> {
     decide(client, scope, key).await?.require()
 }
+/// Opens for any one of `keys` (a route or menu entry that serves a combined
+/// page, `Access::AnyOf`). Candidates come from the live effective set, which
+/// already drops direct denies, so a key the account does not hold writes no
+/// denial row while another key opens the page; each candidate is then
+/// decided (and logged) like [`authorize_key`]. When none is held the first
+/// key is decided once, so a refusal leaves one denial row. An empty list or
+/// an empty or oversized key is `Invalid`.
+pub async fn authorize_any(
+    client: &impl GenericClient,
+    scope: &Scope,
+    keys: &[&str],
+) -> Result<()> {
+    if keys.is_empty() || keys.iter().any(|key| key.is_empty() || key.len() > 200) {
+        return Err(Error::Invalid);
+    }
+    let held = effective_capabilities(client, scope).await?;
+    for key in keys.iter().filter(|key| held.contains(**key)) {
+        if decide(client, scope, key).await?.allowed {
+            return Ok(());
+        }
+    }
+    authorize_key(client, scope, keys[0]).await?;
+    Err(Error::Forbidden)
+}
 /// Unknown keys, invalid live tenants, and non-operator platform requests deny
 /// before any grants (including grant_all) can take effect. Denials are logged.
 pub async fn decide(client: &impl GenericClient, scope: &Scope, key: &str) -> Result<Decision> {
@@ -154,7 +178,7 @@ pub async fn authorize_proof(client: &dyn ProofClient, scope: &Scope, key: &str)
 const LIVE_TENANT_SQL: &str =
     "SELECT id FROM tenants WHERE id=$1 AND status='active' AND deleted_at IS NULL";
 const OPERATOR_SQL: &str = "SELECT o.tenant_id FROM platform_operator o JOIN tenants t ON t.id=o.tenant_id WHERE o.singleton AND o.tenant_id=$1 AND t.status='active' AND t.deleted_at IS NULL";
-const GRANTS_SQL: &str = "SELECT EXISTS(SELECT 1 FROM principal_capabilities WHERE tenant_id=$1 AND user_id=$2 AND capability=$3 AND NOT is_allowed), EXISTS(SELECT 1 FROM principal_capabilities WHERE tenant_id=$1 AND user_id=$2 AND capability=$3 AND is_allowed), EXISTS(SELECT 1 FROM principal_roles p JOIN roles r ON r.tenant_id=p.tenant_id AND r.id=p.role_id WHERE p.tenant_id=$1 AND p.user_id=$2 AND r.grant_all), EXISTS(SELECT 1 FROM principal_roles p JOIN role_capabilities r ON r.tenant_id=p.tenant_id AND r.role_id=p.role_id WHERE p.tenant_id=$1 AND p.user_id=$2 AND r.capability=$3)";
+const GRANTS_SQL: &str = "SELECT EXISTS(SELECT 1 FROM principal_capabilities WHERE tenant_id=$1 AND user_id=$2 AND capability=$3 AND NOT is_allowed), EXISTS(SELECT 1 FROM principal_capabilities WHERE tenant_id=$1 AND user_id=$2 AND capability=$3 AND is_allowed), EXISTS(SELECT 1 FROM effective_principal_roles p JOIN roles r ON r.tenant_id=p.tenant_id AND r.id=p.role_id WHERE p.tenant_id=$1 AND p.user_id=$2 AND r.grant_all), EXISTS(SELECT 1 FROM effective_principal_roles p JOIN role_capabilities r ON r.tenant_id=p.tenant_id AND r.role_id=p.role_id WHERE p.tenant_id=$1 AND p.user_id=$2 AND r.capability=$3)";
 const LOG_SQL: &str = "INSERT INTO authz_decision_log(tenant_id,user_id,capability,allowed,reason,principal_type,system_principal) VALUES($1,$2,$3,$4,$5,$6,$7)";
 const LOG_RETURNING_SQL: &str = "INSERT INTO authz_decision_log(tenant_id,user_id,capability,allowed,reason,principal_type,system_principal) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id";
 /// Deny wins over every allow; an allow names the grant that carried it.
@@ -331,7 +355,7 @@ pub async fn explicitly_granted(
     scope: &Scope,
     key: &str,
 ) -> Result<bool> {
-    Ok(client.query_one("SELECT NOT EXISTS(SELECT 1 FROM principal_capabilities WHERE tenant_id=$1 AND user_id=$2 AND capability=$3 AND NOT is_allowed) AND (EXISTS(SELECT 1 FROM principal_capabilities WHERE tenant_id=$1 AND user_id=$2 AND capability=$3 AND is_allowed) OR EXISTS(SELECT 1 FROM principal_roles p JOIN role_capabilities r ON r.tenant_id=p.tenant_id AND r.role_id=p.role_id WHERE p.tenant_id=$1 AND p.user_id=$2 AND r.capability=$3))",&[&scope.tenant(),&scope.user(),&key]).await?.get(0))
+    Ok(client.query_one("SELECT NOT EXISTS(SELECT 1 FROM principal_capabilities WHERE tenant_id=$1 AND user_id=$2 AND capability=$3 AND NOT is_allowed) AND (EXISTS(SELECT 1 FROM principal_capabilities WHERE tenant_id=$1 AND user_id=$2 AND capability=$3 AND is_allowed) OR EXISTS(SELECT 1 FROM effective_principal_roles p JOIN role_capabilities r ON r.tenant_id=p.tenant_id AND r.role_id=p.role_id WHERE p.tenant_id=$1 AND p.user_id=$2 AND r.capability=$3))",&[&scope.tenant(),&scope.user(),&key]).await?.get(0))
 }
 /// The `base/tenancy.authorization` binding: `authorize_operator` on a pooled
 /// connection, so Tenancy's own screens decide `CREATE` without importing Authz.
@@ -369,12 +393,12 @@ pub async fn restrictions_for(
     if table.is_empty() || table.len() > 200 {
         return Err(Error::Invalid);
     }
-    Ok(client.query("SELECT DISTINCT f.field_id FROM field_restrictions f JOIN principal_roles p ON p.tenant_id=f.tenant_id AND p.role_id=f.role_id WHERE f.tenant_id=$1 AND p.user_id=$2 AND f.table_id=$3",&[&scope.tenant(),&scope.user(),&table]).await?.iter().map(|row|row.get(0)).collect())
+    Ok(client.query("SELECT DISTINCT f.field_id FROM field_restrictions f JOIN effective_principal_roles p ON p.tenant_id=f.tenant_id AND p.role_id=f.role_id WHERE f.tenant_id=$1 AND p.user_id=$2 AND f.table_id=$3",&[&scope.tenant(),&scope.user(),&table]).await?.iter().map(|row|row.get(0)).collect())
 }
 inventory::submit! { bilibi_module_registry::Module {
     id:"base/authz",layer:bilibi_module_registry::Layer::Base,
     dependencies:&["base/module_registry","base/database","base/tenancy","base/audit","base/menu","base/settings","base/ui","base/locale","base/datetime","base/step_up"],
-    migrations:&[("007-authz-policy",include_str!("../migrations/007-policy.sql")),("base-authz-008-decision-log-restrictions",include_str!("../migrations/008-decision-log-restrictions.sql")),("base-authz-009-roles-admin",include_str!("../migrations/009-roles-admin.sql")),("base-authz-010-decision-log-retention",include_str!("../migrations/010-decision-log-retention.sql")),("base-authz-011-role-company",include_str!("../migrations/011-role-company.sql"))],
+    migrations:&[("base-authz-012-external-roles",include_str!("../migrations/012-external-roles.sql")),("007-authz-policy",include_str!("../migrations/007-policy.sql")),("base-authz-008-decision-log-restrictions",include_str!("../migrations/008-decision-log-restrictions.sql")),("base-authz-009-roles-admin",include_str!("../migrations/009-roles-admin.sql")),("base-authz-010-decision-log-retention",include_str!("../migrations/010-decision-log-retention.sql")),("base-authz-011-role-company",include_str!("../migrations/011-role-company.sql"))],
     services:&[bilibi_module_registry::Service {id:"base/authz.grants",factory:|services| Ok(Arc::new(grants::Grants::new(
         services.get::<bilibi_database::Db>("base/database.pool")?.as_ref().clone(),
         services.get("base/database.mutations")?, vocabulary::Vocabulary::from_inventory()?, services.get("base/tenancy.authentication")?,

@@ -46,12 +46,10 @@ static MEMORY: Mutex<Option<Value>> = Mutex::new(None);
 pub fn parse_repository(raw: &str) -> std::result::Result<(String, String), String> {
     let raw = raw.trim();
     let Some((owner, name)) = raw.split_once('/') else {
-        return Err(
-            "Enter the repository as owner/name, like BelimbingApp/bilibi-setup-template.".into(),
-        );
+        return Err("Enter the repository as owner/name, like your-company/my-bilibi.".into());
     };
     if raw.matches('/').count() != 1 || !github_owner(owner) || !github_name(name) {
-        return Err("Enter the repository as owner/name, like BelimbingApp/bilibi-setup-template. Do not paste a file address.".into());
+        return Err("Enter the repository as owner/name, like your-company/my-bilibi. Do not paste a file address.".into());
     }
     Ok((owner.to_owned(), name.to_owned()))
 }
@@ -177,7 +175,7 @@ impl Software {
                 "available": false,
                 "token_set": saved.token_set,
                 "refresh_minutes": saved.refresh_minutes,
-                "message": "No GitHub repository is set. A server owner sets Software › GitHub repository, like BelimbingApp/bilibi-setup-template.",
+                "message": "No GitHub repository is set. A server owner sets Software › GitHub repository, like your-company/my-bilibi.",
             }));
         };
         let Some(target) = this_target() else {
@@ -306,7 +304,7 @@ async fn github_review(
         Some(_) => {
             return Err(SoftwareError::field(
                 "repository",
-                "Enter the repository as owner/name, like BelimbingApp/bilibi-setup-template.",
+                "Enter the repository as owner/name, like your-company/my-bilibi.",
             ))
         }
     };

@@ -19,7 +19,7 @@ fn show(label: &str, value: impl std::fmt::Debug) {
 }
 // Trusted owner specimen: a sealed own-company scope for any company through
 // the real authentication boundary, without writing a durable account link.
-// The production adapter (`bilibi_user::identity`) proves stored links instead.
+// The production adapter (`bilibi_user::standing`) proves stored links instead.
 struct OwnCompany(OrganisationId);
 impl ActorVerifier for OwnCompany {
     fn verify<'a>(

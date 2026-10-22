@@ -132,7 +132,7 @@ A gzip-compressed tar carries `bilibi-web`, `SHA256SUMS` and optionally `manifes
 
 ### Install from GitHub
 
-Name one repository on **Software › Releases**, as owner/name, for example your-org/your-bilibi. A public repository needs no token, but GitHub then allows only 60 calls an hour from a server's address, and each install review uses about three. A token raises that to 5,000 an hour. A private repository needs a fine-grained token that can only read that repository. The token is stored encrypted and never shown again. Changing or clearing it asks for your 2FA code, including in the settings editor.
+Name one repository on **Software › Releases**, as owner/name, for example your-company/my-bilibi. A public repository needs no token, but GitHub then allows only 60 calls an hour from a server's address, and each install review uses about three. A token raises that to 5,000 an hour. A private repository needs a fine-grained token that can only read that repository. The token is stored encrypted and never shown again. Changing or clearing it asks for your 2FA code, including in the settings editor.
 
 The first time you save a repository, Bilibi asks GitHub for its number and remembers that number only when you choose **Accept this repository**. That also asks for your 2FA code. If GitHub later reports a different number for the same name, installs stop until you accept the new number. Bilibi does not replace a remembered number by itself.
 

@@ -156,6 +156,17 @@ pub enum Availability {
 /// Reads must have no side effects. All lifecycle writes use the supplied SQL
 /// transaction and return every affected record, without committing or fan-out.
 pub trait Provider: Send + Sync {
+    /// Optional company methods may be absent from presentation until configured.
+    /// Default keeps existing method providers source- and behavior-compatible.
+    /// This read must never start delivery or grant enrollment.
+    fn available<'a>(
+        &'a self,
+        _sql: &'a dyn ProofClient,
+        _account: FactorAccount,
+    ) -> ProofFuture<'a, bool> {
+        Box::pin(async { Ok(true) })
+    }
+
     fn enrolled<'a>(
         &'a self,
         sql: &'a dyn ProofClient,
@@ -408,6 +419,21 @@ impl StepUp {
     pub async fn methods(&self, scope: &Scope, back: &str) -> Result<Vec<MethodChoice>> {
         let mut choices = Vec::new();
         for (method, provider) in self.providers()? {
+            let available = {
+                let client = self.db.get().await?;
+                provider
+                    .available(
+                        &**client,
+                        FactorAccount {
+                            tenant: scope.tenant(),
+                            user: scope.user(),
+                        },
+                    )
+                    .await?
+            };
+            if !available {
+                continue;
+            }
             let enrolled = self.provider_enrolled(&*provider, scope).await?;
             let prompt = provider.prompt(scope, back).await?;
             let setup = provider.setup(scope, back).await?;
@@ -451,6 +477,53 @@ impl StepUp {
             });
         }
         provider.start(scope, purpose).await
+    }
+    /// Consume one method's proof without consulting a session window or
+    /// skipping an explicitly pending authentication when policy changes.
+    /// The identity owner keeps the pending credential sealed and supplies a
+    /// fresh account scope internally; this does not admit a session.
+    pub async fn verify(
+        &self,
+        scope: &Scope,
+        method: &str,
+        code: &str,
+        purpose: Purpose<'_>,
+    ) -> Result<Spent> {
+        if scope.impersonator().is_some() || purpose.channel != scope.channel() || code.len() > 256
+        {
+            return Err(Error::Forbidden);
+        }
+        let declared = self.declared(purpose.operation).ok_or(Error::Invalid)?;
+        let provider = self
+            .providers()?
+            .into_iter()
+            .find(|(m, _)| m.id == method)
+            .ok_or(Error::Invalid)?
+            .1;
+        let spent = if self.provider_enrolled(&*provider, scope).await? {
+            provider
+                .spend(
+                    scope,
+                    code,
+                    Purpose {
+                        operation: purpose.operation,
+                        target: purpose.target,
+                        channel: purpose.channel,
+                    },
+                )
+                .await?
+        } else {
+            Spent::NotEnrolled
+        };
+        let outcome = match spent {
+            Spent::Accepted => Outcome::Passed("fresh_code"),
+            Spent::Rejected => Outcome::Failed("invalid_code"),
+            Spent::Locked => Outcome::Failed("locked"),
+            Spent::NotEnrolled => Outcome::Refused("not_enrolled"),
+        };
+        self.audit(scope, declared, purpose.target, Mode::EveryTime, &outcome)
+            .await?;
+        Ok(spent)
     }
     /// Bind once to the installation's live policy, never a process-local role cache.
     pub fn bind_enforcement(

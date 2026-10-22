@@ -55,6 +55,21 @@ Use `ProofInput` inside a protected form's `StepUp` component. Build `ProofMetho
 
 The specimen at `/assets/ui-components.html#specimen-factor-proof` shows six-digit and eight-character methods. The [Step-up provider contract](../step_up/README.md#provider) owns registration, challenge starts and verification.
 
+## Browser location
+
+Use **`LocationAction` to ask the browser where the person is** before an event that needs it (clocking in, a site visit): one button, no page-owned script.
+
+```rust
+use bilibi_ui::{ButtonVariant, LocationAction, LocationReport};
+
+let clock_in = LocationAction::new("clock-in", "clock", "Clock in")
+    .variant(ButtonVariant::Primary)
+    .value("clock_type", "in")
+    .sending("Recording clock event…");
+```
+
+Render with `Html::render(&clock_in)` or `forms::location_action(control=clock_in)`. On click the button shows "Finding your location…" while the browser locates, then raises `clock` with `clock_type`, `latitude`, `longitude` and `accuracy`, or with `outcome` `permission_denied`, `unavailable` or `insecure_context`. Decode the event with `LocationReport::from_event` and show `LocationReport::refusal` for a report without a position, adding what the person can do instead on that page. The contract is in [`docs/live-pages.md`](../../../docs/live-pages.md#browser-location); the Design Library's Browser location card is the running specimen.
+
 ## Where to go next
 
 See [`base/system`](../system/README.md) for Banner colour on Instance settings.

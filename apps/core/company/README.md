@@ -315,7 +315,7 @@ rolls everything back, even if a caller catches it. The returned company
 honors the actor's field restrictions.
 
 `eligibility::account_eligibility` supplies the company fact to the User
-account binder (`bilibi_user::identity::standing`) for login, session/bearer
+account binder (`bilibi_user::standing`) for login, session/bearer
 validation and reset issue / redeem. Only archived/deleted/missing freezes an
 account; pending and suspended do not. No role or business relationship confers
 account eligibility. The binder calls this on every validation and caches no

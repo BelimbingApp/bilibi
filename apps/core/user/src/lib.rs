@@ -8,7 +8,7 @@ pub mod contributions;
 pub mod database_queries;
 mod directory;
 mod factor_choice;
-pub mod identity;
+mod identity;
 pub mod impersonation;
 mod inbox;
 pub mod notifications;
@@ -17,6 +17,12 @@ pub mod password;
 mod preferences;
 mod query_ui;
 mod reset;
+mod sign_in;
+mod sso;
+pub use sso::{
+    ConfigurationError, ExternalIdentity, ExternalLogout, IdentityConfiguration, IdentityFuture,
+    IdentityOutcome, IdentityProvider, IdentityPurpose, IdentityRedirect, IdentityRequest,
+};
 mod two_factor;
 mod two_factor_ui;
 mod verification;
@@ -31,7 +37,7 @@ pub use bootstrap::{
     validate_first_administrator, BootstrapAffiliation, FirstAdministrator,
     FirstAdministratorCreated, FirstAdministratorError, OperatorAccounts, OperatorCompany,
 };
-pub use identity::{Account, AccountLinks, AccountVerifier, Freeze, LinkError, Standing};
+pub use identity::{standing, Account, AccountLinks, AccountVerifier, Freeze, LinkError, Standing};
 pub use notifications::{unread, Notifications};
 pub use password::PolicyViolation;
 pub use preferences::{
@@ -110,6 +116,9 @@ pub enum CredentialError {
     /// or its Person/affiliation no longer stands.
     #[error("This account is not attached to an active workspace.")]
     WorkspaceUnavailable,
+    /// Sign-in: the password is right, but the company requires company sign-in for this account.
+    #[error("Your company requires company sign-in for this account. Use your company's sign-in address, or contact your administrator.")]
+    CompanySignInRequired,
     #[error("is incorrect")]
     IncorrectPassword,
     #[error("{0}")]
@@ -131,18 +140,21 @@ impl From<tokio_postgres::Error> for CredentialError {
     }
 }
 
+/// A credential issued by sign-in. A pending token is never a session.
 pub struct Login {
     pub token: String,
     pub csrf: String,
+    pub pending: bool,
 }
+pub use sign_in::{PendingSignIn, SIGN_IN};
 
-/// Bilimbi's global sign-in: email alone names the account (`identity::login`).
+/// Bilimbi's global sign-in, continued through neutral admission policy.
 pub async fn login(
-    db: &Db,
+    users: &UserService,
     email: &str,
     password: &str,
 ) -> std::result::Result<Login, CredentialError> {
-    identity::login(db, email, password).await
+    users.begin_sign_in(email, password).await
 }
 
 pub async fn logout(db: &Db, token: &str, csrf: &str, sessions: &Sessions) -> Result<()> {
@@ -170,12 +182,15 @@ pub struct UserService {
     signer: Signer,
     /// Public origin that emailed links point at (`APP_ORIGIN`).
     origin: String,
+    identities: sso::Registry,
+    sso_grants: std::sync::Arc<bilibi_authz::grants::Grants>,
+    sso_parties: std::sync::Arc<bilibi_tenancy::PartyProofs>,
     pub(crate) step_up: std::sync::Arc<bilibi_step_up::StepUp>,
 }
 inventory::submit! {
     bilibi_module_registry::Module {
         id:"core/user",layer:bilibi_module_registry::Layer::Core,
-        dependencies:&["base/agent_api","base/database","base/security","base/step_up","base/system","base/notifications","base/tenancy","base/session","base/principal_directory","base/mail","base/settings","base/datetime","base/locale","base/ui","base/audit","base/authz","base/menu","base/grid","base/dashboard","base/party_ids","core/company","core/person","core/affiliation"],migrations:&[MIGRATION,CREDENTIALS_MIGRATION,PINS_MIGRATION,NOTIFICATIONS_MIGRATION,database_queries::MIGRATION,database_queries::DROP_PROMPT,BOOTSTRAP_MIGRATION,IDENTITY_MIGRATION,ACCOUNTS_MIGRATION,IMPERSONATION_MIGRATION,BOOTSTRAP_AFFILIATION_MIGRATION,MOVED_PINS_MIGRATION,TWO_FACTOR_MIGRATION,TWO_FACTOR_RECOVERY_DROP],
+        dependencies:&["base/integration","base/agent_api","base/database","base/security","base/step_up","base/system","base/notifications","base/tenancy","base/session","base/principal_directory","base/mail","base/settings","base/datetime","base/locale","base/ui","base/audit","base/authz","base/menu","base/grid","base/dashboard","base/party_ids","core/company","core/person","core/affiliation"],migrations:&[MIGRATION,CREDENTIALS_MIGRATION,PINS_MIGRATION,NOTIFICATIONS_MIGRATION,database_queries::MIGRATION,database_queries::DROP_PROMPT,BOOTSTRAP_MIGRATION,IDENTITY_MIGRATION,ACCOUNTS_MIGRATION,IMPERSONATION_MIGRATION,BOOTSTRAP_AFFILIATION_MIGRATION,MOVED_PINS_MIGRATION,TWO_FACTOR_MIGRATION,TWO_FACTOR_RECOVERY_DROP,sign_in::MIGRATION,sso::MIGRATION,sso::RUNTIME_MIGRATION],
         services:&[bilibi_module_registry::Service {id:"core/user.database_queries",factory:|services| {
             Ok(std::sync::Arc::new(database_queries::QueryService::new(services.get::<Db>("base/database.pool")?.as_ref().clone(), services.get("base/database.mutations")?, services.get("base/tenancy.authentication")?)))
         }},bilibi_module_registry::Service {id:"core/user.query-pages",factory:|services| {
@@ -188,13 +203,17 @@ inventory::submit! {
             services.get::<bilibi_security::Authentication>("base/tenancy.authentication")?.bind(std::sync::Arc::new(AccountVerifier))?;
             services.get::<bilibi_notifications::NotificationBoundary>("base/notifications.sink")?.bind(std::sync::Arc::new(notifications.clone()))?;
             services.get::<bilibi_principal_directory::PrincipalDirectory>("base/principal_directory.directory")?.bind("core/user", std::sync::Arc::new(directory::UserDirectory))?;
-            let users = std::sync::Arc::new(UserService {sessions:services.get("base/session.sessions")?,mutations:services.get("base/database.mutations")?,authentication:services.get("base/tenancy.authentication")?,persons:services.get(bilibi_person::SERVICE)?,affiliations:services.get(bilibi_affiliation::SERVICE)?,db:services.get::<Db>("base/database.pool")?.as_ref().clone(),notifications,mailer:services.get("base/mail.mailer")?,settings:services.get("base/settings.store")?,display:services.get("base/datetime.display")?,locales:services.get("base/locale.locales")?,signer:Signer::from_hex(std::env::var("BILIBI_USER_SIGNING_KEY").ok().as_deref()),origin:std::env::var("APP_ORIGIN").unwrap_or_else(|_| "http://localhost:3000".into()).trim_end_matches('/').to_owned(),step_up:services.get(bilibi_step_up::SERVICE)?});
+            let users = std::sync::Arc::new(UserService {identities:sso::Registry::default(),sso_grants:services.get("base/authz.grants")?,sso_parties:services.get("base/tenancy.parties")?,sessions:services.get("base/session.sessions")?,mutations:services.get("base/database.mutations")?,authentication:services.get("base/tenancy.authentication")?,persons:services.get(bilibi_person::SERVICE)?,affiliations:services.get(bilibi_affiliation::SERVICE)?,db:services.get::<Db>("base/database.pool")?.as_ref().clone(),notifications,mailer:services.get("base/mail.mailer")?,settings:services.get("base/settings.store")?,display:services.get("base/datetime.display")?,locales:services.get("base/locale.locales")?,signer:Signer::from_hex(std::env::var("BILIBI_USER_SIGNING_KEY").ok().as_deref()),origin:std::env::var("APP_ORIGIN").unwrap_or_else(|_| "http://localhost:3000".into()).trim_end_matches('/').to_owned(),step_up:services.get(bilibi_step_up::SERVICE)?});
+            users.register_identity_provider("oidc", std::sync::Arc::new(sso::oidc::Oidc(services.get("base/integration.exchanges")?)))?;
+            users.step_up.register(sso::factor::METHOD, std::sync::Arc::new(sso::factor::Factor(users.clone())))?;
             let authenticator = std::sync::Arc::new(two_factor::Authenticator(users.clone()));
             users.step_up.register(two_factor::METHOD, authenticator.clone())?;
             users.step_up.bind_session(authenticator)?;
             two_factor::bind(users.clone())?;
+            sso::agent::bind(users.clone())?;
             Ok(users)
         }},
+        bilibi_module_registry::Service{id:"core/user.sso-pages",factory:|services|Ok(std::sync::Arc::new(bilibi_ui::page::PageService(std::sync::Arc::new(sso::web::Pages{users:services.get("core/user.accounts")?,contracts:services.get(bilibi_agent_api::page::SERVICE)?}))))},
         bilibi_module_registry::Service {id:"core/user.pages",factory:|services| {
             Ok(std::sync::Arc::new(bilibi_ui::page::PageService(std::sync::Arc::new(web::Pages {users:services.get("core/user.accounts")?,display:services.get("base/datetime.display")?,locales:services.get("base/locale.locales")?,db:services.get::<Db>("base/database.pool")?.as_ref().clone(),grants:services.get("base/authz.grants")?,contracts:services.get(bilibi_agent_api::page::SERVICE)?}))))
         }}],
@@ -207,9 +226,17 @@ impl UserService {
         email: &str,
         password: &str,
     ) -> std::result::Result<Login, CredentialError> {
-        login(&self.db, email, password).await
+        self.begin_sign_in(email, password).await
     }
     pub async fn logout(&self, token: &str, csrf: &str) -> Result<()> {
+        let scope = {
+            let client = self.db.get().await?;
+            guard(&**client, token, &self.sessions).await?
+        };
+        if scope.csrf != csrf {
+            return Err(Error::Forbidden);
+        }
+        self.forget_external_session(&scope, token).await?;
         logout(&self.db, token, csrf, &self.sessions).await
     }
     pub async fn mark_read(&self, token: &str, id: i64) -> Result<notifications::Item> {

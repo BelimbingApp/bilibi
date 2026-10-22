@@ -15,7 +15,7 @@ Bilibi is MIT-licensed, like the earlier iterations. The architecture is the sam
 
 ## Who it is for
 
-- Small and medium businesses now; larger organisations as enterprise sign-in and compliance arrive.
+- Small and medium businesses, and larger organisations connecting their existing identity provider.
 - Developers and builders serving businesses.
 - IT service providers.
 - SaaS founders and builders.
@@ -35,7 +35,7 @@ Bilibi is MIT-licensed, like the earlier iterations. The architecture is the sam
 
 ## What works today
 
-- **Sign-in:** server-held sessions, Argon2id passwords, password reset.
+- **Sign-in:** server-held sessions, Argon2id passwords, password reset, and optional [company OIDC single sign-on](apps/core/user/sso.md) with provider 2FA and role mapping.
 - **Permissions:** roles, capabilities and direct grants; a deny always wins; sensitive fields can be masked.
 - **Companies, people and addresses:** lists, details and inline edits, scoped to the tenant.
 - **Audit:** every change records old and new values and who made it, in the same save; append-only.
@@ -83,7 +83,7 @@ Run commands from the clone's root. Use `./bilibi help` to see the command list.
 | `./bilibi new <name>` | Keep this source composition in a separate sibling application repository |
 | `./bilibi check`, `pin`, `build` | Require an application repository; create one with `new` |
 
-The [application workspace guide](docs/application-workspaces.md) covers the next step, Git ownership and migration; [ADR 03](docs/architecture/decisions/03-application-workspaces-one-front-door.md) records the decision. `scripts/setup.sh` and `scripts/start-app.sh` remain available directly. Direct setup also installs the safeguard; after installing tools directly, load `$HOME/.cargo/env` before using the direct launcher.
+`new` copies the [application starting point](https://github.com/BelimbingApp/bilibi-app). The [application workspace guide](docs/application-workspaces.md) covers the next step, Git ownership and migration; [ADR 03](docs/architecture/decisions/03-application-workspaces-one-front-door.md) records the decision. `scripts/setup.sh` and `scripts/start-app.sh` remain available directly. Direct setup also installs the safeguard; after installing tools directly, load `$HOME/.cargo/env` before using the direct launcher.
 
 Run `./bilibi update` before `./bilibi start` to bring an existing clone up to date. It fast-forwards your branch from its upstream. A published branch whose changes already reached the default branch, including an exact squash merge, can safely return to that default branch. Other local commits and source edits stop the update with a concrete next step. Recognised generated composition and its reproduced dependency lock are regenerated; real edits are never discarded or silently stashed. Update never downgrades a component. A component on a branch, dirty, symlinked, unlisted or off its official origin stays where it is, with its path and reason printed; this does not fail the update.
 
@@ -120,6 +120,7 @@ The launcher sets `BILIBI_ENV=development` unless you already set it, so the ins
 | `BILIBI_USER_SIGNING_KEY` | 64 hex characters, for email verification links. Unset: `start-app.sh` supplies one |
 | `BILIBI_SETTINGS_KEY` | 64 hex characters. Encrypts secret settings and authenticator keys. 2FA setup refuses without it. Unset: `start-app.sh` supplies one |
 | `BILIBI_MEDIA_SIGNING_KEY` | 64 hex characters, for signed file links. Unset: `start-app.sh` supplies one |
+| `BILIBI_SSO_ALLOW_PRIVATE_ENDPOINTS` | `1` lets company sign-in reach identity providers on private networks and literal-loopback HTTP. Unset: public HTTPS only. See [company sign-in](apps/core/user/sso.md) |
 | `BILIBI_ENV` | `development`, `staging` or `production`. Initial role for the install seed. Unset means `production`; `start-app.sh` defaults to `development`. Later role changes use Instance settings. Other values refuse installation |
 
 Every page, consent page and agent answer says which Bilibi it is, so nobody mistakes a test copy for the live system. The status bar always shows the stored server role; Staging also shows a top-bar badge. Dev and Staging show a sign-in badge; reviews and agent plans name every instance, production included. The name and colour are the Instance settings (`instance.label`, `instance.colour`), read through `bilibi_base::system::Instance::resolve` ([Base System](apps/base/system/README.md)).

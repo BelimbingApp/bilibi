@@ -1,0 +1,6 @@
+{%- import "components.html" as ui -%}
+{%- import "forms.html" as form -%}
+{% call ui::card(id="specimen-location-action", title="Browser location", class="lg:col-span-2", inner_class="p-4 lg:col-span-2") %}
+<p class="mb-3 text-xs text-ink-muted">A location action asks the browser for its position when clicked and raises its event with the coordinates and their accuracy, or with why there are none: permission refused, unavailable, or an insecure connection. The button stays busy with its working label until the page answers; the disabled control is the server's decision and survives the reply.</p>
+<div class="flex flex-wrap items-center gap-2">{% call form::location_action(control=location_secondary) %}{% endcall %}{% call form::location_action(control=location_primary) %}{% endcall %}{% call form::location_action(control=location_disabled) %}{% endcall %}</div>
+{% endcall %}

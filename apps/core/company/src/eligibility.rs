@@ -1,5 +1,5 @@
 //! Company facts for account authentication and owner writes. User owns the
-//! account → Person/Affiliation/Organisation binding (`bilibi_user::identity`):
+//! account → Person/Affiliation/Organisation binding (`bilibi_user::standing`):
 //! no company is inferred for an unlinked account. A business relationship role
 //! grants no login or capability; only the account's proven Organisation is
 //! checked here.
@@ -53,6 +53,17 @@ pub async fn lock_account_company(
     organisation: OrganisationId,
 ) -> std::result::Result<OrganisationId, WriteError> {
     organisation::require_writable(tx, scope, organisation.get(), true).await?;
+    Ok(organisation)
+}
+
+/// [`lock_account_company`] for a system principal that provisions an account
+/// and has no account scope; `tenant` comes from its audited transaction.
+pub async fn lock_account_company_in(
+    tx: &Transaction<'_>,
+    tenant: i64,
+    organisation: OrganisationId,
+) -> std::result::Result<OrganisationId, WriteError> {
+    organisation::require_writable_in(tx, tenant, organisation.get(), true).await?;
     Ok(organisation)
 }
 

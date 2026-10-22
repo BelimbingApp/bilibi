@@ -92,10 +92,10 @@ impl Provider for Authenticator {
         event: Lifecycle,
     ) -> ProofFuture<'a, Vec<Change>> {
         Box::pin(async move {
+            let mut changes = crate::sign_in::revoke(sql, account.tenant(), account.user()).await?;
             if event == Lifecycle::Revoke {
-                return Ok(Vec::new());
+                return Ok(changes);
             }
-            let mut changes = Vec::new();
             // Return every affected row, never the sealed secret or a code.
             if let Some(row) = sql.query_opt("DELETE FROM user_two_factor WHERE tenant_id=$1 AND user_id=$2 RETURNING confirmed_at IS NOT NULL", &[&account.tenant(), &account.user()]).await? {
                 changes.push(Change { kind: "user_two_factor".into(), id: account.user(), old: json!({"status": if row.get::<_, bool>(0) { "enabled" } else { "pending" }}), new: json!({"status": "off"}) });

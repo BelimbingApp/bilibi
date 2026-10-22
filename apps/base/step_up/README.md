@@ -127,6 +127,7 @@ Declare `base/step_up` as both a Cargo and descriptor dependency. Registration o
 
 | Provider method | Responsibility |
 | --- | --- |
+| `available(sql, account)` | Optional presentation read; defaults to true. A company method may hide its setup/choice until configured. It never grants enrollment |
 | `enrolled(sql, account)` | Read live enrollment for the sealed `FactorAccount`; bind its tenant and user in every query |
 | `start(scope, purpose)` | Start or resend a challenge after an explicit action; return `Challenge` availability, masked destination and retry seconds |
 | `spend(scope, code, purpose)` | Atomically validate and consume proof for that holder and exact operation, target and channel; own throttling and audit |
@@ -136,11 +137,17 @@ Declare `base/step_up` as both a Cargo and descriptor dependency. Registration o
 
 `enrolled`, `prompt` and `setup` are presentation reads. They must never create or send a challenge, consume proof, or write enrollment. `StepUp::methods` returns these live choices; Core User's settings and confirm pages use them. Prompt/setup destinations must be local paths, and the method must validate the return address again. Build method pages with Base UI components. The method owns its data and delivery through the existing Platform services.
 
-Call `StepUp::start(scope, method_id, Purpose { operation, target, channel })` only for an explicit start/resend action. It refuses impersonation, unknown operations and a mismatched channel; an unenrolled method returns `Availability::Unavailable`. `Availability::RetryLater` and `retry_after_seconds` let a page explain a cooldown without delivering again. Never include a plaintext code or destination in the result. Extensions expose any agent challenge operation through their own `agent_api` contribution, using this same facade.
+Call `StepUp::start(scope, method_id, Purpose { operation, target, channel })` only for an explicit start/resend action. It refuses impersonation, unknown operations and a mismatched channel; an unenrolled method returns `Availability::Unavailable`. `Availability::RetryLater` and `retry_after_seconds` let a page explain a cooldown without delivering again; they are advice to the page, not enforcement. Base and Core User keep no start throttle, so a method's `start` must itself limit deliveries per account, across all pending sign-in entries and step-up targets, never per target. Anyone holding a leaked password can start a sign-in challenge for every new pending entry. Never include a plaintext code or destination in the result. Extensions expose any agent challenge operation through their own `agent_api` contribution, using this same facade.
 
 Use `Method::new(id, label).code(length, numeric)` for a different code format (the default is six digits; lengths 1–64 are supported). Protected browser forms and the Software MCP card read `StepUp::enrolled_methods(scope)`, an enrollment-only list that never reads a method's `prompt` or `setup`, so a failing destination cannot break a page. They use the shared UI `ProofInput`, which builds its method choice and code fields from live enrollment and submits `method_id:code` without changing the owner’s event schema.
 
 A single enrolled method accepts the existing plain `step_up_code`. With several enrolled methods, send `"method_id:code"`. Base routes to exactly one provider; it never tries the same code against every method. Missing enrollment and unknown methods fail closed. An accepted code still covers the remaining checks in the same request.
+
+### Sign-in proof
+
+`StepUp::verify(scope, method_id, code, purpose)` consumes one enrolled method's proof independently of session windows or policy bypasses. It validates the declared purpose and channel, audits the result, and returns `Spent`. It creates no window or session. Only the identity owner uses it to finish a separately sealed pending sign-in; ordinary protected actions continue to use `require` or `require_code`.
+
+For `core.user.sign_in`, provider `start` and `spend` receive an internally proved holder scope without an admitted session row. Bind delivered codes to the complete purpose, including the pending-entry target. Finish verification through the provider's own audited transaction; the identity owner rechecks pending state before admission. The shared credential card reads only enrollment and code formats; it never follows signed-in setup or prompt routes.
 
 ### Shared browser proof
 
@@ -169,7 +176,7 @@ Extension owners implementing the former `Provider` must:
 5. Handle `SessionProof::Fresh`'s new `consume` field if implementing the session adapter. Update account-wide sign-out callers from `Sessions::end_user_sessions(sql, tenant, user, except)` to `sessions.revoke(tx, user, except)` on a service wired with `with_factors(step_up)`.
 6. Qualify codes as `method_id:code` when several methods are enrolled. Keep `require`/`require_code` at the protected owner's boundary.
 
-The sign-in admission flow is unchanged. A second-factor sign-in stage is a separate task. This contract adds no delivery method, secret reader or company policy.
+Core User owns [pending sign-in admission](../../core/user/README.md#sign-in-admission). Its anonymous card uses these registered methods without opening a session. This contract adds no delivery method, secret reader or company policy.
 
 ## Try it
 

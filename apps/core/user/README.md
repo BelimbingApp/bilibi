@@ -16,7 +16,7 @@ pages belong to the Web host, as Bilimbi's do.
 
 | Method | Purpose |
 |---|---|
-| `login(email, password)` / `logout` | Bilimbi's global sign-in: the address alone names the account; the password is verified first, then the account's standing. Refusals are `CredentialError::{Rejected, CompanyArchived, WorkspaceUnavailable}` |
+| `login(email, password)` / `logout` | Bilimbi's global sign-in: the address alone names the account; the password is verified first, then the account's standing. Refusals are `CredentialError::{Rejected, CompanyArchived, WorkspaceUnavailable}`. A required second factor returns a pending credential, not a session; see [Sign-in admission](#sign-in-admission) |
 | `change_password(token, csrf, current, new)` | Signed-in change. Needs the current password; ends the account's other sessions |
 | `request_password_reset(email)` | Always `Ok` for unknown, frozen or throttled accounts. Mail is sent after returning |
 | `reset_password(email, token, new)` | Consumes the one-time token, replaces the password, ends every session; a frozen account's link is as invalid as an unknown one |
@@ -35,6 +35,31 @@ Use `password::{hash, verify, check_policy}` for any password work instead of
 calling `argon2` directly. It runs Argon2id on the blocking pool, bounds input
 (8 characters to 1024 bytes) and `verify(.., None)` costs the same as a real
 check, so timing does not reveal which emails exist.
+
+## Company sign-in
+
+Optional company OIDC, linking, provisioning, role mapping and provider re-authentication are documented in [Company sign-in](sso.md). With no enabled connection, password sign-in and existing factor settings keep their behavior.
+
+## Sign-in admission
+
+Enable **Sign in** on the tenant's 2FA requirements page to ask for a second factor before admitting a session.
+
+- `core.user.sign_in` is off by default. It follows the existing Step-up policy and instance enforcement: ordinary checks are skipped in Dev. Both On and Ask every time require a fresh code at each sign-in.
+- `UserService::login(email, password)` verifies the password and live account standing. `Login.pending == false` means its token is an admitted session. `true` means it is only a pending credential; never install that token as a session or expose it to a live page.
+- `pending_sign_in(token)` returns only CSRF and live enrolled method formats. It exposes no `Scope`. `start_sign_in_challenge(token, csrf, method)` explicitly starts or resends delivery. `complete_sign_in(token, csrf, method, code)` consumes that method's proof and returns a fresh admitted session, or `None` for a refused proof. `cancel_sign_in(token, csrf)` ends pending entry.
+- Pending credentials are hashed in `user_sign_ins`, outside `sessions` and agent grants. Normal session, API and live guards cannot authenticate them. Admission locks the pending row and rechecks expiry, standing and the password version, so parallel submits admit at most once. Once pending, sign-in always requires proof even if policy is later turned off.
+- The operator setting **Sign-in challenge lifetime** (`user.sign_in_minutes`) defaults to five minutes, with a range of 1–30. Expiry uses the database clock, never extends on resend, and is recorded once when the expired credential is next presented. Cancelled, expired, revoked and admitted credentials cannot be reused.
+- Password verification, pending entry, challenge starts, admission, cancellation and observed expiry are audited through `MutationBoundary`, without credentials or codes. Providers audit their own checks; Base Step-up also records proof acceptance or refusal for `core.user.sign_in`. Reset, account deletion and session revocation end pending sign-ins through Core User's lifecycle adapter.
+- With no enrolled method, a required sign-in stays pending and explains how to ask an administrator for help. It never admits, enrolls a method or sends a challenge from a GET. Before resetting the last method, keep another administrator signed in to turn off the tenant's sign-in requirement while the holder enrolls again. Reset does not bypass that policy.
+
+Factor Extensions use the [Base provider contract](../../base/step_up/README.md#provider). Sign-in calls the same `start` and `spend` hooks with operation `core.user.sign_in`, a pending-entry ID as target, and channel Web. These hooks must work without a session row. Delivered codes must bind to that complete purpose. Core User does not throttle `start_sign_in_challenge`, and each password sign-in creates a new pending entry. A method's `start` must therefore throttle deliveries per account across all pending entries and step-up targets; `retry_after_seconds` is advice to the page, not enforcement. Providers finish their own proof transaction before Core User begins admission; an admission failure may consume a code but never create a session.
+
+### Upgrade notes for agents
+
+- Replace the free `login(&db, email, password)` with `users.login(email, password)` (or `login(&users, ...)`). The service carries the installed factor registry and policy.
+- Check `Login.pending` before treating its token as a session. Custom sign-in adapters must continue through the pending methods above and admit only the fresh token returned by `complete_sign_in`.
+- Replace `bilibi_user::identity::standing` and `identity::AccountLinks` with the crate-root exports `bilibi_user::standing` and `bilibi_user::AccountLinks`.
+- Factor providers must accept the sign-in purpose without assuming an admitted session. Keep factor setup and ordinary step-up prompt routes signed in; the shared anonymous challenge card handles sign-in.
 
 ## Appearance and pins
 
@@ -67,7 +92,7 @@ Web adapters (`apps/web/src/shell.rs`): `POST /preferences` (`{kind,value}`), `G
 `BilimbiWeb.Impersonation`, behind the host's `POST /admin/impersonate/{id}` and
 `/admin/impersonate/leave` (`apps/web/src/impersonation.rs`). Entering needs
 `admin.user.impersonate`, a session that is not already impersonating, another
-account, and a target whose `identity::standing` is live (an archived company is
+account, and a target whose `bilibi_user::standing` is live (an archived company is
 refused). Each switch is one transaction through `Sessions::switch`: the session
 must still hold the identity the request came from, its CSRF secret rotates, and
 the retained `impersonation.started`/`impersonation.stopped` action (operator as
@@ -108,7 +133,7 @@ company other than the affiliation's. The login email is unique platform-wide
 resolves the one duplicate the retired demo seed created explicitly and refuses
 any other.
 
-`identity::standing(client, tenant, user)` is the authentication-edge read:
+`standing(client, tenant, user)` is the authentication-edge read:
 the account row, then each stored link re-proved through its owner's public
 read (`bilibi_company::eligibility::account_eligibility`,
 `bilibi_affiliation::identity::account_standing`,
@@ -168,7 +193,7 @@ proof below stays in one place. Reads only and no capability, as in Bilimbi:
 the caller authorizes the company target first. The scope's tenant bounds every
 answer; a missing, deleted or other-tenant company or account is `NotFound`.
 
-An account is listed only while `identity::standing`'s proof holds for the
+An account is listed only while `bilibi_user::standing`'s proof holds for the
 company: live and `active`, its affiliation still linked and naming that
 company, and its Person not retired. An account with no Person or affiliation
 belongs to no company. An archived company stays readable with its accounts,
@@ -435,4 +460,4 @@ The editor keeps SQL, name, description and named parameter values in its mounte
 
 The query editor uses the shared page header for its title, description and Back link. Query name and description use shared form fields; Discard, Save and saved-query actions sit in the form action row. Migration `core-user-014-drop-query-prompt` removes the unused prompt column while preserving saved queries and their SQL.
 
-The [Base Step-up provider contract](../../base/step_up/README.md#provider) owns method registration, challenge starts and lifecycle hooks. Core User registers TOTP beside Extensions. With one method the existing routes retain their original flow. Reset (including the server command) reads enrollment across all methods in the owner's transaction, removes all factor state, revokes challenges and signs out the target. Account deletion also calls every method's deletion hook. Password changes/resets and account reassignment use `Sessions::revoke`; they retain enrollment. Every provider change shares the owner's mutation transaction and audit trace. Sign-in admission is unchanged.
+The [Base Step-up provider contract](../../base/step_up/README.md#provider) owns method registration, challenge starts and lifecycle hooks. Core User registers TOTP beside Extensions. With one method the existing routes retain their original flow. Reset (including the server command) reads enrollment across all methods in the owner's transaction, removes all factor state, revokes challenges and signs out the target. Account deletion also calls every method's deletion hook. Password changes/resets and account reassignment use `Sessions::revoke`; they retain enrollment. Every provider change shares the owner's mutation transaction and audit trace. Sign-in admission is described under [Sign-in admission](#sign-in-admission).

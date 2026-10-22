@@ -12,7 +12,7 @@
 
 ## Context
 
-**Everyone starts in `bilibi`, with or without an AI agent.** Choosing between a Platform checkout and a setup template before trying the software adds an unnecessary decision. A lasting application still needs its own recipe and dependency lock, separate from component source repositories.
+**Everyone starts in `bilibi`, with or without an AI agent.** Choosing between a Platform checkout and the application starting point before trying the software adds an unnecessary decision. A lasting application still needs its own recipe and dependency lock, separate from component source repositories.
 
 ## Decision
 
@@ -29,7 +29,7 @@
 
 **Refuse uncommitted source edits, unpublished commits and an occupied destination.** Recognised generated composition changes are allowed. Give the exact commit or push action needed; never omit edits or substitute revisions. This captures sources only: it does not migrate the trial's database, media, configuration or keys.
 
-The setup template supplies content to `new`; it is no longer a user-facing starting point. Direct Platform, Domain and Extension clones remain supported for focused contributions. There are no adopter, developer or owner modes; repository permissions govern publishing.
+The application starting point supplies content to `new`; people no longer begin there directly. Direct Platform, Domain and Extension clones remain supported for focused contributions. There are no adopter, developer or owner modes; repository permissions govern publishing.
 
 ### Command roots
 
@@ -86,6 +86,6 @@ Local startup permits branches and uncommitted edits. It must report those diffe
 
 ## Current implementation
 
-**The common entry point and application workspace are implemented.** Platform supplies `start`, `setup`, `add`, `status`, `update`, `help` and `new`; the [application starting point](https://github.com/BelimbingApp/bilibi-setup-template) supplies the application wrapper, independent editable sources, saved recipes, commit safeguards and strict release commands. `new` pins the starting point revision, independently fetches every selected source and validates the trial's resolved lock before saving it. `check`, `pin` and `build` in Platform explain how to create an application.
+**The common entry point and application workspace are implemented.** Platform supplies `start`, `setup`, `add`, `status`, `update`, `help` and `new`; the [application starting point](https://github.com/BelimbingApp/bilibi-app) supplies the application wrapper, independent editable sources, saved recipes, commit safeguards and strict release commands. `new` pins the starting point revision, independently fetches every selected source and validates the trial's resolved lock before saving it. `check`, `pin` and `build` in Platform explain how to create an application.
 
 [Application workspaces](../../application-workspaces.md) documents Git ownership, deliberate tooling updates, parallel migration, manual adoption of ordinary clones and rollback. Setup never adopts or relocates an existing checkout automatically. Runtime data retains its existing paths; output conflicts require a deliberate preserved move. Server delivery remains under ADR 02.

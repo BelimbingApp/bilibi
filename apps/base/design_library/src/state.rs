@@ -2,7 +2,7 @@ use bilibi_database::{Error, Result};
 use bilibi_datetime::{filter, DisplayContext, Period, PeriodFilter};
 use bilibi_ui::{
     flex_sample::FlexSample, BuiltinColumn, CommitStates, CommitStatus, ListColumns, ListSpec,
-    ListState, SortDir, UploadSpec, Uploads,
+    ListState, LocationReport, SortDir, UploadSpec, Uploads,
 };
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -75,6 +75,8 @@ pub struct State {
     pub uploads: Uploads,
     /// The files the specimen's Keep event received, in this page's memory.
     pub kept: Vec<KeptFile>,
+    /// The last report of the browser location specimen.
+    pub location: Option<LocationReport>,
 }
 /// What the specimen records of a delivered file: enough to prove the
 /// bytes arrived whole, never the bytes themselves.
@@ -157,6 +159,7 @@ impl State {
                 UploadSpec::new(SAMPLE_UPLOAD, SAMPLE_UPLOAD_BYTES).max_entries(2)
             ]),
             kept: Vec::new(),
+            location: None,
         };
         result.params(query)?;
         Ok(result)
@@ -390,6 +393,11 @@ impl State {
             "forget-files" => {
                 self.kept.clear();
                 self.uploads.clear(SAMPLE_UPLOAD);
+            }
+            // The location action's one event: a position or an outcome the
+            // card answers in words; a payload that is neither is invalid.
+            "capture-location" => {
+                self.location = Some(LocationReport::from_event(event).ok_or(Error::Invalid)?);
             }
             "clear-flash" => {
                 self.submitted = false;

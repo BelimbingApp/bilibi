@@ -434,7 +434,7 @@ pub(crate) fn client_address(peer: Option<SocketAddr>, headers: &HeaderMap) -> O
     Some(peer)
 }
 
-async fn allowed(app: &App, kind: &str, sender: &str) -> Result<bool, Error> {
+pub(crate) async fn allowed(app: &App, kind: &str, sender: &str) -> Result<bool, Error> {
     let client = app.db.get().await?;
     let limit = app
         .api

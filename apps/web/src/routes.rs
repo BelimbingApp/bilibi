@@ -34,10 +34,14 @@ pub struct BoundDownload {
 }
 
 /// The host paths no discovered route, download or moved path may overlap.
-const HOST_PATHS: [&str; 17] = [
+const HOST_PATHS: [&str; 21] = [
     "/",
     "/login",
+    "/login/challenge",
     "/logout",
+    "/login/sso/{provider}/start",
+    "/login/sso/callback",
+    "/login/sso/backchannel/{provider}",
     "/preferences",
     "/forgot-password",
     "/reset-password/{token}",
@@ -423,6 +427,7 @@ async fn check_base(
         Access::OperatorCapability(key) => {
             bilibi_authz::authorize_operator(&**client, &scope, key).await?;
         }
+        Access::AnyOf(keys) => bilibi_authz::authorize_any(&**client, &scope, keys).await?,
         Access::Owner => {
             bilibi_tenancy::prove_owner(&**client, &scope).await?;
         }

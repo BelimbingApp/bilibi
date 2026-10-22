@@ -1,0 +1,8 @@
+{# Company identity settings extend Bilimbi User settings with shared form DOM. #}
+{% import "components.html" as ui %}
+{% import "feedback.html" as feedback %}
+{% call ui::page(variant=bilibi_ui::PageVariant::Form) %}
+{{ header }}
+{% if !notice.is_empty() %}{% call feedback::alert(kind=kind,id="sso-notice") %}{{ notice }}{% endcall %}{% endif %}
+{% call ui::card() %}{{ body }}{% endcall %}
+{% endcall %}

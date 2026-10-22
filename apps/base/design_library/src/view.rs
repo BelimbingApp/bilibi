@@ -59,6 +59,7 @@ card_component_input_states: "design_library/card_component_input_states.html",
 card_component_input_variants: "design_library/card_component_input_variants.html",
 card_component_combobox: "design_library/card_component_combobox.html",
 card_component_file_input: "design_library/card_component_file_input.html",
+card_component_location_action: "design_library/card_component_location_action.html",
 component_interaction_patterns: "design_library/component_interaction_patterns.html",
 card_component_inline_edit: "design_library/card_component_inline_edit.html",
 component_feedback_states: "design_library/component_feedback_states.html",
@@ -131,6 +132,19 @@ impl View<'_> {
                     "Up to two files, {} KiB each.",
                     state::SAMPLE_UPLOAD_BYTES / 1024
                 )),
+        )
+    }
+    /// The browser location specimen: one control whose event the state keeps.
+    fn location_action(&self) -> askama::Result<Html> {
+        render(
+            bilibi_ui::LocationAction::new(
+                "design-library-location",
+                "capture-location",
+                "Use my location",
+            )
+            .variant(bilibi_ui::ButtonVariant::Primary)
+            .value("purpose", "specimen")
+            .sending("Recording position…"),
         )
     }
     fn kept_size(&self, size: &usize) -> String {

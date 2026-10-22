@@ -195,6 +195,29 @@ and a dropped socket ends every stream: the remounted state holds no bytes.
 The `FileUpload` hook (`apps/base/ui/assets/upload.js`) does the browser's
 part and holds a form's submit until every file of its input has arrived.
 
+## Browser location
+
+Bilimbi's colocated `.ClockLocation` hook (People Attendance `web/my_live.ex`)
+is `bilibi_ui::LocationAction` (`apps/base/ui/src/forms.rs`, macro
+`forms::location_action`), since a Domain owns no JavaScript. The owner
+renders a button with its event, label and any `value(key, value)` pairs the
+event should carry; the `LocationAction` hook (`apps/base/ui/assets/hooks.js`)
+asks `navigator.geolocation` on click (high accuracy, no cached fix, 15 s
+unless `timeout_ms` says otherwise) and raises one `bilibi:event` per click:
+the values plus `latitude`, `longitude` and `accuracy` (metres), or the values
+plus `outcome` `permission_denied`, `unavailable` or `insecure_context`. The
+button is busy (disabled, `aria-busy`, `data-live-busy`) with the `working`
+label while the browser locates, with `sending` once the event is raised, and
+settles when the owner's reply arrives, then takes the disabled state the
+reply rendered. The owner decodes the payload with
+`LocationReport::from_event` (a position, or `None` for a payload this control
+did not raise; coordinates off the globe are `Unavailable`) and answers a
+refusal in words through `LocationReport::refusal`, adding the page's own way
+out. The event's `type` is the event name, so a value key is never `type`,
+`outcome`, `latitude`, `longitude` or `accuracy`. The Design Library's Browser
+location card is the running specimen; `/assets/ui-components.html` shows the
+variants.
+
 ## Server-declared panels and background updates
 
 `LiveState::panels` returns up to 32 unique `PanelSpec`s: stable HTML element ID,

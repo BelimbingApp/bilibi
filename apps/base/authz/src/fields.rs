@@ -12,7 +12,7 @@ pub async fn restricted(
     client: &impl GenericClient,
     scope: &Scope,
 ) -> Result<BTreeMap<String, HashSet<String>>> {
-    let rows=client.query("SELECT DISTINCT f.table_id,f.field_id FROM field_restrictions f JOIN principal_roles p ON p.tenant_id=f.tenant_id AND p.role_id=f.role_id WHERE f.tenant_id=$1 AND p.user_id=$2",&[&scope.tenant(),&scope.user()]).await?;
+    let rows=client.query("SELECT DISTINCT f.table_id,f.field_id FROM field_restrictions f JOIN effective_principal_roles p ON p.tenant_id=f.tenant_id AND p.role_id=f.role_id WHERE f.tenant_id=$1 AND p.user_id=$2",&[&scope.tenant(),&scope.user()]).await?;
     let mut result: BTreeMap<String, HashSet<String>> = BTreeMap::new();
     for row in rows {
         result.entry(row.get(0)).or_default().insert(row.get(1));

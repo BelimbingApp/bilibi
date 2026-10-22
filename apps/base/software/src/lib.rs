@@ -101,7 +101,7 @@ bilibi_step_up::declare!(
     .always()
 );
 // Saving the GitHub read token in the settings editor. The token can read
-// the setup repository, so changing it asks for a fresh code.
+// the application repository, so changing it asks for a fresh code.
 bilibi_step_up::declare!(
     "base/software",
     bilibi_step_up::Operation::new(
@@ -779,9 +779,9 @@ inventory::submit! { Contribution::new(DEFINITIONS, CATALOGUE_URL_KEY, provenanc
 inventory::submit! { Contribution::new(DEFINITIONS, github::REPOSITORY, provenance!(), &Setting::Definition(Definition {
     value_type: ValueType::String, scopes: &[ScopeKind::Global], default: || json!(null), nullable: true, encrypted: false,
     minimum: None, maximum: None,
-    validator: Some(Validator { accepts: github::accepts_repository, message: "Enter the repository as owner/name, like BelimbingApp/bilibi-setup-template." }),
-    editor: Some(Editor { group: "Software", label: "GitHub repository: owner and name of the setup repository",
-        help: "Example: BelimbingApp/bilibi-setup-template. Software reads releases from this repository. Server owner only.",
+    validator: Some(Validator { accepts: github::accepts_repository, message: "Enter the repository as owner/name, like your-company/my-bilibi." }),
+    editor: Some(Editor { group: "Software", label: "GitHub repository: owner and name of your application repository",
+        help: "Your application repository, like your-company/my-bilibi. Software reads its releases from here. Server owner only.",
         capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
 })) }
 inventory::submit! { Contribution::new(DEFINITIONS, github::REPOSITORY_ID, provenance!(), &Setting::Definition(Definition {

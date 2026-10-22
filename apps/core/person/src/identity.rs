@@ -170,19 +170,31 @@ fn restricted_input(input: &PersonInput, masked: &HashSet<String>) -> Result<()>
 
 async fn insert(
     tx: &mut MutationTransaction<'_>,
-    scope: &Scope,
+    tenant: i64,
     input: PersonInput,
     system: Option<&'static str>,
 ) -> Result<Person> {
-    let tenant = scope.tenant();
     let person = tx.mutate(move |sql| Box::pin(async move {
         let row = sql.query_one(&format!("INSERT INTO persons(tenant_id,name,kind,email,phone,system_key) VALUES($1,$2,$3,$4,$5,$6) RETURNING {COLUMNS}"), &[&tenant, &input.name, &kind_key(input.kind), &input.email, &input.phone, &system]).await?;
         let person = Person::from_row(&row)?;
         let change = Change { kind: "person".into(), id: person.id.get(), old: Value::Null, new: person.json() };
         Ok((person, vec![change]))
     })).await?;
-    crate::publish(tx, scope.tenant(), person.id);
+    crate::publish(tx, tenant, person.id);
     Ok(person)
+}
+/// Account provisioning by a named system principal, composed in the caller's
+/// audited transaction. The caller has authorized the creation itself.
+pub async fn provision(
+    tx: &mut MutationTransaction<'_>,
+    input: &PersonInput,
+) -> std::result::Result<Person, WriteError> {
+    if tx.context().actor.kind != "system" {
+        return Err(Error::Forbidden.into());
+    }
+    let input = validate(input).map_err(WriteError::Validation)?;
+    let tenant = tx.context().tenant;
+    Ok(insert(tx, tenant, input, None).await?)
 }
 pub async fn create(
     tx: &mut MutationTransaction<'_>,
@@ -192,7 +204,9 @@ pub async fn create(
     check_context(tx, scope)?;
     let input = preview(tx.sql(), scope, input).await?;
     let masked = fields(tx.sql(), scope).await?;
-    Ok(insert(tx, scope, input, None).await?.redact(&masked))
+    Ok(insert(tx, scope.tenant(), input, None)
+        .await?
+        .redact(&masked))
 }
 pub async fn update(
     tx: &mut MutationTransaction<'_>,
@@ -367,7 +381,7 @@ pub async fn ensure_platform_orchestrator(
         phone: None,
     };
     Ok((
-        insert(tx, scope, input, Some(SYSTEM_KEY))
+        insert(tx, scope.tenant(), input, Some(SYSTEM_KEY))
             .await?
             .redact(&masked),
         true,
