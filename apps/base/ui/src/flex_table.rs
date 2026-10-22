@@ -527,33 +527,8 @@ impl Cell {
     }
 }
 
-/// The points of a sparkline polyline for a series, in a 60 by 16 box.
-pub fn sparkline(series: &[f64]) -> Option<String> {
-    if series.len() < 2 {
-        return None;
-    }
-    let (lo, hi) = series
-        .iter()
-        .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), value| {
-            (lo.min(*value), hi.max(*value))
-        });
-    let span = if hi == lo { 1.0 } else { hi - lo };
-    let step = 60.0 / (series.len() - 1) as f64;
-    // One decimal, always written, as Bilimbi's Float.round(_, 1) prints.
-    let one = |value: f64| format!("{:.1}", (value * 10.0).round() / 10.0);
-    Some(
-        series
-            .iter()
-            .enumerate()
-            .map(|(index, value)| {
-                let x = one(index as f64 * step);
-                let y = one(15.0 - (value - lo) / span * 14.0);
-                format!("{x},{y}")
-            })
-            .collect::<Vec<_>>()
-            .join(" "),
-    )
-}
+/// The trend lens's small line, drawn by the shared chart module.
+pub use crate::chart::sparkline;
 
 /// A value in an expanded rollup's inner table.
 #[derive(Clone, Debug, PartialEq)]
