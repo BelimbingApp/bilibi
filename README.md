@@ -49,12 +49,12 @@ Start in one of two places, depending on what you want to do:
 
 | You want to… | Start in | What you get |
 | --- | --- | --- |
-| Build your own product on Bilibi | [`bilibi-app-template`](https://github.com/BelimbingApp/bilibi-app-template) | Your own application: Bilibi at a tested version, ready for you to add Domains, release, and install on your servers |
+| Build your own product on Bilibi | [`bilibi-app-maker`](https://github.com/BelimbingApp/bilibi-app-maker) | Your own application: Bilibi at a tested version, ready for you to add Domains, release, and install on your servers |
 | Change Bilibi itself, or build a Domain or Extension for everyone | `bilibi` (this one) | Bilibi's latest source code, to change and send back as pull requests |
 
 Both start the same way: clone the repository, then run `./bilibi start`. Bilibi opens in your browser at the sign-in page.
 
-For example, a company that wants Bilibi for its own business clones the template, runs `./bilibi start`, and adds the Finance Domain. When it works for them, they push it to their own private repository and release it to their server. Someone fixing a Bilibi bug clones this repository instead, and sends the fix as a pull request.
+For example, a company that wants Bilibi for its own business clones the app maker, runs `./bilibi start`, and adds the Finance Domain. When it works for them, they push it to their own private repository and release it to their server. Someone fixing a Bilibi bug clones this repository instead, and sends the fix as a pull request.
 
 If you started here and want to keep what you built as your own product, `./bilibi new my-bilibi` turns it into an application, in a new folder next to this one.
 
@@ -63,10 +63,10 @@ If you started here and want to keep what you built as your own product, `./bili
 | Repository | What it holds |
 | --- | --- |
 | `bilibi` (this one) | Bilibi's source code: the Platform |
-| [`bilibi-app-template`](https://github.com/BelimbingApp/bilibi-app-template) | The template every application is copied from |
+| [`bilibi-app-maker`](https://github.com/BelimbingApp/bilibi-app-maker) | The app maker: where every application starts, with its starting files and the `./bilibi` commands |
 | Your application, such as `your-company/my-bilibi` | One product: the Bilibi, Domain and Extension versions it uses, and its releases |
 
-A template is a ready-made starting copy. You don't work in it; you copy it and change the copy. Your copy keeps the template's working parts as they are, such as the `./bilibi` commands and the release scripts, and you replace its sample parts with your own.
+You clone the app maker, and your clone becomes your application. It keeps the maker's working parts as they are, such as the `./bilibi` commands and the release scripts, and you replace its sample parts with your own.
 
 ## Run it locally
 
@@ -109,7 +109,7 @@ Run commands from the clone's root. `./bilibi help` shows the same list. Your br
 
 `check`, `pin` and `build` work only in an application; here they say how to make one.
 
-`new` copies the [application template](https://github.com/BelimbingApp/bilibi-app-template). The [application workspace guide](docs/application-workspaces.md) covers the next step, Git ownership and migration; [ADR 03](docs/architecture/decisions/03-application-workspaces-one-front-door.md) records the decision. `scripts/setup.sh` and `scripts/start-app.sh` remain available directly. Direct setup also installs the safeguard; after installing tools directly, load `$HOME/.cargo/env` before using the direct launcher.
+`new` copies the [app maker](https://github.com/BelimbingApp/bilibi-app-maker). The [application workspace guide](docs/application-workspaces.md) covers the next step, Git ownership and migration; [ADR 03](docs/architecture/decisions/03-application-workspaces-one-front-door.md) records the decision. `scripts/setup.sh` and `scripts/start-app.sh` remain available directly. Direct setup also installs the safeguard; after installing tools directly, load `$HOME/.cargo/env` before using the direct launcher.
 
 Run `./bilibi update` before `./bilibi start` to bring an existing clone up to date. It fast-forwards your branch from its upstream. A published branch whose changes already reached the default branch, including an exact squash merge, can safely return to that default branch. Other local commits and source edits stop the update with a concrete next step. Recognised generated composition and its reproduced dependency lock are regenerated; real edits are never discarded or silently stashed. Update never downgrades a component. A component on a branch, dirty, symlinked, unlisted or off its official origin stays where it is, with its path and reason printed; this does not fail the update.
 
