@@ -2,13 +2,13 @@
 //! ask [`Holds`] before acting; what a hold names is kept and listed with its
 //! reason on the completion certificate.
 use crate::{HOLD_MANAGE, HOLD_VIEW};
-use bilibi_database::{Change, Error, MutationBoundary, Result};
+use bilibi_database::{Change, Error, MutationTransaction, Result};
 use bilibi_party_ids::PersonId;
 use bilibi_tenancy::Scope;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::BTreeMap;
-use tokio_postgres::{Client, GenericClient, Row};
+use tokio_postgres::{GenericClient, Row};
 
 const MAX_REASON: usize = 255;
 const RECORD_KIND: &str = "base/privacy.hold";
@@ -136,10 +136,10 @@ fn snapshot(hold: &Hold) -> Value {
     serde_json::to_value(hold).unwrap_or(Value::Null)
 }
 
-/// Places a hold. Placing a second active hold on the same target is `Conflict`.
-pub(crate) async fn place(
-    boundary: &MutationBoundary,
-    client: &mut Client,
+/// Places a hold in the caller's transaction. A second active hold on the
+/// same target is `Conflict`.
+pub(crate) async fn place_in(
+    tx: &mut MutationTransaction<'_>,
     scope: &Scope,
     target: HoldTarget,
     text: &str,
@@ -154,9 +154,6 @@ pub(crate) async fn place(
             (None, Some(kind.clone()), Some(*id))
         }
     };
-    let mut tx = boundary
-        .begin(client, scope.mutation_context("privacy.hold.place"))
-        .await?;
     bilibi_authz::authorize_key(tx.sql(), scope, HOLD_MANAGE).await?;
     let taken = tx
         .sql()
@@ -204,22 +201,18 @@ pub(crate) async fn place(
             })
         })
         .await?;
-    tx.commit().await?;
     Ok(placed)
 }
 
-/// Releases an active hold; the next erasure or sweep acts on what it kept.
-pub(crate) async fn release(
-    boundary: &MutationBoundary,
-    client: &mut Client,
+/// Releases an active hold in the caller's transaction; the next erasure or
+/// sweep acts on what it kept.
+pub(crate) async fn release_in(
+    tx: &mut MutationTransaction<'_>,
     scope: &Scope,
     id: i64,
     text: &str,
 ) -> Result<Hold> {
     let text = reason(text)?;
-    let mut tx = boundary
-        .begin(client, scope.mutation_context("privacy.hold.release"))
-        .await?;
     bilibi_authz::authorize_key(tx.sql(), scope, HOLD_MANAGE).await?;
     let before = tx
         .sql()
@@ -267,7 +260,6 @@ pub(crate) async fn release(
             })
         })
         .await?;
-    tx.commit().await?;
     Ok(released)
 }
 

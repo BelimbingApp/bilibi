@@ -42,6 +42,75 @@ pub enum Identifier {
     Email(String),
     Phone(String),
 }
+impl Identifier {
+    pub fn value(&self) -> &str {
+        match self {
+            Self::Email(value) | Self::Phone(value) => value,
+        }
+    }
+}
+impl Subject {
+    /// `ILIKE` patterns (`%value%`, with `%`, `_` and `\` escaped) for a store
+    /// with no person link that can only find the subject by an identifier
+    /// the operator confirmed when verifying the request.
+    pub fn like_patterns(&self) -> Vec<String> {
+        self.identifiers
+            .iter()
+            .map(|identifier| {
+                let escaped = identifier
+                    .value()
+                    .replace('\\', "\\\\")
+                    .replace('%', "\\%")
+                    .replace('_', "\\_");
+                format!("%{escaped}%")
+            })
+            .collect()
+    }
+    /// Replaces every identifier inside the string values of `value`, at any
+    /// depth and ignoring case, with `[erased]`. Keys, numbers and structure
+    /// stay. Returns whether anything changed.
+    pub fn redact(&self, value: &mut Value) -> bool {
+        match value {
+            Value::String(text) => {
+                let mut changed = false;
+                for identifier in &self.identifiers {
+                    let needle = identifier.value();
+                    if needle.is_empty() {
+                        continue;
+                    }
+                    // ASCII case folding keeps every byte offset; a non-ASCII
+                    // identifier must match exactly.
+                    let ascii = needle.is_ascii();
+                    let needle = if ascii {
+                        needle.to_ascii_lowercase()
+                    } else {
+                        needle.to_owned()
+                    };
+                    loop {
+                        let haystack = if ascii {
+                            text.to_ascii_lowercase()
+                        } else {
+                            text.clone()
+                        };
+                        let Some(at) = haystack.find(&needle) else {
+                            break;
+                        };
+                        text.replace_range(at..at + needle.len(), ERASED);
+                        changed = true;
+                    }
+                }
+                changed
+            }
+            Value::Array(items) => items
+                .iter_mut()
+                .fold(false, |changed, item| self.redact(item) | changed),
+            Value::Object(map) => map
+                .values_mut()
+                .fold(false, |changed, item| self.redact(item) | changed),
+            _ => false,
+        }
+    }
+}
 
 /// What a store holds about a subject, per record kind.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -75,9 +144,33 @@ pub enum FileRef {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct Erased {
     pub actions: Vec<KindAction>,
+    /// Every record anonymised or deleted, with the personal fields it held:
+    /// `base/privacy` clears those fields from the record's earlier audit
+    /// evidence in the same transaction.
+    #[serde(default)]
+    pub records: Vec<ErasedRecord>,
     pub kept: Vec<Kept>,
     /// Set when the store cannot finish now (a backup, an external system).
     pub deferral: Option<Deferral>,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ErasedRecord {
+    /// The audit record kind (`Change::kind`).
+    pub kind: String,
+    pub id: i64,
+    /// The personal fields, by the names the store's changes use.
+    pub fields: Vec<String>,
+}
+impl Erased {
+    /// Adds another pass's answer (for example from `after_erase`).
+    pub fn merge(&mut self, other: Erased) {
+        self.actions.extend(other.actions);
+        self.records.extend(other.records);
+        self.kept.extend(other.kept);
+        if other.deferral.is_some() {
+            self.deferral = other.deferral;
+        }
+    }
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct KindAction {
@@ -95,7 +188,8 @@ pub enum Action {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Kept {
     pub kind: String,
-    pub id: i64,
+    /// The record's ID as its store names it (a number, or an artifact's UUID).
+    pub id: String,
     pub reason: KeptReason,
     /// RFC 3339, when the reason has an end.
     pub until: Option<String>,
@@ -106,6 +200,8 @@ pub enum KeptReason {
     LegalHold,
     RetainedUntil,
     LegalMinimum,
+    /// The record also belongs to another party (a company's address).
+    Shared,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Deferral {
@@ -142,6 +238,19 @@ pub trait Handler: Send + Sync {
         subject: &'a Subject,
         holds: &'a Holds,
     ) -> HandlerFuture<'a, Erased>;
+    /// Work that needs a plain connection after the erasure committed, such as
+    /// removing files or deleting artifacts. Retried until it succeeds, so it
+    /// must be idempotent, and it must keep what `holds` names. Its answer is
+    /// added to the store's result.
+    fn after_erase<'a>(
+        &'a self,
+        _client: &'a mut Client,
+        _scope: &'a Scope,
+        _subject: &'a Subject,
+        _holds: &'a Holds,
+    ) -> HandlerFuture<'a, Erased> {
+        Box::pin(async { Ok(Erased::default()) })
+    }
 }
 
 /// The value an erased field takes, in records and in audit evidence.
