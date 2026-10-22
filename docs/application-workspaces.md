@@ -1,8 +1,11 @@
 # Application workspaces
 
-Try Bilibi in a Platform clone; use `./bilibi new my-bilibi` when you want to keep your own application.
+An application is your own product built on Bilibi. You get one in either of two ways:
 
-## Create your application
+- **Start from the template** if you want a product: clone [`bilibi-app-template`](https://github.com/BelimbingApp/bilibi-app-template) and run `./bilibi start`. The clone is already your application; its README, **Start here**, shows how to make it yours.
+- **Start from a Platform clone** if you began here: run `./bilibi new my-bilibi`, as below.
+
+## Create your application from a Platform clone
 
 From your trial's Platform root, run:
 

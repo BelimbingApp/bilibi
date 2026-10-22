@@ -44,25 +44,38 @@ case ${1:-help} in
         exec python3 "$root/scripts/new-application.py" "${@:2}"
         ;;
     check|pin|build)
-        echo "This is a Platform clone, without a saved application recipe."
-        echo 'Next: ./bilibi new <name> creates your application repository. Run check, pin and build there.'
-        echo 'For now, try local sources with ./bilibi start and ./bilibi add <component>.'
+        echo "./bilibi $1 works in an application, not here."
+        echo 'This is the Bilibi Platform: Bilibi'"'"'s own source code.'
+        echo 'To make your own application from what you have here, run: ./bilibi new <name>'
+        echo 'Or start one from the template: https://github.com/BelimbingApp/bilibi-app-template'
         exit 1
         ;;
     help|--help|-h)
         cat <<'USAGE'
-This is the Bilibi Platform repository.
+This is the Bilibi Platform: Bilibi's own source code.
+Work here to change Bilibi itself, or to try Domains and Extensions.
+To build a product of your own, start from the application template:
+https://github.com/BelimbingApp/bilibi-app-template
 
 Usage: ./bilibi <command>
-  start             Set up missing tools and run local sources
-  setup             Prepare tools and install the Platform commit safeguard
-  add <component>   Mount an official Domain or Extension (from catalogue.json, or the
-                    --kind, --source and --commit that Software shows)
-  status            Show component repositories, branches and local changes
-  update            Pull safe Platform changes and move release mounts to recommended ones
-  new <name>        Keep this source composition in a sibling application repository
-  check, pin, build Require an application repository
-  help              Show this command list (-h and --help also work)
+
+Run Bilibi on this computer
+  start         Install anything missing, run Bilibi, and open it in your browser.
+  add <name>    Add a Domain or Extension, such as: ./bilibi add finance
+                Or paste the add command that the Software page shows.
+                Then run ./bilibi start again to use it.
+
+Stay up to date
+  update        Get the latest Bilibi changes, and move the Domains and
+                Extensions you added to their newest recommended versions.
+  status        List Bilibi and what you added, with each one's branch and
+                any changes you have not committed.
+
+Less often
+  setup         Install the tools only, without starting Bilibi.
+  new <name>    Turn what you have here into your own application, in a new
+                folder next to this one.
+  help          Show this list.
 USAGE
         ;;
     *) echo "Unknown command: $1. Run ./bilibi --help." >&2; exit 1 ;;
