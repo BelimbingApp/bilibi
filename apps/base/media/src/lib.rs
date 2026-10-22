@@ -17,7 +17,7 @@ mod signing;
 mod storage;
 mod upload;
 
-pub use attachments::{Attachment, AttachmentState, AttachmentSubject, Cleanup};
+pub use attachments::{Attachment, AttachmentState, AttachmentSubject, Cleanup, ErasedAttachment};
 pub use owner::{Subject, SubjectAction, SubjectOwner, Subjects, SUBJECTS};
 pub use response::{Delivery, StreamFile};
 pub use signing::Signer;
@@ -711,6 +711,7 @@ inventory::submit! {
         migrations: &[
             ("base-media-001", include_str!("../migrations/001-media.sql")),
             ("base-media-002", include_str!("../migrations/002-attachments.sql")),
+            ("base-media-003-erasure", include_str!("../migrations/003-erasure.sql")),
         ],
         services: &[Service { id: "base/media.store", factory: |services| {
             let modules = bilibi_module_registry::discover()?;
