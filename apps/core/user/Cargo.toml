@@ -44,7 +44,7 @@ bilibi-locale = { path = "../../base/locale" }
 serde_urlencoded = "0.7.1"
 jiff = { version = "0.2.38", features = ["tzdb-bundle-always"] }
 thiserror.workspace = true
-hmac = "0.13.0"
+hmac.workspace = true
 sha2 = "0.11.1"
 subtle = "2.6.1"
 base64 = "0.23.1"

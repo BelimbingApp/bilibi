@@ -197,6 +197,7 @@ impl Vocabulary {
         };
         let access = |value: Access| match value {
             Access::Capability(key) | Access::OperatorCapability(key) => check(key),
+            Access::AnyOf(keys) => keys.iter().try_for_each(|key| check(key)),
             _ => Ok(()),
         };
         for entry in catalog.entries::<Route>(ROUTES)? {

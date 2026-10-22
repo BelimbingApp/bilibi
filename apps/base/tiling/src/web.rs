@@ -221,6 +221,7 @@ impl Core {
             Access::Public | Access::SignedIn | Access::StepUp { .. } => true,
             Access::Capability(key) => standing.capabilities.contains(key),
             Access::Operator => standing.operator,
+            Access::AnyOf(keys) => keys.iter().any(|key| standing.capabilities.contains(key)),
             Access::Owner => standing.owner,
             Access::OperatorCapability(key) => {
                 standing.operator && standing.capabilities.contains(key)

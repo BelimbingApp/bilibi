@@ -259,6 +259,13 @@ pub enum Access {
     Operator,
     /// Both requirements apply; an operator identity is not a capability grant.
     OperatorCapability(&'static str),
+    /// Any one of these capabilities opens the page (Bilimbi's
+    /// `{:any_of, [..]}`): a combined page such as a person's own standing,
+    /// where each section and write inside still enforces its own capability.
+    /// Boot refuses an empty list, a blank key and a repeated key, and the
+    /// vocabulary check refuses an undeclared one. Direct denies still win
+    /// per key, so a denied key never opens the page through another's deny.
+    AnyOf(&'static [&'static str]),
     /// The installation owner only (`bilibi_tenancy::prove_owner`): the
     /// bootstrap account in the operator tenant, in its own browser session.
     /// No role, capability or grant extends it to anyone else.
@@ -362,10 +369,16 @@ pub struct Seed {
     pub action: SeedAction,
 }
 fn access_valid(access: Access) -> bool {
-    !matches!(
-        access,
-        Access::Capability("") | Access::OperatorCapability("")
-    )
+    match access {
+        Access::Capability(key) | Access::OperatorCapability(key) => !key.trim().is_empty(),
+        Access::AnyOf(keys) => {
+            !keys.is_empty()
+                && keys.iter().all(|key| !key.trim().is_empty())
+                && keys.iter().collect::<BTreeSet<_>>().len() == keys.len()
+        }
+        Access::StepUp { inner, .. } => access_valid(*inner),
+        _ => true,
+    }
 }
 fn path_valid(path: &str, operation: &str, access: Access) -> bool {
     path.starts_with('/')

@@ -74,6 +74,11 @@ impl Pages {
             Access::Capability(key) | Access::OperatorCapability(key) => {
                 self.allowed(scope, key).await?
             }
+            Access::AnyOf(keys) => {
+                let client = self.db.get().await?;
+                let held = effective_capabilities(&**client, scope).await?;
+                keys.iter().any(|key| held.contains(key))
+            }
             _ => true,
         };
         if !capability {

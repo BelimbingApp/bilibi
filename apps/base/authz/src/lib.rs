@@ -67,6 +67,30 @@ impl Decision {
 pub async fn authorize_key(client: &impl GenericClient, scope: &Scope, key: &str) -> Result<()> {
     decide(client, scope, key).await?.require()
 }
+/// Opens for any one of `keys` (a route or menu entry that serves a combined
+/// page, `Access::AnyOf`). Candidates come from the live effective set, which
+/// already drops direct denies, so a key the account does not hold writes no
+/// denial row while another key opens the page; each candidate is then
+/// decided (and logged) like [`authorize_key`]. When none is held the first
+/// key is decided once, so a refusal leaves one denial row. An empty list or
+/// an empty or oversized key is `Invalid`.
+pub async fn authorize_any(
+    client: &impl GenericClient,
+    scope: &Scope,
+    keys: &[&str],
+) -> Result<()> {
+    if keys.is_empty() || keys.iter().any(|key| key.is_empty() || key.len() > 200) {
+        return Err(Error::Invalid);
+    }
+    let held = effective_capabilities(client, scope).await?;
+    for key in keys.iter().filter(|key| held.contains(**key)) {
+        if decide(client, scope, key).await?.allowed {
+            return Ok(());
+        }
+    }
+    authorize_key(client, scope, keys[0]).await?;
+    Err(Error::Forbidden)
+}
 /// Unknown keys, invalid live tenants, and non-operator platform requests deny
 /// before any grants (including grant_all) can take effect. Denials are logged.
 pub async fn decide(client: &impl GenericClient, scope: &Scope, key: &str) -> Result<Decision> {

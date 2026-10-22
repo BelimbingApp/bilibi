@@ -33,7 +33,7 @@ page's exact pattern, and answers GET with a 308 that keeps the parameter
 segments and the query string. It checks no access; the destination does.
 
 Access is checked before the owner renders: Public, SignedIn, Capability(key),
-Operator, OperatorCapability(key), Owner, or StepUp { operation, inner }. Operator requires the persisted Tenancy
+AnyOf(keys), Operator, OperatorCapability(key), Owner, or StepUp { operation, inner }. AnyOf opens a combined page for an account that holds any one of its keys (Bilimbi `{:any_of, [..]}`, a menu leaf's `Requirement::AnyOf` is the matching link): boot refuses an empty, blank or repeated key and an undeclared one, a direct deny removes only its own key, and the owner still enforces each section and write with `Capability`. Operator requires the persisted Tenancy
 proof, never a tenant-ID convention or an admin grant. OperatorCapability
 requires both proof and capability; direct denials still win. Browser GETs
 without a valid session redirect to login. Authenticated refusals return 403.

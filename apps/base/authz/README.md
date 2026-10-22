@@ -55,7 +55,9 @@ Administration's list) make. A new module below
 Authz that needs a decision extends that seam; it does not import Authz.
 
 Use `authorize_key` (or the compatibility `Capability` enum) for enforcement and
-`decide` for a reasoned decision. Unknown keys deny even grant-all holders.
+`decide` for a reasoned decision. `authorize_any(client, scope, keys)` is the same
+enforcement for a combined page (`Access::AnyOf`): it opens for any one live key and
+writes no denial row for the others while one opens it. Unknown keys deny even grant-all holders.
 A contributed platform capability requires the persistent `platform_operator`
 identity **and** a grant; tenant 1 and grant-all have no implicit operator power.
 Direct deny wins over direct allow, role grants and grant-all. Permission reads

@@ -1332,6 +1332,8 @@
   "domain_sources": {
     "supply_chain": "4b4f95c8effbd719077b35b9f792f3de413d8dba",
     "finance": "4abfaf829321f8540581d833752a086b21b45ba9",
-    "factory": "f39ed3dcf2ce2694d30c2b88e82212780f4f3b98"
+    "factory": "f39ed3dcf2ce2694d30c2b88e82212780f4f3b98",
+    "people": "771cd360c94cd1893b1e066bb087b2aaa0a49d4d",
+    "people_connector": "dc6e1cbeca39be8eb9211a333088fa726c09b603"
   }
 }

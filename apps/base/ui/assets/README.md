@@ -16,10 +16,11 @@ class strings or `@source inline(...)` in the CSS entrypoint. The source snapsho
 in `reference-candidates.txt` keeps Bilimbi classes available while components
 are translated. To recapture it from the exact pinned checkout, run
 `node apps/base/ui/assets/capture-reference.cjs /path/to/bilimbi`.
-`domain-candidates.txt` is the same kind of snapshot for the Supply Chain, Finance
-and Factory sources at the HEADs in `provenance.json` (`domain_sources`), so
-mounting those Domains changes no CSS. Recapture it from clean pinned checkouts with
-`node apps/base/ui/assets/capture-domains.cjs supply_chain=<dir> finance=<dir> factory=<dir>`.
+`domain-candidates.txt` is the same kind of snapshot for the Supply Chain, Finance,
+Factory, People and People connector sources at the HEADs in `provenance.json`
+(`domain_sources`, keyed by container ID), so mounting those Domains changes no CSS.
+Recapture it from clean pinned checkouts with
+`node apps/base/ui/assets/capture-domains.cjs supply_chain=<dir> finance=<dir> factory=<dir> people=<dir> people_connector=<dir>`.
 Mounted Domain and Extension checkouts are gitignored, which Tailwind honours, so
 `build.cjs` adds an explicit `@source` for each mounted Domain or Extension (a folder holding
 `bilibi.container.toml`); a class that only a mounted Domain uses then fails

@@ -241,6 +241,7 @@ async fn permits(app: &App, scope: &Scope, access: Access) -> Result<bool> {
         Access::Public | Access::SignedIn | Access::StepUp { .. } => Ok(()),
         Access::Capability(key) => authz::authorize_key(client, scope, key).await,
         Access::Operator => tenancy::prove_operator(client, scope).await.map(|_| ()),
+        Access::AnyOf(keys) => authz::authorize_any(client, scope, keys).await,
         Access::Owner => tenancy::prove_owner(client, scope).await.map(|_| ()),
         Access::OperatorCapability(key) => authz::authorize_operator(client, scope, key)
             .await

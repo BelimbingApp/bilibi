@@ -28,6 +28,8 @@ zip = { version = "9.0.4", default-features = false, features = ["deflate-flate2
 tar = "0.4.44"
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 sha2 = "0.11"
+# Keyed digests: signed streams (Media), webhook signatures (Integration, People connector).
+hmac = "0.13.0"
 futures-core = "0.3"
 # Outgoing HTTPS (base/integration) trusts the server's own CA store too.
 rustls-native-certs = "0.8"
