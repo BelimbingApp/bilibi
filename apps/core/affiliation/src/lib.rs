@@ -160,6 +160,19 @@ impl AffiliationService {
         let scope = self.fresh(tx.sql(), scope).await?;
         identity::lock_for_employment(tx, &scope, id).await
     }
+    /// The same proof at the company the consumer names: any live company of
+    /// the tenant the actor may target (own company, or tenant-wide reach),
+    /// locked writable, with the affiliation linked and belonging to it.
+    pub async fn lock_for_employment_at<'tx>(
+        &self,
+        tx: &'tx MutationTransaction<'_>,
+        scope: &Scope,
+        id: AffiliationId,
+        company: OrganisationId,
+    ) -> Result<OwnCompanyAffiliation<'tx>> {
+        let scope = self.fresh(tx.sql(), scope).await?;
+        identity::lock_for_employment_at(tx, &scope, id, company).await
+    }
     pub async fn lock_for_account_binding<'tx>(
         &self,
         tx: &'tx MutationTransaction<'_>,

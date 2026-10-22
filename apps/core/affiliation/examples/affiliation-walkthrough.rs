@@ -208,6 +208,41 @@ async fn main() -> Result<(), Failure> {
             .lock_for_account_binding(&tx, &manager, external.id)
             .await,
     );
+    // PP2: the proof at a named company of the tenant, for Employment at a
+    // sibling company. The manager reaches company 2 through the tenant-wide
+    // reach; a direct deny of that reach keeps only the manager's own company.
+    show(
+        "sibling-company Employment proof at the named company",
+        affiliations
+            .lock_for_employment_at(&tx, &manager, external.id, OrganisationId::new(2)?)
+            .await,
+    );
+    show(
+        "named company must be the affiliation's company",
+        affiliations
+            .lock_for_employment_at(&tx, &manager, external.id, OrganisationId::new(1)?)
+            .await,
+    );
+    show(
+        "other-tenant company is not found",
+        affiliations
+            .lock_for_employment_at(&tx, &manager, external.id, OrganisationId::new(100)?)
+            .await,
+    );
+    client.execute("INSERT INTO principal_capabilities(tenant_id,user_id,capability,is_allowed) VALUES(1,$1,'admin.company.tenant-wide.manage',false)", &[&manager.user()]).await?;
+    show(
+        "sibling company outside the actor's reach denied",
+        affiliations
+            .lock_for_employment_at(&tx, &manager, external.id, OrganisationId::new(2)?)
+            .await,
+    );
+    show(
+        "own company stays within reach without tenant-wide",
+        affiliations
+            .lock_for_employment_at(&tx, &manager, own.id, OrganisationId::new(1)?)
+            .await,
+    );
+    client.execute("DELETE FROM principal_capabilities WHERE tenant_id=1 AND user_id=$1 AND capability='admin.company.tenant-wide.manage'", &[&manager.user()]).await?;
     let mut contender = db.get().await?;
     let mut blocked = boundary
         .begin(
@@ -420,6 +455,12 @@ async fn main() -> Result<(), Failure> {
             .lock_for_employment(&tx, &manager, own.id)
             .await,
     );
+    show(
+        "unlinked Employment proof at the named company denied",
+        affiliations
+            .lock_for_employment_at(&tx, &manager, own.id, OrganisationId::new(1)?)
+            .await,
+    );
     tx.rollback().await?;
     show(
         "unlinked edit denied",
@@ -485,6 +526,12 @@ async fn main() -> Result<(), Failure> {
             .lock_for_account_binding(&tx, &manager, second.id)
             .await,
     );
+    show(
+        "archived company Employment proof denied",
+        affiliations
+            .lock_for_employment_at(&tx, &manager, second.id, OrganisationId::new(2)?)
+            .await,
+    );
     tx.rollback().await?;
     show(
         "archived company history still readable",
@@ -514,6 +561,12 @@ async fn main() -> Result<(), Failure> {
         "retired Person binding proof denied",
         affiliations
             .lock_for_account_binding(&tx, &manager, second.id)
+            .await,
+    );
+    show(
+        "retired Person Employment proof denied",
+        affiliations
+            .lock_for_employment_at(&tx, &manager, second.id, OrganisationId::new(2)?)
             .await,
     );
     tx.rollback().await?;

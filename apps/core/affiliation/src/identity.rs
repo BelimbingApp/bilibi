@@ -341,14 +341,24 @@ pub(crate) async fn lock_for_account_binding<'tx>(
     })
 }
 /// People must separately authorize Employment and use the same transaction.
-/// Own-company means the explicit tenant_primary_companies assignment, never
-/// a user-selected Organisation or a special numeric company ID.
+/// Own-company means a company of the scope's tenant that the owner proved:
+/// the explicit tenant_primary_companies assignment (`lock_for_employment`)
+/// or the company the caller named and the actor may target
+/// (`lock_for_employment_at`), never a user-selected Organisation or a
+/// special numeric company ID. `identity().organisation()` is the proven
+/// company; People compares its own company column against it.
 #[derive(Debug)]
 pub struct OwnCompanyAffiliation<'tx>(LockedAffiliation<'tx>);
 impl OwnCompanyAffiliation<'_> {
     pub fn identity(&self) -> &LockedAffiliation<'_> {
         &self.0
     }
+}
+/// Tenant lock first in the global order: it fences primary-company transfers
+/// and serializes proof+Employment writes with changing our own company.
+async fn lock_active_tenant(tx: &MutationTransaction<'_>, scope: &Scope) -> Result<()> {
+    tx.sql().query_opt("SELECT id FROM tenants WHERE id=$1 AND status='active' AND deleted_at IS NULL FOR NO KEY UPDATE", &[&scope.tenant()]).await?.ok_or(Error::Unauthorized)?;
+    Ok(())
 }
 pub(crate) async fn lock_for_employment<'tx>(
     tx: &'tx MutationTransaction<'_>,
@@ -357,14 +367,41 @@ pub(crate) async fn lock_for_employment<'tx>(
 ) -> Result<OwnCompanyAffiliation<'tx>> {
     check_context(tx, scope)?;
     authorize_key(tx.sql(), scope, PROVE).await?;
-    // Primary assignment also locks tenant before company: this fences transfers
-    // and serializes proof+Employment writes with changing our own company.
-    tx.sql().query_opt("SELECT id FROM tenants WHERE id=$1 AND status='active' AND deleted_at IS NULL FOR NO KEY UPDATE", &[&scope.tenant()]).await?.ok_or(Error::Unauthorized)?;
+    lock_active_tenant(tx, scope).await?;
     let primary = bilibi_company::primary_company(tx.sql(), scope.tenant())
         .await?
         .ok_or(Error::Forbidden)?;
     let affiliation = raw(tx.sql(), scope, id, false).await?;
     if affiliation.affiliation.organisation_id != primary.id {
+        return Err(Error::Forbidden);
+    }
+    let proof = lock_for_account_binding(tx, scope, id).await?;
+    Ok(OwnCompanyAffiliation(proof))
+}
+/// Employment proof at the company the caller names (PP2): a live company of
+/// the scope's tenant that the actor may target, as a company write would be
+/// authorized (`organisation::authorize_target`: own company, or any company
+/// of the tenant with the tenant-wide reach), locked writable so an archive
+/// that loses the race sees the proof commit first. The affiliation must
+/// belong to that company; a missing or other-tenant company is `NotFound`,
+/// an archived one, a company out of reach, an affiliation of another
+/// company, an unlinked affiliation and a retired or system Person are
+/// `Forbidden`. Lock order stays tenant → Company → Person → Affiliation.
+pub(crate) async fn lock_for_employment_at<'tx>(
+    tx: &'tx MutationTransaction<'_>,
+    scope: &Scope,
+    id: AffiliationId,
+    company: OrganisationId,
+) -> Result<OwnCompanyAffiliation<'tx>> {
+    check_context(tx, scope)?;
+    authorize_key(tx.sql(), scope, PROVE).await?;
+    lock_active_tenant(tx, scope).await?;
+    bilibi_company::organisation::authorize_target(tx.sql(), scope, company.get(), PROVE).await?;
+    bilibi_company::eligibility::lock_account_company(tx.sql(), scope, company)
+        .await
+        .map_err(company_error)?;
+    let affiliation = raw(tx.sql(), scope, id, false).await?;
+    if affiliation.affiliation.organisation_id != company {
         return Err(Error::Forbidden);
     }
     let proof = lock_for_account_binding(tx, scope, id).await?;

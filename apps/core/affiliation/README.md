@@ -76,7 +76,22 @@ archive, Person retirement and affiliation update/unlink until commit. Missing
 primary assignment, external affiliation, retired/system Person, archived
 company, unlinked affiliation or cross-tenant identity refuses the proof.
 
-Use global lock order tenant (for own-company proof) → Company → Person →
+Employment at any company of the tenant takes
+`AffiliationService::lock_for_employment_at(tx, scope, affiliation, company)`
+(PP2). People names the company its employment record will carry; the proof
+authorizes it as a company write would (`organisation::authorize_target` with
+`admin.affiliation.prove`: the actor's own company, or any live company of
+the tenant with `admin.company.tenant-wide.manage`), locks it writable, and
+then issues the same `OwnCompanyAffiliation` only if the affiliation is linked
+and belongs to that company and its Person is neither retired nor system.
+`identity().organisation()` is the proven company; store that, never the
+requested integer. A missing or other-tenant company is `NotFound`; an
+archived company, a company outside the actor's reach, an affiliation of
+another company, an unlinked affiliation and a retired or system Person are
+`Forbidden`. The primary-only `lock_for_employment` stays for callers that
+mean the tenant's own company and no other.
+
+Use global lock order tenant (for both Employment proofs) → Company → Person →
 Affiliation → User/Employment. When locking multiple identities, sort Company
 and Person IDs first. Call the proof service before locking User/Employment.
 The proof borrows the outer transaction; consume/check its identity before
@@ -101,6 +116,7 @@ BILIBI_AFFILIATION_DEMO=disposable cargo run -p bilibi-affiliation --example aff
 
 The command uses real services and prints concurrent external positions,
 normalization, independent personal contacts, paged panels, proof refusals,
+the sibling-company proof and its reach, company, archive, unlink and retirement refusals,
 explicit primary reassignment, tenant isolation, stale saves, field restrictions,
 live capability revocation, atomic audit failure, rollback event suppression,
 end/unlink retention and archived/retired owner guards. It creates no account,
