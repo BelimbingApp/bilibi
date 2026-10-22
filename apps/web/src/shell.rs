@@ -14,7 +14,7 @@ use axum::{
 };
 use bilibi_base::{authz, menu, tenancy};
 use bilibi_database::{Error, Result};
-use bilibi_module_registry::contributions::{Access, Embed, EmbedContext, Method, EMBEDS};
+use bilibi_module_registry::contributions::{Access, Embed, EmbedContext, Method, Route, EMBEDS};
 use bilibi_security::Scope;
 use bilibi_ui::page::{PageRequest, PageService};
 use bilibi_ui::{AppShell, DisplayPreferences, Framed, Html, NavNode, SearchPage, ShellContext};
@@ -121,17 +121,6 @@ async fn context<'a>(
     if platform_operator {
         adopt_installation_locale(app, scope).await;
     }
-    // The search lists the pages the person may open, decided as the menu
-    // decides its items: display only and unlogged, since each route checks
-    // its own access again when opened.
-    let pages = search_pages(app, &tree, |access| match access.base() {
-        Access::SignedIn => true,
-        Access::Capability(key) => capabilities.contains(key),
-        Access::Operator => platform_operator,
-        Access::OperatorCapability(key) => platform_operator && capabilities.contains(key),
-        Access::Owner => owner,
-        Access::Public | Access::StepUp { .. } => false,
-    });
     // The company the account signs in under, through its affiliation
     // (Bilimbi `company_name_for`): display only, so a company the directory
     // cannot name never blocks an otherwise proven session.
@@ -171,6 +160,25 @@ async fn context<'a>(
             .get::<bilibi_base::system::Instances>(bilibi_base::system::SERVICE)?
             .is_core_administrator(scope)
             .await?;
+    // The search lists the pages the person may open, decided as the menu
+    // decides its items: display only and unlogged, since each route checks
+    // its own access again when opened. Two pages the status bar links to
+    // under a condition use the same condition here: Instance settings also
+    // needs the Core Administrator standing, and the operator setup page only
+    // helps while the operator stands on no primary company (afterwards it
+    // sends everyone to that company).
+    let may_open = |access: Access| match access.base() {
+        Access::SignedIn => true,
+        Access::Capability(key) => capabilities.contains(key),
+        Access::Operator => platform_operator,
+        Access::OperatorCapability(bilibi_base::system::INSTANCE_MANAGE) => manage_instance,
+        Access::OperatorCapability(key) => platform_operator && capabilities.contains(key),
+        Access::Owner => owner,
+        Access::Public | Access::StepUp { .. } => false,
+    };
+    let pages = search_pages(app, &tree, |route| {
+        may_open(route.access) && (route.path != OPERATOR_SETUP || operator_company_missing)
+    });
     let served = served_routes(app);
     let pins: Vec<_> = bilibi_user::list_pins(&**client, scope)
         .await?
@@ -219,12 +227,19 @@ async fn context<'a>(
     })
 }
 
+/// The address of Company's operator setup page, which the status bar links to
+/// while the operator stands on no primary company (`shell.html`).
+const OPERATOR_SETUP: &str = "/setup/platform-operator";
+
 /// The pages the shell's search lists: each page route the person `may` open,
 /// named by its title, else its menu row, and placed where it lives: at its
 /// menu row, else under the deepest row its address sits beneath. A personal
 /// settings page takes its tab's label under `SETTINGS_LOCATION`. A route with
-/// a path parameter, a redirect and a page with no name are left out.
-fn search_pages(app: &App, tree: &[menu::Node], may: impl Fn(Access) -> bool) -> Vec<SearchPage> {
+/// a path parameter and a page with no name are left out. A route that only
+/// redirects is listed under its title when the person may also open where it
+/// leads (Create Contact opens the Contacts list's dialog), so an old address
+/// that redirects returns no title.
+fn search_pages(app: &App, tree: &[menu::Node], may: impl Fn(&Route) -> bool) -> Vec<SearchPage> {
     let mut rows = Vec::new();
     menu_rows(tree, &[], &mut rows);
     let settings = bilibi_ui::SettingsTab::pages();
@@ -232,12 +247,15 @@ fn search_pages(app: &App, tree: &[menu::Node], may: impl Fn(Access) -> bool) ->
     let mut account = Vec::new();
     for bound in app.routes.iter() {
         let route = bound.route;
-        if route.method != Method::Get
-            || route.path.contains('{')
-            || !may(route.access)
-            || bound.page.0.redirect(route.operation).is_some()
-        {
+        if route.method != Method::Get || route.path.contains('{') || !may(route) {
             continue;
+        }
+        if let Some(target) = bound.page.0.redirect(route.operation) {
+            let path = target.split('?').next().unwrap_or(target);
+            match crate::routes::resolve(app, path) {
+                Ok((to, _)) if may(to.route) => {}
+                _ => continue,
+            }
         }
         if let Some(at) = settings.iter().position(|(_, href)| *href == route.path) {
             let label = settings[at].0;

@@ -144,7 +144,7 @@ impl Page<Scope, Error> for Pages {
     fn title(&self, operation: &str) -> Option<&'static str> {
         Some(match operation {
             "list" => "Contacts",
-            "create" => "New contact",
+            "create" => "Create Contact",
             _ => "Contact",
         })
     }

@@ -38,8 +38,10 @@ impl SearchPage {
 
 /// The search dialog over `pages`: Pages first, then Account.
 pub fn page_search(pages: &[SearchPage]) -> askama::Result<Html> {
+    // A plain text field beside the search icon: a search field would add the
+    // browser's own clear "×" next to the dialog's Close.
     let input = Field::named("app-search-input")
-        .kind(InputKind::Search)
+        .kind(InputKind::Text)
         .placeholder("Search…")
         .aria_label("Search pages")
         .autocomplete("off")

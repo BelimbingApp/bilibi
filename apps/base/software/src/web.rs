@@ -1863,8 +1863,10 @@ impl Page<Scope, Error> for Pages {
     fn redirect(&self, operation: &str) -> Option<&'static str> {
         (operation == "legacy_releases").then_some("/system/software?tab=releases")
     }
+    // The old releases address only redirects, so it has no name of its own:
+    // a title would list it in the top-bar search beside Software.
     fn title(&self, operation: &str) -> Option<&'static str> {
-        matches!(operation, "index" | "legacy_releases").then_some("Software")
+        (operation == "index").then_some("Software")
     }
     fn render<'a>(&'a self, request: PageRequest<'a, Scope>) -> PageFuture<'a, Error> {
         Box::pin(async move {

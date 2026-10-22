@@ -191,7 +191,7 @@ Width is a shared decision. Every page uses `PageVariant`. All three share one c
   - Below `lg` the menu is an off-canvas drawer.
 - Pages never render chrome. The host wraps them (`apps/web/src/shell.rs`).
 - The bell shows the unread count and follows new notifications live. It opens recent items.
-- Search is the button before the bell, or `/` when not typing in a field. It opens a dialog that finds every page the person may open: menu pages, account pages and pages with no menu row. A query matches a page's name or any place it lives under, ignoring case, and each result shows where it lives (`Administration › Authorization › Roles`, `Account › My Settings › Password`). ↑/↓ and Enter open one; Esc or a click outside closes it. On a phone it fills the screen.
+- Search is the button before the bell, or `/` when not typing in a field. It opens a dialog that finds every page the person may open that has a name (its page title or menu row): menu pages, account pages and pages with no menu row. A query matches a page's name or any place it lives under, ignoring case, and each result shows where it lives (`Administration › Authorization › Roles`, `Account › My Settings › Password`). ↑/↓ and Enter open one; Esc or a click outside closes it. On a phone it fills the screen.
 - Theme, clock mode and pins belong to the account. They are not `localStorage`.
 - "Viewing as … · Stop" appears only while impersonating.
 - A platform-operator row appears in the account menu. Operator-only screens carry their own caution where reach is unfiltered.

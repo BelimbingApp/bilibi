@@ -30,6 +30,8 @@ proof, never a tenant-ID convention or an admin grant. OperatorCapability
 requires both proof and capability; direct denials still win. Browser GETs
 without a valid session redirect to login. Authenticated refusals return 403.
 
+The top-bar search (`src/shell.rs`, `search_pages`) lists a GET page whose path has no parameter when the person may open it, judged as the menu judges (display only; the route checks again when opened), and only when it has a name: `Page::title` for its operation, else its menu row. A page with neither is not found. A route that only redirects is listed under its title when the person may also open where it leads, so an old address kept working by a redirect returns no title.
+
 Step-up (`apps/base/step_up/README.md`) is the same on every surface:
 
 - `StepUp { operation, inner }` checks `inner`, then `StepUp::require` for the declared `operation`. A GET that owes a check is redirected to the 2FA prompt (the method choice when several are enrolled) with `return=<address>`; any other method, an embed or a panel is refused with 403. Boot refuses a step-up of `Public`, of another step-up, or of an undeclared operation. Menus and tile pickers check only `inner`.

@@ -310,7 +310,7 @@
         this.open();
         return;
       }
-      // Escape closes at once: a search field would spend it clearing its text.
+      // Escape closes at once, whatever inside the dialog has focus.
       if (event.key === 'Escape') {
         event.preventDefault();
         this.close();
