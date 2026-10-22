@@ -133,7 +133,10 @@ def composition(layer, modules):
             'edition.workspace = true\nrust-version.workspace = true\nlicense.workspace = true\n\n[dependencies]\n')
     text += ''.join(f'{name} = {{ path = "{path}" }}\n' for path, name in modules)
     code = '// Generated composition links. Runtime inventory owns discovery.\n'
-    code += ''.join(f'pub use {name.replace("-", "_")} as {path.replace("/", "_")};\n' for path, name in modules)
+    # Rustfmt sorts imports by Rust crate identifier, not container/module path.
+    # Keep discovery order for the manifest and MODULES table below.
+    imports = sorted(modules, key=lambda module: module[1].replace('-', '_'))
+    code += ''.join(f'pub use {name.replace("-", "_")} as {path.replace("/", "_")};\n' for path, name in imports)
     if layer in CONTAINER_LAYERS:
         # A mounted module's ID is its <container>/<module> path; boot refuses descriptors that differ.
         code += '/// Mounted (module ID, crate) pairs, checked against registered descriptors at boot.\n#[rustfmt::skip]\n'
