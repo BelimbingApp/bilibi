@@ -139,7 +139,7 @@ Agents curate through `base.picklists.*` (`src/operations.rs`). Each write is a 
 
 ## Runtime check
 
-`apps/web/examples/picklists-reference.rs` declares a category list with a locked `other` value, a dependent sub-category list and a second module's region list. Each declaring module contributes its seed. Run it on a fresh disposable database:
+`apps/web/examples/picklists-reference/` declares a category list with a locked `other` value, a dependent sub-category list and a second module's region list. Each declaring module contributes its seed. Run it on a fresh disposable database:
 
 ```sh
 DATABASE_URL=… cargo run -p bilibi-web --example picklists-reference
@@ -159,4 +159,6 @@ DATABASE_URL=… cargo run -p bilibi-web --example picklists-reference
 | Agent reads | `base.picklists.lists` shows each list's locked codes; `base.picklists.values` lists the codes in order. |
 | Agent writes | A create's preview is valid and writes no row; its commit saves one; replaying the plan code is refused. |
 | Operator page | Serve the fixture with `APP_ORIGIN` and `BIND_ADDR`, sign in as `admin@example.test`: add, rename, translate, reorder, set the default, retire and restore on `/admin/picklists`; `viewer@example.test` gets 403 and no menu entry. |
+| Case form | `/reference/cases` (`cases.rs`) as `manager@example.test`, who reads in Malay: the category options show the Malay labels; choosing a category narrows the sub-categories, changing it clears the chosen one; after retiring `feedback`, case #1 still shows it marked retired and saves unchanged, a new case cannot choose it; a forged retired value and a forged mismatched pair are refused on their fields. |
+| Installation-wide list | Region is kept on the platform operator: `admin@example.test` edits it; `manager@other.example.test` (tenant 2) sees the operator's labels read-only, picks from them on the case form, and a forged write is refused. |
 | Agent refusals | Retiring the locked value, a stale version and an unknown field are refused in the preview; the viewer's plan is `missing_capability`. |
