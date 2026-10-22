@@ -25,8 +25,8 @@ pub use catalog::{
 };
 pub use column::{Agg, Column, ColumnError, ColumnKind};
 pub use model::{
-    Field, FieldType, GridContribution, Installed, Join, Link, LinkDecl, LinkKind, RecordFields,
-    Source, Table, TableDecl,
+    Field, FieldType, GridContribution, Installed, Join, Link, LinkDecl, LinkKind, PersonalKind,
+    RecordFields, Source, Table, TableDecl,
 };
 
 #[doc(hidden)]

@@ -40,6 +40,31 @@ impl FieldType {
     }
 }
 
+/// What kind of personal data a field holds (ADR 05). The kind shapes a partial
+/// mask and names the field in an audit erasure; `base/privacy` refuses boot
+/// when a table marks one and its module contributes no personal-data handler.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PersonalKind {
+    Name,
+    Email,
+    Phone,
+    Identifier,
+    Date,
+    FreeText,
+}
+impl PersonalKind {
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Name => "name",
+            Self::Email => "email",
+            Self::Phone => "phone",
+            Self::Identifier => "identifier",
+            Self::Date => "date",
+            Self::FreeText => "free_text",
+        }
+    }
+}
+
 /// One value a column can show. `column` is the key the owner's source selects it
 /// under; it defaults to the field id. `hidden` fields exist for links to join on
 /// and never appear as columns. `protected` marks a field no operator may
@@ -56,6 +81,8 @@ pub struct Field {
     /// The closed set an enum field takes, which the band lens colours.
     pub values: &'static [&'static str],
     pub protected: bool,
+    /// Set when the field holds a person's data; see [`PersonalKind`].
+    pub personal: Option<PersonalKind>,
 }
 impl Field {
     pub const fn new(id: &'static str, label: &'static str, ty: FieldType) -> Self {
@@ -67,6 +94,7 @@ impl Field {
             hidden: false,
             values: &[],
             protected: false,
+            personal: None,
         }
     }
     pub const fn choice(
@@ -94,6 +122,12 @@ impl Field {
     pub const fn protected(self) -> Self {
         Self {
             protected: true,
+            ..self
+        }
+    }
+    pub const fn personal(self, kind: PersonalKind) -> Self {
+        Self {
+            personal: Some(kind),
             ..self
         }
     }
@@ -328,6 +362,10 @@ impl Table {
     /// Declared fields in declaration order, hidden ones included.
     pub fn fields(&self) -> &[Field] {
         &self.fields
+    }
+    /// Fields marked personal, hidden ones included.
+    pub fn personal_fields(&self) -> impl Iterator<Item = &Field> {
+        self.fields.iter().filter(|field| field.personal.is_some())
     }
     pub fn field(&self, id: &str) -> Option<&Field> {
         self.fields.iter().find(|field| field.id == id)
