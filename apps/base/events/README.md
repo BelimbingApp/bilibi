@@ -245,6 +245,13 @@ A row with a gap shows a Replay button, for people with `admin.events.replay`. I
 
 The guide `base.events` walks an agent through finding a gap and closing it.
 
+## Personal data
+
+**An event names no person, so it is found only by an identifier (email or phone) the operator confirmed when verifying the request.** Store `base/events.payloads` ("Event payloads") under [`base/privacy`](../../base/privacy/README.md), [ADR 05](../../../docs/architecture/decisions/05-personal-data-registry.md).
+
+- Erasure replaces that identifier inside payload strings with `[erased]`.
+- Subscribers keep their own copies and answer for them through their own handlers.
+
 ## Tables
 
 This module owns `base_events` and `base_events_deliveries`.

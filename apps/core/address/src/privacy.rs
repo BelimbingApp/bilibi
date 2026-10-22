@@ -1,0 +1,176 @@
+//! Address's personal-data store (ADR 05, `base/privacy`): addresses attached
+//! to the person. Erasure clears the lines, phone, label, postcode, locality
+//! and raw input of an address only this person uses, keeping its country so
+//! the record still says where in the world it was; an address another party
+//! also uses (a company's office) is kept and reported. The person's
+//! attachments stay as links to the anonymised address. No Bilimbi counterpart.
+use bilibi_database::{Change, MutationTransaction};
+use bilibi_module_registry::{Contribution, Provenance};
+use bilibi_privacy::{
+    Action, Erased, ErasedRecord, Exported, Handler, HandlerFuture, Holds, Kept, KeptReason,
+    KindAction, KindCount, Located, PersonalData, Subject, PERSONAL_DATA,
+};
+use bilibi_tenancy::Scope;
+use serde_json::{json, Value};
+use tokio_postgres::Client;
+
+const KIND: &str = "address";
+const FIELDS: [&str; 9] = [
+    "label",
+    "phone",
+    "line1",
+    "line2",
+    "line3",
+    "locality",
+    "postcode",
+    "raw_input",
+    "source_ref",
+];
+
+struct Addresses;
+static ADDRESSES: Addresses = Addresses;
+impl Handler for Addresses {
+    fn locate<'a>(
+        &'a self,
+        client: &'a Client,
+        scope: &'a Scope,
+        subject: &'a Subject,
+    ) -> HandlerFuture<'a, Located> {
+        Box::pin(async move {
+            let count: i64 = client
+                .query_one(
+                    "SELECT count(DISTINCT address_id) FROM address_attachments WHERE tenant_id=$1 AND person_id=$2",
+                    &[&scope.tenant(), &subject.person.get()],
+                )
+                .await?
+                .get(0);
+            Ok(Located {
+                kinds: vec![KindCount {
+                    kind: KIND.into(),
+                    by_person: count,
+                    by_identifier: 0,
+                }],
+            })
+        })
+    }
+    fn export<'a>(
+        &'a self,
+        client: &'a Client,
+        scope: &'a Scope,
+        subject: &'a Subject,
+    ) -> HandlerFuture<'a, Exported> {
+        Box::pin(async move {
+            let rows = client
+                .query(
+                    "SELECT a.id,a.label,a.phone,a.line1,a.line2,a.line3,a.locality,a.postcode,a.country_iso,t.kinds,t.is_primary \
+                     FROM address_attachments t JOIN addresses a ON a.tenant_id=t.tenant_id AND a.id=t.address_id \
+                     WHERE t.tenant_id=$1 AND t.person_id=$2 AND a.deleted_at IS NULL ORDER BY a.id",
+                    &[&scope.tenant(), &subject.person.get()],
+                )
+                .await?;
+            let records: Vec<Value> = rows
+                .iter()
+                .map(|row| {
+                    json!({
+                        "id": row.get::<_, i64>(0), "label": row.get::<_, Option<String>>(1), "phone": row.get::<_, Option<String>>(2),
+                        "line1": row.get::<_, Option<String>>(3), "line2": row.get::<_, Option<String>>(4), "line3": row.get::<_, Option<String>>(5),
+                        "locality": row.get::<_, Option<String>>(6), "postcode": row.get::<_, Option<String>>(7),
+                        "country": row.get::<_, Option<String>>(8), "kinds": row.get::<_, Vec<String>>(9), "primary": row.get::<_, bool>(10),
+                    })
+                })
+                .collect();
+            Ok(Exported {
+                records: json!({"addresses": records}),
+                files: Vec::new(),
+            })
+        })
+    }
+    fn erase<'a>(
+        &'a self,
+        tx: &'a mut MutationTransaction<'_>,
+        scope: &'a Scope,
+        subject: &'a Subject,
+        holds: &'a Holds,
+    ) -> HandlerFuture<'a, Erased> {
+        Box::pin(async move {
+            let tenant = scope.tenant();
+            // Shared: another party (a company or another person) also uses it.
+            let rows = tx
+                .sql()
+                .query(
+                    "SELECT a.id,a.label,a.phone,a.line1,a.line2,a.line3,a.locality,a.postcode,a.raw_input,a.source_ref,\
+                     EXISTS (SELECT 1 FROM address_attachments o WHERE o.tenant_id=a.tenant_id AND o.address_id=a.id \
+                       AND (o.organisation_id IS NOT NULL OR o.person_id<>$2)) AS shared \
+                     FROM addresses a WHERE a.tenant_id=$1 AND a.id IN \
+                       (SELECT address_id FROM address_attachments WHERE tenant_id=$1 AND person_id=$2) ORDER BY a.id FOR UPDATE OF a",
+                    &[&tenant, &subject.person.get()],
+                )
+                .await?;
+            let mut erased = Erased::default();
+            let mut count = 0;
+            for row in rows {
+                let id: i64 = row.get(0);
+                if holds.record_held(KIND, id) {
+                    erased.kept.push(Kept {
+                        kind: KIND.into(),
+                        id: id.to_string(),
+                        reason: KeptReason::LegalHold,
+                        until: None,
+                    });
+                    continue;
+                }
+                if row.get::<_, bool>("shared") {
+                    erased.kept.push(Kept {
+                        kind: KIND.into(),
+                        id: id.to_string(),
+                        reason: KeptReason::Shared,
+                        until: None,
+                    });
+                    continue;
+                }
+                let mut before = serde_json::Map::new();
+                for (index, field) in FIELDS.iter().enumerate() {
+                    before.insert(
+                        (*field).into(),
+                        json!(row.get::<_, Option<String>>(index + 1)),
+                    );
+                }
+                if before.values().any(|v| !v.is_null()) {
+                    let before = Value::Object(before);
+                    tx.mutate(move |sql| {
+                        Box::pin(async move {
+                            sql.execute(
+                                "UPDATE addresses SET label=NULL,phone=NULL,line1=NULL,line2=NULL,line3=NULL,locality=NULL,postcode=NULL,\
+                                 raw_input=NULL,source_ref=NULL,verification_status='unverified',version=version+1,updated_at=now() \
+                                 WHERE tenant_id=$1 AND id=$2",
+                                &[&tenant, &id],
+                            )
+                            .await?;
+                            let after = Value::Object(FIELDS.iter().map(|f| ((*f).to_owned(), Value::Null)).collect());
+                            Ok(((), vec![Change { kind: KIND.into(), id, old: before, new: after }]))
+                        })
+                    })
+                    .await?;
+                }
+                count += 1;
+                erased.records.push(ErasedRecord {
+                    kind: KIND.into(),
+                    id,
+                    fields: FIELDS.map(String::from).to_vec(),
+                });
+            }
+            if count > 0 {
+                erased.actions.push(KindAction {
+                    kind: KIND.into(),
+                    action: Action::Anonymised,
+                    count,
+                });
+            }
+            Ok(erased)
+        })
+    }
+}
+
+inventory::submit! { Contribution::new(PERSONAL_DATA, "core/address.addresses",
+Provenance { module: "core/address", source: file!(), line: line!() },
+&PersonalData { label: "Addresses", record_kinds: &[KIND], handler: &ADDRESSES }) }

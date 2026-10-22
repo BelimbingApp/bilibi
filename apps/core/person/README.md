@@ -93,6 +93,14 @@ Directory providers name only bounded, live Person/agent candidates within the
 request tenant. Agent candidates must have `kind=agent`. Base never reads Core
 tables directly; the providers contain the owning queries.
 
+## Personal data
+
+**Erasure anonymises the person to a stub that keeps its ID, kind and links.** Store `core/person.people` ("People (contacts)") under [`base/privacy`](../../base/privacy/README.md), [ADR 05](../../../docs/architecture/decisions/05-personal-data-registry.md).
+
+- Affiliations, accounts and other records still point at the stub.
+- The person's own attachments (`core.person` Media subject) become tombstones and their bytes are removed; their documents (`core.person` Artifacts owner) are deleted unless held or retained.
+- Other people sharing an email or phone are counted for the operator, never touched.
+
 ## Runtime walkthrough without unit tests
 
 Use a freshly migrated disposable database, then run:
