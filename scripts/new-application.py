@@ -15,7 +15,7 @@ from urllib.parse import urlsplit
 ROOT = Path(__file__).resolve().parent.parent
 # Version the application tooling independently of the selected Platform sources.
 TEMPLATE = 'https://github.com/BelimbingApp/bilibi-app-maker.git'
-TEMPLATE_COMMIT = '24f6fafb9cd30f77ae53c1d05fe7fd122a2624a3'
+TEMPLATE_COMMIT = '481ad710b70bec905bf9c1f5b8eaf2bb09b24d35'
 
 
 class Refused(Exception):
