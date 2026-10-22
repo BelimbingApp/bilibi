@@ -412,6 +412,14 @@ Two limits, both operator settings (Settings › Session), with these defaults:
 - **Visible to the owner and administrators:** failures and locks are audited (`user.sign_in.failed`, `user.sign_in.locked`, actor the system principal `sign-in`); the owner is emailed a reset link when a lock starts; an administrator sees "Locked until" on the account page and can Unlock (`admin.user.update`, `user.sign_in.unlocked`).
 - **Ends:** when the lock expires, after a password reset or an administrator's unlock. A successful sign-in forgets the count and the run of locks.
 
+## Personal data
+
+**Erasure closes each linked account as `delete_account` does, then anonymises it.** Store `core/user.accounts` ("User accounts and notifications") under [`base/privacy`](../../base/privacy/README.md), [ADR 05](../../../docs/architecture/decisions/05-personal-data-registry.md).
+
+- Sessions end; step-up factors and reset tokens go. The row, its ID and links stay; the name and sign-in email do not.
+- Single sign-on links, pending sign-ins, failed-attempt counters and notifications have no business value and are deleted.
+- Accounts that only share an email are counted, never touched.
+
 ## Known gaps
 
 Authorization of the link commands is tenant-scoped (K15).
