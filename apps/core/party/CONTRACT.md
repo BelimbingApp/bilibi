@@ -87,8 +87,9 @@ Renaming keeps the role ID. Retirement forbids new assignments but retains
 historical links. Ending/unlinking retains dated history, not cascade deletion.
 Relationship role IDs cannot be used as Authz role IDs.
 
-People Employment references an affiliation with **our own company** and obtains
-a fresh owner-issued proof under the actor scope. A client-provided AffiliationId,
+People Employment references an affiliation with **a company of our tenant** (the
+primary one, or any the actor may target) and obtains a fresh owner-issued proof
+under the actor scope. A client-provided AffiliationId,
 DTO or matching integer is not that proof. K18/F3 implement the
 sealed proof/provider seam and lock/revalidation boundary; K0 intentionally
 publishes no forgeable `OwnCompanyAffiliation` constructor. People must enforce
