@@ -8,9 +8,11 @@
 | --- | --- |
 | Personal-data registry and handler contract | Built |
 | Grid personal field marks and boot check | Built |
-| Legal holds | Built (facade; operator page planned) |
-| Access and erasure requests, export, certificate | Planned |
-| Audit and media erasure paths | Planned |
+| Legal holds | Built (facade, operator page, agent operations) |
+| Access and erasure requests, export, certificate | Built |
+| Audit and media erasure paths | Built |
+| Platform handlers: Person, User, Affiliation, Address, Events, Integration | Built |
+| Notice as a request nears its due date | Planned |
 | Retention classes and sweeps | Planned |
 | Partial masking and audited reveal | Planned |
 
@@ -41,7 +43,8 @@ inventory::submit! { Contribution::new(bilibi_privacy::PERSONAL_DATA, "core/pers
 | --- | --- | --- |
 | `locate` | plain connection | `Located`: counts per record kind, by person and by identifier only |
 | `export` | plain connection | `Exported`: the records as JSON, plus media and artifact references |
-| `erase` | the request's `MutationTransaction` | `Erased`: actions per kind, records kept with a reason, an optional deferral |
+| `erase` | the request's `MutationTransaction` | `Erased`: actions per kind, records kept with a reason, an optional deferral, and the erased fields of each record for audit |
+| `after_erase` | plain connection, after commit | Work outside the transaction (removing files, deleting artifacts). Retried until it succeeds, so idempotent; keeps what holds name |
 
 - `Subject` is a `PersonId` plus identifiers (email, phone). Match by person first. A match by identifier alone is counted, never acted on, until the operator confirms it.
 - Anonymise by default: keep rows, keys, amounts and links, and replace personal fields with `ERASED` (`[erased]`). Delete only records with no business value.
@@ -78,6 +81,48 @@ inventory::submit! { Contribution::new(bilibi_privacy::PERSONAL_DATA, "core/pers
   - a hold is released once, and nothing else about it changes
   - no hold row is deleted or truncated
   - `base_privacy_hold_events` is append-only, with `recorded_at` stamped by PostgreSQL
+
+## Requests
+
+**An access or erasure request runs through one contributed Workflow flow, `received → verified → approved → running → completed`, or `refused`.**
+
+| Step | Needs | Rule |
+| --- | --- | --- |
+| Receive | `privacy.request.receive` | Kind (`access` or `erasure`), the Person and any identifiers. Due date is receipt plus `privacy.request.due_days` |
+| Verify | `privacy.request.receive` | A note saying how the requester's identity was checked |
+| Approve | `privacy.request.approve` | An erasure needs someone other than whoever received it, and Step-up `base.privacy.erasure.approve` (`.floor()`). Approval moves the request to `running` and queues one job per store |
+| Refuse | `privacy.request.receive` | From `received` or `verified`, with a reason |
+
+- Each store answers in its own Queue job (`base/privacy-request-store`), run as the approver and retried up to 25 times. A failing store leaves the request `running` and marks it late; it never completes.
+- When every store has answered or deferred, `base/privacy-request-finish` writes the document and completes the request.
+- An erasure runs each store's `erase` in that store's own `MutationTransaction`, marked as the request's erasure and with holds read inside it, clears the returned fields from audit evidence, then calls `after_erase` on a plain connection.
+- Agents may list, read, locate, receive, verify, approve and refuse (`base.privacy.request.*`); approving an erasure still needs a person's Step-up.
+- Pages: `/privacy/requests`, `/privacy/requests/{id}`, `/privacy/holds`, under Admin → Personal data.
+
+## Documents
+
+**An access request ends with an export; an erasure ends with a certificate. Both are `base/artifacts` documents owned by `base.privacy`.**
+
+| Document | Kept | Read |
+| --- | --- | --- |
+| Export: one JSON bundle of every store's records, with media and artifact references | `privacy.export_days`, then purged | `GET /privacy/requests/{id}/document` through `Artifacts::read`, so each download is audited |
+| Certificate: each store, action, counts, records kept and why, deferrals with dates, approver | `put_retained` for `privacy.certificate_years` | Same route |
+
+## Erasure in audit and media
+
+**Values go; who, when, which record and which fields stay.**
+
+- `bilibi_audit::erase_values` replaces a record's declared fields with `[erased]` in its mutation evidence and writes an append-only `base_audit_erasures` row (`base/audit` README).
+- `Media::erase_attachments` turns a person's attachments into tombstones; `Media::remove_erased_bytes` removes the bytes after commit (`base/media` README).
+- Both refuse outside a privacy erasure transaction.
+
+## Settings
+
+| Key | Scope | Default | Meaning |
+| --- | --- | --- | --- |
+| `privacy.request.due_days` | Global, Tenant | 21 | Days from receipt to answer |
+| `privacy.export_days` | Global, Tenant | 30 | Days an export stays downloadable |
+| `privacy.certificate_years` | Global, Tenant | 7 | Years a certificate is retained |
 
 ## Runtime checks
 
