@@ -47,15 +47,15 @@ case ${1:-help} in
         echo "./bilibi $1 works in an application, not here."
         echo 'This is the Bilibi Platform: Bilibi'"'"'s own source code.'
         echo 'To make your own application from what you have here, run: ./bilibi new <name>'
-        echo 'Or start one from the template: https://github.com/BelimbingApp/bilibi-app-template'
+        echo 'Or start one with the app maker: https://github.com/BelimbingApp/bilibi-app-maker'
         exit 1
         ;;
     help|--help|-h)
         cat <<'USAGE'
 This is the Bilibi Platform: Bilibi's own source code.
 Work here to change Bilibi itself, or to try Domains and Extensions.
-To build a product of your own, start from the application template:
-https://github.com/BelimbingApp/bilibi-app-template
+To make a product of your own, start with the app maker:
+https://github.com/BelimbingApp/bilibi-app-maker
 
 Usage: ./bilibi <command>
 

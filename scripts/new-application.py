@@ -14,8 +14,8 @@ from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parent.parent
 # Version the application tooling independently of the selected Platform sources.
-TEMPLATE = 'https://github.com/BelimbingApp/bilibi-app-template.git'
-TEMPLATE_COMMIT = '24f6fafb9cd30f77ae53c1d05fe7fd122a2624a3'
+TEMPLATE = 'https://github.com/BelimbingApp/bilibi-app-maker.git'
+TEMPLATE_COMMIT = '481ad710b70bec905bf9c1f5b8eaf2bb09b24d35'
 
 
 class Refused(Exception):
@@ -113,7 +113,7 @@ def independent_clone(source, destination, env, original=None):
         run('git', 'checkout', '--detach', source['commit'], cwd=destination, env=env)
     except subprocess.CalledProcessError:
         if original is None:
-            raise Refused('Could not fetch the application template. Check network and Git credentials, then retry.') from None
+            raise Refused('Could not fetch the app maker. Check network and Git credentials, then retry.') from None
         push = shlex.join(['git', '-C', str(original), 'push', 'origin',
                           f'{source["commit"]}:refs/heads/bilibi-save-{source["commit"][:12]}'])
         raise Refused(f'{original}: cannot fetch {source["commit"]} from its declared origin. '
@@ -140,7 +140,7 @@ def create(name):
     with tempfile.TemporaryDirectory(prefix='.bilibi-new-', dir=ROOT.parent) as temp:
         application = Path(temp) / 'application'
         independent_clone({'url': TEMPLATE, 'commit': TEMPLATE_COMMIT}, application, env)
-        # Keep the template's history so template updates merge later:
+        # Keep the maker's history so maker updates merge later:
         # it becomes the `upstream` remote, and `main` starts at the pinned
         # commit, tracking nothing until the application adds its `origin`.
         # Its tags are not the application's releases.
@@ -152,7 +152,7 @@ def create(name):
         tags = git(application, 'tag', '--list').split()
         if tags:
             run('git', 'tag', '--delete', *tags, cwd=application, capture=True, env=env)
-        # Use the template's own recipe writer and validators.
+        # Use the maker's own recipe writer and validators.
         sys.path.insert(0, str(application / 'scripts'))
         workspace = load('application_workspace', application / 'scripts/workspace.py')
         (application / 'setup.toml').write_text(workspace.serialize(selected))
@@ -192,7 +192,7 @@ def create(name):
           f'Next:\n  cd {shlex.quote(str(destination))}\n  ./bilibi start\n'
           'Review setup.toml and composition/, then commit your application files.\n'
           'When ready, create your own remote, run git remote add origin <your-repository-url>, and git push -u origin main.\n'
-          'The template is the upstream remote; its README explains how to take its updates.')
+          'The app maker is the upstream remote; its README explains how to take its updates.')
 
 
 if __name__ == '__main__':
