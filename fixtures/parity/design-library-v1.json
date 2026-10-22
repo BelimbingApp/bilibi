@@ -28,6 +28,7 @@
     "Search Acme, clear, sort the Updated heading twice, change page size, page, Back and reload. Type a missing name and recover from the empty state.",
     "Open the FlexTable notch, change row heights repeatedly, add/remove/reorder columns, select a lens and expand a rollup; reset.",
     "Commit an inline name and a long-text value; cancel another draft with Escape. Select Pending in the choice editor and read its refusal.",
+    "Click Use my location on the Browser location card: with location allowed the card shows latitude, longitude and accuracy; with it refused, unavailable, or the page opened over http on a non-localhost address, the card shows that refusal's sentence and the button is usable again. Check the console for CSP reports.",
     "Filter icons, clear an empty result, copy a name and verify that success is reported only after the browser clipboard succeeds; verify refusal wording if access is denied.",
     "Choose a custom period: cancel and preserve the URL; submit reversed dates and read the error; apply valid dates and reload the same URL.",
     "Open each page unauthenticated and as the viewer; exercise the allowed page framed, light/dark/system and at mobile width. Check console/network output."

@@ -8,8 +8,8 @@ use crate::section::sections;
 use crate::{
     choices, error_sentence, ActionLink, AddMore, BadgeKind, Button, ButtonVariant, Card, Chrome,
     ClientEntry, CodeInput, Combobox, ErrorSummary, Field, FileInput, Html, IconButton,
-    IconContext, IconKind, InputKind, MultiSelect, PageVariant, RadioGroup, Restricted,
-    RestrictedField, SecretInput, StatItem, UploadSpec, Uploads,
+    IconContext, IconKind, InputKind, LocationAction, MultiSelect, PageVariant, RadioGroup,
+    Restricted, RestrictedField, SecretInput, StatItem, UploadSpec, Uploads,
 };
 use askama::Template;
 
@@ -37,6 +37,10 @@ pub struct ComponentsSpecimen {
     /// The file inputs in every state the host can leave them in: empty,
     /// arriving, complete, refused per entry and refused as a whole.
     uploads: Uploads,
+    /// The browser location action in both button variants and disabled.
+    location_secondary: LocationAction,
+    location_primary: LocationAction,
+    location_disabled: LocationAction,
 }
 
 sections! {
@@ -59,6 +63,7 @@ sections! {
         input_variants: "ui_components_specimen/input_variants.html",
         combobox: "ui_components_specimen/combobox.html",
         file_input: "ui_components_specimen/file_input.html",
+        location_action: "ui_components_specimen/location_action.html",
         restricted: "ui_components_specimen/restricted.html",
         form_helpers: "ui_components_specimen/form_helpers.html",
         inline_facts: "ui_components_specimen/inline_facts.html",
@@ -477,6 +482,22 @@ impl ComponentsSpecimen {
             inline: InlineSamples::new()?,
             flex: crate::flex_sample::FlexSpecimens::new()?,
             uploads: specimen_uploads(),
+            location_secondary: LocationAction::new(
+                "specimen-location",
+                "locate",
+                "Use my location",
+            ),
+            location_primary: LocationAction::new("specimen-location-clock", "clock", "Clock in")
+                .variant(ButtonVariant::Primary)
+                .value("clock_type", "in")
+                .sending("Recording clock event…"),
+            location_disabled: LocationAction::new(
+                "specimen-location-disabled",
+                "clock",
+                "Clock out",
+            )
+            .value("clock_type", "out")
+            .disabled(),
         })
     }
 

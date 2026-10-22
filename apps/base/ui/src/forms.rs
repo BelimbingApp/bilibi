@@ -22,7 +22,7 @@
 //! the shared runtime in `assets/ui.js`) where Bilimbi used `phx-hook`; a
 //! control that reports to the server carries `data-event` where Bilimbi used
 //! `phx-click`.
-use crate::Html;
+use crate::{ButtonVariant, Html};
 use askama::Template;
 
 /// The one sentence a restricted field explains itself with.
@@ -1788,4 +1788,175 @@ pub struct Form<'a> {
     pub class: &'a str,
     pub body: Html,
     pub actions: Html,
+}
+
+/// A button that asks the browser for its position before raising its event
+/// (Bilimbi's colocated `.ClockLocation` hook in People Attendance's
+/// `web/my_live.ex`, lifted into the Platform because a Domain owns no
+/// JavaScript). The `LocationAction` hook (`assets/hooks.js`) keeps the button
+/// busy with `working` while the browser locates, then with `sending` (when
+/// given) until the page answers, and raises `event` once per click with the
+/// control's `values` plus `latitude`, `longitude` and `accuracy` (metres), or
+/// with `outcome` `permission_denied`, `unavailable` or `insecure_context`.
+/// The page reads the payload with [`LocationReport::from_event`]. A refusal
+/// is a payload the page answers in words, never a transport error.
+#[derive(Template, Clone, Debug)]
+#[template(
+    source = r#"{% import "forms.html" as forms %}{% call forms::location_action(control=self) %}{% endcall %}"#,
+    ext = "html"
+)]
+pub struct LocationAction {
+    pub id: String,
+    pub event: String,
+    pub label: String,
+    pub variant: ButtonVariant,
+    /// Values the event carries beside the position, rendered as
+    /// `data-value-<key>` (Bilimbi's `phx-value-*`); a key is `snake_case`.
+    pub values: Vec<(String, String)>,
+    /// The button's label while the browser locates.
+    pub working: String,
+    /// The button's label from the raised event until the page answers; empty
+    /// keeps `working`.
+    pub sending: String,
+    /// How long the browser may take before the control reports `unavailable`.
+    pub timeout_ms: u32,
+    pub disabled: bool,
+    /// Layout classes on the control's wrapper.
+    pub class: String,
+}
+
+impl LocationAction {
+    pub const DEFAULT_TIMEOUT_MS: u32 = 15_000;
+
+    pub fn new(id: impl Into<String>, event: impl Into<String>, label: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            event: event.into(),
+            label: label.into(),
+            variant: ButtonVariant::Secondary,
+            values: Vec::new(),
+            working: "Finding your location…".into(),
+            sending: String::new(),
+            timeout_ms: Self::DEFAULT_TIMEOUT_MS,
+            disabled: false,
+            class: String::new(),
+        }
+    }
+    pub fn variant(mut self, variant: ButtonVariant) -> Self {
+        self.variant = variant;
+        self
+    }
+    /// Adds a value the event carries. The key is a `snake_case` identifier
+    /// other than `type`, `outcome`, `latitude`, `longitude` or `accuracy`,
+    /// which the control itself fills; anything else is a programming error.
+    pub fn value(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        let key = key.into();
+        assert!(
+            !key.is_empty()
+                && key
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+                && !["type", "outcome", "latitude", "longitude", "accuracy"]
+                    .contains(&key.as_str()),
+            "LocationAction value key {key:?} is not a free snake_case identifier"
+        );
+        self.values.push((key, value.into()));
+        self
+    }
+    pub fn working(mut self, label: impl Into<String>) -> Self {
+        self.working = label.into();
+        self
+    }
+    pub fn sending(mut self, label: impl Into<String>) -> Self {
+        self.sending = label.into();
+        self
+    }
+    pub fn timeout_ms(mut self, timeout_ms: u32) -> Self {
+        self.timeout_ms = timeout_ms.max(1);
+        self
+    }
+    pub fn disabled(mut self) -> Self {
+        self.disabled = true;
+        self
+    }
+    pub fn class(mut self, class: impl Into<String>) -> Self {
+        self.class = class.into();
+        self
+    }
+}
+
+/// What a [`LocationAction`] click reported: a position, or why there is none.
+/// The page decodes the raised event with [`LocationReport::from_event`] and
+/// answers a refusal with [`LocationReport::refusal`] (Bilimbi's sentences from
+/// `my_live.ex`), adding what the person can do instead on that page.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum LocationReport {
+    Position {
+        latitude: f64,
+        longitude: f64,
+        /// The browser's radius of confidence in metres, when it gave one.
+        accuracy: Option<f64>,
+    },
+    /// The person refused location access, or the browser remembers a refusal.
+    PermissionDenied,
+    /// No position: unsupported browser, no fix in time, or malformed numbers.
+    Unavailable,
+    /// The page is not a secure context, so the browser offers no geolocation.
+    InsecureContext,
+}
+
+impl LocationReport {
+    /// Reads the control's part of an event payload. `None` means the payload
+    /// carries neither a position nor an outcome: it was not raised by this
+    /// control. Coordinates outside the globe are `Unavailable`, as a browser
+    /// never produces them.
+    pub fn from_event(event: &serde_json::Value) -> Option<Self> {
+        if let Some(outcome) = event.get("outcome").and_then(serde_json::Value::as_str) {
+            return match outcome {
+                "permission_denied" => Some(Self::PermissionDenied),
+                "unavailable" => Some(Self::Unavailable),
+                "insecure_context" => Some(Self::InsecureContext),
+                _ => None,
+            };
+        }
+        let number = |key: &str| event.get(key).and_then(serde_json::Value::as_f64);
+        let (latitude, longitude) = (number("latitude")?, number("longitude")?);
+        if !(-90.0..=90.0).contains(&latitude) || !(-180.0..=180.0).contains(&longitude) {
+            return Some(Self::Unavailable);
+        }
+        let accuracy = number("accuracy").filter(|metres| metres.is_finite() && *metres >= 0.0);
+        Some(Self::Position {
+            latitude,
+            longitude,
+            accuracy,
+        })
+    }
+
+    /// The wire name of this report: `located`, or the outcome the hook sent.
+    pub fn outcome(&self) -> &'static str {
+        match self {
+            Self::Position { .. } => "located",
+            Self::PermissionDenied => "permission_denied",
+            Self::Unavailable => "unavailable",
+            Self::InsecureContext => "insecure_context",
+        }
+    }
+
+    /// The sentence a page shows for a report without a position; `None` for
+    /// a position. A page appends its own way out ("or request an adjustment
+    /// below.") in the same message.
+    pub fn refusal(&self) -> Option<&'static str> {
+        match self {
+            Self::Position { .. } => None,
+            Self::PermissionDenied => Some(
+                "Location permission was refused. Allow location access in your browser and try again.",
+            ),
+            Self::Unavailable => {
+                Some("Your location is unavailable. Check location access and try again.")
+            }
+            Self::InsecureContext => Some(
+                "Your location cannot be read over an insecure connection. Open this page over HTTPS and try again.",
+            ),
+        }
+    }
 }

@@ -72,8 +72,9 @@ pub use flex_table::{
 pub use forms::{
     choices, described_by, error_sentence, field_base_class, field_class, field_inset_class,
     field_state_class, translate_error, AddMore, Attrs, Choice, CodeInput, Combobox, Field, Form,
-    InputKind, LabelPlacement, MultiSelect, ProofInput, ProofMethod, RadioGroup, Restricted,
-    RestrictedField, Reveal, SecretInput, StepUp, StoredReveal, RESTRICTED_REASON, SECRET_MASK,
+    InputKind, LabelPlacement, LocationAction, LocationReport, MultiSelect, ProofInput,
+    ProofMethod, RadioGroup, Restricted, RestrictedField, Reveal, SecretInput, StepUp,
+    StoredReveal, RESTRICTED_REASON, SECRET_MASK,
 };
 pub use html::Html;
 pub use inline::{

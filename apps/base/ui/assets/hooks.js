@@ -1,6 +1,6 @@
 // Browser behaviour for the shared form controls in templates/forms.html:
 // CodeInput, ColourInput, Combobox, SecretReveal, SecretClear, SecretStored and
-// DisclosureDismiss, MultiSelect (plus the dashboard's DashboardSort and the form Fold), adapted from Bilimbi's Phoenix hooks (apps/web/assets/js
+// DisclosureDismiss, MultiSelect, LocationAction (plus the dashboard's DashboardSort and the form Fold), adapted from Bilimbi's Phoenix hooks (apps/web/assets/js
 // at the pinned source) with the LiveView JS commands folded into the hooks.
 // Each registers with the shared `data-hook` runtime in ui.js
 // (BilibiUI.registerHook), which mounts a control when it enters the
@@ -875,9 +875,104 @@
     },
   }
 
+  // The browser half of forms.html `location_action` (Bilimbi's colocated
+  // `.ClockLocation` hook in people/attendance `web/my_live.ex`, lifted here
+  // because a Domain owns no JavaScript). The wrapper carries the event, its
+  // `data-value-*` values (live.js's spelling for a button's values), the
+  // working labels, the timeout and the server's `data-disabled`; the shared
+  // button inside it is what the person clicks. A click puts the button in the
+  // transport's busy shape (disabled, aria-busy and data-live-busy, so a patch
+  // leaves its text and state alone) with the `working` label while the
+  // browser locates, swaps in `sending` once the event is raised and settles
+  // it when the page answers, taking the server's disabled state from the
+  // wrapper. The busy spell is kept here, not in attributes: a patch makes a
+  // busy control's data-* attributes follow the server (the reply's patch
+  // strips the marker before onReply runs), so updated() re-holds the shape,
+  // writing only what differs. One event per click: the values plus latitude,
+  // longitude and accuracy, or the values plus outcome permission_denied (the
+  // person or the browser refused), unavailable (no geolocation, no fix in
+  // time, or no numbers) or insecure_context (an http page off localhost,
+  // where the browser offers no geolocation). A position that arrives after
+  // the control left the page is dropped; one raised while the socket is
+  // down is queued by live.js.
+  const LocationAction = {
+    mounted() {
+      this.generation = 0
+      this.pending = null
+      this.onClick = event => {
+        const button = event.target.closest("button")
+        if (!button || button.disabled || this.pending || !this.el.contains(button)) return
+        const generation = ++this.generation
+        const current = () => this.el.isConnected && this.generation === generation
+        this.pending = {button, text: button.textContent, label: this.el.dataset.working || button.textContent}
+        this.hold()
+        const raise = values => {
+          if (!current()) return
+          if (this.el.dataset.sending) {
+            this.pending.label = this.el.dataset.sending
+            this.hold()
+          }
+          this.emit(this.el.dataset.event, {...this.values(), ...values, onReply: () => {
+            if (current()) this.settle()
+          }})
+        }
+        const failed = outcome => raise({outcome})
+        if (!window.isSecureContext) return failed("insecure_context")
+        if (!navigator.geolocation) return failed("unavailable")
+        try {
+          navigator.geolocation.getCurrentPosition(position => {
+            const {latitude, longitude, accuracy} = position.coords || {}
+            if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return failed("unavailable")
+            raise(Number.isFinite(accuracy) ? {latitude, longitude, accuracy} : {latitude, longitude})
+          }, error => failed(error && error.code === 1 ? "permission_denied" : "unavailable"),
+          {enableHighAccuracy: true, maximumAge: 0, timeout: Number(this.el.dataset.timeout) || 15000})
+        } catch (_error) {
+          failed("unavailable")
+        }
+      }
+      this.el.addEventListener("click", this.onClick)
+    },
+
+    // data-value-clock_type="in" is {clock_type: "in"}, as live.js reads a button.
+    values() {
+      const values = {}
+      for (const [key, value] of Object.entries(this.el.dataset)) {
+        if (key.startsWith("value") && key.length > 5) values[key[5].toLowerCase() + key.slice(6)] = value
+      }
+      return values
+    },
+
+    hold() {
+      const {button, label} = this.pending
+      if (button.textContent !== label) button.textContent = label
+      if (!button.disabled) button.disabled = true
+      if (button.getAttribute("aria-busy") !== "true") button.setAttribute("aria-busy", "true")
+      if (!button.hasAttribute("data-live-busy")) button.setAttribute("data-live-busy", "")
+    },
+
+    updated() {
+      if (this.pending) this.hold()
+    },
+
+    settle() {
+      const {button, text} = this.pending
+      this.pending = null
+      button.removeAttribute("data-live-busy")
+      button.removeAttribute("aria-busy")
+      button.textContent = text
+      button.disabled = this.el.hasAttribute("data-disabled")
+    },
+
+    destroyed() {
+      this.generation++
+      this.pending = null
+      this.el.removeEventListener("click", this.onClick)
+    },
+  }
+
   const registry = window.BilibiUI
   if (!registry) throw new Error("hooks.js needs ui.js loaded first")
-  for (const [name, hook] of Object.entries({FactorProof, CodeInput, ColourInput, Combobox, SecretReveal, SecretClear, SecretStored, DisclosureDismiss, MultiSelect, DashboardSort, Fold})) {
+  for (const [name, hook] of Object.entries({FactorProof, CodeInput, ColourInput, Combobox, SecretReveal, SecretClear, SecretStored, DisclosureDismiss, MultiSelect, DashboardSort, Fold, LocationAction})) {
     registry.registerHook(name, hook)
   }
 })()

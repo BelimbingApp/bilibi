@@ -1,0 +1,27 @@
+{% import "components.html" as ui %}
+{% import "feedback.html" as fb %}
+{% import "dialog.html" as d %}
+{% import "tiling.html" as tile %}
+
+                <p class="text-sm text-ink-muted">
+                  A location action asks the browser for its position when clicked, then raises its event with the latitude, longitude and accuracy, or with why there is none. The browser asks for permission on the first click; a refusal, an unavailable position and an insecure (http, off localhost) connection each reach the page as an outcome it answers in words. The page keeps only the last report, in this page's memory.
+                </p>
+                <div class="mt-4 flex flex-wrap items-center gap-2">
+                  {{ self.location_action()? }}
+                  {% if self.state.location.is_some() %}{% call ui::button(id="design-library-location-forget", button_type="button", event="forget-location") %}Forget position{% endcall %}{% endif %}
+                </div>
+                {% match self.state.location %}
+                {% when Some(report) %}
+                {% match report %}
+                {% when bilibi_ui::LocationReport::Position { latitude, longitude, accuracy } %}
+                <dl id="design-library-location-position" class="mt-4 grid gap-x-6 gap-y-1 text-sm sm:grid-cols-3">
+                  <div><dt class="text-ink-muted">Latitude</dt><dd class="tabular-nums text-ink">{{ "{:.6}"|format(latitude) }}</dd></div>
+                  <div><dt class="text-ink-muted">Longitude</dt><dd class="tabular-nums text-ink">{{ "{:.6}"|format(longitude) }}</dd></div>
+                  <div><dt class="text-ink-muted">Accuracy</dt><dd class="tabular-nums text-ink">{% match accuracy %}{% when Some(metres) %}± {{ "{:.0}"|format(metres) }} m{% when None %}Not given{% endmatch %}</dd></div>
+                </dl>
+                {% when _ %}
+                <p id="design-library-location-refused" class="mt-4 text-sm text-danger-ink" role="alert" data-outcome="{{ report.outcome() }}">{{ report.refusal().unwrap_or_default() }}</p>
+                {% endmatch %}
+                {% when None %}
+                <p id="design-library-location-empty" class="mt-4 text-sm text-ink-muted">No position reported yet.</p>
+                {% endmatch %}
