@@ -53,6 +53,11 @@ pub const MIGRATION_ROLE_OWNER: (&str, &str) = (
     "core-company-006-authz-role-owner",
     include_str!("../migrations/006-authz-role-owner.sql"),
 );
+/// Global search: the stored text-search vector Base Search matches on.
+pub const MIGRATION_SEARCH: (&str, &str) = (
+    "core-company-007-search",
+    include_str!("../migrations/007-search.sql"),
+);
 pub const MASK: &str = "••••";
 /// The registry service id of the Companies facade.
 pub const SERVICE: &str = "core/company.companies";
@@ -678,8 +683,8 @@ async fn finish(tx: bilibi_database::MutationTransaction<'_>, saved: bool) -> Re
 inventory::submit! {
     bilibi_module_registry::Module {
         id:"core/company",layer:bilibi_module_registry::Layer::Core,
-        dependencies:&["base/database","base/security","base/ui","base/notifications","base/party_ids","base/session","base/menu","base/grid","base/dashboard","base/authz","base/tenancy","base/audit","base/agent_api","base/datetime","base/locale","base/principal_directory","base/media","base/artifacts","core/party","core/geonames","core/person"],
-        migrations:&[MIGRATION, MIGRATION_ORGANISATION, MIGRATION_RELATIONSHIPS, MIGRATION_ROLE_OWNER],
+        dependencies:&["base/database","base/security","base/ui","base/notifications","base/party_ids","base/session","base/menu","base/grid","base/search","base/dashboard","base/authz","base/tenancy","base/audit","base/agent_api","base/datetime","base/locale","base/principal_directory","base/media","base/artifacts","core/party","core/geonames","core/person"],
+        migrations:&[MIGRATION, MIGRATION_ORGANISATION, MIGRATION_RELATIONSHIPS, MIGRATION_ROLE_OWNER, MIGRATION_SEARCH],
         services: &[
             bilibi_module_registry::Service { id: SERVICE, factory: |services| {
                 let db = services.get::<Db>("base/database.pool")?.as_ref().clone();

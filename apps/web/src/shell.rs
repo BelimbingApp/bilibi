@@ -142,14 +142,19 @@ async fn context<'a>(
             bilibi_core::company::platform_operator_company(&**client).await,
             Ok(None)
         );
-    // A module contributes the bell through the `shell.notifications` embed;
-    // an account the embed refuses has none.
+    // A module contributes the bell through the `shell.notifications` embed
+    // and the search dialog's records through `shell.search.records`; an
+    // account an embed refuses has none.
     let mut notifications = Html::default();
+    let mut records = Html::default();
     for slot in embeds(app)? {
-        if slot.embed.slot == "shell.notifications"
-            && permits(app, scope, slot.embed.access).await?
-        {
-            notifications = render_embed(app, scope, &slot.embed).await?;
+        let rendered = match slot.embed.slot {
+            "shell.notifications" => &mut notifications,
+            "shell.search.records" => &mut records,
+            _ => continue,
+        };
+        if permits(app, scope, slot.embed.access).await? {
+            *rendered = render_embed(app, scope, &slot.embed).await?;
         }
     }
     // Display only and unlogged: the editor and its save authorize for real.
@@ -224,7 +229,7 @@ async fn context<'a>(
         },
         versions: bilibi_ui::version_badges(&crate::composition()),
         topbar_actions,
-        page_search: bilibi_ui::page_search(&pages).map_err(|_| Error::Internal)?,
+        page_search: bilibi_ui::page_search(&pages, records).map_err(|_| Error::Internal)?,
     })
 }
 
@@ -338,8 +343,9 @@ fn menu_rows(
 }
 
 /// One `EmbedContext::Shell` contribution and the id of the element it
-/// renders: slot `shell.notifications` is `#app-notifications`. The live
-/// socket mounts it as a panel under that id, outside framed pages.
+/// renders: slot `shell.notifications` is `#app-notifications`, and
+/// `shell.search.records` is `#app-search-records`. The live socket mounts it
+/// as a panel under that id, outside framed pages.
 pub struct ShellEmbed {
     pub id: String,
     pub embed_id: &'static str,

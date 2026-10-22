@@ -3,7 +3,7 @@
 **Document Type:** Index of architecture decision records
 **Status:** Active
 **Scope:** Decisions that shape Bilibi's architecture
-**Last Updated:** 2026-10-21
+**Last Updated:** 2026-10-22
 
 Each record states one decision, its context and its consequences. The format follows [Bilimbi's records](https://github.com/BelimbingApp/bilimbi/tree/main/docs/architecture/decisions). The architecture overview is [`../README.md`](../README.md).
 
@@ -54,3 +54,9 @@ Every record carries these header lines: Document Type, Status, Agents, Scope, L
 | Record | Status |
 | --- | --- |
 | [04 Provider-neutral single sign-on](./04-provider-neutral-single-sign-on.md) | Accepted |
+
+### Search
+
+| Record | Status |
+| --- | --- |
+| [05 Record search at query time, in the owner's source](./05-query-time-record-search.md) | Proposed |
