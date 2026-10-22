@@ -135,6 +135,13 @@ pub struct ValueUpdate {
     pub version: i64,
 }
 
+/// A status change, with the version the caller read.
+#[derive(Clone, Copy)]
+enum Step {
+    Retire(i64),
+    Restore(i64),
+}
+
 /// The registry service `base/picklists.lists`.
 pub struct PickLists {
     pub(crate) lists: BTreeMap<&'static str, &'static PickList>,
@@ -340,28 +347,30 @@ impl PickLists {
     /// An installation-wide list is the platform operator's alone.
     async fn manage(
         &self,
-        tx: &MutationTransaction<'_>,
+        client: &(impl GenericClient + Sync),
         scope: &Scope,
         list: &PickList,
     ) -> Result<i64> {
         match list.reach {
-            Reach::Tenant => authorize_key(tx.sql(), scope, MANAGE).await?,
+            Reach::Tenant => authorize_key(client, scope, MANAGE).await?,
             Reach::Installation => {
-                authorize_operator(tx.sql(), scope, INSTALLATION_MANAGE).await?;
+                authorize_operator(client, scope, INSTALLATION_MANAGE).await?;
             }
         }
         if let Some(capability) = list.capability {
-            authorize_key(tx.sql(), scope, capability).await?;
+            authorize_key(client, scope, capability).await?;
         }
         Ok(scope.tenant())
     }
-    /// The parent codes a value may name: active codes of the parent list.
+    /// The parent codes a value may name: active codes of the parent list,
+    /// held `FOR SHARE` by a write so a concurrent retirement waits.
     async fn check_parents(
         &self,
-        tx: &MutationTransaction<'_>,
+        client: &impl GenericClient,
         tenant: i64,
         list: &PickList,
         parents: &[String],
+        lock: bool,
         errors: &mut Vec<FieldError>,
     ) -> Result<Vec<String>> {
         let parents: Vec<String> = parents
@@ -383,10 +392,9 @@ impl PickLists {
             ));
             return Ok(parents);
         }
-        let active: BTreeSet<String> = tx
-            .sql()
+        let active: BTreeSet<String> = client
             .query(
-                "SELECT code FROM base_picklist_values WHERE tenant_id=$1 AND list=$2 AND code=ANY($3) AND retired_on IS NULL FOR SHARE",
+                &format!("SELECT code FROM base_picklist_values WHERE tenant_id=$1 AND list=$2 AND code=ANY($3) AND retired_on IS NULL{}", if lock { " FOR SHARE" } else { "" }),
                 &[&tenant, &parent.key, &parents],
             )
             .await?
@@ -401,18 +409,49 @@ impl PickLists {
         }
         Ok(parents)
     }
-
-    /// Creates a value under `base.picklists.manage`. The code is locked for
-    /// the transaction so two creates of one code cannot both pass.
-    pub async fn create(
+    /// The value as it stands, locked `FOR UPDATE` by a write; a stale
+    /// `version` is a refusal.
+    async fn current(
         &self,
-        tx: &mut MutationTransaction<'_>,
-        scope: &Scope,
-        list: &str,
-        input: &NewValue,
+        client: &impl GenericClient,
+        tenant: i64,
+        list: &PickList,
+        code: &str,
+        version: Option<i64>,
+        lock: bool,
     ) -> Result<Checked<PickValue>> {
-        let list = self.list(list)?;
-        let tenant = self.manage(tx, scope, list).await?;
+        let value = self
+            .one(
+                client,
+                tenant,
+                list,
+                code,
+                if lock { " FOR UPDATE" } else { "" },
+            )
+            .await?
+            .ok_or(Error::NotFound)?;
+        if version.is_some_and(|version| version != value.version) {
+            return Ok(Err(vec![FieldError::new(
+                "version",
+                "the value changed; reload before saving",
+            )]));
+        }
+        Ok(Ok(value))
+    }
+
+    // Each write is one check, shared with its preview, then the write. The
+    // check locks only for the write: a preview takes no lock and writes
+    // nothing. A write's transaction reaches the same check through `sql()`.
+
+    async fn check_create(
+        &self,
+        client: &(impl GenericClient + Sync),
+        scope: &Scope,
+        list: &'static PickList,
+        input: &NewValue,
+        lock: bool,
+    ) -> Result<Checked<(i64, NewValue)>> {
+        let tenant = self.manage(client, scope, list).await?;
         let mut errors = Vec::new();
         let code = input.code.trim().to_ascii_lowercase();
         if !code_shaped(&code, CODE_MAX) {
@@ -423,16 +462,18 @@ impl PickLists {
         }
         let (label, labels, hint) = texts(&mut errors, &input.label, &input.labels, &input.hint);
         let parents = self
-            .check_parents(tx, tenant, list, &input.parents, &mut errors)
+            .check_parents(client, tenant, list, &input.parents, lock, &mut errors)
             .await?;
-        tx.sql()
-            .execute(
-                "SELECT pg_advisory_xact_lock(hashtextextended('base-picklists-' || $1::text || ':' || $2, 0))",
-                &[&tenant.to_string(), &list.key],
-            )
-            .await?;
-        let count: i64 = tx
-            .sql()
+        if lock {
+            // Two creates of one code (or past the cap) cannot both pass.
+            client
+                .execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended('base-picklists-' || $1::text || ':' || $2, 0))",
+                    &[&tenant.to_string(), &list.key],
+                )
+                .await?;
+        }
+        let count: i64 = client
             .query_one(
                 "SELECT count(*) FROM base_picklist_values WHERE tenant_id=$1 AND list=$2",
                 &[&tenant, &list.key],
@@ -445,21 +486,62 @@ impl PickLists {
                 format!("a list holds at most {VALUES_MAX} values"),
             ));
         }
-        if errors.is_empty() && self.one(tx.sql(), tenant, list, &code, "").await?.is_some() {
+        if errors.is_empty() && self.one(client, tenant, list, &code, "").await?.is_some() {
             errors.push(FieldError::new("code", "has already been taken"));
         }
         if !errors.is_empty() {
             return Ok(Err(errors));
         }
-        let declared = list;
+        Ok(Ok((
+            tenant,
+            NewValue {
+                code,
+                label,
+                labels,
+                hint,
+                parents,
+            },
+        )))
+    }
+    /// The value a create would add, without adding it (the agent preview).
+    pub async fn preview_create(
+        &self,
+        client: &(impl GenericClient + Sync),
+        scope: &Scope,
+        list: &str,
+        input: &NewValue,
+    ) -> Result<Checked<NewValue>> {
+        let list = self.list(list)?;
+        Ok(self
+            .check_create(client, scope, list, input, false)
+            .await?
+            .map(|(_, value)| value))
+    }
+    /// Creates a value under `base.picklists.manage`, after the list's
+    /// other values.
+    pub async fn create(
+        &self,
+        tx: &mut MutationTransaction<'_>,
+        scope: &Scope,
+        list: &str,
+        input: &NewValue,
+    ) -> Result<Checked<PickValue>> {
+        let list = self.list(list)?;
+        let (tenant, value) = match self
+            .check_create(tx.sql(), scope, list, input, true)
+            .await?
+        {
+            Ok(checked) => checked,
+            Err(errors) => return Ok(Err(errors)),
+        };
         let created = tx
             .mutate(move |sql| {
                 Box::pin(async move {
                     let row = sql.query_one(
                         &format!("INSERT INTO base_picklist_values(tenant_id,list,code,label,labels,hint,position,parent_codes) VALUES($1,$2,$3,$4,$5,$6,(SELECT coalesce(max(position),0)+10 FROM base_picklist_values WHERE tenant_id=$1 AND list=$2),$7) RETURNING {COLUMNS}"),
-                        &[&tenant, &declared.key, &code, &label, &json!(labels), &hint, &parents],
+                        &[&tenant, &list.key, &value.code, &value.label, &json!(value.labels), &value.hint, &value.parents],
                     ).await?;
-                    let created = PickValue::from_row(&row, declared)?;
+                    let created = PickValue::from_row(&row, list)?;
                     // An empty `old` records a create.
                     let change = change(json!({}), &created);
                     Ok((created, vec![change]))
@@ -469,26 +551,6 @@ impl PickLists {
         Ok(Ok(created))
     }
 
-    async fn current(
-        &self,
-        tx: &MutationTransaction<'_>,
-        tenant: i64,
-        list: &PickList,
-        code: &str,
-        version: Option<i64>,
-    ) -> Result<Checked<PickValue>> {
-        let value = self
-            .one(tx.sql(), tenant, list, code, " FOR UPDATE")
-            .await?
-            .ok_or(Error::NotFound)?;
-        if version.is_some_and(|version| version != value.version) {
-            return Ok(Err(vec![FieldError::new(
-                "version",
-                "the value changed; reload before saving",
-            )]));
-        }
-        Ok(Ok(value))
-    }
     async fn save(
         tx: &mut MutationTransaction<'_>,
         list: &'static PickList,
@@ -514,6 +576,55 @@ impl PickLists {
         .await
     }
 
+    async fn check_update(
+        &self,
+        client: &(impl GenericClient + Sync),
+        scope: &Scope,
+        list: &'static PickList,
+        code: &str,
+        input: &ValueUpdate,
+        lock: bool,
+    ) -> Result<Checked<(PickValue, ValueUpdate)>> {
+        let tenant = self.manage(client, scope, list).await?;
+        let before = match self
+            .current(client, tenant, list, code, Some(input.version), lock)
+            .await?
+        {
+            Ok(before) => before,
+            Err(errors) => return Ok(Err(errors)),
+        };
+        let mut errors = Vec::new();
+        let (label, labels, hint) = texts(&mut errors, &input.label, &input.labels, &input.hint);
+        let parents = self
+            .check_parents(client, tenant, list, &input.parents, lock, &mut errors)
+            .await?;
+        if !errors.is_empty() {
+            return Ok(Err(errors));
+        }
+        Ok(Ok((
+            before,
+            ValueUpdate {
+                label,
+                labels,
+                hint,
+                parents,
+                version: input.version,
+            },
+        )))
+    }
+    /// The value before and the update as it would apply (the agent preview).
+    pub async fn preview_update(
+        &self,
+        client: &(impl GenericClient + Sync),
+        scope: &Scope,
+        list: &str,
+        code: &str,
+        input: &ValueUpdate,
+    ) -> Result<Checked<(PickValue, ValueUpdate)>> {
+        let list = self.list(list)?;
+        self.check_update(client, scope, list, code, input, false)
+            .await
+    }
     /// Renames, translates, re-hints or re-parents a value; the code stays.
     /// A retired value may still be edited.
     pub async fn update(
@@ -525,50 +636,41 @@ impl PickLists {
         input: &ValueUpdate,
     ) -> Result<Checked<PickValue>> {
         let list = self.list(list)?;
-        let tenant = self.manage(tx, scope, list).await?;
-        let before = match self
-            .current(tx, tenant, list, code, Some(input.version))
+        let (before, update) = match self
+            .check_update(tx.sql(), scope, list, code, input, true)
             .await?
         {
-            Ok(before) => before,
+            Ok(checked) => checked,
             Err(errors) => return Ok(Err(errors)),
         };
-        let mut errors = Vec::new();
-        let (label, labels, hint) = texts(&mut errors, &input.label, &input.labels, &input.hint);
-        let parents = self
-            .check_parents(tx, tenant, list, &input.parents, &mut errors)
-            .await?;
-        if !errors.is_empty() {
-            return Ok(Err(errors));
-        }
         let saved = Self::save(
             tx,
             list,
             before,
             "label=$2,labels=$3,hint=$4,parent_codes=$5",
             vec![
-                Box::new(label),
-                Box::new(json!(labels)),
-                Box::new(hint),
-                Box::new(parents),
+                Box::new(update.label),
+                Box::new(json!(update.labels)),
+                Box::new(update.hint),
+                Box::new(update.parents),
             ],
         )
         .await?;
         Ok(Ok(saved))
     }
 
-    /// Puts the list in `codes` order. `codes` names every value of the list,
-    /// retired ones included, once each. Only moved values are changed.
-    pub async fn reorder(
+    async fn check_reorder(
         &self,
-        tx: &mut MutationTransaction<'_>,
+        client: &(impl GenericClient + Sync),
         scope: &Scope,
-        list: &str,
+        list: &'static PickList,
         codes: &[String],
-    ) -> Result<Checked<Vec<PickValue>>> {
-        let list = self.list(list)?;
-        self.manage(tx, scope, list).await?;
-        let current = self.rows(tx.sql(), scope, list, " FOR UPDATE").await?;
+        lock: bool,
+    ) -> Result<Checked<Vec<(PickValue, i32)>>> {
+        self.manage(client, scope, list).await?;
+        let current = self
+            .rows(client, scope, list, if lock { " FOR UPDATE" } else { "" })
+            .await?;
         let named: BTreeSet<&str> = codes.iter().map(String::as_str).collect();
         if named.len() != codes.len()
             || named
@@ -586,36 +688,121 @@ impl PickLists {
             .iter()
             .map(|value| (value.code.as_str(), value))
             .collect();
-        let moves: Vec<(PickValue, i32)> = codes
+        Ok(Ok(codes
             .iter()
             .enumerate()
             .map(|(index, code)| (by_code[&code.as_str()].clone(), (index as i32 + 1) * 10))
             .filter(|(value, position)| value.position != *position)
-            .collect();
-        if moves.is_empty() {
-            return Ok(Ok(current));
-        }
-        let declared = list;
-        tx.mutate(move |sql| {
-            Box::pin(async move {
-                let mut changes = Vec::with_capacity(moves.len());
-                for (before, position) in moves {
-                    let row = sql
-                        .query_one(
-                            &format!("UPDATE base_picklist_values SET position=$2,version=version+1,updated_at=now() WHERE id=$1 RETURNING {COLUMNS}"),
-                            &[&before.id, &position],
-                        )
-                        .await?;
-                    let saved = PickValue::from_row(&row, declared)?;
-                    changes.push(change(before.to_json(), &saved));
-                }
-                Ok(((), changes))
+            .collect()))
+    }
+    /// The values a reorder would move, as (code, position before, after).
+    pub async fn preview_reorder(
+        &self,
+        client: &(impl GenericClient + Sync),
+        scope: &Scope,
+        list: &str,
+        codes: &[String],
+    ) -> Result<Checked<Vec<(String, i32, i32)>>> {
+        let list = self.list(list)?;
+        Ok(self
+            .check_reorder(client, scope, list, codes, false)
+            .await?
+            .map(|moves| {
+                moves
+                    .into_iter()
+                    .map(|(value, to)| (value.code, value.position, to))
+                    .collect()
+            }))
+    }
+    /// Puts the list in `codes` order. `codes` names every value of the list,
+    /// retired ones included, once each. Only moved values are changed.
+    pub async fn reorder(
+        &self,
+        tx: &mut MutationTransaction<'_>,
+        scope: &Scope,
+        list: &str,
+        codes: &[String],
+    ) -> Result<Checked<Vec<PickValue>>> {
+        let list = self.list(list)?;
+        let moves = match self
+            .check_reorder(tx.sql(), scope, list, codes, true)
+            .await?
+        {
+            Ok(moves) => moves,
+            Err(errors) => return Ok(Err(errors)),
+        };
+        if !moves.is_empty() {
+            tx.mutate(move |sql| {
+                Box::pin(async move {
+                    let mut changes = Vec::with_capacity(moves.len());
+                    for (before, position) in moves {
+                        let row = sql
+                            .query_one(
+                                &format!("UPDATE base_picklist_values SET position=$2,version=version+1,updated_at=now() WHERE id=$1 RETURNING {COLUMNS}"),
+                                &[&before.id, &position],
+                            )
+                            .await?;
+                        let saved = PickValue::from_row(&row, list)?;
+                        changes.push(change(before.to_json(), &saved));
+                    }
+                    Ok(((), changes))
+                })
             })
-        })
-        .await?;
+            .await?;
+        }
         Ok(Ok(self.rows(tx.sql(), scope, list, "").await?))
     }
 
+    /// The current default and the chosen value. Equal codes mean no change.
+    async fn check_default(
+        &self,
+        client: &(impl GenericClient + Sync),
+        scope: &Scope,
+        list: &'static PickList,
+        code: Option<&str>,
+        lock: bool,
+    ) -> Result<Checked<(Option<PickValue>, Option<PickValue>)>> {
+        let tenant = self.manage(client, scope, list).await?;
+        let previous = client
+            .query_opt(
+                &format!("SELECT {COLUMNS} FROM base_picklist_values WHERE tenant_id=$1 AND list=$2 AND is_default{}", if lock { " FOR UPDATE" } else { "" }),
+                &[&tenant, &list.key],
+            )
+            .await?
+            .as_ref()
+            .map(|row| PickValue::from_row(row, list))
+            .transpose()?;
+        let chosen = match code {
+            Some(code) => match self.current(client, tenant, list, code, None, lock).await? {
+                Ok(value) if value.retired() => {
+                    return Ok(Err(vec![FieldError::new("code", "is retired")]))
+                }
+                Ok(value) => Some(value),
+                Err(errors) => return Ok(Err(errors)),
+            },
+            None => None,
+        };
+        Ok(Ok((previous, chosen)))
+    }
+    /// The default's code before and after (the agent preview).
+    pub async fn preview_default(
+        &self,
+        client: &(impl GenericClient + Sync),
+        scope: &Scope,
+        list: &str,
+        code: Option<&str>,
+    ) -> Result<Checked<(Option<String>, Option<String>)>> {
+        let list = self.list(list)?;
+        Ok(self
+            .check_default(client, scope, list, code, false)
+            .await?
+            .map(|(previous, chosen)| {
+                (
+                    previous.map(|value| value.code),
+                    chosen.map(|value| value.code),
+                )
+            }))
+    }
     /// Makes `code` the value that pre-fills a new record, or clears the
     /// default with `None`. A retired value cannot be the default.
     pub async fn set_default(
@@ -626,37 +813,18 @@ impl PickLists {
         code: Option<&str>,
     ) -> Result<Checked<Option<PickValue>>> {
         let list = self.list(list)?;
-        let tenant = self.manage(tx, scope, list).await?;
-        let previous = tx
-            .sql()
-            .query_opt(
-                "SELECT code FROM base_picklist_values WHERE tenant_id=$1 AND list=$2 AND is_default FOR UPDATE",
-                &[&tenant, &list.key],
-            )
+        let (previous, chosen) = match self
+            .check_default(tx.sql(), scope, list, code, true)
             .await?
-            .map(|row| row.get::<_, String>(0));
-        if previous.as_deref() == code {
-            return Ok(Ok(match code {
-                Some(code) => self.one(tx.sql(), tenant, list, code, "").await?,
-                None => None,
-            }));
-        }
-        let chosen = match code {
-            Some(code) => match self.current(tx, tenant, list, code, None).await? {
-                Ok(value) if value.retired() => {
-                    return Ok(Err(vec![FieldError::new("code", "is retired")]))
-                }
-                Ok(value) => Some(value),
-                Err(errors) => return Ok(Err(errors)),
-            },
-            None => None,
+        {
+            Ok(checked) => checked,
+            Err(errors) => return Ok(Err(errors)),
         };
+        if previous.as_ref().map(|value| &value.code) == chosen.as_ref().map(|value| &value.code) {
+            return Ok(Ok(chosen));
+        }
         if let Some(previous) = previous {
-            let before = self
-                .one(tx.sql(), tenant, list, &previous, "")
-                .await?
-                .ok_or(Error::Internal)?;
-            Self::save(tx, list, before, "is_default=false", Vec::new()).await?;
+            Self::save(tx, list, previous, "is_default=false", Vec::new()).await?;
         }
         Ok(Ok(match chosen {
             Some(before) => {
@@ -666,6 +834,54 @@ impl PickLists {
         }))
     }
 
+    /// The value to retire or restore, version-checked.
+    async fn check_status(
+        &self,
+        client: &(impl GenericClient + Sync),
+        scope: &Scope,
+        list: &'static PickList,
+        code: &str,
+        step: Step,
+        lock: bool,
+    ) -> Result<Checked<PickValue>> {
+        let (version, retiring) = match step {
+            Step::Retire(version) => (version, true),
+            Step::Restore(version) => (version, false),
+        };
+        let tenant = self.manage(client, scope, list).await?;
+        let before = match self
+            .current(client, tenant, list, code, Some(version), lock)
+            .await?
+        {
+            Ok(before) => before,
+            Err(errors) => return Ok(Err(errors)),
+        };
+        let refusal = match (retiring, before.retired()) {
+            (true, _) if before.locked => {
+                Some("is locked: the module relies on it, so it cannot be retired")
+            }
+            (true, true) => Some("is already retired"),
+            (false, false) => Some("is not retired"),
+            _ => None,
+        };
+        Ok(match refusal {
+            Some(message) => Err(vec![FieldError::new("code", message)]),
+            None => Ok(before),
+        })
+    }
+    /// The value a retirement would apply to (the agent preview).
+    pub async fn preview_retire(
+        &self,
+        client: &(impl GenericClient + Sync),
+        scope: &Scope,
+        list: &str,
+        code: &str,
+        version: i64,
+    ) -> Result<Checked<PickValue>> {
+        let list = self.list(list)?;
+        self.check_status(client, scope, list, code, Step::Retire(version), false)
+            .await
+    }
     /// Retires a value as of today: new records cannot choose it, records
     /// holding it keep it. A locked value cannot be retired; a retired
     /// default stops being the default.
@@ -678,20 +894,13 @@ impl PickLists {
         version: i64,
     ) -> Result<Checked<PickValue>> {
         let list = self.list(list)?;
-        let tenant = self.manage(tx, scope, list).await?;
-        let before = match self.current(tx, tenant, list, code, Some(version)).await? {
+        let before = match self
+            .check_status(tx.sql(), scope, list, code, Step::Retire(version), true)
+            .await?
+        {
             Ok(before) => before,
             Err(errors) => return Ok(Err(errors)),
         };
-        if before.locked {
-            return Ok(Err(vec![FieldError::new(
-                "code",
-                "is locked: the module relies on it, so it cannot be retired",
-            )]));
-        }
-        if before.retired() {
-            return Ok(Err(vec![FieldError::new("code", "is already retired")]));
-        }
         let saved = Self::save(
             tx,
             list,
@@ -702,7 +911,19 @@ impl PickLists {
         .await?;
         Ok(Ok(saved))
     }
-
+    /// The value a restore would apply to (the agent preview).
+    pub async fn preview_restore(
+        &self,
+        client: &(impl GenericClient + Sync),
+        scope: &Scope,
+        list: &str,
+        code: &str,
+        version: i64,
+    ) -> Result<Checked<PickValue>> {
+        let list = self.list(list)?;
+        self.check_status(client, scope, list, code, Step::Restore(version), false)
+            .await
+    }
     /// Brings a retired value back into new choices.
     pub async fn restore(
         &self,
@@ -713,14 +934,13 @@ impl PickLists {
         version: i64,
     ) -> Result<Checked<PickValue>> {
         let list = self.list(list)?;
-        let tenant = self.manage(tx, scope, list).await?;
-        let before = match self.current(tx, tenant, list, code, Some(version)).await? {
+        let before = match self
+            .check_status(tx.sql(), scope, list, code, Step::Restore(version), true)
+            .await?
+        {
             Ok(before) => before,
             Err(errors) => return Ok(Err(errors)),
         };
-        if !before.retired() {
-            return Ok(Err(vec![FieldError::new("code", "is not retired")]));
-        }
         let saved = Self::save(tx, list, before, "retired_on=NULL", Vec::new()).await?;
         Ok(Ok(saved))
     }

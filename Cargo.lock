@@ -951,6 +951,7 @@ dependencies = [
 name = "bilibi-picklists"
 version = "0.1.1"
 dependencies = [
+ "bilibi-agent-api",
  "bilibi-audit",
  "bilibi-authz",
  "bilibi-database",
