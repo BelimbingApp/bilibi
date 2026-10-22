@@ -140,12 +140,15 @@ fi
 echo "$(highlight 'Open ' "$APP_ORIGIN") — sign in as ai@agent.my / bilibi-dev (the platform operator's administrator)."
 echo 'Cargo output stays visible. Edit Rust/templates/assets to rebuild; Ctrl-C stops this app, leaving shared Caddy running.'
 # The asset build rewrites app.css, writes a scratch css/.mounted-<pid>.css (and
-# npm may touch node_modules) under apps/; watching them would make every rebuild
-# trigger the next one. cargo-watch reads .gitignore only when .git is a
-# directory, so in a git worktree these ignores are the only ones it applies.
+# npm may touch node_modules, Python its __pycache__) under apps/ and scripts/;
+# watching them would make every rebuild trigger the next one, so they are
+# ignored here. .gitignore is not used: it ignores the mounted Domain and
+# Extension checkouts under apps/, whose edits must rebuild too. (cargo-watch
+# only ever read it when .git is a directory, so a git worktree already ran
+# with these ignores alone.)
 # Keep the app owned by the launcher, outside cargo-watch's rebuild process
 # group. The owner stops only its own child on replacement or Ctrl-C.
 # Ignore prose, while retaining all Rust, SQL, templates, assets and include files.
-exec cargo watch --watch apps --watch Cargo.toml --watch Cargo.lock --watch scripts \
+exec cargo watch --no-vcs-ignores --watch apps --watch Cargo.toml --watch Cargo.lock --watch scripts \
     --ignore 'apps/base/ui/assets/app.css' --ignore 'apps/base/ui/assets/css/.mounted-*.css' \
-    --ignore '**/node_modules/**' --ignore '*.md' --shell './scripts/dev-run.sh'
+    --ignore '**/node_modules/**' --ignore '**/__pycache__/**' --ignore '*.md' --shell './scripts/dev-run.sh'
