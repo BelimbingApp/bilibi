@@ -10,7 +10,10 @@
 //! ```
 //!
 //! Add `APP_ORIGIN` and `BIND_ADDR` to serve the app afterwards, with these
-//! lists on the operator page at `/admin/picklists`.
+//! lists on the operator page at `/admin/picklists` and a case form using
+//! them at `/reference/cases` (`cases.rs`). The region list is
+//! installation-wide: the platform operator (tenant 1) keeps it, tenant 2
+//! reads it.
 //!
 //! It prints each boot refusal of behaviour 2 with its source line, then
 //! seeds every tenant, curates tenant 1's lists as its administrator, shows
@@ -22,8 +25,10 @@ use bilibi_base::agent_api::{
     plans::{PlanAuthority, PlanIdentity, PlannedOperation, Plans},
     Registry,
 };
+mod cases;
+
 use bilibi_base::authz::{
-    grants::Grants, CapabilityDefinition, VocabularyContribution, VOCABULARY,
+    grants::Grants, CapabilityDefinition, RoleDefinition, VocabularyContribution, VOCABULARY,
 };
 use bilibi_base::picklists::{
     self, NewValue, PickList, PickLists, Start, ValueUpdate, LISTS, SEEDS_SERVICE, SERVICE,
@@ -32,7 +37,7 @@ use bilibi_company::{provision_tenant, NewCompany, ProvisionOutcome};
 use bilibi_database::{pool, seeds, Error, MutationBoundary, Result};
 use bilibi_module_registry::{
     contributions::{Seed, SeedAction, SeedMode, SEEDS},
-    Catalog, Consumer, Contribution, Layer, Module, Provenance, Services,
+    Catalog, Consumer, Contribution, Layer, Module, Provenance, Service, Services,
 };
 use bilibi_tenancy::{Authentication, ProofFuture, Scope};
 use serde_json::json;
@@ -47,7 +52,9 @@ const SUBCATEGORY: &str = "extensions.picklists_reference.subcategory";
 const REGION: &str = "extensions.picklists_other.region";
 
 inventory::submit! {
-    Module { id: MODULE, layer: Layer::Extensions, dependencies: &["base/picklists", "base/authz"], migrations: &[], services: &[] }
+    Module { id: MODULE, layer: Layer::Extensions, dependencies: &["base/picklists", "base/authz", "base/database", "base/tenancy", "base/ui"], migrations: &[], services: &[
+        Service { id: cases::PAGES, factory: cases::service },
+    ] }
 }
 inventory::submit! {
     Module { id: "extensions/picklists_other", layer: Layer::Extensions, dependencies: &["base/picklists"], migrations: &[], services: &[] }
@@ -55,7 +62,11 @@ inventory::submit! {
 inventory::submit! { Contribution::new(VOCABULARY, MODULE, Provenance { module: MODULE, source: file!(), line: line!() }, &VocabularyContribution {
     domains: &["reference"], verbs: &["manage"],
     capabilities: &[CapabilityDefinition::tenant("reference.cases.manage")],
-    roles: &[], system_principals: &[],
+    // The fixture managers curate pick-lists, including tenant 2's, which
+    // reads the installation-wide region list but cannot change it.
+    roles: &[RoleDefinition { code: "manager", name: "manager", description: "Walkthrough fixture role", grant_all: false,
+        capabilities: &["base.picklists.view", "base.picklists.manage", "reference.cases.manage"] }],
+    system_principals: &[],
 }) }
 bilibi_base::picklists::declare!(
     "extensions/picklists_reference",
@@ -91,7 +102,12 @@ bilibi_base::picklists::declare!(
 );
 bilibi_base::picklists::declare!(
     "extensions/picklists_other",
-    PickList::new(REGION, "Region", &[Start::new("north", "North")])
+    PickList::new(
+        REGION,
+        "Region",
+        &[Start::new("north", "North"), Start::new("south", "South")]
+    )
+    .installation()
 );
 // Every module that declares lists contributes its own seed version naming
 // the shared reconcile; a later release that adds values contributes v2.
@@ -641,10 +657,28 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     drop(client);
 
     // With BIND_ADDR set, serve the app with these lists for the operator
-    // page (`/admin/picklists`), until Ctrl-C.
+    // page (`/admin/picklists`) and the case form (`/reference/cases`),
+    // until Ctrl-C. Tenant 1 holds a case on `feedback`, to retire it under
+    // the case; the manager reads in Malay.
     if let Ok(bind) = std::env::var("BIND_ADDR") {
+        cases::STORE.insert(
+            1,
+            cases::Case {
+                category: "feedback".into(),
+                subcategory: "general".into(),
+                region: "north".into(),
+                ..cases::Case::default()
+            },
+        );
+        db.get()
+            .await?
+            .execute(
+                "INSERT INTO base_settings(key,tenant_id,scope_type,scope_id,value,is_encrypted) VALUES('ui.locale',1,'user',1,'\"ms-MY\"',false) ON CONFLICT DO NOTHING",
+                &[],
+            )
+            .await?;
         let listener = tokio::net::TcpListener::bind(bind).await?;
-        println!("Pick-lists reference listening at {origin}/admin/picklists");
+        println!("Pick-lists reference listening at {origin}/admin/picklists and {origin}/reference/cases");
         axum::serve(listener, bilibi_web::router(app))
             .with_graceful_shutdown(async {
                 let _ = tokio::signal::ctrl_c().await;
