@@ -107,6 +107,14 @@ Each write runs on the caller's `MutationTransaction` and records one `Change` o
 - Reading every value (`values`) needs `base.picklists.view`. Writing needs `base.picklists.manage`. A list's `.requires(key)` capability is needed for both.
 - **Installation-wide lists** keep their rows on the platform-operator tenant. Every tenant reads them; only the platform operator writes them, with `base.picklists.installation.manage`.
 
+## Operator page
+
+**Administration › Pick-lists** (`/admin/picklists`, `base.picklists.view`) lists the mounted lists the person may see; `/admin/picklists/{key}` shows one list's values (`src/web.rs`).
+
+- Label, translation (pick the language in the toolbar), hint and parent codes are edited in place. Move up and down, make or clear the default, retire and restore sit on each row; retire and restore confirm first.
+- Every change goes through the `base.picklists.value.*` contracts below (`PAGE_WRITES` names each event), so the page and agents share one check and one audit trail.
+- Editors and the "+ Value" button show only for a person who may change the list. Retired values show with "Include retired".
+
 ## Agent operations
 
 Agents curate through `base.picklists.*` (`src/operations.rs`). Each write is a reviewed safe write: the preview runs the facade's checks without locking or writing, and the commit writes on the plan's audited transaction.
@@ -150,4 +158,5 @@ DATABASE_URL=… cargo run -p bilibi-web --example picklists-reference
 | Audit | One `picklist_value` row per change, attributed to the actor: `created` for a new value, `updated` otherwise. |
 | Agent reads | `base.picklists.lists` shows each list's locked codes; `base.picklists.values` lists the codes in order. |
 | Agent writes | A create's preview is valid and writes no row; its commit saves one; replaying the plan code is refused. |
+| Operator page | Serve the fixture with `APP_ORIGIN` and `BIND_ADDR`, sign in as `admin@example.test`: add, rename, translate, reorder, set the default, retire and restore on `/admin/picklists`; `viewer@example.test` gets 403 and no menu entry. |
 | Agent refusals | Retiring the locked value, a stale version and an unknown field are refused in the preview; the viewer's plan is `missing_capability`. |

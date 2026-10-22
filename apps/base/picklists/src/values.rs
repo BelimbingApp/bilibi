@@ -187,7 +187,7 @@ impl PickLists {
         self.lists.get(key).copied().ok_or(Error::NotFound)
     }
 
-    async fn rows(
+    pub(crate) async fn rows(
         &self,
         client: &impl GenericClient,
         scope: &Scope,
