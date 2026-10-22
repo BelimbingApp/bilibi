@@ -9,6 +9,9 @@
 //! cargo run -p bilibi-web --example picklists-reference
 //! ```
 //!
+//! Add `APP_ORIGIN` and `BIND_ADDR` to serve the app afterwards, with these
+//! lists on the operator page at `/admin/picklists`.
+//!
 //! It prints each boot refusal of behaviour 2 with its source line, then
 //! seeds every tenant, curates tenant 1's lists as its administrator, shows
 //! that a repeat seed and reconcile leave those edits alone, that tenant 2
@@ -420,7 +423,8 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let modules = bilibi_web::modules()?;
     bilibi_database::migrate(&db, &modules).await?;
     bilibi_walkthrough_fixture::install(&db).await?;
-    let app = bilibi_web::App::new(db.clone(), "http://localhost:3000")?;
+    let origin = std::env::var("APP_ORIGIN").unwrap_or_else(|_| "http://localhost:3000".into());
+    let app = bilibi_web::App::new(db.clone(), &origin)?;
     let services = &app.services;
     services
         .get::<Grants>("base/authz.grants")?
@@ -633,6 +637,19 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             row.get::<_, Option<String>>(1).unwrap_or_default(),
             row.get::<_, Option<String>>(2).unwrap_or_default()
         );
+    }
+    drop(client);
+
+    // With BIND_ADDR set, serve the app with these lists for the operator
+    // page (`/admin/picklists`), until Ctrl-C.
+    if let Ok(bind) = std::env::var("BIND_ADDR") {
+        let listener = tokio::net::TcpListener::bind(bind).await?;
+        println!("Pick-lists reference listening at {origin}/admin/picklists");
+        axum::serve(listener, bilibi_web::router(app))
+            .with_graceful_shutdown(async {
+                let _ = tokio::signal::ctrl_c().await;
+            })
+            .await?;
     }
     Ok(())
 }

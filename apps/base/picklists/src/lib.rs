@@ -10,6 +10,7 @@ mod declaration;
 mod operations;
 mod seeds;
 mod values;
+mod web;
 
 pub use declaration::{PickList, Reach, Start, CODE_MAX, HINT_MAX, LABEL_MAX, LISTS, VALUES_MAX};
 pub use seeds::provision;
@@ -24,12 +25,17 @@ pub use {
 
 use bilibi_authz::{CapabilityDefinition, VocabularyContribution, VOCABULARY};
 use bilibi_module_registry::{
-    contributions::{Seed, SeedAction, SeedMode, SEEDS},
+    contributions::{
+        Access, Method, PageWrites, Pending, Route, Seed, SeedAction, SeedMode, PAGE_WRITES,
+        ROUTES, SEEDS,
+    },
     Catalog, Module, RegistryError, Service,
 };
 use std::{collections::BTreeSet, sync::Arc};
 
 pub const SERVICE: &str = "base/picklists.lists";
+/// The operator page.
+pub(crate) const PAGES: &str = "base/picklists.pages";
 /// The production seed service; its one operation is `reconcile`.
 pub const SEEDS_SERVICE: &str = "base/picklists.seeds";
 /// Read a list's values on the operator page and through agents.
@@ -133,7 +139,7 @@ fn build(services: &bilibi_module_registry::Services) -> bilibi_module_registry:
 inventory::submit! {
     Module {
         id: "base/picklists", layer: bilibi_module_registry::Layer::Base,
-        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/locale", "base/ui", "base/audit", "base/agent_api"],
+        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/locale", "base/ui", "base/audit", "base/agent_api", "base/menu"],
         migrations: &[("base-picklists-001-values", include_str!("../migrations/001-values.sql"))],
         services: &[
             Service { id: SERVICE, factory: |services| {
@@ -141,7 +147,42 @@ inventory::submit! {
                 operations::bind(services.get::<bilibi_database::Db>("base/database.pool")?.as_ref().clone(), lists.clone())?;
                 Ok(lists)
             } },
+            Service { id: PAGES, factory: |services| Ok(Arc::new(bilibi_ui::page::PageService::<bilibi_tenancy::Scope, bilibi_database::Error>(Arc::new(web::Pages {
+                db: services.get::<bilibi_database::Db>("base/database.pool")?.as_ref().clone(),
+                lists: services.get(SERVICE)?,
+                contracts: services.get(bilibi_agent_api::page::SERVICE)?,
+            })))) },
             Service { id: SEEDS_SERVICE, factory: |_| Ok(Arc::new(bilibi_database::seeds::SeedService(Arc::new(seeds::Seeds)))) },
         ],
     }
 }
+
+inventory::submit! { Contribution::new(ROUTES, "base/picklists.index", provenance!(), &Route {
+    method: Method::Get, path: web::INDEX, service: PAGES, operation: "index", access: Access::Capability(VIEW), framed: true,
+}) }
+inventory::submit! { Contribution::new(ROUTES, "base/picklists.values", provenance!(), &Route {
+    method: Method::Get, path: web::VALUES, service: PAGES, operation: "values", access: Access::Capability(VIEW), framed: true,
+}) }
+// Every write goes through the contracts agents call.
+inventory::submit! { Contribution::new(PAGE_WRITES, PAGES, provenance!(), &PageWrites {
+    service: PAGES,
+    contracts: &[
+        ("create", "base.picklists.value.create"),
+        ("save_field", "base.picklists.value.update"),
+        ("move_up", "base.picklists.value.reorder"),
+        ("move_down", "base.picklists.value.reorder"),
+        ("make_default", "base.picklists.value.default"),
+        ("clear_default", "base.picklists.value.default"),
+        ("retire", "base.picklists.value.retire"),
+        ("restore", "base.picklists.value.restore"),
+    ],
+    pending: Pending::None,
+}) }
+bilibi_menu::contribute!(
+    "base/picklists",
+    bilibi_menu::MenuItem::page("admin.picklists", "Pick-lists", web::INDEX)
+        .icon("hero-queue-list")
+        .under("admin")
+        .requires(bilibi_menu::Requirement::Capability(VIEW))
+        .order(60)
+);

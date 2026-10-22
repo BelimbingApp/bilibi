@@ -954,11 +954,13 @@ dependencies = [
 name = "bilibi-picklists"
 version = "0.1.1"
 dependencies = [
+ "askama",
  "bilibi-agent-api",
  "bilibi-audit",
  "bilibi-authz",
  "bilibi-database",
  "bilibi-locale",
+ "bilibi-menu",
  "bilibi-module-registry",
  "bilibi-tenancy",
  "bilibi-ui",
