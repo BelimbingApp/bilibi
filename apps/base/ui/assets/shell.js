@@ -302,6 +302,8 @@
     }
 
     key(event) {
+      // Leave composition keys with the input method, including its final Enter.
+      if (event.isComposing || event.keyCode === 229) return;
       if (!this.isOpen()) {
         if (event.key !== '/' || event.ctrlKey || event.metaKey || event.altKey || event.defaultPrevented) return;
         const target = event.target instanceof Element ? event.target : null;
