@@ -186,7 +186,7 @@
     insecure_context; the page decodes it with bilibi_ui::LocationReport. -#}
 {% macro location_action(control) %}
 {%- let button_id = "{}-button"|format(control.id) -%}
-<span id="{{ control.id }}" data-hook="LocationAction" data-event="{{ control.event }}"{% for pair in control.values %} data-value-{{ pair.0 }}="{{ pair.1 }}"{% endfor %} data-working="{{ control.working }}"{% if !control.sending.is_empty() %} data-sending="{{ control.sending }}"{% endif %} data-timeout="{{ control.timeout_ms }}"{% if control.disabled %} data-disabled{% endif %} class="inline-flex{% if !control.class.is_empty() %} {{ control.class }}{% endif %}">{% call ui::button(id=button_id, button_type="button", variant=control.variant, disabled=control.disabled) %}{{ control.label }}{% endcall %}</span>
+<span id="{{ control.id }}" data-hook="LocationAction" data-event="{{ control.event }}"{% for pair in control.values %} data-value-{{ pair.0 }}="{{ pair.1 }}"{% endfor %} data-working="{{ control.working }}"{% if !control.sending.is_empty() %} data-sending="{{ control.sending }}"{% endif %} data-timeout="{{ control.timeout_ms }}"{% if control.disabled %} data-disabled{% endif %} class="inline-flex">{% call ui::button(id=button_id, button_type="button", variant=control.variant, disabled=control.disabled) %}{{ control.label }}{% endcall %}</span>
 {% endmacro %}
 
 {#- A quiet "+ Add …" button that reveals one more optional field (no Bilimbi

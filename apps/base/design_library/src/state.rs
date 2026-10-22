@@ -399,7 +399,6 @@ impl State {
             "capture-location" => {
                 self.location = Some(LocationReport::from_event(event).ok_or(Error::Invalid)?);
             }
-            "forget-location" => self.location = None,
             "clear-flash" => {
                 self.submitted = false;
                 self.notice.clear();

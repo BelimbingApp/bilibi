@@ -1821,8 +1821,6 @@ pub struct LocationAction {
     /// How long the browser may take before the control reports `unavailable`.
     pub timeout_ms: u32,
     pub disabled: bool,
-    /// Layout classes on the control's wrapper.
-    pub class: String,
 }
 
 impl LocationAction {
@@ -1839,7 +1837,6 @@ impl LocationAction {
             sending: String::new(),
             timeout_ms: Self::DEFAULT_TIMEOUT_MS,
             disabled: false,
-            class: String::new(),
         }
     }
     pub fn variant(mut self, variant: ButtonVariant) -> Self {
@@ -1877,10 +1874,6 @@ impl LocationAction {
     }
     pub fn disabled(mut self) -> Self {
         self.disabled = true;
-        self
-    }
-    pub fn class(mut self, class: impl Into<String>) -> Self {
-        self.class = class.into();
         self
     }
 }
@@ -1930,16 +1923,6 @@ impl LocationReport {
             longitude,
             accuracy,
         })
-    }
-
-    /// The wire name of this report: `located`, or the outcome the hook sent.
-    pub fn outcome(&self) -> &'static str {
-        match self {
-            Self::Position { .. } => "located",
-            Self::PermissionDenied => "permission_denied",
-            Self::Unavailable => "unavailable",
-            Self::InsecureContext => "insecure_context",
-        }
     }
 
     /// The sentence a page shows for a report without a position; `None` for

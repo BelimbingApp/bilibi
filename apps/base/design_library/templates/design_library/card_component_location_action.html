@@ -8,7 +8,6 @@
                 </p>
                 <div class="mt-4 flex flex-wrap items-center gap-2">
                   {{ self.location_action()? }}
-                  {% if self.state.location.is_some() %}{% call ui::button(id="design-library-location-forget", button_type="button", event="forget-location") %}Forget position{% endcall %}{% endif %}
                 </div>
                 {% match self.state.location %}
                 {% when Some(report) %}
@@ -20,7 +19,7 @@
                   <div><dt class="text-ink-muted">Accuracy</dt><dd class="tabular-nums text-ink">{% match accuracy %}{% when Some(metres) %}± {{ "{:.0}"|format(metres) }} m{% when None %}Not given{% endmatch %}</dd></div>
                 </dl>
                 {% when _ %}
-                <p id="design-library-location-refused" class="mt-4 text-sm text-danger-ink" role="alert" data-outcome="{{ report.outcome() }}">{{ report.refusal().unwrap_or_default() }}</p>
+                <p id="design-library-location-refused" class="mt-4 text-sm text-danger-ink" role="alert">{{ report.refusal().unwrap_or_default() }}</p>
                 {% endmatch %}
                 {% when None %}
                 <p id="design-library-location-empty" class="mt-4 text-sm text-ink-muted">No position reported yet.</p>
