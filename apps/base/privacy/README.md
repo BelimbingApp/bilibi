@@ -8,7 +8,7 @@
 | --- | --- |
 | Personal-data registry and handler contract | Built |
 | Grid personal field marks and boot check | Built |
-| Legal holds | Planned |
+| Legal holds | Built (facade; operator page planned) |
 | Access and erasure requests, export, certificate | Planned |
 | Audit and media erasure paths | Planned |
 | Retention classes and sweeps | Planned |
@@ -57,6 +57,28 @@ inventory::submit! { Contribution::new(bilibi_privacy::PERSONAL_DATA, "core/pers
 - Boot fails when a Grid table marks a field personal and its module contributes no store, naming the table, the field and the module.
 - Marks are opt-in. A table without marks behaves exactly as before.
 
+## Legal holds
+
+**A hold on a person or one record stops erasure and sweeps for what it names.** Artifact holds stay authoritative for documents.
+
+| Call | Needs | Does |
+| --- | --- | --- |
+| `place_hold(client, scope, target, reason)` | `privacy.hold.manage` | Places a hold on `HoldTarget::Person` or `HoldTarget::Record { kind, id }`. A second active hold on the same target is `Conflict` |
+| `release_hold(client, scope, id, reason)` | `privacy.hold.manage` | Releases an active hold once. Another tenant's hold is `NotFound` |
+| `holds(client, scope, limit)` | `privacy.hold.view` | The tenant's holds, active first then newest, at most 500 |
+| `hold_history(client, scope, id)` | `privacy.hold.view` | Placed and released events, oldest first |
+| `active_holds(client, scope, person)` | `privacy.hold.view` | `Holds` for an erasure or sweep: `person_held()`, `record_held(kind, id)` |
+
+- A record is named by its audit record kind (`Change::kind`) and ID.
+- A reason is required: 1–255 characters, no control characters. It is a case reference, never personal data.
+- Place and release are `MutationBoundary` writes recorded as `base/privacy.hold` (created, then updated).
+- `erase` receives the `Holds` read inside the erasure transaction. A held person keeps everything; a held record is listed as kept with `KeptReason::LegalHold`.
+- The database guards the same rules for any client (`migrations/001-holds.sql`):
+  - a hold has exactly one target
+  - a hold is released once, and nothing else about it changes
+  - no hold row is deleted or truncated
+  - `base_privacy_hold_events` is append-only, with `recorded_at` stamped by PostgreSQL
+
 ## Runtime checks
 
 No unit tests. Prove on a disposable database ([runtime parity](../../../docs/runtime-parity.md)).
@@ -66,3 +88,12 @@ No unit tests. Prove on a disposable database ([runtime parity](../../../docs/ru
 | Nothing marked | Boot the app | Boots; pages unchanged |
 | Mark without a store | Mark a Core Grid field personal, boot | Boot fails naming the table, field and module |
 | Store without the dependency | Contribute a store from a module that does not declare `base/privacy` | Boot fails naming the store |
+| Legal holds | `examples/holds-walkthrough.rs` on a disposable database, then again with `report` | Place, duplicate `Conflict`, release once, history; viewer refused; tenant 2 sees none and gets `NotFound`; every raw edit, delete and truncate refused by the database |
+
+Run the holds walkthrough only against a fresh disposable database:
+
+```sh
+BILIBI_DISPOSABLE_PRIVACY_DEMO=yes DATABASE_URL=postgres://…/disposable \
+  cargo run -p bilibi-privacy --example holds-walkthrough
+cargo run -p bilibi-privacy --example holds-walkthrough -- report   # same env
+```
