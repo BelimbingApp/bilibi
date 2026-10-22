@@ -14,7 +14,7 @@ cd ../my-bilibi
 
 `new` creates a sibling repository. It records the current Platform, every mounted Domain and every mounted Extension. All selected commits must be independently fetchable from their declared `origin`. Sources use credential-free HTTPS URLs; private repositories use your existing Git credential helper or `GIT_ASKPASS`.
 
-The command copies a pinned revision of the [application starting point](https://github.com/BelimbingApp/bilibi-app). It reconstructs source clones without the trial's Git objects, validates the trial's resolved dependency lock against those sources, then saves the recipe, manifest and lock. It never resolves a replacement dependency selection. If the working lock needs updating after mounting, run `cargo metadata` in the trial first. Python 3.11+, Git and the trial's working Cargo toolchain are needed; creation itself does not require Docker.
+The command copies a pinned revision of the [application template](https://github.com/BelimbingApp/bilibi-app-template). It reconstructs source clones without the trial's Git objects, validates the trial's resolved dependency lock against those sources, then saves the recipe, manifest and lock. It never resolves a replacement dependency selection. If the working lock needs updating after mounting, run `cargo metadata` in the trial first. Python 3.11+, Git and the trial's working Cargo toolchain are needed; creation itself does not require Docker.
 
 **This captures sources only.** The trial's database, media, configuration and keys stay where they are. Generated composition changes may remain local to Platform; other staged, unstaged and untracked source changes must be committed in their owning repository and pushed first. A refusal prints the repository and exact commit or push step. An occupied destination is left untouched; choose another sibling name.
 
@@ -25,7 +25,7 @@ git add .
 git commit -m 'Create application from selected Bilibi sources'
 ```
 
-The application's `main` branch starts at that starting-point revision, and the starting point is its `upstream` remote, so later template updates merge with your changes. Create a remote when you are ready, add it with `git remote add origin <your-repository-url>`, then run `git push -u origin main`. Trying Bilibi and creating the local application do not require a GitHub account.
+The application's `main` branch starts at that template revision, and the template is its `upstream` remote, so later template updates merge with your changes. Create a remote when you are ready, add it with `git remote add origin <your-repository-url>`, then run `git push -u origin main`. Trying Bilibi and creating the local application do not require a GitHub account.
 
 ## Git ownership
 
@@ -69,7 +69,7 @@ After component changes are committed and pushed, run:
 git diff -- setup.toml composition/
 ```
 
-Review and commit those three saved files together. Domains and Extensions are optional, including a Platform-only application. Strict checks and builds require the saved commits, remotely fetchable sources and clean inputs, except recognised generated composition. The application uses the starting point's pinned Docker builder for `pin`, `check` and `build`; these commands need Docker and a running daemon. Checks require a separate empty `BILIBI_CHECK_DATABASE_URL`, never your working database. See your application's README for the full command and release contract.
+Review and commit those three saved files together. Domains and Extensions are optional, including a Platform-only application. Strict checks and builds require the saved commits, remotely fetchable sources and clean inputs, except recognised generated composition. The application uses the template's pinned Docker builder for `pin`, `check` and `build`; these commands need Docker and a running daemon. Checks require a separate empty `BILIBI_CHECK_DATABASE_URL`, never your working database. See your application's README for the full command and release contract.
 
 Publish an application release through its existing workflow. Verify the resulting artifact on Staging, then promote **that same artifact** to Production under [ADR 02](architecture/decisions/02-build-in-development-keep-everything-in-step.md) and the [server installation guide](server-install.md). A workspace migration is not a server deployment.
 
@@ -90,9 +90,9 @@ An application created before `update` was available needs the deliberate toolin
 
 The application owns its wrapper, scripts and workflows after creation. `setup` obtains component sources; it does not overwrite application automation from a moving template branch.
 
-An application created by `new` merges the starting point's `upstream/main` on a branch and reviews it as a pull request; the starting point's README, **Take template updates**, gives the commands. Merge with a merge commit, never a squash, so the link to the starting point survives.
+An application created by `new` merges the template's `upstream/main` on a branch and reviews it as a pull request; the template's README, **Take template updates**, gives the commands. Merge with a merge commit, never a squash, so the link to the template survives.
 
-An application created before `new` kept that history has no common history with the starting point. Compare its automation against a chosen commit of the starting point in a separate clone. Transfer the relevant wrapper, script, builder and workflow changes deliberately, preserving application customizations. Review the full diff, run the application's checks and packaging verification, then commit the tooling update in the application repository. After that, link the histories once, as the same README section describes, so later updates merge. Keep recipe changes separate and explicit; never replace `setup.toml` or `composition/` with the template's example selection.
+An application created before `new` kept that history has no common history with the template. Compare its automation against a chosen commit of the template in a separate clone. Transfer the relevant wrapper, script, builder and workflow changes deliberately, preserving application customizations. Review the full diff, run the application's checks and packaging verification, then commit the tooling update in the application repository. After that, link the histories once, as the same README section describes, so later updates merge. Keep recipe changes separate and explicit; never replace `setup.toml` or `composition/` with the template's example selection.
 
 ## Inventory an existing checkout
 

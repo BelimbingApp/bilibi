@@ -51,6 +51,8 @@ case ${1:-help} in
         ;;
     help|--help|-h)
         cat <<'USAGE'
+This is the Bilibi Platform repository.
+
 Usage: ./bilibi <command>
   start             Set up missing tools and run local sources
   setup             Prepare tools and install the Platform commit safeguard

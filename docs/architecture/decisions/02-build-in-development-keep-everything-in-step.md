@@ -88,4 +88,4 @@ This table describes the checkout on 2026-10-20. Accepted direction does not mea
 | --- | --- |
 | Catalogue-wide CI cross-check | Built. Every official Domain and Extension is checked, and a breaking change still needs a companion pull request. |
 | Coordinated release train | Release gating, automatic catalogue entries and upgrade notes for agents are built. The Software page's Update available state is still open. |
-| GitHub Actions builds and GitHub release assets | Built through the public [application starting point](https://github.com/BelimbingApp/bilibi-app). Servers install an exact asset or upload; [Software](../../../apps/base/software/README.md) owns the identity, Staging report and install contract. |
+| GitHub Actions builds and GitHub release assets | Built through the public [application starting point](https://github.com/BelimbingApp/bilibi-app-template). Servers install an exact asset or upload; [Software](../../../apps/base/software/README.md) owns the identity, Staging report and install contract. |

@@ -43,6 +43,20 @@ Bilibi is MIT-licensed, like the earlier iterations. The architecture is the sam
 - **Agent access:** agents sign in for a person through OAuth and work through `/api/v1` and `/mcp`. Connection details are on My settings, under AI connections. The tab holds one prompt the person pastes into their AI app, so the agent connects itself.
 - **Database tables:** an owner-only, read-only view of every table, with data, schema and relationships.
 
+## Which repository?
+
+Bilibi has three kinds of repository. You start in this one.
+
+| Repository | What it holds | Use it to |
+| --- | --- | --- |
+| `bilibi` (this one) | The Platform's source code | Try Bilibi, change the Platform, and add Domains and Extensions to develop or test them |
+| [`bilibi-app-template`](https://github.com/BelimbingApp/bilibi-app-template) | The template for applications | Change what every new application starts with. Most people never work in it. |
+| Your application, such as `your-company/my-bilibi` | One product: the Platform, Domain and Extension versions it uses | Develop your product, build releases, and install them on your servers |
+
+For example, you try Bilibi here and add the Finance Domain. When you want to keep that setup as your own product, run `./bilibi new my-bilibi`. It copies the template into a new `my-bilibi` folder next to this one and records the Platform and Finance versions in it. From then on, you develop and release from `my-bilibi`.
+
+A template is a ready-made starting copy. You don't work in it; you copy it and change the copy. Your copy keeps the template's working parts as they are, such as the `./bilibi` commands and the release scripts, and you replace its sample parts with your own.
+
 ## Run it locally
 
 1. Clone Bilibi and enter its folder:
@@ -83,7 +97,7 @@ Run commands from the clone's root. Use `./bilibi help` to see the command list.
 | `./bilibi new <name>` | Keep this source composition in a separate sibling application repository |
 | `./bilibi check`, `pin`, `build` | Require an application repository; create one with `new` |
 
-`new` copies the [application starting point](https://github.com/BelimbingApp/bilibi-app). The [application workspace guide](docs/application-workspaces.md) covers the next step, Git ownership and migration; [ADR 03](docs/architecture/decisions/03-application-workspaces-one-front-door.md) records the decision. `scripts/setup.sh` and `scripts/start-app.sh` remain available directly. Direct setup also installs the safeguard; after installing tools directly, load `$HOME/.cargo/env` before using the direct launcher.
+`new` copies the [application template](https://github.com/BelimbingApp/bilibi-app-template). The [application workspace guide](docs/application-workspaces.md) covers the next step, Git ownership and migration; [ADR 03](docs/architecture/decisions/03-application-workspaces-one-front-door.md) records the decision. `scripts/setup.sh` and `scripts/start-app.sh` remain available directly. Direct setup also installs the safeguard; after installing tools directly, load `$HOME/.cargo/env` before using the direct launcher.
 
 Run `./bilibi update` before `./bilibi start` to bring an existing clone up to date. It fast-forwards your branch from its upstream. A published branch whose changes already reached the default branch, including an exact squash merge, can safely return to that default branch. Other local commits and source edits stop the update with a concrete next step. Recognised generated composition and its reproduced dependency lock are regenerated; real edits are never discarded or silently stashed. Update never downgrades a component. A component on a branch, dirty, symlinked, unlisted or off its official origin stays where it is, with its path and reason printed; this does not fail the update.
 
