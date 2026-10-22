@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+bilibi-agent-api.workspace = true
 bilibi-audit.workspace = true
 bilibi-authz.workspace = true
 bilibi-database.workspace = true

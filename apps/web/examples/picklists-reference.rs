@@ -15,6 +15,10 @@
 //! keeps its own values, that `check` refuses retired, unknown and mismatched
 //! values, that a person without `base.picklists.manage` cannot write, that a
 //! new tenant gets the starting values at provisioning, and the audit rows.
+use bilibi_base::agent_api::{
+    plans::{PlanAuthority, PlanIdentity, PlannedOperation, Plans},
+    Registry,
+};
 use bilibi_base::authz::{
     grants::Grants, CapabilityDefinition, VocabularyContribution, VOCABULARY,
 };
@@ -27,8 +31,10 @@ use bilibi_module_registry::{
     contributions::{Seed, SeedAction, SeedMode, SEEDS},
     Catalog, Consumer, Contribution, Layer, Module, Provenance, Services,
 };
-use bilibi_tenancy::{Authentication, Scope};
+use bilibi_tenancy::{Authentication, ProofFuture, Scope};
+use serde_json::json;
 use std::{collections::BTreeMap, sync::Arc};
+use tokio_postgres::Transaction;
 bilibi_walkthrough_fixture::walkthrough_vocabulary!();
 bilibi_walkthrough_fixture::walkthrough_module_roles!();
 
@@ -385,16 +391,37 @@ async fn seed(
     Ok(())
 }
 
+/// A browser session as the plan's authority, as the operator page's
+/// reviewed writes use it.
+struct Browser<'a> {
+    app: &'a bilibi_web::App,
+    token: &'a str,
+}
+impl PlanAuthority for Browser<'_> {
+    fn verify<'a>(&'a self, tx: &'a Transaction<'_>) -> ProofFuture<'a, PlanIdentity> {
+        Box::pin(async move {
+            tx.query_opt(
+                "SELECT id FROM sessions WHERE id=$1 AND expires_at>clock_timestamp() FOR UPDATE",
+                &[&self.token],
+            )
+            .await?
+            .ok_or(Error::Unauthorized)?;
+            Ok(PlanIdentity {
+                scope: self.app.security.sessions.check(tx, self.token).await?,
+                credential_binding: format!("browser:{}", self.token),
+            })
+        })
+    }
+}
+
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let db = pool(&std::env::var("DATABASE_URL").map_err(|_| Error::Invalid)?)?;
     let modules = bilibi_web::modules()?;
     bilibi_database::migrate(&db, &modules).await?;
     bilibi_walkthrough_fixture::install(&db).await?;
-    let mut services = Services::default();
-    services.provide("bootstrap.database", Arc::new(db.clone()))?;
-    services.provide("bootstrap.composition", Arc::new(bilibi_web::composition()))?;
-    services.install(&modules)?;
+    let app = bilibi_web::App::new(db.clone(), "http://localhost:3000")?;
+    let services = &app.services;
     services
         .get::<Grants>("base/authz.grants")?
         .reconcile()
@@ -410,7 +437,7 @@ async fn main() -> Result<()> {
         "mounted lists: {:?}",
         proof.lists.lists().map(|list| list.key).collect::<Vec<_>>()
     );
-    seed(&db, &modules, &services).await?;
+    seed(&db, &modules, services).await?;
 
     let client = db.get().await?;
     let authentication = services.get::<Authentication>("base/tenancy.authentication")?;
@@ -539,7 +566,7 @@ async fn main() -> Result<()> {
     );
     drop(client);
 
-    seed(&db, &modules, &services).await?;
+    seed(&db, &modules, services).await?;
     let inserted = picklists::provision(&**db.get().await?, 1).await?;
     println!("reconcile tenant 1 again: {inserted} value(s) inserted");
     proof.show(&admin, "edits survive the repeat").await?;
@@ -589,11 +616,13 @@ async fn main() -> Result<()> {
         ProvisionOutcome::Refused(errors) => println!("provisioning refused: {errors:?}"),
     }
 
+    agent(&app, &db).await?;
+
     let client = db.get().await?;
     println!("-- audit (tenant 1, picklist_value):");
     for row in client
         .query(
-            "SELECT event, new_values->>'list', new_values->>'code' FROM base_audit_mutations WHERE tenant_id=1 AND auditable_type='picklist_value' ORDER BY id",
+            "SELECT event||' by '||actor_type||' '||actor_id, new_values->>'list', new_values->>'code' FROM base_audit_mutations WHERE tenant_id=1 AND auditable_type='picklist_value' ORDER BY id",
             &[],
         )
         .await?
@@ -605,5 +634,143 @@ async fn main() -> Result<()> {
             row.get::<_, Option<String>>(2).unwrap_or_default()
         );
     }
+    Ok(())
+}
+
+/// The same writes as an agent or the operator page makes them: a plan is
+/// previewed (nothing is written), then committed with its code.
+async fn agent(
+    app: &bilibi_web::App,
+    db: &bilibi_database::Db,
+) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let password = bilibi_walkthrough_fixture::PASSWORD;
+    let admin_login = app.user.login("admin@example.test", password).await?;
+    let viewer_login = app.user.login("viewer@example.test", password).await?;
+    let admin = app.security.guard(&admin_login.token).await?;
+    let plans = app.services.get::<Plans>("base/agent_api.plans")?;
+    let registry = app.services.get::<Registry>("base/agent_api.registry")?;
+    let browser = Browser {
+        app,
+        token: &admin_login.token,
+    };
+    let delivery = || async {
+        let count: i64 = db
+            .get()
+            .await?
+            .query_one(
+                "SELECT count(*) FROM base_picklist_values WHERE tenant_id=1 AND list=$1 AND code='delivery'",
+                &[&CATEGORY],
+            )
+            .await?
+            .get(0);
+        Ok::<_, Error>(count)
+    };
+    println!("-- reviewed writes (agent operations)");
+    let client = db.get().await?;
+    let lists = registry
+        .call(&**client, &admin, "base.picklists.lists", &json!({}))
+        .await?;
+    println!(
+        "base.picklists.lists: {:?}",
+        lists["result"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|list| format!("{} locked {}", list["key"], list["locked"]))
+            .collect::<Vec<_>>()
+    );
+    let values = registry
+        .call(
+            &**client,
+            &admin,
+            "base.picklists.values",
+            &json!({"list": CATEGORY}),
+        )
+        .await?;
+    println!(
+        "base.picklists.values: {:?}",
+        values["result"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|value| value["code"].as_str().unwrap_or_default().to_owned())
+            .collect::<Vec<_>>()
+    );
+    drop(client);
+
+    let create = [PlannedOperation {
+        key: "base.picklists.value.create".into(),
+        input: json!({"list": CATEGORY, "code": "delivery", "label": "Delivery", "labels": {"ms": "Penghantaran"}}),
+    }];
+    let plan = plans.preview(&browser, &create).await?;
+    println!(
+        "create preview: valid {}, {}; rows written: {}",
+        plan["valid"],
+        plan["results"][0]["preview"]["result"]["summary"],
+        delivery().await?
+    );
+    let code = plan["plan_code"].as_str().ok_or("no plan code")?;
+    let committed = plans.commit(&admin, &browser, code, &create).await?;
+    println!(
+        "create commit: {} saved; rows: {}",
+        committed["results"][0]["result"]["result"]["code"],
+        delivery().await?
+    );
+    println!(
+        "create replay: {:?}",
+        plans.commit(&admin, &browser, code, &create).await.err()
+    );
+
+    let version = |code: &str| {
+        let values = &values["result"];
+        values
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|value| value["code"] == code)
+            .and_then(|value| value["version"].as_i64())
+            .unwrap_or(1)
+    };
+    let other_version = version("other");
+    for (what, key, input) in [
+        (
+            "retire the locked value",
+            "base.picklists.value.retire",
+            json!({"list": CATEGORY, "code": "other", "version": other_version}),
+        ),
+        (
+            "rename with a stale version",
+            "base.picklists.value.update",
+            json!({"list": CATEGORY, "code": "technical", "label": "Tech", "version": 99}),
+        ),
+        (
+            "an unknown field",
+            "base.picklists.value.create",
+            json!({"list": CATEGORY, "code": "x", "label": "X", "colour": "red"}),
+        ),
+    ] {
+        let plan = plans
+            .preview(
+                &browser,
+                &[PlannedOperation {
+                    key: key.into(),
+                    input,
+                }],
+            )
+            .await?;
+        println!(
+            "{what}: valid {}, {}",
+            plan["valid"], plan["results"][0]["error"]
+        );
+    }
+    let viewer = Browser {
+        app,
+        token: &viewer_login.token,
+    };
+    let plan = plans.preview(&viewer, &create).await?;
+    println!(
+        "the viewer plans a create: valid {}, {}",
+        plan["valid"], plan["results"][0]["error"]
+    );
     Ok(())
 }

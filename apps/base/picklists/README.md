@@ -107,6 +107,24 @@ Each write runs on the caller's `MutationTransaction` and records one `Change` o
 - Reading every value (`values`) needs `base.picklists.view`. Writing needs `base.picklists.manage`. A list's `.requires(key)` capability is needed for both.
 - **Installation-wide lists** keep their rows on the platform-operator tenant. Every tenant reads them; only the platform operator writes them, with `base.picklists.installation.manage`.
 
+## Agent operations
+
+Agents curate through `base.picklists.*` (`src/operations.rs`). Each write is a reviewed safe write: the preview runs the facade's checks without locking or writing, and the commit writes on the plan's audited transaction.
+
+| Key | Capability | Does |
+| --- | --- | --- |
+| `base.picklists.lists` | `base.picklists.view` | The mounted lists the caller may see: key, label, reach, parent list, extra capability, locked codes. |
+| `base.picklists.values` | `base.picklists.view` | One list's values in order; retired ones with `include_retired`. |
+| `base.picklists.value.create` | `base.picklists.manage` | Add a value. |
+| `base.picklists.value.update` | `base.picklists.manage` | Rename, translate, re-hint or re-parent; needs `version`. |
+| `base.picklists.value.reorder` | `base.picklists.manage` | Name every code once, in the new order. |
+| `base.picklists.value.default` | `base.picklists.manage` | Set the default, or omit `code` to clear it. |
+| `base.picklists.value.retire` / `.restore` | `base.picklists.manage` | Retire or restore; needs `version`. |
+
+- The facade still checks the list's own `.requires(key)` capability and, for an installation-wide list, the platform operator.
+- Translations (`labels`) accept one property per language `base/locale` supports; any other field is refused.
+- The guide `base.picklists` explains codes, retirement, locked values and dependent lists to agents.
+
 ## Storage
 
 `base_picklist_values` (migration `base-picklists-001-values`): one row per tenant, list and code, with the default label, translations (`labels`, keyed by language), hint, position, default flag, parent codes, `retired_on` and `version`. Whether a value is locked comes from its declaration. Every statement binds the tenant.
@@ -129,4 +147,7 @@ DATABASE_URL=… cargo run -p bilibi-web --example picklists-reference
 | Isolation | Tenant 2 keeps the starting values. |
 | Check | Retired, unknown and mismatched pairs are refused; a retired value still shows its label, marked retired; restore accepts it again. |
 | Provisioning | A new tenant has every reference value. |
-| Audit | One `picklist_value` row per change: `created` for a new value, `updated` otherwise. |
+| Audit | One `picklist_value` row per change, attributed to the actor: `created` for a new value, `updated` otherwise. |
+| Agent reads | `base.picklists.lists` shows each list's locked codes; `base.picklists.values` lists the codes in order. |
+| Agent writes | A create's preview is valid and writes no row; its commit saves one; replaying the plan code is refused. |
+| Agent refusals | Retiring the locked value, a stale version and an unknown field are refused in the preview; the viewer's plan is `missing_capability`. |

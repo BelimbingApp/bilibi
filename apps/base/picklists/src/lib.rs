@@ -7,6 +7,7 @@
 //! counterpart; the rules generalise `core/company` relationship roles.
 //! Contract: `README.md`.
 mod declaration;
+mod operations;
 mod seeds;
 mod values;
 
@@ -132,10 +133,14 @@ fn build(services: &bilibi_module_registry::Services) -> bilibi_module_registry:
 inventory::submit! {
     Module {
         id: "base/picklists", layer: bilibi_module_registry::Layer::Base,
-        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/locale", "base/ui", "base/audit"],
+        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/locale", "base/ui", "base/audit", "base/agent_api"],
         migrations: &[("base-picklists-001-values", include_str!("../migrations/001-values.sql"))],
         services: &[
-            Service { id: SERVICE, factory: |services| Ok(Arc::new(build(services)?)) },
+            Service { id: SERVICE, factory: |services| {
+                let lists = Arc::new(build(services)?);
+                operations::bind(services.get::<bilibi_database::Db>("base/database.pool")?.as_ref().clone(), lists.clone())?;
+                Ok(lists)
+            } },
             Service { id: SEEDS_SERVICE, factory: |_| Ok(Arc::new(bilibi_database::seeds::SeedService(Arc::new(seeds::Seeds)))) },
         ],
     }
