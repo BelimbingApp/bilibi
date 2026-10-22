@@ -1,6 +1,7 @@
 //! The personal-data registry (ADR 05): each module that keeps a person's data
 //! contributes one `PersonalData` handler per store and answers for it. Base
 //! never reads another module's tables; it asks the handler.
+use crate::holds::Holds;
 use bilibi_database::{MutationTransaction, Result};
 use bilibi_module_registry::{Catalog, Entry, Module, RegistryError, Result as RegistryResult};
 use bilibi_party_ids::PersonId;
@@ -131,13 +132,15 @@ pub trait Handler: Send + Sync {
         subject: &'a Subject,
     ) -> HandlerFuture<'a, Exported>;
     /// Anonymise (the default) or delete, writing through `tx` and returning
-    /// every change through it, with erased values as `[erased]`. List what
-    /// the store must keep, with its reason, rather than erasing it.
+    /// every change through it, with erased values as `[erased]`. Keep what
+    /// `holds` names, and anything the store must keep, and list it with its
+    /// reason rather than erasing it.
     fn erase<'a>(
         &'a self,
         tx: &'a mut MutationTransaction<'_>,
         scope: &'a Scope,
         subject: &'a Subject,
+        holds: &'a Holds,
     ) -> HandlerFuture<'a, Erased>;
 }
 

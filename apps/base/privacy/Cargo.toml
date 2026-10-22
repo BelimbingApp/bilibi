@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+bilibi-authz = { path = "../authz" }
 bilibi-database.workspace = true
 bilibi-grid.workspace = true
 bilibi-module-registry.workspace = true
@@ -15,3 +16,10 @@ inventory.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio-postgres.workspace = true
+
+[dev-dependencies]
+bilibi-walkthrough-fixture = { path = "../../../fixtures/walkthrough" }
+bilibi-base = { path = ".." }
+bilibi-core = { path = "../../core" }
+bilibi-web = { path = "../../web" }
+tokio.workspace = true
