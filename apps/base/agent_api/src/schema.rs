@@ -31,7 +31,7 @@ fn check_node(node: &Value, depth: usize) -> Result<(), String> {
         _ => return Err(format!("unknown schema type {kind}")),
     };
     for key in object.keys() {
-        if !["type", "title", "description"].contains(&key.as_str())
+        if !["type", "title", "description", "nullable"].contains(&key.as_str())
             && !keywords.contains(&key.as_str())
         {
             return Err(format!("unknown {kind} keyword {key}"));
@@ -41,6 +41,9 @@ fn check_node(node: &Value, depth: usize) -> Result<(), String> {
         if node.get(key).is_some_and(|v| !v.is_string()) {
             return Err(format!("{key} must be text"));
         }
+    }
+    if node.get("nullable").is_some_and(|v| !v.is_boolean()) {
+        return Err("nullable must be boolean".into());
     }
     if kind == "object" {
         let properties = match node.get("properties") {
@@ -147,6 +150,9 @@ fn join(path: &str, name: &str) -> String {
     }
 }
 fn errors_at(schema: &Value, input: &Value, path: &str, errors: &mut FieldErrors) {
+    if input.is_null() && schema["nullable"].as_bool() == Some(true) {
+        return;
+    }
     let kind = schema["type"].as_str().unwrap_or("");
     if !of_type(kind, input) {
         add(errors, path, format!("must be of type {kind}"));

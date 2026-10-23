@@ -121,7 +121,7 @@ struct RoleBadges<'a> {
 pub(crate) struct Screen {
     pages: Pages,
     columns: ListColumns,
-    catalog: &'static FieldCatalog,
+    catalog: FieldCatalog,
     roles: Vec<RoleChoice>,
     restrictions: Vec<RestrictionSummary>,
     dialog: Dialog,
@@ -136,7 +136,7 @@ impl Screen {
             pages: pages.clone(),
             columns: ListColumns::mount("field-restrictions", builtins())
                 .map_err(|_| Error::Internal)?,
-            catalog: pages.restrictions.catalog()?,
+            catalog: FieldCatalog::default(),
             roles: Vec::new(),
             restrictions: Vec::new(),
             dialog: Dialog::None,
@@ -152,6 +152,7 @@ impl Screen {
     /// event or refresh. The route guard has already checked the capability
     /// for this round trip, so a refusal here is a race the host resolves.
     async fn load(&mut self, scope: &Scope) -> Result<()> {
+        self.catalog = self.pages.restrictions.catalog(scope).await?;
         self.roles = self.pages.restrictions.roles(scope).await?;
         self.restrictions = self.pages.restrictions.list(scope).await?;
         let rows = std::mem::take(&mut self.restrictions);
@@ -203,7 +204,7 @@ impl Screen {
         self.catalog
             .tables()
             .iter()
-            .map(|table| Choice::new(table.label, table.id))
+            .map(|table| Choice::new(table.label.clone(), table.id.clone()))
             .collect()
     }
 
@@ -215,7 +216,7 @@ impl Screen {
             .catalog
             .tables()
             .iter()
-            .filter(|table| table_ids.iter().any(|id| id == table.id))
+            .filter(|table| table_ids.iter().any(|id| id == &table.id))
             .collect();
         let several = chosen.len() > 1;
         chosen

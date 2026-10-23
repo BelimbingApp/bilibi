@@ -10,6 +10,7 @@ pub mod page_columns;
 pub mod page_views;
 pub mod query;
 pub mod reference;
+mod runtime_fields;
 pub mod view;
 pub use lens::{Lens, Range};
 pub use page_columns::{Outcome, PageColumns};
@@ -25,8 +26,11 @@ pub use catalog::{
 };
 pub use column::{Agg, Column, ColumnError, ColumnKind};
 pub use model::{
-    Field, FieldType, GridContribution, Installed, Join, Link, LinkDecl, LinkKind, RecordFields,
-    Source, Table, TableDecl,
+    Field, FieldType, FieldValue, GridContribution, Installed, Join, Link, LinkDecl, LinkKind,
+    RecordFields, Source, Table, TableDecl,
+};
+pub use runtime_fields::{
+    RuntimeField, RuntimeFieldProvider, RuntimeFieldSource, RuntimeFuture, RUNTIME_FIELDS,
 };
 
 #[doc(hidden)]
@@ -102,13 +106,21 @@ fn restriction_snapshot(
         restriction_catalog(installed().map_err(|error| error.to_string())?)
             .into_iter()
             .map(|entry| CatalogTable {
-                id: entry.table,
-                label: entry.label,
-                record_types: entry.record_types,
+                id: entry.table.into(),
+                label: entry.label.into(),
+                record_types: entry
+                    .record_types
+                    .iter()
+                    .map(|kind| (*kind).into())
+                    .collect(),
                 fields: entry
                     .fields
                     .into_iter()
-                    .map(|(id, label)| CatalogField { id, label })
+                    .map(|(id, label)| CatalogField {
+                        id,
+                        label,
+                        reference_values: None,
+                    })
                     .collect(),
             })
             .collect(),
@@ -124,7 +136,7 @@ inventory::submit! { Consumer::new::<GridContribution>(TABLES, "base/grid", |ent
 inventory::submit! {
     Module {
         id: "base/grid", layer: Layer::Base,
-        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/ui", "base/datetime", "base/settings"],
+        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/ui", "base/datetime", "base/settings", "base/ports"],
         migrations: &[
             ("base-grid-001", include_str!("../migrations/001-reference.sql")),
             ("base-grid-002", include_str!("../migrations/002-reference-recorded-at.sql")),

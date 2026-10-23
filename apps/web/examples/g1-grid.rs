@@ -323,7 +323,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         println!(
             "  {} {:?} audit types {:?}",
             table.table,
-            table.fields.iter().map(|f| f.0).collect::<Vec<_>>(),
+            table.fields.iter().map(|f| f.0.clone()).collect::<Vec<_>>(),
             table.record_types
         );
     }

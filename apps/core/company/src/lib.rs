@@ -13,6 +13,7 @@ mod page_data;
 mod tenant_provisioning;
 pub use tenant_provisioning::TenantCompanyErrors;
 mod primary;
+mod reference_targets;
 pub mod reference_types;
 mod relationship_operations;
 pub mod relationship_roles;
@@ -53,6 +54,10 @@ pub const MIGRATION_ROLE_OWNER: (&str, &str) = (
     "core-company-006-authz-role-owner",
     include_str!("../migrations/006-authz-role-owner.sql"),
 );
+pub const MIGRATION_CUSTOM_FIELDS: (&str, &str) = (
+    "core-company-007-custom-fields",
+    include_str!("../migrations/007-custom-fields.sql"),
+);
 pub const MASK: &str = "••••";
 /// The registry service id of the Companies facade.
 pub const SERVICE: &str = "core/company.companies";
@@ -60,13 +65,13 @@ pub const SERVICE: &str = "core/company.companies";
 /// One refusal of a submitted value, in the words a form shows beside the field.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct FieldError {
-    pub field: &'static str,
+    pub field: String,
     pub message: String,
 }
 impl FieldError {
-    pub fn new(field: &'static str, message: impl Into<String>) -> Self {
+    pub fn new(field: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
-            field,
+            field: field.into(),
             message: message.into(),
         }
     }
@@ -98,6 +103,14 @@ pub struct Params {
     pub dir: String,
     pub q: String,
     pub status: String,
+    #[serde(skip)]
+    pub custom_filters: Vec<CustomFilter>,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct CustomFilter {
+    pub field: String,
+    pub operator: String,
+    pub value: String,
 }
 impl Default for Params {
     fn default() -> Self {
@@ -108,6 +121,7 @@ impl Default for Params {
             dir: "asc".into(),
             q: String::new(),
             status: String::new(),
+            custom_filters: Vec::new(),
         }
     }
 }
@@ -115,7 +129,12 @@ impl Params {
     pub fn validate(&self) -> Result<()> {
         if !(1..=1_000_000).contains(&self.page)
             || ![25, 50, 100, 300].contains(&self.size)
-            || !["name", "status", "jurisdiction", "created_at"].contains(&self.sort.as_str())
+            || (!(["name", "status", "jurisdiction", "created_at"].contains(&self.sort.as_str()))
+                && !(self.sort.starts_with("cf_")
+                    && self.sort.len() <= 68
+                    && self.sort[3..]
+                        .bytes()
+                        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')))
             || !["asc", "desc"].contains(&self.dir.as_str())
             || self.q.chars().count() > 255
             || !["", "active", "suspended", "pending", "archived"].contains(&self.status.as_str())
@@ -146,6 +165,7 @@ pub struct Company {
     pub website: Option<String>,
     pub revenue: String,
     pub version: i64,
+    pub custom: serde_json::Value,
 }
 impl Company {
     /// Organisation identity of this company, preserving existing record IDs.
@@ -175,6 +195,12 @@ impl Company {
                 row.get(field)
             }
         };
+        let mut custom: serde_json::Value = row.try_get("custom").unwrap_or_else(|_| json!({}));
+        if let Some(object) = custom.as_object_mut() {
+            for field in masked.iter().filter_map(|field| field.strip_prefix("cf_")) {
+                object.remove(field);
+            }
+        }
         Self {
             id: row.get("id"),
             tenant_id: row.get("tenant_id"),
@@ -192,6 +218,7 @@ impl Company {
             website: read_opt("website"),
             revenue: read("revenue"),
             version: row.get("version"),
+            custom,
         }
     }
 }
@@ -202,6 +229,19 @@ pub struct Page {
 use organisation::COLUMNS;
 
 pub async fn list(client: &impl GenericClient, scope: &Scope, params: &Params) -> Result<Page> {
+    list_with_catalog(client, scope, params, None, &[]).await
+}
+
+/// Company list query with current, scoped custom-field metadata. The owner
+/// expression builder binds JSON keys; only fixed operators and catalog types
+/// become SQL syntax. Mirrors Bilimbi Core Company’s custom-field list query.
+pub async fn list_with_catalog(
+    client: &impl GenericClient,
+    scope: &Scope,
+    params: &Params,
+    catalog: Option<&bilibi_grid::Catalog>,
+    definitions: &[bilibi_custom_fields::Definition],
+) -> Result<Page> {
     params.validate()?;
     bilibi_authz::authorize_key(client, scope, LIST).await?;
     let masked = restrictions(client, scope).await?;
@@ -212,44 +252,195 @@ pub async fn list(client: &impl GenericClient, scope: &Scope, params: &Params) -
         .map(|field| format!("{field} ILIKE $3"))
         .collect::<Vec<_>>()
         .join(" OR ");
-    let filter =
-        format!("tenant_id=$1 AND deleted_at IS NULL AND ($2='' OR status=$2) AND ({searchable})");
-    let sort = if masked.contains(&params.sort) {
-        "name"
-    } else {
-        &params.sort
-    };
-    let args: &[&(dyn tokio_postgres::types::ToSql + Sync)] =
-        &[&scope.tenant(), &params.status, &query];
+    let mut args: Vec<Box<dyn tokio_postgres::types::ToSql + Sync + Send>> = vec![
+        Box::new(scope.tenant()),
+        Box::new(params.status.clone()),
+        Box::new(query),
+    ];
+    let mut conditions = vec![
+        "tenant_id=$1".to_owned(),
+        "deleted_at IS NULL".to_owned(),
+        "($2='' OR status=$2)".to_owned(),
+        format!("({searchable})"),
+    ];
+    if params.custom_filters.len() > 10 {
+        return Err(Error::Invalid);
+    }
+    for condition in &params.custom_filters {
+        let Some(definition) = definitions.iter().find(|definition| {
+            format!("cf_{}", definition.key) == condition.field && !definition.archived
+        }) else {
+            return Err(Error::Invalid);
+        };
+        let Some(catalog) = catalog else {
+            return Err(Error::Invalid);
+        };
+        let expression = bilibi_grid::query::field_expression(
+            catalog,
+            "companies",
+            &condition.field,
+            "companies",
+            args.len(),
+        )
+        .ok_or(Error::Forbidden)?;
+        if masked.contains(&condition.field) {
+            return Err(Error::Forbidden);
+        }
+        if definition.field_type == bilibi_custom_fields::FieldType::MultiChoice {
+            if condition.operator != "contains" || !choice_code(definition, &condition.value) {
+                return Err(Error::Invalid);
+            }
+            args.push(Box::new(expression.bind_values[0].clone()));
+            let key_pos = args.len();
+            args.push(Box::new(condition.value.clone()));
+            conditions.push(format!(
+                "jsonb_extract_path(companies.custom, ${key_pos}::text) @> to_jsonb(${}::text)",
+                args.len()
+            ));
+            continue;
+        }
+        let operator = match (definition.field_type, condition.operator.as_str()) {
+            (
+                bilibi_custom_fields::FieldType::Text | bilibi_custom_fields::FieldType::LongText,
+                "contains",
+            ) => "ILIKE",
+            (
+                bilibi_custom_fields::FieldType::Text | bilibi_custom_fields::FieldType::LongText,
+                "equals",
+            ) => "=",
+            (
+                bilibi_custom_fields::FieldType::Integer
+                | bilibi_custom_fields::FieldType::Decimal
+                | bilibi_custom_fields::FieldType::Date
+                | bilibi_custom_fields::FieldType::DateTime,
+                "eq",
+            ) => "=",
+            (
+                bilibi_custom_fields::FieldType::Integer
+                | bilibi_custom_fields::FieldType::Decimal
+                | bilibi_custom_fields::FieldType::Date
+                | bilibi_custom_fields::FieldType::DateTime,
+                "gt",
+            ) => ">",
+            (
+                bilibi_custom_fields::FieldType::Integer
+                | bilibi_custom_fields::FieldType::Decimal
+                | bilibi_custom_fields::FieldType::Date
+                | bilibi_custom_fields::FieldType::DateTime,
+                "gte",
+            ) => ">=",
+            (
+                bilibi_custom_fields::FieldType::Integer
+                | bilibi_custom_fields::FieldType::Decimal
+                | bilibi_custom_fields::FieldType::Date
+                | bilibi_custom_fields::FieldType::DateTime,
+                "lt",
+            ) => "<",
+            (
+                bilibi_custom_fields::FieldType::Integer
+                | bilibi_custom_fields::FieldType::Decimal
+                | bilibi_custom_fields::FieldType::Date
+                | bilibi_custom_fields::FieldType::DateTime,
+                "lte",
+            ) => "<=",
+            (
+                bilibi_custom_fields::FieldType::Boolean | bilibi_custom_fields::FieldType::Choice,
+                "equals",
+            ) => "=",
+            _ => return Err(Error::Invalid),
+        };
+        if definition.field_type == bilibi_custom_fields::FieldType::Choice
+            && !choice_code(definition, &condition.value)
+        {
+            return Err(Error::Invalid);
+        }
+        let value = if condition.operator == "contains" {
+            format!("%{}%", organisation::escape_like(&condition.value))
+        } else {
+            condition.value.clone()
+        };
+        for key in expression.bind_values {
+            args.push(Box::new(key));
+        }
+        let value_pos = args.len() + 1;
+        args.push(Box::new(value));
+        let cast = match definition.field_type {
+            bilibi_custom_fields::FieldType::Integer => "::text::bigint",
+            bilibi_custom_fields::FieldType::Decimal => "::text::numeric",
+            bilibi_custom_fields::FieldType::Date => "::text::date",
+            bilibi_custom_fields::FieldType::DateTime => "::text::timestamptz",
+            bilibi_custom_fields::FieldType::Boolean => "::text::boolean",
+            _ => "::text",
+        };
+        conditions.push(format!("{} {operator} ${value_pos}{cast}", expression.sql));
+    }
+    let filter = conditions.join(" AND ");
+    let count_refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = args
+        .iter()
+        .map(|arg| arg.as_ref() as &(dyn tokio_postgres::types::ToSql + Sync))
+        .collect();
     let total = client
         .query_one(
             &format!("SELECT count(*) FROM companies WHERE {filter}"),
-            args,
+            &count_refs,
         )
         .await?
         .get(0);
+    let sort_expression = if params.sort.starts_with("cf_") {
+        let allowed = definitions.iter().any(|definition| {
+            format!("cf_{}", definition.key) == params.sort && !definition.archived
+        });
+        if !allowed || masked.contains(&params.sort) {
+            "name".into()
+        } else if let Some(catalog) = catalog {
+            match bilibi_grid::query::field_expression(
+                catalog,
+                "companies",
+                &params.sort,
+                "companies",
+                args.len(),
+            ) {
+                Some(expression) => {
+                    for key in expression.bind_values {
+                        args.push(Box::new(key));
+                    }
+                    expression.sql
+                }
+                None => "name".into(),
+            }
+        } else {
+            "name".into()
+        }
+    } else if masked.contains(&params.sort) {
+        "name".to_owned()
+    } else {
+        params.sort.clone()
+    };
     // Only validated enum values reach the two SQL identifiers below.
-    let sql = format!(
-        "SELECT {COLUMNS} FROM companies WHERE {filter} ORDER BY {} {}, id {} LIMIT $4 OFFSET $5",
-        sort, params.dir, params.dir
-    );
+    let limit_pos = args.len() + 1;
+    args.push(Box::new(params.size));
     let offset = (params.page - 1) * params.size;
+    args.push(Box::new(offset));
+    let refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = args
+        .iter()
+        .map(|arg| arg.as_ref() as &(dyn tokio_postgres::types::ToSql + Sync))
+        .collect();
+    let sql = format!("SELECT {COLUMNS} FROM companies WHERE {filter} ORDER BY {sort_expression} {} , id {} LIMIT ${limit_pos} OFFSET ${}", params.dir, params.dir, limit_pos+1);
     let rows = client
-        .query(
-            &sql,
-            &[
-                &scope.tenant(),
-                &params.status,
-                &query,
-                &params.size,
-                &offset,
-            ],
-        )
+        .query(&sql, &refs)
         .await?
         .iter()
         .map(|row| Company::from_row(row, &masked))
         .collect();
     Ok(Page { rows, total })
+}
+
+fn choice_code(definition: &bilibi_custom_fields::Definition, code: &str) -> bool {
+    definition.options.as_array().is_some_and(|options| {
+        options
+            .iter()
+            .any(|option| option.get("code").and_then(serde_json::Value::as_str) == Some(code))
+    })
 }
 
 pub async fn detail(
@@ -280,6 +471,19 @@ pub struct Edit {
 }
 impl Edit {
     pub fn validate(&self) -> Result<()> {
+        if let Some(key) = self.field.strip_prefix("cf_") {
+            let key_valid = !key.is_empty()
+                && key.len() <= 63
+                && key
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_');
+            let valid_json = serde_json::from_str::<serde_json::Value>(&self.value).is_ok();
+            return if key_valid && valid_json && self.id > 0 && self.version > 0 {
+                Ok(())
+            } else {
+                Err(Error::Invalid)
+            };
+        }
         let value = self.value.trim();
         let valid = match self.field.as_str() {
             "name" => !value.is_empty() && value.chars().count() <= 160,
@@ -311,6 +515,7 @@ pub async fn save(
     notifications: &NotificationBoundary,
     mutations: &MutationBoundary,
     sessions: &Sessions,
+    custom_fields: &bilibi_custom_fields::CustomFields,
 ) -> Result<()> {
     edit.validate()?;
     let mut client = db.get().await?;
@@ -354,6 +559,48 @@ pub async fn save(
         "name" | "legal_name" | "registration_number" | "website" => edit.value.trim().to_owned(),
         _ => edit.value.clone(),
     };
+    if let Some(key) = field.strip_prefix("cf_").map(str::to_owned) {
+        let row = tx.sql().query_opt(
+            "SELECT custom,version,status FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL FOR UPDATE",
+            &[&tenant, &id],
+        ).await?.ok_or(Error::NotFound)?;
+        if row.get::<_, i64>(1) != version {
+            return Err(Error::Conflict);
+        }
+        if row.get::<_, String>(2) == "archived" {
+            return Err(Error::Forbidden);
+        }
+        let old_custom: serde_json::Value = row.get(0);
+        let old_value = old_custom
+            .get(&key)
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        let submitted: serde_json::Value =
+            serde_json::from_str(&edit.value).map_err(|_| Error::Invalid)?;
+        let patch = serde_json::json!({ (key.clone()): submitted });
+        let merged = match custom_fields
+            .validate(tx.sql(), &scope, "core.company", &patch, &old_custom, false)
+            .await?
+        {
+            Ok(value) => value,
+            Err(_) => return Err(Error::Invalid),
+        };
+        let new_value = merged.get(&key).cloned().unwrap_or(serde_json::Value::Null);
+        tx.mutate(move |sql| Box::pin(async move {
+            sql.execute(
+                "UPDATE companies SET custom=$1,version=version+1,updated_at=now() WHERE tenant_id=$2 AND id=$3",
+                &[&merged, &tenant, &id],
+            ).await?;
+            Ok(((), vec![Change { kind: "company".into(), id,
+                old: json!({"custom": {key.clone(): old_value}}),
+                new: json!({"custom": {key: new_value}}),
+            }]))
+        })).await?;
+        notifications
+            .record(&mut tx, &scope, "Company updated")
+            .await?;
+        return tx.commit().await;
+    }
     tx.mutate(move |sql| Box::pin(async move {
         let row = sql.query_opt(&format!("SELECT {}::text,version,status FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL FOR UPDATE",field), &[&tenant,&id]).await?.ok_or(Error::NotFound)?;
         if row.get::<_, i64>(1) != version { return Err(Error::Conflict); }
@@ -388,6 +635,7 @@ pub struct CompanyService {
     mutations: Arc<MutationBoundary>,
     proofs: Arc<bilibi_tenancy::PartyProofs>,
     directory: Arc<bilibi_principal_directory::PrincipalDirectory>,
+    custom_fields: Arc<bilibi_custom_fields::CustomFields>,
 }
 impl CompanyService {
     pub async fn save(&self, token: &str, edit: &Edit) -> Result<()> {
@@ -398,6 +646,7 @@ impl CompanyService {
             &self.notifications,
             &self.mutations,
             &self.sessions,
+            &self.custom_fields,
         )
         .await
     }
@@ -408,7 +657,7 @@ impl CompanyService {
             .mutations
             .begin(&mut client, scope.mutation_context("company.create"))
             .await?;
-        let outcome = organisation::create(&mut tx, scope, new).await?;
+        let outcome = organisation::create(&mut tx, scope, new, &self.custom_fields).await?;
         match &outcome {
             CreateOutcome::Created(_) => tx.commit().await?,
             CreateOutcome::Refused(_) => tx.rollback().await?,
@@ -678,8 +927,8 @@ async fn finish(tx: bilibi_database::MutationTransaction<'_>, saved: bool) -> Re
 inventory::submit! {
     bilibi_module_registry::Module {
         id:"core/company",layer:bilibi_module_registry::Layer::Core,
-        dependencies:&["base/database","base/security","base/ui","base/notifications","base/party_ids","base/session","base/menu","base/grid","base/dashboard","base/authz","base/tenancy","base/audit","base/agent_api","base/datetime","base/locale","base/principal_directory","base/media","base/artifacts","core/party","core/geonames","core/person"],
-        migrations:&[MIGRATION, MIGRATION_ORGANISATION, MIGRATION_RELATIONSHIPS, MIGRATION_ROLE_OWNER],
+        dependencies:&["base/database","base/security","base/ui","base/notifications","base/party_ids","base/session","base/menu","base/grid","base/dashboard","base/authz","base/tenancy","base/audit","base/agent_api","base/datetime","base/locale","base/principal_directory","base/media","base/artifacts","base/custom_fields","core/party","core/geonames","core/person"],
+        migrations:&[MIGRATION, MIGRATION_ORGANISATION, MIGRATION_RELATIONSHIPS, MIGRATION_ROLE_OWNER, MIGRATION_CUSTOM_FIELDS],
         services: &[
             bilibi_module_registry::Service { id: SERVICE, factory: |services| {
                 let db = services.get::<Db>("base/database.pool")?.as_ref().clone();
@@ -689,11 +938,14 @@ inventory::submit! {
                 proofs.bind_organisations(Arc::new(organisation::Provider))?;
                 proofs.bind_directory(Arc::new(organisation::Directory))?;
                 let directory = services.get::<bilibi_principal_directory::PrincipalDirectory>("base/principal_directory.directory")?;
+                let custom_fields = services.get::<bilibi_custom_fields::CustomFields>(bilibi_custom_fields::SERVICE)?;
                 agent_operations::bind(db.clone())?;
+                agent_operations::bind_custom_fields(custom_fields.clone())?;
                 relationship_operations::bind(db.clone(), proofs.clone(), directory.clone())?;
                 Ok(Arc::new(CompanyService {
                     sessions: services.get("base/session.sessions")?, mutations: services.get("base/database.mutations")?,
                     db, notifications: services.get("base/notifications.sink")?, proofs, directory,
+                    custom_fields,
                 }))
             } },
             bilibi_module_registry::Service { id: "core/company.pages", factory: |services| Ok(Arc::new(bilibi_ui::page::PageService(Arc::new(web::Pages {

@@ -53,6 +53,12 @@ inventory::submit! { Contribution::new(ROUTES, "settings.global", provenance!(),
     method: Method::Get, path: "/system/settings", service: "base/settings_editor.pages",
     operation: "global", access: Access::OperatorCapability(GLOBAL_MANAGE), framed: true,
 }) }
+// Tenant limits share Settings storage and controls, mirroring Bilimbi's
+// tenant settings target while keeping the operator route unchanged.
+inventory::submit! { Contribution::new(ROUTES, "settings.custom_field_limits", provenance!(), &Route {
+    method: Method::Get, path: "/system/settings/tenant", service: "base/settings_editor.pages",
+    operation: "tenant", access: Access::Capability("admin.custom.fields.manage"), framed: true,
+}) }
 // Belimbing declares this item in Base/System; Bilimbi moved it beside the
 // page. Same id, so pins and the menu inspector keep naming it.
 bilibi_menu::contribute!(
@@ -63,10 +69,24 @@ bilibi_menu::contribute!(
         .requires(bilibi_menu::Requirement::Capability(GLOBAL_MANAGE))
         .order(10)
 );
+bilibi_menu::contribute!(
+    "base/settings_editor",
+    bilibi_menu::MenuItem::page(
+        "admin.system.tenant-settings",
+        "Tenant Settings",
+        "/system/settings/tenant"
+    )
+    .under("admin.system")
+    .icon("cog-6-tooth")
+    .requires(bilibi_menu::Requirement::Capability(
+        "admin.custom.fields.manage"
+    ))
+    .order(20)
+);
 
 inventory::submit! {
     Module { id: "base/settings_editor", layer: bilibi_module_registry::Layer::Base,
-        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/audit", "base/settings", "base/step_up", "base/ui", "base/menu"],
+        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/audit", "base/settings", "base/step_up", "base/ui", "base/menu", "base/custom_fields"],
         migrations: &[],
         services: &[Service { id: "base/settings_editor.pages", factory: |services| {
             Ok(Arc::new(bilibi_ui::page::PageService::<bilibi_tenancy::Scope, Error>(Arc::new(web::Pages::new(web::Core {

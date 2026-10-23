@@ -12,6 +12,7 @@ bilibi-tenancy = { path = "../tenancy" }
 bilibi-authz = { path = "../authz" }
 bilibi-datetime = { path = "../datetime" }
 bilibi-settings = { path = "../settings" }
+bilibi-ports = { path = "../ports" }
 bilibi-ui.workspace = true
 jiff = "0.2.38"
 tokio-postgres.workspace = true

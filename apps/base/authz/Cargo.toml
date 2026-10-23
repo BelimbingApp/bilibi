@@ -21,5 +21,6 @@ bilibi-step-up.workspace = true
 bilibi-ui.workspace = true
 bilibi-datetime = { path = "../datetime" }
 bilibi-locale = { path = "../locale" }
+bilibi-ports = { path = "../ports" }
 askama.workspace = true
 jiff = { version = "0.2.38", features = ["tzdb-bundle-always"] }

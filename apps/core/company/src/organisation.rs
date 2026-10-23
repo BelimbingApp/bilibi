@@ -8,7 +8,8 @@ use crate::{
     contributions::{CREATE, TENANT_WIDE},
     Company, FieldError, WriteError, MASK,
 };
-use bilibi_authz::{authorize_key, authorize_proof, decide_proof, restrictions};
+use bilibi_authz::{authorize_key, authorize_proof, decide_proof, effective_proof, restrictions};
+use bilibi_custom_fields::CustomFields;
 use bilibi_database::{Change, Error, MutationTransaction, Result};
 use bilibi_party_ids::OrganisationId;
 use bilibi_tenancy::{
@@ -21,7 +22,7 @@ use tokio_postgres::{GenericClient, Transaction};
 
 /// The columns of `companies` a read model carries, with restricted ones
 /// masked (`Company::from_row`).
-pub const COLUMNS: &str = "id,tenant_id,parent_id,name,code,status,legal_name,registration_number,tax_id,legal_entity_type_id,jurisdiction,email,phone,website,revenue::text AS revenue,version";
+pub const COLUMNS: &str = "id,tenant_id,parent_id,name,code,status,legal_name,registration_number,tax_id,legal_entity_type_id,jurisdiction,email,phone,website,revenue::text AS revenue,version,custom";
 /// The fields a role may be restricted from (Bilimbi `Summary`); `code` and
 /// `status` are protected, `id` and `name` implicitly.
 pub const RESTRICTABLE: [&str; 7] = [
@@ -267,10 +268,12 @@ impl OrganisationDirectory for Directory {
         capability: &'a str,
     ) -> ProofFuture<'a, Vec<NamedOrganisation>> {
         Box::pin(async move {
-            if !decide_proof(client, scope, capability).await?.allowed {
+            // Bilimbi Company directory pickers are filtered reads, not access attempts.
+            // Keep this usable from Grid's read-only projection transaction.
+            if !effective_proof(client, scope, capability).await?.allowed {
                 return Ok(Vec::new());
             }
-            let tenant_wide = decide_proof(client, scope, TENANT_WIDE).await?.allowed;
+            let tenant_wide = effective_proof(client, scope, TENANT_WIDE).await?.allowed;
             let own = scope.actor().organisation();
             Ok(named_in_scope(client, scope)
                 .await?
@@ -405,7 +408,7 @@ fn strip_accent(ch: char) -> char {
 /// What a create submits: the creation fields of Bilimbi's schema, as the
 /// create page, the agent operation and the provisioning command send them.
 /// Unknown keys (HR, account, grant fields) are refused.
-#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct NewCompany {
     pub name: String,
@@ -420,6 +423,30 @@ pub struct NewCompany {
     pub email: Option<String>,
     pub phone: Option<String>,
     pub website: Option<String>,
+    #[serde(default = "empty_custom")]
+    pub custom: serde_json::Value,
+}
+fn empty_custom() -> serde_json::Value {
+    json!({})
+}
+impl Default for NewCompany {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            code: None,
+            status: None,
+            parent_id: None,
+            legal_name: None,
+            registration_number: None,
+            tax_id: None,
+            legal_entity_type_id: None,
+            jurisdiction: None,
+            email: None,
+            phone: None,
+            website: None,
+            custom: empty_custom(),
+        }
+    }
 }
 /// A create that passed its own validation: trimmed, defaulted, with a code.
 /// Reference facts (parent, legal entity type, jurisdiction, code uniqueness)
@@ -438,6 +465,7 @@ pub struct ValidCompany {
     pub email: String,
     pub phone: String,
     pub website: Option<String>,
+    pub custom: serde_json::Value,
 }
 fn trimmed(value: &Option<String>) -> Option<String> {
     value
@@ -501,6 +529,9 @@ pub fn validate(
     let tax_id = bounded(&mut errors, "tax_id", &new.tax_id, 64).unwrap_or_default();
     let phone = bounded(&mut errors, "phone", &new.phone, 64).unwrap_or_default();
     let website = bounded(&mut errors, "website", &new.website, 255);
+    if !new.custom.is_object() {
+        errors.push(FieldError::new("custom", "must be an object"));
+    }
     let email = bounded(&mut errors, "email", &new.email, 254).unwrap_or_default();
     if !email.is_empty() && !email_shaped(&email) {
         errors.push(FieldError::new("email", "must be an email address"));
@@ -555,6 +586,11 @@ pub fn validate(
         email,
         phone,
         website,
+        custom: if new.custom.is_object() {
+            new.custom.clone()
+        } else {
+            json!({})
+        },
     })
 }
 /// `~r/^[^\s@]+@[^\s@]+$/`, the source's shape check.
@@ -660,10 +696,10 @@ pub async fn lock_code(client: &impl GenericClient, tenant: i64, code: &str) -> 
 /// Inserts the company row. Plain SQL on the caller's transaction: the
 /// audited paths wrap it in `tx.mutate`, provisioning records its own action.
 pub async fn insert(sql: &Transaction<'_>, tenant: i64, company: &ValidCompany) -> Result<Company> {
-    let row = sql.query_one(&format!("INSERT INTO companies(tenant_id,parent_id,name,code,status,legal_name,registration_number,tax_id,legal_entity_type_id,jurisdiction,email,phone,website,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,now()) RETURNING {COLUMNS}"), &[
+    let row = sql.query_one(&format!("INSERT INTO companies(tenant_id,parent_id,name,code,status,legal_name,registration_number,tax_id,legal_entity_type_id,jurisdiction,email,phone,website,custom,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,now()) RETURNING {COLUMNS}"), &[
         &tenant, &company.parent_id, &company.name, &company.code, &company.status, &company.legal_name,
         &company.registration_number, &company.tax_id, &company.legal_entity_type_id, &company.jurisdiction,
-        &company.email, &company.phone, &company.website,
+        &company.email, &company.phone, &company.website, &company.custom,
     ]).await?;
     Ok(Company::from_row(&row, &HashSet::new()))
 }
@@ -684,6 +720,7 @@ pub async fn create(
     tx: &mut MutationTransaction<'_>,
     scope: &Scope,
     new: &NewCompany,
+    custom_fields: &CustomFields,
 ) -> Result<CreateOutcome> {
     authorize_key(tx.sql(), scope, CREATE).await?;
     let restricted = restrictions(tx.sql(), scope).await?;
@@ -691,6 +728,28 @@ pub async fn create(
         Ok(company) => company,
         Err(errors) => return Ok(CreateOutcome::Refused(errors)),
     };
+    let custom = match custom_fields
+        .validate(
+            tx.sql(),
+            scope,
+            "core.company",
+            &new.custom,
+            &json!({}),
+            true,
+        )
+        .await?
+    {
+        Ok(value) => value,
+        Err(errors) => {
+            return Ok(CreateOutcome::Refused(
+                errors
+                    .into_iter()
+                    .map(|e| FieldError::new(e.field, e.message))
+                    .collect(),
+            ))
+        }
+    };
+    let company = ValidCompany { custom, ..company };
     let tenant = scope.tenant();
     lock_code(tx.sql(), tenant, &company.code).await?;
     let errors = check_references(tx.sql(), tenant, &company, None).await?;
@@ -718,9 +777,10 @@ pub async fn create(
 /// access and current code uniqueness, without writing or reserving the code
 /// (Bilimbi `preview_create_company/2`).
 pub async fn preview(
-    client: &impl GenericClient,
+    client: &(impl GenericClient + Sync),
     scope: &Scope,
     new: &NewCompany,
+    custom_fields: &CustomFields,
 ) -> Result<std::result::Result<ValidCompany, Vec<FieldError>>> {
     authorize_key(client, scope, CREATE).await?;
     let restricted = restrictions(client, scope).await?;
@@ -728,6 +788,19 @@ pub async fn preview(
         Ok(company) => company,
         Err(errors) => return Ok(Err(errors)),
     };
+    let custom = match custom_fields
+        .validate(client, scope, "core.company", &new.custom, &json!({}), true)
+        .await?
+    {
+        Ok(value) => value,
+        Err(errors) => {
+            return Ok(Err(errors
+                .into_iter()
+                .map(|e| FieldError::new(e.field, e.message))
+                .collect()))
+        }
+    };
+    let company = ValidCompany { custom, ..company };
     let errors = check_references(client, scope.tenant(), &company, None).await?;
     Ok(if errors.is_empty() {
         Ok(company)
@@ -844,7 +917,7 @@ impl Company {
             "id": self.id, "tenant_id": self.tenant_id, "parent_id": self.parent_id, "name": self.name, "code": self.code,
             "status": self.status, "legal_name": self.legal_name, "registration_number": self.registration_number,
             "tax_id": self.tax_id, "legal_entity_type_id": self.legal_entity_type_id, "jurisdiction": self.jurisdiction,
-            "email": self.email, "phone": self.phone, "website": self.website, "revenue": self.revenue, "version": self.version,
+            "email": self.email, "phone": self.phone, "website": self.website, "revenue": self.revenue, "version": self.version, "custom": self.custom,
         })
     }
     /// Which of this read model's fields carry the mask rather than a value.

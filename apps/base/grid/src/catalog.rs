@@ -6,8 +6,9 @@
 //! resolved against it, so a table or field it left out cannot be reached by any
 //! spelling. Build it again wherever the page refreshes its own capabilities.
 use crate::column::{self, Agg, Column, ColumnError, MAX_SPEC};
-use crate::model::{Field, FieldType, Installed, Join, LinkKind, Source, Table};
+use crate::model::{FieldType, Installed, Join, LinkKind, Source, Table};
 use bilibi_database::Error;
+use bilibi_ports::PortClient;
 use bilibi_tenancy::Scope;
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
@@ -124,6 +125,15 @@ impl Catalog {
         client: &impl GenericClient,
         scope: &Scope,
     ) -> Result<Self, CatalogError> {
+        Self::for_scope_with_runtime(client, scope, None).await
+    }
+
+    /// Scoped catalog including fields loaded through the runtime provider.
+    pub async fn for_scope_with_runtime(
+        client: &impl GenericClient,
+        scope: &Scope,
+        runtime_client: Option<PortClient<'_>>,
+    ) -> Result<Self, CatalogError> {
         let installed = crate::installed().map_err(|_| Error::Internal)?;
         let allowed = bilibi_authz::effective_capabilities(client, scope).await?;
         let restricted = bilibi_authz::fields::restricted(client, scope).await?;
@@ -142,6 +152,59 @@ impl Catalog {
                 .filter(|field| !table.is_protected(field))
                 .collect();
             tables.insert(*id, table.without(&hidden));
+        }
+        if let (Some(provider), Some(runtime_client)) =
+            (crate::runtime_fields::provider()?, runtime_client)
+        {
+            let fields = bilibi_ports::on_client!(runtime_client, |sql| {
+                provider.fields(sql.into(), scope)
+            })
+            .await?;
+            let mut seen = BTreeSet::<(String, String)>::new();
+            for field in fields {
+                if !super::model::id_valid(&field.key)
+                    || field.key.len() + 3 > 64
+                    || field.label.trim().is_empty()
+                    || field.readable_values.as_ref().is_some_and(|values| {
+                        let mut keys = BTreeSet::new();
+                        values.iter().any(|key| {
+                            key.is_empty() || key.len() > 200 || !keys.insert(key.as_str())
+                        })
+                    })
+                    || !seen.insert((field.table.clone(), field.key.clone()))
+                {
+                    return Err(CatalogError::Misdeclared(
+                        "runtime field provider returned invalid or duplicate metadata".into(),
+                    ));
+                }
+                let Some(table) = tables.get_mut(field.table.as_str()) else {
+                    continue;
+                };
+                let id = format!("cf_{}", field.key);
+                if restricted
+                    .get(field.table.as_str())
+                    .is_some_and(|fields| fields.contains(&id))
+                {
+                    continue;
+                }
+                if table.field(&id).is_some() {
+                    return Err(CatalogError::Misdeclared(format!(
+                        "runtime field {}.{} collides with an installed field",
+                        field.table, id
+                    )));
+                }
+                table.runtime_fields.push(crate::FieldValue {
+                    id,
+                    label: field.label,
+                    ty: field.ty,
+                    source_key: field.column.into(),
+                    json_key: Some(field.key),
+                    hidden: false,
+                    values: field.values,
+                    readable_values: field.readable_values,
+                    protected: false,
+                });
+            }
         }
         let visible: BTreeSet<&str> = tables.keys().copied().collect();
         for table in tables.values_mut() {
@@ -359,7 +422,7 @@ pub struct Restrictable {
     pub table: &'static str,
     pub label: &'static str,
     pub record_types: &'static [&'static str],
-    pub fields: Vec<(&'static str, &'static str)>,
+    pub fields: Vec<(String, String)>,
 }
 pub fn restriction_catalog(installed: &Installed) -> Vec<Restrictable> {
     installed
@@ -370,7 +433,7 @@ pub fn restriction_catalog(installed: &Installed) -> Vec<Restrictable> {
             record_types: table.decl.record_types,
             fields: table
                 .visible_fields()
-                .filter(|field: &&Field| !table.is_protected(field.id))
+                .filter(|field| !table.is_protected(&field.id))
                 .map(|field| (field.id, field.label))
                 .collect(),
         })
@@ -383,6 +446,6 @@ pub fn restrictable(installed: &Installed, table: &str, field: &str) -> bool {
     installed.table(table).is_some_and(|table| {
         table
             .field(field)
-            .is_some_and(|f| !f.hidden && !table.is_protected(f.id))
+            .is_some_and(|f| !f.hidden && !table.is_protected(&f.id))
     })
 }

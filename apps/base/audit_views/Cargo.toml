@@ -9,6 +9,7 @@ license.workspace = true
 askama.workspace = true
 bilibi-audit.workspace = true
 bilibi-authz = { path = "../authz" }
+bilibi-ports = { path = "../ports" }
 bilibi-dashboard = { path = "../dashboard" }
 bilibi-database.workspace = true
 bilibi-datetime = { path = "../datetime" }

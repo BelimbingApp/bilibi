@@ -132,6 +132,65 @@ pub struct Stats {
     pub skipped: bool,
 }
 
+/// A typed field expression for an owner list's bounded sort or filter query.
+/// Dynamic JSON keys are returned separately so callers bind them after their
+/// own parameters; no tenant key enters the SQL text.
+#[derive(Clone, Debug)]
+pub struct FieldExpression {
+    pub sql: String,
+    pub ty: crate::FieldType,
+    pub bind_values: Vec<String>,
+}
+
+pub fn field_expression(
+    catalog: &Catalog,
+    table_id: &str,
+    field_id: &str,
+    alias: &str,
+    bind_offset: usize,
+) -> Option<FieldExpression> {
+    if !crate::model::id_valid(alias) || bind_offset > 65_534 {
+        return None;
+    }
+    let table = catalog.table(table_id)?;
+    let field = table.field(field_id)?;
+    if field.hidden || field.readable_values.is_some() {
+        return None;
+    }
+    if let Some(key) = field.json_key.clone() {
+        let raw = format!(
+            "jsonb_extract_path_text({alias}.{}, ${}::text)",
+            ident(field.source_key()),
+            bind_offset + 1
+        );
+        let sql = match field.ty {
+            crate::FieldType::Integer => format!("NULLIF({raw}, '')::bigint"),
+            crate::FieldType::Decimal => format!("NULLIF({raw}, '')::numeric"),
+            crate::FieldType::Date => format!("NULLIF({raw}, '')::date"),
+            crate::FieldType::DateTime => format!("NULLIF({raw}, '')::timestamptz"),
+            crate::FieldType::Boolean => format!("NULLIF({raw}, '')::boolean"),
+            _ => raw,
+        };
+        Some(FieldExpression {
+            sql,
+            ty: field.ty,
+            bind_values: vec![key],
+        })
+    } else {
+        Some(FieldExpression {
+            sql: format!("{alias}.{}", ident(field.source_key())),
+            ty: field.ty,
+            bind_values: Vec::new(),
+        })
+    }
+}
+
+#[derive(Debug)]
+pub struct TextSearchSql {
+    pub sql: String,
+    pub json_keys: Vec<String>,
+}
+
 /// Project columns over IDs the owner's list has already paged. The IDs are JSON
 /// scalar keys (numbers or strings), converted to the source key's native type
 /// by PostgreSQL. Missing/unauthorized IDs disappear. Grants/restrictions are
@@ -181,7 +240,7 @@ pub async fn project_lenses<S: AsRef<str>>(
         .start()
         .await?;
     tx.batch_execute(BOUNDS).await?;
-    let catalog = Catalog::for_scope(&*tx, scope).await?;
+    let catalog = Catalog::for_scope_with_runtime(&*tx, scope, Some((&*tx).into())).await?;
     let root = catalog.table(root).ok_or(QueryError::ForbiddenRoot)?;
     let columns = catalog
         .resolve_all(root, specs)
@@ -189,6 +248,7 @@ pub async fn project_lenses<S: AsRef<str>>(
     if columns.iter().map(|c| c.depth).sum::<usize>() > MAX_HOPS {
         return Err(QueryError::Limit("more than 128 total hops"));
     }
+    let (key_params, json_keys) = key_params(&columns, 6);
     let today = today();
     let months = trend_months(today);
     let wanted =
@@ -212,13 +272,13 @@ pub async fn project_lenses<S: AsRef<str>>(
     let shape = tx
         .prepare(&format!(
             "SELECT {} FROM {} r",
-            field("r", root, root.key()),
+            field("r", root, root.key(), &KeyParams::new()),
             source(root)
         ))
         .await?;
     let key_type = shape.columns()[0].type_();
     let cast = format!("{}.{}", ident(key_type.schema()), ident(key_type.name()));
-    let sql = statement(&catalog, root, &columns, &trend, &delta, &cast);
+    let sql = statement(&catalog, root, &columns, &trend, &delta, &cast, &key_params);
     let ids = Value::Array(ids.to_vec());
     let tenant = scope.tenant();
     let user = scope.user();
@@ -226,10 +286,15 @@ pub async fn project_lenses<S: AsRef<str>>(
     let trend_from = iso(months[0]);
     let trend_to = iso(today.first_of_month().saturating_add(1.month()));
     let since = iso(lenses.since.unwrap_or_else(|| default_since(today)));
-    let params: &[&(dyn tokio_postgres::types::ToSql + Sync)] =
-        &[&tenant, &user, &ids, &trend_from, &trend_to, &since];
+    let mut params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> =
+        vec![&tenant, &user, &ids, &trend_from, &trend_to, &since];
+    params.extend(
+        json_keys
+            .iter()
+            .map(|key| key as &(dyn tokio_postgres::types::ToSql + Sync)),
+    );
     let explain: Value = tx
-        .query_one(&format!("EXPLAIN (FORMAT JSON) {sql}"), params)
+        .query_one(&format!("EXPLAIN (FORMAT JSON) {sql}"), &params)
         .await?
         .try_get(0)?;
     let cost = explain[0]["Plan"]["Total Cost"]
@@ -238,7 +303,7 @@ pub async fn project_lenses<S: AsRef<str>>(
     if !cost.is_finite() || cost > MAX_ESTIMATED_COST {
         return Err(QueryError::Limit("estimated query cost exceeds 100000"));
     }
-    let selected = tx.query(&sql, params).await?;
+    let selected = tx.query(&sql, &params).await?;
     if selected.len() > MAX_ROWS {
         return Err(crate::CatalogError::Misdeclared(format!(
             "table {} source duplicated page keys",
@@ -259,7 +324,20 @@ pub async fn project_lenses<S: AsRef<str>>(
         }
         let mut cells = BTreeMap::new();
         for (i, column) in columns.iter().enumerate() {
-            cells.insert(column.id.clone(), row.try_get(i + 1)?);
+            let mut value: Value = row.try_get(i + 1)?;
+            if let Some(allowed) = column
+                .field
+                .as_ref()
+                .and_then(|field| field.readable_values.as_ref())
+            {
+                if !value
+                    .as_str()
+                    .is_some_and(|key| allowed.iter().any(|allowed| allowed == key))
+                {
+                    value = Value::Null;
+                }
+            }
+            cells.insert(column.id.clone(), value);
         }
         let mut at = columns.len() + 1;
         let mut series = BTreeMap::new();
@@ -316,7 +394,7 @@ pub async fn stats<S: AsRef<str>>(
         .start()
         .await?;
     tx.batch_execute(BOUNDS).await?;
-    let catalog = Catalog::for_scope(&*tx, scope).await?;
+    let catalog = Catalog::for_scope_with_runtime(&*tx, scope, Some((&*tx).into())).await?;
     let root = catalog.table(root).ok_or(QueryError::ForbiddenRoot)?;
     let columns = catalog
         .resolve_all(root, specs)
@@ -328,22 +406,31 @@ pub async fn stats<S: AsRef<str>>(
     if numeric.is_empty() {
         return Ok(Stats::default());
     }
+    let (key_params, json_keys) = key_params(numeric.iter().copied(), 2);
     let values = numeric
         .iter()
         .enumerate()
-        .map(|(i, column)| format!("{} AS c{i}", cell(&catalog, root, column)))
+        .map(|(i, column)| format!("{} AS c{i}", cell(&catalog, root, column, &key_params)))
         .collect::<Vec<_>>()
         .join(", ");
     let ranges = (0..numeric.len())
         .map(|i| format!("to_jsonb(min(c{i})), to_jsonb(max(c{i}))"))
         .collect::<Vec<_>>()
         .join(", ");
-    let sql = format!("WITH actor AS (SELECT $1::bigint AS tenant, $2::bigint AS usr) SELECT {ranges} FROM (SELECT {values} FROM {} r CROSS JOIN actor) s", source(root));
+    let sql = format!(
+        "WITH actor AS (SELECT $1::bigint AS tenant, $2::bigint AS usr) SELECT {ranges} FROM (SELECT {values} FROM {} r CROSS JOIN actor) s",
+        source(root)
+    );
     let tenant = scope.tenant();
     let user = scope.user();
-    let params: &[&(dyn tokio_postgres::types::ToSql + Sync)] = &[&tenant, &user];
+    let mut params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = vec![&tenant, &user];
+    params.extend(
+        json_keys
+            .iter()
+            .map(|key| key as &(dyn tokio_postgres::types::ToSql + Sync)),
+    );
     let explain: Value = tx
-        .query_one(&format!("EXPLAIN (FORMAT JSON) {sql}"), params)
+        .query_one(&format!("EXPLAIN (FORMAT JSON) {sql}"), &params)
         .await?
         .try_get(0)?;
     let cost = explain[0]["Plan"]["Total Cost"]
@@ -357,7 +444,7 @@ pub async fn stats<S: AsRef<str>>(
             skipped: true,
         });
     }
-    let row = tx.query_one(&sql, params).await?;
+    let row = tx.query_one(&sql, &params).await?;
     let mut ranges = BTreeMap::new();
     for (i, column) in numeric.iter().enumerate() {
         let min: Option<Value> = row.try_get(2 * i)?;
@@ -386,32 +473,48 @@ pub async fn stats<S: AsRef<str>>(
 /// The caller owns its statement timeout and pagination, as for its own search.
 pub async fn text_search_sql(
     client: &impl tokio_postgres::GenericClient,
+    runtime_client: Option<bilibi_ports::PortClient<'_>>,
     scope: &Scope,
     root: &str,
     specs: &[&str],
-) -> Result<String, QueryError> {
+    bind_offset: usize,
+) -> Result<TextSearchSql, QueryError> {
     if specs.len() > MAX_COLUMNS {
         return Err(QueryError::Limit("more than 32 search paths"));
     }
-    let catalog = Catalog::for_scope(client, scope).await?;
+    let catalog = Catalog::for_scope_with_runtime(client, scope, runtime_client).await?;
     let root = catalog.table(root).ok_or(QueryError::ForbiddenRoot)?;
     let mut predicates = Vec::new();
+    let mut columns = Vec::new();
     for spec in specs {
         let Ok(column) = catalog.resolve(root, spec) else {
             continue;
         };
-        let Some(f) = column.field.filter(|f| f.ty == crate::FieldType::String) else {
+        if !column
+            .field
+            .as_ref()
+            .is_some_and(|f| f.ty == crate::FieldType::String && f.readable_values.is_none())
+        {
             continue;
-        };
-        let predicate = match walk(&catalog, root, &column) {
+        }
+        columns.push(column.clone());
+        predicates.push(String::new());
+    }
+    let (keys, json_keys) = key_params(columns.iter(), bind_offset);
+    for (index, column) in columns.iter().enumerate() {
+        let f = column.field.as_ref().expect("field column");
+        let predicate = match walk(&catalog, root, column, &keys) {
             Some(w) => format!(
                 "EXISTS (SELECT 1 {} AND position($3::text in lower({}))>0)",
                 w.suffix,
-                field(&w.alias, w.table, f.id)
+                field(&w.alias, w.table, &f.id, &keys)
             ),
-            None => format!("position($3::text in lower({}))>0", field("r", root, f.id)),
+            None => format!(
+                "position($3::text in lower({}))>0",
+                field("r", root, &f.id, &keys)
+            ),
         };
-        predicates.push(predicate);
+        predicates[index] = predicate;
     }
     // Reference both scope parameters even for sources that only use tenant.
     let predicate = if predicates.is_empty() {
@@ -419,7 +522,14 @@ pub async fn text_search_sql(
     } else {
         predicates.join(" OR ")
     };
-    Ok(format!("SELECT {} FROM {} r CROSS JOIN (SELECT $1::bigint AS tenant, $2::bigint AS usr) actor WHERE ({predicate})", field("r", root, root.key()), source(root)))
+    Ok(TextSearchSql {
+        sql: format!(
+            "SELECT {} FROM {} r CROSS JOIN (SELECT $1::bigint AS tenant, $2::bigint AS usr) actor WHERE ({predicate})",
+            field("r", root, root.key(), &keys),
+            source(root)
+        ),
+        json_keys,
+    })
 }
 
 // Every Grid read: bounded locally, and on the UTC calendar so a trend month
@@ -431,30 +541,74 @@ const BOUNDS: &str = "SET LOCAL statement_timeout = '2000ms'; SET LOCAL lock_tim
 fn ident(name: &str) -> String {
     format!("\"{}\"", name.replace('"', "\"\""))
 }
-fn field(alias: &str, table: &Table, id: &str) -> String {
-    format!(
-        "{alias}.{}",
-        ident(table.field(id).expect("resolved field").source_key())
-    )
+type KeyParams = BTreeMap<(String, String), usize>;
+fn key_params<'a>(
+    columns: impl IntoIterator<Item = &'a Column>,
+    start: usize,
+) -> (KeyParams, Vec<String>) {
+    let mut params = KeyParams::new();
+    let mut keys = Vec::new();
+    for column in columns {
+        let Some(field) = column
+            .field
+            .as_ref()
+            .filter(|field| field.json_key.is_some())
+        else {
+            continue;
+        };
+        let key = (column.table.to_owned(), field.id.clone());
+        if params.contains_key(&key) {
+            continue;
+        }
+        keys.push(field.json_key.clone().expect("custom key"));
+        params.insert(key, start + keys.len());
+    }
+    (params, keys)
+}
+
+fn field(alias: &str, table: &Table, id: &str, keys: &KeyParams) -> String {
+    let field = table.field(id).expect("resolved field");
+    if field.json_key.is_some() {
+        let Some(index) = keys.get(&(table.id().into(), field.id.clone())) else {
+            return "NULL".into();
+        };
+        let raw = format!("({alias}.{} ->> ${index}::text)", ident(field.source_key()));
+        return match field.ty {
+            crate::FieldType::Integer => format!("NULLIF({raw}, '')::bigint"),
+            crate::FieldType::Decimal => format!("NULLIF({raw}, '')::numeric"),
+            crate::FieldType::Date => format!("NULLIF({raw}, '')::date"),
+            crate::FieldType::DateTime => format!("NULLIF({raw}, '')::timestamptz"),
+            crate::FieldType::Boolean => format!("NULLIF({raw}, '')::boolean"),
+            _ => raw,
+        };
+    }
+    format!("{alias}.{}", ident(field.source_key()))
 }
 fn source(table: &Table) -> String {
     format!("({})", table.source().sql)
 }
-fn condition(link: &Link, parent: &Table, target: &Table, p: &str, t: &str) -> String {
+fn condition(
+    link: &Link,
+    parent: &Table,
+    target: &Table,
+    p: &str,
+    t: &str,
+    keys: &KeyParams,
+) -> String {
     match link.decl.join {
         Join::On {
             from_field,
             to_field,
         } => format!(
             "{} = {}",
-            field(p, parent, from_field),
-            field(t, target, to_field)
+            field(p, parent, from_field, keys),
+            field(t, target, to_field, keys)
         ),
         Join::Edge(edge) => format!(
             "{} IN (SELECT e.to_key FROM ({}) e WHERE e.from_key = {})",
-            field(t, target, target.key()),
+            field(t, target, target.key(), keys),
             edge.sql,
-            field(p, parent, parent.key())
+            field(p, parent, parent.key(), keys)
         ),
     }
 }
@@ -463,21 +617,40 @@ fn condition(link: &Link, parent: &Table, target: &Table, p: &str, t: &str) -> S
 // multiply each other or the page. One-hops select a scalar key first: a broken
 // owner declaration returning two targets fails instead of silently inflating
 // aggregates. Edge duplicates are set membership, not duplicate business rows.
-fn cell(catalog: &Catalog, root: &Table, column: &Column) -> String {
+fn cell(catalog: &Catalog, root: &Table, column: &Column, keys: &KeyParams) -> String {
     let Some(Walked {
         suffix,
         alias: p,
         table: parent,
-    }) = walk(catalog, root, column)
+    }) = walk(catalog, root, column, keys)
     else {
-        return field("r", root, column.field.expect("field column").id);
+        return field(
+            "r",
+            root,
+            &column.field.as_ref().expect("field column").id,
+            keys,
+        );
     };
-    let value = column.field.map(|f| field(&p, parent, f.id));
+    let value = column
+        .field
+        .as_ref()
+        .map(|f| field(&p, parent, &f.id, keys));
     match column.agg {
         None => format!("(SELECT {} {suffix})", value.unwrap()),
-        Some(Agg::Count) => format!("(SELECT {} {suffix})", aggregate(catalog, column, &p, parent)),
-        Some(Agg::Latest) => format!("(SELECT {} {suffix} ORDER BY {} DESC NULLS LAST, {} DESC LIMIT 1)", value.unwrap(), field(&p, parent, parent.time_field().unwrap()), field(&p, parent, parent.key())),
-        Some(Agg::List) => format!("(SELECT left(string_agg(v, ', ' ORDER BY v), 300) FROM (SELECT DISTINCT left(({})::text, 300) AS v {suffix} ORDER BY v LIMIT 301) listed)", value.unwrap()),
+        Some(Agg::Count) => format!(
+            "(SELECT {} {suffix})",
+            aggregate(catalog, column, &p, parent, keys)
+        ),
+        Some(Agg::Latest) => format!(
+            "(SELECT {} {suffix} ORDER BY {} DESC NULLS LAST, {} DESC LIMIT 1)",
+            value.unwrap(),
+            field(&p, parent, parent.time_field().unwrap(), keys),
+            field(&p, parent, parent.key(), keys)
+        ),
+        Some(Agg::List) => format!(
+            "(SELECT left(string_agg(v, ', ' ORDER BY v), 300) FROM (SELECT DISTINCT left(({})::text, 300) AS v {suffix} ORDER BY v LIMIT 301) listed)",
+            value.unwrap()
+        ),
         Some(agg) => format!("(SELECT {}({}) {suffix})", agg.key(), value.unwrap()),
     }
 }
@@ -491,17 +664,28 @@ struct Walked<'c> {
 }
 
 /// `count` of the many-link's rows or the column's aggregate of its field.
-fn aggregate(catalog: &Catalog, column: &Column, alias: &str, table: &Table) -> String {
-    match (column.agg, column.field) {
+fn aggregate(
+    catalog: &Catalog,
+    column: &Column,
+    alias: &str,
+    table: &Table,
+    keys: &KeyParams,
+) -> String {
+    match (column.agg, column.field.as_ref()) {
         (Some(Agg::Count), _) => {
             let many_index = column.hops.len();
             let many_table = catalog.table(column.many.unwrap().to()).unwrap();
             format!(
                 "count({})",
-                field(&format!("t{many_index}"), many_table, many_table.key())
+                field(
+                    &format!("t{many_index}"),
+                    many_table,
+                    many_table.key(),
+                    keys
+                )
             )
         }
-        (Some(agg), Some(f)) => format!("{}({})", agg.key(), field(alias, table, f.id)),
+        (Some(agg), Some(f)) => format!("{}({})", agg.key(), field(alias, table, &f.id, keys)),
         _ => unreachable!("resolved rollups aggregate"),
     }
 }
@@ -509,28 +693,43 @@ fn aggregate(catalog: &Catalog, column: &Column, alias: &str, table: &Table) -> 
 /// A trend: the aggregate per calendar month of the many-link target's time
 /// field, from `actor.trend_from` up to `actor.trend_to`, as a JSON object
 /// keyed `YYYY-MM`. A lens column ends on its dated many-link target.
-fn trend(catalog: &Catalog, root: &Table, column: &Column) -> String {
-    let w = walk(catalog, root, column).expect("rollup walks a link");
-    let time = field(&w.alias, w.table, column.time_field.expect("dated rollup"));
+fn trend(catalog: &Catalog, root: &Table, column: &Column, keys: &KeyParams) -> String {
+    let w = walk(catalog, root, column, keys).expect("rollup walks a link");
+    let time = field(
+        &w.alias,
+        w.table,
+        column.time_field.expect("dated rollup"),
+        keys,
+    );
     format!(
         "(SELECT COALESCE(jsonb_object_agg(m, v), '{{}}'::jsonb) FROM (SELECT to_char(date_trunc('month', {time}), 'YYYY-MM') AS m, ({})::float8 AS v {} AND {time} >= actor.trend_from AND {time} < actor.trend_to GROUP BY 1) months)",
-        aggregate(catalog, column, &w.alias, w.table),
+        aggregate(catalog, column, &w.alias, w.table, keys),
         w.suffix
     )
 }
 
 /// A change since a date: the same aggregate over rows dated before it.
-fn before(catalog: &Catalog, root: &Table, column: &Column) -> String {
-    let w = walk(catalog, root, column).expect("rollup walks a link");
-    let time = field(&w.alias, w.table, column.time_field.expect("dated rollup"));
+fn before(catalog: &Catalog, root: &Table, column: &Column, keys: &KeyParams) -> String {
+    let w = walk(catalog, root, column, keys).expect("rollup walks a link");
+    let time = field(
+        &w.alias,
+        w.table,
+        column.time_field.expect("dated rollup"),
+        keys,
+    );
     format!(
         "(SELECT {} {} AND {time} < actor.since)",
-        aggregate(catalog, column, &w.alias, w.table),
+        aggregate(catalog, column, &w.alias, w.table, keys),
         w.suffix
     )
 }
 
-fn walk<'c>(catalog: &'c Catalog, root: &'c Table, column: &Column) -> Option<Walked<'c>> {
+fn walk<'c>(
+    catalog: &'c Catalog,
+    root: &'c Table,
+    column: &Column,
+    keys: &KeyParams,
+) -> Option<Walked<'c>> {
     let links: Vec<_> = column
         .hops
         .iter()
@@ -552,13 +751,13 @@ fn walk<'c>(catalog: &'c Catalog, root: &'c Table, column: &Column) -> Option<Wa
             // targets; this scalar SELECT enforces the declared cardinality.
             format!(
                 "{} = (SELECT {} FROM {} lookup WHERE {})",
-                field(&t, target, target.key()),
-                field("lookup", target, target.key()),
+                field(&t, target, target.key(), keys),
+                field("lookup", target, target.key(), keys),
                 source(target),
-                condition(link, parent, target, &p, "lookup")
+                condition(link, parent, target, &p, "lookup", keys)
             )
         } else {
-            condition(link, parent, target, &p, &t)
+            condition(link, parent, target, &p, &t, keys)
         };
         if i == 0 {
             from = format!("{} {t}", source(target));
@@ -582,25 +781,30 @@ fn statement(
     trends: &[&Column],
     deltas: &[&Column],
     key_cast: &str,
+    keys: &KeyParams,
 ) -> String {
-    let mut select = format!("to_jsonb({})", field("r", root, root.key()));
+    let mut select = format!("to_jsonb({})", field("r", root, root.key(), keys));
     for column in columns {
         select.push_str(&format!(
             ", COALESCE(to_jsonb({}), 'null'::jsonb)",
-            cell(catalog, root, column)
+            cell(catalog, root, column, keys)
         ));
     }
     for column in trends {
-        select.push_str(&format!(", {}", trend(catalog, root, column)));
+        select.push_str(&format!(", {}", trend(catalog, root, column, keys)));
     }
     for column in deltas {
         select.push_str(&format!(
             ", COALESCE(to_jsonb({}), 'null'::jsonb)",
-            before(catalog, root, column)
+            before(catalog, root, column, keys)
         ));
     }
     // Cast input values to the server-described key type. This keeps the owner
     // key bare, allowing its index to bound the page lookup. Type identifiers
     // come from PostgreSQL metadata, never from a request.
-    format!("WITH input AS (SELECT (id #>> '{{}}')::{key_cast} AS key, min(ord) AS ord FROM jsonb_array_elements($3::jsonb) WITH ORDINALITY AS x(id,ord) GROUP BY 1), actor AS (SELECT $1::bigint AS tenant, $2::bigint AS usr, $4::text::date AS trend_from, $5::text::date AS trend_to, $6::text::date AS since) SELECT {select} FROM input JOIN {} r ON {} = input.key CROSS JOIN actor ORDER BY input.ord LIMIT 101", source(root), field("r", root, root.key()))
+    format!(
+        "WITH input AS (SELECT (id #>> '{{}}')::{key_cast} AS key, min(ord) AS ord FROM jsonb_array_elements($3::jsonb) WITH ORDINALITY AS x(id,ord) GROUP BY 1), actor AS (SELECT $1::bigint AS tenant, $2::bigint AS usr, $4::text::date AS trend_from, $5::text::date AS trend_to, $6::text::date AS since) SELECT {select} FROM input JOIN {} r ON {} = input.key CROSS JOIN actor ORDER BY input.ord LIMIT 101",
+        source(root),
+        field("r", root, root.key(), keys)
+    )
 }

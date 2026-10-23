@@ -383,7 +383,7 @@ async fn dump(
                     json!({
                         "key": row.key, "spec": column.spec, "ty": format!("{:?}", column.ty),
                         "kind": format!("{:?}", column.kind), "agg": column.agg.map(|a| a.key()),
-                        "field_ty": column.field.map(|f| format!("{:?}", f.ty)),
+                        "field_ty": column.field.as_ref().map(|f| format!("{:?}", f.ty)),
                         "dated": column.time_field.is_some(),
                         "available": lens::available(column).iter().map(|l| l.as_str()).collect::<Vec<_>>(),
                         "lens": lens.as_str(), "value": row.cells[&column.id],

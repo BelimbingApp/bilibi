@@ -54,3 +54,9 @@ Every record carries these header lines: Document Type, Status, Agents, Scope, L
 | Record | Status |
 | --- | --- |
 | [04 Provider-neutral single sign-on](./04-provider-neutral-single-sign-on.md) | Accepted |
+
+### Data and extensibility
+
+| Record | Status |
+| --- | --- |
+| [05 Tenant-defined fields stay with their owning records](./05-tenant-defined-custom-fields.md) | Accepted; implementation in progress |

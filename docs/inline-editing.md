@@ -4,13 +4,13 @@ A record page edits its facts in place: there is no separate Edit button or
 `/:id/edit` route. The shared pieces are in `apps/base/ui`:
 
 - `src/inline.rs` — the typed models `InlineField`, `InlineEdit`,
-  `InlineLongText`, `InlineChoice`, `CommitOutcome`, and the per-fact outcome
+  `InlineLongText`, `InlineChoice`, `InlineMultiChoice`, `CommitOutcome`, and the per-fact outcome
   bookkeeping `CommitStatus`/`CommitStates`.
 - `templates/inline.html` — the `inline_edit`, `inline_long_text`,
-  `inline_choice` and `commit_status` macros, mirroring Bilimbi
+  `inline_choice`, `inline_multi_choice` and `commit_status` macros, mirroring Bilimbi
   `components.ex` (`inline_edit`, `inline_choice`, `inline_long_text`,
   `commit_status`).
-- `assets/inline.js` — the `InlineEdit`, `InlineLongText` and `InlineChoice`
+- `assets/inline.js` — the `InlineEdit`, `InlineLongText`, `InlineChoice` and `InlineMultiChoice`
   hooks, adapted from Bilimbi `inline_edit.js`, `inline_long_text.js` and
   `inline_commit.js`. It is served with the form hooks at `/assets/hooks.js`.
 
@@ -26,11 +26,12 @@ field's hint; the trigger and the editor are described by it.
 | `InlineEdit` | click, Enter, Space, F2 (caret at end), a typed character (replaces) | Enter, blur | Escape |
 | `InlineLongText` | click, Enter, Space, F2, a typed character (replaces) | blur (Enter adds a line) | Escape |
 | `InlineChoice` | click, Enter, Space, F2 | `change` of the editor control named by the field | Escape, focus leaving the editor |
+| `InlineMultiChoice` | click, Enter, Space, F2 | blur or Enter after selecting multiple options | Escape |
 
 Enter and Escape return focus to the trigger; a blur commit leaves focus where
 the person put it. An unchanged value sends nothing, and an emptied text value
 sends nothing unless the owner calls `allow_empty()`. Text is trimmed;
-long text and choice values are sent as entered.
+long text and choice values are sent as entered. Multi-choice values are sent as a JSON array of selected codes.
 
 A commit raises the field's `save_event` (default `save_field`) through the
 queued transport with `{id, field, value, version}`. While its own reply is

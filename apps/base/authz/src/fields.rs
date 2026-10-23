@@ -1,10 +1,16 @@
 //! Generalized field withholding, independent of Grid and presentation. Never
 //! serialize an original value beside a restricted placeholder.
 use bilibi_database::{Error, Result};
+use bilibi_ports::PortClient;
 use bilibi_tenancy::Scope;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashSet};
+use std::future::Future;
+use std::pin::Pin;
 use tokio_postgres::GenericClient;
+
+type WithheldFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<BTreeMap<String, HashSet<String>>>> + Send + 'a>>;
 
 /// All restrictions for an actor, in one fresh database read. Any restricting
 /// role wins, including alongside an admin/grant_all role.
@@ -31,23 +37,60 @@ pub async fn withheld_by_record_type(
     types: &[&str],
 ) -> Result<BTreeMap<String, HashSet<String>>> {
     let restricted = restricted(client, scope).await?;
+    withheld_from_catalog(restricted, crate::field_catalog::field_catalog()?, types)
+}
+
+/// Runtime catalog variant for pages whose connection can cross the provider
+/// boundary (audit history and mutation views).
+pub async fn withheld_by_record_type_runtime(
+    client: PortClient<'_>,
+    scope: &Scope,
+    types: &[&str],
+) -> Result<BTreeMap<String, HashSet<String>>> {
+    let catalog = crate::field_catalog::for_scope(client, scope).await?;
+    bilibi_ports::on_client!(client, |sql| withheld_query(sql, scope, &catalog, types)).await
+}
+
+fn withheld_query<'a>(
+    client: &'a (impl GenericClient + Sync),
+    scope: &'a Scope,
+    catalog: &'a crate::field_catalog::FieldCatalog,
+    types: &'a [&'a str],
+) -> WithheldFuture<'a> {
+    Box::pin(async move { withheld_from_catalog(restricted(client, scope).await?, catalog, types) })
+}
+
+fn withheld_from_catalog(
+    restricted: BTreeMap<String, HashSet<String>>,
+    catalog: &crate::field_catalog::FieldCatalog,
+    types: &[&str],
+) -> Result<BTreeMap<String, HashSet<String>>> {
     let mut result: BTreeMap<String, HashSet<String>> = BTreeMap::new();
     if restricted.is_empty() || types.is_empty() {
         return Ok(result);
     }
-    for table in crate::field_catalog::field_catalog()?.tables() {
-        let Some(fields) = restricted.get(table.id).filter(|fields| !fields.is_empty()) else {
+    for table in catalog.tables() {
+        let Some(fields) = restricted
+            .get(&table.id)
+            .filter(|fields| !fields.is_empty())
+        else {
             continue;
         };
         for kind in table
             .record_types
             .iter()
-            .filter(|kind| types.contains(kind))
+            .filter(|kind| types.contains(&kind.as_str()))
         {
             result
                 .entry((*kind).to_owned())
                 .or_default()
-                .extend(fields.iter().cloned());
+                .extend(fields.iter().map(|field| {
+                    if let Some(custom_key) = field.strip_prefix("cf_") {
+                        format!("custom.{custom_key}")
+                    } else {
+                        field.clone()
+                    }
+                }));
         }
     }
     Ok(result)
@@ -58,7 +101,17 @@ pub fn mask(value: &mut Value, fields: &HashSet<String>) {
     match value {
         Value::Object(object) => {
             for field in fields {
-                object.remove(field);
+                let mut parts = field.split('.').peekable();
+                let mut current = &mut *object;
+                while let Some(part) = parts.next() {
+                    if parts.peek().is_none() {
+                        current.remove(part);
+                    } else if let Some(Value::Object(nested)) = current.get_mut(part) {
+                        current = nested;
+                    } else {
+                        break;
+                    }
+                }
             }
         }
         Value::Array(rows) => {

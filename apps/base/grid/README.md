@@ -76,6 +76,27 @@ internal error and logs the cause).
 `restriction_catalog` and `restrictable` give the Authz screens the protected-field
 catalog as **data**: Authz does not depend on Grid.
 
+Opted-in record owners contribute one `RuntimeFieldProvider` to
+`RUNTIME_FIELDS`. `Catalog::for_scope_with_runtime(client, scope, port_client)`
+loads that scope's active definitions on each request and merges fields into
+visible owner tables. A runtime field uses the owner's declared JSON column and
+`cf_<key>` field ID; the key is a bound PostgreSQL value. The source must select
+the whole JSON column, and a provider failure refuses the catalog build. The
+two-argument `for_scope` remains the static-catalog entry point for existing
+callers.
+
+Reference fields carry the current actor's readable target keys in runtime
+metadata. Grid masks other keys from projections and excludes reference fields
+from text search and owner sorting/filtering to prevent indirect value probes.
+Readable values remain stored target keys; Grid does not add dynamic
+relationship paths or target labels.
+
+`query::field_expression` exposes a typed root-field expression for an owner's
+bounded sort or filter query. It returns JSON keys separately for binding after
+the owner's existing parameters. `query::text_search_sql` also returns a
+`TextSearchSql` fragment with any JSON keys to bind. Walked-column projections
+remain display-only; Grid does not page or sort an owner's rows.
+
 ## Column paths
 
 `name`, `group.name` (one-links), `movements:count`, `movements.delta:sum`,
@@ -151,7 +172,11 @@ The estimate is an admission check, not a promise about runtime; the timeout is
 the execution backstop. Owners must still index their sources and join keys.
 
 The query returns typed `QueryError`s and converts to the shared database error
-for page handlers. It does not sort/filter walked columns or persist layouts (G4).
+for page handlers. It does not page owner rows. By default walked columns do
+not sort; a host may opt in to root-level scalar runtime fields with
+`PageColumns::sortable_runtime_fields()`. The owner must re-resolve the current
+scoped catalog and validate sort/filter state on every list request. References,
+multi-choice fields, linked paths and aggregates remain ineligible for sorting.
 
 Run the live projection walkthrough against a **disposable** migrated
 PostgreSQL database:
@@ -169,7 +194,7 @@ reference rows on success. No unit tests or test runner are involved.
 
 ## Searching related text
 
-`query::text_search_sql(client, scope, root, paths)` builds a membership subquery for an owner's paginated search and count. Execute it immediately under the same scope, binding tenant, user and normalized search text to `$1`, `$2` and `$3`. The owner retains its pagination and statement timeout. Paths resolve against a fresh catalog; unavailable tables and restricted fields contribute no matches. Many-links search every text value before cell truncation, so a value beyond the displayed rollup still matches.
+`query::text_search_sql(client, runtime_client, scope, root, paths, bind_offset)` builds a membership subquery for an owner's paginated search and count. Execute it immediately under the same scope, binding tenant, user and normalized search text to `$1`, `$2` and `$3`, then append `TextSearchSql::json_keys` after the owner's existing parameters (the supplied offset is their count). The owner retains its pagination and statement timeout. Paths resolve against a fresh catalog; unavailable tables and restricted fields contribute no matches. Many-links search every text value before cell truncation, so a value beyond the displayed rollup still matches.
 
 ## Lenses (G3)
 
@@ -246,7 +271,8 @@ The page holds one `PageColumns` in its live state and:
    `PageColumns::rows`, each row's slots filled for the built-in ids);
 5. delegates its `grid` event to `handle(scope, values)`: after
    `Outcome::Patch` it loads again and returns the merged query; `Sort(key)`
-   is a built-in's sort for the page's `ListState`; `Update` re-renders.
+   is a built-in or opted-in runtime field sort for the page's `ListState`; the
+   owner validates it against fresh metadata and restrictions; `Update` re-renders.
 
 `View` is what a person arranged, as one value that round-trips through the
 URL (`cols`, `lens`, `z`, `since`; defaults left out) and the stored JSON

@@ -14,7 +14,7 @@
 //! aggregate. `count` takes no field; every other aggregate needs one. Parsing is
 //! bounded and total: it never panics, allocates from, or indexes anything by a
 //! client string beyond the catalog's own tables.
-use crate::model::{id_valid, Field, FieldType, Link, LinkKind, Table};
+use crate::model::{segment_valid, FieldType, FieldValue, Link, LinkKind, Table};
 use std::fmt;
 
 pub const MAX_SPEC: usize = 160;
@@ -135,7 +135,7 @@ pub fn parse(spec: &str) -> Result<Parsed<'_>, ColumnError> {
         None => (spec, None),
     };
     let segments: Vec<_> = path.split('.').collect();
-    if segments.len() > MAX_SEGMENTS || !segments.iter().all(|segment| id_valid(segment)) {
+    if segments.len() > MAX_SEGMENTS || !segments.iter().all(|segment| segment_valid(segment)) {
         return Err(ColumnError::Malformed);
     }
     Ok(Parsed { segments, agg })
@@ -160,7 +160,7 @@ pub struct Column {
     pub hops: Vec<Link>,
     pub many: Option<Link>,
     pub tail: Vec<Link>,
-    pub field: Option<Field>,
+    pub field: Option<FieldValue>,
     pub agg: Option<Agg>,
     pub depth: usize,
     /// The many-link target's time field when the rollup ends on that target
@@ -173,7 +173,7 @@ impl Column {
         match (self.kind, self.agg) {
             (ColumnKind::Rollup, Some(Agg::Count | Agg::Sum | Agg::Avg)) => true,
             (ColumnKind::Rollup, Some(Agg::Min | Agg::Max)) => {
-                self.field.is_some_and(|f| f.ty.numeric())
+                self.field.as_ref().is_some_and(|f| f.ty.numeric())
             }
             (ColumnKind::Rollup, _) => false,
             _ => self.ty.numeric(),
@@ -194,7 +194,7 @@ struct Walk {
     hops: Vec<Link>,
     many: Option<Link>,
     tail: Vec<Link>,
-    field: Option<Field>,
+    field: Option<FieldValue>,
 }
 
 /// Resolves `spec` against `root`, with `fetch` returning a visible table by id.
@@ -226,7 +226,7 @@ pub fn resolve<'a>(
             .field(segment)
             .filter(|f| !f.hidden && index + 1 == count)
         {
-            walk.field = Some(*field);
+            walk.field = Some(field);
         } else {
             return Err(ColumnError::UnknownSegment {
                 segment: (*segment).into(),
@@ -258,8 +258,8 @@ fn build(
         return Ok(Column {
             spec: spec.into(),
             id: dom_id(spec),
-            label: label(&hops, field.label),
-            short_label: short_label(&hops, field.label),
+            label: label(&hops, &field.label),
+            short_label: short_label(&hops, &field.label),
             ty: field.ty,
             kind: ColumnKind::Field,
             root: root.id(),
@@ -274,7 +274,7 @@ fn build(
         });
     };
     let agg = agg.ok_or(ColumnError::ManyLinkNeedsAggregate)?;
-    match (agg, field) {
+    match (agg, field.as_ref()) {
         (Agg::Count, Some(_)) => return Err(ColumnError::CountTakesNoField),
         (Agg::Count, None) => {}
         (_, None) => return Err(ColumnError::AggregateNeedsField),
@@ -295,20 +295,20 @@ fn build(
         .chain([many])
         .chain(tail.iter().copied())
         .collect();
-    let short = field.map_or_else(
+    let short = field.as_ref().map_or_else(
         || Agg::Count.label().to_string(),
         |f| format!("{} ({})", f.label, agg.label()),
     );
     let heading = match field {
         None => format!("{} {}", many.label(), Agg::Count.label().to_lowercase()),
-        Some(f) => format!(
+        Some(ref f) => format!(
             "{} {} {}",
             links.last().expect("many link").label(),
-            lower_first(f.label),
+            lower_first(&f.label),
             agg.label().to_lowercase()
         ),
     };
-    let ty = match (agg, field) {
+    let ty = match (agg, field.as_ref()) {
         (Agg::Count, _) => FieldType::Integer,
         (Agg::Avg, _) => FieldType::Float,
         (Agg::List, _) => FieldType::String,

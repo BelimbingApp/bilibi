@@ -121,7 +121,7 @@ static GRID: GridContribution = GridContribution {
         "Companies",
         LIST,
         Source::tenant(
-            "SELECT id, parent_id, code, name, legal_name, registration_number, legal_entity_type_id, jurisdiction, website, status, email, phone, tax_id, revenue, created_at, updated_at FROM companies WHERE tenant_id = $1 AND deleted_at IS NULL",
+            "SELECT id, parent_id, code, name, legal_name, registration_number, legal_entity_type_id, jurisdiction, website, status, email, phone, tax_id, revenue, created_at, updated_at, custom FROM companies WHERE tenant_id = $1 AND deleted_at IS NULL",
         ),
         "id",
         &[
@@ -141,6 +141,7 @@ static GRID: GridContribution = GridContribution {
             Field::new("revenue", "Revenue", Integer),
             Field::new("created_at", "Created", DateTime),
             Field::new("updated_at", "Updated", DateTime),
+            Field::new("custom", "Custom fields", String).hidden(),
         ],
     )
     .label_field("name")
@@ -192,6 +193,10 @@ static GRID: GridContribution = GridContribution {
         LinkDecl::on("company", "Company", LinkKind::One, "departments", "company_id", "companies", "id"),
     ],
 };
+
+// Tenant-defined Company facts (Bilimbi `CustomFields` record-type opt-in).
+inventory::submit! { Contribution::new(bilibi_custom_fields::RECORD_TYPES, "core.company.custom-fields", provenance!(), &bilibi_custom_fields::RecordType::new("core.company", "Company", "company", "companies", "custom", LIST)) }
+inventory::submit! { Contribution::new(bilibi_custom_fields::REFERENCE_TARGETS, "core.company.reference-targets", provenance!(), &bilibi_custom_fields::ReferenceTargetSource { table: "companies", provider: &crate::reference_targets::COMPANIES }) }
 bilibi_grid::contribute!("core/company", "company.grid", &GRID);
 
 inventory::submit! {

@@ -123,7 +123,7 @@ fn render(fragment: impl Template) -> Result<Html> {
 /// their values out of each entry, the one place a stored mutation becomes a
 /// read model for a screen.
 pub(crate) async fn withhold(
-    client: &impl tokio_postgres::GenericClient,
+    client: bilibi_ports::PortClient<'_>,
     scope: &Scope,
     entries: &mut [MutationEntry],
 ) -> Result<()> {
@@ -133,13 +133,43 @@ pub(crate) async fn withhold(
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect();
-    let withheld = bilibi_authz::fields::withheld_by_record_type(client, scope, &kinds).await?;
-    if withheld.is_empty() {
-        return Ok(());
-    }
+    let withheld =
+        bilibi_authz::fields::withheld_by_record_type_runtime(client, scope, &kinds).await?;
+    let catalog = bilibi_authz::field_catalog::for_scope(client, scope).await?;
     for entry in entries {
-        if let Some(fields) = withheld.get(&entry.auditable_type) {
-            entry.withhold(fields);
+        let mut fields = withheld
+            .get(&entry.auditable_type)
+            .cloned()
+            .unwrap_or_default();
+        for table in catalog.tables().iter().filter(|table| {
+            table
+                .record_types
+                .iter()
+                .any(|kind| kind == &entry.auditable_type)
+        }) {
+            for field in table
+                .fields
+                .iter()
+                .filter(|field| field.reference_values.is_some() && field.id.starts_with("cf_"))
+            {
+                let key = field.id.strip_prefix("cf_").unwrap_or(&field.id);
+                let path = format!("custom.{key}");
+                let readable = field.reference_values.as_ref().expect("checked");
+                if [
+                    entry.old_values.pointer(&format!("/custom/{key}")),
+                    entry.new_values.pointer(&format!("/custom/{key}")),
+                ]
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .any(|value| !readable.iter().any(|key| key == value))
+                {
+                    fields.insert(path);
+                }
+            }
+        }
+        if !fields.is_empty() {
+            entry.withhold(&fields);
         }
     }
     Ok(())
@@ -195,7 +225,7 @@ impl Mutations {
         {
             page = bilibi_audit::list_mutations(&**client, scope, &self.query()).await?;
         }
-        withhold(&**client, scope, &mut page.entries).await?;
+        withhold((&**client).into(), scope, &mut page.entries).await?;
         // The rows changed: ListColumns forgets an unfinished add box, and an
         // open diff belongs to a row no longer shown.
         self.columns

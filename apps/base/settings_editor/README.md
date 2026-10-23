@@ -2,6 +2,8 @@
 
 `/system/settings`, titled **System Settings**, is the operator page for contributed settings (Bilimbi `Settings.Web.GroupLive` + `Settings.Form` + the host's `SecretReveal`). It is its own module because it needs Authz, and Authz depends on `base/settings`: storage stays below Authz, the screen sits above it.
 
+`/system/settings/tenant`, titled **Tenant Settings**, is a tenant-admin view of only the three custom-field limits. It requires `admin.custom.fields.manage`; every save and restore rechecks that capability and writes only the current tenant's values. This view mirrors Bilimbi Settings' tenant target without exposing other tenant-scoped settings.
+
 ## Table
 
 Settings appear in the shared `FlexTable`, with Setting, Value and Area columns. The company picker uses the same table; per-person settings do not use this module.
@@ -14,7 +16,7 @@ Settings appear in the shared `FlexTable`, with Setting, Value and Area columns.
 
 ## Fields
 
-A field is every `base/settings.definitions` contribution with `editor` metadata, a concrete key (no wildcard) and the global scope, shown as rows in the table. Declaring such a setting is all a module does to appear here. A field whose `editor.capability` the actor does not hold right now is withheld: it is not rendered and a forged submission naming it is ignored. When every field is withheld the page names the missing capabilities instead of claiming nothing was contributed.
+On the operator view, fields are every `base/settings.definitions` contribution with `editor` metadata, a concrete key (no wildcard) and the global scope. The tenant view admits only fields in the `Custom field limits` group with tenant scope. A field whose `editor.capability` the actor does not hold right now is withheld: it is not rendered and a forged submission naming it is ignored. When every field is withheld the page names the missing capabilities instead of claiming nothing was contributed.
 
 Values are read with `Settings::resolve_masked`, so an encrypted value is never decrypted to draw the page; a stored secret shows the keep-current mask. Without a valid `BILIBI_SETTINGS_KEY` an encrypted field is read-only (it can still be cleared by Restore Defaults, which needs no key).
 

@@ -100,7 +100,31 @@ impl Plans {
         let mut definitions = Vec::new();
         let mut valid = true;
         for (index, op) in operations.iter().enumerate() {
-            let result = self.preview_one(tx, scope, op).await;
+            let registered = self.registry.operations.get(op.key.as_str());
+            let (schema, result) = if let Some(registered) = registered {
+                if !registered.definition.channels.allows(scope.channel()) {
+                    (None, Err(Error::ChannelNotAllowed))
+                } else {
+                    match bilibi_authz::authorize_key(tx, scope, registered.definition.capability)
+                        .await
+                    {
+                        Ok(()) => match self
+                            .registry
+                            .input_schema(tx as &dyn OperationClient, scope, registered)
+                            .await
+                        {
+                            Ok(input) => {
+                                let result = self.preview_one(tx, scope, op, &input).await;
+                                (Some(input), result)
+                            }
+                            Err(error) => (None, Err(error)),
+                        },
+                        Err(error) => (None, Err(error.into())),
+                    }
+                }
+            } else {
+                (None, Err(Error::UnknownOperation))
+            };
             match result {
                 Ok(preview) => {
                     results.push(json!({"index":index,"key":op.key,"valid":true,"preview":preview}))
@@ -135,11 +159,12 @@ impl Plans {
                     results.push(json!({"index":index,"key":op.key,"valid":false,"error":reason}));
                 }
             }
-            if let Some(registered) = self.registry.operations.get(op.key.as_str()) {
+            if let Some(registered) = registered {
+                let input = schema.as_ref().unwrap_or(&registered.input);
                 definitions.push(json!([
                     registered.definition.key,
                     registered.definition.capability,
-                    registered.input,
+                    input,
                     registered.output
                 ]));
             }
@@ -154,6 +179,7 @@ impl Plans {
         tx: &Transaction<'_>,
         scope: &Scope,
         op: &PlannedOperation,
+        input_schema: &Value,
     ) -> Result<Value> {
         let registered = self
             .registry
@@ -163,8 +189,7 @@ impl Plans {
         if !registered.definition.channels.allows(scope.channel()) {
             return Err(Error::ChannelNotAllowed);
         }
-        crate::schema::validate(&registered.input, &op.input).map_err(Error::InvalidInput)?;
-        bilibi_authz::authorize_key(tx, scope, registered.definition.capability).await?;
+        crate::schema::validate(input_schema, &op.input).map_err(Error::InvalidInput)?;
         match registered.definition.handler {
             Handler::SafeWrite(owner) => Ok(owner
                 .preview(tx as &dyn OperationClient, scope, &op.input)
@@ -318,12 +343,17 @@ impl Plans {
         }
         let binding = binding(&identity)?;
         self.shape(tx.sql(), std::slice::from_ref(op)).await?;
-        self.preview_one(tx.sql(), scope, op).await?;
         let registered = self
             .registry
             .operations
             .get(op.key.as_str())
             .ok_or(Error::UnknownOperation)?;
+        bilibi_authz::authorize_key(tx.sql(), scope, registered.definition.capability).await?;
+        let input_schema = self
+            .registry
+            .input_schema(tx.sql() as &dyn OperationClient, scope, registered)
+            .await?;
+        self.preview_one(tx.sql(), scope, op, &input_schema).await?;
         let Handler::SafeWrite(owner) = registered.definition.handler else {
             return Err(Error::WritesNotEnabled);
         };

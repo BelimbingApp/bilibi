@@ -57,6 +57,27 @@ pub struct Field {
     pub values: &'static [&'static str],
     pub protected: bool,
 }
+
+/// Owned view used by a scoped catalog, allowing tenant fields beside static
+/// declarations without retaining tenant strings in process snapshots.
+#[derive(Clone, Debug)]
+pub struct FieldValue {
+    pub id: String,
+    pub label: String,
+    pub ty: FieldType,
+    pub source_key: String,
+    pub json_key: Option<String>,
+    pub hidden: bool,
+    pub values: Vec<String>,
+    /// Reference target keys the current scoped catalog may reveal.
+    pub readable_values: Option<Vec<String>>,
+    pub protected: bool,
+}
+impl FieldValue {
+    pub fn source_key(&self) -> &str {
+        &self.source_key
+    }
+}
 impl Field {
     pub const fn new(id: &'static str, label: &'static str, ty: FieldType) -> Self {
         Self {
@@ -303,6 +324,7 @@ pub struct Table {
     pub provenance: Provenance,
     pub(crate) record_fields: Vec<bilibi_ui::RecordField>,
     fields: Vec<Field>,
+    pub(crate) runtime_fields: Vec<FieldValue>,
     links: Vec<Link>,
     protected: BTreeSet<&'static str>,
 }
@@ -326,15 +348,48 @@ impl Table {
         self.decl.source
     }
     /// Declared fields in declaration order, hidden ones included.
-    pub fn fields(&self) -> &[Field] {
-        &self.fields
+    pub fn fields(&self) -> Vec<FieldValue> {
+        self.fields
+            .iter()
+            .map(|field| FieldValue {
+                id: field.id.into(),
+                label: field.label.into(),
+                ty: field.ty,
+                source_key: field.source_key().into(),
+                json_key: None,
+                hidden: field.hidden,
+                values: field.values.iter().map(|value| (*value).into()).collect(),
+                readable_values: None,
+                protected: field.protected,
+            })
+            .chain(self.runtime_fields.iter().cloned())
+            .collect()
     }
-    pub fn field(&self, id: &str) -> Option<&Field> {
-        self.fields.iter().find(|field| field.id == id)
+    pub fn field(&self, id: &str) -> Option<FieldValue> {
+        self.fields
+            .iter()
+            .find(|field| field.id == id)
+            .map(|field| FieldValue {
+                id: field.id.into(),
+                label: field.label.into(),
+                ty: field.ty,
+                source_key: field.source_key().into(),
+                json_key: None,
+                hidden: field.hidden,
+                values: field.values.iter().map(|value| (*value).into()).collect(),
+                readable_values: None,
+                protected: field.protected,
+            })
+            .or_else(|| {
+                self.runtime_fields
+                    .iter()
+                    .find(|field| field.id == id)
+                    .cloned()
+            })
     }
     /// The fields a column may show: declaration order, without hidden ones.
-    pub fn visible_fields(&self) -> impl Iterator<Item = &Field> {
-        self.fields.iter().filter(|field| !field.hidden)
+    pub fn visible_fields(&self) -> impl Iterator<Item = FieldValue> + '_ {
+        self.fields().into_iter().filter(|field| !field.hidden)
     }
     /// Links starting at this table, in declaration order.
     pub fn links(&self) -> &[Link] {
@@ -343,12 +398,16 @@ impl Table {
     pub fn link(&self, id: &str) -> Option<&Link> {
         self.links.iter().find(|link| link.decl.id == id)
     }
-    pub fn key_field(&self) -> &Field {
+    pub fn key_field(&self) -> FieldValue {
         self.field(self.decl.key).expect("validated key")
     }
     /// Whether an operator may never restrict the field.
     pub fn is_protected(&self, field: &str) -> bool {
         self.protected.contains(field)
+            || self
+                .runtime_fields
+                .iter()
+                .any(|f| f.id == field && f.protected)
     }
     /// A link to a table the actor cannot read does not exist for them: a path
     /// through it is refused exactly as an unknown one is, revealing nothing.
@@ -358,6 +417,8 @@ impl Table {
     pub(crate) fn without(&self, restricted: &BTreeSet<&str>) -> Self {
         let mut copy = self.clone();
         copy.fields.retain(|field| !restricted.contains(field.id));
+        copy.runtime_fields
+            .retain(|field| !restricted.contains(field.id.as_str()));
         copy
     }
 }
@@ -376,6 +437,13 @@ pub fn id_valid(id: &str) -> bool {
     id.len() <= MAX_ID
         && chars.next().is_some_and(|c| c.is_ascii_lowercase())
         && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'_')
+}
+pub fn segment_valid(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 128
+        && id
+            .bytes()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'_')
 }
 fn label_valid(label: &str) -> bool {
     !label.trim().is_empty() && label.len() <= MAX_LABEL
@@ -600,6 +668,7 @@ impl Table {
             owner,
             provenance,
             fields: decl.fields.to_vec(),
+            runtime_fields: Vec::new(),
             links: Vec::new(),
             protected,
         })

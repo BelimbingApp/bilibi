@@ -72,7 +72,7 @@ impl PersonService {
     pub async fn search(&self, scope: &Scope, query: &Search) -> Result<Page> {
         let client = self.db.get().await?;
         let scope = self.fresh(&**client, scope).await?;
-        identity::search(&**client, &scope, query).await
+        identity::search_with_runtime(&**client, (&**client).into(), &scope, query).await
     }
     pub async fn duplicates(&self, scope: &Scope, query: &DuplicateQuery) -> Result<Vec<Person>> {
         let client = self.db.get().await?;
@@ -174,7 +174,7 @@ impl PersonService {
 inventory::submit! {
     bilibi_module_registry::Module {
         id: "core/person", layer: bilibi_module_registry::Layer::Core,
-        dependencies: &["base/database", "base/tenancy", "base/authz", "base/grid", "base/agent_api", "base/principal_directory", "base/ui", "base/menu", "base/datetime", "base/locale", "base/media", "base/artifacts", "base/step_up", "core/party"],
+        dependencies: &["base/database", "base/tenancy", "base/authz", "base/grid", "base/ports", "base/agent_api", "base/principal_directory", "base/ui", "base/menu", "base/datetime", "base/locale", "base/media", "base/artifacts", "base/step_up", "core/party"],
         migrations: &[("001-core-person", include_str!("../migrations/001-person.sql"))],
         services: &[bilibi_module_registry::Service { id: SERVICE, factory: |services| {
             let parties = services.get::<bilibi_tenancy::PartyProofs>("base/tenancy.parties")?;

@@ -67,6 +67,7 @@ bilibi-datetime = { path = "apps/base/datetime" }
 bilibi-events = { path = "apps/base/events" }
 bilibi-design-library = { path = "apps/base/design_library" }
 bilibi-grid = { path = "apps/base/grid" }
+bilibi-custom-fields = { path = "apps/base/custom_fields" }
 bilibi-integration = { path = "apps/base/integration" }
 bilibi-locale = { path = "apps/base/locale" }
 bilibi-mail = { path = "apps/base/mail" }

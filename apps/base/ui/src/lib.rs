@@ -80,7 +80,7 @@ pub use forms::{
 pub use html::Html;
 pub use inline::{
     CommitOutcome, CommitStates, CommitStatus, InlineChoice, InlineEdit, InlineField, InlineForm,
-    InlineLongText,
+    InlineLongText, InlineMultiChoice,
 };
 pub use inline_specimen::{inline_specimen_values, InlineSpecimen};
 pub use instance::{InstanceBadge, InstanceBanner, InstanceStatus};

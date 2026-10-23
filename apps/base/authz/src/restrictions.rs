@@ -80,10 +80,11 @@ impl FieldRestrictions {
         }
     }
 
-    /// What may be restricted. Requires nothing: the catalog is deployment
-    /// metadata, not tenant data. Pages still gate on their route capability.
-    pub fn catalog(&self) -> Result<&'static FieldCatalog> {
-        crate::field_catalog::field_catalog()
+    /// What may be restricted for this actor; runtime definitions are fresh.
+    pub async fn catalog(&self, actor: &Scope) -> Result<FieldCatalog> {
+        let client = self.db.get().await?;
+        self.administrator(&**client, actor).await?;
+        crate::field_catalog::for_scope((&**client).into(), actor).await
     }
 
     /// The tenant's roles, by name, for choosing whom a field is restricted for.
@@ -109,7 +110,8 @@ impl FieldRestrictions {
     pub async fn list(&self, actor: &Scope) -> Result<Vec<RestrictionSummary>> {
         let client = self.db.get().await?;
         self.administrator(&**client, actor).await?;
-        list_in(&**client, actor.tenant(), self.catalog()?).await
+        let catalog = crate::field_catalog::for_scope((&**client).into(), actor).await?;
+        list_in(&**client, actor.tenant(), &catalog).await
     }
 
     /// Restrict `field` of `table` for exactly `roles`, creating the restriction
@@ -137,7 +139,6 @@ impl FieldRestrictions {
         fields: &[(String, String)],
         roles: &[i64],
     ) -> Result<Vec<RestrictionSummary>> {
-        let catalog = self.catalog()?;
         let fields: BTreeSet<(String, String)> = fields.iter().cloned().collect();
         let roles: BTreeSet<i64> = roles.iter().copied().collect();
         if fields.is_empty()
@@ -145,7 +146,6 @@ impl FieldRestrictions {
             || roles.is_empty()
             || roles.len() > MAX_ROLES
             || roles.iter().any(|id| *id <= 0)
-            || !fields.iter().all(|(t, f)| catalog.restrictable(t, f))
         {
             return Err(Error::Invalid);
         }
@@ -158,6 +158,13 @@ impl FieldRestrictions {
             )
             .await?;
         self.administrator(tx.sql(), actor).await?;
+        let catalog = crate::field_catalog::for_scope(tx.sql().into(), actor).await?;
+        if !fields
+            .iter()
+            .all(|(table, field)| catalog.restrictable(table, field))
+        {
+            return Err(Error::Invalid);
+        }
         let tenant = actor.tenant();
         let keys: Vec<(String, String)> = fields.iter().cloned().collect();
         let roles: Vec<i64> = roles.into_iter().collect();
@@ -207,7 +214,7 @@ impl FieldRestrictions {
             })
         })
         .await?;
-        let summaries = list_in(tx.sql(), tenant, catalog).await?;
+        let summaries = list_in(tx.sql(), tenant, &catalog).await?;
         tx.commit().await?;
         Ok(summaries
             .into_iter()

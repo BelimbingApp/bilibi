@@ -125,6 +125,34 @@ pub async fn decide(client: &impl GenericClient, scope: &Scope, key: &str) -> Re
 /// `Owner`): the same vocabulary, tenant, operator and deny-wins rules, the
 /// same decision log, on the caller's connection or transaction.
 pub async fn decide_proof(client: &dyn ProofClient, scope: &Scope, key: &str) -> Result<Decision> {
+    let decision = effective_proof(client, scope, key).await?;
+    let kind = "user";
+    let principal: Option<&str> = None;
+    client
+        .query_opt(
+            LOG_RETURNING_SQL,
+            &[
+                &scope.tenant(),
+                &scope.user(),
+                &key,
+                &decision.allowed,
+                &decision.reason,
+                &kind,
+                &principal,
+            ],
+        )
+        .await?;
+    Ok(decision)
+}
+/// Evaluate a capability on Tenancy's sealed proof connection without writing
+/// a decision log. Use this for filtered reads such as target pickers that may
+/// run inside a read-only transaction; the protected action must still call
+/// [`authorize_proof`].
+pub async fn effective_proof(
+    client: &dyn ProofClient,
+    scope: &Scope,
+    key: &str,
+) -> Result<Decision> {
     if key.is_empty() || key.len() > 200 {
         return Err(Error::Invalid);
     }
@@ -153,22 +181,6 @@ pub async fn decide_proof(client: &dyn ProofClient, scope: &Scope, key: &str) ->
             }
         }
     };
-    let kind = "user";
-    let principal: Option<&str> = None;
-    client
-        .query_opt(
-            LOG_RETURNING_SQL,
-            &[
-                &scope.tenant(),
-                &scope.user(),
-                &key,
-                &decision.allowed,
-                &decision.reason,
-                &kind,
-                &principal,
-            ],
-        )
-        .await?;
     Ok(decision)
 }
 /// `authorize_key` on a sealed proof connection.
@@ -397,7 +409,7 @@ pub async fn restrictions_for(
 }
 inventory::submit! { bilibi_module_registry::Module {
     id:"base/authz",layer:bilibi_module_registry::Layer::Base,
-    dependencies:&["base/module_registry","base/database","base/tenancy","base/audit","base/menu","base/settings","base/ui","base/locale","base/datetime","base/step_up"],
+    dependencies:&["base/module_registry","base/database","base/tenancy","base/audit","base/menu","base/settings","base/ui","base/locale","base/datetime","base/step_up","base/ports"],
     migrations:&[("base-authz-012-external-roles",include_str!("../migrations/012-external-roles.sql")),("007-authz-policy",include_str!("../migrations/007-policy.sql")),("base-authz-008-decision-log-restrictions",include_str!("../migrations/008-decision-log-restrictions.sql")),("base-authz-009-roles-admin",include_str!("../migrations/009-roles-admin.sql")),("base-authz-010-decision-log-retention",include_str!("../migrations/010-decision-log-retention.sql")),("base-authz-011-role-company",include_str!("../migrations/011-role-company.sql"))],
     services:&[bilibi_module_registry::Service {id:"base/authz.grants",factory:|services| Ok(Arc::new(grants::Grants::new(
         services.get::<bilibi_database::Db>("base/database.pool")?.as_ref().clone(),

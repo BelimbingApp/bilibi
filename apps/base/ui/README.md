@@ -49,6 +49,10 @@ Use `InlineForm` when a read-first table cell needs a complete form, including s
 
 Source: [`src/inline.rs`](src/inline.rs), [`templates/inline.html`](templates/inline.html), and the `InlineForm` hook in [`assets/hooks.js`](assets/hooks.js). The Design Library includes reading and refused-editor states; `/system/settings` exercises the live lifecycle.
 
+## Inline multi-choice facts
+
+Use `InlineMultiChoice` for a read-first fact whose owner stores multiple selected codes. It uses the shared `Field` multiple select and sends the selected codes as one JSON array on commit; the owner remains responsible for permission checks, validation, stale versions and persistence. Its browser hook is `InlineMultiChoice` in `assets/inline.js`, alongside the single-choice hook. The Design Library's inline facts specimen shows the editor.
+
 ## 2FA proof input
 
 Use `ProofInput` inside a protected form's `StepUp` component. Build `ProofMethod` values from `StepUp::enrolled_methods`, including each method's code length and numeric flag. It keeps the plain `CodeInput` id for one method (the wrapper is `{id}-proof`), suffixes the ids with the method's position when there are several, takes `.optional()` for a form that asks for a code only on some changes, and adds a shared selector when there are several. The `FactorProof` hook posts the chosen method and code as `method_id:code` in the existing code field, so the owner's event schema stays unchanged. Neither selecting nor rendering a method sends a challenge. The owner still calls `require` or `require_code`.

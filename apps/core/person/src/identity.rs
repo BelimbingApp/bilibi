@@ -36,6 +36,24 @@ pub async fn read(client: &impl GenericClient, scope: &Scope, id: PersonId) -> R
 }
 
 pub async fn search(client: &impl GenericClient, scope: &Scope, query: &Search) -> Result<Page> {
+    search_inner(client, None, scope, query).await
+}
+
+pub async fn search_with_runtime(
+    client: &impl GenericClient,
+    runtime_client: bilibi_ports::PortClient<'_>,
+    scope: &Scope,
+    query: &Search,
+) -> Result<Page> {
+    search_inner(client, Some(runtime_client), scope, query).await
+}
+
+async fn search_inner(
+    client: &impl GenericClient,
+    runtime_client: Option<bilibi_ports::PortClient<'_>>,
+    scope: &Scope,
+    query: &Search,
+) -> Result<Page> {
     authorize_key(client, scope, LIST).await?;
     query.check()?;
     let masked = fields(client, scope).await?;
@@ -46,11 +64,15 @@ pub async fn search(client: &impl GenericClient, scope: &Scope, query: &Search) 
     let phone = !masked.contains("phone");
     // Bilimbi Contacts: work data follows owner-contributed Grid paths so
     // Person never reads affiliation/company tables or bypasses their masking.
-    let work = if needle.is_empty() {
-        "SELECT NULL::bigint WHERE $2::bigint IS NULL".to_owned()
+    let (work, work_keys) = if needle.is_empty() {
+        (
+            "SELECT NULL::bigint WHERE $2::bigint IS NULL".to_owned(),
+            Vec::new(),
+        )
     } else {
-        bilibi_grid::query::text_search_sql(
+        let fragment = bilibi_grid::query::text_search_sql(
             client,
+            runtime_client,
             scope,
             "persons",
             &[
@@ -59,29 +81,38 @@ pub async fn search(client: &impl GenericClient, scope: &Scope, query: &Search) 
                 "work.title:list",
                 "work.company.name:list",
             ],
+            7,
         )
-        .await?
+        .await?;
+        (fragment.sql, fragment.json_keys)
     };
     let predicate = format!("tenant_id=$1 AND ($4 OR retired_at IS NULL) AND ($5::text IS NULL OR kind=$5) AND ($3='' OR position($3 in lower(name))>0 OR ($6 AND position($3 in lower(email))>0) OR ($7 AND position($3 in lower(phone))>0) OR id IN ({work}))");
-    let params: &[&(dyn tokio_postgres::types::ToSql + Sync)] = &[
-        &scope.tenant(),
-        &scope.user(),
+    let tenant = scope.tenant();
+    let user = scope.user();
+    let mut params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = vec![
+        &tenant,
+        &user,
         &needle,
         &query.include_retired,
         &kind,
         &email,
         &phone,
     ];
+    params.extend(
+        work_keys
+            .iter()
+            .map(|key| key as &(dyn tokio_postgres::types::ToSql + Sync)),
+    );
     let total = client
         .query_one(
             &format!("SELECT count(*) FROM persons WHERE {predicate}"),
-            params,
+            &params,
         )
         .await?
         .get(0);
     let limit = query.page_size;
     let offset = (query.page - 1) * limit;
-    let mut paged = params.to_vec();
+    let mut paged = params.clone();
     paged.extend([
         &limit as &(dyn tokio_postgres::types::ToSql + Sync),
         &offset,
@@ -95,7 +126,9 @@ pub async fn search(client: &impl GenericClient, scope: &Scope, query: &Search) 
         _ => "lower(name)",
     };
     let direction = if query.descending { "DESC" } else { "ASC" };
-    let rows = client.query(&format!("SELECT {COLUMNS} FROM persons WHERE {predicate} ORDER BY {sort} {direction},id {direction} LIMIT $8 OFFSET $9"), &paged).await?;
+    let limit_param = 8 + work_keys.len();
+    let offset_param = limit_param + 1;
+    let rows = client.query(&format!("SELECT {COLUMNS} FROM persons WHERE {predicate} ORDER BY {sort} {direction},id {direction} LIMIT ${limit_param} OFFSET ${offset_param}"), &paged).await?;
     Ok(Page {
         entries: rows
             .iter()

@@ -101,11 +101,7 @@ edits are rejected in the domain too.
 ## Agent operations
 
 `agent_operations.rs` registers `core.company.list` and `core.company.get`
-(reads) and `core.company.create` (a reviewed safe write: preview shares
-create's validation and code check without reserving it, commit writes
-through the plan's transaction) plus the `core.company` guide. A restricted
-field arrives as `{"restricted": true}`. The handlers read through a pool
-bound once by the service factory.
+(reads), `core.company.create`, and `core.company.update` (reviewed safe writes). Create accepts current tenant-defined custom fields; update changes custom fields only and requires the current company version. The input schemas resolve active custom definitions on the caller's scope and transaction, including field types, required fields, choice codes, and reference target types. Plans include those schemas in review facts and require a new review after definition changes. Writes still validate current definitions, restrictions, references and record version on the owning transaction. Restricted values arrive as `{"restricted": true}`. The handlers use the pool bound once by the service factory when an existing owner preview requires a separate read connection.
 
 ## Provisioning
 
@@ -357,6 +353,18 @@ status, sort, page and `per_page` live in the URL; the supported sizes are
 zoom URL parameters override the account's saved arrangement; resetting forgets
 it through Grid's `PageViews` service.
 
+Active, unrestricted Company custom fields can also be sorted when they are
+root-level scalar values. The list offers up to ten typed custom filters,
+combined with AND and retained in the bounded `cf_filters` URL parameter.
+Text supports contains/equality; numbers and dates support ordered comparisons;
+yes/no and choice values support equality; multi-choice supports membership.
+Choice filters and sorts use stable codes. Reference, linked and aggregate
+fields cannot be filtered or sorted. Each request reloads the tenant's active
+definitions and current restrictions; stale or invalid conditions are omitted
+with a notice, and an unavailable custom sort returns to Name. JSON keys and
+filter values are bound parameters, and accepted operators come from a fixed
+allowlist.
+
 Create uses K1 validation and records optional business context on the same
 audited transaction. Detail uses shared read-first inline text, choice and
 long-text controls, activity chips with confirmed removal, per-field commit
@@ -434,6 +442,10 @@ Company scalar facts share a record-field schema with Grid. Optional columns inc
 `CompanyService::preview_tenant_companies` and `provision_new_tenant_in` compose tenant provisioning with [Core Tenant Administration](../tenant_administration/README.md). Names use ordinary Company validation, generated codes and the person's field restrictions; duplicate generated codes are refused. The first company becomes primary.
 
 The write requires Tenancy's sealed `CreatedTenant` receipt, bound to the current transaction and original actor. It accepts no arbitrary target tenant id and never changes the caller's scope. Tenant-create capability and live operator standing authorize the complete provisioning action; its contract enforces Base Step-up. Every company and primary assignment is a `Change` on that same transaction. Existing tenant business data remains behind its ordinary scoped facade.
+
+## Tenant-defined custom fields (#131)
+
+Active tenant definitions are shown on Company create and detail pages. Create values use the owner's audited validation transaction; detail edits use versioned custom-field writes. Shared inline multi-choice submits selected codes as a JSON array. Reference fields target readable live companies through a searchable picker, and writes recheck the target in the owner's mutation transaction. Missing, archived or unreadable stored targets are masked and preserved; an optional reference can be cleared through the ordinary authorized write path. Field restrictions continue to mask values and refuse writes. With no active fields, the existing page layout and create behavior remain unchanged.
 
 ## Postal addresses
 

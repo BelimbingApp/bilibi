@@ -167,7 +167,7 @@ impl Panel {
         let mut trail =
             bilibi_audit::subject_history(&**client, scope, &self.kinds, &self.record, TRAIL)
                 .await?;
-        mutations::withhold(&**client, scope, &mut trail).await?;
+        mutations::withhold((&**client).into(), scope, &mut trail).await?;
         let mut entries = Vec::new();
         for entry in &trail {
             let prefix = format!("{}-entry-{}", self.id, entry.id);

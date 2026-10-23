@@ -98,6 +98,9 @@ pub struct PageColumns {
     since: String,
     pub suggestions: Vec<FlexColumn>,
     pub add_query: String,
+    /// Whether root-level scalar runtime fields may raise sort events for the
+    /// owning list. This mirrors Bilimbi Core Company’s Grid host behavior.
+    runtime_sortable: bool,
 }
 
 impl PageColumns {
@@ -144,7 +147,16 @@ impl PageColumns {
             since: String::new(),
             suggestions: Vec::new(),
             add_query: String::new(),
+            runtime_sortable: false,
         })
+    }
+
+    /// Let the owner list sort root-level scalar runtime fields through its
+    /// own fresh, validated query state. References and collection fields stay
+    /// unsortable. Mirrors Bilimbi Core Company’s custom-field list host.
+    pub fn sortable_runtime_fields(mut self) -> Self {
+        self.runtime_sortable = true;
+        self
     }
 
     /// Page-owned defaults may include discovered paths. Catalog pruning still
@@ -239,7 +251,7 @@ impl PageColumns {
     ) -> Result<()> {
         let catalog = {
             let client = self.views.db().get().await?;
-            Catalog::for_scope(&**client, scope).await?
+            Catalog::for_scope_with_runtime(&**client, scope, Some((&**client).into())).await?
         };
         if let Some(root) = catalog.table(&self.table) {
             self.record_fields = root.record_fields.clone();
@@ -320,7 +332,21 @@ impl PageColumns {
             .iter()
             .map(|kept| match kept {
                 Kept::Builtin(index) => flex_column(&builtins[*index]),
-                Kept::Walked(column) => lens::flex_column(column, worn(column)),
+                Kept::Walked(column) => {
+                    let mut rendered = lens::flex_column(column, worn(column));
+                    if self.runtime_sortable
+                        && column.hops.is_empty()
+                        && column.field.as_ref().is_some_and(|field| {
+                            field.json_key.is_some()
+                                && field.readable_values.is_none()
+                                && !(field.ty == crate::FieldType::String
+                                    && !field.values.is_empty())
+                        })
+                    {
+                        rendered.sortable = true;
+                    }
+                    rendered
+                }
             })
             .collect();
         self.rows = keys
@@ -454,7 +480,7 @@ impl PageColumns {
         let get = |key: &str| params.get(key).map(String::as_str).unwrap_or("");
         let spec = get("spec");
         if get("op") == "sort" {
-            return Ok(self
+            let builtin = self
                 .builtins
                 .iter()
                 .find(|b| {
@@ -464,8 +490,26 @@ impl PageColumns {
                             .as_ref()
                             .is_none_or(|catalog| self.builtin_allowed(catalog, b))
                 })
-                .and_then(|b| b.sort.clone())
-                .map_or(Outcome::Noop, Outcome::Sort));
+                .and_then(|b| b.sort.clone());
+            if let Some(sort) = builtin {
+                return Ok(Outcome::Sort(sort));
+            }
+            let runtime = self.runtime_sortable
+                && self.extras.iter().any(|column| {
+                    column.spec == get("sort")
+                        && column.hops.is_empty()
+                        && column.field.as_ref().is_some_and(|field| {
+                            field.json_key.is_some()
+                                && field.readable_values.is_none()
+                                && !(field.ty == crate::FieldType::String
+                                    && !field.values.is_empty())
+                        })
+                });
+            return Ok(if runtime {
+                Outcome::Sort(get("sort").into())
+            } else {
+                Outcome::Noop
+            });
         }
         // An empty column list means the page default; an op that changes
         // columns starts from that default spelled out, so a built-in is

@@ -10,7 +10,8 @@
       this.pending = new Set();
       this.sequence = 0;
       this.long = this.el.dataset.hook === 'InlineLongText';
-      this.choice = this.el.dataset.hook === 'InlineChoice';
+      this.multiple = this.el.dataset.hook === 'InlineMultiChoice';
+      this.choice = this.el.dataset.hook === 'InlineChoice' || this.multiple;
       this.abort = new AbortController();
       const listen = (node, type, callback) => node.addEventListener(type, callback, {signal: this.abort.signal});
       listen(this.el, 'click', (event) => {
@@ -42,12 +43,12 @@
       listen(this.el, 'focusout', () => {
         queueMicrotask(() => {
           if (!this.active || this.editor()?.contains(document.activeElement)) return;
-          if (this.choice) this.cancel(false);
+          if (this.choice && !this.multiple) this.cancel(false);
           else this.commit(false);
         });
       });
       listen(this.el, 'change', (event) => {
-        if (this.choice && this.active && event.target.name === this.el.dataset.field) this.commit(true);
+        if (this.choice && !this.multiple && this.active && event.target.name === this.el.dataset.field) this.commit(true);
       });
       this.updated();
       if (this.el.dataset.initialEdit === 'true') this.start(undefined, false, this.el.dataset.autofocus !== 'false');
@@ -108,7 +109,13 @@
       this.version = draft.version;
       const input = this.control();
       if (!input) { this.active = false; return; }
-      input.value = value === undefined ? draft.value : value;
+      if (this.multiple) {
+        let selected = [];
+        try { selected = JSON.parse(value === undefined ? draft.value : value); } catch (_) {}
+        for (const option of input.options) option.selected = selected.includes(option.value);
+      } else {
+        input.value = value === undefined ? draft.value : value;
+      }
       const combo = this.editor().querySelector('[data-hook="Combobox"]');
       combo?.dispatchEvent(new CustomEvent('bilibi:choice-value', {detail: {value: input.value}}));
       this.updated();
@@ -130,7 +137,9 @@
     commit(returnFocus) {
       if (!this.active) return;
       const input = this.control();
-      const value = this.long || this.choice ? input.value : input.value.trim();
+      const value = this.multiple
+        ? JSON.stringify([...input.selectedOptions].map((option) => option.value))
+        : (this.long || this.choice ? input.value : input.value.trim());
       const unchanged = value === this.original;
       if (unchanged || (!value.trim() && !this.el.hasAttribute('data-allow-empty'))) {
         this.cancel(returnFocus);
@@ -164,5 +173,5 @@
       message.classList.toggle('hidden', !value);
     },
   };
-  for (const name of ['InlineEdit', 'InlineLongText', 'InlineChoice']) window.BilibiUI.registerHook(name, hook);
+  for (const name of ['InlineEdit', 'InlineLongText', 'InlineChoice', 'InlineMultiChoice']) window.BilibiUI.registerHook(name, hook);
 })();

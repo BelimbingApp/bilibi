@@ -1,5 +1,5 @@
 //! `/system/settings`, the operator settings page (Bilimbi
-//! `Settings.Web.GroupLive`). The screen owns no rules: `form` decides what a
+//! `Settings.Web.GroupLive`), with a tenant custom-field limits view. The screen owns no rules: `form` decides what a
 //! field is, whether it is inherited, what clearing means and what a secret may
 //! show; this renders that and hands submissions back.
 //!
@@ -47,6 +47,8 @@ use std::{
 };
 
 const TITLE: &str = "System Settings";
+const TENANT_TITLE: &str = "Tenant Settings";
+const CUSTOM_FIELDS_MANAGE: &str = "admin.custom.fields.manage";
 const COLUMNS: [(&str, &str); 3] = [("setting", "Setting"), ("value", "Value"), ("area", "Area")];
 static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
     Arc::new(ListSpec {
@@ -119,6 +121,7 @@ struct Editor {
     events: Vec<(&'static str, Value)>,
     /// The picked company scope; `None` is Global. An id, never a proof.
     company: Option<NamedOrganisation>,
+    tenant_limits: bool,
     list: ListState,
     columns: ListColumns,
     editing: Option<String>,
@@ -128,13 +131,14 @@ struct Editor {
 }
 
 impl Editor {
-    fn new(core: Arc<Core>, values: &HashMap<String, String>) -> Result<Self> {
+    fn new(core: Arc<Core>, values: &HashMap<String, String>, tenant_limits: bool) -> Result<Self> {
         Ok(Self {
             core,
             flash: None,
             pending_restore: None,
             events: Vec::new(),
             company: None,
+            tenant_limits,
             list: list(values)?,
             columns: ListColumns::mount(
                 "settings-table",
@@ -154,6 +158,9 @@ impl Editor {
         self.flash = Some((kind, message.into()));
     }
     fn target(&self) -> Target {
+        if self.tenant_limits {
+            return Target::Tenant;
+        }
         match &self.company {
             Some(company) => Target::Company(company.id),
             None => Target::Global,
@@ -170,6 +177,19 @@ impl Editor {
     /// than blaming a permission.
     async fn writable(&mut self, scope: &Scope) -> Result<bool> {
         let client = self.core.db.get().await?;
+        if self.tenant_limits {
+            return match bilibi_authz::authorize_key(&**client, scope, CUSTOM_FIELDS_MANAGE).await {
+                Ok(()) => Ok(true),
+                Err(Error::Forbidden) => {
+                    self.flash(
+                        StatusKind::Error,
+                        "You do not have permission to manage tenant custom-field limits.",
+                    );
+                    Ok(false)
+                }
+                Err(error) => Err(error),
+            };
+        }
         match authorize_operator(&**client, scope, GLOBAL_MANAGE).await {
             Ok(_) => {}
             Err(Error::Forbidden) => {
@@ -255,6 +275,11 @@ impl Editor {
     }
 
     async fn apply_scope(&mut self, scope: &Scope) -> Result<()> {
+        if self.tenant_limits {
+            self.company = None;
+            self.list.filters.insert("company".into(), "tenant".into());
+            return Ok(());
+        }
         let wanted = self
             .list
             .filters
@@ -291,12 +316,14 @@ impl Editor {
                 self.list
                     .apply_filters(&bilibi_ui::params::form_values(payload, "filters"));
                 self.apply_scope(scope).await?;
-                self.list.filters.insert(
-                    "company".into(),
-                    self.company
-                        .as_ref()
-                        .map_or("global".into(), |company| company.id.get().to_string()),
-                );
+                if !self.tenant_limits {
+                    self.list.filters.insert(
+                        "company".into(),
+                        self.company
+                            .as_ref()
+                            .map_or("global".into(), |company| company.id.get().to_string()),
+                    );
+                }
             }
             "page" => self.list.put_page(get("page")),
             "grid" => {
@@ -355,6 +382,12 @@ impl Editor {
             "cancel_restore" => self.pending_restore = None,
             "restore_defaults" => self.restore(scope).await?,
             "switch_scope" => match get("scope[company_id]") {
+                _ if self.tenant_limits => {
+                    self.flash(
+                        StatusKind::Error,
+                        "This page only manages tenant custom-field limits.",
+                    );
+                }
                 Some("global") => {
                     self.company = None;
                     self.list.filters.insert("company".into(), "global".into());
@@ -443,7 +476,9 @@ impl Editor {
         let (mut written, mut cleared) = (0, 0);
         if !steps.is_empty() {
             let target = self.target();
-            let action = if self.company.is_some() {
+            let action = if self.tenant_limits {
+                "settings.tenant.custom_field_limits.save"
+            } else if self.company.is_some() {
                 "settings.company.save"
             } else {
                 "settings.global.save"
@@ -515,7 +550,9 @@ impl Editor {
         }
         if !fields.is_empty() {
             let target = self.target();
-            let action = if self.company.is_some() {
+            let action = if self.tenant_limits {
+                "settings.tenant.custom_field_limits.restore"
+            } else if self.company.is_some() {
                 "settings.company.restore"
             } else {
                 "settings.global.restore"
@@ -588,6 +625,9 @@ impl Editor {
         let message = match error {
             Error::Unauthorized => return Err(Error::Unauthorized),
             Error::Forbidden if self.company.is_some() => COMPANY_ARCHIVED.to_owned(),
+            Error::Forbidden if self.tenant_limits => {
+                "You do not have permission to manage tenant custom-field limits.".to_owned()
+            }
             Error::Forbidden => PLATFORM_DENIED.to_owned(),
             Error::NotFound if self.company.is_some() => {
                 self.company = None;
@@ -648,9 +688,13 @@ impl Editor {
     async fn render(&mut self, scope: &Scope) -> Result<String> {
         self.list.filters.insert(
             "company".into(),
-            self.company
-                .as_ref()
-                .map_or("global".into(), |company| company.id.get().to_string()),
+            if self.tenant_limits {
+                "tenant".into()
+            } else {
+                self.company
+                    .as_ref()
+                    .map_or("global".into(), |company| company.id.get().to_string())
+            },
         );
         let plan = self.plan(scope).await?;
         let client = self.core.db.get().await?;
@@ -900,17 +944,34 @@ impl Editor {
             &SPEC.page_sizes,
         ))?;
         let header = render(Header {
-            title: Html::text(TITLE),
+            title: Html::text(if self.tenant_limits {
+                TENANT_TITLE
+            } else {
+                TITLE
+            }),
             subtitle: "",
             title_actions: render(IconButton {
                 context: IconContext::Inline,
                 id: "settings-pin",
-                nav_pin: "nav-admin-system-settings",
-                ..IconButton::new("bilimbi-pin", "Pin System Settings to sidebar")
+                nav_pin: if self.tenant_limits {
+                    "nav-admin-system-tenant-settings"
+                } else {
+                    "nav-admin-system-settings"
+                },
+                ..IconButton::new(
+                    "bilimbi-pin",
+                    if self.tenant_limits {
+                        "Pin Tenant Settings to sidebar"
+                    } else {
+                        "Pin System Settings to sidebar"
+                    },
+                )
             })?,
             ..Header::default()
         })?;
-        let scopes = if plan.capabilities.contains(COMPANY_MANAGE) {
+        let scopes = if self.tenant_limits {
+            Html::default()
+        } else if plan.capabilities.contains(COMPANY_MANAGE) {
             let companies = self
                 .core
                 .parties
@@ -956,9 +1017,13 @@ impl Editor {
         let toolbar = render(FilterToolbar::new("settings-search-form", controls))?;
         let dialog = match &self.pending_restore {
             Some(held) => {
-                let scope_name = match &self.company {
-                    Some(company) => format!("{} settings", company.name),
-                    None => "Server settings".to_owned(),
+                let scope_name = if self.tenant_limits {
+                    "Tenant settings".to_owned()
+                } else {
+                    match &self.company {
+                        Some(company) => format!("{} settings", company.name),
+                        None => "Server settings".to_owned(),
+                    }
                 };
                 let consequence = format!(
                     "This resets {} in {scope_name} to their defaults, including any hidden by your search or filters.",
@@ -1101,15 +1166,20 @@ fn render(fragment: impl Template) -> Result<Html> {
 
 impl Page<Scope, Error> for Pages {
     fn title(&self, operation: &str) -> Option<&'static str> {
-        (operation == "global").then_some(TITLE)
+        match operation {
+            "global" => Some(TITLE),
+            "tenant" => Some(TENANT_TITLE),
+            _ => None,
+        }
     }
     fn render<'a>(&'a self, request: PageRequest<'a, Scope>) -> PageFuture<'a, Error> {
         Box::pin(async move {
-            if request.operation != "global" {
+            if !matches!(request.operation, "global" | "tenant") {
                 return Err(Error::NotFound);
             }
             let scope = request.scope.ok_or(Error::Unauthorized)?;
-            let mut editor = Editor::new(self.0.clone(), request.query)?;
+            let mut editor =
+                Editor::new(self.0.clone(), request.query, request.operation == "tenant")?;
             editor.apply_scope(scope).await?;
             Ok(PageBody {
                 html: editor.render(scope).await?,
@@ -1120,10 +1190,11 @@ impl Page<Scope, Error> for Pages {
     }
     fn mount<'a>(&'a self, request: PageRequest<'a, Scope>) -> MountFuture<'a, Scope, Error> {
         Box::pin(async move {
-            if request.operation != "global" {
+            if !matches!(request.operation, "global" | "tenant") {
                 return Err(Error::NotFound);
             }
-            let mut editor = Editor::new(self.0.clone(), request.query)?;
+            let mut editor =
+                Editor::new(self.0.clone(), request.query, request.operation == "tenant")?;
             editor
                 .apply_scope(request.scope.ok_or(Error::Unauthorized)?)
                 .await?;

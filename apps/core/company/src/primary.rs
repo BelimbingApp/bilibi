@@ -408,7 +408,7 @@ impl crate::CompanyService {
             )
             .await?;
         bilibi_tenancy::prove_operator(tx.sql(), scope).await?;
-        let outcome = crate::organisation::create(&mut tx, scope, new).await?;
+        let outcome = crate::organisation::create(&mut tx, scope, new, &self.custom_fields).await?;
         match &outcome {
             crate::CreateOutcome::Created(company) => {
                 assign(&mut tx, scope.tenant(), company.id, false).await?;

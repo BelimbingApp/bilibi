@@ -20,6 +20,7 @@ thiserror.workspace = true
 tokio-postgres.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+jiff.workspace = true
 bilibi-notifications.workspace = true
 askama.workspace = true
 bilibi-module-registry.workspace = true
@@ -29,6 +30,7 @@ bilibi-menu.workspace = true
 bilibi-locale = { path = "../../base/locale" }
 bilibi-datetime = { path = "../../base/datetime" }
 bilibi-grid = { path = "../../base/grid" }
+bilibi-custom-fields.workspace = true
 bilibi-dashboard = { path = "../../base/dashboard" }
 bilibi-person = { path = "../person" }
 bilibi-media = { path = "../../base/media" }

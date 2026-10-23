@@ -95,7 +95,12 @@ restricted key regardless of its value. Owner-typed read models must also clear
 those values before rendering (Companies already does). Named system identities
 hold no roles and therefore have no role-based field restrictions. P8 owns the
 protected-field catalog contract and restriction administration; Grid supplies
-that catalog as data, with no Authz→Grid dependency.
+the deployment catalog as data, and opted-in owners contribute a separate
+request-scoped runtime catalog. The field-restriction page, writes and audit
+masking load fresh tenant definitions through that contract. Runtime reference
+metadata also carries only keys the current actor may read, so audit screens can
+withhold unreadable targets beside ordinary field restrictions. Authz does not
+depend on Grid or Custom Fields.
 
 ## Step-up on grant changes
 

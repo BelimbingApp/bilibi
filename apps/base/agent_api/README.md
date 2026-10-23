@@ -52,11 +52,13 @@ call their scoped facade and enforce field restrictions. All direct writes are
 refused. Unsupported writes remain discoverable. Supported `WriteHandler`
 operations use the plan service below, sharing its audited transaction.
 
+An owner may contribute a `ScopedInputSchema` for tenant-specific fields. Agent API resolves it after the operation capability check, using the request scope and caller's read transaction, for describe and dispatch. Plan preview and commit resolve it inside their own transaction; the resolved schema is included in review facts, so changed definitions make a plan stale. A provider failure refuses the operation.
+
 The [schema dialect](src/schema.rs) accepts object/properties/required,
 string/enum/maxLength/format, integer/number/enum/minimum/maximum, boolean and
-array/items, plus title/description annotations. Every node needs a type and
+array/items, plus title/description and nullable annotations. Every node needs a type and
 root input must be an object. Input objects refuse unknown fields. Validation
-returns dotted field paths, including array indexes. Null is not implicit.
+returns dotted field paths, including array indexes. Null must be explicitly allowed with `nullable:true`.
 String formats are date, date-time with offset, and email. Nesting is bounded
 at discovery. Output schemas describe data without runtime enforcement, as in
 Bilimbi.

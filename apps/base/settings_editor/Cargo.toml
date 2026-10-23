@@ -9,6 +9,7 @@ license.workspace = true
 askama.workspace = true
 bilibi-audit.workspace = true
 bilibi-authz = { path = "../authz" }
+bilibi-custom-fields.workspace = true
 bilibi-database.workspace = true
 bilibi-menu.workspace = true
 bilibi-module-registry.workspace = true

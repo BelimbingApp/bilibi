@@ -432,26 +432,48 @@ impl MutationEntry {
         let mut withheld: Vec<String> = fields
             .iter()
             .filter(|field| {
-                let old = self.old_values.get(field.as_str());
-                let new = self.new_values.get(field.as_str());
+                let old = value_at(&self.old_values, field);
+                let new = value_at(&self.new_values, field);
                 (old.is_some() || new.is_some()) && (self.event != "updated" || old != new)
             })
             .cloned()
             .collect();
         withheld.sort();
         for values in [&mut self.old_values, &mut self.new_values] {
-            if let Value::Object(object) = values {
-                for field in fields {
-                    object.remove(field);
-                }
+            for field in fields {
+                remove_at(values, field);
             }
         }
         self.withheld = withheld;
     }
 }
 
-const MUTATION_COLUMNS: &str =
-    "m.id,m.actor_type,m.actor_id,m.actor_role,m.impersonator_id,m.system_principal,\
+fn value_at<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
+    path.split('.')
+        .try_fold(value, |current, part| current.get(part))
+}
+
+fn remove_at(value: &mut Value, path: &str) {
+    let mut parts = path.split('.').peekable();
+    let mut current = value;
+    while let Some(part) = parts.next() {
+        if parts.peek().is_none() {
+            if let Some(object) = current.as_object_mut() {
+                object.remove(part);
+            }
+            return;
+        }
+        let Some(next) = current
+            .as_object_mut()
+            .and_then(|object| object.get_mut(part))
+        else {
+            return;
+        };
+        current = next;
+    }
+}
+
+const MUTATION_COLUMNS: &str = "m.id,m.actor_type,m.actor_id,m.actor_role,m.impersonator_id,m.system_principal,\
  m.auditable_type,m.auditable_id,m.subject_name,m.subject_id,m.subject_identifier,m.source,m.event,\
  coalesce(m.old_values,'{}'::jsonb),coalesce(m.new_values,'{}'::jsonb),m.trace_id,m.occurred_at,m.agent_self_report,m.client_identity";
 

@@ -130,7 +130,7 @@ bilibi_dashboard::contribute!(
 
 inventory::submit! {
     Module { id: MODULE, layer: bilibi_module_registry::Layer::Base,
-        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/audit", "base/authz", "base/ui", "base/dashboard", "base/menu", "base/datetime", "base/locale"],
+        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/audit", "base/authz", "base/ui", "base/dashboard", "base/menu", "base/datetime", "base/locale", "base/ports"],
         migrations: &[],
         services: &[
             Service { id: "base/audit_views.pages", factory: |services| {

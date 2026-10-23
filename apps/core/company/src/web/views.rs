@@ -2,13 +2,15 @@ use super::fields;
 use super::Pending;
 use crate::{Company, FieldError, NewCompany, Params};
 use askama::Template;
+use bilibi_custom_fields::ReferenceOption;
+use bilibi_custom_fields::{Definition, FieldType};
 use bilibi_database::{Error, Result};
 use bilibi_grid::{PageColumns, PageViews};
 use bilibi_tenancy::Scope;
 use bilibi_ui::*;
 use serde_json::Value;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     sync::Arc,
 };
 use tokio_postgres::GenericClient;
@@ -42,7 +44,9 @@ pub(super) fn columns(views: Arc<PageViews>, masked: &HashSet<String>) -> Result
         }
     })
     .collect();
-    PageColumns::mount(views, "companies", columns).map_err(|_| Error::Internal)
+    PageColumns::mount(views, "companies", columns)
+        .map(PageColumns::sortable_runtime_fields)
+        .map_err(|_| Error::Internal)
 }
 pub(super) fn badge(status: &str) -> Result<Html> {
     render(&Badge::status(
@@ -105,15 +109,36 @@ struct CompanyName<'a> {
     link: Html,
     legal: Option<&'a str>,
 }
+pub(super) struct CustomListState<'a> {
+    pub definitions: &'a [Definition],
+    pub filters: &'a [crate::CustomFilter],
+}
+pub(super) struct ListRenderState<'a> {
+    pub params: &'a Params,
+    pub columns: &'a PageColumns,
+    pub workspace: bool,
+    pub masked: &'a HashSet<String>,
+    pub warning: &'a str,
+    pub custom: CustomListState<'a>,
+}
 pub(super) async fn list(
     client: &impl GenericClient,
     scope: &Scope,
     data: &crate::Page,
-    params: &Params,
-    columns: &PageColumns,
-    workspace: bool,
-    masked: &HashSet<String>,
+    state: ListRenderState<'_>,
 ) -> Result<String> {
+    let ListRenderState {
+        params,
+        columns,
+        workspace,
+        masked,
+        warning,
+        custom,
+    } = state;
+    let CustomListState {
+        definitions,
+        filters: custom_filters,
+    } = custom;
     let mut actions = Html::EMPTY;
     if allowed(client, scope, crate::CREATE).await? {
         actions.push(&render(&CreateButton {
@@ -123,6 +148,35 @@ pub(super) async fn list(
             class: "",
             event: "",
             button_type: "button",
+        })?);
+    }
+    let filterable: Vec<&Definition> = definitions
+        .iter()
+        .filter(|definition| {
+            !definition.archived
+                && !matches!(definition.field_type, FieldType::Reference)
+                && !masked.contains(&format!("cf_{}", definition.key))
+        })
+        .collect();
+    if !filterable.is_empty() && custom_filters.len() < 10 {
+        actions.push(&render(&Button {
+            id: "companies-add-custom-filter",
+            event: "add_cf_filter",
+            body: Html::text("Add custom filter"),
+            ..Button::default()
+        })?);
+    }
+    for index in 0..custom_filters.len() {
+        let id = format!("companies-remove-custom-filter-{index}");
+        let label = format!("Remove filter {}", index + 1);
+        let value = index.to_string();
+        actions.push(&render(&Button {
+            id: &id,
+            event: "remove_cf_filter",
+            name: "index",
+            value: &value,
+            body: Html::text(&label),
+            ..Button::default()
         })?);
     }
     actions.push(&link(
@@ -162,31 +216,128 @@ pub(super) async fn list(
     } else {
         "Search by name, code, legal name, email, or jurisdiction..."
     };
-    let toolbar = render(&FilterToolbar::new(
-        "companies-filters",
-        vec![
-            ToolbarControl::search(
-                "companies-search",
-                "search",
-                "Search companies",
-                &params.q,
-                placeholder,
-            ),
-            ToolbarControl::select(
-                "companies-status-filter",
-                "status_filter",
-                "Status filter",
-                &params.status,
-                choices(&[
-                    ("All statuses", ""),
-                    ("Active", "active"),
-                    ("Suspended", "suspended"),
-                    ("Pending", "pending"),
-                    ("Archived", "archived"),
-                ]),
-            ),
-        ],
-    ))?;
+    let mut controls = vec![
+        ToolbarControl::search(
+            "companies-search",
+            "search",
+            "Search companies",
+            &params.q,
+            placeholder,
+        ),
+        ToolbarControl::select(
+            "companies-status-filter",
+            "status_filter",
+            "Status filter",
+            &params.status,
+            choices(&[
+                ("All statuses", ""),
+                ("Active", "active"),
+                ("Suspended", "suspended"),
+                ("Pending", "pending"),
+                ("Archived", "archived"),
+            ]),
+        ),
+    ];
+    for (index, filter) in custom_filters.iter().enumerate() {
+        let field_key = format!("cf_field_{index}");
+        let operator_key = format!("cf_operator_{index}");
+        let value_key = format!("cf_value_{index}");
+        let fields = filterable
+            .iter()
+            .map(|definition| Choice::new(&definition.label, format!("cf_{}", definition.key)))
+            .collect();
+        controls.push(ToolbarControl::select(
+            &format!("companies-cf-field-{index}"),
+            &field_key,
+            "Custom field",
+            &filter.field,
+            fields,
+        ));
+        let definition = filterable
+            .iter()
+            .find(|definition| format!("cf_{}", definition.key) == filter.field);
+        let operators: Vec<(&str, &str)> = definition.map_or(
+            vec![("Contains", "contains"), ("Equals", "equals")],
+            |definition| match definition.field_type {
+                FieldType::Text | FieldType::LongText => {
+                    vec![("Contains", "contains"), ("Equals", "equals")]
+                }
+                FieldType::Integer | FieldType::Decimal | FieldType::Date | FieldType::DateTime => {
+                    vec![
+                        ("Equals", "eq"),
+                        ("Greater than", "gt"),
+                        ("At least", "gte"),
+                        ("Less than", "lt"),
+                        ("At most", "lte"),
+                    ]
+                }
+                FieldType::Boolean | FieldType::Choice => vec![("Equals", "equals")],
+                FieldType::MultiChoice => vec![("Contains", "contains")],
+                FieldType::Reference => vec![],
+            },
+        );
+        controls.push(ToolbarControl::select(
+            &format!("companies-cf-operator-{index}"),
+            &operator_key,
+            "Operator",
+            &filter.operator,
+            choices(&operators),
+        ));
+        if let Some(definition) = definition.filter(|definition| {
+            matches!(
+                definition.field_type,
+                FieldType::Choice | FieldType::MultiChoice | FieldType::Boolean
+            )
+        }) {
+            let options = if definition.field_type == FieldType::Boolean {
+                choices(&[("Yes", "true"), ("No", "false")])
+            } else {
+                definition
+                    .options
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|option| {
+                        Some(Choice::new(
+                            option.get("label")?.as_str()?,
+                            option.get("code")?.as_str()?,
+                        ))
+                    })
+                    .collect()
+            };
+            controls.push(ToolbarControl::select(
+                &format!("companies-cf-value-{index}"),
+                &value_key,
+                "Value",
+                &filter.value,
+                options,
+            ));
+        } else if definition.is_some_and(|definition| definition.field_type == FieldType::Date) {
+            controls.push(ToolbarControl::date(
+                &format!("companies-cf-value-{index}"),
+                &value_key,
+                "Value",
+                &filter.value,
+            ));
+        } else {
+            controls.push(ToolbarControl::search(
+                &format!("companies-cf-value-{index}"),
+                &value_key,
+                "Value",
+                &filter.value,
+                "Filter value",
+            ));
+        }
+    }
+    let mut toolbar = render(&FilterToolbar::new("companies-filters", controls))?;
+    if !warning.is_empty() {
+        toolbar.push(&render(&Alert {
+            kind: StatusKind::Warning,
+            id: "companies-custom-filter-warning",
+            body: Html::text(warning),
+            ..Alert::default()
+        })?);
+    }
     let ids: Vec<i64> = data.rows.iter().map(|row| row.id).collect();
     let facts=client.query("SELECT c.id,p.name,(t.company_id IS NOT NULL) FROM companies c LEFT JOIN companies p ON p.id=c.parent_id AND p.tenant_id=c.tenant_id AND p.deleted_at IS NULL LEFT JOIN tenant_primary_companies t ON t.tenant_id=c.tenant_id AND t.company_id=c.id WHERE c.tenant_id=$1 AND c.id=ANY($2)",&[&scope.tenant(),&ids]).await?;
     let mut rows = columns.rows.clone();
@@ -256,7 +407,8 @@ pub(super) async fn list(
     table.caption = "Companies";
     table.framed = false;
     table.actions = true;
-    let filtered = !params.q.is_empty() || !params.status.is_empty();
+    let filtered =
+        !params.q.is_empty() || !params.status.is_empty() || !params.custom_filters.is_empty();
     let title = if filtered {
         format!(
             "No {}companies{}",
@@ -266,7 +418,11 @@ pub(super) async fn list(
                 format!("{} ", params.status)
             },
             if params.q.is_empty() {
-                String::new()
+                if params.custom_filters.is_empty() {
+                    String::new()
+                } else {
+                    " with custom filters".into()
+                }
             } else {
                 format!(" match “{}”", params.q)
             }
@@ -411,6 +567,211 @@ fn choice(
         editor,
     })
 }
+
+fn custom_fact(
+    company: &Company,
+    definition: &Definition,
+    value: Option<&Value>,
+    editable: bool,
+    status: CommitStatus,
+    reference_targets: &BTreeMap<String, Vec<ReferenceOption>>,
+) -> Result<Html> {
+    let id = format!("company-custom-{}", definition.key);
+    let name = format!("cf_{}", definition.key);
+    let wire = match value {
+        None | Some(Value::Null) => String::new(),
+        Some(Value::String(value)) => value.clone(),
+        Some(Value::Number(value)) => value.to_string(),
+        Some(Value::Bool(value)) => value.to_string(),
+        Some(value @ Value::Array(_)) => serde_json::to_string(value).unwrap_or_default(),
+        Some(_) => String::new(),
+    };
+    let active_choices = custom_options(
+        definition,
+        &value
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .chain(value.and_then(Value::as_str))
+            .map(str::to_owned)
+            .collect::<Vec<_>>(),
+    );
+    let reference_choices = definition
+        .reference_table
+        .as_ref()
+        .and_then(|table| reference_targets.get(table))
+        .map(|targets| {
+            targets
+                .iter()
+                .map(|target| Choice::new(target.label.clone(), target.key.clone()))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let reference_readable = definition.field_type != FieldType::Reference
+        || value
+            .and_then(Value::as_str)
+            .is_none_or(|key| reference_choices.iter().any(|choice| choice.value == key));
+    let wire = if definition.field_type == FieldType::Reference && !reference_readable {
+        String::new()
+    } else {
+        wire
+    };
+    let display = match definition.field_type {
+        FieldType::Boolean => match value.and_then(Value::as_bool) {
+            Some(true) => "Yes".to_owned(),
+            Some(false) => "No".to_owned(),
+            None => "—".to_owned(),
+        },
+        FieldType::Choice => {
+            let code = value.and_then(Value::as_str).unwrap_or_default();
+            active_choices
+                .iter()
+                .find(|choice| choice.value == code)
+                .map(|choice| choice.label.clone())
+                .unwrap_or_else(|| code.to_owned())
+        }
+        FieldType::MultiChoice => value
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(|code| {
+                active_choices
+                    .iter()
+                    .find(|choice| choice.value == code)
+                    .map_or_else(|| code.to_owned(), |choice| choice.label.clone())
+            })
+            .collect::<Vec<_>>()
+            .join(", "),
+        FieldType::Reference => {
+            if value.is_none_or(Value::is_null) {
+                "—".into()
+            } else if reference_readable {
+                reference_choices
+                    .iter()
+                    .find(|choice| Some(choice.value.as_str()) == value.and_then(Value::as_str))
+                    .map(|choice| choice.label.clone())
+                    .unwrap_or_else(|| "Unavailable".into())
+            } else {
+                "Unavailable".into()
+            }
+        }
+        _ => wire.clone(),
+    };
+    let display_html = if display.is_empty() {
+        render(&MutedValue { text: "—" })?
+    } else {
+        Html::text(&display)
+    };
+    let mut inline = InlineField::new(&id, &name, format!("Edit {}", definition.label), &wire)
+        .version(company.version)
+        .status(status)
+        .hint(definition.help_text.clone().unwrap_or_default());
+    inline.id_value = company.id.to_string();
+    inline.editable = editable;
+    inline.allow_empty = !definition.required;
+    match definition.field_type {
+        FieldType::LongText => render(&InlineLongText {
+            field: inline,
+            rows: 4,
+        }),
+        FieldType::MultiChoice => {
+            let selected = value
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect();
+            let editor = render(
+                &Field::named(&name)
+                    .id(format!("{id}-input"))
+                    .label(&definition.label)
+                    .kind(InputKind::Select)
+                    .multiple()
+                    .values(selected)
+                    .options(active_choices)
+                    .aria_label(&definition.label)
+                    .wrapper_class("mb-0"),
+            )?;
+            render(&InlineMultiChoice {
+                field: inline,
+                display: display_html,
+                editor,
+            })
+        }
+        FieldType::Choice | FieldType::Boolean | FieldType::Date | FieldType::Reference => {
+            if definition.field_type == FieldType::Reference {
+                let mut options = reference_choices;
+                if !definition.required {
+                    options.insert(0, Choice::new("None", ""));
+                }
+                let editor = render(
+                    &Combobox::new(format!("{id}-input"), &name)
+                        .label(&definition.label)
+                        .value(&wire)
+                        .options(options)
+                        .placeholder(if definition.required {
+                            "Choose a company..."
+                        } else {
+                            "None"
+                        })
+                        .aria_label(&definition.label)
+                        .hint(definition.help_text.clone().unwrap_or_default())
+                        .wrapper_class("mb-0"),
+                )?;
+                return render(&InlineChoice {
+                    field: inline,
+                    display: display_html,
+                    editor,
+                });
+            }
+            let options = if definition.field_type == FieldType::Boolean {
+                choices(&[("Yes", "true"), ("No", "false")])
+            } else {
+                active_choices
+            };
+            let editor = match definition.field_type {
+                FieldType::Date => render(
+                    &Field::named(&name)
+                        .id(format!("{id}-input"))
+                        .label(&definition.label)
+                        .kind(InputKind::Date)
+                        .value(&wire)
+                        .aria_label(&definition.label)
+                        .wrapper_class("mb-0"),
+                )?,
+                _ => {
+                    let mut field = Field::named(&name)
+                        .id(format!("{id}-input"))
+                        .label(&definition.label)
+                        .kind(InputKind::Select)
+                        .aria_label(&definition.label)
+                        .options(options.clone())
+                        .wrapper_class("mb-0");
+                    field = field.value(&wire);
+                    if !definition.required && definition.field_type != FieldType::Boolean {
+                        field = field.prompt("Choose an option...");
+                    }
+                    render(&field)?
+                }
+            };
+            render(&InlineChoice {
+                field: inline,
+                display: display_html,
+                editor,
+            })
+        }
+        FieldType::Text | FieldType::Integer | FieldType::Decimal | FieldType::DateTime => {
+            if definition.field_type == FieldType::DateTime && inline.hint.is_empty() {
+                inline.hint = "Enter an ISO 8601 UTC timestamp.".into();
+            }
+            render(&InlineEdit { field: inline })
+        }
+    }
+}
+
 #[derive(Template)]
 #[template(path = "detail.html")]
 struct DetailBody<'a> {
@@ -441,6 +802,8 @@ fn operation_name(op: crate::lifecycle::Operation) -> (&'static str, &'static st
 /// open dialog, the notice and the Departments table arrangement.
 pub(super) struct DetailState<'a> {
     pub statuses: &'a CommitStates,
+    pub custom_fields: &'a [Definition],
+    pub custom_reference_targets: &'a BTreeMap<String, Vec<ReferenceOption>>,
     pub pending: Option<&'a Pending>,
     pub notice: &'a str,
     pub pending_activity: Option<&'a (String, i64)>,
@@ -458,6 +821,8 @@ pub(super) async fn detail(
 ) -> Result<String> {
     let DetailState {
         statuses,
+        custom_fields,
+        custom_reference_targets,
         pending,
         notice,
         pending_activity,
@@ -637,6 +1002,29 @@ pub(super) async fn detail(
             editable,
         )?,
     });
+    // Company custom facts mirror Bilimbi Core Company's record facts.
+    for definition in custom_fields.iter() {
+        let field_id = format!("cf_{}", definition.key);
+        let id = format!("company-custom-{}", definition.key);
+        let value = company.custom.get(&definition.key);
+        let body = if masked.contains(&field_id) {
+            restricted(&id)?
+        } else {
+            custom_fact(
+                &company,
+                definition,
+                value,
+                editable,
+                statuses.get(&field_id),
+                custom_reference_targets,
+            )?
+        };
+        facts.push(Fact {
+            title: &definition.label,
+            id: "",
+            value: body,
+        });
+    }
     let context = client
         .query_one(
             "SELECT scope_activities,metadata FROM companies WHERE tenant_id=$1 AND id=$2",
@@ -819,10 +1207,18 @@ pub(super) async fn detail(
             }
         );
         let detail = match pending.operation {
-            crate::lifecycle::Operation::Archive => "Its records are kept. Archiving is final: an archived company cannot be reactivated.",
-            crate::lifecycle::Operation::Suspend => "Its records are kept. Reactivating the company lifts the suspension.",
-            crate::lifecycle::Operation::Activate => "It becomes a working company of this workspace. It can be suspended later.",
-            crate::lifecycle::Operation::Reactivate => "The suspension is lifted and the company is active again.",
+            crate::lifecycle::Operation::Archive => {
+                "Its records are kept. Archiving is final: an archived company cannot be reactivated."
+            }
+            crate::lifecycle::Operation::Suspend => {
+                "Its records are kept. Reactivating the company lifts the suspension."
+            }
+            crate::lifecycle::Operation::Activate => {
+                "It becomes a working company of this workspace. It can be suspended later."
+            }
+            crate::lifecycle::Operation::Reactivate => {
+                "The suspension is lifted and the company is active again."
+            }
         };
         let mut reason = Field::named("reason")
             .id("company-lifecycle-reason")
@@ -946,6 +1342,8 @@ struct CreateBody {
     fields: Vec<Html>,
     contacts: Vec<Html>,
     context: Vec<Html>,
+    custom: Vec<Html>,
+    custom_heading: Html,
     submit: Html,
 }
 pub(super) async fn create(
@@ -953,6 +1351,8 @@ pub(super) async fn create(
     scope: &Scope,
     values: &HashMap<String, String>,
     errors: &[FieldError],
+    custom_fields: &[Definition],
+    reference_targets: &BTreeMap<String, Vec<ReferenceOption>>,
 ) -> Result<String> {
     bilibi_authz::authorize_key(client, scope, crate::CREATE).await?;
     let masked = bilibi_authz::restrictions(client, scope).await?;
@@ -1057,6 +1457,26 @@ pub(super) async fn create(
         )
     })
     .collect::<Result<Vec<_>>>()?;
+    // Creation controls mirror Bilimbi Core Company's NewLive form.
+    let custom = custom_fields
+        .iter()
+        .map(|definition| {
+            let id = format!("company-custom-{}", definition.key);
+            if masked
+                .get("companies")
+                .is_some_and(|fields| fields.contains(&format!("cf_{}", definition.key)))
+            {
+                render(&RestrictedField::new(&id, &definition.label))
+            } else {
+                custom_create_field(definition, values, errors, reference_targets)
+            }
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let custom_heading = render(&SectionHeading {
+        id: "company-create-custom-fields-heading",
+        title: "Custom fields",
+        ..SectionHeading::default()
+    })?;
     let header = render(&Header {
         title: Html::text("Create Company"),
         subtitle: "",
@@ -1079,15 +1499,19 @@ pub(super) async fn create(
             fields,
             contacts,
             context,
+            custom,
+            custom_heading,
             submit,
         })?,
     )
 }
 pub(super) fn new_company(
     values: &HashMap<String, String>,
+    custom_fields: &[Definition],
 ) -> (NewCompany, Option<Value>, Option<Value>, Vec<FieldError>) {
     let text = |name| values.get(name).filter(|s| !s.trim().is_empty()).cloned();
     let mut errors = Vec::new();
+    let custom = custom_values(values, custom_fields, &mut errors);
     let mut id = |name: &'static str| match text(name) {
         None => None,
         Some(v) => match v.parse::<i64>() {
@@ -1110,6 +1534,7 @@ pub(super) fn new_company(
         jurisdiction: text("jurisdiction"),
         email: text("email"),
         website: text("website"),
+        custom,
         ..NewCompany::default()
     };
     let mut object = |name: &'static str| {
@@ -1124,6 +1549,275 @@ pub(super) fn new_company(
     let activities = object("scope_activities");
     let metadata = object("metadata");
     (new, activities, metadata, errors)
+}
+
+fn custom_form_name(key: &str, multiple: bool) -> String {
+    format!("custom[{key}]{}", if multiple { "[]" } else { "" })
+}
+
+fn form_custom_value(values: &HashMap<String, String>, definition: &Definition) -> Value {
+    let name = custom_form_name(
+        &definition.key,
+        definition.field_type == FieldType::MultiChoice,
+    );
+    let Some(raw) = values.get(&name) else {
+        return Value::Null;
+    };
+    if definition.field_type == FieldType::Reference {
+        return Value::String(raw.clone());
+    }
+    serde_json::from_str(raw).unwrap_or_else(|_| Value::String(raw.clone()))
+}
+
+fn custom_error_messages(errors: &[FieldError], key: &str) -> Vec<String> {
+    let field = format!("custom.{key}");
+    errors
+        .iter()
+        .filter(|error| error.field == field || error.field == "custom")
+        .map(|error| error.message.clone())
+        .collect()
+}
+
+fn custom_options(definition: &Definition, include_retired: &[String]) -> Vec<Choice> {
+    definition
+        .options
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|option| {
+            let code = option.get("code")?.as_str()?;
+            let label = option.get("label")?.as_str()?;
+            let active = option
+                .get("active")
+                .and_then(Value::as_bool)
+                .unwrap_or(true);
+            (active || include_retired.iter().any(|value| value == code))
+                .then(|| Choice::new(label, code))
+        })
+        .collect()
+}
+
+fn custom_create_field(
+    definition: &Definition,
+    values: &HashMap<String, String>,
+    errors: &[FieldError],
+    reference_targets: &BTreeMap<String, Vec<ReferenceOption>>,
+) -> Result<Html> {
+    let name = custom_form_name(
+        &definition.key,
+        definition.field_type == FieldType::MultiChoice,
+    );
+    let id = format!("company-custom-{}", definition.key);
+    let value = form_custom_value(values, definition);
+    if definition.field_type == FieldType::Reference {
+        let mut options: Vec<Choice> = definition
+            .reference_table
+            .as_ref()
+            .and_then(|table| reference_targets.get(table))
+            .into_iter()
+            .flatten()
+            .map(|target| Choice::new(target.label.clone(), target.key.clone()))
+            .collect();
+        if !definition.required {
+            options.insert(0, Choice::new("None", ""));
+        }
+        let selected = value
+            .as_str()
+            .filter(|key| options.iter().any(|option| option.value == *key))
+            .unwrap_or_default();
+        let mut hint = definition.help_text.clone().unwrap_or_default();
+        if options.is_empty() {
+            if !hint.is_empty() {
+                hint.push(' ');
+            }
+            hint.push_str("No readable targets are available.");
+        }
+        return render(
+            &Combobox::new(&id, &name)
+                .label(&definition.label)
+                .value(selected)
+                .options(options)
+                .placeholder(if definition.required {
+                    "Choose a company..."
+                } else {
+                    "None"
+                })
+                .errors(custom_error_messages(errors, &definition.key))
+                .hint(hint)
+                .attrs(Attrs {
+                    required: definition.required,
+                    ..Attrs::default()
+                }),
+        );
+    }
+    let mut field = Field::named(&name)
+        .id(&id)
+        .label(&definition.label)
+        .hint(definition.help_text.clone().unwrap_or_default())
+        .errors(custom_error_messages(errors, &definition.key));
+    field = match definition.field_type {
+        FieldType::Text => field
+            .kind(InputKind::Text)
+            .value(value.as_str().unwrap_or_default())
+            .attr(
+                "maxlength",
+                &definition.text_limit.unwrap_or(255).to_string(),
+            ),
+        FieldType::LongText => field
+            .kind(InputKind::Textarea)
+            .value(value.as_str().unwrap_or_default())
+            .attr(
+                "maxlength",
+                &definition.text_limit.unwrap_or(100_000).to_string(),
+            ),
+        FieldType::Integer => field
+            .kind(InputKind::Number)
+            .value(
+                value
+                    .as_i64()
+                    .map(|v| v.to_string())
+                    .or_else(|| value.as_str().map(str::to_owned))
+                    .unwrap_or_default(),
+            )
+            .attr("step", "1"),
+        FieldType::Decimal => field
+            .kind(InputKind::Number)
+            .value(value.as_str().map(str::to_owned).unwrap_or_default())
+            .attr("step", "any"),
+        FieldType::Date => field
+            .kind(InputKind::Date)
+            .value(value.as_str().unwrap_or_default()),
+        FieldType::DateTime => field
+            .kind(InputKind::Text)
+            .value(value.as_str().unwrap_or_default())
+            .placeholder("2026-10-23T12:00:00Z")
+            .hint(
+                definition
+                    .help_text
+                    .clone()
+                    .unwrap_or_else(|| "Enter an ISO 8601 UTC timestamp.".into()),
+            ),
+        FieldType::Boolean => field.kind(InputKind::Checkbox).checked(
+            value
+                .as_bool()
+                .unwrap_or_else(|| value.as_str() == Some("true")),
+        ),
+        FieldType::Choice => field
+            .kind(InputKind::Select)
+            .prompt("Choose an option...")
+            .value(value.as_str().unwrap_or_default())
+            .options(custom_options(definition, &[])),
+        FieldType::MultiChoice => field
+            .kind(InputKind::Select)
+            .multiple()
+            .values(
+                value
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect(),
+            )
+            .options(custom_options(definition, &[])),
+        FieldType::Reference => return Ok(Html::EMPTY),
+    };
+    if definition.required && definition.field_type != FieldType::Boolean {
+        field = field.required();
+    }
+    render(&field)
+}
+
+fn custom_values(
+    values: &HashMap<String, String>,
+    definitions: &[Definition],
+    errors: &mut Vec<FieldError>,
+) -> Value {
+    let mut custom = serde_json::Map::new();
+    for (name, raw) in values {
+        let Some(inner) = name.strip_prefix("custom[") else {
+            continue;
+        };
+        let (key, multiple) = if let Some(key) = inner.strip_suffix("][]") {
+            (key, true)
+        } else if let Some(key) = inner.strip_suffix(']') {
+            (key, false)
+        } else {
+            continue;
+        };
+        let value =
+            serde_json::from_str::<Value>(raw).unwrap_or_else(|_| Value::String(raw.clone()));
+        let Some(definition) = definitions.iter().find(|definition| definition.key == key) else {
+            custom.insert(key.to_owned(), value);
+            continue;
+        };
+        let parsed = if value.as_str() == Some("")
+            && !matches!(definition.field_type, FieldType::Text | FieldType::LongText)
+        {
+            Value::Null
+        } else {
+            match definition.field_type {
+                FieldType::Text
+                | FieldType::LongText
+                | FieldType::Decimal
+                | FieldType::Date
+                | FieldType::DateTime
+                | FieldType::Choice => {
+                    if value.is_null() || (multiple && value.as_array().is_some_and(Vec::is_empty))
+                    {
+                        Value::Null
+                    } else {
+                        Value::String(
+                            value
+                                .as_str()
+                                .map(str::to_owned)
+                                .unwrap_or_else(|| raw.clone()),
+                        )
+                    }
+                }
+                FieldType::Integer => match value.as_str().unwrap_or(raw).parse::<i64>() {
+                    Ok(number) => Value::Number(number.into()),
+                    Err(_) => {
+                        errors.push(FieldError::new(
+                            format!("custom.{key}"),
+                            "must be a whole number",
+                        ));
+                        Value::Null
+                    }
+                },
+                FieldType::Boolean => match value.as_str().unwrap_or(raw) {
+                    "true" => Value::Bool(true),
+                    "false" => Value::Bool(false),
+                    _ => {
+                        errors.push(FieldError::new(
+                            format!("custom.{key}"),
+                            "must be yes or no",
+                        ));
+                        Value::Null
+                    }
+                },
+                FieldType::MultiChoice => {
+                    if !multiple || !value.is_array() {
+                        errors.push(FieldError::new(
+                            format!("custom.{key}"),
+                            "has invalid choices",
+                        ));
+                        Value::Array(Vec::new())
+                    } else {
+                        value
+                    }
+                }
+                FieldType::Reference => Value::String(
+                    value
+                        .as_str()
+                        .map(str::to_owned)
+                        .unwrap_or_else(|| raw.clone()),
+                ),
+            }
+        };
+        custom.insert(key.to_owned(), parsed);
+    }
+    Value::Object(custom)
 }
 
 #[derive(Template)]

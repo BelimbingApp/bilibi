@@ -38,7 +38,7 @@ runtime claims and keys without a global scope refuse; a secret needs an
 explicit, authorized `get`.
 
 `Target` is a request, not permission. The actor is a sealed Tenancy `Scope`.
-User means the actor's own account; tenant means their tenant. Each company read,
+User means the actor's own account; tenant means their tenant. Tenant-scoped values inherit their declared defaults when no tenant override exists. Each company read,
 write, and delete calls `base/tenancy.parties` on the same DB connection. A missing
 provider refuses. Core owns this binding; Settings never queries Company tables.
 Global writes/delete additionally reprove the explicit platform operator.

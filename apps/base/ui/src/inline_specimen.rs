@@ -2,7 +2,7 @@
 //! driven by its live server owner, rather than a browser-only imitation.
 use crate::{
     choices, Combobox, CommitStates, CommitStatus, Field, Html, InlineChoice, InlineEdit,
-    InlineField, InlineLongText, InputKind,
+    InlineField, InlineLongText, InlineMultiChoice, InputKind,
 };
 use askama::Template;
 use std::collections::BTreeMap;
@@ -135,6 +135,7 @@ pub struct InlineSamples {
     pub long_error: Html,
     pub choice_read: Html,
     pub choice_error: Html,
+    pub multi_choice: Html,
 }
 impl InlineSamples {
     pub fn new() -> askama::Result<Self> {
@@ -177,6 +178,29 @@ impl InlineSamples {
         ));
         let mut choice_error = choice("error", active)?;
         choice_error.field.status = CommitStatus::Error("Pending is not allowed.".into());
+        let multi_editor = Field::named("regions")
+            .id("specimen-inline-multi-choice-select")
+            .kind(InputKind::Select)
+            .multiple()
+            .values(vec!["regional".into(), "national".into()])
+            .options(choices(&[
+                ("Regional", "regional"),
+                ("National", "national"),
+                ("Global", "global"),
+            ]))
+            .aria_label("Regions")
+            .wrapper_class("mb-0");
+        let multi_choice = InlineMultiChoice {
+            field: InlineField::new(
+                "specimen-inline-multi-choice",
+                "regions",
+                "Edit regions",
+                r#"["regional","national"]"#,
+            )
+            .version(1),
+            display: Html::text("Regional, National"),
+            editor: Html::render(&multi_editor)?,
+        };
         let form_sample = |editing| -> askama::Result<Html> {
             let mut actions = Html::render(&crate::Button {
                 button_type: "submit",
@@ -259,6 +283,7 @@ impl InlineSamples {
             })?,
             choice_read: Html::render(&choice("read", since)?)?,
             choice_error: Html::render(&choice_error)?,
+            multi_choice: Html::render(&multi_choice)?,
         })
     }
 }

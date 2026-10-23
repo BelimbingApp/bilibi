@@ -80,7 +80,13 @@ impl ReadHandler for Read {
             let client = db()?.get().await.map_err(Error::from)?;
             match self {
                 Self::List => {
-                    let page = identity::search(&**client, scope, &parse::<Search>(input)?).await?;
+                    let page = identity::search_with_runtime(
+                        &**client,
+                        (&**client).into(),
+                        scope,
+                        &parse::<Search>(input)?,
+                    )
+                    .await?;
                     Ok(Output::Page(Page {
                         entries: Data::Array(page.entries.into_iter().map(record).collect()),
                         page: page.page as u64,

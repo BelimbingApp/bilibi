@@ -215,6 +215,18 @@ pub struct InlineChoice {
     pub editor: Html,
 }
 
+/// Inline multi-choice editor. Selected codes are submitted as a JSON array.
+#[derive(Template, Clone, Debug)]
+#[template(
+    source = r#"{% import "inline.html" as inline %}{% call inline::inline_multi_choice(field=field, display=display, editor=editor) %}{% endcall %}"#,
+    ext = "html"
+)]
+pub struct InlineMultiChoice {
+    pub field: InlineField,
+    pub display: Html,
+    pub editor: Html,
+}
+
 /// Read-first cell with an owner-rendered form (including secrets and 2FA).
 /// Unlike text facts, Save is explicit. The owner holds editing state, validates
 /// each submission and closes only on success. No Bilimbi counterpart.
