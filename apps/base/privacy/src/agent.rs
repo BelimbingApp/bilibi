@@ -1,0 +1,398 @@
+//! Agent operations (ADR 01) over the privacy facade: the same calls the
+//! Personal data pages make through their contracts. Agents may enter, verify
+//! and refuse requests and manage holds; `approve` refuses an agent facet, so
+//! approval needs a person, and an erasure approval also asks for that
+//! person's Step-up code. No Bilimbi counterpart.
+use crate::{
+    HoldTarget, Identifier, NewRequest, Privacy, RequestKind, RequestView, HOLD_MANAGE, HOLD_VIEW,
+    REQUEST_APPROVE, REQUEST_RECEIVE, REQUEST_VIEW, STEP_UP_ERASURE,
+};
+use bilibi_agent_api::{
+    json::{Data, Output},
+    Channels, Definitions, Error as AgentError, Guide, Handler, Operation, OperationClient,
+    OperationFuture, ReadHandler, WriteHandler, DEFINITIONS,
+};
+use bilibi_database::{Error, MutationTransaction};
+use bilibi_module_registry::{Contribution, Provenance};
+use bilibi_party_ids::{OrganisationId, PersonId};
+use bilibi_tenancy::Scope;
+use serde_json::{json, Value};
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, OnceLock},
+};
+
+static PRIVACY: OnceLock<Arc<Privacy>> = OnceLock::new();
+/// Bound once at boot by the `base/privacy.agent` service.
+pub(crate) fn bind(privacy: Arc<Privacy>) -> bool {
+    PRIVACY.set(privacy).is_ok()
+}
+fn privacy() -> bilibi_agent_api::Result<&'static Arc<Privacy>> {
+    PRIVACY.get().ok_or(Error::Internal.into())
+}
+fn field_error(field: &str, message: &str) -> AgentError {
+    AgentError::InvalidInput(BTreeMap::from([(field.into(), vec![message.into()])]))
+}
+fn id(input: &Value, field: &str) -> bilibi_agent_api::Result<i64> {
+    input[field]
+        .as_i64()
+        .filter(|id| *id > 0)
+        .ok_or_else(|| field_error(field, "must be a positive integer"))
+}
+fn text<'a>(input: &'a Value, field: &str) -> bilibi_agent_api::Result<&'a str> {
+    input[field]
+        .as_str()
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| field_error(field, "is required"))
+}
+
+/// A request as agents and pages read it: never the identifier values.
+pub(crate) fn request_json(request: &RequestView) -> Value {
+    json!({
+        "id": request.id, "kind": request.kind.as_str(), "person_id": request.person.get(),
+        "identifiers": request.identifiers.iter().map(|i| match i { Identifier::Email(_) => "email", Identifier::Phone(_) => "phone" }).collect::<Vec<_>>(),
+        "company_id": request.company.get(), "status": request.status, "version": request.version,
+        "received_by": request.received_by, "received_at": request.received_at, "due_at": request.due_at,
+        "verified_by": request.verified_by, "approved_by": request.approved_by, "approved_at": request.approved_at,
+        "refused_reason": request.refused_reason, "completed_at": request.completed_at, "late": request.late,
+        "has_export": request.export_artifact.is_some(), "has_certificate": request.certificate_artifact.is_some(),
+        "stores": request.stores.iter().map(|s| json!({
+            "store": s.store, "label": s.label, "state": s.state, "attempts": s.attempts,
+            "last_error": s.last_error, "answered_at": s.answered_at, "result": s.result,
+        })).collect::<Vec<_>>(),
+    })
+}
+
+enum Read {
+    Requests,
+    Request,
+    Locate,
+    Holds,
+}
+impl ReadHandler for Read {
+    fn owner(&self) -> &'static str {
+        "base/privacy"
+    }
+    fn call<'a>(
+        &'a self,
+        _client: &'a dyn OperationClient,
+        scope: &'a Scope,
+        input: &'a Value,
+    ) -> OperationFuture<'a> {
+        Box::pin(async move {
+            let privacy = privacy()?;
+            let client = privacy.db.get().await.map_err(Error::from)?;
+            let data = match self {
+                Self::Requests => {
+                    let open = input["open"].as_bool().unwrap_or(false);
+                    let limit = input["limit"].as_i64().unwrap_or(100);
+                    let rows = privacy.requests(&**client, scope, open, limit).await?;
+                    json!({"requests": rows.iter().map(request_json).collect::<Vec<_>>()})
+                }
+                Self::Request => {
+                    json!({"request": request_json(&privacy.request(&**client, scope, id(input, "id")?).await?)})
+                }
+                Self::Locate => {
+                    let found = privacy.locate(&client, scope, id(input, "id")?).await?;
+                    json!({"stores": found.iter().map(|(store, label, located)| json!({"store": store, "label": label, "kinds": located.kinds})).collect::<Vec<_>>()})
+                }
+                Self::Holds => {
+                    let holds = privacy
+                        .holds(&**client, scope, input["limit"].as_i64().unwrap_or(100))
+                        .await?;
+                    json!({"holds": holds})
+                }
+            };
+            Ok(Output::Data(Data::Json(data)))
+        })
+    }
+}
+
+fn kind(input: &Value) -> bilibi_agent_api::Result<RequestKind> {
+    match input["kind"].as_str() {
+        Some("access") => Ok(RequestKind::Access),
+        Some("portability") => Ok(RequestKind::Portability),
+        Some("erasure") => Ok(RequestKind::Erasure),
+        _ => Err(field_error(
+            "kind",
+            "must be access, portability or erasure",
+        )),
+    }
+}
+fn new_request(input: &Value) -> bilibi_agent_api::Result<NewRequest> {
+    let person = PersonId::new(id(input, "person_id")?)
+        .map_err(|_| field_error("person_id", "is invalid"))?;
+    let company = OrganisationId::new(id(input, "company_id")?)
+        .map_err(|_| field_error("company_id", "is invalid"))?;
+    let mut identifiers = Vec::new();
+    for (field, make) in [
+        ("emails", Identifier::Email as fn(String) -> Identifier),
+        ("phones", Identifier::Phone),
+    ] {
+        if let Some(values) = input.get(field) {
+            let values = values
+                .as_array()
+                .ok_or_else(|| field_error(field, "must be a list"))?;
+            for value in values {
+                identifiers.push(make(
+                    value
+                        .as_str()
+                        .ok_or_else(|| field_error(field, "must be text"))?
+                        .to_owned(),
+                ));
+            }
+        }
+    }
+    Ok(NewRequest {
+        kind: kind(input)?,
+        person,
+        identifiers,
+        company,
+    })
+}
+fn hold_target(input: &Value) -> bilibi_agent_api::Result<HoldTarget> {
+    match (input.get("person_id"), input.get("record_kind")) {
+        (Some(_), None) => Ok(HoldTarget::Person {
+            person: PersonId::new(id(input, "person_id")?)
+                .map_err(|_| field_error("person_id", "is invalid"))?,
+        }),
+        (None, Some(_)) => Ok(HoldTarget::Record {
+            kind: text(input, "record_kind")?.to_owned(),
+            id: id(input, "record_id")?,
+        }),
+        _ => Err(field_error(
+            "person_id",
+            "give exactly one of person_id or record_kind with record_id",
+        )),
+    }
+}
+fn refusal(error: Error) -> AgentError {
+    match error {
+        Error::Conflict => field_error("version", "the request or hold changed; read it again"),
+        error => error.into(),
+    }
+}
+
+enum Write {
+    Receive,
+    Verify,
+    Approve,
+    Refuse,
+    PlaceHold,
+    ReleaseHold,
+}
+impl WriteHandler for Write {
+    fn owner(&self) -> &'static str {
+        "base/privacy"
+    }
+    fn preview<'a>(
+        &'a self,
+        _client: &'a dyn OperationClient,
+        scope: &'a Scope,
+        input: &'a Value,
+    ) -> OperationFuture<'a> {
+        Box::pin(async move {
+            let privacy = privacy()?;
+            let client = privacy.db.get().await.map_err(Error::from)?;
+            let facts = match self {
+                Self::Receive => {
+                    let new = new_request(input)?;
+                    json!({"summary": format!("Record a {} request for person {}, filed under company {}", new.kind.as_str(), new.person.get(), new.company.get())})
+                }
+                Self::Verify | Self::Approve | Self::Refuse => {
+                    let request = privacy.request(&**client, scope, id(input, "id")?).await?;
+                    let verb = match self {
+                        Self::Verify => "Verify",
+                        Self::Approve => "Approve and run",
+                        _ => "Refuse",
+                    };
+                    let mut facts = json!({"summary": format!("{verb} {} request {} for person {} (now {})", request.kind.as_str(), request.id, request.person.get(), request.status), "request": request_json(&request)});
+                    if matches!(self, Self::Approve) && request.kind == RequestKind::Erasure {
+                        facts["step_up"] = json!([STEP_UP_ERASURE]);
+                    }
+                    facts
+                }
+                Self::PlaceHold => {
+                    let target = hold_target(input)?;
+                    json!({"summary": format!("Place a legal hold on {}", match &target { HoldTarget::Person { person } => format!("person {person}"), HoldTarget::Record { kind, id } => format!("{kind} {id}") })})
+                }
+                Self::ReleaseHold => {
+                    json!({"summary": format!("Release legal hold {}", id(input, "id")?)})
+                }
+            };
+            Ok(facts.into())
+        })
+    }
+    fn commit<'a>(
+        &'a self,
+        tx: &'a mut MutationTransaction<'_>,
+        scope: &'a Scope,
+        input: &'a Value,
+    ) -> OperationFuture<'a> {
+        Box::pin(async move {
+            let privacy = privacy()?;
+            let version = || {
+                input["version"]
+                    .as_i64()
+                    .ok_or_else(|| field_error("version", "is required"))
+            };
+            let result = match self {
+                Self::Receive => request_json(
+                    &privacy
+                        .receive_in(tx, scope, new_request(input)?)
+                        .await
+                        .map_err(refusal)?,
+                ),
+                Self::Verify => request_json(
+                    &privacy
+                        .verify_in(
+                            tx,
+                            scope,
+                            id(input, "id")?,
+                            version()?,
+                            text(input, "verification")?,
+                        )
+                        .await
+                        .map_err(refusal)?,
+                ),
+                Self::Approve => request_json(
+                    &privacy
+                        .approve_in(tx, scope, id(input, "id")?, version()?)
+                        .await
+                        .map_err(refusal)?,
+                ),
+                Self::Refuse => request_json(
+                    &privacy
+                        .refuse_in(
+                            tx,
+                            scope,
+                            id(input, "id")?,
+                            version()?,
+                            text(input, "reason")?,
+                        )
+                        .await
+                        .map_err(refusal)?,
+                ),
+                Self::PlaceHold => json!(privacy
+                    .place_hold_in(tx, scope, hold_target(input)?, text(input, "reason")?)
+                    .await
+                    .map_err(refusal)?),
+                Self::ReleaseHold => json!(privacy
+                    .release_hold_in(tx, scope, id(input, "id")?, text(input, "reason")?)
+                    .await
+                    .map_err(refusal)?),
+            };
+            Ok(result.into())
+        })
+    }
+}
+
+fn empty() -> Value {
+    json!({"type":"object","properties":{}})
+}
+fn list_schema() -> Value {
+    json!({"type":"object","properties":{
+        "open":{"type":"boolean","description":"Only requests not yet completed or refused"},
+        "limit":{"type":"integer","minimum":1,"maximum":500,"description":"Default 100"}}})
+}
+fn id_schema() -> Value {
+    json!({"type":"object","required":["id"],"properties":{"id":{"type":"integer","minimum":1}}})
+}
+fn receive_schema() -> Value {
+    json!({"type":"object","required":["kind","person_id","company_id"],"properties":{
+        "kind":{"type":"string","enum":["access","portability","erasure"]},
+        "person_id":{"type":"integer","minimum":1,"description":"The Core person the request is about"},
+        "company_id":{"type":"integer","minimum":1,"description":"The company the export or certificate is filed under"},
+        "emails":{"type":"array","items":{"type":"string"},"description":"Emails the requester gave"},
+        "phones":{"type":"array","items":{"type":"string"},"description":"Phone numbers the requester gave"}}})
+}
+fn verify_schema() -> Value {
+    json!({"type":"object","required":["id","version","verification"],"properties":{
+        "id":{"type":"integer","minimum":1},"version":{"type":"integer","minimum":0},
+        "verification":{"type":"string","maxLength":1000,"description":"How the requester's identity was checked. Verifying also confirms the matches base.privacy.request.locate found by email or phone"}}})
+}
+fn approve_schema() -> Value {
+    json!({"type":"object","required":["id","version"],"properties":{"id":{"type":"integer","minimum":1},"version":{"type":"integer","minimum":0}}})
+}
+fn refuse_schema() -> Value {
+    json!({"type":"object","required":["id","version","reason"],"properties":{
+        "id":{"type":"integer","minimum":1},"version":{"type":"integer","minimum":0},"reason":{"type":"string","maxLength":1000}}})
+}
+fn place_schema() -> Value {
+    json!({"type":"object","required":["reason"],"properties":{
+        "person_id":{"type":"integer","minimum":1,"description":"Hold everything about this person (give this or record_kind with record_id)"},
+        "record_kind":{"type":"string","maxLength":255,"description":"The record's audit kind, such as person or affiliation"},
+        "record_id":{"type":"integer","minimum":1},
+        "reason":{"type":"string","maxLength":255,"description":"A case reference, never personal data"}}})
+}
+fn release_schema() -> Value {
+    json!({"type":"object","required":["id","reason"],"properties":{"id":{"type":"integer","minimum":1},"reason":{"type":"string","maxLength":255}}})
+}
+fn requests_output() -> Value {
+    json!({"type":"object","description":"Requests newest first: kind, person, status, version, due date, late, and each store's answer (counts, records kept and why, deferrals). Identifier values are never returned."})
+}
+fn request_output() -> Value {
+    json!({"type":"object","description":"One request with each store's answer."})
+}
+fn locate_output() -> Value {
+    json!({"type":"object","description":"Per store and record kind: records linked to the person, and records matched only by an email or phone the request carries."})
+}
+fn holds_output() -> Value {
+    json!({"type":"object","description":"Legal holds, active first: target, reason, who placed and released it."})
+}
+
+macro_rules! read {
+    ($key:literal, $title:literal, $summary:literal, $cap:expr, $input:expr, $output:expr, $handler:expr) => {
+        Operation {
+            key: $key,
+            title: $title,
+            summary: $summary,
+            keywords: &["privacy", "personal data", "pdpa", "gdpr"],
+            capability: $cap,
+            input: $input,
+            output: $output,
+            handler: Handler::Read($handler),
+            channels: Channels::Every,
+            step_up: &[],
+        }
+    };
+}
+macro_rules! write {
+    ($key:literal, $title:literal, $summary:literal, $cap:expr, $input:expr, $handler:expr, $step_up:expr) => {
+        Operation {
+            key: $key,
+            title: $title,
+            summary: $summary,
+            keywords: &[
+                "privacy",
+                "personal data",
+                "pdpa",
+                "gdpr",
+                "erasure",
+                "access request",
+            ],
+            capability: $cap,
+            input: $input,
+            output: request_output,
+            handler: Handler::SafeWrite($handler),
+            channels: Channels::Every,
+            step_up: $step_up,
+        }
+    };
+}
+inventory::submit! { Contribution::new(DEFINITIONS, "base/privacy", Provenance { module: "base/privacy", source: file!(), line: line!() }, &Definitions {
+    operations: &[
+        read!("base.privacy.request.list", "List data-subject requests", "This tenant's access, portability and erasure requests with their progress.", REQUEST_VIEW, list_schema, requests_output, &Read::Requests),
+        read!("base.privacy.request.get", "Read a data-subject request", "One request and each store's answer.", REQUEST_VIEW, id_schema, request_output, &Read::Request),
+        read!("base.privacy.request.locate", "Find a request's personal data", "What every store holds about the request's person, including matches found only by email or phone, which verifying confirms.", REQUEST_VIEW, id_schema, locate_output, &Read::Locate),
+        read!("base.privacy.hold.list", "List legal holds", "This tenant's legal holds on people and records.", HOLD_VIEW, empty, holds_output, &Read::Holds),
+        write!("base.privacy.request.receive", "Record a data-subject request", "Record an access, portability or erasure request for a person; it is due after privacy.request.due_days.", REQUEST_RECEIVE, receive_schema, &Write::Receive, &[]),
+        write!("base.privacy.request.verify", "Verify a requester's identity", "Record how the requester's identity was checked and confirm the request's email and phone matches.", REQUEST_RECEIVE, verify_schema, &Write::Verify, &[]),
+        write!("base.privacy.request.approve", "Approve a data-subject request", "Approve and run a verified request in every store. A person must approve; an erasure needs someone other than whoever entered it, and Step-up: base.privacy.erasure.approve.", REQUEST_APPROVE, approve_schema, &Write::Approve, &[STEP_UP_ERASURE]),
+        write!("base.privacy.request.refuse", "Refuse a data-subject request", "Refuse a request that is not yet approved, with the reason.", REQUEST_RECEIVE, refuse_schema, &Write::Refuse, &[]),
+        write!("base.privacy.hold.place", "Place a legal hold", "Stop erasure and retention sweeps for a person or one record.", HOLD_MANAGE, place_schema, &Write::PlaceHold, &[]),
+        write!("base.privacy.hold.release", "Release a legal hold", "Release an active legal hold; the next erasure or sweep acts on what it kept.", HOLD_MANAGE, release_schema, &Write::ReleaseHold, &[]),
+    ],
+    guides: &[Guide { key: "base.privacy", title: "Data-subject requests", summary: "Answer a person's access or erasure request in every store.", keywords: &["privacy", "pdpa", "gdpr", "erasure", "access request", "legal hold"], capability: REQUEST_VIEW,
+        body: "Record the request with base.privacy.request.receive (kind, person_id, company_id, and the emails or phones the person gave). Read base.privacy.request.locate to see what every store holds, including matches found only by email or phone. Record how the person's identity was checked with base.privacy.request.verify; that also confirms those matches. A person with privacy.request.approve then approves; an agent cannot approve, and an erasure needs someone other than whoever entered it plus that person's Step-up code. Running answers each store in the background; read base.privacy.request.get until status is completed. A store that fails stays pending and the request shows late. Legal holds (base.privacy.hold.place) keep what they name through erasure; the certificate lists every store, what was kept and why." }],
+}) }

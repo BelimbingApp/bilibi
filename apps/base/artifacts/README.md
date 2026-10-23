@@ -189,6 +189,10 @@ or while a hold or retain-until still protects the document. All three need
 `Purge`. The owning module wires `purge_expired` into its own schedule and
 alerting on `failed`; Base enumerates no companies.
 
+### Data-subject requests
+
+**`subject_documents(client, scope, owner, subject)` lists one subject's live documents of an owner** in every company of the tenant, keeping those the owner lets the scope `Read` (at most 500). `base/privacy` handlers use it to export references and to delete through `for_owner`; retained and held documents stay ([ADR 05](../../../docs/architecture/decisions/05-personal-data-registry.md)).
+
 ## HTML PDFs (A4)
 
 Use `Owned::render_inline` / `render_view` (`src/render.rs`) to print an owner's
