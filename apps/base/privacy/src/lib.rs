@@ -7,12 +7,14 @@
 //! per-store retention workers only.
 mod agent;
 mod documents;
+mod due;
 mod holds;
 mod registry;
 mod requests;
 mod runner;
 mod web;
 pub use documents::{RequestDocuments, ARTIFACT_OWNER, CERTIFICATE_YEARS, DOCUMENTS, EXPORT_DAYS};
+pub use due::{DUE_SCHEDULE, DUE_WORKER, NOTICE_DAYS};
 pub use holds::{Hold, HoldEvent, HoldTarget, Holds};
 pub use registry::{
     Action, Deferral, Erased, ErasedRecord, Exported, FileRef, Handler, HandlerFuture, Identifier,
@@ -211,6 +213,20 @@ inventory::submit! { Contribution::new(DEFINITIONS, CERTIFICATE_YEARS, provenanc
     editor: Some(Editor { group: "Personal data", label: "Erasure certificate years",
         help: "Years an erasure completion certificate is kept as a retained record.", capability: Some(REQUEST_APPROVE), reveal_duration_ms: 5_000 }),
 })) }
+inventory::submit! { Contribution::new(DEFINITIONS, NOTICE_DAYS, provenance!(), &Setting::Definition(Definition {
+    value_type: ValueType::Integer, scopes: &[ScopeKind::Global, ScopeKind::Tenant], default: || json!(due::NOTICE_DEFAULT),
+    nullable: false, encrypted: false, minimum: Some(1.0), maximum: Some(60.0), validator: None,
+    editor: Some(Editor { group: "Personal data", label: "Request notice days",
+        help: "Days before a request's due date that the people handling it are notified.", capability: Some(REQUEST_APPROVE), reveal_duration_ms: 5_000 }),
+})) }
+// Due notices: a daily scheduled task, run only after an operator enables it.
+inventory::submit! { Contribution::new(WORKERS, DUE_WORKER, provenance!(), &Worker { max_attempts: 3, validate: |args| bilibi_schedule::worker::validate(args, due::arguments) }) }
+inventory::submit! { Contribution::new(HANDLERS, DUE_WORKER, provenance!(), &HandlerBinding { service: "base/privacy.due_job", capability: bilibi_schedule::EXECUTE }) }
+inventory::submit! { Contribution::new(bilibi_schedule::DEFINITIONS, DUE_SCHEDULE, provenance!(), &bilibi_schedule::Definition {
+    name: "Personal-data request due notices", expression: "0 7 * * *", timezone: "UTC",
+    task_name: "Personal-data request due notices", worker: DUE_WORKER, args: || json!({}),
+    overlap: bilibi_schedule::Overlap::Forbid, misfire: bilibi_schedule::Misfire::Coalesce, owner_route: Some(web::REQUESTS_PATH),
+}) }
 inventory::submit! { Contribution::new(WORKERS, STORE_WORKER, provenance!(), &Worker { max_attempts: 25, validate: runner::store_arguments }) }
 inventory::submit! { Contribution::new(HANDLERS, STORE_WORKER, provenance!(), &HandlerBinding { service: "base/privacy.store_job", capability: REQUEST_APPROVE }) }
 inventory::submit! { Contribution::new(WORKERS, FINISH_WORKER, provenance!(), &Worker { max_attempts: 25, validate: runner::finish_arguments }) }
@@ -306,10 +322,11 @@ inventory::submit! {
     Module {
         id: "base/privacy", layer: Layer::Base,
         dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/grid", "base/party_ids",
-            "base/audit", "base/workflow", "base/queue", "base/step_up", "base/settings", "base/artifacts", "base/agent_api", "base/ui", "base/menu", "base/datetime", "base/locale"],
+            "base/audit", "base/workflow", "base/queue", "base/step_up", "base/settings", "base/artifacts", "base/agent_api", "base/ui", "base/menu", "base/datetime", "base/locale", "base/notifications", "base/schedule"],
         migrations: &[
             ("base-privacy-001-holds", include_str!("../migrations/001-holds.sql")),
             ("base-privacy-002-requests", include_str!("../migrations/002-requests.sql")),
+            ("base-privacy-003-due-notices", include_str!("../migrations/003-due-notices.sql")),
         ],
         services: &[
             Service { id: SERVICE, factory: |services| Ok(Arc::new(build(services)?)) },
@@ -340,6 +357,14 @@ inventory::submit! {
             } },
             Service { id: "base/privacy.finish_job", factory: |services| {
                 Ok(Arc::new(HandlerService(Arc::new(runner::FinishJob { privacy: services.get(SERVICE)? }))))
+            } },
+            Service { id: "base/privacy.due_job", factory: |services| {
+                Ok(Arc::new(HandlerService(Arc::new(due::DueJob {
+                    privacy: services.get(SERVICE)?,
+                    schedule: services.get("base/schedule.store")?,
+                    authentication: services.get("base/tenancy.authentication")?,
+                    notifications: services.get("base/notifications.sink")?,
+                }))))
             } },
         ],
     }

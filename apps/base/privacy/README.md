@@ -12,7 +12,7 @@
 | Access and erasure requests, export, certificate | Built |
 | Audit and media erasure paths | Built |
 | Platform handlers: Person, User, Affiliation, Address, Events, Integration | Built |
-| Notice as a request nears its due date | Planned |
+| Notice as a request nears its due date | Built |
 | Retention classes and sweeps | Planned |
 | Partial masking and audited reveal | Planned |
 
@@ -99,6 +99,14 @@ inventory::submit! { Contribution::new(bilibi_privacy::PERSONAL_DATA, "core/pers
 - Agents may list, read, locate, receive, verify, approve and refuse (`base.privacy.request.*`); approving an erasure still needs a person's Step-up.
 - Pages: `/privacy/requests`, `/privacy/requests/{id}`, `/privacy/holds`, under Admin → Personal data.
 
+## Due notices
+
+**A daily scheduled task tells the people handling an open request that its due date is near, once.**
+
+- Definition `base/privacy.due-notices` (07:00 UTC, worker `base/privacy-due-notices`). Like every contributed task it runs only after an operator reviews and enables it on `/system/schedule` and grants the `scheduler` principal `admin.system.schedule.execute`.
+- Each run visits every tenant's open requests whose due date falls within that tenant's `privacy.request.notice_days`, at most 500 per tenant.
+- It notifies the request's receiver, verifier and approver who are still active accounts, through `base/notifications`, and records `due_notified_at` in the same audited write (actor: system principal `scheduler`). A request is notified once.
+
 ## Documents
 
 **An access request ends with an export; an erasure ends with a certificate. Both are `base/artifacts` documents owned by `base.privacy`.**
@@ -121,6 +129,7 @@ inventory::submit! { Contribution::new(bilibi_privacy::PERSONAL_DATA, "core/pers
 | Key | Scope | Default | Meaning |
 | --- | --- | --- | --- |
 | `privacy.request.due_days` | Global, Tenant | 21 | Days from receipt to answer |
+| `privacy.request.notice_days` | Global, Tenant | 3 | Days before the due date that a request's handlers are notified |
 | `privacy.export_days` | Global, Tenant | 30 | Days an export stays downloadable |
 | `privacy.certificate_years` | Global, Tenant | 7 | Years a certificate is retained |
 
@@ -135,7 +144,7 @@ No unit tests. Prove on a disposable database ([runtime parity](../../../docs/ru
 | Store without the dependency | Contribute a store from a module that does not declare `base/privacy` | Boot fails naming the store |
 | Legal holds | `examples/holds-walkthrough.rs` on a disposable database, then again with `report` | Place, duplicate `Conflict`, release once, history; viewer refused; tenant 2 sees none and gets `NotFound`; every raw edit, delete and truncate refused by the database |
 
-| Requests | `examples/requests-walkthrough.rs` with `seed`, then without, on a disposable database with the queue running | Access: one export covering every store, download audited as `artifacts.read`. Tenant 2 sees no request. Erasure: refused for whoever received it, approved by a second person with an authenticator code; a failing store leaves it `running` and late until a retry answers; afterwards person and account are stubs, attachment bytes gone, document deleted, audit values `[erased]` with ledger rows, certificate lists every store; a console search finds no erased value. A hold on an unknown kind is `Invalid`; a held person is kept and named on the certificate; after release a new erasure acts |
+| Requests | `examples/requests-walkthrough.rs` with `seed`, then without, on a disposable database with the queue running | Access: one export covering every store, download audited as `artifacts.read`. Tenant 2 sees no request. Erasure: refused for whoever received it, approved by a second person with an authenticator code; a failing store leaves it `running` and late until a retry answers; afterwards person and account are stubs, attachment bytes gone, document deleted, audit values `[erased]` with ledger rows, certificate lists every store; a console search finds no erased value. Due notices: refused before the definition is enabled; once enabled, a request due tomorrow notifies its receiver and verifier once, and a second run adds nothing. A hold on an unknown kind is `Invalid`; a held person is kept and named on the certificate; after release a new erasure acts |
 
 Run the holds walkthrough only against a fresh disposable database:
 

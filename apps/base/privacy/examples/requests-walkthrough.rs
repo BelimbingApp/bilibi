@@ -363,6 +363,106 @@ async fn main() -> Result<()> {
     )
     .await?;
 
+    println!("== due notices: an open request due tomorrow");
+    let open = privacy
+        .receive(
+            &mut client,
+            &second,
+            NewRequest {
+                kind: RequestKind::Access,
+                person: kim,
+                identifiers: vec![],
+                company: one,
+            },
+        )
+        .await?;
+    let open = privacy
+        .verify(
+            &mut client,
+            &admin,
+            open.id,
+            open.version,
+            "Phone call, account details confirmed",
+        )
+        .await?;
+    // Stands in for twenty days passing.
+    client
+        .execute(
+            "UPDATE base_privacy_requests SET due_at=clock_timestamp()+interval '1 day' WHERE tenant_id=1 AND id=$1",
+            &[&open.id],
+        )
+        .await?;
+    let schedule = app
+        .services
+        .get::<bilibi_base::schedule::Schedule>("base/schedule.store")?;
+    show(
+        "run before an operator enables it",
+        schedule
+            .run_now(
+                &mut client,
+                &admin,
+                bilibi_privacy::DUE_SCHEDULE,
+                jiff::Timestamp::now(),
+            )
+            .await
+            .map(|r| r.is_ok()),
+    );
+    schedule
+        .review(&mut client, &admin, bilibi_privacy::DUE_SCHEDULE, true)
+        .await?;
+    app.services
+        .get::<Grants>("base/authz.grants")?
+        .set_system(
+            &admin,
+            bilibi_base::schedule::PRINCIPAL,
+            bilibi_base::schedule::EXECUTE,
+            Some(true),
+        )
+        .await?;
+    for run in 1..=2 {
+        show(
+            &format!("run {run} after enabling"),
+            schedule
+                .run_now(
+                    &mut client,
+                    &admin,
+                    bilibi_privacy::DUE_SCHEDULE,
+                    jiff::Timestamp::now(),
+                )
+                .await
+                .map(|r| r.is_ok()),
+        );
+        tokio::time::sleep(Duration::from_secs(5)).await;
+    }
+    rows(
+        &client,
+        "notice",
+        "SELECT user_id||' '||title||' '||url FROM notifications WHERE tenant_id=1 AND type='privacy.request' ORDER BY id",
+    )
+    .await?;
+    rows(
+        &client,
+        "request",
+        "SELECT id||' notified='||(due_notified_at IS NOT NULL) FROM base_privacy_requests WHERE tenant_id=1 ORDER BY id",
+    )
+    .await?;
+    rows(
+        &client,
+        "schedule run",
+        "SELECT trigger||' '||status||' '||coalesce(output_excerpt,'') FROM base_schedule_runs ORDER BY id",
+    )
+    .await?;
+    let version = privacy.request(&**client, &admin, open.id).await?.version;
+    privacy
+        .refuse(
+            &mut client,
+            &admin,
+            open.id,
+            version,
+            "Withdrawn by the person",
+        )
+        .await?;
+
     println!("== tenant 2 sees none of tenant 1's requests");
     show(
         "tenant 2 list",
