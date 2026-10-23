@@ -243,7 +243,7 @@ async fn answer(
                         )
                         .await?;
                     }
-                    record_answer(&mut tx, scope, id, key, &erased, false).await?;
+                    record_answer(&mut tx, scope, id, key, &erased, false, 0).await?;
                     tx.commit().await?;
                 } else {
                     tx.rollback().await?;
@@ -260,7 +260,7 @@ async fn answer(
                 .begin(&mut client, "privacy.request.erase_finished")
                 .await?;
             let tenant = scope.tenant();
-            let current: Value = tx
+            let mut current: Value = tx
                 .sql()
                 .query_one(
                     "SELECT result FROM base_privacy_request_stores WHERE tenant_id=$1 AND request_id=$2 AND store=$3 FOR UPDATE",
@@ -268,10 +268,16 @@ async fn answer(
                 )
                 .await?
                 .get(0);
+            // The stored answer keeps only the count of erased records.
+            let prior = current
+                .as_object_mut()
+                .and_then(|answer| answer.remove("records"))
+                .and_then(|count| count.as_u64())
+                .unwrap_or(0);
             let mut erased: Erased =
                 serde_json::from_value(current).map_err(|_| Error::Internal)?;
             erased.merge(more);
-            record_answer(&mut tx, scope, id, key, &erased, true).await?;
+            record_answer(&mut tx, scope, id, key, &erased, true, prior).await?;
             finish_when_done(privacy, &mut tx, scope, id).await?;
             tx.commit().await
         }
@@ -280,6 +286,7 @@ async fn answer(
 
 /// Saves a store's erasure answer. The stored result keeps counts, kinds, IDs
 /// and reasons; the per-record field names are dropped once audit is cleared.
+/// `prior` is the count an earlier step of the same erasure already recorded.
 async fn record_answer(
     tx: &mut MutationTransaction<'_>,
     scope: &Scope,
@@ -287,6 +294,7 @@ async fn record_answer(
     key: &'static str,
     erased: &Erased,
     finished: bool,
+    prior: u64,
 ) -> Result<()> {
     let state = if erased.deferral.is_some() {
         "deferred"
@@ -295,7 +303,7 @@ async fn record_answer(
     };
     let mut result = serde_json::to_value(erased).map_err(|_| Error::Internal)?;
     if let Some(object) = result.as_object_mut() {
-        let count = erased.records.len();
+        let count = prior + erased.records.len() as u64;
         object.insert("records".into(), json!(count));
     }
     let tenant = scope.tenant();
@@ -323,6 +331,17 @@ async fn finish_when_done(
     scope: &Scope,
     id: i64,
 ) -> Result<()> {
+    // Store jobs run concurrently. Locking the request makes their answers
+    // take turns, so the last one counts after every other has committed;
+    // without it, stores answering together each see the others open and no
+    // one queues the finish. NO KEY UPDATE, because staged exports already
+    // hold a key-share lock on the request through their foreign key.
+    tx.sql()
+        .query_one(
+            "SELECT 1 FROM base_privacy_requests WHERE tenant_id=$1 AND id=$2 FOR NO KEY UPDATE",
+            &[&scope.tenant(), &id],
+        )
+        .await?;
     let open: i64 = tx
         .sql()
         .query_one(
@@ -437,6 +456,29 @@ async fn complete(
                 old: before,
                 new: requests::evidence(&after),
             }];
+            if erasure {
+                // The person's earlier, closed requests keep their email or
+                // phone too; an erased person leaves none behind.
+                let person = after.person.get();
+                for row in sql
+                    .query(
+                        "WITH earlier AS (SELECT id,jsonb_array_length(identifiers) AS given FROM base_privacy_requests \
+                         WHERE tenant_id=$1 AND person_id=$2 AND id<>$3 AND status IN ('completed','refused') \
+                         AND identifiers<>'[]' FOR UPDATE) \
+                         UPDATE base_privacy_requests r SET identifiers='[]' FROM earlier e \
+                         WHERE r.tenant_id=$1 AND r.id=e.id RETURNING r.id,e.given",
+                        &[&tenant, &person, &id],
+                    )
+                    .await?
+                {
+                    changes.push(Change {
+                        kind: requests::REQUEST_KIND.into(),
+                        id: row.get(0),
+                        old: json!({"identifiers": row.get::<_, i32>(1)}),
+                        new: json!({"identifiers": 0}),
+                    });
+                }
+            }
             for row in staged {
                 changes.push(Change {
                     kind: EXPORT_KIND.into(),

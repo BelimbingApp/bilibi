@@ -26,7 +26,7 @@ inventory::submit! { Contribution::new(bilibi_privacy::PERSONAL_DATA, "core/pers
     Provenance { module: "core/person", source: file!(), line: line!() },
     &bilibi_privacy::PersonalData {
         label: "People",
-        record_kinds: &["core/person.person"],
+        record_kinds: &["person"],
         handler: &HANDLER,
     }) }
 ```
@@ -72,7 +72,7 @@ inventory::submit! { Contribution::new(bilibi_privacy::PERSONAL_DATA, "core/pers
 | `hold_history(client, scope, id)` | `privacy.hold.view` | Placed and released events, oldest first |
 | `active_holds(client, scope, person)` | `privacy.hold.view` | `Holds` for an erasure or sweep: `person_held()`, `record_held(kind, id)` |
 
-- A record is named by its audit record kind (`Change::kind`) and ID.
+- A record is named by its audit record kind (`Change::kind`, as a store lists it in `record_kinds`, such as `person`) and ID. A kind no mounted store declares is `Invalid`: a hold on it would protect nothing.
 - A reason is required: 1–255 characters, no control characters. It is a case reference, never personal data.
 - Place and release are `MutationBoundary` writes recorded as `base/privacy.hold` (created, then updated).
 - `erase` receives the `Holds` read inside the erasure transaction. A held person keeps everything; a held record is listed as kept with `KeptReason::LegalHold`.

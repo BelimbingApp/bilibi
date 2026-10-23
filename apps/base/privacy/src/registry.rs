@@ -329,6 +329,12 @@ impl Stores {
         }
         Ok(Self { by_key })
     }
+    /// Whether a mounted store declares `kind` among its record kinds.
+    pub(crate) fn declares(&self, kind: &str) -> bool {
+        self.by_key
+            .values()
+            .any(|(_, data)| data.record_kinds.contains(&kind))
+    }
 }
 
 /// Boot refuses a Grid table with a personal field whose module contributes
