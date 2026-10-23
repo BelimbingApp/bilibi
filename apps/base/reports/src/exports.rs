@@ -264,14 +264,22 @@ impl Reports {
         let _ = owned.purge_expired(&mut client).await;
         let cap = match self.queued_rows(scope).await {
             Ok(cap) => cap,
-            Err(_) => return JobOutcome::Retry("settings_unavailable"),
+            Err(_) => {
+                return self
+                    .give_up(execution, scope, export, "settings_unavailable", quiet)
+                    .await
+            }
         };
         let file = match self
             .export_within(scope, report, &answers, format, cap, !quiet)
             .await
         {
             Ok(file) => file,
-            Err(ReportError::Database(_)) => return JobOutcome::Retry("report_unavailable"),
+            Err(ReportError::Database(_)) => {
+                return self
+                    .give_up(execution, scope, export, "report_unavailable", quiet)
+                    .await
+            }
             Err(refused) => {
                 let message = refused.to_string();
                 return match self
@@ -285,14 +293,20 @@ impl Reports {
         };
         let days = {
             let Ok(client) = self.db.get().await else {
-                return JobOutcome::Retry("database_unavailable");
+                return self
+                    .give_up(execution, scope, export, "database_unavailable", quiet)
+                    .await;
             };
             match self
                 .setting(&**client, scope, contributions::EXPORT_DAYS_KEY)
                 .await
             {
                 Ok(days) => days as i64,
-                Err(_) => return JobOutcome::Retry("settings_unavailable"),
+                Err(_) => {
+                    return self
+                        .give_up(execution, scope, export, "settings_unavailable", quiet)
+                        .await
+                }
             }
         };
         let reference = Reference {
@@ -304,7 +318,11 @@ impl Reports {
             .await;
         let metadata = match stored {
             Ok(metadata) => metadata,
-            Err(_) => return JobOutcome::Retry("store_failed"),
+            Err(_) => {
+                return self
+                    .give_up(execution, scope, export, "store_failed", quiet)
+                    .await
+            }
         };
         match self
             .finish(
@@ -318,6 +336,32 @@ impl Reports {
         {
             Ok(()) => JobOutcome::Completed,
             Err(_) => JobOutcome::Retry("finish_failed"),
+        }
+    }
+
+    /// A fault that may pass: retried, until the job's last attempt, which
+    /// fails the request in words so it never waits for ever.
+    async fn give_up(
+        &self,
+        execution: &Execution,
+        scope: &Scope,
+        export: i64,
+        code: &'static str,
+        quiet: bool,
+    ) -> JobOutcome {
+        if !last_attempt(execution) {
+            return JobOutcome::Retry(code);
+        }
+        let message = match code {
+            "store_failed" => "The file could not be stored. Ask an administrator to check the private document folder setting.",
+            _ => "The export could not be prepared after several tries. Try again later.",
+        };
+        match self
+            .finish(execution, scope, export, Finished::Failed(message), quiet)
+            .await
+        {
+            Ok(()) => JobOutcome::Completed,
+            Err(_) => JobOutcome::Retry(code),
         }
     }
 
@@ -392,6 +436,11 @@ impl Reports {
 enum Finished<'a> {
     Ready(&'a Metadata, &'a crate::File),
     Failed(&'a str),
+}
+
+/// Whether this is the job's last attempt.
+pub(crate) fn last_attempt(execution: &Execution) -> bool {
+    execution.attempt >= execution.max_attempts
 }
 
 /// The queue handler bound to [`WORKER`].
