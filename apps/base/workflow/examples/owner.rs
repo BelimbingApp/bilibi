@@ -181,6 +181,24 @@ async fn main() -> Result<()> {
             task.await.map_err(|_| Error::Internal)??;
             println!("queue executor stopped");
         }
+        "seed" => {
+            // The production seed path, with no operator and no `initialize`.
+            let catalog = bilibi_module_registry::Catalog::discover(&modules)?;
+            for run in bilibi_database::seeds::run(&db, &modules, &catalog, &services).await? {
+                if run.version.starts_with("workflow-") {
+                    println!("seed {} applied={}", run.version, run.applied);
+                }
+            }
+            let client = db.get().await?;
+            let row = client.query_one("SELECT (SELECT count(*) FROM base_workflow_flows WHERE code='reference.approval'),(SELECT count(*) FROM base_workflow_status_configs WHERE flow='reference.approval'),(SELECT count(*) FROM base_workflow_edges WHERE flow='reference.approval'),(SELECT label FROM base_workflow_status_configs WHERE flow='reference.approval' AND code='pending')",&[]).await?;
+            println!(
+                "reference.approval flows={} statuses={} edges={} pending label={:?}",
+                row.get::<_, i64>(0),
+                row.get::<_, i64>(1),
+                row.get::<_, i64>(2),
+                row.get::<_, Option<String>>(3)
+            );
+        }
         "init" => {
             let client = db.get().await?;
             // Disposable specimen only: initialize needs the platform operator.

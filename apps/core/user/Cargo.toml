@@ -32,6 +32,7 @@ bilibi-module-registry.workspace = true
 inventory.workspace = true
 bilibi-notifications.workspace = true
 bilibi-principal-directory.workspace = true
+bilibi-privacy.workspace = true
 bilibi-ui.workspace = true
 askama.workspace = true
 serde.workspace = true

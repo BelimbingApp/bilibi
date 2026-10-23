@@ -585,3 +585,171 @@ impl Media {
         Ok(report)
     }
 }
+
+/// One attachment an erasure turned into a tombstone.
+#[derive(Clone, Debug)]
+pub struct ErasedAttachment {
+    pub public_id: String,
+    /// The attachment row ID, the audit record kind `base/media/attachment`.
+    pub id: i64,
+}
+
+impl Media {
+    /// One subject's live attachments (draft and submitted, at most 500), after
+    /// its owner allows `Download` for this scope now. For a data-subject
+    /// request (ADR 05): the export names them by public id.
+    pub async fn subject_attachments(
+        &self,
+        client: &(impl GenericClient + Sync),
+        scope: &Scope,
+        subject: AttachmentSubject<'_>,
+    ) -> Result<Vec<Attachment>> {
+        self.subjects
+            .authorize(
+                client,
+                scope,
+                subject.kind,
+                SubjectAction::Download,
+                subject.id,
+            )
+            .await?;
+        let rows = client
+            .query(
+                &format!("{SELECT} WHERE a.tenant_id=$1 AND a.subject_type=$2 AND a.subject_id=$3 ORDER BY a.id LIMIT 500"),
+                &[&scope.tenant(), &subject.kind, &subject.id],
+            )
+            .await?;
+        rows.iter()
+            .map(|row| bound(row).map(|row| row.summary))
+            .collect()
+    }
+
+    /// Erasure (ADR 05): turn every submitted attachment of `subject` into a
+    /// tombstone and remove its asset row, in the caller's privacy erasure
+    /// transaction. The owner of the subject calls this from its personal-data
+    /// handler; the approved request is the authority, so no `SubjectAction` is
+    /// asked. Outside a privacy erasure transaction the database refuses. Drafts
+    /// become tombstones too. Bytes go afterwards, through
+    /// [`Media::remove_erased_bytes`] on a plain connection. Repeating it finds
+    /// nothing left to erase.
+    pub async fn erase_attachments(
+        &self,
+        tx: &mut MutationTransaction<'_>,
+        scope: &Scope,
+        subject: AttachmentSubject<'_>,
+    ) -> Result<Vec<ErasedAttachment>> {
+        let marked = tx
+            .sql()
+            .query_one(
+                "SELECT coalesce(current_setting('bilibi.privacy_erasure', true), '') <> ''",
+                &[],
+            )
+            .await?
+            .get::<_, bool>(0);
+        if !marked || tx.context().tenant != scope.tenant() {
+            return Err(Error::Database(bilibi_database::Error::Forbidden));
+        }
+        let rows = tx
+            .sql()
+            .query(
+                &format!("{SELECT} WHERE a.tenant_id=$1 AND a.subject_type=$2 AND a.subject_id=$3 ORDER BY a.id FOR UPDATE OF a"),
+                &[&scope.tenant(), &subject.kind, &subject.id],
+            )
+            .await?;
+        let mut erased = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let row = bound(row)?;
+            let asset = self.fetch(tx.sql(), scope.tenant(), row.asset_id).await?;
+            let (disk, key) = (asset.disk.clone(), asset.key.clone());
+            let (id, asset_id, user) = (row.id, row.asset_id, scope.user());
+            let changes = vec![
+                Change {
+                    kind: "base/media/attachment".into(),
+                    id,
+                    old: facts(&row.summary),
+                    new: json!({"public_id": row.summary.public_id, "subject_type": row.summary.subject_type,
+                        "subject_id": row.summary.subject_id, "state": "erased", "uploaded_by_id": row.summary.uploaded_by_id}),
+                },
+                Change {
+                    kind: "base/media/asset".into(),
+                    id: asset_id,
+                    old: audit(&asset),
+                    new: json!({}),
+                },
+            ];
+            tx.mutate(move |sql| {
+                Box::pin(async move {
+                    sql.execute(
+                        "UPDATE base_media_attachments SET state='erased',media_asset_id=NULL,erased_at=now(),erased_by=$2,erased_disk=$3,erased_key=$4,updated_at=now() WHERE id=$1",
+                        &[&id, &user, &disk, &key],
+                    )
+                    .await?;
+                    sql.execute("DELETE FROM base_media_assets WHERE id=$1", &[&asset_id])
+                        .await?;
+                    Ok(((), changes))
+                })
+            })
+            .await?;
+            erased.push(ErasedAttachment {
+                public_id: row.summary.public_id.clone(),
+                id,
+            });
+        }
+        Ok(erased)
+    }
+
+    /// Removes the bytes of this tenant's erased attachments and records each
+    /// removal. Safe to repeat: a file already gone counts as removed. Returns
+    /// how many files were removed now; a file that will not go stays pending
+    /// for the next call and the result is `CleanupFailed`.
+    pub async fn remove_erased_bytes(&self, client: &mut Client, scope: &Scope) -> Result<usize> {
+        let pending = client
+            .query(
+                "SELECT id,erased_disk,erased_key FROM base_media_attachments WHERE tenant_id=$1 AND state='erased' AND bytes_removed_at IS NULL ORDER BY id LIMIT $2",
+                &[&scope.tenant(), &CLEANUP_BATCH],
+            )
+            .await?;
+        if pending.is_empty() {
+            return Ok(0);
+        }
+        let roots = self.disks(&*client).await?;
+        let (mut removed, mut failed) = (0, false);
+        for row in pending {
+            let (id, disk, key): (i64, String, String) = (row.get(0), row.get(1), row.get(2));
+            if storage::delete(&roots, &disk, &key).await.is_err() {
+                failed = true;
+                continue;
+            }
+            let mut tx = self
+                .boundary
+                .begin(
+                    client,
+                    scope.mutation_context("media.attachment.bytes_removed"),
+                )
+                .await?;
+            tx.mutate(move |sql| {
+                Box::pin(async move {
+                    sql.execute(
+                        "UPDATE base_media_attachments SET bytes_removed_at=now() WHERE id=$1 AND bytes_removed_at IS NULL",
+                        &[&id],
+                    )
+                    .await?;
+                    let change = Change {
+                        kind: "base/media/attachment".into(),
+                        id,
+                        old: json!({"bytes": "present"}),
+                        new: json!({"bytes": "removed"}),
+                    };
+                    Ok(((), vec![change]))
+                })
+            })
+            .await?;
+            tx.commit().await?;
+            removed += 1;
+        }
+        if failed {
+            return Err(Error::CleanupFailed);
+        }
+        Ok(removed)
+    }
+}

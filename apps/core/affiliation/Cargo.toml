@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+bilibi-privacy.workspace = true
 askama.workspace = true
 bilibi-agent-api = { path = "../../base/agent_api" }
 bilibi-authz = { path = "../../base/authz" }

@@ -89,6 +89,8 @@ booleans and structure stay. Non-JSON or streamed bodies, and previews over
 32 KiB, record only `{"kind":"omitted","reason":…}`. `payload` redacts again
 on read (`redaction::inspect_stored`).
 
+**Data-subject requests.** The `base/integration.previews` store ("API exchange previews") under [`base/privacy`](../privacy/README.md) finds a saved preview only by an identifier (email or phone) the operator confirmed, and erasure replaces it in the endpoint, headers and bodies with `[erased]`. Previews still expire after `integration.payload_retention_days`.
+
 ## Reads, deletion and retention
 
 `list`, `get`, `payload` and `delete` take the session scope and authorize on
