@@ -45,6 +45,19 @@ impl Format {
     }
 }
 
+/// Who an export is for, which sets what it needs and its bounds.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Mode {
+    /// Downloaded now: `reports.export`, the interactive bounds.
+    Download,
+    /// Prepared in the background at the reader's request: `reports.export`,
+    /// the background bounds.
+    Prepared,
+    /// A scheduled delivery: its recipient asked for nothing, so it needs
+    /// only what `reports.view` lets them run, under the background bounds.
+    Delivery,
+}
+
 /// A finished export.
 #[derive(Debug)]
 pub struct File {
@@ -77,13 +90,11 @@ impl Reports {
         format: Format,
     ) -> Outcome<File> {
         let cap = self.export_rows(scope).await?;
-        self.export_within(scope, id, answers, format, cap, true)
+        self.export_within(scope, id, answers, format, cap, Mode::Download)
             .await
     }
 
-    /// The same file within `cap` rows; the queued export passes its own. A
-    /// scheduled delivery does not `require_export`: its recipient asked for
-    /// nothing, and receives only what `reports.view` lets them run.
+    /// The same file within `cap` rows, for `mode`.
     pub(crate) async fn export_within(
         &self,
         scope: &Scope,
@@ -91,13 +102,14 @@ impl Reports {
         answers: &BTreeMap<usize, Value>,
         format: Format,
         cap: usize,
-        require_export: bool,
+        mode: Mode,
     ) -> Outcome<File> {
-        if require_export {
+        if mode != Mode::Delivery {
             let client = self.db.get().await.map_err(Error::from)?;
             crate::authorize(&**client, scope, EXPORT).await?;
         }
-        let table = self.tabulate(scope, id, answers, cap).await?;
+        let background = mode != Mode::Download;
+        let table = self.tabulate(scope, id, answers, cap, background).await?;
         let bytes = render(&table, format)?;
         let client = self.db.get().await.map_err(Error::from)?;
         record_action(
@@ -124,9 +136,11 @@ impl Reports {
         id: i64,
         answers: &BTreeMap<usize, Value>,
         cap: usize,
+        background: bool,
     ) -> Outcome<Tabled> {
         let mut input = RunInput {
             answers: answers.clone(),
+            background,
             ..RunInput::default()
         };
         let first = self.run(scope, id, &input).await?;

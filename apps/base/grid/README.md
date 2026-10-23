@@ -192,6 +192,8 @@ Run the walkthrough against a **disposable** migrated database. It compares ever
 BILIBI_GRID_DEMO=disposable cargo run -p bilibi-web --example g5-grid-summary
 ```
 
+
+Both specs carry `bounds` (`Bounds { statement_ms, max_cost }`): `Default` is the interactive bound every other Grid read uses (2 s, `MAX_ESTIMATED_COST`); a background caller may pass a larger pair, up to `MAX_STATEMENT_MS` and `MAX_COST_BOUND`. A statement stopped by its timeout is refused as `QueryError::Limit`, like the cost bound, not reported as a database fault.
 ## Searching related text
 
 `query::text_search_sql(client, scope, root, paths)` builds a membership subquery for an owner's paginated search and count. Execute it immediately under the same scope, binding tenant, user and normalized search text to `$1`, `$2` and `$3`. The owner retains its pagination and statement timeout. Paths resolve against a fresh catalog; unavailable tables and restricted fields contribute no matches. Many-links search every text value before cell truncation, so a value beyond the displayed rollup still matches.

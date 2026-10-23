@@ -64,6 +64,9 @@ pub(crate) struct Show {
     grouped: Vec<(String, String, Option<&'static str>)>,
     /// A summary or matrix shown as the records behind it (a drill-down).
     as_rows: bool,
+    /// The last run was too heavy for a page: downloads, which read under
+    /// the same bounds, are not offered; Prepare is.
+    too_heavy: bool,
     confirm: Option<Confirm>,
     flash: Option<(StatusKind, String)>,
     schedule: schedule::Draft,
@@ -163,6 +166,7 @@ impl Show {
             drillable: Vec::new(),
             grouped: Vec::new(),
             as_rows: false,
+            too_heavy: false,
             confirm: None,
             flash: None,
             schedule: schedule::Draft::default(),
@@ -634,7 +638,6 @@ impl Show {
         {
             self.tab = "result".into();
         }
-        let header = self.header(&report, can)?;
         let facts = self.facts(scope, &report).await?;
         let path = page_path(&report);
         let hrefs: Vec<(String, &str, bool)> = TABS
@@ -669,6 +672,8 @@ impl Show {
             "schedule" => self.schedules(scope, &report, can).await?,
             _ => self.result(scope, &report, can).await?,
         };
+        // After the body: a run too heavy for the page withdraws the downloads.
+        let header = self.header(&report, can)?;
         let dialog = match self.confirm {
             Some(Confirm::Copy) => {
                 let consequence = format!("Copy {}?", report.name);
@@ -720,7 +725,7 @@ impl Show {
 
     fn header(&self, report: &Report, can: Can) -> Result<Html> {
         let mut actions = Html::EMPTY;
-        if can.export && report.builtin.is_none() {
+        if can.export && report.builtin.is_none() && !self.too_heavy {
             let mut query = self
                 .answers
                 .clone()
@@ -851,12 +856,18 @@ impl Show {
             drill: self.drill.iter().map(|d| d.filter.clone()).collect(),
             page: self.page,
             as_rows: self.as_rows,
+            background: false,
         };
         let run = match match report.builtin {
             Some(key) => self.pages.reports.run_builtin(scope, key, &input).await,
             None => self.pages.reports.run(scope, report.id, &input).await,
         } {
-            Ok(run) => run,
+            // A drill-down's lighter read says nothing about the whole result.
+            Ok(run) if self.as_rows => run,
+            Ok(run) => {
+                self.too_heavy = false;
+                run
+            }
             Err(
                 error @ (ReportError::NotFound | ReportError::Forbidden | ReportError::Database(_)),
             ) => return Err(page_error(error)),
@@ -867,6 +878,19 @@ impl Show {
                     StatusKind::Error,
                     &format!("This answer does not fit the report: {message}"),
                 )?);
+                return Ok(out);
+            }
+            // Too heavy for a page: offer the background export right here.
+            Err(error @ ReportError::TooHeavy(_)) => {
+                self.too_heavy = true;
+                out.push(&alert(
+                    "report-run-refused",
+                    StatusKind::Warning,
+                    &error.to_string(),
+                )?);
+                if can.export && report.builtin.is_none() {
+                    out.push(&self.exports(scope, report).await?);
+                }
                 return Ok(out);
             }
             Err(error) => {

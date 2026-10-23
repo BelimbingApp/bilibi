@@ -31,6 +31,22 @@ bilibi_walkthrough_fixture::inventory::submit! { bilibi_walkthrough_fixture::reg
     system_principals: &[],
 }) }
 
+// A source the planner thinks is heavy (20 million rows) that returns one
+// row at once: over the interactive cost bound, within the background one.
+static HEAVY: grid::GridContribution = grid::GridContribution {
+    record_fields: &[],
+    tables: &[grid::TableDecl::new(
+        "r1_heavy",
+        "Heavy estimate",
+        "grid.reference.view",
+        grid::Source::global("SELECT n AS id FROM r1_heavy() n"),
+        "id",
+        &[grid::Field::new("id", "ID", grid::FieldType::Integer)],
+    )],
+    links: &[],
+};
+grid::contribute!("base/grid", "r1.walkthrough", &HEAVY);
+
 struct Checks {
     failed: usize,
 }
@@ -130,6 +146,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let db = pool(&std::env::var("DATABASE_URL")?)?;
     bilibi_walkthrough_fixture::install(&db).await?;
+    // Before the first catalog read, which describes each source once.
+    db.get().await?.batch_execute("CREATE OR REPLACE FUNCTION r1_heavy() RETURNS SETOF int LANGUAGE plpgsql STABLE ROWS 20000000 AS 'BEGIN RETURN NEXT 1; END'").await?;
     let app = bilibi_web::App::new(db.clone(), "http://localhost:35567")?;
     let auth = app
         .services
@@ -693,6 +711,52 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "unsubscribing removes it",
         reports.subscriptions(&manager, rows_id).await?.is_empty(),
         "",
+    );
+
+    println!("== Read bounds: interactive and background");
+    let heavy = Draft {
+        name: "Heavy".into(),
+        description: String::new(),
+        record_type: "r1_heavy".into(),
+        kind: Kind::Summary,
+        definition: Definition {
+            groupings: vec![GroupingDef {
+                column: "id".into(),
+                bucket: None,
+            }],
+            ..Definition::default()
+        },
+    };
+    let heavy_id = write(&boundary, &db, &manager, "reports.create", async |tx| {
+        reports.create(tx, &manager, &heavy).await
+    })
+    .await?;
+    let refused = reports.run(&manager, heavy_id, &RunInput::default()).await;
+    checks.check(
+        "a report over the interactive cost bound is refused with the export offer",
+        matches!(&refused, Err(ReportError::TooHeavy(_)))
+            && refused
+                .as_ref()
+                .err()
+                .is_some_and(|e| e.to_string().contains("Prepare it as an export")),
+        refused
+            .as_ref()
+            .err()
+            .map(ToString::to_string)
+            .unwrap_or_default()
+            .chars()
+            .take(120)
+            .collect::<String>(),
+    );
+    let background = RunInput {
+        background: true,
+        ..RunInput::default()
+    };
+    let run = reports.run(&manager, heavy_id, &background).await;
+    checks.check(
+        "the same report runs under the larger background bounds",
+        run.is_ok(),
+        format!("{:?}", run.as_ref().err()),
     );
 
     println!("== Deleting");

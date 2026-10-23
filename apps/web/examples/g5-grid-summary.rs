@@ -49,6 +49,7 @@ impl Report {
 
 fn spec(filters: Vec<Filter>, groupings: Vec<Grouping>, measures: Vec<Measure>) -> SummarySpec {
     SummarySpec {
+        bounds: grid::Bounds::default(),
         filters,
         groupings,
         measures,
@@ -317,6 +318,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         &manager,
         "reference_items",
         &PageSpec {
+            bounds: grid::Bounds::default(),
             filters: vec![filter("category", Test::Equals(json!("tools")))],
             sorts: vec![
                 Sort {

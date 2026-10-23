@@ -116,6 +116,7 @@ fn run_input(input: &Value) -> Result<RunInput, AgentError> {
         drill,
         page,
         as_rows: input["as_rows"].as_bool() == Some(true),
+        background: false,
     })
 }
 fn listed(report: &crate::Report) -> Value {

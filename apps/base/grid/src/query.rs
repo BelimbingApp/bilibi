@@ -41,6 +41,10 @@ impl fmt::Display for QueryError {
 impl std::error::Error for QueryError {}
 impl From<tokio_postgres::Error> for QueryError {
     fn from(error: tokio_postgres::Error) -> Self {
+        // A statement past its timeout is the read's bound, not a fault.
+        if error.code() == Some(&tokio_postgres::error::SqlState::QUERY_CANCELED) {
+            return Self::Limit("the read took longer than its time bound");
+        }
         Self::Database(error.into())
     }
 }

@@ -4,7 +4,11 @@
 //! expires after `reports.export_days`, and the bell says when it is ready.
 //! Only the requester reads it. Each export is audited like a download.
 //! No Bilimbi counterpart.
-use crate::{authorize, contributions, export::Format, store, ReportError, Reports, EXPORT};
+use crate::{
+    authorize, contributions,
+    export::{Format, Mode},
+    store, ReportError, Reports, EXPORT,
+};
 use bilibi_artifacts::{Metadata, Operation, Owner, Reference};
 use bilibi_database::{Change, Error, MutationTransaction};
 use bilibi_notifications::Notice;
@@ -267,7 +271,18 @@ impl Reports {
             Err(_) => return JobOutcome::Retry("settings_unavailable"),
         };
         let file = match self
-            .export_within(scope, report, &answers, format, cap, !quiet)
+            .export_within(
+                scope,
+                report,
+                &answers,
+                format,
+                cap,
+                if quiet {
+                    Mode::Delivery
+                } else {
+                    Mode::Prepared
+                },
+            )
             .await
         {
             Ok(file) => file,

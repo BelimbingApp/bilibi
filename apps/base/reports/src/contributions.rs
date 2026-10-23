@@ -24,6 +24,10 @@ pub const EXPORT_ROWS_KEY: &str = "reports.export_rows";
 pub const QUEUED_ROWS_KEY: &str = "reports.queued_export_rows";
 pub const EXPORT_DAYS_KEY: &str = "reports.export_days";
 pub const MAX_SUBSCRIPTIONS_KEY: &str = "reports.max_subscriptions";
+pub const STATEMENT_MS_KEY: &str = "reports.statement_ms";
+pub const MAX_COST_KEY: &str = "reports.max_cost";
+pub const QUEUED_STATEMENT_MS_KEY: &str = "reports.queued_statement_ms";
+pub const QUEUED_MAX_COST_KEY: &str = "reports.queued_max_cost";
 
 inventory::submit! { Contribution::new(VOCABULARY, "base/reports", Provenance { module: "base/reports", source: file!(), line: line!() }, &VocabularyContribution {
     domains: &["reports"],
@@ -85,4 +89,39 @@ bound!(
     200,
     "Scheduled reports per person",
     "How many report schedules one person may hold."
+);
+// Read bounds. The interactive pair defaults to Grid's own bound, so a report
+// on a page is no heavier than a list; prepared exports and deliveries run in
+// the background and may take the larger pair.
+bound!(
+    STATEMENT_MS_KEY,
+    2_000,
+    500,
+    30_000,
+    "Report time bound (ms)",
+    "How long one read of a report on a page may run before it is stopped."
+);
+bound!(
+    MAX_COST_KEY,
+    100_000,
+    1_000,
+    bilibi_grid::MAX_COST_BOUND,
+    "Report cost bound",
+    "The planner cost above which a report on a page is refused before it runs; the reader can prepare it as an export instead."
+);
+bound!(
+    QUEUED_STATEMENT_MS_KEY,
+    60_000,
+    1_000,
+    bilibi_grid::MAX_STATEMENT_MS,
+    "Background report time bound (ms)",
+    "How long one read of a prepared export or scheduled delivery may run."
+);
+bound!(
+    QUEUED_MAX_COST_KEY,
+    10_000_000,
+    1_000,
+    bilibi_grid::MAX_COST_BOUND,
+    "Background report cost bound",
+    "The planner cost above which a prepared export or scheduled delivery is refused."
 );
