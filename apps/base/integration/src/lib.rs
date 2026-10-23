@@ -10,6 +10,7 @@
 //! deletion is an audited mutation. `web` is the API Exchanges list and
 //! detail (`/system/api-exchanges`).
 mod contributions;
+mod privacy;
 mod redaction;
 mod redirect;
 pub mod reference_webhook;
@@ -659,7 +660,7 @@ async fn visible_tenant(
 
 inventory::submit! {
     Module { id: "base/integration", layer: bilibi_module_registry::Layer::Base,
-        dependencies: &["base/module_registry", "base/database", "base/audit", "base/tenancy", "base/authz", "base/queue", "base/schedule", "base/settings", "base/ui", "base/datetime", "base/locale", "base/menu", "base/grid"],
+        dependencies: &["base/module_registry", "base/database", "base/audit", "base/tenancy", "base/authz", "base/queue", "base/schedule", "base/settings", "base/ui", "base/datetime", "base/locale", "base/menu", "base/grid", "base/privacy"],
         migrations: &[("base-integration-001", include_str!("../migrations/001-exchanges.sql")),
             ("base-integration-002", include_str!("../migrations/002-reference-webhook.sql")),
             ("base-integration-003-agent-self-report", include_str!("../migrations/003-agent-self-report.sql")),
