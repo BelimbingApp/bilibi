@@ -5,6 +5,7 @@ mod directory;
 pub mod files;
 pub mod identity;
 pub mod model;
+mod privacy;
 mod step_up;
 mod web;
 
@@ -174,12 +175,13 @@ impl PersonService {
 inventory::submit! {
     bilibi_module_registry::Module {
         id: "core/person", layer: bilibi_module_registry::Layer::Core,
-        dependencies: &["base/database", "base/tenancy", "base/authz", "base/grid", "base/agent_api", "base/principal_directory", "base/ui", "base/menu", "base/datetime", "base/locale", "base/media", "base/artifacts", "base/step_up", "core/party"],
+        dependencies: &["base/database", "base/tenancy", "base/authz", "base/grid", "base/agent_api", "base/principal_directory", "base/ui", "base/menu", "base/datetime", "base/locale", "base/media", "base/artifacts", "base/step_up", "base/privacy", "core/party"],
         migrations: &[("001-core-person", include_str!("../migrations/001-person.sql"))],
         services: &[bilibi_module_registry::Service { id: SERVICE, factory: |services| {
             let parties = services.get::<bilibi_tenancy::PartyProofs>("base/tenancy.parties")?;
             parties.bind_persons(Arc::new(identity::Provider))?;
             files::bind(parties)?;
+            privacy::bind(services.get("base/media.store")?, services.get("base/artifacts.store")?)?;
             let directory = services.get::<bilibi_principal_directory::PrincipalDirectory>("base/principal_directory.directory")?;
             directory.bind("core/person", Arc::new(directory::Provider(bilibi_principal_directory::PrincipalKind::Person)))?;
             directory.bind("core/person", Arc::new(directory::Provider(bilibi_principal_directory::PrincipalKind::Agent)))?;

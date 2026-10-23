@@ -528,13 +528,60 @@ pub async fn recent_actions(
         .collect())
 }
 
+/// The marker `base/privacy` sets, transaction-locally, on an erasure
+/// transaction for one request; [`erase_values`] refuses without it.
+pub const ERASURE_MARKER: &str = "bilibi.privacy_erasure";
+
+/// Replaces `fields` with `[erased]` in every mutation row of one record
+/// (`kind`, `id`) in the transaction's tenant, and its subject identifier, then
+/// writes one append-only `base_audit_erasures` row. Only a privacy erasure
+/// transaction for `request` may call it (ADR 05); the evidence guard still
+/// refuses every other change. Returns the mutation rows changed.
+pub async fn erase_values(
+    tx: &bilibi_database::MutationTransaction<'_>,
+    request: i64,
+    kind: &str,
+    id: i64,
+    fields: &[String],
+) -> Result<i32> {
+    if request <= 0
+        || id <= 0
+        || kind.is_empty()
+        || kind.len() > 255
+        || fields.is_empty()
+        || fields.len() > 64
+    {
+        return Err(Error::Invalid);
+    }
+    let attribution = Attribution::from_context(tx.context())?;
+    let tenant = tx.context().tenant;
+    let row = tx
+        .sql()
+        .query_one(
+            "SELECT base_audit_erase_values($1,$2,$3,$4,$5,$6,$7,$8)",
+            &[
+                &tenant,
+                &request,
+                &kind,
+                &id.to_string(),
+                &fields,
+                &attribution.actor_type,
+                &attribution.actor_id,
+                &attribution.trace_id,
+            ],
+        )
+        .await?;
+    Ok(row.get(0))
+}
+
 inventory::submit! {
     bilibi_module_registry::Module {
         id: "base/audit", layer: bilibi_module_registry::Layer::Base,
         dependencies: &["base/module_registry", "base/database", "base/tenancy"],
         migrations: &[("006-audit-evidence", include_str!("../migrations/006-evidence.sql")),
             ("base-audit-007-agent-self-report", include_str!("../migrations/007-agent-self-report.sql")),
-            ("base-audit-008-client-identity", include_str!("../migrations/008-client-identity.sql"))],
+            ("base-audit-008-client-identity", include_str!("../migrations/008-client-identity.sql")),
+            ("base-audit-009-erasure", include_str!("../migrations/009-erasure.sql"))],
         services: &[bilibi_module_registry::Service { id: "base/audit.capture", factory: |services| {
             let db = services.get::<Db>("base/database.pool")?.as_ref().clone();
             let capture = Arc::new(AuditCapture::new(RedactionPolicy::from_inventory(), db));

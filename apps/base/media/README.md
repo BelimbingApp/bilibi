@@ -117,6 +117,14 @@ drafts for one tenant with the host command, which has no automatic schedule:
 
     bilibi-web media-cleanup --tenant ID [--hours POSITIVE_INTEGER]   # default 24
 
+### Personal-data erasure
+
+**A submitted attachment is erased only for a `base/privacy` erasure, and leaves a tombstone** ([ADR 05](../../../docs/architecture/decisions/05-personal-data-registry.md), migration `base-media-003-erasure`).
+
+- `erase_attachments` (owner's `MutationTransaction`) turns a subject's attachments, drafts included, into tombstones: the row keeps who uploaded what, for which record and when; the asset row goes. Outside a privacy erasure transaction the database refuses. Repeating it finds nothing left.
+- `remove_erased_bytes` (plain connection, after commit) deletes the files the tombstones name. Call it from the store's `after_erase`.
+- An erased row never changes again. `ImmutableAttachment` still refuses every other update or delete.
+
 Photo cleanup (background removal and the like) is not part of this module.
 Per-owner adapters for Company and Person records follow K15.
 

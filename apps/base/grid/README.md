@@ -28,7 +28,9 @@ Depend on `base/grid`, submit one `GridContribution` to `TABLES`
 - `Field`s: `Field::new`/`choice`; `column` names the source key when it differs
   from the id; `hidden` fields exist only for joins; `protected` keeps a field
   out of operator restriction (the key, label, time, hidden and join fields are
-  protected implicitly).
+  protected implicitly); `personal(PersonalKind::…)` marks a field that holds a
+  person's data, and `base/privacy` then refuses boot unless the owning module
+  contributes a personal-data store (`apps/base/privacy/README.md`).
 - `LinkDecl`s: `One` (a foreign key to the target's **key**, or an edge yielding at
   most one row per parent) or `Many` (the reverse, or an attachment table), joined
   `on` two declared fields or through an edge `Source` selecting `from_key` and
