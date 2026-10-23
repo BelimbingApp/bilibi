@@ -257,7 +257,7 @@ pub trait Handler: Send + Sync {
 pub const ERASED: &str = "[erased]";
 
 /// A store key is its module ID, a dot and a snake_case name.
-fn store_key(module: &str, id: &str) -> bool {
+pub(crate) fn store_key(module: &str, id: &str) -> bool {
     id.strip_prefix(module)
         .and_then(|rest| rest.strip_prefix('.'))
         .is_some_and(|name| {

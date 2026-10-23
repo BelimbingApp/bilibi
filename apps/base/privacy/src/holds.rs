@@ -98,6 +98,60 @@ impl Holds {
     }
 }
 
+/// Every active hold in one tenant, for a retention sweep: the people held
+/// (everything about them stays) and the records held. Read inside the
+/// sweep's transaction, like [`Holds`].
+#[derive(Clone, Debug, Default)]
+pub struct TenantHolds {
+    persons: std::collections::BTreeSet<i64>,
+    records: std::collections::BTreeSet<(String, i64)>,
+}
+impl TenantHolds {
+    pub fn person_held(&self, person: i64) -> bool {
+        self.persons.contains(&person)
+    }
+    pub fn record_held(&self, kind: &str, id: i64) -> bool {
+        self.records.contains(&(kind.to_owned(), id))
+    }
+    /// The held people, for a sweep that skips everything about them in SQL.
+    pub fn persons(&self) -> Vec<i64> {
+        self.persons.iter().copied().collect()
+    }
+    /// The held record IDs of one kind, for a sweep that skips them in SQL.
+    pub fn records_of(&self, kind: &str) -> Vec<i64> {
+        self.records
+            .iter()
+            .filter(|(held, _)| held == kind)
+            .map(|(_, id)| *id)
+            .collect()
+    }
+    pub(crate) async fn load(client: &impl GenericClient, tenant: i64) -> Result<Self> {
+        let rows = client
+            .query(
+                "SELECT person_id,record_kind,record_id FROM base_privacy_holds \
+                 WHERE tenant_id=$1 AND released_at IS NULL FOR SHARE",
+                &[&tenant],
+            )
+            .await?;
+        let mut holds = Self::default();
+        for row in rows {
+            match (
+                row.get::<_, Option<i64>>(0),
+                row.get::<_, Option<String>>(1),
+            ) {
+                (Some(person), _) => {
+                    holds.persons.insert(person);
+                }
+                (None, Some(kind)) => {
+                    holds.records.insert((kind, row.get(2)));
+                }
+                (None, None) => {}
+            }
+        }
+        Ok(holds)
+    }
+}
+
 fn reason(text: &str) -> Result<String> {
     let text = text.trim();
     if text.is_empty() || text.len() > MAX_REASON || text.chars().any(char::is_control) {

@@ -319,6 +319,38 @@ impl Settings {
         }
         Ok(value)
     }
+    /// [`Settings::get_global`] for one tenant: its own value, else the global
+    /// one, else the default. For trusted workers acting for a tenant without a
+    /// session (a retention sweep). The same refusals: encrypted definitions
+    /// and keys that cannot hold a tenant value.
+    pub async fn get_tenant(
+        &self,
+        client: &dyn ReadClient,
+        tenant: i64,
+        key: &str,
+    ) -> Result<Value> {
+        let definition = match self.definitions.lookup(key)?.setting {
+            Setting::Definition(d) if !d.encrypted && d.scopes.contains(&ScopeKind::Tenant) => d,
+            _ => return Err(Error::Invalid),
+        };
+        if tenant <= 0 {
+            return Err(Error::Invalid);
+        }
+        let rows = client.query("SELECT value,is_encrypted,scope_type FROM base_settings WHERE key=$1 AND ((tenant_id=$2 AND scope_type='tenant' AND scope_id=$2) OR (tenant_id=0 AND scope_type='global' AND scope_id=0)) ORDER BY scope_type='global'", &[&key, &tenant]).await?;
+        for row in &rows {
+            if row.get::<_, String>("scope_type") == "global"
+                && !definition.scopes.contains(&ScopeKind::Global)
+            {
+                continue;
+            }
+            let value: Value = row.get("value");
+            if row.get::<_, bool>("is_encrypted") || definition.validate(&value).is_err() {
+                return Err(Error::Invalid);
+            }
+            return Ok(value);
+        }
+        Ok((definition.default)())
+    }
     /// The caller owns the surrounding transaction. Missing/invalid encryption
     /// keys refuse the write before SQL; secret values never enter audit data.
     pub async fn put(

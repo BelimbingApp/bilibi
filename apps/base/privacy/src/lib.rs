@@ -11,16 +11,22 @@ mod due;
 mod holds;
 mod registry;
 mod requests;
+mod retention;
 mod runner;
 mod web;
 pub use documents::{RequestDocuments, ARTIFACT_OWNER, CERTIFICATE_YEARS, DOCUMENTS, EXPORT_DAYS};
 pub use due::{DUE_SCHEDULE, DUE_WORKER, NOTICE_DAYS};
+pub use holds::TenantHolds;
 pub use holds::{Hold, HoldEvent, HoldTarget, Holds};
 pub use registry::{
     Action, Deferral, Erased, ErasedRecord, Exported, FileRef, Handler, HandlerFuture, Identifier,
     Kept, KeptReason, KindAction, KindCount, Located, PersonalData, Subject, ERASED, PERSONAL_DATA,
 };
 pub use requests::{NewRequest, RequestKind, RequestView, StoreProgress, DUE_DAYS};
+pub use retention::{
+    ClassView, RecordClass, RetentionAction, SweepView, Sweeper, Swept, MAX_DAYS, PERIODS,
+    RECORD_CLASSES, SWEEP_SCHEDULE, SWEEP_WORKER,
+};
 pub use runner::{FINISH_WORKER, STORE_WORKER};
 
 use bilibi_authz::{CapabilityDefinition, VocabularyContribution, VOCABULARY};
@@ -52,6 +58,10 @@ pub const REQUEST_VIEW: &str = "privacy.request.view";
 pub const REQUEST_RECEIVE: &str = "privacy.request.receive";
 /// Approve requests; the request jobs run as the approver.
 pub const REQUEST_APPROVE: &str = "privacy.request.approve";
+/// Read record classes, the tenant's retention periods and sweep results.
+pub const RETENTION_VIEW: &str = "privacy.retention.view";
+/// Set the tenant's retention periods.
+pub const RETENTION_MANAGE: &str = "privacy.retention.manage";
 /// The Step-up operation an erasure approval asks for; tenants cannot turn it off.
 pub const STEP_UP_ERASURE: &str = "base.privacy.erasure.approve";
 
@@ -67,6 +77,7 @@ pub struct Privacy {
     parties: Arc<bilibi_tenancy::PartyProofs>,
     artifacts: Arc<bilibi_artifacts::Artifacts>,
     stores: registry::Stores,
+    classes: retention::Classes,
 }
 impl Privacy {
     /// Every mounted store key with its label, sorted by key.
@@ -180,6 +191,7 @@ macro_rules! provenance {
     };
 }
 inventory::submit! { Consumer::new::<PersonalData>(PERSONAL_DATA, "base/privacy", registry::validate) }
+inventory::submit! { Consumer::new::<RecordClass>(RECORD_CLASSES, "base/privacy", retention::validate) }
 inventory::submit! { Contribution::new(VOCABULARY, "base/privacy.vocabulary", provenance!(), &VocabularyContribution {
     domains: &["privacy"],
     verbs: &["view", "manage", "receive", "approve"],
@@ -187,6 +199,7 @@ inventory::submit! { Contribution::new(VOCABULARY, "base/privacy.vocabulary", pr
         CapabilityDefinition::tenant(HOLD_VIEW), CapabilityDefinition::tenant(HOLD_MANAGE),
         CapabilityDefinition::tenant(REQUEST_VIEW), CapabilityDefinition::tenant(REQUEST_RECEIVE),
         CapabilityDefinition::tenant(REQUEST_APPROVE),
+        CapabilityDefinition::tenant(RETENTION_VIEW), CapabilityDefinition::tenant(RETENTION_MANAGE),
     ],
     roles: &[],
     system_principals: &[],
@@ -219,6 +232,21 @@ inventory::submit! { Contribution::new(DEFINITIONS, NOTICE_DAYS, provenance!(), 
     editor: Some(Editor { group: "Personal data", label: "Request notice days",
         help: "Days before a request's due date that the people handling it are notified.", capability: Some(REQUEST_APPROVE), reveal_duration_ms: 5_000 }),
 })) }
+inventory::submit! { Contribution::new(DEFINITIONS, PERIODS, provenance!(), &Setting::Definition(Definition {
+    value_type: ValueType::Array, scopes: &[ScopeKind::Tenant], default: || json!({}),
+    nullable: false, encrypted: false, minimum: None, maximum: None,
+    validator: Some(bilibi_settings::Validator { accepts: retention::valid_periods, message: "Give each record class a whole number of days from 1 to 36500." }),
+    // Edited on the retention page, which enforces each class's legal minimum.
+    editor: None,
+})) }
+// Retention sweeps: a daily scheduled task, run only after an operator enables it.
+inventory::submit! { Contribution::new(WORKERS, SWEEP_WORKER, provenance!(), &Worker { max_attempts: 3, validate: |args| bilibi_schedule::worker::validate(args, retention::arguments) }) }
+inventory::submit! { Contribution::new(HANDLERS, SWEEP_WORKER, provenance!(), &HandlerBinding { service: "base/privacy.sweep_job", capability: bilibi_schedule::EXECUTE }) }
+inventory::submit! { Contribution::new(bilibi_schedule::DEFINITIONS, SWEEP_SCHEDULE, provenance!(), &bilibi_schedule::Definition {
+    name: "Personal-data retention sweep", expression: "0 2 * * *", timezone: "UTC",
+    task_name: "Personal-data retention sweep", worker: SWEEP_WORKER, args: || json!({}),
+    overlap: bilibi_schedule::Overlap::Forbid, misfire: bilibi_schedule::Misfire::Coalesce, owner_route: Some(web::RETENTION_PATH),
+}) }
 // Due notices: a daily scheduled task, run only after an operator enables it.
 inventory::submit! { Contribution::new(WORKERS, DUE_WORKER, provenance!(), &Worker { max_attempts: 3, validate: |args| bilibi_schedule::worker::validate(args, due::arguments) }) }
 inventory::submit! { Contribution::new(HANDLERS, DUE_WORKER, provenance!(), &HandlerBinding { service: "base/privacy.due_job", capability: bilibi_schedule::EXECUTE }) }
@@ -256,6 +284,12 @@ page!(
     REQUEST_VIEW
 );
 page!("base/privacy.holds", web::HOLDS_PATH, "holds", HOLD_VIEW);
+page!(
+    "base/privacy.retention",
+    web::RETENTION_PATH,
+    "retention",
+    RETENTION_VIEW
+);
 inventory::submit! { Contribution::new(DOWNLOADS, "base/privacy.request.document", provenance!(), &Download {
     path: "/privacy/requests/{id}/document", service: web::DOWNLOADS, operation: "document", access: Access::Capability(REQUEST_VIEW),
 }) }
@@ -269,6 +303,7 @@ inventory::submit! { Contribution::new(PAGE_WRITES, web::SERVICE, provenance!(),
         ("refuse", "base.privacy.request.refuse"),
         ("place", "base.privacy.hold.place"),
         ("release", "base.privacy.hold.release"),
+        ("set_retention", "base.privacy.retention.set"),
     ],
     pending: Pending::None,
 }) }
@@ -295,6 +330,14 @@ bilibi_menu::contribute!(
         .requires(bilibi_menu::Requirement::Capability(HOLD_VIEW))
         .order(20)
 );
+bilibi_menu::contribute!(
+    "base/privacy",
+    bilibi_menu::MenuItem::page("admin.privacy.retention", "Retention", web::RETENTION_PATH)
+        .icon("clock")
+        .under("admin.privacy")
+        .requires(bilibi_menu::Requirement::Capability(RETENTION_VIEW))
+        .order(30)
+);
 
 fn build(services: &bilibi_module_registry::Services) -> RegistryResult<Privacy> {
     let modules = bilibi_module_registry::discover()?;
@@ -315,6 +358,7 @@ fn build(services: &bilibi_module_registry::Services) -> RegistryResult<Privacy>
         parties,
         artifacts: services.get("base/artifacts.store")?,
         stores: registry::Stores::from_catalog(&catalog, &modules)?,
+        classes: retention::Classes::from_catalog(&catalog, &modules)?,
     })
 }
 
@@ -327,6 +371,7 @@ inventory::submit! {
             ("base-privacy-001-holds", include_str!("../migrations/001-holds.sql")),
             ("base-privacy-002-requests", include_str!("../migrations/002-requests.sql")),
             ("base-privacy-003-due-notices", include_str!("../migrations/003-due-notices.sql")),
+            ("base-privacy-004-retention", include_str!("../migrations/004-retention.sql")),
         ],
         services: &[
             Service { id: SERVICE, factory: |services| Ok(Arc::new(build(services)?)) },
@@ -357,6 +402,12 @@ inventory::submit! {
             } },
             Service { id: "base/privacy.finish_job", factory: |services| {
                 Ok(Arc::new(HandlerService(Arc::new(runner::FinishJob { privacy: services.get(SERVICE)? }))))
+            } },
+            Service { id: "base/privacy.sweep_job", factory: |services| {
+                Ok(Arc::new(HandlerService(Arc::new(retention::SweepJob {
+                    privacy: services.get(SERVICE)?,
+                    schedule: services.get("base/schedule.store")?,
+                }))))
             } },
             Service { id: "base/privacy.due_job", factory: |services| {
                 Ok(Arc::new(HandlerService(Arc::new(due::DueJob {
