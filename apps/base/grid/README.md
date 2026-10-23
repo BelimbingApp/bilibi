@@ -151,7 +151,7 @@ The estimate is an admission check, not a promise about runtime; the timeout is
 the execution backstop. Owners must still index their sources and join keys.
 
 The query returns typed `QueryError`s and converts to the shared database error
-for page handlers. It does not sort/filter walked columns or persist layouts (G4).
+for page handlers. It does not sort/filter walked columns or persist layouts (G4); `page_keys` does the sorting and filtering (G5).
 
 Run the live projection walkthrough against a **disposable** migrated
 PostgreSQL database:
@@ -166,6 +166,28 @@ IDs and an empty group; applies/revokes restrictions and grants; exercises scope
 edges and global text keys; then demonstrates cardinality refusal, input bounds,
 cost rejection, timeout and a successful projection after failure. It removes its
 reference rows on success. No unit tests or test runner are involved.
+
+## Grouped summaries and row pages (G5)
+
+The report builder's reads ([ADR 05](../../../docs/architecture/decisions/05-report-builder-reads-owner-sources.md)), in `src/summary.rs`, with `project`'s rules: a fresh scoped catalog, a read-only repeatable-read transaction, owner sources with tenant and user bindings, the `EXPLAIN` bound of 100,000 and the 2 s and 500 ms timeouts.
+
+| Call | Returns |
+| --- | --- |
+| `summarize(&db, &scope, root, &SummarySpec { filters, groupings, measures, timezone, max_groups })` | A `Line` per group (`keys`, `rows`, one value per measure), a subtotal line per first-level group when there are two groupings, and the `total`. Groups in key order, nulls last |
+| `page_keys(&db, &scope, root, &PageSpec { filters, sorts, timezone, offset, limit })` | One page of root keys in sort order and the matching `total`; pass the keys to `project` for the cells |
+
+- **Columns** are specs, resolved against the reader's catalog: a field, a linked field or a rollup. A restricted or unreadable column is refused (`QueryError::Column`), so it can neither be shown nor filtered on.
+- **Filters** (`Test`): `Equals`, `OneOf` (up to 100 values), `Contains` (text and choices), `Range` (numbers, or `YYYY-MM-DD` days for dates and date-times), `Within(Period)` (today, this week, last 7 or 30 days, this month, quarter or year), `Empty`, `NotEmpty`. At most 16. A type mismatch is `QueryError::Unsupported`.
+- **Groupings**: at most 2. A date or date-time groups only by a `Bucket` (day, week from Monday, month, quarter, year) and returns the bucket's first day; anything else groups by value.
+- **Measures**: at most 8. `count` (rows with a value), `sum` and `avg` (numbers), `min` and `max` (ordered values and text).
+- **Time zone**: the reader's IANA zone (`bilibi_datetime::valid_timezone`). Date-time buckets and day filters use the reader's local days; a day range on an instant compares against the instants those days start and end at, so the owner's index still applies.
+- **Bounds**: `max_groups` 1 to 1,000; above it the read is refused, never truncated. Pages hold 1 to 100 rows and start within the first 10,000; up to 3 sorts, the root key breaking ties.
+
+Run the walkthrough against a **disposable** migrated database. It compares every answer with plain SQL over the reference rows, proves each refusal, and exits non-zero on any failure:
+
+```sh
+BILIBI_GRID_DEMO=disposable cargo run -p bilibi-web --example g5-grid-summary
+```
 
 ## Searching related text
 

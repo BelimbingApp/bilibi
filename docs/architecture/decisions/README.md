@@ -54,3 +54,9 @@ Every record carries these header lines: Document Type, Status, Agents, Scope, L
 | Record | Status |
 | --- | --- |
 | [04 Provider-neutral single sign-on](./04-provider-neutral-single-sign-on.md) | Accepted |
+
+### Data and reporting
+
+| Record | Status |
+| --- | --- |
+| [05 Report builder: reports read owners' Grid sources under bounds](./05-report-builder-reads-owner-sources.md) | Proposed |
