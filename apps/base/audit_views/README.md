@@ -62,6 +62,8 @@ this only when its owner's Grid table names it in `record_types`: Companies
 without it is not withheld in the audit views, so declare `record_types` with
 every restrictable table.
 
+A field the reader sees **masked** (ADR 05, `bilibi_authz::fields::masked_by_record_type`) shows partial old and new values instead. When the two partial values read the same although the stored values differ (two emails at one domain), the row shows the `Restricted` marker, so the change is never hidden.
+
 ## Record History (`record.history` embed)
 
 The demoted labelled "History" disclosure a record page places in its header

@@ -14,7 +14,7 @@
 | Platform handlers: Person, User, Affiliation, Address, Events, Integration | Built |
 | Notice as a request nears its due date | Built |
 | Retention classes, tenant periods, sweeps and operator page | Built |
-| Partial masking and audited reveal | Planned |
+| Partial masking and audited reveal | Built |
 
 ## Contribute a store
 
@@ -137,6 +137,16 @@ inventory::submit! { Contribution::new(bilibi_privacy::RECORD_CLASSES, "core/use
 | Log | `base_privacy_sweeps` (migration `base-privacy-004-retention`): class, cutoff, period, acted on, kept. A sweep records its result once; rows are never changed otherwise or removed |
 | Reading | `/privacy/retention` and `base.privacy.retention.list` (`privacy.retention.view`): every class, its clock, action, default, minimum, this tenant's period, the period in use and the last sweep |
 
+## Masking and reveal
+
+**A field restricted in mask mode shows a partial value; revealing the full value needs `privacy.field.reveal`, a reason, and is recorded.**
+
+- An operator chooses the mode per restricted field on `/authz/field-restrictions`: withhold (removed, as before) or mask. Only a field its Grid table marks personal can be masked; a role that withholds wins over one that masks.
+- Partial values by kind (`bilibi_authz::fields::partial`): email `a•••@example.com`, phone `•••• 1234`, date the year, name initials, identifier the last four characters, free text nothing.
+- Masked values reach every reader path: owner records and lists (Person, Affiliation, Address), Grid columns, agent JSON (with `masked` naming the fields) and history. Masked fields are not searchable and refuse writes, like withheld ones.
+- Reveal: `Privacy::reveal_field(scope, table, field, record, reason)`, the person record page's Reveal action, or `base.privacy.field.reveal` (a reviewed write). It checks `privacy.field.reveal`, a 1–255 character reason and Step-up `base.privacy.field.reveal` (off until the tenant turns it on), reads through `bilibi_grid::query::reveal`, and records the action `privacy.field.revealed` with table, field, record and reason, never the value, before returning it. A withheld or unrestricted field is `Forbidden`.
+- The access export is the data subject's own copy and is not masked.
+
 ## Documents
 
 **An access request ends with an export; an erasure ends with a certificate. Both are `base/artifacts` documents owned by `base.privacy`.**
@@ -178,6 +188,8 @@ No unit tests. Prove on a disposable database ([runtime parity](../../../docs/ru
 | Requests | `examples/requests-walkthrough.rs` with `seed`, then without, on a disposable database with the queue running | Access: one export covering every store, download audited as `artifacts.read`. Tenant 2 sees no request. Erasure: refused for whoever received it, approved by a second person with an authenticator code; a failing store leaves it `running` and late until a retry answers; afterwards person and account are stubs, attachment bytes gone, document deleted, audit values `[erased]` with ledger rows, certificate lists every store; a console search finds no erased value. Due notices: refused before the definition is enabled; once enabled, a request due tomorrow notifies its receiver and verifier once, and a second run adds nothing. A hold on an unknown kind is `Invalid`; a held person is kept and named on the certificate; after release a new erasure acts |
 
 | Retention | `examples/retention-walkthrough.rs` with `seed`, then without, on a disposable database with the queue running | Viewer refused, unknown class and 0 days `Invalid`; tenant 2 keeps its own (empty) periods. Before enabling, run-now is refused. Run 1: a closed account past 30 days anonymised with `[erased]` audit ledger rows, a held one kept, a recently closed one untouched, notices past 10 days purged, tenant 2's untouched. After release, run 2 anonymises the held account; run 3 acts on nothing. The sweep log refuses edits and deletes |
+
+| Masking | `examples/masking-walkthrough.rs` on a disposable database | Masking a non-personal field refused. For viewer and staff (email and work email masked, phone withheld): agent JSON, list and Grid columns show `a•••@corp.example` and `m•••@example.test`, phone restricted; search by the email finds nothing for them and the person for admin; the record page shows the partial email with a Reveal action; history shows `a•••@example.test` → `a•••@corp.example`; a write to the email is refused. Reveal: no reason `Invalid`; with a reason the full value, recorded as `privacy.field.revealed` without the value; withheld, unrestricted, no capability and full-view readers refused; the agent operation reveals the work email |
 
 Run the holds walkthrough only against a fresh disposable database:
 

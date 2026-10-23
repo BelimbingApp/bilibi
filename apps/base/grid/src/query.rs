@@ -159,6 +159,54 @@ pub async fn project_lenses<S: AsRef<str>>(
     specs: &[S],
     lenses: &Lenses,
 ) -> Result<Projection, QueryError> {
+    project_in(db, scope, root, ids, specs, lenses, None).await
+}
+
+/// The full value of one masked field of one record (ADR 05): the same read
+/// as [`project`], with only that field unmasked. `None` when the record is
+/// gone or the scope may not read it. The field must be masked for this scope
+/// now: a withheld or unrestricted field is `Forbidden`. The caller authorizes
+/// the reveal and records it; Grid only reads.
+pub async fn reveal(
+    db: &Db,
+    scope: &Scope,
+    table: &str,
+    field: &str,
+    key: &Value,
+) -> Result<Option<Value>, QueryError> {
+    {
+        let client = db.get().await.map_err(Error::from)?;
+        let catalog = Catalog::for_scope(&**client, scope).await?;
+        if !catalog.masked(table, field) {
+            return Err(QueryError::Database(Error::Forbidden));
+        }
+    }
+    let projection = project_in(
+        db,
+        scope,
+        table,
+        std::slice::from_ref(key),
+        &[field],
+        &Lenses::default(),
+        Some((table, field)),
+    )
+    .await?;
+    Ok(projection
+        .rows
+        .into_iter()
+        .next()
+        .and_then(|mut row| row.cells.remove(field)))
+}
+
+async fn project_in<S: AsRef<str>>(
+    db: &Db,
+    scope: &Scope,
+    root: &str,
+    ids: &[Value],
+    specs: &[S],
+    lenses: &Lenses,
+    reveal: Option<(&str, &str)>,
+) -> Result<Projection, QueryError> {
     if ids.len() > MAX_ROWS {
         return Err(QueryError::Limit("page exceeds 100 IDs"));
     }
@@ -181,7 +229,10 @@ pub async fn project_lenses<S: AsRef<str>>(
         .start()
         .await?;
     tx.batch_execute(BOUNDS).await?;
-    let catalog = Catalog::for_scope(&*tx, scope).await?;
+    let catalog = match reveal {
+        Some((table, field)) => Catalog::revealing(&*tx, scope, table, field).await?,
+        None => Catalog::for_scope(&*tx, scope).await?,
+    };
     let root = catalog.table(root).ok_or(QueryError::ForbiddenRoot)?;
     let columns = catalog
         .resolve_all(root, specs)
@@ -259,7 +310,11 @@ pub async fn project_lenses<S: AsRef<str>>(
         }
         let mut cells = BTreeMap::new();
         for (i, column) in columns.iter().enumerate() {
-            cells.insert(column.id.clone(), row.try_get(i + 1)?);
+            let mut cell: Value = row.try_get(i + 1)?;
+            if let Some(kind) = catalog.mask(column) {
+                cell = masked(kind, column, cell);
+            }
+            cells.insert(column.id.clone(), cell);
         }
         let mut at = columns.len() + 1;
         let mut series = BTreeMap::new();
@@ -400,6 +455,10 @@ pub async fn text_search_sql(
         let Ok(column) = catalog.resolve(root, spec) else {
             continue;
         };
+        // A masked field is not searched: a match would say what it holds.
+        if catalog.mask(&column).is_some() {
+            continue;
+        }
         let Some(f) = column.field.filter(|f| f.ty == crate::FieldType::String) else {
             continue;
         };
@@ -420,6 +479,22 @@ pub async fn text_search_sql(
         predicates.join(" OR ")
     };
     Ok(format!("SELECT {} FROM {} r CROSS JOIN (SELECT $1::bigint AS tenant, $2::bigint AS usr) actor WHERE ({predicate})", field("r", root, root.key()), source(root)))
+}
+
+/// A masked column's cell: each listed value, or the one value, as its
+/// partial form. Anything that is not text is dropped rather than shown.
+fn masked(kind: &str, column: &Column, cell: Value) -> Value {
+    match cell {
+        Value::Null => Value::Null,
+        Value::String(text) if column.agg == Some(crate::column::Agg::List) => Value::String(
+            text.split(", ")
+                .map(|item| bilibi_authz::fields::partial(kind, item))
+                .collect::<Vec<_>>()
+                .join(", "),
+        ),
+        Value::String(text) => Value::String(bilibi_authz::fields::partial(kind, &text)),
+        _ => Value::Null,
+    }
 }
 
 // Every Grid read: bounded locally, and on the UTC calendar so a trend month

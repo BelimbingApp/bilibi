@@ -402,6 +402,8 @@ impl Detail {
         if a.restricted.iter().any(|r| r == name) {
             return render(Restricted::new(format!("address-{name}-restricted")));
         }
+        // A partial value is read-only: it is not the stored value.
+        let editable = editable && !a.masked.iter().any(|m| m == name);
         let mut stored = a.address.clone();
         let value = fact_slot(name)(&mut stored).clone().unwrap_or_default();
         let mut field = InlineField::new(

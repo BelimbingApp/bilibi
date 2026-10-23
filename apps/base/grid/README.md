@@ -76,7 +76,9 @@ naming the table and field (the owner must fix it; callers' `?` maps it to an
 internal error and logs the cause).
 
 `restriction_catalog` and `restrictable` give the Authz screens the protected-field
-catalog as **data**: Authz does not depend on Grid.
+catalog as **data**: Authz does not depend on Grid. Each field carries its personal kind, so only personal fields can be masked.
+
+**Masked fields (ADR 05) stay in the scoped catalog, with partial values.** A field restricted in mask mode for the actor (`authz::fields::masked`) is not removed: projected cells show its partial value by kind (`a•••@example.com`, `•••• 1234`), a `list` rollup masks each item, and a count, sum or average is unchanged. `Catalog::mask(column)` names a column's mask. Text search skips masked fields, so a match cannot say what one holds. `query::reveal(db, scope, table, field, key)` reads one masked field of one record in full, through the same scoped source; a withheld or unrestricted field is `Forbidden`. Only `base/privacy` calls it, after authorizing and recording the reveal.
 
 ## Column paths
 

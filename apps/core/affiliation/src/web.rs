@@ -667,7 +667,12 @@ impl Panel {
                 ("from", "From"),
                 ("to", "To"),
             ] {
-                let value = if entry.affiliation.restricted.iter().any(|r| r == column) {
+                let value = if entry.affiliation.masked.iter().any(|m| m == column) {
+                    // A partial value is read-only: it is not the stored value.
+                    render(InlineEdit {
+                        field: self.inline(entry, column, label, false),
+                    })?
+                } else if entry.affiliation.restricted.iter().any(|r| r == column) {
                     render(Restricted::new(self.dom(&format!(
                         "{key}-{}-restricted",
                         column.replace('_', "-")

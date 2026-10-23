@@ -138,6 +138,7 @@ proof; the shell does so on the first operator page that finds these facts
 
 - An address another party also uses (a company office) is kept and reported.
 - Attachments stay as links to the anonymised address.
+- **Masking.** A masked `phone` holds its partial value, named in `masked`, keeps its list column and is read-only on the record. Writes refuse it.
 
 ## Runtime walkthrough (no unit tests)
 

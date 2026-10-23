@@ -40,6 +40,8 @@ pub struct Pages {
     pub display: Arc<DisplayPolicy>,
     pub locales: Arc<Locales>,
     pub person_panels: Vec<RecordPanel>,
+    /// Reveals a masked contact with a reason (ADR 05).
+    pub privacy: Arc<bilibi_privacy::Privacy>,
 }
 impl Pages {
     /// One of these pages' write events, as the contract it declared.
