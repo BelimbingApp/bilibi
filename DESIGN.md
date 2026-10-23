@@ -41,7 +41,7 @@ Use semantic roles. Never use arbitrary colors. Values live in `apps/base/ui/ass
 | `action`, `action-hover`, `action-ink` | Primary buttons and page headings |
 | `brand`, `brand-strong`, `brand-surface`, `brand-ink` | Orientation accent |
 | `success`, `info`, `warning`, `danger` | Honest status, each with `-surface`, `-line`, `-ink` |
-| `scale-1..5`, `cat-1..8` | Data colour for ordered and categorical values. Never read as status |
+| `scale-1..5`, `cat-1..8` | Data colour for ordered and categorical values. Never read as status. Charts take `cat-1..8` in series order |
 
 - Light and dark themes share the same roles.
 - Success and info announce politely. Warning and error announce as an alert.
@@ -60,6 +60,7 @@ Reuse the shared macros and typed models. Do not hand-write markup or copy class
 | Tabs | `templates/tabs.html` | `apps/base/ui` |
 | Inline edit | `templates/inline.html` and `src/inline.rs` | `apps/base/ui` |
 | List and table | `templates/lists.html`, `flex_table.html` | `apps/base/ui` |
+| Chart (KPI, bar, stacked bar, line, pie, donut) | `templates/chart.html` and `src/chart.rs` (`Chart`, `ChartKind`, `Series`) | `apps/base/ui` |
 
 - Name variants through the enums (`ButtonVariant`, `BadgeKind`, `PageVariant`), not class strings.
 - Icons come from `src/icons.rs` action names or `hero-*`. Use the Belimbing equivalent for a familiar action.
