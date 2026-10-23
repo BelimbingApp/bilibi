@@ -1004,10 +1004,12 @@ dependencies = [
  "bilibi-walkthrough-fixture",
  "bilibi-web",
  "bilibi-workflow",
+ "hmac 0.13.0",
  "inventory",
  "jiff",
  "serde",
  "serde_json",
+ "sha1 0.11.0",
  "tokio",
  "tokio-postgres",
 ]

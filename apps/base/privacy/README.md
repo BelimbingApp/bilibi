@@ -135,10 +135,21 @@ No unit tests. Prove on a disposable database ([runtime parity](../../../docs/ru
 | Store without the dependency | Contribute a store from a module that does not declare `base/privacy` | Boot fails naming the store |
 | Legal holds | `examples/holds-walkthrough.rs` on a disposable database, then again with `report` | Place, duplicate `Conflict`, release once, history; viewer refused; tenant 2 sees none and gets `NotFound`; every raw edit, delete and truncate refused by the database |
 
+| Requests | `examples/requests-walkthrough.rs` with `seed`, then without, on a disposable database with the queue running | Access: one export covering every store, download audited as `artifacts.read`. Tenant 2 sees no request. Erasure: refused for whoever received it, approved by a second person with an authenticator code; a failing store leaves it `running` and late until a retry answers; afterwards person and account are stubs, attachment bytes gone, document deleted, audit values `[erased]` with ledger rows, certificate lists every store; a console search finds no erased value. A hold on an unknown kind is `Invalid`; a held person is kept and named on the certificate; after release a new erasure acts |
+
 Run the holds walkthrough only against a fresh disposable database:
 
 ```sh
 BILIBI_DISPOSABLE_PRIVACY_DEMO=yes DATABASE_URL=postgres://…/disposable \
   cargo run -p bilibi-privacy --example holds-walkthrough
 cargo run -p bilibi-privacy --example holds-walkthrough -- report   # same env
+```
+
+The requests walkthrough also needs a private folder for files and the three development keys (`./scripts/start-app.sh` creates them under `.local/dev/`):
+
+```sh
+export BILIBI_DISPOSABLE_PRIVACY_DEMO=yes BILIBI_PRIVACY_DEMO_ROOT=/tmp/privacy-demo DATABASE_URL=postgres://…/disposable
+export BILIBI_SETTINGS_KEY=… BILIBI_USER_SIGNING_KEY=… BILIBI_MEDIA_SIGNING_KEY=…
+cargo run -p bilibi-privacy --example requests-walkthrough -- seed   # production seeds, own process
+cargo run -p bilibi-privacy --example requests-walkthrough
 ```

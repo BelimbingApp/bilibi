@@ -31,6 +31,8 @@ serde_json.workspace = true
 tokio-postgres.workspace = true
 
 [dev-dependencies]
+hmac.workspace = true
+sha1.workspace = true
 bilibi-walkthrough-fixture = { path = "../../../fixtures/walkthrough" }
 bilibi-base = { path = ".." }
 bilibi-core = { path = "../../core" }
