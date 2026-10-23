@@ -1,0 +1,7 @@
+{%- import "components.html" as ui -%}
+<section id="specimen-charts" class="space-y-4">
+<div><h2 class="text-base font-semibold text-ink-strong">Charts</h2><p class="text-sm text-ink-muted">One server-rendered SVG figure (<code>Chart</code>): a KPI number, bars side by side or stacked, lines, a pie and a donut, in the data colours <code>cat-1</code> to <code>cat-8</code>, never status colours. Every mark has a title, the figure is described for screen readers, and the Data fold holds the exact values. A gap stays a gap. With no data, or more than it can draw honestly, the chart says so and keeps the data.</p></div>
+<div id="component-charts" class="grid gap-4 lg:grid-cols-2">
+{% for chart in charts %}{% call ui::card(id="sample-chart-card-{}"|format(loop.index), inner_class="p-4") %}{{ chart }}{% endcall %}{% endfor %}
+</div>
+</section>

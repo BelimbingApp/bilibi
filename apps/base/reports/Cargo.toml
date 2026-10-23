@@ -1,0 +1,34 @@
+[package]
+name = "bilibi-reports"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+askama.workspace = true
+bilibi-agent-api.workspace = true
+bilibi-artifacts.workspace = true
+bilibi-audit.workspace = true
+bilibi-authz.workspace = true
+bilibi-dashboard.workspace = true
+bilibi-database.workspace = true
+bilibi-datetime.workspace = true
+bilibi-grid.workspace = true
+bilibi-locale.workspace = true
+bilibi-mail.workspace = true
+bilibi-menu.workspace = true
+bilibi-module-registry.workspace = true
+bilibi-notifications.workspace = true
+bilibi-party-ids.workspace = true
+bilibi-queue.workspace = true
+bilibi-schedule.workspace = true
+bilibi-settings.workspace = true
+bilibi-tenancy.workspace = true
+bilibi-ui.workspace = true
+inventory.workspace = true
+jiff.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio-postgres.workspace = true

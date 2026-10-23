@@ -521,6 +521,7 @@ dependencies = [
  "bilibi-ports",
  "bilibi-principal-directory",
  "bilibi-queue",
+ "bilibi-reports",
  "bilibi-schedule",
  "bilibi-security",
  "bilibi-session",
@@ -559,6 +560,7 @@ dependencies = [
  "bilibi-party-ids",
  "bilibi-person",
  "bilibi-principal-directory",
+ "bilibi-reports",
  "bilibi-security",
  "bilibi-settings",
  "bilibi-tenancy",
@@ -990,6 +992,38 @@ dependencies = [
  "tokio",
  "tokio-postgres",
  "uuid",
+]
+
+[[package]]
+name = "bilibi-reports"
+version = "0.1.1"
+dependencies = [
+ "askama",
+ "bilibi-agent-api",
+ "bilibi-artifacts",
+ "bilibi-audit",
+ "bilibi-authz",
+ "bilibi-dashboard",
+ "bilibi-database",
+ "bilibi-datetime",
+ "bilibi-grid",
+ "bilibi-locale",
+ "bilibi-mail",
+ "bilibi-menu",
+ "bilibi-module-registry",
+ "bilibi-notifications",
+ "bilibi-party-ids",
+ "bilibi-queue",
+ "bilibi-schedule",
+ "bilibi-settings",
+ "bilibi-tenancy",
+ "bilibi-ui",
+ "inventory",
+ "jiff",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio-postgres",
 ]
 
 [[package]]

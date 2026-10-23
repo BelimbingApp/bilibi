@@ -539,7 +539,24 @@ impl<O: Owner> Owned<'_, O> {
         bytes: &[u8],
         content_type: &str,
     ) -> Result<Metadata> {
-        self.store(client, reference, bytes, content_type, None)
+        self.store(client, reference, bytes, content_type, None, None)
+            .await
+    }
+    /// Like `put`, for a document wanted only briefly (a prepared export): it
+    /// expires after `days`, never later than `artifacts.retention_days`
+    /// would, so an owner can shorten a document's life but not extend it.
+    pub async fn put_expiring(
+        &self,
+        client: &mut Client,
+        reference: Reference,
+        bytes: &[u8],
+        content_type: &str,
+        days: i64,
+    ) -> Result<Metadata> {
+        if days <= 0 {
+            return Err(Error::Invalid);
+        }
+        self.store(client, reference, bytes, content_type, None, Some(days))
             .await
     }
     /// Like `put`, but the document is records-grade from publication: it has a
@@ -556,8 +573,15 @@ impl<O: Owner> Owned<'_, O> {
         retention: Retention,
     ) -> Result<Metadata> {
         retention.validate()?;
-        self.store(client, reference, bytes, content_type, Some(retention))
-            .await
+        self.store(
+            client,
+            reference,
+            bytes,
+            content_type,
+            Some(retention),
+            None,
+        )
+        .await
     }
     async fn store(
         &self,
@@ -566,6 +590,7 @@ impl<O: Owner> Owned<'_, O> {
         bytes: &[u8],
         content_type: &str,
         retention: Option<Retention>,
+        expiry_days: Option<i64>,
     ) -> Result<Metadata> {
         if !bounded(&reference.subject, 255)
             || !bounded(&reference.kind, 100)
@@ -598,6 +623,7 @@ impl<O: Owner> Owned<'_, O> {
             .as_i64()
             .filter(|d| *d > 0 && *d <= 36500)
             .ok_or(Error::Policy)?;
+        let days = expiry_days.map_or(days, |shorter| shorter.min(days));
         let max = self
             .store
             .settings
