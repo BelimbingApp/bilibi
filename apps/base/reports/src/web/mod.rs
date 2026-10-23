@@ -8,10 +8,11 @@ mod builder;
 pub(crate) mod download;
 mod index;
 pub(crate) mod panel;
-mod result;
+pub(crate) mod result;
+mod schedule;
 mod show;
 
-use crate::{ReportError, Reports, AUTHOR, EXPORT, SHARE};
+use crate::{ReportError, Reports, AUTHOR, EXPORT, SCHEDULE, SHARE};
 use askama::Template;
 use bilibi_agent_api::{
     page::{Call, PageContracts},
@@ -32,6 +33,8 @@ use std::{collections::BTreeMap, sync::Arc};
 pub const SERVICE: &str = "base/reports.pages";
 pub const INDEX: &str = "/reports";
 pub const SHOW: &str = "/reports/{id}";
+pub const BUILTIN: &str = "/built-in-reports/{key}";
+pub(crate) const BUILTIN_BASE: &str = "/built-in-reports";
 pub const EXPORT_PATH: &str = "/reports/{id}/export";
 
 /// The module's page adapter; every field is shared by mounted states.
@@ -50,6 +53,7 @@ pub(crate) struct Can {
     pub author: bool,
     pub share: bool,
     pub export: bool,
+    pub schedule: bool,
 }
 
 impl Pages {
@@ -60,6 +64,7 @@ impl Pages {
             author: held.contains(AUTHOR),
             share: held.contains(SHARE),
             export: held.contains(EXPORT),
+            schedule: held.contains(SCHEDULE),
         })
     }
     pub async fn display(&self, scope: &Scope) -> Result<DisplayContext> {
@@ -178,6 +183,22 @@ pub(crate) fn page_error(error: ReportError) -> Error {
     }
 }
 
+/// A built-in's key from its address; the facade still checks it exists.
+fn builtin_key(request: &PageRequest<'_, Scope>) -> Result<String> {
+    request
+        .path
+        .get("key")
+        .filter(|key| {
+            !key.is_empty()
+                && key.len() <= 64
+                && key
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        })
+        .cloned()
+        .ok_or(Error::NotFound)
+}
+
 fn report_id(request: &PageRequest<'_, Scope>) -> Result<i64> {
     bilibi_ui::params::positive_id(request.path.get("id").map(String::as_str))
         .ok_or(Error::NotFound)
@@ -194,6 +215,12 @@ impl Page<Scope, Error> for Pages {
                 "index" => {
                     let mut index = index::Index::new(self.clone(), request.query)?;
                     (index.render(scope).await?, None)
+                }
+                "builtin" => {
+                    let mut show =
+                        show::Show::builtin(self.clone(), builtin_key(&request)?, request.query);
+                    let html = show.render(scope).await?;
+                    (html, show.title())
                 }
                 "show" => {
                     let mut show =
@@ -221,6 +248,11 @@ impl Page<Scope, Error> for Pages {
                 "show" => Box::new(show::Show::new(
                     self.clone(),
                     report_id(&request)?,
+                    request.query,
+                )),
+                "builtin" => Box::new(show::Show::builtin(
+                    self.clone(),
+                    builtin_key(&request)?,
                     request.query,
                 )),
                 _ => return Ok(None),

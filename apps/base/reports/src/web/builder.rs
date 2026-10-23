@@ -245,7 +245,7 @@ impl Builder {
                     definition["totals"] = json!(true);
                 }
             }
-            Kind::Summary => {
+            Kind::Summary | Kind::Matrix => {
                 let groupings: Vec<Value> = self
                     .groupings
                     .iter()
@@ -262,6 +262,11 @@ impl Builder {
                     .measures
                     .iter()
                     .filter(|(column, agg)| !column.is_empty() && !agg.is_empty())
+                    .take(if kind == Kind::Matrix {
+                        1
+                    } else {
+                        MEASURE_ROWS
+                    })
                     .map(|(column, agg)| json!({"column": column, "agg": agg}))
                     .collect();
                 definition["groupings"] = json!(groupings);
@@ -331,7 +336,11 @@ impl Builder {
             render(
                 field("kind", "Kind")
                     .kind(InputKind::Select)
-                    .options(choices(&[("List", "rows"), ("Summary", "summary")]))
+                    .options(choices(&[
+                        ("List", "rows"),
+                        ("Summary", "summary"),
+                        ("Matrix", "matrix"),
+                    ]))
                     .value(&self.kind),
             )?,
         ];
@@ -385,12 +394,13 @@ impl Builder {
                     .hint("Adds a line summing each number column over every row."),
             )?);
         } else {
+            let matrix = self.kind == "matrix";
             for (i, (column, bucket)) in self.groupings.iter().enumerate() {
-                let label = if i == 0 { "Group by" } else { "Then by" };
-                let prompt = if i == 0 {
-                    "No grouping: one total"
-                } else {
-                    "No second grouping"
+                let (label, prompt) = match (matrix, i) {
+                    (true, 0) => ("Down", "Choose a field"),
+                    (true, _) => ("Across", "Choose a field"),
+                    (false, 0) => ("Group by", "No grouping: one total"),
+                    (false, _) => ("Then by", "No second grouping"),
                 };
                 shape.push(render(
                     field(&format!("g{i}"), label)
@@ -410,8 +420,13 @@ impl Builder {
         }
 
         let mut measures = Vec::new();
-        if self.kind == "summary" {
-            for (i, (column, agg)) in self.measures.iter().enumerate() {
+        if self.kind != "rows" {
+            let rows = if self.kind == "matrix" {
+                1
+            } else {
+                MEASURE_ROWS
+            };
+            for (i, (column, agg)) in self.measures.iter().enumerate().take(rows) {
                 let label = format!("Measure {}", i + 1);
                 let mut aggs = vec![("", "")];
                 aggs.push(("Count of values", "count"));
@@ -561,7 +576,9 @@ impl Builder {
             summary,
             about,
             wide,
-            shape_heading: if self.kind == "rows" {
+            shape_heading: if self.kind == "matrix" {
+                "Down, across and measure"
+            } else if self.kind == "rows" {
                 "Columns"
             } else {
                 "Groups and totals"

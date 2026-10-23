@@ -4,19 +4,30 @@
 //! agents both reach it through the operation contracts in
 //! `agent_operations.rs`. Contract: `README.md`.
 mod agent_operations;
+mod builtin;
 mod contributions;
 mod definition;
+mod export;
+mod exports;
+mod schedules;
 mod store;
 mod web;
 
-pub use contributions::{AUTHOR, EXPORT, MANAGE, SHARE, VIEW};
+#[doc(hidden)]
+pub use bilibi_module_registry::{Contribution, Provenance};
+pub use builtin::{Builtin, BUILTINS};
+pub use contributions::{AUTHOR, EXPORT, MANAGE, SCHEDULE, SHARE, VIEW};
 pub use definition::{
     Definition, FilterDef, GroupingDef, Kind, MeasureDef, SortDef, CHARTS, MAX_COLUMNS,
 };
+pub use export::{File, Format};
+pub use exports::Prepared;
+#[doc(hidden)]
+pub use inventory;
+pub use schedules::{Frequency, Plan, Subscription};
 pub use store::Report;
 
 use bilibi_agent_api::schema::FieldErrors;
-use bilibi_audit::{record_action, Attribution};
 use bilibi_database::{Change, Db, Error, MutationTransaction};
 use bilibi_datetime::DisplayPolicy;
 use bilibi_grid::{
@@ -30,10 +41,28 @@ use std::{collections::BTreeMap, sync::Arc};
 
 pub const SERVICE: &str = "base/reports.reports";
 const DOWNLOAD: &str = "base/reports.export";
-pub const MIGRATION: (&str, &str) = (
-    "base-reports-001-reports",
-    include_str!("../migrations/001-reports.sql"),
-);
+const EXPORTED: &str = "base/reports.exported";
+const PREPARER: &str = "base/reports.preparer";
+const SWEEPER: &str = "base/reports.sweeper";
+const DELIVERER: &str = "base/reports.deliverer";
+const MIGRATIONS: [(&str, &str); 4] = [
+    (
+        "base-reports-001-reports",
+        include_str!("../migrations/001-reports.sql"),
+    ),
+    (
+        "base-reports-002-matrix",
+        include_str!("../migrations/002-matrix.sql"),
+    ),
+    (
+        "base-reports-003-exports",
+        include_str!("../migrations/003-exports.sql"),
+    ),
+    (
+        "base-reports-004-subscriptions",
+        include_str!("../migrations/004-subscriptions.sql"),
+    ),
+];
 const KIND: &str = "base_report";
 /// Columns offered to a builder for one record type, at most.
 const MAX_OFFERED: usize = 300;
@@ -84,8 +113,8 @@ pub struct RunInput {
     pub drill: Vec<FilterDef>,
     /// Rows reports: the page, from 0.
     pub page: usize,
-    /// A summary read as the rows behind it (a drill-down): its label
-    /// field, groupings and measured columns, page by page.
+    /// A summary or matrix read as the rows behind it (a drill-down): its
+    /// label field, groupings and measured columns, page by page.
     pub as_rows: bool,
 }
 
@@ -134,18 +163,19 @@ pub enum RunResult {
     },
 }
 
-/// A CSV export of one run, every page included up to the export cap.
-#[derive(Debug)]
-pub struct Csv {
-    pub filename: String,
-    pub text: String,
-    pub rows: usize,
-}
-
 pub struct Reports {
     db: Db,
     settings: Arc<Settings>,
     display: Arc<DisplayPolicy>,
+    queue: Arc<bilibi_queue::Queue>,
+    artifacts: Arc<bilibi_artifacts::Artifacts>,
+    notifications: Arc<bilibi_notifications::NotificationBoundary>,
+    authentication: Arc<bilibi_tenancy::Authentication>,
+    mutations: Arc<bilibi_database::MutationBoundary>,
+    mailer: Arc<bilibi_mail::Mailer>,
+    /// The public origin emailed links point at (`APP_ORIGIN`).
+    origin: String,
+    builtins: Vec<&'static Builtin>,
 }
 
 fn field_errors(field: &str, message: impl Into<String>) -> FieldErrors {
@@ -393,7 +423,7 @@ impl Reports {
                 )
                 .await?;
             }
-            Kind::Summary => {
+            Kind::Summary | Kind::Matrix => {
                 bilibi_grid::summarize(
                     &self.db,
                     scope,
@@ -486,6 +516,55 @@ impl Reports {
             Err(Error::NotFound) => return Err(ReportError::NotFound),
             other => other?,
         };
+        drop(client);
+        self.run_report(scope, report, input).await
+    }
+
+    /// Runs a built-in report as the reader, like a stored one.
+    pub async fn run_builtin(&self, scope: &Scope, key: &str, input: &RunInput) -> Outcome<Run> {
+        let report = self.builtin(scope, key).await?;
+        self.run_report(scope, report, input).await
+    }
+
+    /// The built-in reports the reader can run: those over a record type
+    /// their catalog includes. Needs `reports.view`.
+    pub async fn builtins(&self, scope: &Scope) -> Outcome<Vec<Report>> {
+        let client = self.db.get().await.map_err(Error::from)?;
+        authorize(&**client, scope, VIEW).await?;
+        let catalog = Catalog::for_scope(&**client, scope)
+            .await
+            .map_err(|e| ReportError::Database(e.into()))?;
+        Ok(self
+            .builtins
+            .iter()
+            .filter(|b| catalog.table(b.record_type).is_some())
+            .filter_map(|b| as_report(b))
+            .collect())
+    }
+
+    /// One built-in report the reader can run.
+    pub async fn builtin(&self, scope: &Scope, key: &str) -> Outcome<Report> {
+        self.builtins(scope)
+            .await?
+            .into_iter()
+            .find(|r| r.builtin == Some(key))
+            .ok_or(ReportError::NotFound)
+    }
+
+    /// Saves the reader's own copy of a built-in report. Needs `reports.author`.
+    pub async fn copy_builtin(
+        &self,
+        tx: &mut MutationTransaction<'_>,
+        scope: &Scope,
+        key: &str,
+        name: Option<&str>,
+    ) -> Outcome<i64> {
+        let original = self.builtin(scope, key).await?;
+        self.create(tx, scope, &copy_of(&original, name)).await
+    }
+
+    async fn run_report(&self, scope: &Scope, report: Report, input: &RunInput) -> Outcome<Run> {
+        let client = self.db.get().await.map_err(Error::from)?;
         let timezone = self
             .display
             .display(&**client, scope, None, "en")
@@ -634,7 +713,7 @@ impl Reports {
                     totals,
                 }
             }
-            Kind::Rows | Kind::Summary => {
+            Kind::Rows | Kind::Summary | Kind::Matrix => {
                 let groupings: Vec<_> = definition
                     .groupings()
                     .into_iter()
@@ -689,164 +768,6 @@ impl Reports {
             left_out,
             timezone,
             result,
-        })
-    }
-
-    /// The whole result as CSV, up to the export cap: every page of a Rows
-    /// report, or every line of a Summary. Audited with the report, the reader
-    /// and the row count, never the data. Needs `reports.export`.
-    pub async fn csv(
-        &self,
-        scope: &Scope,
-        id: i64,
-        answers: &BTreeMap<usize, Value>,
-    ) -> Outcome<Csv> {
-        let client = self.db.get().await.map_err(Error::from)?;
-        authorize(&**client, scope, EXPORT).await?;
-        let cap = self
-            .setting(&**client, scope, contributions::EXPORT_ROWS_KEY)
-            .await?;
-        drop(client);
-        let mut input = RunInput {
-            answers: answers.clone(),
-            ..RunInput::default()
-        };
-        let first = self.run(scope, id, &input).await?;
-        let mut out = String::new();
-        let mut rows = 0;
-        let name = first.report.name.clone();
-        match &first.result {
-            RunResult::Rows {
-                columns,
-                total,
-                page_size,
-                totals,
-                ..
-            } => {
-                let totals = totals.clone();
-                if *total as usize > cap {
-                    return Err(ReportError::Refused(format!("This report has {total} rows; an export holds at most {cap}. Add a filter and try again.")));
-                }
-                line(&mut out, columns.iter().map(|c| c.label.clone()));
-                let pages = (*total as usize).div_ceil((*page_size).max(1));
-                let mut current = Some(first);
-                for page in 0..pages {
-                    let run = match current.take() {
-                        Some(run) => run,
-                        None => {
-                            input.page = page;
-                            self.run(scope, id, &input).await?
-                        }
-                    };
-                    if let RunResult::Rows {
-                        rows: page_rows, ..
-                    } = run.result
-                    {
-                        for (_, cells) in page_rows {
-                            line(&mut out, cells.iter().map(cell));
-                            rows += 1;
-                        }
-                    }
-                }
-                if let Some(totals) = totals {
-                    line(
-                        &mut out,
-                        totals.iter().enumerate().map(|(i, v)| {
-                            if i == 0 && v.is_null() {
-                                "Total".to_owned()
-                            } else {
-                                cell(v)
-                            }
-                        }),
-                    );
-                }
-            }
-            RunResult::Summary {
-                groupings,
-                measures,
-                lines,
-                total,
-                ..
-            } => {
-                let headers = groupings
-                    .iter()
-                    .map(|(c, _)| c.label.clone())
-                    .chain(std::iter::once("Rows".to_owned()))
-                    .chain(
-                        measures
-                            .iter()
-                            .map(|(c, agg)| format!("{} ({agg})", c.label)),
-                    );
-                line(&mut out, headers);
-                for (keys, subtotal, count, values) in lines {
-                    let mut fields: Vec<String> = keys.iter().map(cell).collect();
-                    if *subtotal {
-                        if let Some(last) = fields.last_mut() {
-                            *last = "Subtotal".into();
-                        }
-                    }
-                    line(
-                        &mut out,
-                        fields
-                            .into_iter()
-                            .chain(std::iter::once(count.to_string()))
-                            .chain(values.iter().map(cell)),
-                    );
-                    rows += 1;
-                }
-                let blanks = groupings.len().saturating_sub(1);
-                let label = if groupings.is_empty() {
-                    Vec::new()
-                } else {
-                    std::iter::once("Total".to_owned())
-                        .chain(std::iter::repeat_n(String::new(), blanks))
-                        .collect()
-                };
-                line(
-                    &mut out,
-                    label
-                        .into_iter()
-                        .chain(std::iter::once(total.0.to_string()))
-                        .chain(total.1.iter().map(cell)),
-                );
-            }
-        }
-        let client = self.db.get().await.map_err(Error::from)?;
-        record_action(
-            &**client,
-            &Attribution::from_scope(scope),
-            None,
-            "base.reports.exported",
-            json!({"semantic": true, "source": "Reports", "summary": "Report exported as CSV", "report_id": id, "rows": rows, "format": "csv"}),
-            true,
-        )
-        .await?;
-        let slug: String = name
-            .chars()
-            .map(|c| {
-                if c.is_ascii_alphanumeric() {
-                    c.to_ascii_lowercase()
-                } else {
-                    '-'
-                }
-            })
-            .collect();
-        let slug = slug
-            .split('-')
-            .filter(|s| !s.is_empty())
-            .collect::<Vec<_>>()
-            .join("-");
-        Ok(Csv {
-            filename: format!(
-                "{}.csv",
-                if slug.is_empty() {
-                    "report".into()
-                } else {
-                    slug
-                }
-            ),
-            text: out,
-            rows,
         })
     }
 
@@ -1065,6 +986,25 @@ fn change(id: i64, old: Value, new: Value) -> Change {
 fn after(draft: &Draft) -> Value {
     json!({"name": draft.name.trim(), "description": draft.description, "record_type": draft.record_type, "kind": draft.kind.key(), "definition": draft.definition})
 }
+/// A built-in as the report a reader runs: never owned, never shared.
+fn as_report(builtin: &'static Builtin) -> Option<Report> {
+    Some(Report {
+        id: 0,
+        owner_id: 0,
+        owned: false,
+        name: builtin.name.to_owned(),
+        description: builtin.description.to_owned(),
+        record_type: builtin.record_type.to_owned(),
+        kind: builtin.kind,
+        definition: Definition::from_input(&(builtin.definition)()).ok()?,
+        shared_with_everyone: false,
+        role_ids: Vec::new(),
+        version: 1,
+        updated_at: String::new(),
+        builtin: Some(builtin.key),
+    })
+}
+
 /// A copy's draft: the given name, or "Copy of" the original's, kept to the
 /// name bound.
 fn copy_of(report: &Report, name: Option<&str>) -> Draft {
@@ -1121,13 +1061,21 @@ fn line(out: &mut String, fields: impl IntoIterator<Item = String>) {
 inventory::submit! {
     bilibi_module_registry::Module {
         id: "base/reports", layer: bilibi_module_registry::Layer::Base,
-        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/audit", "base/settings", "base/datetime", "base/grid", "base/agent_api", "base/ui", "base/menu", "base/locale", "base/dashboard"],
-        migrations: &[MIGRATION],
+        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/audit", "base/settings", "base/datetime", "base/grid", "base/agent_api", "base/ui", "base/menu", "base/locale", "base/dashboard", "base/artifacts", "base/queue", "base/notifications", "base/party_ids", "base/schedule", "base/mail"],
+        migrations: &MIGRATIONS,
         services: &[bilibi_module_registry::Service { id: SERVICE, factory: |services| {
             let reports = Arc::new(Reports {
                 db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
                 settings: services.get("base/settings.store")?,
                 display: services.get("base/datetime.display")?,
+                queue: services.get("base/queue.store")?,
+                artifacts: services.get("base/artifacts.store")?,
+                notifications: services.get("base/notifications.sink")?,
+                authentication: services.get("base/tenancy.authentication")?,
+                mutations: services.get("base/database.mutations")?,
+                mailer: services.get("base/mail.mailer")?,
+                origin: std::env::var("APP_ORIGIN").unwrap_or_else(|_| "http://localhost:3000".into()).trim_end_matches('/').to_owned(),
+                builtins: builtin::validate(bilibi_module_registry::Catalog::discover(&bilibi_module_registry::discover()?)?.entries::<Builtin>(BUILTINS)?)?,
             });
             agent_operations::bind(reports.clone())?;
             Ok(reports)
@@ -1138,6 +1086,16 @@ inventory::submit! {
                 contracts: services.get(bilibi_agent_api::page::SERVICE)?,
                 display: services.get("base/datetime.display")?,
                 locales: services.get("base/locale.locales")?,
+            }))))
+        }}, bilibi_module_registry::Service { id: PREPARER, factory: |services| {
+            Ok(Arc::new(bilibi_queue::execution::HandlerService(Arc::new(exports::Preparer(services.get(SERVICE)?)))))
+        }}, bilibi_module_registry::Service { id: SWEEPER, factory: |services| {
+            Ok(Arc::new(bilibi_queue::execution::HandlerService(Arc::new(schedules::Sweeper { reports: services.get(SERVICE)?, schedule: services.get("base/schedule.store")? }))))
+        }}, bilibi_module_registry::Service { id: DELIVERER, factory: |services| {
+            Ok(Arc::new(bilibi_queue::execution::HandlerService(Arc::new(schedules::Deliverer(services.get(SERVICE)?)))))
+        }}, bilibi_module_registry::Service { id: EXPORTED, factory: |services| {
+            Ok(Arc::new(bilibi_ui::download::DownloadService::<Scope, Error>(Arc::new(web::download::Prepared {
+                reports: services.get(SERVICE)?,
             }))))
         }}, bilibi_module_registry::Service { id: DOWNLOAD, factory: |services| {
             Ok(Arc::new(bilibi_ui::download::DownloadService::<Scope, Error>(Arc::new(web::download::Csv {
@@ -1162,7 +1120,7 @@ inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_reg
 // Every page write is an operation contract (ADR 01).
 inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::PAGE_WRITES, web::SERVICE, bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_module_registry::contributions::PageWrites {
     service: web::SERVICE,
-    contracts: &[("create", "base.reports.create"), ("save_definition", "base.reports.update"), ("copy", "base.reports.copy"), ("save_sharing", "base.reports.share"), ("delete", "base.reports.delete")],
+    contracts: &[("create", "base.reports.create"), ("save_definition", "base.reports.update"), ("copy", "base.reports.copy"), ("save_sharing", "base.reports.share"), ("delete", "base.reports.delete"), ("prepare_export", "base.reports.prepare_export"), ("subscribe", "base.reports.subscribe"), ("pause_schedule", "base.reports.pause_subscription"), ("unsubscribe", "base.reports.unsubscribe")],
     pending: bilibi_module_registry::contributions::Pending::None,
 }) }
 bilibi_menu::contribute!(
@@ -1188,4 +1146,29 @@ bilibi_dashboard::provide!(
 inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::EMBEDS, "base/reports.dashboard", bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_module_registry::contributions::Embed {
     slot: "dashboard.reports", context: bilibi_module_registry::contributions::EmbedContext::Dashboard,
     service: web::SERVICE, operation: "panel", access: bilibi_module_registry::contributions::Access::Capability(VIEW),
+}) }
+
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_queue::WORKERS, exports::WORKER, bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_queue::Worker { max_attempts: 5, validate: exports::validate }) }
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_queue::execution::HANDLERS, exports::WORKER, bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_queue::execution::HandlerBinding { service: PREPARER, capability: EXPORT }) }
+// A prepared export downloads from its own path, for its requester only.
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::DOWNLOADS, "base/reports.exported", bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_module_registry::contributions::Download {
+    path: "/report-exports/{id}", service: EXPORTED, operation: "file",
+    access: bilibi_module_registry::contributions::Access::Capability(EXPORT),
+}) }
+
+// Scheduled deliveries: Schedule's recurrence sweeps due subscriptions as the
+// `scheduler` principal; each delivery then runs as its recipient. Like every
+// contributed recurrence it runs nothing until an operator enables it.
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_queue::WORKERS, schedules::SWEEP, bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_queue::Worker { max_attempts: 5, validate: schedules::validate_sweep }) }
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_queue::execution::HANDLERS, schedules::SWEEP, bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_queue::execution::HandlerBinding { service: SWEEPER, capability: bilibi_schedule::EXECUTE }) }
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_schedule::DEFINITIONS, "base/reports.deliveries", bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_schedule::Definition {
+    name: "Deliver scheduled reports", expression: "*/15 * * * *", timezone: "Etc/UTC",
+    task_name: "Base Reports scheduled deliveries", worker: schedules::SWEEP, args: || json!({}),
+    overlap: bilibi_schedule::Overlap::Forbid, misfire: bilibi_schedule::Misfire::Coalesce, owner_route: Some(web::INDEX),
+}) }
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_queue::WORKERS, schedules::DELIVER, bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_queue::Worker { max_attempts: 5, validate: schedules::validate_delivery }) }
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_queue::execution::HANDLERS, schedules::DELIVER, bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_queue::execution::HandlerBinding { service: DELIVERER, capability: VIEW }) }
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::ROUTES, "base/reports.builtin", bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_module_registry::contributions::Route {
+    method: bilibi_module_registry::contributions::Method::Get, path: web::BUILTIN, service: web::SERVICE, operation: "builtin",
+    access: bilibi_module_registry::contributions::Access::Capability(VIEW), framed: true,
 }) }

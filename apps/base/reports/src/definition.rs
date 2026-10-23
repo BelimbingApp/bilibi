@@ -32,18 +32,23 @@ pub enum Kind {
     Rows,
     /// Rows grouped by up to two columns, with measures, subtotals and a total.
     Summary,
+    /// One grouping down and one across, one measure in each cell, with row,
+    /// column and grand totals.
+    Matrix,
 }
 impl Kind {
     pub fn key(self) -> &'static str {
         match self {
             Self::Rows => "rows",
             Self::Summary => "summary",
+            Self::Matrix => "matrix",
         }
     }
     pub fn from_key(key: &str) -> Option<Self> {
         match key {
             "rows" => Some(Self::Rows),
             "summary" => Some(Self::Summary),
+            "matrix" => Some(Self::Matrix),
             _ => None,
         }
     }
@@ -209,6 +214,34 @@ impl Definition {
                 }
                 if self.sort.len() > MAX_SORTS {
                     err(&mut errors, "definition.sort", "at most 3 sorts");
+                }
+            }
+            Kind::Matrix => {
+                if !self.columns.is_empty() || !self.sort.is_empty() || self.totals {
+                    err(
+                        &mut errors,
+                        "definition",
+                        "a matrix report has no columns, sort or totals line",
+                    );
+                }
+                if self.groupings.len() != 2 {
+                    err(
+                        &mut errors,
+                        "definition.groupings",
+                        "a matrix needs one grouping down and one across",
+                    );
+                }
+                if self.measures.len() > 1 {
+                    err(
+                        &mut errors,
+                        "definition.measures",
+                        "a matrix shows one measure",
+                    );
+                }
+                if let Some(chart) = &self.chart {
+                    if !CHARTS.contains(&chart.as_str()) {
+                        err(&mut errors, "definition.chart", "is not a chart kind");
+                    }
                 }
             }
             Kind::Summary => {

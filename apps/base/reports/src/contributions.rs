@@ -15,15 +15,20 @@ pub const SHARE: &str = "reports.share";
 pub const EXPORT: &str = "reports.export";
 /// Set the report bounds.
 pub const MANAGE: &str = "reports.manage";
+/// Have a report delivered on a schedule.
+pub const SCHEDULE: &str = "reports.schedule";
 
 pub const PAGE_SIZE_KEY: &str = "reports.page_size";
 pub const MAX_GROUPS_KEY: &str = "reports.max_groups";
 pub const EXPORT_ROWS_KEY: &str = "reports.export_rows";
+pub const QUEUED_ROWS_KEY: &str = "reports.queued_export_rows";
+pub const EXPORT_DAYS_KEY: &str = "reports.export_days";
+pub const MAX_SUBSCRIPTIONS_KEY: &str = "reports.max_subscriptions";
 
 inventory::submit! { Contribution::new(VOCABULARY, "base/reports", Provenance { module: "base/reports", source: file!(), line: line!() }, &VocabularyContribution {
     domains: &["reports"],
-    verbs: &["view", "author", "share", "export", "manage"],
-    capabilities: &[CapabilityDefinition::tenant(VIEW), CapabilityDefinition::tenant(AUTHOR), CapabilityDefinition::tenant(SHARE), CapabilityDefinition::tenant(EXPORT), CapabilityDefinition::tenant(MANAGE)],
+    verbs: &["view", "author", "share", "export", "manage", "schedule"],
+    capabilities: &[CapabilityDefinition::tenant(VIEW), CapabilityDefinition::tenant(AUTHOR), CapabilityDefinition::tenant(SHARE), CapabilityDefinition::tenant(EXPORT), CapabilityDefinition::tenant(MANAGE), CapabilityDefinition::tenant(SCHEDULE)],
     roles: &[],
     system_principals: &[],
 }) }
@@ -50,9 +55,34 @@ bound!(MAX_GROUPS_KEY, 500, 10, bilibi_grid::MAX_RESULT_GROUPS, "Most groups in 
 // An export reads every page, and a page starts at most at Grid's offset bound.
 bound!(
     EXPORT_ROWS_KEY,
-    5_000,
+    1_000,
     100,
     bilibi_grid::MAX_OFFSET,
-    "Most rows in an export",
-    "A list report with more rows than this cannot be downloaded; the reader adds a filter first."
+    "Most rows in a download",
+    "A larger list report is prepared in the background instead, and the reader is told when it is ready."
+);
+// A prepared export pages through Grid too, so it stops at the same offset bound.
+bound!(
+    QUEUED_ROWS_KEY,
+    bilibi_grid::MAX_OFFSET,
+    100,
+    bilibi_grid::MAX_OFFSET,
+    "Most rows in a prepared export",
+    "A larger result is refused even in the background; the reader adds a filter first."
+);
+bound!(
+    EXPORT_DAYS_KEY,
+    7,
+    1,
+    90,
+    "Days a prepared export is kept",
+    "After this many days a prepared export is deleted and its link stops working."
+);
+bound!(
+    MAX_SUBSCRIPTIONS_KEY,
+    20,
+    1,
+    200,
+    "Scheduled reports per person",
+    "How many report schedules one person may hold."
 );

@@ -56,10 +56,10 @@ Scheduled work runs as the `scheduler` system principal, which has no `Scope` an
 | Slice | State |
 | --- | --- |
 | Grid grouped read and filtered row page (`summarize`, `page_keys`) | **Built** (`apps/base/grid/src/summary.rs`, walkthrough `g5-grid-summary`) |
-| Shared server-rendered SVG chart component in `base/ui` | Not built |
-| `base/reports` module: definitions, sharing, builder and read pages, CSV export, agent operations | Not built |
-| Dashboard provider hook for report panels | Not built |
-| Phase 2: matrix, queued exports, PDF, schedules, module-contributed reports | Not built |
+| Shared server-rendered SVG chart component in `base/ui` | **Built** (`apps/base/ui/src/chart.rs`; bars and slices drill through `Chart::drill`) |
+| `base/reports` module: definitions, sharing, builder and read pages, CSV export, agent operations | **Built** (`apps/base/reports`, walkthrough `r1-reports`) |
+| Dashboard provider hook for report panels | **Built** (`bilibi_dashboard::provide!`) |
+| Phase 2: matrix, queued exports, PDF, schedules, module-contributed reports | **Built** (`apps/base/reports` README: Schedules, Built-in reports). Deliveries run as each recipient through the stored subscription, as decided above, with no Queue change: the sweep proves the recipient's account and queues an ordinary user job, which Queue re-proves on every attempt. |
 
 ## Consequences
 
