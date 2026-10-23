@@ -23,6 +23,7 @@ pub use bilibi_perf as perf;
 pub use bilibi_ports as ports;
 pub use bilibi_principal_directory as principal_directory;
 pub use bilibi_queue as queue;
+pub use bilibi_reports as reports;
 pub use bilibi_schedule as schedule;
 pub use bilibi_security as security;
 pub use bilibi_session as session;
