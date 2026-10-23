@@ -75,6 +75,7 @@ bilibi-party-ids = { path = "apps/base/party_ids" }
 bilibi-perf = { path = "apps/base/perf" }
 bilibi-ports = { path = "apps/base/ports" }
 bilibi-queue = { path = "apps/base/queue" }
+bilibi-reports = { path = "apps/base/reports" }
 bilibi-schedule = { path = "apps/base/schedule" }
 bilibi-session = { path = "apps/base/session" }
 bilibi-settings = { path = "apps/base/settings" }

@@ -1,0 +1,5 @@
+{#- A report on the dashboard (src/web/panel.rs): one root element with the
+    panel's id, holding the report's chart (its title names the report) and a
+    link to the report, withheld while the dashboard is being customized. -#}
+{%- import "components.html" as ui -%}
+{% call ui::card(id=id) %}<div class="space-y-2">{% if !note.is_empty() %}<p class="text-sm font-semibold text-ink">{{ name }}</p><p class="text-sm text-ink-muted">{{ note }}</p>{% endif %}{{ body|safe }}{% if !href.is_empty() %}<a href="{{ href }}" class="text-xs font-medium text-link hover:underline">Open report</a>{% endif %}</div>{% endcall %}

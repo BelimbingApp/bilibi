@@ -47,7 +47,7 @@ static GRID: GridContribution = GridContribution {
             Field::new("phone", "Phone", FieldType::String),
             Field::choice("verification_status", "Verification", &["unverified", "suggested", "verified"]).protected(),
             Field::new("created_at", "Created", FieldType::DateTime).protected(),
-        ]).label_field("label").time_field("created_at").record_types(&["address"])],
+        ]).label_field("label").time_field("created_at").record_types(&["address"]).page("/addresses/{key}")],
     links: &[
         LinkDecl::on("country", "Country", LinkKind::One, "addresses", "country_iso", "countries", "iso"),
         LinkDecl::edge("addresses", "Addresses", LinkKind::Many, "companies", "addresses",
