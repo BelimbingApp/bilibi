@@ -24,6 +24,11 @@ pub(crate) fn bind(reports: Arc<Reports>) -> bilibi_module_registry::Result<()> 
         .set(reports)
         .map_err(|_| RegistryError::Service("duplicate reports binding".into()))
 }
+/// The installed facade, for callers outside a request (the dashboard
+/// provider), once the service exists.
+pub(crate) fn facade() -> Option<&'static Arc<Reports>> {
+    BOUND.get()
+}
 fn bound() -> Result<&'static Arc<Reports>, AgentError> {
     BOUND.get().ok_or(AgentError::Backend(Error::Internal))
 }

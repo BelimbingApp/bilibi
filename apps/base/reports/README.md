@@ -50,6 +50,7 @@ Grid's cost bound and timeouts apply to every run on top of these.
 |---|---|
 | `/reports` | The reports the reader may run (`FlexTable`), with New report for authors: name, record type and kind create a starter report that opens on its Definition tab. |
 | `/reports/{id}` | Read first. **Result** runs it as the reader, with ask-when-run answers, drill-down on a group's own value (not on date buckets) and a left-out note. **Definition** is the editor, live for the author, read-only for others. **Sharing** is the author's. Copy and Delete confirm with `ConfirmDialog`. |
+| Dashboard | Customize offers every report the reader may run (provider `report`, embed `base/reports.dashboard`). A placed report runs as the reader with its stored answers and shows its chart, or its total as a number; it refreshes at most once a minute. |
 | `/reports/{id}/export` | The CSV download (`reports.export`), with the answers in the address (`a<i>`, `a<i>_to`). |
 
 - Answers, the tab and the page are in the address, so a link repeats the question.
@@ -72,4 +73,4 @@ Reads: `base.reports.list`, `base.reports.get`, `base.reports.fields` (record ty
 
 ## Not yet
 
-Dashboard panels (next PR); matrix, PDF, queued exports and schedules (phase 2).
+Matrix, PDF, queued exports and schedules (phase 2).

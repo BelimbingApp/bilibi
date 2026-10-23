@@ -1001,6 +1001,7 @@ dependencies = [
  "bilibi-agent-api",
  "bilibi-audit",
  "bilibi-authz",
+ "bilibi-dashboard",
  "bilibi-database",
  "bilibi-datetime",
  "bilibi-grid",

@@ -1018,7 +1018,7 @@ fn line(out: &mut String, fields: impl IntoIterator<Item = String>) {
 inventory::submit! {
     bilibi_module_registry::Module {
         id: "base/reports", layer: bilibi_module_registry::Layer::Base,
-        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/audit", "base/settings", "base/datetime", "base/grid", "base/agent_api", "base/ui", "base/menu", "base/locale"],
+        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/audit", "base/settings", "base/datetime", "base/grid", "base/agent_api", "base/ui", "base/menu", "base/locale", "base/dashboard"],
         migrations: &[MIGRATION],
         services: &[bilibi_module_registry::Service { id: SERVICE, factory: |services| {
             let reports = Arc::new(Reports {
@@ -1069,3 +1069,20 @@ bilibi_menu::contribute!(
         .requires(bilibi_menu::Requirement::Capability(VIEW))
         .order(800)
 );
+
+// A report the reader may run can be placed on their dashboard.
+bilibi_dashboard::provide!(
+    "base/reports",
+    bilibi_dashboard::Provider {
+        prefix: web::panel::PREFIX,
+        embed: "base/reports.dashboard",
+        placement: bilibi_dashboard::Placement::Grid,
+        capability: Some(VIEW),
+        refresh_interval: 60_000,
+        entries: web::panel::entries,
+    }
+);
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::EMBEDS, "base/reports.dashboard", bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_module_registry::contributions::Embed {
+    slot: "dashboard.reports", context: bilibi_module_registry::contributions::EmbedContext::Dashboard,
+    service: web::SERVICE, operation: "panel", access: bilibi_module_registry::contributions::Access::Capability(VIEW),
+}) }

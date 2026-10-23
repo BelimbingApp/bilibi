@@ -7,6 +7,7 @@
 mod builder;
 pub(crate) mod download;
 mod index;
+pub(crate) mod panel;
 mod result;
 mod show;
 
@@ -213,6 +214,10 @@ impl Page<Scope, Error> for Pages {
         Box::pin(async move {
             let state: Box<dyn LiveState<Scope, Error>> = match request.operation {
                 "index" => Box::new(index::Index::new(self.clone(), request.query)?),
+                "panel" => Box::new(panel::Panel::new(
+                    self.clone(),
+                    bilibi_dashboard::PanelArgs::from_request(&request)?,
+                )?),
                 "show" => Box::new(show::Show::new(
                     self.clone(),
                     report_id(&request)?,

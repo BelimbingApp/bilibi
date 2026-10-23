@@ -180,7 +180,13 @@ pub(crate) fn summary(
     let mut out = Html::EMPTY;
     if let Some(kind) = chart.as_deref().and_then(ChartKind::from_key) {
         out.push(&render(figure(
-            title, kind, groupings, measures, lines, total,
+            "report-chart",
+            title,
+            kind,
+            groupings,
+            measures,
+            lines,
+            total,
         ))?);
     }
     let mut drillable = Vec::new();
@@ -287,7 +293,8 @@ pub(crate) fn agg_label(agg: &str) -> &'static str {
 /// measure (or the record count). Two: a category per first group and a
 /// series per second group, of the first measure. None: the total as a
 /// number.
-fn figure(
+pub(crate) fn figure(
+    id: &str,
     title: &str,
     kind: ChartKind,
     groupings: &[(ColumnInfo, Option<&'static str>)],
@@ -316,7 +323,7 @@ fn figure(
             name: measure_name(0),
             values: vec![pick(total.0, &total.1)],
         }];
-        return Chart::new("report-chart", title, ChartKind::Kpi, Vec::new(), series);
+        return Chart::new(id, title, ChartKind::Kpi, Vec::new(), series);
     }
     if depth == 1 {
         let categories: Vec<String> = detail
@@ -336,7 +343,7 @@ fn figure(
                 })
                 .collect()
         };
-        return Chart::new("report-chart", title, kind, categories, series);
+        return Chart::new(id, title, kind, categories, series);
     }
     let mut categories: Vec<String> = Vec::new();
     let mut names: Vec<String> = Vec::new();
@@ -374,5 +381,5 @@ fn figure(
                 .collect(),
         })
         .collect();
-    Chart::new("report-chart", title, kind, categories, series)
+    Chart::new(id, title, kind, categories, series)
 }
