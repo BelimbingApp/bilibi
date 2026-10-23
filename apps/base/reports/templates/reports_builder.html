@@ -1,0 +1,18 @@
+{#- A report's definition editor (src/web/builder.rs): one data-change form
+    held by the page, in three parts. Fields and buttons are rendered by the
+    shared models; this file lays them out. -#}
+{%- import "forms.html" as forms -%}
+{{ summary|safe }}
+{% call forms::form(id="report-builder", event="edit_definition", change=true, actions=actions) %}
+{% call forms::section(labelledby="report-builder-about", heading="About") %}{% for field in about %}{{ field|safe }}{% endfor %}{% endcall %}
+{% call forms::section(labelledby="report-builder-shape", heading=shape_heading) %}
+{{ wide|safe }}
+<div class="grid gap-x-3 sm:grid-cols-2">{% for field in shape %}{{ field|safe }}{% endfor %}</div>
+{% for row in measures %}<div class="grid gap-x-3 sm:grid-cols-2">{{ row[0]|safe }}{{ row[1]|safe }}</div>{% endfor %}
+{% endcall %}
+{% call forms::section(labelledby="report-builder-filters", heading="Filters") %}
+{% if filters.is_empty() %}<p class="mb-3 text-sm text-ink-muted">Every record is counted. Add a filter to narrow it; one marked Ask when run takes the reader's value each time.</p>{% endif %}
+{% for filter in filters %}<div id="{{ filter.id }}" class="grid gap-x-3 sm:grid-cols-2 lg:grid-cols-4">{{ filter.column|safe }}{{ filter.test|safe }}{{ filter.value|safe }}{{ filter.to|safe }}<div class="flex items-center gap-2">{{ filter.ask|safe }}{{ filter.remove|safe }}</div></div>{% endfor %}
+{{ add_filter|safe }}
+{% endcall %}
+{% endcall %}

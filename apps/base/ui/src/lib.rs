@@ -14,6 +14,7 @@ mod assets;
 pub use assets::{Assets, StaticAsset};
 
 mod auth;
+mod chart;
 mod colour;
 pub use colour::{ColourChoice, ColourInput, ColourRole};
 mod components;
@@ -51,6 +52,7 @@ pub use auth::{
     ResetPasswordPage, SignInChallengePage, COMPANY_ARCHIVED, CREDENTIALS_REJECTED, PASSWORD_RESET,
     RESET_LINK_INVALID, RESET_REQUESTED, SESSION_EXPIRED, SIGN_IN_THROTTLED, WORKSPACE_UNAVAILABLE,
 };
+pub use chart::{Chart, ChartKind, Series, MAX_CATEGORIES, MAX_SERIES, MAX_SLICES};
 pub use components::{button_class, card_body_class, card_flat, stat_strip_columns};
 pub use components::{
     ActionLink, BackLink, Badge, BadgeKind, Button, ButtonVariant, Card, Chrome, CreateButton,
