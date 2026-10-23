@@ -72,6 +72,7 @@ pub(crate) struct Builder {
     columns: Vec<String>,
     sort: String,
     descending: bool,
+    totals: bool,
     groupings: [(String, String); 2],
     measures: [(String, String); MEASURE_ROWS],
     chart: String,
@@ -126,6 +127,7 @@ impl Builder {
             columns: d.columns.clone(),
             sort: d.sort.first().map(|s| s.column.clone()).unwrap_or_default(),
             descending: d.sort.first().is_some_and(|s| s.descending),
+            totals: d.totals,
             groupings,
             measures,
             chart: d.chart.clone().unwrap_or_default(),
@@ -160,6 +162,7 @@ impl Builder {
             .unwrap_or_default();
         self.sort = get("sort");
         self.descending = get("sort_dir") == "desc";
+        self.totals = get("totals") == "true";
         for (i, slot) in self.groupings.iter_mut().enumerate() {
             *slot = (get(&format!("g{i}")), get(&format!("b{i}")));
         }
@@ -237,6 +240,9 @@ impl Builder {
                 if !self.sort.is_empty() {
                     definition["sort"] =
                         json!([{"column": self.sort, "descending": self.descending}]);
+                }
+                if self.totals {
+                    definition["totals"] = json!(true);
                 }
             }
             Kind::Summary => {
@@ -371,6 +377,12 @@ impl Builder {
                     .kind(InputKind::Select)
                     .options(choices(&[("Ascending", "asc"), ("Descending", "desc")]))
                     .value(if self.descending { "desc" } else { "asc" }),
+            )?);
+            shape.push(render(
+                field("totals", "Totals line")
+                    .kind(InputKind::Checkbox)
+                    .checked(self.totals)
+                    .hint("Adds a line summing each number column over every row."),
             )?);
         } else {
             for (i, (column, bucket)) in self.groupings.iter().enumerate() {

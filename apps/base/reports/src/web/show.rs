@@ -15,9 +15,9 @@ use bilibi_tenancy::Scope;
 use bilibi_ui::{
     choices,
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
-    params, ActionLink, Alert, Badge, BadgeKind, Button, ButtonVariant, Card, ColumnsOutcome,
-    ConfirmDialog, Fact, Facts, Field, FlashMap, Header, Html, IconButton, IconKind, InputKind,
-    ListColumns, MultiSelect, StatusKind, Tab, Tabs,
+    params, ActionLink, Alert, Button, ButtonVariant, Card, ColumnsOutcome, ConfirmDialog, Fact,
+    Facts, Field, FlashMap, Header, Html, IconButton, IconKind, InputKind, ListColumns,
+    MultiSelect, StatusKind, Tab, Tabs,
 };
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap};
@@ -55,8 +55,10 @@ pub(crate) struct Show {
     builder: Option<Builder>,
     hosts: BTreeMap<&'static str, (Vec<String>, ListColumns)>,
     drillable: Vec<result::Drillable>,
-    /// The drawn summary's groupings, as `(spec, label, bucketed)`.
-    grouped: Vec<(String, String, bool)>,
+    /// The drawn summary's groupings, as `(spec, label, bucket)`.
+    grouped: Vec<(String, String, Option<&'static str>)>,
+    /// A summary shown as the records behind it (a drill-down).
+    as_rows: bool,
     confirm: Option<Confirm>,
     flash: Option<(StatusKind, String)>,
 }
@@ -146,6 +148,7 @@ impl Show {
             hosts: BTreeMap::new(),
             drillable: Vec::new(),
             grouped: Vec::new(),
+            as_rows: false,
             confirm: None,
             flash: None,
         };
@@ -244,7 +247,10 @@ impl Show {
                     Some(n) if (n as usize) <= self.drill.len() => {
                         self.drill.remove(n as usize - 1);
                     }
-                    _ => self.drill.clear(),
+                    _ => {
+                        self.drill.clear();
+                        self.as_rows = false;
+                    }
                 }
                 self.page = 0;
             }
@@ -341,9 +347,15 @@ impl Show {
         self.flash = Some((StatusKind::Error, message));
     }
 
-    /// Narrows the run to a drawn summary line's own groups. Bucketed
-    /// groups (a month, a quarter) are not drill targets.
+    /// Shows the records behind a drawn line (or, for `total`, behind the
+    /// whole result), narrowed by that line's own groups: equals for a value,
+    /// the period's first and last day for a date bucket.
     fn drill_line(&mut self, line: Option<&str>) {
+        if line == Some("total") {
+            self.as_rows = true;
+            self.page = 0;
+            return;
+        }
         let Some(line) = line
             .and_then(|l| l.parse::<usize>().ok())
             .and_then(|n| self.drillable.get(n))
@@ -355,19 +367,21 @@ impl Show {
         } else {
             line.keys.len()
         };
-        for (key, (spec, label, bucketed)) in line.keys.iter().zip(&self.grouped).take(depth) {
-            if *bucketed
-                || self.drill.iter().any(|d| &d.filter.column == spec)
-                || self.drill.len() >= 2
-            {
+        let mut added = Vec::new();
+        for (key, (spec, label, bucket)) in line.keys.iter().zip(&self.grouped).take(depth) {
+            if self.drill.iter().any(|d| &d.filter.column == spec) {
                 continue;
             }
-            let (test, value) = if key.is_null() {
-                ("empty", Value::Null)
-            } else {
-                ("equals", key.clone())
+            let shown = result::key_text(key, *bucket);
+            let (test, value) = match bucket {
+                _ if key.is_null() => ("empty", Value::Null),
+                Some(bucket) => match result::bucket_days(key, bucket) {
+                    Some((min, max)) => ("range", json!({"min": min, "max": max})),
+                    None => continue,
+                },
+                None => ("equals", key.clone()),
             };
-            self.drill.push(Drill {
+            added.push(Drill {
                 filter: FilterDef {
                     column: spec.clone(),
                     test: test.into(),
@@ -379,11 +393,14 @@ impl Show {
                     if key.is_null() {
                         "(none)".into()
                     } else {
-                        result::cell(key)
+                        shown
                     }
                 ),
             });
         }
+        self.drill.extend(added);
+        self.drill.truncate(2);
+        self.as_rows = true;
         self.page = 0;
     }
 
@@ -658,13 +675,14 @@ impl Show {
         if !asks.is_empty() {
             out.push(&self.ask_form(&asks, &offered)?);
         }
-        if !self.drill.is_empty() {
+        if self.as_rows && report.kind != Kind::Rows {
             out.push(&self.breadcrumb()?);
         }
         let input = RunInput {
             answers: answers(report, &self.answers),
             drill: self.drill.iter().map(|d| d.filter.clone()).collect(),
             page: self.page,
+            as_rows: self.as_rows,
         };
         let run = match self.pages.reports.run(scope, report.id, &input).await {
             Ok(run) => run,
@@ -700,11 +718,13 @@ impl Show {
             RunResult::Rows {
                 columns,
                 rows,
+                pages,
                 total,
                 page,
                 page_size,
+                totals,
             } => {
-                if can.export {
+                if can.export && !self.as_rows {
                     let cap = self
                         .pages
                         .reports
@@ -719,12 +739,20 @@ impl Show {
                 let builtins = result::row_columns(columns);
                 let host = self.host("rows", &builtins)?;
                 let sizes = [*page_size as u64];
-                result::rows(host, rows, *total, *page, *page_size, &sizes)?
+                let list = result::RowsPage {
+                    rows,
+                    pages,
+                    total: *total,
+                    page: *page,
+                    page_size: *page_size,
+                    totals: totals.as_deref(),
+                };
+                result::rows(host, &list, &sizes)?
             }
             summary @ RunResult::Summary { groupings, .. } => {
                 self.grouped = groupings
                     .iter()
-                    .map(|(c, bucket)| (c.spec.clone(), c.label.clone(), bucket.is_some()))
+                    .map(|(c, bucket)| (c.spec.clone(), c.label.clone(), *bucket))
                     .collect();
                 let builtins = result::summary_columns(summary);
                 let host = self.host("summary", &builtins)?;
@@ -733,9 +761,10 @@ impl Show {
                 html
             }
         };
+        let flat = matches!(run.result, RunResult::Rows { .. });
         out.push(&render(Card {
             id: "report-result",
-            inner_class: if report.kind == Kind::Rows { "p-0" } else { "" },
+            inner_class: if flat { "p-0" } else { "" },
             body,
             ..Card::default()
         })?);
@@ -843,27 +872,39 @@ impl Show {
         })
     }
 
+    /// Where a drill-down stands: the groups it narrows to, each removable,
+    /// and the way back to the summary or matrix it came from.
     fn breadcrumb(&self) -> Result<Html> {
         let mut parts = Html::EMPTY;
+        if self.drill.is_empty() {
+            parts.push(&render(Narrowed {
+                label: "everything in the total",
+                button: Html::EMPTY,
+            })?);
+        }
         for (n, drill) in self.drill.iter().enumerate() {
-            parts.push(&render(Badge::status(BadgeKind::Plain, &drill.label))?);
             let id = format!("report-undrill-{}", n + 1);
             let index = (n + 1).to_string();
-            let label = format!("Stop showing only {}", drill.label);
-            parts.push(&render(IconButton {
+            let label = format!("Stop narrowing to {}", drill.label);
+            // Data values keep their own spelling: a badge would capitalise them.
+            let button = render(IconButton {
                 id: &id,
                 kind: IconKind::Neutral,
                 event: "undrill",
                 name: "index",
                 value: &index,
                 ..IconButton::new("close", &label)
+            })?;
+            parts.push(&render(Narrowed {
+                label: &drill.label,
+                button,
             })?);
         }
         parts.push(&render(Button {
             id: "report-undrill-all",
             button_type: "button",
             event: "undrill",
-            body: Html::text("Show all"),
+            body: Html::text("Back to the summary"),
             ..Button::default()
         })?);
         render(Breadcrumb { body: parts })
@@ -979,9 +1020,20 @@ struct Row {
     body: Html,
 }
 
+/// One group a drill-down narrows to, with its remove button.
 #[derive(Template)]
 #[template(
-    source = r#"<nav id="report-drill" aria-label="Narrowed to" class="flex flex-wrap items-center gap-2"><span class="text-sm text-ink-muted">Showing only</span>{{ body|safe }}</nav>"#,
+    source = r#"<span class="inline-flex items-center gap-1 text-sm font-medium text-ink">{{ label }}{{ button|safe }}</span>"#,
+    ext = "html"
+)]
+struct Narrowed<'a> {
+    label: &'a str,
+    button: Html,
+}
+
+#[derive(Template)]
+#[template(
+    source = r#"<nav id="report-drill" aria-label="Narrowed to" class="flex flex-wrap items-center gap-2"><span class="text-sm text-ink-muted">Records behind</span>{{ body|safe }}</nav>"#,
     ext = "html"
 )]
 struct Breadcrumb {

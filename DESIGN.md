@@ -60,7 +60,7 @@ Reuse the shared macros and typed models. Do not hand-write markup or copy class
 | Tabs | `templates/tabs.html` | `apps/base/ui` |
 | Inline edit | `templates/inline.html` and `src/inline.rs` | `apps/base/ui` |
 | List and table | `templates/lists.html`, `flex_table.html` | `apps/base/ui` |
-| Chart (KPI, bar, stacked bar, line, pie, donut) | `templates/chart.html` and `src/chart.rs` (`Chart`, `ChartKind`, `Series`) | `apps/base/ui` |
+| Chart (KPI, bar, stacked bar, line, pie, donut); `Chart::drill` makes bars and slices raise a page event, with the Data table as the keyboard route | `templates/chart.html` and `src/chart.rs` (`Chart`, `ChartKind`, `Series`) | `apps/base/ui` |
 
 - Name variants through the enums (`ButtonVariant`, `BadgeKind`, `PageVariant`), not class strings.
 - Icons come from `src/icons.rs` action names or `hero-*`. Use the Belimbing equivalent for a familiar action.

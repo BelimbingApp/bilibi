@@ -129,6 +129,8 @@ pub struct Chart {
     legend: Vec<Legend>,
     headers: Vec<String>,
     rows: Vec<(String, Vec<String>)>,
+    /// The event a bar or slice raises once [`Chart::drill`] names one.
+    drill_event: &'static str,
 }
 
 struct Tick {
@@ -148,6 +150,10 @@ struct Mark {
     d: String,
     class: &'static str,
     title: String,
+    /// Which series and category the mark draws.
+    at: (usize, usize),
+    /// What the mark raises when [`Chart::drill`] makes it a control.
+    drill: String,
 }
 struct Line {
     /// One polyline per unbroken run of values.
@@ -167,6 +173,21 @@ struct Legend {
 }
 
 impl Chart {
+    /// Makes each bar and slice a control that raises `event` with `line`
+    /// set to what `pick(series, category)` answers (a value the owner holds,
+    /// such as the number of the line it drew), where it answers one. The
+    /// "Data" table stays the keyboard route; the marks are a pointer shortcut.
+    pub fn drill(
+        mut self,
+        event: &'static str,
+        pick: impl Fn(usize, usize) -> Option<String>,
+    ) -> Self {
+        self.drill_event = event;
+        for mark in self.rects.iter_mut().chain(self.slices.iter_mut()) {
+            mark.drill = pick(mark.at.0, mark.at.1).unwrap_or_default();
+        }
+        self
+    }
     /// Builds the figure. `id` prefixes every element id; `title` names it.
     pub fn new(
         id: impl Into<String>,
@@ -190,6 +211,7 @@ impl Chart {
             slices: Vec::new(),
             centre: String::new(),
             legend: Vec::new(),
+            drill_event: "",
             headers: std::iter::once(String::new())
                 .chain(series.iter().map(|s| s.name.clone()))
                 .collect(),
@@ -392,6 +414,7 @@ impl Chart {
                             y(from),
                             FILL[si],
                             title(category, s, v),
+                            (si, i),
                         ));
                     }
                 }
@@ -411,6 +434,7 @@ impl Chart {
                             y(v.min(0.0)),
                             FILL[si],
                             title(category, s, v),
+                            (si, i),
                         ));
                     }
                 }
@@ -464,6 +488,8 @@ impl Chart {
                     format_number(*v),
                     percent
                 ),
+                at: (0, *i),
+                drill: String::new(),
             });
             self.legend.push(Legend {
                 class: SWATCH[slot],
@@ -484,7 +510,15 @@ impl Chart {
     }
 }
 
-fn bar(x: f64, w: f64, top: f64, bottom: f64, class: &'static str, title: String) -> Mark {
+fn bar(
+    x: f64,
+    w: f64,
+    top: f64,
+    bottom: f64,
+    class: &'static str,
+    title: String,
+    at: (usize, usize),
+) -> Mark {
     Mark {
         x: num(x),
         y: num(top),
@@ -493,6 +527,8 @@ fn bar(x: f64, w: f64, top: f64, bottom: f64, class: &'static str, title: String
         d: String::new(),
         class,
         title,
+        at,
+        drill: String::new(),
     }
 }
 

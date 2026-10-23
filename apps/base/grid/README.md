@@ -18,7 +18,10 @@ Depend on `base/grid`, submit one `GridContribution` to `TABLES`
   `capability` that reads any of its rows, a `Source`, the `key` field, optional
   `label_field` and `time_field` (a date/datetime), `fields`, and `record_types`
   (the audit `auditable_type` values its rows use, so a restriction reaches their
-  audit views; one table claims a type).
+  audit views; one table claims a type), and optional `page`, the record's own
+  page with `{key}` for the row's key (`/companies/{key}`), which a report row
+  links to (`Table::page_for`; boot refuses one that is not a local path with
+  one `{key}`).
 - a `Source`: static SQL for **the rows a scope may read**, with the owner's own
   tenant, soft-delete and company filters applied. A tenant source takes bigint
   `$1` (tenant) and may take `$2` (user); a `Source::global` takes none. The grid

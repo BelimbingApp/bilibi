@@ -115,6 +115,7 @@ fn run_input(input: &Value) -> Result<RunInput, AgentError> {
         answers,
         drill,
         page,
+        as_rows: input["as_rows"].as_bool() == Some(true),
     })
 }
 fn listed(report: &crate::Report) -> Value {
@@ -303,7 +304,8 @@ fn run_schema() -> Value {
         "drill":{"type":"array","description":"Extra equals filters to narrow to one group of a summary, as {column, test: equals, value}.","items":{"type":"object","required":["column","test"],"properties":{
             "column":{"type":"string","maxLength":160},"test":{"type":"string","enum":["equals","empty"]},"value":{"type":"string","maxLength":256}
         }}},
-        "page":{"type":"integer","minimum":0,"maximum":1000,"description":"A list report's page, from 0."}
+        "page":{"type":"integer","minimum":0,"maximum":1000,"description":"A list report's page, from 0."},
+        "as_rows":{"type":"boolean","description":"For a summary: list the records behind it (with drill, the records of one group) page by page instead."}
     }})
 }
 fn draft_schema(with_id: bool) -> Value {

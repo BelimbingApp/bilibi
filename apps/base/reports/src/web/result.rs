@@ -1,7 +1,8 @@
 //! A run drawn for the Result tab: a list report's page of rows in the
-//! shared flex table, or a summary's chart and its lines with subtotals and
-//! the total. A group shown by its own value offers a drill-down that runs
-//! the report again narrowed to that group.
+//! shared flex table (each row opening its record's own page where the
+//! owner declares one, and an optional totals line), or a summary's chart
+//! and its lines with subtotals and the total. A group, a total or a chart bar drills into the records
+//! behind it: the page names a line it drew, never a value from the browser.
 use super::render;
 use crate::{ColumnInfo, RunResult};
 use bilibi_database::{Error, Result};
@@ -10,6 +11,10 @@ use bilibi_ui::{
     ListColumns, PageCounts, Pagination, Series, TableEmpty,
 };
 use serde_json::Value;
+
+/// One line of a summary as a run carries it: keys, subtotal flag, record
+/// count, one value per measure.
+type SummaryLine = (Vec<Value>, bool, i64, Vec<Value>);
 
 /// A cell's text: numbers as they come, yes/no for booleans, blank for none.
 pub(crate) fn cell(value: &Value) -> String {
@@ -44,6 +49,25 @@ pub(crate) fn key_text(value: &Value, bucket: Option<&str>) -> String {
         "week" => format!("Week of {}", text.get(0..10).unwrap_or(&text)),
         _ => text.get(0..10).unwrap_or(&text).to_owned(),
     }
+}
+/// The first and last day of the period a date bucket's key starts, as
+/// `YYYY-MM-DD`, for the range filter a drill into it adds.
+pub(crate) fn bucket_days(value: &Value, bucket: &str) -> Option<(String, String)> {
+    use jiff::{civil::Date, ToSpan};
+    let first: Date = cell(value).get(0..10)?.parse().ok()?;
+    let last = match bucket {
+        "day" => first,
+        "week" => first.checked_add(6.days()).ok()?,
+        "month" => first.last_of_month(),
+        "quarter" => first
+            .checked_add(3.months())
+            .ok()?
+            .checked_sub(1.day())
+            .ok()?,
+        "year" => first.last_of_year(),
+        _ => return None,
+    };
+    Some((first.to_string(), last.to_string()))
 }
 fn number(value: &Value) -> Option<f64> {
     value
@@ -80,44 +104,79 @@ pub(crate) fn row_columns(columns: &[ColumnInfo]) -> Vec<BuiltinColumn> {
         .collect()
 }
 
-/// A list report's page, with its pager.
-pub(crate) fn rows(
-    host: &ListColumns,
-    rows: &[(Value, Vec<Value>)],
-    total: i64,
-    page: usize,
-    page_size: usize,
-    sizes: &[u64],
-) -> Result<Html> {
-    let flex: Vec<FlexRow> = rows
-        .iter()
-        .enumerate()
-        .map(|(n, (_, cells))| {
-            cells
-                .iter()
-                .enumerate()
-                .fold(FlexRow::new(n.to_string()), |row, (i, value)| {
-                    row.slot(&format!("c{i}"), Html::text(&cell(value)))
-                })
-        })
-        .collect();
+/// One page of a list, as the result carries it.
+pub(crate) struct RowsPage<'a> {
+    pub rows: &'a [(Value, Vec<Value>)],
+    pub pages: &'a [Option<String>],
+    pub total: i64,
+    pub page: usize,
+    pub page_size: usize,
+    pub totals: Option<&'a [Value]>,
+}
+
+/// A list report's page, with its totals line and pager. The first cell of
+/// a row links to the record's own page when its module declares one.
+pub(crate) fn rows(host: &ListColumns, list: &RowsPage<'_>, sizes: &[u64]) -> Result<Html> {
+    let mut flex = Vec::with_capacity(list.rows.len() + 1);
+    for (n, (_, cells)) in list.rows.iter().enumerate() {
+        let mut row = FlexRow::new(n.to_string());
+        for (i, value) in cells.iter().enumerate() {
+            let text = cell(value);
+            let html = match list.pages.get(n).and_then(Option::as_ref) {
+                Some(href) if i == 0 => render(RecordCell {
+                    href,
+                    text: if text.is_empty() { "(none)" } else { &text },
+                })?,
+                _ => Html::text(&text),
+            };
+            row = row.slot(&format!("c{i}"), html);
+        }
+        flex.push(row);
+    }
+    if let Some(totals) = list.totals {
+        let mut last = FlexRow::new("total");
+        for (i, value) in totals.iter().enumerate() {
+            let text = if i == 0 && value.is_null() {
+                "Total".to_owned()
+            } else {
+                cell(value)
+            };
+            last = last.slot(&format!("c{i}"), Html::text(&text));
+        }
+        last.dom_id = Some("report-rows-total".into());
+        flex.push(last);
+    }
     let mut table = FlexTable::new("report-rows", host.flex_columns(), flex);
     table.zoom = host.zoom;
     table.caption = "Report rows";
     table.framed = false;
-    if total == 0 {
+    if list.total == 0 {
         table.empty = Some(TableEmpty::Content(Html::text(
             "No records match this report.",
         )));
     }
     let mut body = render(table)?;
-    let counts = PageCounts::new(page as u64 + 1, page_size as u64, total.max(0) as u64);
+    let counts = PageCounts::new(
+        list.page as u64 + 1,
+        list.page_size as u64,
+        list.total.max(0) as u64,
+    );
     body.push(&render(Pagination::new(
         "report-pagination",
         counts,
         sizes,
     ))?);
     Ok(body)
+}
+
+#[derive(askama::Template)]
+#[template(
+    source = r#"<a href="{{ href }}" class="font-medium text-link hover:underline">{{ text }}</a>"#,
+    ext = "html"
+)]
+struct RecordCell<'a> {
+    href: &'a str,
+    text: &'a str,
 }
 
 /// The table columns of a summary: its groups, the record count, then
@@ -160,6 +219,15 @@ pub(crate) struct Drillable {
     pub keys: Vec<Value>,
     pub subtotal: bool,
 }
+fn drillables(lines: &[SummaryLine]) -> Vec<Drillable> {
+    lines
+        .iter()
+        .map(|(keys, subtotal, _, _)| Drillable {
+            keys: keys.clone(),
+            subtotal: *subtotal,
+        })
+        .collect()
+}
 
 /// A summary's chart and its lines. Answers the lines a drill may name.
 pub(crate) fn summary(
@@ -187,14 +255,15 @@ pub(crate) fn summary(
             measures,
             lines,
             total,
+            true,
         ))?);
     }
-    let mut drillable = Vec::new();
     let mut flex = Vec::new();
     for (n, (keys, subtotal, count, values)) in lines.iter().enumerate() {
         let mut row = FlexRow::new(n.to_string());
         for (i, key) in keys.iter().enumerate() {
-            let shown = if *subtotal && i + 1 == keys.len() {
+            let placeholder = *subtotal && i + 1 == keys.len();
+            let shown = if placeholder {
                 "Subtotal".to_owned()
             } else {
                 key_text(key, groupings[i].1)
@@ -204,11 +273,14 @@ pub(crate) fn summary(
             } else {
                 shown
             };
-            let html = if groupings[i].1.is_none() && !(*subtotal && i + 1 == keys.len()) {
-                drill_cell(&shown, n)?
-            } else {
-                Html::text(&shown)
-            };
+            // The innermost key drills the whole line; an outer one only on
+            // its subtotal, so one group is one control.
+            let html =
+                if !placeholder && (i + 1 == keys.len() || (*subtotal && i + 2 == keys.len())) {
+                    drill_cell(&shown, &n.to_string())?
+                } else {
+                    Html::text(&shown)
+                };
             row = row.slot(&format!("g{i}"), html);
         }
         row = row.slot("rows", Html::text(&count.to_string()));
@@ -216,15 +288,16 @@ pub(crate) fn summary(
             row = row.slot(&format!("m{i}"), Html::text(&cell(value)));
         }
         row.dom_id = Some(format!("report-line-{n}"));
-        drillable.push(Drillable {
-            keys: keys.clone(),
-            subtotal: *subtotal,
-        });
         flex.push(row);
     }
     let mut last = FlexRow::new("total");
-    if !groupings.is_empty() {
-        last = last.slot("g0", Html::text("Total"));
+    let label = if groupings.is_empty() {
+        None
+    } else {
+        Some("Total")
+    };
+    if let Some(label) = label {
+        last = last.slot("g0", drill_cell(label, "total")?);
     }
     last = last.slot("rows", Html::text(&total.0.to_string()));
     for (i, value) in total.1.iter().enumerate() {
@@ -237,7 +310,7 @@ pub(crate) fn summary(
     table.caption = "Report summary";
     table.framed = false;
     out.push(&render(table)?);
-    Ok((render(Stack { body: out })?, drillable))
+    Ok((render(Stack { body: out })?, drillables(lines)))
 }
 
 #[derive(askama::Template)]
@@ -260,16 +333,19 @@ struct DrillCell<'a> {
     button: Html,
 }
 
-fn drill_cell(shown: &str, line: usize) -> Result<Html> {
+fn drill_cell(shown: &str, line: &str) -> Result<Html> {
     let id = format!("report-drill-{line}");
-    let value = line.to_string();
-    let label = format!("Show only {shown}");
+    let label = if line == "total" {
+        "Show every record behind the total".to_owned()
+    } else {
+        format!("Show the records behind {shown}")
+    };
     let button = render(IconButton {
         id: &id,
         kind: IconKind::Neutral,
         event: "drill",
         name: "line",
-        value: &value,
+        value: line,
         ..IconButton::new("filter", &label)
     })?;
     render(DrillCell {
@@ -292,15 +368,17 @@ pub(crate) fn agg_label(agg: &str) -> &'static str {
 /// The chart of a summary. One grouping: a category per group, a series per
 /// measure (or the record count). Two: a category per first group and a
 /// series per second group, of the first measure. None: the total as a
-/// number.
+/// number. With `drill`, each bar or slice names the line it draws.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn figure(
     id: &str,
     title: &str,
     kind: ChartKind,
     groupings: &[(ColumnInfo, Option<&'static str>)],
     measures: &[(ColumnInfo, &'static str)],
-    lines: &[(Vec<Value>, bool, i64, Vec<Value>)],
+    lines: &[SummaryLine],
     total: &(i64, Vec<Value>),
+    drill: bool,
 ) -> Chart {
     let measure_name = |i: usize| {
         measures.get(i).map_or_else(
@@ -317,7 +395,9 @@ pub(crate) fn figure(
     };
     let depth = groupings.len();
     let key = |i: usize, v: &Value| key_text(v, groupings.get(i).and_then(|g| g.1));
-    let detail: Vec<_> = lines.iter().filter(|l| !l.1).collect();
+    // The detail lines with their position in `lines`, which a drill names.
+    let detail: Vec<(usize, &SummaryLine)> =
+        lines.iter().enumerate().filter(|(_, l)| !l.1).collect();
     if depth == 0 || kind == ChartKind::Kpi {
         let series = vec![Series {
             name: measure_name(0),
@@ -328,26 +408,36 @@ pub(crate) fn figure(
     if depth == 1 {
         let categories: Vec<String> = detail
             .iter()
-            .map(|l| l.0.first().map(|v| key(0, v)).unwrap_or_default())
+            .map(|(_, l)| l.0.first().map(|v| key(0, v)).unwrap_or_default())
             .collect();
         let series = if measures.is_empty() {
             vec![Series {
                 name: measure_name(0),
-                values: detail.iter().map(|l| Some(l.2 as f64)).collect(),
+                values: detail.iter().map(|(_, l)| Some(l.2 as f64)).collect(),
             }]
         } else {
             (0..measures.len())
                 .map(|i| Series {
                     name: measure_name(i),
-                    values: detail.iter().map(|l| l.3.get(i).and_then(number)).collect(),
+                    values: detail
+                        .iter()
+                        .map(|(_, l)| l.3.get(i).and_then(number))
+                        .collect(),
                 })
                 .collect()
         };
-        return Chart::new(id, title, kind, categories, series);
+        let chart = Chart::new(id, title, kind, categories, series);
+        return if drill {
+            chart.drill("drill", |_, category| {
+                detail.get(category).map(|(n, _)| n.to_string())
+            })
+        } else {
+            chart
+        };
     }
     let mut categories: Vec<String> = Vec::new();
     let mut names: Vec<String> = Vec::new();
-    for l in &detail {
+    for (_, l) in &detail {
         let (a, b) = (
             l.0.first().map(|v| key(0, v)).unwrap_or_default(),
             l.0.get(1).map(|v| key(1, v)).unwrap_or_default(),
@@ -359,6 +449,12 @@ pub(crate) fn figure(
             names.push(b);
         }
     }
+    let find = |category: &String, name: &String| {
+        detail.iter().find(|(_, l)| {
+            l.0.first().map(|v| key(0, v)).as_ref() == Some(category)
+                && l.0.get(1).map(|v| key(1, v)).as_ref() == Some(name)
+        })
+    };
     let series = names
         .iter()
         .map(|name| Series {
@@ -369,17 +465,17 @@ pub(crate) fn figure(
             },
             values: categories
                 .iter()
-                .map(|category| {
-                    detail
-                        .iter()
-                        .find(|l| {
-                            l.0.first().map(|v| key(0, v)).as_ref() == Some(category)
-                                && l.0.get(1).map(|v| key(1, v)).as_ref() == Some(name)
-                        })
-                        .and_then(|l| pick(l.2, &l.3))
-                })
+                .map(|category| find(category, name).and_then(|(_, l)| pick(l.2, &l.3)))
                 .collect(),
         })
         .collect();
-    Chart::new(id, title, kind, categories, series)
+    let chart = Chart::new(id, title, kind, categories.clone(), series);
+    if drill {
+        chart.drill("drill", |s, c| {
+            let (name, category) = (names.get(s)?, categories.get(c)?);
+            find(category, name).map(|(n, _)| n.to_string())
+        })
+    } else {
+        chart
+    }
 }

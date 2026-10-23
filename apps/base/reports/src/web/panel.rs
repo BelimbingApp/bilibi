@@ -80,7 +80,9 @@ impl Panel {
                             .as_deref()
                             .and_then(ChartKind::from_key)
                             .unwrap_or(ChartKind::Kpi);
-                        result::figure(&chart_id, &name, kind, groupings, measures, lines, total)
+                        result::figure(
+                            &chart_id, &name, kind, groupings, measures, lines, total, false,
+                        )
                     }
                     RunResult::Rows { total, .. } => Chart::new(
                         &chart_id,

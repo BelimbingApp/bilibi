@@ -18,9 +18,9 @@
 <svg viewBox="0 0 640 240" class="h-auto w-full" role="img" aria-labelledby="{{ title_id }} {{ desc_id }}"><desc id="{{ desc_id }}">{{ summary }}</desc>
 {%- for tick in ticks %}<line x1="52" x2="628" y1="{{ tick.y }}" y2="{{ tick.y }}" class="stroke-low-contrast-line" stroke-width="1"></line><text x="46" y="{{ tick.y }}" dy="3" text-anchor="end" class="fill-ink-subtle text-[10px] tabular-nums">{{ tick.label }}</text>{% endfor %}
 {%- for label in labels %}<text x="{{ label.x }}" y="222" text-anchor="middle" class="fill-ink-subtle text-[10px]">{{ label.text }}</text>{% endfor %}
-{%- for rect in rects %}<rect x="{{ rect.x }}" y="{{ rect.y }}" width="{{ rect.w }}" height="{{ rect.h }}" rx="1" class="{{ rect.class }}"><title>{{ rect.title }}</title></rect>{% endfor %}
+{%- for rect in rects %}<rect x="{{ rect.x }}" y="{{ rect.y }}" width="{{ rect.w }}" height="{{ rect.h }}" rx="1" class="{{ rect.class }}{% if !rect.drill.is_empty() %} cursor-pointer{% endif %}"{% if !rect.drill.is_empty() %} data-event="{{ drill_event }}" data-line="{{ rect.drill }}"{% endif %}><title>{{ rect.title }}</title></rect>{% endfor %}
 {%- for line in lines %}{% for run in line.runs %}<polyline points="{{ run }}" fill="none" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" class="{{ line.class }}"></polyline>{% endfor %}{% for dot in line.dots %}<circle cx="{{ dot.x }}" cy="{{ dot.y }}" r="3" class="{{ line.dot_class }}"><title>{{ dot.title }}</title></circle>{% endfor %}{% endfor %}
-{%- for slice in slices %}<path d="{{ slice.d }}" fill-rule="evenodd" class="{{ slice.class }} stroke-surface" stroke-width="1.5"><title>{{ slice.title }}</title></path>{% endfor %}
+{%- for slice in slices %}<path d="{{ slice.d }}" fill-rule="evenodd" class="{{ slice.class }} stroke-surface{% if !slice.drill.is_empty() %} cursor-pointer{% endif %}" stroke-width="1.5"{% if !slice.drill.is_empty() %} data-event="{{ drill_event }}" data-line="{{ slice.drill }}"{% endif %}><title>{{ slice.title }}</title></path>{% endfor %}
 {%- if !centre.is_empty() %}<text x="320" y="120" dy="6" text-anchor="middle" class="fill-ink-strong text-[18px] font-semibold tabular-nums">{{ centre }}</text>{% endif %}
 </svg>
 {%- if !legend.is_empty() %}

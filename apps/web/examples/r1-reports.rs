@@ -427,6 +427,69 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         format!("{refused:?}").chars().take(60).collect::<String>(),
     );
 
+    println!("== Totals and drilling into records");
+    let totals = Draft {
+        name: "Quantities".into(),
+        description: String::new(),
+        record_type: "reference_items".into(),
+        kind: Kind::Rows,
+        definition: Definition {
+            columns: vec!["name".into(), "quantity".into()],
+            totals: true,
+            ..Definition::default()
+        },
+    };
+    let totals_id = write(&boundary, &db, &manager, "reports.create", async |tx| {
+        reports.create(tx, &manager, &totals).await
+    })
+    .await?;
+    let run = reports
+        .run(&manager, totals_id, &RunInput::default())
+        .await?;
+    let want: f64 = client
+        .query_one(
+            "SELECT sum(quantity)::float8 FROM base_grid_ref_items WHERE tenant_id=1",
+            &[],
+        )
+        .await?
+        .get(0);
+    if let RunResult::Rows { totals, .. } = &run.result {
+        let got = totals
+            .as_ref()
+            .and_then(|t| t.get(1))
+            .map(number)
+            .unwrap_or_default();
+        checks.check(
+            "a totals line sums the number column over every row",
+            got == format!("{want:.2}") && totals.as_ref().is_some_and(|t| t[0].is_null()),
+            format!("{got} against {want}"),
+        );
+    }
+    let csv = reports.csv(&manager, totals_id, &BTreeMap::new()).await?;
+    checks.check(
+        "the CSV ends with the totals line",
+        csv.text.trim_end().ends_with(&format!("Total,{want}")),
+        csv.text.lines().last().unwrap_or_default().to_owned(),
+    );
+    let drill = RunInput {
+        drill: vec![filter("category", "equals", json!("parts"), false)],
+        as_rows: true,
+        ..RunInput::default()
+    };
+    let run = reports.run(&manager, id, &drill).await;
+    let parts: i64 = client
+        .query_one(
+            "SELECT count(*) FROM base_grid_ref_items WHERE tenant_id=1 AND category='parts'",
+            &[],
+        )
+        .await?
+        .get(0);
+    checks.check(
+        "a summary drills into the records behind one group",
+        matches!(&run, Ok(r) if matches!(&r.result, RunResult::Rows { total, .. } if *total == parts)),
+        format!("{parts} parts expected"),
+    );
+
     println!("== Deleting");
     let refused = write(&boundary, &db, &viewer, "reports.delete", async |tx| {
         reports.delete(tx, &viewer, id, 3).await

@@ -15,7 +15,7 @@ Operator-built reports: a saved question over one Grid table, run as each reader
 | Call | Needs | Does |
 |---|---|---|
 | `list`, `get` | `reports.view` | Reports the reader may run: their own, shared with everyone, or shared with one of their roles. |
-| `run` | `reports.view` | One page of rows, or a grouped summary with subtotals and a total. Answers ask-when-run filters by position; drill filters narrow to a group. |
+| `run` | `reports.view` | One page of rows (each with its record's own page where the owner declares one, and the totals line), or a grouped summary with subtotals and a total. Answers ask-when-run filters by position; `as_rows` with drill filters lists the records behind a group. |
 | `csv` | `reports.export` | The whole result as CSV, up to the export cap. Audited as `base.reports.exported` with report id and row count, never the data. Leading `=`, `+`, `-`, `@` are neutralised. |
 | `record_types`, `columns` | `reports.view` | What a builder may offer: readable record types, and a type's own fields plus fields one link away. |
 | `check` | — | Shape bounds, every column against the author's catalog, then a bounded dry run. A dry run refused only by size or cost still saves. |
@@ -29,6 +29,8 @@ Operator-built reports: a saved question over one Grid table, run as each reader
 |---|---|
 | `rows` | `columns` (up to 32 Grid column paths), `filters`, `sort` (up to 3) |
 | `summary` | `filters`, `groupings` (up to 2; a date column takes a `bucket`), `measures` (up to 8: `count`, `sum`, `avg`, `min`, `max`), `chart` |
+
+- A rows report with `totals` adds a line summing each number column (not the key) over every row, on the page and in the CSV.
 
 - Filter tests: `equals`, `one_of`, `contains`, `range`, `within` (a period such as `this_month`), `empty`, `not_empty`. A filter with `ask` takes the reader's value at run time; the stored value is the default, and an ask filter left blank is skipped.
 - Text values from forms and agents are typed for the column at run time (numbers, yes/no).
@@ -49,7 +51,7 @@ Grid's cost bound and timeouts apply to every run on top of these.
 | Path | What |
 |---|---|
 | `/reports` | The reports the reader may run (`FlexTable`), with New report for authors: name, record type and kind create a starter report that opens on its Definition tab. |
-| `/reports/{id}` | Read first. **Result** runs it as the reader, with ask-when-run answers, drill-down on a group's own value (not on date buckets) and a left-out note. **Definition** is the editor, live for the author, read-only for others. **Sharing** is the author's. Copy and Delete confirm with `ConfirmDialog`. |
+| `/reports/{id}` | Read first. **Result** runs it as the reader, with ask-when-run answers, a left-out note, and drill-down: a group, a date bucket (as its period's first and last day), the total or a chart bar opens the records behind it, with a way back. **Definition** is the editor, live for the author, read-only for others. **Sharing** is the author's. Copy and Delete confirm with `ConfirmDialog`. |
 | Dashboard | Customize offers every report the reader may run (provider `report`, embed `base/reports.dashboard`). A placed report runs as the reader with its stored answers and shows its chart, or its total as a number; it refreshes at most once a minute. |
 | `/reports/{id}/export` | The CSV download (`reports.export`), with the answers in the address (`a<i>`, `a<i>_to`). |
 
@@ -69,7 +71,7 @@ Reads: `base.reports.list`, `base.reports.get`, `base.reports.fields` (record ty
 
 ## Proof
 
-`apps/web/examples/r1-reports.rs` on a disposable database (`BILIBI_GRID_DEMO=disposable`): build, run against plain SQL, share, a field restriction, another tenant, stale version, copy, rows, CSV and its audit, delete.
+`apps/web/examples/r1-reports.rs` on a disposable database (`BILIBI_GRID_DEMO=disposable`): build, run against plain SQL, share, a field restriction, another tenant, stale version, copy, rows, CSV and its audit, totals, drilling into records, delete.
 
 ## Not yet
 
