@@ -520,6 +520,7 @@ dependencies = [
  "bilibi-perf",
  "bilibi-ports",
  "bilibi-principal-directory",
+ "bilibi-privacy",
  "bilibi-queue",
  "bilibi-schedule",
  "bilibi-security",
@@ -969,6 +970,27 @@ dependencies = [
  "bilibi-tenancy",
  "inventory",
  "thiserror",
+ "tokio-postgres",
+]
+
+[[package]]
+name = "bilibi-privacy"
+version = "0.1.1"
+dependencies = [
+ "bilibi-authz",
+ "bilibi-base",
+ "bilibi-core",
+ "bilibi-database",
+ "bilibi-grid",
+ "bilibi-module-registry",
+ "bilibi-party-ids",
+ "bilibi-tenancy",
+ "bilibi-walkthrough-fixture",
+ "bilibi-web",
+ "inventory",
+ "serde",
+ "serde_json",
+ "tokio",
  "tokio-postgres",
 ]
 
