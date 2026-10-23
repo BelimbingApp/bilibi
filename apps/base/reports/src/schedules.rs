@@ -623,7 +623,18 @@ impl Reports {
                         )
                         .await
                 }
-                Err(_) => return JobOutcome::Retry("export_not_recorded"),
+                Err(_) => {
+                    return self
+                        .retry_or_close(
+                            execution,
+                            scope,
+                            delivery,
+                            "export_not_recorded",
+                            "skipped",
+                            "The report could not be prepared for the recipient.",
+                        )
+                        .await
+                }
             },
         };
         match self.prepare(execution, export, true).await {
@@ -631,7 +642,16 @@ impl Reports {
             other => return other,
         }
         let Ok(client) = self.db.get().await else {
-            return JobOutcome::Retry("database_unavailable");
+            return self
+                .retry_or_close(
+                    execution,
+                    scope,
+                    delivery,
+                    "database_unavailable",
+                    "skipped",
+                    "The delivery could not be completed after several tries.",
+                )
+                .await;
         };
         let outcome = client
             .query_opt(
@@ -690,7 +710,16 @@ impl Reports {
             ),
         };
         if self.mailer.deliver(&message).await.is_err() {
-            return JobOutcome::Retry("mail_failed");
+            return self
+                .retry_or_close(
+                    execution,
+                    scope,
+                    delivery,
+                    "mail_failed",
+                    "sent",
+                    "Delivered to the bell; the email could not be sent.",
+                )
+                .await;
         }
         self.close(execution, scope, delivery, "sent", None).await
     }
@@ -742,6 +771,25 @@ impl Reports {
             .await?;
         tx.commit().await?;
         Ok(Some(export))
+    }
+
+    /// A fault that may pass: retried, until the job's last attempt, which
+    /// closes the delivery as `state` with `reason` instead of leaving it
+    /// queued for ever.
+    async fn retry_or_close(
+        &self,
+        execution: &Execution,
+        scope: &Scope,
+        delivery: i64,
+        code: &'static str,
+        state: &'static str,
+        reason: &str,
+    ) -> JobOutcome {
+        if !crate::exports::last_attempt(execution) {
+            return JobOutcome::Retry(code);
+        }
+        self.close(execution, scope, delivery, state, Some(reason))
+            .await
     }
 
     async fn close(
