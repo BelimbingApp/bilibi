@@ -87,6 +87,8 @@ refused and the host clears the page. Rows whose table the installed catalog no
 longer offers (a restriction on a table its module stopped contributing) stay
 listed by id, can be removed and cannot be re-restricted.
 
+**Mask mode (ADR 05).** A restricted field has one mode for all its roles (migration `base-authz-013-field-masks`): `withhold`, as above, or `mask`, offered on the screen only for fields the catalog marks personal (`CatalogField::personal`). A role that withholds wins over one that masks. `restrictions_for` and `fields::restricted` still return masked fields too, so a caller that only removes restricted fields never shows a masked value in full. A caller that shows partial values asks `fields::masks_for(table)` (or `fields::masked`, `fields::masked_by_record_type`) for each masked field's kind and uses `fields::partial(kind, value)` or `fields::apply_masks`. Writes and searches refuse a masked field like a withheld one. Revealing a full value is `base/privacy`'s (`apps/base/privacy/README.md`).
+
 `restrictions_for` and `fields::restricted` read restrictions for any table ID;
 any held restricting role masks, even alongside an admin. `fields::mask` removes
 restricted fields before JSON serialization, including arrays, audit old/new

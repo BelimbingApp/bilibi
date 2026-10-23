@@ -111,6 +111,7 @@ affiliations work with People absent.
 **Erasure keeps each affiliation, its company link and dates, and clears job title, work email and work phone.** Store `core/affiliation.affiliations` ("Affiliations (work contact)") under [`base/privacy`](../../base/privacy/README.md), [ADR 05](../../../docs/architecture/decisions/05-personal-data-registry.md).
 
 - The company's records stay whole.
+- **Masking.** A masked `work_email` or `work_phone` holds its partial value, named in `masked` in the read model and JSON, and is read-only in the panel. Writes refuse it.
 
 ## Runtime walkthrough (no unit tests)
 

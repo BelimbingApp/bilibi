@@ -6,7 +6,7 @@ use bilibi_authz::{authorize_key, restrictions_for};
 use bilibi_database::{Change, Error, MutationTransaction, Result};
 use bilibi_tenancy::Scope;
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use tokio_postgres::{types::ToSql, GenericClient};
 
 /// Attachments read for one address or one owner; more is a data defect.
@@ -24,8 +24,11 @@ impl ValidAddress {
     }
 }
 
-async fn fields(client: &impl GenericClient, scope: &Scope) -> Result<HashSet<String>> {
-    restrictions_for(client, scope, "addresses").await
+async fn fields(client: &impl GenericClient, scope: &Scope) -> Result<Restrictions> {
+    Ok(Restrictions {
+        fields: restrictions_for(client, scope, "addresses").await?,
+        masks: bilibi_authz::fields::masks_for(client, scope, "addresses").await?,
+    })
 }
 async fn raw(
     client: &impl GenericClient,
@@ -333,7 +336,7 @@ async fn lock_owner(
     }
     Ok(())
 }
-fn restricted_input(input: &AddressInput, masked: &HashSet<String>) -> Result<()> {
+fn restricted_input(input: &AddressInput, masked: &Restrictions) -> Result<()> {
     if input.phone.is_some() && masked.contains("phone") {
         return Err(Error::Forbidden);
     }

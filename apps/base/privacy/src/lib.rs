@@ -9,6 +9,7 @@ mod agent;
 mod documents;
 mod due;
 mod holds;
+mod masking;
 mod registry;
 mod requests;
 mod retention;
@@ -62,6 +63,10 @@ pub const REQUEST_APPROVE: &str = "privacy.request.approve";
 pub const RETENTION_VIEW: &str = "privacy.retention.view";
 /// Set the tenant's retention periods.
 pub const RETENTION_MANAGE: &str = "privacy.retention.manage";
+/// See the full value of a field masked for the reader, with a reason.
+pub const FIELD_REVEAL: &str = "privacy.field.reveal";
+/// The Step-up operation a reveal asks for once the tenant turns it on.
+pub const STEP_UP_REVEAL: &str = "base.privacy.field.reveal";
 /// The Step-up operation an erasure approval asks for; tenants cannot turn it off.
 pub const STEP_UP_ERASURE: &str = "base.privacy.erasure.approve";
 
@@ -194,12 +199,13 @@ inventory::submit! { Consumer::new::<PersonalData>(PERSONAL_DATA, "base/privacy"
 inventory::submit! { Consumer::new::<RecordClass>(RECORD_CLASSES, "base/privacy", retention::validate) }
 inventory::submit! { Contribution::new(VOCABULARY, "base/privacy.vocabulary", provenance!(), &VocabularyContribution {
     domains: &["privacy"],
-    verbs: &["view", "manage", "receive", "approve"],
+    verbs: &["view", "manage", "receive", "approve", "reveal"],
     capabilities: &[
         CapabilityDefinition::tenant(HOLD_VIEW), CapabilityDefinition::tenant(HOLD_MANAGE),
         CapabilityDefinition::tenant(REQUEST_VIEW), CapabilityDefinition::tenant(REQUEST_RECEIVE),
         CapabilityDefinition::tenant(REQUEST_APPROVE),
         CapabilityDefinition::tenant(RETENTION_VIEW), CapabilityDefinition::tenant(RETENTION_MANAGE),
+        CapabilityDefinition::tenant(FIELD_REVEAL),
     ],
     roles: &[],
     system_principals: &[],
@@ -207,6 +213,11 @@ inventory::submit! { Contribution::new(VOCABULARY, "base/privacy.vocabulary", pr
 bilibi_step_up::declare!(
     "base/privacy",
     bilibi_step_up::Operation::new(STEP_UP_ERASURE, "Approve a personal-data erasure").floor()
+);
+bilibi_step_up::declare!(
+    "base/privacy",
+    bilibi_step_up::Operation::new(STEP_UP_REVEAL, "Reveal a masked personal field")
+        .off_by_default()
 );
 inventory::submit! { Contribution::new(DEFINITIONS, DUE_DAYS, provenance!(), &Setting::Definition(Definition {
     value_type: ValueType::Integer, scopes: &[ScopeKind::Global, ScopeKind::Tenant], default: || json!(requests::DUE_DEFAULT),

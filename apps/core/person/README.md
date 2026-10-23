@@ -100,6 +100,7 @@ tables directly; the providers contain the owning queries.
 - Affiliations, accounts and other records still point at the stub.
 - The person's own attachments (`core.person` Media subject) become tombstones and their bytes are removed; their documents (`core.person` Artifacts owner) are deleted unless held or retained.
 - Other people sharing an email or phone are counted for the operator, never touched.
+- **Masking.** A masked `email` or `phone` holds its partial value in `Person`, named in `masked` (absent from `restricted`), in reads, lists, Grid columns and agent JSON. The record page shows it with a Reveal action for readers holding `privacy.field.reveal`, which asks for a reason and shows the full value in that view only. Masked contacts are not searched or duplicate-matched and refuse writes.
 
 ## Runtime walkthrough without unit tests
 

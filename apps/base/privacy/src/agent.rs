@@ -4,9 +4,9 @@
 //! approval needs a person, and an erasure approval also asks for that
 //! person's Step-up code. No Bilimbi counterpart.
 use crate::{
-    HoldTarget, Identifier, NewRequest, Privacy, RequestKind, RequestView, HOLD_MANAGE, HOLD_VIEW,
-    MAX_DAYS, REQUEST_APPROVE, REQUEST_RECEIVE, REQUEST_VIEW, RETENTION_MANAGE, RETENTION_VIEW,
-    STEP_UP_ERASURE,
+    HoldTarget, Identifier, NewRequest, Privacy, RequestKind, RequestView, FIELD_REVEAL,
+    HOLD_MANAGE, HOLD_VIEW, MAX_DAYS, REQUEST_APPROVE, REQUEST_RECEIVE, REQUEST_VIEW,
+    RETENTION_MANAGE, RETENTION_VIEW, STEP_UP_ERASURE, STEP_UP_REVEAL,
 };
 use bilibi_agent_api::{
     json::{Data, Output},
@@ -186,6 +186,13 @@ enum Write {
     PlaceHold,
     ReleaseHold,
     SetRetention,
+    Reveal,
+}
+fn reveal_record(input: &Value) -> bilibi_agent_api::Result<Value> {
+    match &input["record"] {
+        record @ (Value::Number(_) | Value::String(_)) => Ok(record.clone()),
+        _ => Err(field_error("record", "must be the record's key")),
+    }
 }
 /// `days` left out (or null) returns the class to its default period.
 fn retention_days(input: &Value) -> bilibi_agent_api::Result<Option<u32>> {
@@ -236,6 +243,9 @@ impl WriteHandler for Write {
                 }
                 Self::ReleaseHold => {
                     json!({"summary": format!("Release legal hold {}", id(input, "id")?)})
+                }
+                Self::Reveal => {
+                    json!({"summary": format!("Reveal {}.{} of record {} (recorded with the reason)", text(input, "table")?, text(input, "field")?, reveal_record(input)?), "step_up": [STEP_UP_REVEAL]})
                 }
                 Self::SetRetention => {
                     let class = text(input, "class")?;
@@ -306,6 +316,9 @@ impl WriteHandler for Write {
                     .release_hold_in(tx, scope, id(input, "id")?, text(input, "reason")?)
                     .await
                     .map_err(refusal)?),
+                Self::Reveal => json!({"value": privacy
+                    .reveal_field(scope, text(input, "table")?, text(input, "field")?, &reveal_record(input)?, text(input, "reason")?)
+                    .await?}),
                 Self::SetRetention => json!(privacy
                     .set_retention_in(tx, scope, text(input, "class")?, retention_days(input)?)
                     .await
@@ -368,6 +381,16 @@ fn retention_schema() -> Value {
         "class":{"type":"string","maxLength":255,"description":"A record class key from base.privacy.retention.list"},
         "days":{"type":"integer","minimum":1,"maximum":36500,"description":"Days to keep the class's records; leave it out to return to the class default. Never below the class's legal minimum"}}})
 }
+fn reveal_schema() -> Value {
+    json!({"type":"object","required":["table","field","record","reason"],"properties":{
+        "table":{"type":"string","maxLength":200,"description":"The Grid table, such as persons"},
+        "field":{"type":"string","maxLength":200,"description":"The masked field, such as email"},
+        "record":{"type":"integer","description":"The record's key"},
+        "reason":{"type":"string","maxLength":255,"description":"A case or ticket reference, recorded with the reveal"}}})
+}
+fn reveal_output() -> Value {
+    json!({"type":"object","description":"The field's full value (null when empty). The reveal is recorded with the reason."})
+}
 fn retention_output() -> Value {
     json!({"type":"object","description":"Every record class: what starts its clock, purge or anonymise, default period, legal minimum, this tenant's period, the period sweeps use (null keeps forever) and the last sweep."})
 }
@@ -429,6 +452,18 @@ inventory::submit! { Contribution::new(DEFINITIONS, "base/privacy", Provenance {
         read!("base.privacy.request.get", "Read a data-subject request", "One request and each store's answer.", REQUEST_VIEW, id_schema, request_output, &Read::Request),
         read!("base.privacy.request.locate", "Find a request's personal data", "What every store holds about the request's person, including matches found only by email or phone, which verifying confirms.", REQUEST_VIEW, id_schema, locate_output, &Read::Locate),
         read!("base.privacy.hold.list", "List legal holds", "This tenant's legal holds on people and records.", HOLD_VIEW, empty, holds_output, &Read::Holds),
+        Operation {
+            key: "base.privacy.field.reveal",
+            title: "Reveal a masked field",
+            summary: "The full value of one masked field of one record, with a reason; the reveal is recorded.",
+            keywords: &["privacy", "personal data", "mask", "reveal"],
+            capability: FIELD_REVEAL,
+            input: reveal_schema,
+            output: reveal_output,
+            handler: Handler::SafeWrite(&Write::Reveal),
+            channels: Channels::Every,
+            step_up: &[STEP_UP_REVEAL],
+        },
         read!("base.privacy.retention.list", "List retention rules", "Every record class, its periods and its last sweep in this tenant.", RETENTION_VIEW, empty, retention_output, &Read::Retention),
         write!("base.privacy.request.receive", "Record a data-subject request", "Record an access, portability or erasure request for a person; it is due after privacy.request.due_days.", REQUEST_RECEIVE, receive_schema, &Write::Receive, &[]),
         write!("base.privacy.request.verify", "Verify a requester's identity", "Record how the requester's identity was checked and confirm the request's email and phone matches.", REQUEST_RECEIVE, verify_schema, &Write::Verify, &[]),

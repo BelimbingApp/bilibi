@@ -4,7 +4,26 @@
 use bilibi_database::{Error, Result};
 pub use bilibi_party::{CalendarDate, EffectiveDates, OrganisationId, PartyId, PersonId};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashSet, fmt, time::SystemTime};
+use std::{
+    collections::{BTreeMap, HashSet},
+    fmt,
+    time::SystemTime,
+};
+
+/// What this reader may not see of addresses: every restricted field, and of
+/// those, the ones it sees masked with their personal kinds (ADR 05).
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Restrictions {
+    pub(crate) fields: HashSet<String>,
+    pub(crate) masks: BTreeMap<String, &'static str>,
+}
+impl Restrictions {
+    /// Whether the field is restricted at all: withheld or masked. Writes
+    /// refuse such a field either way.
+    pub(crate) fn contains(&self, field: &str) -> bool {
+        self.fields.contains(field)
+    }
+}
 use tokio_postgres::Row;
 
 pub const COLUMNS: &str = "id,label,phone,line1,line2,line3,locality,postcode,country_iso,admin1_code,raw_input,source,source_ref,parser_version,parse_confidence::text AS parse_confidence,verification_status,version,created_at,updated_at";
@@ -84,6 +103,9 @@ pub struct Address {
     pub updated_at: SystemTime,
     /// Fields hidden from this actor; their value above is `None`.
     pub restricted: Vec<String>,
+    /// Fields holding a partial value instead (ADR 05).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub masked: Vec<String>,
 }
 impl Address {
     pub(crate) fn from_row(row: &Row) -> Result<Self> {
@@ -110,10 +132,18 @@ impl Address {
             created_at: row.get("created_at"),
             updated_at: row.get("updated_at"),
             restricted: Vec::new(),
+            masked: Vec::new(),
         })
     }
-    pub(crate) fn redact(mut self, fields: &HashSet<String>) -> Self {
-        if fields.contains("phone") {
+    pub(crate) fn redact(mut self, restrictions: &Restrictions) -> Self {
+        if let Some(kind) = restrictions.masks.get("phone") {
+            self.address.phone = self
+                .address
+                .phone
+                .take()
+                .map(|text| bilibi_authz::fields::partial(kind, &text));
+            self.masked.push("phone".into());
+        } else if restrictions.contains("phone") {
             self.address.phone = None;
             self.restricted.push("phone".into());
         }
@@ -127,6 +157,7 @@ impl Address {
             fields.extend(facts);
         }
         fields.remove("restricted");
+        fields.remove("masked");
         value
     }
     /// One line for lists and pickers: label, else street and place.

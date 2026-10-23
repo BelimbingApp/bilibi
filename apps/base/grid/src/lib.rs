@@ -108,7 +108,11 @@ fn restriction_snapshot(
                 fields: entry
                     .fields
                     .into_iter()
-                    .map(|(id, label)| CatalogField { id, label })
+                    .map(|(id, label, personal)| CatalogField {
+                        id,
+                        label,
+                        personal,
+                    })
                     .collect(),
             })
             .collect(),
