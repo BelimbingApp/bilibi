@@ -79,7 +79,7 @@ static GRID: bilibi_grid::GridContribution = bilibi_grid::GridContribution {
             bilibi_grid::Field::new("updated_at", "Updated", bilibi_grid::FieldType::DateTime),
             bilibi_grid::Field::new("company_id", "Company", bilibi_grid::FieldType::Integer).hidden(),
             bilibi_grid::Field::new("person_id", "Person", bilibi_grid::FieldType::Integer).hidden(),
-        ]).label_field("name").time_field("created_at").record_types(&["user"])],
+        ]).label_field("name").time_field("created_at").record_types(&["user"]).page("/users/{key}")],
     links: &[
         bilibi_grid::LinkDecl::on("company", "Company", bilibi_grid::LinkKind::One, "users", "company_id", "companies", "id"),
         bilibi_grid::LinkDecl::on("person", "Person", bilibi_grid::LinkKind::One, "users", "person_id", "persons", "id"),

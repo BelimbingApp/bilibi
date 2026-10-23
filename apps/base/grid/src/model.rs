@@ -147,6 +147,10 @@ pub struct TableDecl {
     /// The audit `auditable_type` values rows are recorded under, so a field
     /// restriction reaches the audit views of those rows. One table claims a type.
     pub record_types: &'static [&'static str],
+    /// The record's own page, with `{key}` standing for the row's key
+    /// (`/companies/{key}`), so a report row can open it. The page checks
+    /// its own access when opened.
+    pub page: Option<&'static str>,
 }
 impl TableDecl {
     pub const fn new(
@@ -167,6 +171,7 @@ impl TableDecl {
             time_field: None,
             fields,
             record_types: &[],
+            page: None,
         }
     }
     pub const fn label_field(self, field: &'static str) -> Self {
@@ -184,6 +189,12 @@ impl TableDecl {
     pub const fn record_types(self, types: &'static [&'static str]) -> Self {
         Self {
             record_types: types,
+            ..self
+        }
+    }
+    pub const fn page(self, page: &'static str) -> Self {
+        Self {
+            page: Some(page),
             ..self
         }
     }
@@ -313,6 +324,10 @@ impl Table {
     pub fn label(&self) -> &'static str {
         self.decl.label
     }
+    /// The field that names a row to a person, when the owner declares one.
+    pub fn label_field(&self) -> Option<&'static str> {
+        self.decl.label_field
+    }
     pub fn key(&self) -> &'static str {
         self.decl.key
     }
@@ -321,6 +336,23 @@ impl Table {
     }
     pub fn capability(&self) -> &'static str {
         self.decl.capability
+    }
+    /// The address of one row's own page, when the owner declares one and
+    /// the key is a plain token (digits, letters, `-`, `_`).
+    pub fn page_for(&self, key: &serde_json::Value) -> Option<String> {
+        let key = match key {
+            serde_json::Value::Number(n) => n.to_string(),
+            serde_json::Value::String(s) => s.clone(),
+            _ => return None,
+        };
+        let plain = !key.is_empty()
+            && key
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"-_".contains(&b));
+        self.decl
+            .page
+            .filter(|_| plain)
+            .map(|page| page.replace("{key}", &key))
     }
     pub fn source(&self) -> Source {
         self.decl.source
@@ -412,6 +444,14 @@ impl Installed {
             let at = where_(&entry.provenance);
             for decl in contribution.tables {
                 let table = Table::new(decl, owner, entry.provenance, &at)?;
+                if let Some(page) = decl.page {
+                    if !page.starts_with('/') || page.matches("{key}").count() != 1 {
+                        return Err(invalid(format!(
+                            "grid table {} page {page} from {at} must be a local path with one {{key}}",
+                            decl.id
+                        )));
+                    }
+                }
                 for kind in decl.record_types {
                     if let Some(first) = types.insert(kind, decl.id) {
                         return Err(invalid(format!(

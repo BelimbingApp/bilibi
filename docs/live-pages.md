@@ -148,7 +148,7 @@ while typing continues undisturbed. Such a form submits as one more change,
 unless `data-submit-event` names the event its submission raises instead
 (Bilimbi's `phx-submit` beside `phx-change`): the Geonames postcode dialog
 validates as values change and saves on Enter or Save. Buttons
-send their `data-*` values (`data-page="3"` becomes `page: "3"`); only Company's
+send their `data-*` values (`data-page="3"` becomes `page: "3"`), and so does an SVG shape that carries `data-event` (a chart's bar or slice, `bilibi_ui::Chart::drill`), which cannot be a button; only Company's
 relative pager (`page` with `data-delta`) and `sort` with `data-field` keep
 their fixed shapes. A `bilibi:event` may carry `{target, payload}` or the controller shape
 `{event, ...values}`, which becomes `{type: event, ...values}` aimed at the

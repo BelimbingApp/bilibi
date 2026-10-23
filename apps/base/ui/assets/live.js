@@ -590,7 +590,9 @@
   }
 
   document.addEventListener('click', (event) => {
-    const button = event.target.closest('button[data-event]');
+    // A chart's bar or slice (`Chart::drill`) is an SVG shape, which cannot be
+    // a button; it raises its event the same way, with the values it carries.
+    const button = event.target instanceof Element && event.target.closest('button[data-event], svg [data-event]');
     if (!button || button.disabled) return;
     const {event: type, field, delta} = button.dataset;
     const target = ownerTarget(button);

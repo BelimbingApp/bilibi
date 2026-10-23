@@ -29,6 +29,7 @@ bilibi-menu.workspace = true
 bilibi-locale = { path = "../../base/locale" }
 bilibi-datetime = { path = "../../base/datetime" }
 bilibi-grid = { path = "../../base/grid" }
+bilibi-reports.workspace = true
 bilibi-dashboard = { path = "../../base/dashboard" }
 bilibi-person = { path = "../person" }
 bilibi-media = { path = "../../base/media" }

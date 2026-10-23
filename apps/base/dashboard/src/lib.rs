@@ -6,6 +6,11 @@
 //! entry here and an `Embed` with `EmbedContext::Dashboard` whose service is a
 //! `PageService`; its `mount` reads [`PanelArgs`] and its `update` renders one
 //! root element whose id is [`PanelArgs::id`].
+//!
+//! A module whose entries exist only at run time (an operator's saved
+//! reports) contributes a [`Provider`] with [`provide!`] instead: the page
+//! asks it for the reader's entries on every update, and each one mounts as
+//! its own panel through the provider's embed, like a contributed entry.
 mod web;
 
 use bilibi_database::Error;
@@ -19,11 +24,16 @@ use bilibi_ui::page::PageRequest;
 use serde_json::{json, Value};
 use std::{
     collections::BTreeSet,
+    future::Future,
+    pin::Pin,
     sync::Arc,
     time::{Duration, Instant},
 };
 
 pub const ENTRIES: &str = "base/dashboard.entries";
+pub const PROVIDERS: &str = "base/dashboard.providers";
+/// Entries one provider offers a reader at most; the rest are not offered.
+pub const MAX_PROVIDED: usize = 100;
 /// Per-account grid arrangement: ordered entry ids. Declared here until a
 /// dedicated preferences module owns it; a second declaration fails boot.
 pub const LAYOUT: &str = "ui.dashboard.layout";
@@ -95,10 +105,50 @@ impl Widget {
         }
     }
 }
+/// One run-time entry a provider offers the reader: `key` makes its id
+/// (`<prefix>-<key>`, stored in each account's arrangement, so keep it
+/// stable) and `label` names it in Customize.
+#[derive(Clone, Debug)]
+pub struct Provided {
+    pub key: String,
+    pub label: String,
+}
+pub type ProvidedFuture<'a> =
+    Pin<Box<dyn Future<Output = bilibi_database::Result<Vec<Provided>>> + Send + 'a>>;
+
+/// Entries that exist only at run time. The page calls `entries` with the
+/// reader's sealed scope on every update; the owner answers only what that
+/// reader may see. Each entry mounts `embed` with its id as the panel's
+/// `entry`, and the embed's `access` still guards every mount and refresh.
+/// Provided entries are offered in Customize, never placed unasked.
+#[derive(Clone, Copy)]
+pub struct Provider {
+    /// The id prefix; must not begin any contributed entry's id.
+    pub prefix: &'static str,
+    pub embed: &'static str,
+    pub placement: Placement,
+    /// Offers the provider's entries at all.
+    pub capability: Option<&'static str>,
+    pub refresh_interval: u32,
+    pub entries: for<'a> fn(&'a Scope) -> ProvidedFuture<'a>,
+}
+
 #[doc(hidden)]
 pub use bilibi_module_registry::{Contribution, Provenance};
 #[doc(hidden)]
 pub use inventory;
+/// Contribute a run-time [`Provider`] from the owning module:
+/// `bilibi_dashboard::provide!("core/x", Provider { prefix: "x", .. })`.
+#[macro_export]
+macro_rules! provide {
+    ($module:literal, $provider:expr) => {
+        $crate::inventory::submit! {{
+            const PROVIDER: $crate::Provider = $provider;
+            $crate::Contribution::new($crate::PROVIDERS, PROVIDER.prefix,
+                $crate::Provenance { module: $module, source: file!(), line: line!() }, &PROVIDER)
+        }}
+    };
+}
 /// Contribute an entry from the owning module:
 /// `bilibi_dashboard::contribute!("core/x", Widget::new("x-open", "Open", "x.dashboard-open"))`.
 #[macro_export]
@@ -115,13 +165,64 @@ macro_rules! contribute {
 #[derive(Clone, Default)]
 pub struct Dashboard {
     entries: Vec<&'static Widget>,
+    providers: Vec<&'static Provider>,
+}
+
+/// One entry the page may show: contributed or provided, owned so both
+/// kinds arrange alike.
+#[derive(Clone, Debug)]
+pub(crate) struct Item {
+    pub id: String,
+    pub label: String,
+    pub embed: &'static str,
+    pub placement: Placement,
+    pub refresh_interval: u32,
+}
+impl Item {
+    pub fn widget(widget: &Widget) -> Self {
+        Self {
+            id: widget.id.into(),
+            label: widget.label.into(),
+            embed: widget.embed,
+            placement: widget.placement,
+            refresh_interval: widget.refresh_interval,
+        }
+    }
+    /// A provided entry; `None` when its key would make an invalid id.
+    pub fn provided(provider: &Provider, entry: Provided) -> Option<Self> {
+        let id = format!("{}-{}", provider.prefix, entry.key);
+        (valid_entry_id(&id) && !entry.label.trim().is_empty()).then_some(Self {
+            id,
+            label: entry.label,
+            embed: provider.embed,
+            placement: provider.placement,
+            refresh_interval: provider.refresh_interval,
+        })
+    }
 }
 impl Dashboard {
     /// Also proves every entry names an installed dashboard embed: a missing
     /// panel is a contributor defect that fails boot, not a blank card.
     pub fn from_catalog(catalog: &Catalog) -> bilibi_module_registry::Result<Self> {
-        let dashboard = Self::from_entries(catalog.entries::<Widget>(ENTRIES)?)?;
+        let mut dashboard = Self::from_entries(catalog.entries::<Widget>(ENTRIES)?)?;
+        dashboard.providers = providers(catalog.entries::<Provider>(PROVIDERS)?, &dashboard)?;
         let embeds = catalog.entries::<Embed>(EMBEDS)?;
+        let dashboard_embed = |id: &str| -> bilibi_module_registry::Result<bool> {
+            Ok(embeds
+                .iter()
+                .find(|e| e.id == id)
+                .map(|e| e.get::<Embed>())
+                .transpose()?
+                .is_some_and(|e| matches!(e.context, EmbedContext::Dashboard)))
+        };
+        for provider in &dashboard.providers {
+            if !dashboard_embed(provider.embed)? {
+                return Err(RegistryError::Contribution(format!(
+                    "dashboard provider {} names embed {}, which no module contributes with the Dashboard context",
+                    provider.prefix, provider.embed
+                )));
+            }
+        }
         for entry in catalog.entries::<Widget>(ENTRIES)? {
             let widget = entry.get::<Widget>()?;
             let installed = embeds
@@ -170,7 +271,13 @@ impl Dashboard {
             ));
         }
         widgets.sort_by_key(|w| (w.order, w.id));
-        Ok(Self { entries: widgets })
+        Ok(Self {
+            entries: widgets,
+            providers: Vec::new(),
+        })
+    }
+    pub fn providers(&self) -> &[&'static Provider] {
+        &self.providers
     }
     pub fn entries(&self) -> &[&'static Widget] {
         &self.entries
@@ -191,6 +298,38 @@ impl Dashboard {
             .filter(|w| w.placement == placement)
             .collect()
     }
+}
+
+/// The contributed providers, proven: a valid unique prefix that begins no
+/// contributed entry's id, and a non-empty embed.
+fn providers(
+    entries: &[Entry],
+    dashboard: &Dashboard,
+) -> bilibi_module_registry::Result<Vec<&'static Provider>> {
+    let mut prefixes = BTreeSet::new();
+    let mut providers = Vec::new();
+    for entry in entries {
+        let provider = entry.get::<Provider>()?;
+        let taken = dashboard
+            .entries()
+            .iter()
+            .any(|w| w.id.starts_with(&format!("{}-", provider.prefix)));
+        if provider.prefix != entry.id
+            || !valid_entry_id(provider.prefix)
+            || provider.prefix.len() > 40
+            || provider.embed.trim().is_empty()
+            || provider.capability.is_some_and(|key| key.trim().is_empty())
+            || taken
+            || !prefixes.insert(provider.prefix)
+        {
+            return Err(RegistryError::Contribution(format!(
+                "invalid/duplicate dashboard provider {} at {}:{}",
+                entry.id, entry.provenance.source, entry.provenance.line
+            )));
+        }
+        providers.push(provider);
+    }
+    Ok(providers)
 }
 
 /// DOM id of an entry's panel. The page renders an empty anchor with this id and
@@ -220,11 +359,11 @@ pub struct PanelArgs {
     pub refresh: Duration,
 }
 impl PanelArgs {
-    pub(crate) fn spec(widget: &Widget, editing: bool) -> bilibi_ui::page::PanelSpec {
+    pub(crate) fn spec(widget: &Item, editing: bool) -> bilibi_ui::page::PanelSpec {
         bilibi_ui::page::PanelSpec {
-            id: panel_id(widget.id),
+            id: panel_id(&widget.id),
             embed: widget.embed.into(),
-            path: [("entry".to_owned(), widget.id.to_owned())].into(),
+            path: [("entry".to_owned(), widget.id.clone())].into(),
             query: [
                 ("editing".to_owned(), editing.to_string()),
                 ("refresh".to_owned(), widget.refresh_interval.to_string()),
@@ -313,6 +452,7 @@ macro_rules! preference {
 preference!(LAYOUT);
 preference!(SECTIONS);
 inventory::submit! { Consumer::new::<Widget>(ENTRIES, "base/dashboard", |entries| Dashboard::from_entries(entries).map(|_| ())) }
+inventory::submit! { Consumer::new::<Provider>(PROVIDERS, "base/dashboard", |entries| providers(entries, &Dashboard::default()).map(|_| ())) }
 inventory::submit! {
     bilibi_module_registry::Module {
         id: "base/dashboard", layer: bilibi_module_registry::Layer::Base,
@@ -324,10 +464,11 @@ inventory::submit! {
                 // Capability keys are proven here, not in the validator: the
                 // authz snapshot initialises while validators run.
                 let vocabulary = bilibi_authz::vocabulary().map_err(|_| RegistryError::Service("authz vocabulary unavailable".into()))?;
-                for widget in dashboard.entries() {
-                    if let Some(key) = widget.capability {
+                let keys = dashboard.entries().iter().map(|w| (w.id, w.capability)).chain(dashboard.providers().iter().map(|p| (p.prefix, p.capability)));
+                for (id, capability) in keys {
+                    if let Some(key) = capability {
                         if !vocabulary.capabilities.contains_key(key) {
-                            return Err(RegistryError::Contribution(format!("dashboard entry {} requires unknown capability {key}", widget.id)));
+                            return Err(RegistryError::Contribution(format!("dashboard entry {id} requires unknown capability {key}")));
                         }
                     }
                 }

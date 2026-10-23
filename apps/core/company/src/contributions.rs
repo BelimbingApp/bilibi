@@ -145,7 +145,8 @@ static GRID: GridContribution = GridContribution {
     )
     .label_field("name")
     .time_field("created_at")
-    .record_types(&["company"]),
+    .record_types(&["company"])
+    .page("/companies/{key}"),
     // A department is in the tenant through its company, so the source joins
     // the tenant's live companies (Bilimbi `Grid.DepartmentsSource`); the
     // head is the affiliation id, which the affiliation owner links.
@@ -290,4 +291,18 @@ bilibi_dashboard::contribute!(
     .section()
     .order(10)
     .refresh(60_000)
+);
+
+// A built-in report (read-only, copyable; base/reports): each reader counts
+// only the companies their own access shows.
+bilibi_reports::builtin!(
+    "core/company",
+    bilibi_reports::Builtin {
+        key: "companies-by-status",
+        name: "Companies by status",
+        description: "How many companies are active, suspended, pending or archived.",
+        record_type: "companies",
+        kind: bilibi_reports::Kind::Summary,
+        definition: || serde_json::json!({"groupings": [{"column": "status"}], "chart": "donut"}),
+    }
 );
