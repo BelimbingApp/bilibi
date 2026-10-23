@@ -133,34 +133,38 @@ impl DueJob {
                         Context::system(tenant, bilibi_schedule::PRINCIPAL, ACTION),
                     )
                     .await?;
-                let marked = tx
-                    .mutate(move |sql| {
-                        Box::pin(async move {
-                            let marked = sql
-                                .query_opt(
-                                    "UPDATE base_privacy_requests SET due_notified_at=clock_timestamp() \
-                                     WHERE tenant_id=$1 AND id=$2 AND due_notified_at IS NULL RETURNING id",
-                                    &[&tenant, &id],
-                                )
-                                .await?;
-                            let changes = marked
-                                .iter()
-                                .map(|_| Change {
-                                    kind: REQUEST_KIND.into(),
-                                    id,
-                                    old: json!({"due_notified": false}),
-                                    new: json!({"due_notified": true}),
-                                })
-                                .collect();
-                            Ok((marked.is_some(), changes))
-                        })
-                    })
-                    .await?;
-                // Another run got there first.
-                if !marked {
+                // Another run got there first: nothing to write.
+                if tx
+                    .sql()
+                    .query_opt(
+                        "SELECT id FROM base_privacy_requests WHERE tenant_id=$1 AND id=$2 AND due_notified_at IS NULL FOR UPDATE",
+                        &[&tenant, &id],
+                    )
+                    .await?
+                    .is_none()
+                {
                     tx.rollback().await?;
                     continue;
                 }
+                tx.mutate(move |sql| {
+                    Box::pin(async move {
+                        sql.execute(
+                            "UPDATE base_privacy_requests SET due_notified_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2",
+                            &[&tenant, &id],
+                        )
+                        .await?;
+                        Ok((
+                            (),
+                            vec![Change {
+                                kind: REQUEST_KIND.into(),
+                                id,
+                                old: json!({"due_notified": false}),
+                                new: json!({"due_notified": true}),
+                            }],
+                        ))
+                    })
+                })
+                .await?;
                 let notice = Notice::new(format!("Personal-data request {id} is due {due}"))
                     .kind("privacy.request")
                     .body("Answer it in every store before the due date.")
