@@ -420,6 +420,15 @@ Two limits, both operator settings (Settings › Session), with these defaults:
 - Single sign-on links, pending sign-ins, failed-attempt counters and notifications have no business value and are deleted.
 - Accounts that only share an email are counted, never touched.
 
+Retention classes (`src/retention.rs`), both keeping forever until the tenant sets a period on `/privacy/retention`:
+
+| Class | Clock starts | Then |
+| --- | --- | --- |
+| `core/user.closed_accounts` | When the account was closed | Anonymise: name and sign-in email replaced, remaining sign-in links deleted |
+| `core/user.notifications` | When the notification was sent | Purge |
+
+Both skip a held record (`user` or `notification`) and everything of a held person.
+
 ## Known gaps
 
 Authorization of the link commands is tenant-scoped (K15).

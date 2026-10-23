@@ -5,7 +5,8 @@
 //! person's Step-up code. No Bilimbi counterpart.
 use crate::{
     HoldTarget, Identifier, NewRequest, Privacy, RequestKind, RequestView, HOLD_MANAGE, HOLD_VIEW,
-    REQUEST_APPROVE, REQUEST_RECEIVE, REQUEST_VIEW, STEP_UP_ERASURE,
+    MAX_DAYS, REQUEST_APPROVE, REQUEST_RECEIVE, REQUEST_VIEW, RETENTION_MANAGE, RETENTION_VIEW,
+    STEP_UP_ERASURE,
 };
 use bilibi_agent_api::{
     json::{Data, Output},
@@ -68,6 +69,7 @@ enum Read {
     Request,
     Locate,
     Holds,
+    Retention,
 }
 impl ReadHandler for Read {
     fn owner(&self) -> &'static str {
@@ -101,6 +103,9 @@ impl ReadHandler for Read {
                         .holds(&**client, scope, input["limit"].as_i64().unwrap_or(100))
                         .await?;
                     json!({"holds": holds})
+                }
+                Self::Retention => {
+                    json!({"classes": privacy.retention_classes(&client, scope).await?})
                 }
             };
             Ok(Output::Data(Data::Json(data)))
@@ -180,6 +185,19 @@ enum Write {
     Refuse,
     PlaceHold,
     ReleaseHold,
+    SetRetention,
+}
+/// `days` left out (or null) returns the class to its default period.
+fn retention_days(input: &Value) -> bilibi_agent_api::Result<Option<u32>> {
+    match input.get("days") {
+        None | Some(Value::Null) => Ok(None),
+        Some(days) => days
+            .as_u64()
+            .and_then(|d| u32::try_from(d).ok())
+            .filter(|d| (1..=MAX_DAYS).contains(d))
+            .map(Some)
+            .ok_or_else(|| field_error("days", "must be a whole number of days from 1 to 36500")),
+    }
 }
 impl WriteHandler for Write {
     fn owner(&self) -> &'static str {
@@ -218,6 +236,13 @@ impl WriteHandler for Write {
                 }
                 Self::ReleaseHold => {
                     json!({"summary": format!("Release legal hold {}", id(input, "id")?)})
+                }
+                Self::SetRetention => {
+                    let class = text(input, "class")?;
+                    json!({"summary": match retention_days(input)? {
+                        Some(days) => format!("Keep {class} records for {days} days"),
+                        None => format!("Return {class} to its default retention period"),
+                    }})
                 }
             };
             Ok(facts.into())
@@ -281,6 +306,16 @@ impl WriteHandler for Write {
                     .release_hold_in(tx, scope, id(input, "id")?, text(input, "reason")?)
                     .await
                     .map_err(refusal)?),
+                Self::SetRetention => json!(privacy
+                    .set_retention_in(tx, scope, text(input, "class")?, retention_days(input)?)
+                    .await
+                    .map_err(|error| match error {
+                        Error::Invalid => field_error(
+                            "days",
+                            "is below the class's legal minimum, or the class is unknown"
+                        ),
+                        error => error.into(),
+                    })?),
             };
             Ok(result.into())
         })
@@ -327,6 +362,14 @@ fn place_schema() -> Value {
 }
 fn release_schema() -> Value {
     json!({"type":"object","required":["id","reason"],"properties":{"id":{"type":"integer","minimum":1},"reason":{"type":"string","maxLength":255}}})
+}
+fn retention_schema() -> Value {
+    json!({"type":"object","required":["class"],"properties":{
+        "class":{"type":"string","maxLength":255,"description":"A record class key from base.privacy.retention.list"},
+        "days":{"type":"integer","minimum":1,"maximum":36500,"description":"Days to keep the class's records; leave it out to return to the class default. Never below the class's legal minimum"}}})
+}
+fn retention_output() -> Value {
+    json!({"type":"object","description":"Every record class: what starts its clock, purge or anonymise, default period, legal minimum, this tenant's period, the period sweeps use (null keeps forever) and the last sweep."})
 }
 fn requests_output() -> Value {
     json!({"type":"object","description":"Requests newest first: kind, person, status, version, due date, late, and each store's answer (counts, records kept and why, deferrals). Identifier values are never returned."})
@@ -386,12 +429,14 @@ inventory::submit! { Contribution::new(DEFINITIONS, "base/privacy", Provenance {
         read!("base.privacy.request.get", "Read a data-subject request", "One request and each store's answer.", REQUEST_VIEW, id_schema, request_output, &Read::Request),
         read!("base.privacy.request.locate", "Find a request's personal data", "What every store holds about the request's person, including matches found only by email or phone, which verifying confirms.", REQUEST_VIEW, id_schema, locate_output, &Read::Locate),
         read!("base.privacy.hold.list", "List legal holds", "This tenant's legal holds on people and records.", HOLD_VIEW, empty, holds_output, &Read::Holds),
+        read!("base.privacy.retention.list", "List retention rules", "Every record class, its periods and its last sweep in this tenant.", RETENTION_VIEW, empty, retention_output, &Read::Retention),
         write!("base.privacy.request.receive", "Record a data-subject request", "Record an access, portability or erasure request for a person; it is due after privacy.request.due_days.", REQUEST_RECEIVE, receive_schema, &Write::Receive, &[]),
         write!("base.privacy.request.verify", "Verify a requester's identity", "Record how the requester's identity was checked and confirm the request's email and phone matches.", REQUEST_RECEIVE, verify_schema, &Write::Verify, &[]),
         write!("base.privacy.request.approve", "Approve a data-subject request", "Approve and run a verified request in every store. A person must approve; an erasure needs someone other than whoever entered it, and Step-up: base.privacy.erasure.approve.", REQUEST_APPROVE, approve_schema, &Write::Approve, &[STEP_UP_ERASURE]),
         write!("base.privacy.request.refuse", "Refuse a data-subject request", "Refuse a request that is not yet approved, with the reason.", REQUEST_RECEIVE, refuse_schema, &Write::Refuse, &[]),
         write!("base.privacy.hold.place", "Place a legal hold", "Stop erasure and retention sweeps for a person or one record.", HOLD_MANAGE, place_schema, &Write::PlaceHold, &[]),
         write!("base.privacy.hold.release", "Release a legal hold", "Release an active legal hold; the next erasure or sweep acts on what it kept.", HOLD_MANAGE, release_schema, &Write::ReleaseHold, &[]),
+        write!("base.privacy.retention.set", "Set a retention period", "Set how long this tenant keeps one record class, or return it to the default; never below a legal minimum.", RETENTION_MANAGE, retention_schema, &Write::SetRetention, &[]),
     ],
     guides: &[Guide { key: "base.privacy", title: "Data-subject requests", summary: "Answer a person's access or erasure request in every store.", keywords: &["privacy", "pdpa", "gdpr", "erasure", "access request", "legal hold"], capability: REQUEST_VIEW,
         body: "Record the request with base.privacy.request.receive (kind, person_id, company_id, and the emails or phones the person gave). Read base.privacy.request.locate to see what every store holds, including matches found only by email or phone. Record how the person's identity was checked with base.privacy.request.verify; that also confirms those matches. A person with privacy.request.approve then approves; an agent cannot approve, and an erasure needs someone other than whoever entered it plus that person's Step-up code. Running answers each store in the background; read base.privacy.request.get until status is completed. A store that fails stays pending and the request shows late. Legal holds (base.privacy.hold.place) keep what they name through erasure; the certificate lists every store, what was kept and why." }],

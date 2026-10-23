@@ -13,7 +13,7 @@
 | Audit and media erasure paths | Built |
 | Platform handlers: Person, User, Affiliation, Address, Events, Integration | Built |
 | Notice as a request nears its due date | Built |
-| Retention classes and sweeps | Planned |
+| Retention classes, tenant periods, sweeps and operator page | Built |
 | Partial masking and audited reveal | Planned |
 
 ## Contribute a store
@@ -97,7 +97,7 @@ inventory::submit! { Contribution::new(bilibi_privacy::PERSONAL_DATA, "core/pers
 - When every store has answered or deferred, `base/privacy-request-finish` writes the document and completes the request.
 - An erasure runs each store's `erase` in that store's own `MutationTransaction`, marked as the request's erasure and with holds read inside it, clears the returned fields from audit evidence, then calls `after_erase` on a plain connection.
 - Agents may list, read, locate, receive, verify, approve and refuse (`base.privacy.request.*`); approving an erasure still needs a person's Step-up.
-- Pages: `/privacy/requests`, `/privacy/requests/{id}`, `/privacy/holds`, under Admin → Personal data.
+- Pages: `/privacy/requests`, `/privacy/requests/{id}`, `/privacy/holds` and `/privacy/retention`, under Admin → Personal data.
 
 ## Due notices
 
@@ -106,6 +106,36 @@ inventory::submit! { Contribution::new(bilibi_privacy::PERSONAL_DATA, "core/pers
 - Definition `base/privacy.due-notices` (07:00 UTC, worker `base/privacy-due-notices`). Like every contributed task it runs only after an operator reviews and enables it on `/system/schedule` and grants the `scheduler` principal `admin.system.schedule.execute`.
 - Each run visits every tenant's open requests whose due date falls within that tenant's `privacy.request.notice_days`, at most 500 per tenant.
 - It notifies the request's receiver, verifier and approver who are still active accounts, through `base/notifications`, and records `due_notified_at` in the same audited write (actor: system principal `scheduler`). A request is notified once.
+
+## Retention
+
+**Modules contribute record classes; each tenant sets its own periods; one daily sweep acts on what is past its period.** A class with no period keeps forever.
+
+```rust,ignore
+static SWEEPER: ClosedAccounts = ClosedAccounts;
+inventory::submit! { Contribution::new(bilibi_privacy::RECORD_CLASSES, "core/user.closed_accounts",
+    Provenance { module: "core/user", source: file!(), line: line!() },
+    &bilibi_privacy::RecordClass {
+        label: "Closed user accounts",
+        clock_start: "When the account was closed",
+        action: RetentionAction::Anonymise,
+        default_days: None,
+        minimum_days: None,
+        sweeper: &SWEEPER,
+    }) }
+```
+
+- The contribution ID is the class key: `<module>.<snake_case name>`. The module depends on `base/privacy`.
+- `default_days`: the period when the tenant sets none; `None` keeps forever. `minimum_days`: a legal minimum no tenant period may go below. Boot refuses a default shorter than its minimum, or either beyond 36,500 days.
+- `Sweeper::sweep(tx, system scope, cutoff, holds, limit)` purges or anonymises at most `limit` records whose clock started before `cutoff`, skips what `TenantHolds` names (the record, or its person) and what an earlier sweep already did, and returns `Swept`: counts acted on and kept, and every record acted on with its personal fields. Write through `tx` and return every change; nothing to act on is not a write.
+
+| Part | Rule |
+| --- | --- |
+| Tenant periods | Setting `privacy.retention.periods` (tenant scope): `{ "<class key>": days }`. Set on `/privacy/retention` or with `base.privacy.retention.set` (`privacy.retention.manage`). An unknown class, 0 days, more than 36,500 or below the legal minimum is `Invalid`. Clearing returns to the default |
+| Sweep | Definition `base/privacy.retention-sweep` (02:00 UTC, worker `base/privacy-retention-sweep`). Runs only after an operator reviews and enables it and grants `scheduler` the execute capability. Visits every active tenant, as `scheduler` under that tenant's `SystemScope` |
+| Batches | Each batch is one `MutationTransaction`: a `base_privacy_sweeps` row, the tenant's holds read inside it, the sweeper's writes, and the acted-on records' fields cleared from audit evidence (`erase_sweep_values`). At most 200 records per batch and 25 batches per class per run |
+| Log | `base_privacy_sweeps` (migration `base-privacy-004-retention`): class, cutoff, period, acted on, kept. A sweep records its result once; rows are never changed otherwise or removed |
+| Reading | `/privacy/retention` and `base.privacy.retention.list` (`privacy.retention.view`): every class, its clock, action, default, minimum, this tenant's period, the period in use and the last sweep |
 
 ## Documents
 
@@ -132,6 +162,7 @@ inventory::submit! { Contribution::new(bilibi_privacy::PERSONAL_DATA, "core/pers
 | `privacy.request.notice_days` | Global, Tenant | 3 | Days before the due date that a request's handlers are notified |
 | `privacy.export_days` | Global, Tenant | 30 | Days an export stays downloadable |
 | `privacy.certificate_years` | Global, Tenant | 7 | Years a certificate is retained |
+| `privacy.retention.periods` | Tenant | `{}` | Each record class's period in days; edited on `/privacy/retention` |
 
 ## Runtime checks
 
@@ -145,6 +176,8 @@ No unit tests. Prove on a disposable database ([runtime parity](../../../docs/ru
 | Legal holds | `examples/holds-walkthrough.rs` on a disposable database, then again with `report` | Place, duplicate `Conflict`, release once, history; viewer refused; tenant 2 sees none and gets `NotFound`; every raw edit, delete and truncate refused by the database |
 
 | Requests | `examples/requests-walkthrough.rs` with `seed`, then without, on a disposable database with the queue running | Access: one export covering every store, download audited as `artifacts.read`. Tenant 2 sees no request. Erasure: refused for whoever received it, approved by a second person with an authenticator code; a failing store leaves it `running` and late until a retry answers; afterwards person and account are stubs, attachment bytes gone, document deleted, audit values `[erased]` with ledger rows, certificate lists every store; a console search finds no erased value. Due notices: refused before the definition is enabled; once enabled, a request due tomorrow notifies its receiver and verifier once, and a second run adds nothing. A hold on an unknown kind is `Invalid`; a held person is kept and named on the certificate; after release a new erasure acts |
+
+| Retention | `examples/retention-walkthrough.rs` with `seed`, then without, on a disposable database with the queue running | Viewer refused, unknown class and 0 days `Invalid`; tenant 2 keeps its own (empty) periods. Before enabling, run-now is refused. Run 1: a closed account past 30 days anonymised with `[erased]` audit ledger rows, a held one kept, a recently closed one untouched, notices past 10 days purged, tenant 2's untouched. After release, run 2 anonymises the held account; run 3 acts on nothing. The sweep log refuses edits and deletes |
 
 Run the holds walkthrough only against a fresh disposable database:
 

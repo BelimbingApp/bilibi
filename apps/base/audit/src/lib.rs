@@ -581,6 +581,49 @@ pub async fn erase_values(
     Ok(row.get(0))
 }
 
+/// The marker `base/privacy` sets, transaction-locally, on a retention sweep
+/// transaction; [`erase_sweep_values`] refuses without it.
+pub const SWEEP_MARKER: &str = "bilibi.privacy_sweep";
+
+/// [`erase_values`] for a retention sweep: the same narrow path, keyed by the
+/// sweep instead of a request, inside a transaction marked for that sweep.
+pub async fn erase_sweep_values(
+    tx: &bilibi_database::MutationTransaction<'_>,
+    sweep: i64,
+    kind: &str,
+    id: i64,
+    fields: &[String],
+) -> Result<i32> {
+    if sweep <= 0
+        || id <= 0
+        || kind.is_empty()
+        || kind.len() > 255
+        || fields.is_empty()
+        || fields.len() > 64
+    {
+        return Err(Error::Invalid);
+    }
+    let attribution = Attribution::from_context(tx.context())?;
+    let tenant = tx.context().tenant;
+    let row = tx
+        .sql()
+        .query_one(
+            "SELECT base_audit_erase_sweep_values($1,$2,$3,$4,$5,$6,$7,$8)",
+            &[
+                &tenant,
+                &sweep,
+                &kind,
+                &id.to_string(),
+                &fields,
+                &attribution.actor_type,
+                &attribution.actor_id,
+                &attribution.trace_id,
+            ],
+        )
+        .await?;
+    Ok(row.get(0))
+}
+
 inventory::submit! {
     bilibi_module_registry::Module {
         id: "base/audit", layer: bilibi_module_registry::Layer::Base,
@@ -588,7 +631,8 @@ inventory::submit! {
         migrations: &[("006-audit-evidence", include_str!("../migrations/006-evidence.sql")),
             ("base-audit-007-agent-self-report", include_str!("../migrations/007-agent-self-report.sql")),
             ("base-audit-008-client-identity", include_str!("../migrations/008-client-identity.sql")),
-            ("base-audit-009-erasure", include_str!("../migrations/009-erasure.sql"))],
+            ("base-audit-009-erasure", include_str!("../migrations/009-erasure.sql")),
+            ("base-audit-010-sweep-erasure", include_str!("../migrations/010-sweep-erasure.sql"))],
         services: &[bilibi_module_registry::Service { id: "base/audit.capture", factory: |services| {
             let db = services.get::<Db>("base/database.pool")?.as_ref().clone();
             let capture = Arc::new(AuditCapture::new(RedactionPolicy::from_inventory(), db));

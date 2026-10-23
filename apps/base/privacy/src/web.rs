@@ -1,6 +1,6 @@
 //! Personal data pages (`base/privacy.pages`): data-subject requests
 //! (`/privacy/requests`, one request at `/privacy/requests/{id}`) and legal
-//! holds (`/privacy/holds`), plus the request document download
+//! holds (`/privacy/holds`), retention (`/privacy/retention`), plus the request document download
 //! (`/privacy/requests/{id}/document`). No Bilimbi counterpart; the lists
 //! follow the Events page (`apps/base/events/src/web.rs`).
 //!
@@ -9,8 +9,8 @@
 //! acts on that held request, never on a client value. A refusal is a flash;
 //! a Step-up refusal goes to the host, which asks for the code and comes back.
 use crate::{
-    Hold, HoldTarget, Privacy, RequestKind, RequestView, HOLD_MANAGE, REQUEST_APPROVE,
-    REQUEST_RECEIVE,
+    ClassView, Hold, HoldTarget, Privacy, RequestKind, RequestView, RetentionAction, HOLD_MANAGE,
+    REQUEST_APPROVE, REQUEST_RECEIVE, RETENTION_MANAGE,
 };
 use askama::Template;
 use bilibi_agent_api::{
@@ -43,12 +43,14 @@ use std::{
 
 pub const REQUESTS_PATH: &str = "/privacy/requests";
 pub const HOLDS_PATH: &str = "/privacy/holds";
+pub const RETENTION_PATH: &str = "/privacy/retention";
 pub(crate) const SERVICE: &str = "base/privacy.pages";
 pub(crate) const DOWNLOADS: &str = "base/privacy.downloads";
 const PAGE_SIZES: [u64; 3] = [25, 50, 100];
 const REQUEST_FORM: &str = "request";
 const HOLD_FORM: &str = "hold";
 const NOTE_FORM: &str = "note";
+const PERIOD_FORM: &str = "period";
 
 static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
     ListSpec {
@@ -1488,12 +1490,344 @@ impl Holds {
     }
 }
 
+// --------------------------------------------------------------- retention
+
+fn retention_columns() -> Vec<BuiltinColumn> {
+    vec![
+        BuiltinColumn::new("class", "Records"),
+        BuiltinColumn::new("clock", "Clock starts"),
+        BuiltinColumn::new("action", "Then"),
+        BuiltinColumn::new("default", "Default"),
+        BuiltinColumn::new("minimum", "Legal minimum"),
+        BuiltinColumn::new("period", "This tenant keeps"),
+        BuiltinColumn::new("sweep", "Last sweep"),
+    ]
+}
+fn days_text(days: Option<u32>) -> String {
+    match days {
+        None => "Forever".into(),
+        Some(1) => "1 day".into(),
+        Some(days) => format!("{days} days"),
+    }
+}
+struct PeriodDialog {
+    class: String,
+    values: HashMap<String, String>,
+    errors: BTreeMap<String, Vec<String>>,
+}
+struct Retention {
+    pages: Pages,
+    state: ListState,
+    columns: ListColumns,
+    rows_changed: bool,
+    rows: Vec<ClassView>,
+    dialog: Option<PeriodDialog>,
+    flash: Option<(StatusKind, String)>,
+}
+impl Retention {
+    fn new(pages: Pages, query: &HashMap<String, String>) -> Result<Self> {
+        Ok(Self {
+            pages,
+            state: parse(query)?,
+            columns: ListColumns::mount("privacy-retention", retention_columns())
+                .map_err(|_| Error::Internal)?,
+            rows_changed: true,
+            rows: Vec::new(),
+            dialog: None,
+            flash: None,
+        })
+    }
+    async fn event(&mut self, scope: &Scope, credential: &str, value: &Value) -> Result<()> {
+        match value
+            .get("type")
+            .and_then(Value::as_str)
+            .ok_or(Error::Invalid)?
+        {
+            "filters" => self
+                .state
+                .apply_filters(&params::form_values(value, FILTERS_FORM)),
+            "page" => self
+                .state
+                .put_page(value.get("page").and_then(Value::as_str)),
+            "grid" => match self.columns.handle(&params::string_values(value)) {
+                ColumnsOutcome::Sort(_) => return Err(Error::Invalid),
+                ColumnsOutcome::Update | ColumnsOutcome::Noop => self.rows_changed = false,
+            },
+            "clear-flash" => clear_flash(&mut self.flash, value),
+            "open_period" => {
+                let class = value.get("value").and_then(Value::as_str).unwrap_or("");
+                // Gone since the list was drawn: the redraw shows that.
+                if let Some(row) = self.rows.iter().find(|row| row.key == class) {
+                    self.flash = None;
+                    self.dialog = Some(PeriodDialog {
+                        class: row.key.to_owned(),
+                        values: HashMap::from([(
+                            "days".to_owned(),
+                            row.tenant_days.map(|d| d.to_string()).unwrap_or_default(),
+                        )]),
+                        errors: BTreeMap::new(),
+                    });
+                }
+            }
+            "close_modal" => self.dialog = None,
+            "set_retention" => {
+                let Some(dialog) = &self.dialog else {
+                    return Ok(());
+                };
+                let class = dialog.class.clone();
+                let values = params::form_values(value, PERIOD_FORM);
+                let days = values.get("days").map(|d| d.trim()).unwrap_or("");
+                let input = if days.is_empty() {
+                    json!({"class": class})
+                } else {
+                    match days.parse::<u64>() {
+                        Ok(days) => json!({"class": class, "days": days}),
+                        Err(_) => {
+                            self.dialog = Some(PeriodDialog {
+                                class,
+                                values,
+                                errors: BTreeMap::from([(
+                                    "days".to_owned(),
+                                    vec!["Give a whole number of days, or leave it empty for the default.".to_owned()],
+                                )]),
+                            });
+                            return Ok(());
+                        }
+                    }
+                };
+                match self
+                    .pages
+                    .contracts
+                    .submit(
+                        &call(
+                            scope,
+                            credential,
+                            "set_retention",
+                            "base.privacy.retention.set",
+                        ),
+                        input,
+                    )
+                    .await
+                {
+                    Ok(_) => {
+                        self.dialog = None;
+                        self.flash = Some((
+                            StatusKind::Success,
+                            "Retention period saved. The next sweep uses it.".into(),
+                        ));
+                    }
+                    Err(error) => {
+                        let errors = field_errors(&error);
+                        self.flash = Some(refusal(
+                            error,
+                            "You do not have permission to set retention periods.",
+                            "The retention period could not be saved.",
+                        )?);
+                        self.dialog = Some(PeriodDialog {
+                            class,
+                            values,
+                            errors,
+                        });
+                    }
+                }
+            }
+            _ => return Err(Error::Invalid),
+        }
+        Ok(())
+    }
+    async fn render(&mut self, scope: &Scope) -> Result<String> {
+        let pages = self.pages.clone();
+        let client = pages.db.get().await?;
+        let display = display(&pages, &client, scope).await?;
+        let can_manage = effective_capabilities(&**client, scope)
+            .await?
+            .contains(RETENTION_MANAGE);
+        let mut all = pages.privacy.retention_classes(&client, scope).await?;
+        let search = self.state.search.trim().to_lowercase();
+        if !search.is_empty() {
+            all.retain(|c| {
+                c.label.to_lowercase().contains(&search) || c.key.to_lowercase().contains(&search)
+            });
+        }
+        let page = self.state.paginate(&all);
+        let counts = page.counts;
+        self.rows = page.entries.to_vec();
+        if self.rows_changed {
+            self.columns.load(&self.rows, |row| row.key.to_owned());
+        }
+        let header = render(Header {
+            title: Html::text("Retention"),
+            subtitle: "How long this tenant keeps each kind of record before it is purged or anonymised. Legal holds keep what they name.",
+            ..Header::default()
+        })?;
+        let form = self.state.filters_form();
+        let mut body = render(FilterToolbar::new(
+            "privacy-retention-filters",
+            vec![ToolbarControl::search(
+                "privacy-retention-search",
+                "search",
+                "Search record classes",
+                &form["search"],
+                "Search by records or key...",
+            )],
+        ))?;
+        let mut rows = Vec::with_capacity(self.rows.len());
+        for class in &self.rows {
+            let action = match class.action {
+                RetentionAction::Purge => "Purge",
+                RetentionAction::Anonymise => "Anonymise",
+            };
+            let period = match (class.tenant_days, class.effective_days) {
+                (Some(_), days) => render(Badge::status(BadgeKind::Success, &days_text(days)))?,
+                (None, days) => Html::text(&format!("{} (default)", days_text(days))),
+            };
+            let sweep = match &class.last_sweep {
+                Some(sweep) => Html::text(&format!(
+                    "{}: {} acted on, {} kept",
+                    when(&display, Some(&sweep.finished_at)),
+                    sweep.acted,
+                    sweep.kept
+                )),
+                None => Html::text("Not swept yet"),
+            };
+            let mut row = FlexRow::new(class.key.to_owned())
+                .slot("class", Html::text(class.label))
+                .slot("clock", Html::text(class.clock_start))
+                .slot("action", Html::text(action))
+                .slot("default", Html::text(&days_text(class.default_days)))
+                .slot(
+                    "minimum",
+                    Html::text(
+                        &class
+                            .minimum_days
+                            .map_or("None".into(), |d| days_text(Some(d))),
+                    ),
+                )
+                .slot("period", period)
+                .slot("sweep", sweep);
+            row.dom_id = Some(format!(
+                "privacy-retention-{}",
+                class.key.replace(['/', '.'], "-")
+            ));
+            if can_manage {
+                let id = format!(
+                    "privacy-retention-set-{}",
+                    class.key.replace(['/', '.'], "-")
+                );
+                row.actions = render(IconButton {
+                    id: &id,
+                    kind: IconKind::Neutral,
+                    event: "open_period",
+                    name: "value",
+                    value: class.key,
+                    ..IconButton::new("hero-pencil", "Set period")
+                })?;
+            }
+            rows.push(row);
+        }
+        let mut table = FlexTable::new("privacy-retention", self.columns.flex_columns(), rows);
+        table.zoom = self.columns.zoom;
+        table.suggestions = self.columns.flex_suggestions();
+        table.add_query = &self.columns.add_query;
+        table.caption = "Record classes";
+        table.framed = false;
+        table.actions = can_manage;
+        if counts.total_entries == 0 {
+            table.empty = Some(TableEmpty::Content(Html::text(if search.is_empty() {
+                "No mounted module keeps records on a retention clock."
+            } else {
+                "No record classes match this search."
+            })));
+        }
+        let mut list = render(table)?;
+        list.push(&render(Pagination::new(
+            "privacy-retention-pagination",
+            counts,
+            &PAGE_SIZES,
+        ))?);
+        body.push(&render(Card {
+            id: "privacy-retention-card",
+            inner_class: "p-0",
+            body: list,
+            ..Card::default()
+        })?);
+        let dialog = match &self.dialog {
+            Some(dialog) => {
+                let class = self.rows.iter().find(|row| row.key == dialog.class);
+                let hint = class.map_or(String::new(), |class| {
+                    format!(
+                        "Leave empty for the default ({}).{}",
+                        days_text(class.default_days),
+                        class.minimum_days.map_or(String::new(), |m| format!(
+                            " No shorter than the legal minimum of {}.",
+                            days_text(Some(m))
+                        ))
+                    )
+                });
+                let field = Field::in_form(PERIOD_FORM, "days")
+                    .id("privacy-retention-days")
+                    .label("Days to keep")
+                    .kind(InputKind::Number)
+                    .hint(&hint)
+                    .value(dialog.values.get("days").cloned().unwrap_or_default())
+                    .errors(dialog.errors.get("days").cloned().unwrap_or_default());
+                let mut actions = render(Button {
+                    button_type: "button",
+                    event: "close_modal",
+                    body: Html::text("Cancel"),
+                    ..Button::default()
+                })?;
+                actions.push(&render(Button {
+                    button_type: "submit",
+                    variant: ButtonVariant::Primary,
+                    body: Html::text("Save period"),
+                    ..Button::default()
+                })?);
+                let title = format!(
+                    "Retention: {}",
+                    class.map_or(dialog.class.as_str(), |c| c.label)
+                );
+                render(Modal {
+                    id: "privacy-retention-modal",
+                    title: &title,
+                    cancel_event: "close_modal",
+                    description: "Sweeps purge or anonymise records once this period has passed since the clock started.",
+                    flash: Some(flash_map(&self.flash)),
+                    body: render(Form {
+                        id: "privacy-retention-form",
+                        event: "set_retention",
+                        body: render(field)?,
+                        actions,
+                        ..Form::default()
+                    })?,
+                    ..Modal::default()
+                })?
+            }
+            None => Html::EMPTY,
+        };
+        PageView {
+            id: "privacy-retention",
+            flash: if self.dialog.is_some() {
+                NO_FLASH
+            } else {
+                flash_map(&self.flash)
+            },
+            header,
+            body,
+            dialog,
+        }
+        .render()
+        .map_err(|_| Error::Internal)
+    }
+}
+
 // --------------------------------------------------------------- the pages
 
 enum State {
     Requests(Requests),
     Request(Box<RequestPage>),
     Holds(Holds),
+    Retention(Retention),
 }
 impl State {
     fn build(
@@ -1513,6 +1847,7 @@ impl State {
                 Self::Request(Box::new(RequestPage::new(pages.clone(), id)?))
             }
             "holds" => Self::Holds(Holds::new(pages.clone(), query)?),
+            "retention" => Self::Retention(Retention::new(pages.clone(), query)?),
             _ => return Err(Error::NotFound),
         })
     }
@@ -1521,6 +1856,7 @@ impl State {
             Self::Requests(page) => page.render(scope).await,
             Self::Request(page) => page.render(scope).await,
             Self::Holds(page) => page.render(scope).await,
+            Self::Retention(page) => page.render(scope).await,
         }
     }
 }
@@ -1531,12 +1867,14 @@ impl LiveState<Scope, Error> for State {
                 Self::Requests(page) => page.rows_changed = true,
                 Self::Request(page) => page.rows_changed = true,
                 Self::Holds(page) => page.rows_changed = true,
+                Self::Retention(page) => page.rows_changed = true,
             }
             match request.input {
                 LiveInput::Refresh => {}
                 LiveInput::Params(values) => match self {
                     Self::Requests(page) => page.state = parse(values)?,
                     Self::Holds(page) => page.state = parse(values)?,
+                    Self::Retention(page) => page.state = parse(values)?,
                     Self::Request(_) => {}
                 },
                 LiveInput::Event(value) => match self {
@@ -1547,6 +1885,9 @@ impl LiveState<Scope, Error> for State {
                         page.event(request.scope, request.credential, value).await?
                     }
                     Self::Holds(page) => {
+                        page.event(request.scope, request.credential, value).await?
+                    }
+                    Self::Retention(page) => {
                         page.event(request.scope, request.credential, value).await?
                     }
                 },
@@ -1564,6 +1905,7 @@ impl LiveState<Scope, Error> for State {
             let (query, rows) = match self {
                 Self::Requests(page) => (page.state.to_params(), page.rows.len()),
                 Self::Holds(page) => (page.state.to_params(), page.rows.len()),
+                Self::Retention(page) => (page.state.to_params(), page.rows.len()),
                 Self::Request(page) => (HashMap::new(), page.rows.len()),
             };
             Ok(LiveBody {
@@ -1582,6 +1924,7 @@ impl Page<Scope, Error> for Pages {
             "requests" => Some("Data-subject requests"),
             "request" => Some("Data-subject request"),
             "holds" => Some("Legal holds"),
+            "retention" => Some("Retention"),
             _ => None,
         }
     }

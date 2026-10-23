@@ -19,6 +19,7 @@ mod preferences;
 mod privacy;
 mod query_ui;
 mod reset;
+mod retention;
 mod sign_in;
 mod sso;
 pub use sso::{
