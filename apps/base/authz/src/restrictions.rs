@@ -32,6 +32,32 @@ pub const MAX_FIELDS: usize = 200;
 /// At most this many roles named by one restriction.
 pub const MAX_ROLES: usize = 100;
 
+/// How a restricted field reaches the roles it is restricted for (ADR 05).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum Mode {
+    /// The field is removed, as if it did not exist.
+    #[default]
+    Withhold,
+    /// The field shows a partial value by its personal kind and may be
+    /// revealed with a reason. Only a field marked personal may be masked.
+    Mask,
+}
+impl Mode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Withhold => "withhold",
+            Self::Mask => "mask",
+        }
+    }
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "withhold" => Some(Self::Withhold),
+            "mask" => Some(Self::Mask),
+            _ => None,
+        }
+    }
+}
+
 /// Stable read model of one restricted field with the roles it is restricted
 /// for. Labels fall back to ids when the catalog no longer offers the field
 /// (`restrictable` is then false: the row is stale and can only be removed).
@@ -42,6 +68,9 @@ pub struct RestrictionSummary {
     pub field_id: String,
     pub field_label: String,
     pub restrictable: bool,
+    /// Whether the catalog marks the field personal, so it may be masked.
+    pub maskable: bool,
+    pub mode: Mode,
     /// When the earliest of its role rows was written.
     pub since: SystemTime,
     pub role_ids: Vec<i64>,
@@ -112,30 +141,34 @@ impl FieldRestrictions {
         list_in(&**client, actor.tenant(), self.catalog()?).await
     }
 
-    /// Restrict `field` of `table` for exactly `roles`, creating the restriction
-    /// or replacing its role set. No roles is `Error::Invalid`: a restriction
-    /// for nobody restricts nothing (remove it instead).
+    /// Restrict `field` of `table` for exactly `roles` in `mode`, creating the
+    /// restriction or replacing its role set and mode. No roles is
+    /// `Error::Invalid`: a restriction for nobody restricts nothing (remove it
+    /// instead). Masking a field the catalog does not mark personal is `Invalid`.
     pub async fn put(
         &self,
         actor: &Scope,
         table: &str,
         field: &str,
         roles: &[i64],
+        mode: Mode,
     ) -> Result<RestrictionSummary> {
         let mut written = self
-            .put_many(actor, &[(table.to_owned(), field.to_owned())], roles)
+            .put_many(actor, &[(table.to_owned(), field.to_owned())], roles, mode)
             .await?;
         written.pop().ok_or(Error::Internal)
     }
 
     /// Restrict several fields for the same `roles` in one transaction: every
     /// field is restricted or none is. Every field and role is validated before
-    /// anything is written; duplicates collapse. Each field gets exactly `roles`.
+    /// anything is written; duplicates collapse. Each field gets exactly `roles`
+    /// and `mode`.
     pub async fn put_many(
         &self,
         actor: &Scope,
         fields: &[(String, String)],
         roles: &[i64],
+        mode: Mode,
     ) -> Result<Vec<RestrictionSummary>> {
         let catalog = self.catalog()?;
         let fields: BTreeSet<(String, String)> = fields.iter().cloned().collect();
@@ -146,6 +179,12 @@ impl FieldRestrictions {
             || roles.len() > MAX_ROLES
             || roles.iter().any(|id| *id <= 0)
             || !fields.iter().all(|(t, f)| catalog.restrictable(t, f))
+            || (mode == Mode::Mask
+                && !fields.iter().all(|(t, f)| {
+                    catalog
+                        .field(t, f)
+                        .is_some_and(|(_, f)| f.personal.is_some())
+                }))
         {
             return Err(Error::Invalid);
         }
@@ -176,15 +215,30 @@ impl FieldRestrictions {
                 }
                 let mut changes = Vec::new();
                 for (table, field) in &keys {
-                    let held: BTreeSet<i64> = sql
+                    let rows = sql
                         .query(
-                            "SELECT role_id FROM field_restrictions WHERE tenant_id=$1 AND table_id=$2 AND field_id=$3",
+                            "SELECT role_id,mode FROM field_restrictions WHERE tenant_id=$1 AND table_id=$2 AND field_id=$3",
                             &[&tenant, table, field],
                         )
-                        .await?
-                        .iter()
-                        .map(|row| row.get(0))
-                        .collect();
+                        .await?;
+                    let held: BTreeSet<i64> = rows.iter().map(|row| row.get(0)).collect();
+                    // A role kept in another mode changes mode.
+                    for row in &rows {
+                        let (role, held_mode): (i64, String) = (row.get(0), row.get(1));
+                        if roles.contains(&role) && held_mode != mode.as_str() {
+                            sql.execute(
+                                "UPDATE field_restrictions SET mode=$5 WHERE tenant_id=$1 AND role_id=$2 AND table_id=$3 AND field_id=$4",
+                                &[&tenant, &role, table, field, &mode.as_str()],
+                            )
+                            .await?;
+                            changes.push(Change {
+                                kind: "authz.field_restriction".into(),
+                                id: role,
+                                old: json!({"table_id": table, "field_id": field, "mode": held_mode}),
+                                new: json!({"table_id": table, "field_id": field, "mode": mode.as_str()}),
+                            });
+                        }
+                    }
                     let wanted: BTreeSet<i64> = roles.iter().copied().collect();
                     for role in held.difference(&wanted) {
                         sql.execute(
@@ -196,8 +250,8 @@ impl FieldRestrictions {
                     }
                     for role in wanted.difference(&held) {
                         sql.execute(
-                            "INSERT INTO field_restrictions(tenant_id,role_id,table_id,field_id) VALUES($1,$2,$3,$4)",
-                            &[&tenant, role, table, field],
+                            "INSERT INTO field_restrictions(tenant_id,role_id,table_id,field_id,mode) VALUES($1,$2,$3,$4,$5)",
+                            &[&tenant, role, table, field, &mode.as_str()],
                         )
                         .await?;
                         changes.push(change(*role, table, field, false, true));
@@ -303,7 +357,7 @@ async fn list_in(
 ) -> Result<Vec<RestrictionSummary>> {
     let rows = client
         .query(
-            "SELECT f.table_id,f.field_id,f.role_id,r.name,f.created_at FROM field_restrictions f JOIN roles r ON r.tenant_id=f.tenant_id AND r.id=f.role_id WHERE f.tenant_id=$1 ORDER BY f.table_id,f.field_id,f.role_id",
+            "SELECT f.table_id,f.field_id,f.role_id,r.name,f.created_at,f.mode FROM field_restrictions f JOIN roles r ON r.tenant_id=f.tenant_id AND r.id=f.role_id WHERE f.tenant_id=$1 ORDER BY f.table_id,f.field_id,f.role_id",
             &[&tenant],
         )
         .await?;
@@ -321,6 +375,8 @@ async fn list_in(
                         .map_or_else(|| table.clone(), |t| t.label.to_owned()),
                     field_label: known.map_or_else(|| field.clone(), |(_, f)| f.label.to_owned()),
                     restrictable: known.is_some(),
+                    maskable: known.is_some_and(|(_, f)| f.personal.is_some()),
+                    mode: Mode::Mask,
                     table_id: table,
                     field_id: field,
                     since,
@@ -329,6 +385,10 @@ async fn list_in(
                 }
             });
         summary.since = summary.since.min(since);
+        // One role row that withholds makes the whole field withheld.
+        if row.get::<_, String>(5) != "mask" {
+            summary.mode = Mode::Withhold;
+        }
         summary.role_ids.push(row.get(2));
         summary.role_names.push(row.get(3));
     }

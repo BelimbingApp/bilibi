@@ -32,10 +32,12 @@ async fn layout(client: &dyn bilibi_tenancy::ReadClient, settings: &Settings) { 
 
 Normal PostgreSQL clients and transactions implement `ReadClient` automatically. A custom `OperationClient` implementation must move its `query` method into an implementation of `ReadClient`; `OperationClient` is now a marker extending that trait. Keep its existing `ProofClient` implementation. Writes still take `MutationTransaction`.
 
-`Settings::get_global` is the one ambient read: a non-secret, global-scope value
+`Settings::get_global` is the ambient read: a non-secret, global-scope value
 for consumers with no session (signed links, workers). Encrypted definitions,
 runtime claims and keys without a global scope refuse; a secret needs an
 explicit, authorized `get`.
+
+`Settings::get_tenant(client, tenant, key)` is the same read for a trusted worker acting for one tenant without a session (a `base/privacy` retention sweep): that tenant's value, else the global one where the key allows it, else the default. The same refusals apply, plus keys that cannot hold a tenant value.
 
 `Target` is a request, not permission. The actor is a sealed Tenancy `Scope`.
 User means the actor's own account; tenant means their tenant. Each company read,

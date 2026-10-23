@@ -4,13 +4,15 @@ use bilibi_authz::{authorize_key, restrictions_for};
 use bilibi_database::{Change, Error, MutationTransaction, Result};
 use bilibi_tenancy::{PersonProvider, ProofClient, ProofFuture, Scope};
 use serde_json::Value;
-use std::collections::HashSet;
 use tokio_postgres::GenericClient;
 
 pub const SYSTEM_KEY: &str = "platform-orchestrator";
 
-async fn fields(client: &impl GenericClient, scope: &Scope) -> Result<HashSet<String>> {
-    restrictions_for(client, scope, "persons").await
+async fn fields(client: &impl GenericClient, scope: &Scope) -> Result<Restrictions> {
+    Ok(Restrictions {
+        fields: restrictions_for(client, scope, "persons").await?,
+        masks: bilibi_authz::fields::masks_for(client, scope, "persons").await?,
+    })
 }
 async fn raw(
     client: &impl GenericClient,
@@ -159,7 +161,7 @@ pub async fn preview(
     restricted_input(&input, &masked)?;
     Ok(input)
 }
-fn restricted_input(input: &PersonInput, masked: &HashSet<String>) -> Result<()> {
+fn restricted_input(input: &PersonInput, masked: &Restrictions) -> Result<()> {
     if (input.email.is_some() && masked.contains("email"))
         || (input.phone.is_some() && masked.contains("phone"))
     {
@@ -232,7 +234,7 @@ async fn prepare_update(
     id: PersonId,
     update: &Update,
     lock: bool,
-) -> std::result::Result<(Person, PersonInput, HashSet<String>), WriteError> {
+) -> std::result::Result<(Person, PersonInput, Restrictions), WriteError> {
     authorize_key(client, scope, UPDATE).await?;
     let mut input = validate(&update.identity).map_err(WriteError::Validation)?;
     let masked = fields(client, scope).await?;

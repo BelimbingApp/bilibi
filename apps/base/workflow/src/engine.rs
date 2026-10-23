@@ -98,33 +98,8 @@ impl Engine {
         bilibi_authz::authorize_operator(tx.sql(), scope, "admin.workflow.definition.manage")
             .await?;
         for &(owner, flow) in self.registry.flows.values() {
-            let inserted = tx.sql().query_opt("INSERT INTO base_workflow_flows(code,owner,subject_type,label,is_active) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING RETURNING id",&[&flow.code,&owner,&flow.subject,&flow.label,&flow.active]).await?;
-            let row = tx
-                .sql()
-                .query_one(
-                    "SELECT owner,subject_type FROM base_workflow_flows WHERE code=$1 FOR SHARE",
-                    &[&flow.code],
-                )
-                .await?;
-            if row.get::<_, String>(0) != owner || row.get::<_, String>(1) != flow.subject {
-                return Err(Error::Conflict);
-            }
-            if let Some(row) = inserted {
-                tx.record(Change {kind:"workflow.flow".into(),id:row.get(0),old:json!({}),new:json!({"code":flow.code,"owner":owner,"subject":flow.subject,"active":flow.active})}).await?;
-            }
-            for status in flow.statuses {
-                let settings: Value =
-                    serde_json::from_str(status.settings).map_err(|_| Error::Invalid)?;
-                if let Some(row)=tx.sql().query_opt("INSERT INTO base_workflow_status_configs(flow,code,label,position,is_active,settings) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING RETURNING id",&[&flow.code,&status.code,&status.label,&status.position,&status.active,&settings]).await? {
-                    tx.record(Change {kind:"workflow.status".into(),id:row.get(0),old:json!({}),new:json!({"flow":flow.code,"code":status.code,"label":status.label})}).await?;
-                }
-            }
-            for edge in flow.edges {
-                let metadata: Value =
-                    serde_json::from_str(edge.metadata).map_err(|_| Error::Invalid)?;
-                if let Some(row)=tx.sql().query_opt("INSERT INTO base_workflow_edges(flow,from_code,to_code,label,capability,guard_key,action_key,position,is_active,sla_seconds,metadata) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT DO NOTHING RETURNING id",&[&flow.code,&edge.from,&edge.to,&edge.label,&edge.capability,&edge.guard,&edge.action,&edge.position,&edge.active,&edge.sla_seconds,&metadata]).await? {
-                    tx.record(Change {kind:"workflow.edge".into(),id:row.get(0),old:json!({}),new:json!({"flow":flow.code,"from":edge.from,"to":edge.to})}).await?;
-                }
+            for change in insert_flow(tx.sql(), owner, &flow).await? {
+                tx.record(change).await?;
             }
         }
         tx.commit().await
@@ -467,4 +442,41 @@ impl Engine {
         sql.commit().await?;
         Ok(edges)
     }
+}
+
+/// Inserts one contributed flow, its statuses and edges, keeping every row an
+/// operator already configured. Returns a change per inserted row. Shared by
+/// [`Engine::initialize`] and the production flow seed (`crate::seeds`).
+pub(crate) async fn insert_flow(
+    sql: &Transaction<'_>,
+    owner: &str,
+    flow: &Flow,
+) -> Result<Vec<Change>> {
+    let mut changes = Vec::new();
+    let inserted = sql.query_opt("INSERT INTO base_workflow_flows(code,owner,subject_type,label,is_active) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING RETURNING id",&[&flow.code,&owner,&flow.subject,&flow.label,&flow.active]).await?;
+    let row = sql
+        .query_one(
+            "SELECT owner,subject_type FROM base_workflow_flows WHERE code=$1 FOR SHARE",
+            &[&flow.code],
+        )
+        .await?;
+    if row.get::<_, String>(0) != owner || row.get::<_, String>(1) != flow.subject {
+        return Err(Error::Conflict);
+    }
+    if let Some(row) = inserted {
+        changes.push(Change {kind:"workflow.flow".into(),id:row.get(0),old:json!({}),new:json!({"code":flow.code,"owner":owner,"subject":flow.subject,"active":flow.active})});
+    }
+    for status in flow.statuses {
+        let settings: Value = serde_json::from_str(status.settings).map_err(|_| Error::Invalid)?;
+        if let Some(row)=sql.query_opt("INSERT INTO base_workflow_status_configs(flow,code,label,position,is_active,settings) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING RETURNING id",&[&flow.code,&status.code,&status.label,&status.position,&status.active,&settings]).await? {
+            changes.push(Change {kind:"workflow.status".into(),id:row.get(0),old:json!({}),new:json!({"flow":flow.code,"code":status.code,"label":status.label})});
+        }
+    }
+    for edge in flow.edges {
+        let metadata: Value = serde_json::from_str(edge.metadata).map_err(|_| Error::Invalid)?;
+        if let Some(row)=sql.query_opt("INSERT INTO base_workflow_edges(flow,from_code,to_code,label,capability,guard_key,action_key,position,is_active,sla_seconds,metadata) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT DO NOTHING RETURNING id",&[&flow.code,&edge.from,&edge.to,&edge.label,&edge.capability,&edge.guard,&edge.action,&edge.position,&edge.active,&edge.sla_seconds,&metadata]).await? {
+            changes.push(Change {kind:"workflow.edge".into(),id:row.get(0),old:json!({}),new:json!({"flow":flow.code,"from":edge.from,"to":edge.to})});
+        }
+    }
+    Ok(changes)
 }

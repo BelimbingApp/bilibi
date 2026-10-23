@@ -24,6 +24,10 @@ pub const FIELD_CATALOG: &str = "base/authz.field_catalog";
 pub struct CatalogField {
     pub id: &'static str,
     pub label: &'static str,
+    /// The field's personal kind (`name`, `email`, `phone`, `identifier`,
+    /// `date`, `free_text`) when its owner marks it personal. Only such a
+    /// field may be masked, since the kind shapes the partial value.
+    pub personal: Option<&'static str>,
 }
 /// One table with the fields an operator may restrict. `record_types` are the
 /// audit record types its rows use, so a restriction reaches their audit views.

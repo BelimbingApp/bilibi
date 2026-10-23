@@ -93,6 +93,16 @@ entry and names them instead. They never ask who may read: this crate sits
 below Authz, so the screens in `base/audit_views` own the capability vocabulary,
 the checks and which fields are withheld.
 
+## Personal-data erasure
+
+**One narrow exception to append-only evidence, for a `base/privacy` erasure only** ([ADR 05](../../../docs/architecture/decisions/05-personal-data-registry.md), migration `base-audit-009-erasure`).
+
+- `erase_values(tx, request, kind, id, fields)` replaces the named top-level fields with `[erased]` in `old_values` and `new_values` of every mutation row of that record in the transaction's tenant, and its subject identifier.
+- Each call writes one append-only `base_audit_erasures` row: request, record kind and ID, fields, rows changed, actor.
+- It works only in a transaction marked with `ERASURE_MARKER` (`bilibi.privacy_erasure`, transaction-local), which `base/privacy` sets for one request. The evidence guard refuses every other update, every delete and every truncate, as before.
+- Who, when, which record and which fields changed all remain; only values go. Null and missing keys stay as they were.
+- Retention sweeps use the same path: `erase_sweep_values(tx, sweep, kind, id, fields)` in a transaction marked with `SWEEP_MARKER` (`bilibi.privacy_sweep`) for one sweep (migration `base-audit-010-sweep-erasure`). A ledger row names exactly one of the request or the sweep.
+
 ## Runtime evidence
 
 Demonstrated without unit tests on a disposable database upgraded from the

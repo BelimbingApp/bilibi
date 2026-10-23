@@ -132,6 +132,14 @@ proof; the shell does so on the first operator page that finds these facts
   only to an owner's updater while the owner is writable; every write is
   still refused by the service. Pages refresh on `subscribe()` changes.
 
+## Personal data
+
+**Erasure clears lines, phone, label, postcode, locality and raw input of an address only this person uses, and keeps its country.** Store `core/address.addresses` ("Addresses") under [`base/privacy`](../../base/privacy/README.md), [ADR 05](../../../docs/architecture/decisions/05-personal-data-registry.md).
+
+- An address another party also uses (a company office) is kept and reported.
+- Attachments stay as links to the anonymised address.
+- **Masking.** A masked `phone` holds its partial value, named in `masked`, keeps its list column and is read-only on the record. Writes refuse it.
+
 ## Runtime walkthrough (no unit tests)
 
 On a fresh disposable database: `migrate`, then import the Geonames

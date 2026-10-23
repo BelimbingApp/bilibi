@@ -106,6 +106,13 @@ K18 adds no page or separate authorization policy; the panels and headless
 operations below (K19) reuse these owner APIs. Core contacts and work
 affiliations work with People absent.
 
+## Personal data
+
+**Erasure keeps each affiliation, its company link and dates, and clears job title, work email and work phone.** Store `core/affiliation.affiliations` ("Affiliations (work contact)") under [`base/privacy`](../../base/privacy/README.md), [ADR 05](../../../docs/architecture/decisions/05-personal-data-registry.md).
+
+- The company's records stay whole.
+- **Masking.** A masked `work_email` or `work_phone` holds its partial value, named in `masked` in the read model and JSON, and is read-only in the panel. Writes refuse it.
+
 ## Runtime walkthrough (no unit tests)
 
 Migrate a disposable DB, then run:
