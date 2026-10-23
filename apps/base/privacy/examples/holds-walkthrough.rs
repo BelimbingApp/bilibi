@@ -116,7 +116,7 @@ async fn main() -> Result<()> {
         .await?;
     let person = PersonId::new(1).map_err(|_| "invalid person")?;
 
-    println!("== mounted stores (none contribute yet)");
+    println!("== mounted stores");
     println!("stores: {:?}", privacy.stores().collect::<Vec<_>>());
 
     println!("== place: person hold, record hold, duplicate, bad reason, no capability");
@@ -134,7 +134,7 @@ async fn main() -> Result<()> {
             &mut client,
             &admin,
             HoldTarget::Record {
-                kind: "core/person.person".into(),
+                kind: "person".into(),
                 id: 2,
             },
             "Regulator inquiry",
@@ -154,7 +154,7 @@ async fn main() -> Result<()> {
                 &mut client,
                 &admin,
                 HoldTarget::Record {
-                    kind: "core/person.person".into(),
+                    kind: "person".into(),
                     id: 3,
                 },
                 "   ",
@@ -168,7 +168,7 @@ async fn main() -> Result<()> {
                 &mut client,
                 &viewer,
                 HoldTarget::Record {
-                    kind: "core/person.person".into(),
+                    kind: "person".into(),
                     id: 3,
                 },
                 "no capability",
@@ -181,20 +181,20 @@ async fn main() -> Result<()> {
         .active_holds(&**client, &admin, Some(person))
         .await?;
     println!(
-        "person 1: person_held={} record core/person.person:2 held={} record core/person.person:3 held={}",
+        "person 1: person_held={} record person:2 held={} record person:3 held={}",
         holds.person_held(),
-        holds.record_held("core/person.person", 2),
-        holds.record_held("core/person.person", 3)
+        holds.record_held("person", 2),
+        holds.record_held("person", 3)
     );
     let other_person = PersonId::new(9).map_err(|_| "invalid person")?;
     let holds = privacy
         .active_holds(&**client, &admin, Some(other_person))
         .await?;
     println!(
-        "person 9: person_held={} record core/person.person:2 held={} record core/person.person:3 held={}",
+        "person 9: person_held={} record person:2 held={} record person:3 held={}",
         holds.person_held(),
-        holds.record_held("core/person.person", 2),
-        holds.record_held("core/person.person", 3)
+        holds.record_held("person", 2),
+        holds.record_held("person", 3)
     );
 
     println!("== release, release twice, list, history");

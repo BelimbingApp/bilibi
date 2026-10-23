@@ -22,7 +22,7 @@ pub use requests::{NewRequest, RequestKind, RequestView, StoreProgress, DUE_DAYS
 pub use runner::{FINISH_WORKER, STORE_WORKER};
 
 use bilibi_authz::{CapabilityDefinition, VocabularyContribution, VOCABULARY};
-use bilibi_database::{Db, MutationBoundary, MutationTransaction, Result};
+use bilibi_database::{Db, Error, MutationBoundary, MutationTransaction, Result};
 use bilibi_module_registry::{
     Catalog, Consumer, Contribution, Layer, Module, Provenance, Ready, Result as RegistryResult,
     Service,
@@ -74,7 +74,9 @@ impl Privacy {
             .iter()
             .map(|(key, (_, data))| (*key, data.label))
     }
-    /// Places a legal hold. A second active hold on the same target is `Conflict`.
+    /// Places a legal hold. A second active hold on the same target is `Conflict`;
+    /// a record kind no mounted store declares is `Invalid`, since a hold on it
+    /// would protect nothing.
     pub async fn place_hold(
         &self,
         client: &mut Client,
@@ -82,6 +84,7 @@ impl Privacy {
         target: HoldTarget,
         reason: &str,
     ) -> Result<Hold> {
+        self.known_target(&target)?;
         let mut tx = self
             .boundary
             .begin(client, scope.mutation_context("privacy.hold.place"))
@@ -98,7 +101,14 @@ impl Privacy {
         target: HoldTarget,
         reason: &str,
     ) -> Result<Hold> {
+        self.known_target(&target)?;
         holds::place_in(tx, scope, target, reason).await
+    }
+    fn known_target(&self, target: &HoldTarget) -> Result<()> {
+        match target {
+            HoldTarget::Record { kind, .. } if !self.stores.declares(kind) => Err(Error::Invalid),
+            _ => Ok(()),
+        }
     }
     /// Releases an active hold; the next erasure or sweep acts on what it kept.
     pub async fn release_hold(
