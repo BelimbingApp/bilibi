@@ -26,6 +26,24 @@ Boot fails when an entry names an embed no module contributes with the
 entry's capability *offers* the entry; the embed's `access` still guards every
 panel mount and refresh.
 
+## Run-time entries (providers)
+
+Entries that exist only at run time (an operator's saved reports) come from a provider instead of `contribute!`:
+
+```rust
+bilibi_dashboard::provide!("base/reports", Provider {
+    prefix: "report",                 // entry ids are report-<key>: never rename
+    embed: "base/reports.dashboard",  // an Embed with the Dashboard context
+    placement: Placement::Grid, capability: Some("reports.view"), refresh_interval: 60_000,
+    entries: panel::entries,          // fn(&Scope) -> the reader's entries (key, label)
+});
+```
+
+- The page calls `entries` with the reader's sealed scope on every update; the owner answers only what that reader may see. At most `MAX_PROVIDED` per provider are offered.
+- Provided entries are offered in Customize and placed only by the reader, never by default, so a new report does not appear on everyone's dashboard. A placed one that is no longer offered drops out like a contributed one.
+- A page holds at most 32 panels; adding past that is refused with a message.
+- Boot fails for a prefix that begins a contributed entry's id, a duplicate prefix, an embed without the `Dashboard` context or an unknown capability.
+
 ## What a panel is
 
 The embed's service is a `PageService<Scope, Error>` whose `mount` returns a

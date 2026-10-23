@@ -34,6 +34,8 @@ pub struct ComponentsSpecimen {
     radio_disabled: Html,
     inline: InlineSamples,
     flex: crate::flex_sample::FlexSpecimens,
+    /// Every chart kind, then the empty and refused states.
+    charts: Vec<Html>,
     /// The file inputs in every state the host can leave them in: empty,
     /// arriving, complete, refused per entry and refused as a whole.
     uploads: Uploads,
@@ -68,6 +70,7 @@ sections! {
         form_helpers: "ui_components_specimen/form_helpers.html",
         inline_facts: "ui_components_specimen/inline_facts.html",
         flex_tables: "ui_components_specimen/flex_tables.html",
+        charts: "ui_components_specimen/charts.html",
     }
 }
 
@@ -481,6 +484,7 @@ impl ComponentsSpecimen {
             radio_disabled,
             inline: InlineSamples::new()?,
             flex: crate::flex_sample::FlexSpecimens::new()?,
+            charts: specimen_charts()?,
             uploads: specimen_uploads(),
             location_secondary: LocationAction::new(
                 "specimen-location",
@@ -528,6 +532,198 @@ impl ComponentsSpecimen {
 
 /// The states the specimen shows, produced the way the host produces them:
 /// through registration and chunk appends, never by hand.
+/// Sample charts: one of each kind over neutral example data, a series with a
+/// gap and negative values, then a chart with no data and a pie refused for
+/// having too many slices (its data still shown).
+fn specimen_charts() -> askama::Result<Vec<Html>> {
+    use crate::{Chart, ChartKind, Series};
+    let months: Vec<String> = ["Jan", "Feb", "Mar", "Apr", "May", "Jun"]
+        .map(String::from)
+        .to_vec();
+    let series = |name: &str, values: &[Option<f64>]| Series {
+        name: name.into(),
+        values: values.to_vec(),
+    };
+    let regions: Vec<String> = ["North", "South", "East", "West"]
+        .map(String::from)
+        .to_vec();
+    let shares = series(
+        "Orders",
+        &[Some(420.0), Some(310.0), Some(180.0), Some(95.0)],
+    );
+    let many: Vec<String> = (1..=10).map(|i| format!("Region {i}")).collect();
+    let charts = [
+        Chart::new(
+            "sample-chart-kpi",
+            "Orders this month",
+            ChartKind::Kpi,
+            vec![],
+            vec![series("Orders this month", &[Some(1284.0)])],
+        ),
+        Chart::new(
+            "sample-chart-bar",
+            "Orders by month",
+            ChartKind::Bar,
+            months.clone(),
+            vec![series(
+                "Orders",
+                &[
+                    Some(120.0),
+                    Some(160.0),
+                    Some(140.0),
+                    Some(210.0),
+                    Some(190.0),
+                    Some(240.0),
+                ],
+            )],
+        ),
+        Chart::new(
+            "sample-chart-grouped",
+            "Net stock change by month",
+            ChartKind::Bar,
+            months.clone(),
+            vec![
+                series(
+                    "North",
+                    &[
+                        Some(40.0),
+                        Some(-15.0),
+                        Some(25.0),
+                        Some(-30.0),
+                        Some(10.0),
+                        Some(35.0),
+                    ],
+                ),
+                series(
+                    "South",
+                    &[
+                        Some(20.0),
+                        Some(30.0),
+                        Some(-10.0),
+                        Some(15.0),
+                        None,
+                        Some(-5.0),
+                    ],
+                ),
+            ],
+        ),
+        Chart::new(
+            "sample-chart-stacked",
+            "Cases by priority",
+            ChartKind::StackedBar,
+            months.clone(),
+            vec![
+                series(
+                    "Low",
+                    &[
+                        Some(30.0),
+                        Some(28.0),
+                        Some(35.0),
+                        Some(32.0),
+                        Some(40.0),
+                        Some(38.0),
+                    ],
+                ),
+                series(
+                    "Normal",
+                    &[
+                        Some(52.0),
+                        Some(60.0),
+                        Some(48.0),
+                        Some(66.0),
+                        Some(58.0),
+                        Some(70.0),
+                    ],
+                ),
+                series(
+                    "High",
+                    &[
+                        Some(12.0),
+                        Some(9.0),
+                        Some(15.0),
+                        Some(11.0),
+                        Some(18.0),
+                        Some(14.0),
+                    ],
+                ),
+            ],
+        ),
+        Chart::new(
+            "sample-chart-line",
+            "Average resolution hours",
+            ChartKind::Line,
+            months.clone(),
+            vec![
+                series(
+                    "Email",
+                    &[
+                        Some(18.5),
+                        Some(16.2),
+                        None,
+                        Some(14.8),
+                        Some(13.1),
+                        Some(12.4),
+                    ],
+                ),
+                series(
+                    "Chat",
+                    &[
+                        Some(4.2),
+                        Some(3.9),
+                        Some(4.5),
+                        Some(3.6),
+                        Some(3.2),
+                        Some(3.4),
+                    ],
+                ),
+            ],
+        ),
+        Chart::new(
+            "sample-chart-pie",
+            "Orders by region",
+            ChartKind::Pie,
+            regions.clone(),
+            vec![shares.clone()],
+        ),
+        Chart::new(
+            "sample-chart-donut",
+            "Orders by region (total)",
+            ChartKind::Donut,
+            regions,
+            vec![shares],
+        ),
+        Chart::new(
+            "sample-chart-empty",
+            "Orders by month (no orders yet)",
+            ChartKind::Bar,
+            months,
+            vec![series("Orders", &[None, None, None, None, None, None])],
+        ),
+        Chart::new(
+            "sample-chart-refused",
+            "Orders by region (ten regions)",
+            ChartKind::Pie,
+            many,
+            vec![series(
+                "Orders",
+                &[
+                    Some(5.0),
+                    Some(8.0),
+                    Some(3.0),
+                    Some(9.0),
+                    Some(4.0),
+                    Some(7.0),
+                    Some(6.0),
+                    Some(2.0),
+                    Some(1.0),
+                    Some(10.0),
+                ],
+            )],
+        ),
+    ];
+    charts.iter().map(Html::render).collect()
+}
+
 fn specimen_uploads() -> Uploads {
     let mut uploads = Uploads::new([
         UploadSpec::new("statement", 5 * 1024 * 1024).accept([".csv", ".txt", "text/csv"]),

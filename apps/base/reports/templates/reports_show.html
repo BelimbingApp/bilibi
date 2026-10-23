@@ -1,0 +1,15 @@
+{#- One report (src/web/show.rs): header, facts, the view tabs and the
+    current view, all rendered through the shared models; this file lays them
+    out. -#}
+{%- import "components.html" as ui -%}
+{%- import "feedback.html" as feedback -%}
+<div data-shared-ui>
+{% call feedback::flash_group(messages=flash) %}{% endcall %}
+{% call ui::page(id="report-show", variant=bilibi_ui::PageVariant::Detail, class="space-y-3") %}
+{{ header|safe }}
+{{ facts|safe }}
+{{ tabs|safe }}
+<div id="report-view" class="space-y-3">{{ body|safe }}</div>
+{{ dialog|safe }}
+{% endcall %}
+</div>
