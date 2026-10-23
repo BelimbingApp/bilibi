@@ -16,9 +16,11 @@ bilibi-datetime.workspace = true
 bilibi-grid.workspace = true
 bilibi-locale.workspace = true
 bilibi-menu.workspace = true
+bilibi-notifications.workspace = true
 bilibi-module-registry.workspace = true
 bilibi-party-ids.workspace = true
 bilibi-queue.workspace = true
+bilibi-schedule.workspace = true
 bilibi-settings.workspace = true
 bilibi-step-up.workspace = true
 bilibi-tenancy = { path = "../tenancy" }
