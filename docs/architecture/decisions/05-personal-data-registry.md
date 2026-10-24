@@ -4,7 +4,7 @@
 **Status:** Proposed
 **Agents:** claude-code/opus-5.5 (author)
 **Scope:** Personal-data retention, legal hold, access and erasure requests, and field masking across every mounted module
-**Last Updated:** 2026-10-22
+**Last Updated:** 2026-10-24
 
 > Source: [issue 132](https://github.com/BelimbingApp/bilibi/issues/132). Bilimbi has no privacy module to mirror; its per-store retention workers (`base/integration`, `base/perf`, `base/schedule`) are prior art for sweeps only. Belimbing's [company erasure refusal](https://github.com/BelimbingApp/belimbing/blob/main/app/Core/Company/Exceptions/CompanyErasureException.php) is prior art for keeping history rows when erasing.
 
@@ -32,10 +32,14 @@ Without a shared contract, each Domain (a CRM first) would build its own export,
 | Requests | `base/privacy` on `base/workflow` and `base/queue` | Access, portability and erasure requests through one contributed flow |
 | Export and certificate | `base/artifacts` | Expiring export bundle; retained completion certificate |
 | Legal hold | `base/privacy` | Holds on a person or one record, append-only history |
-| Retention | `base/privacy`, `base/settings`, `base/schedule` | Contributed record classes, tenant overrides, sweeps |
+| Retention | `base/privacy`, `base/settings`, `base/schedule` | Contributed record classes, company periods and legal minimums, sweeps |
 | Masking | `base/authz`, `base/grid` | Partial-value restriction mode with audited reveal |
-| Audit erasure | `base/audit` | One guarded function that replaces erased values in earlier evidence |
+| Audit erasure | `base/audit` | Guarded replacement of erased values, with a hash chain and verification |
 | File erasure | `base/media` | Owner-authorised erasure of a submitted attachment, leaving a tombstone |
+
+### Anonymise by default
+
+**Erasure keeps rows, IDs, keys, links and amounts; only the person's declared personal fields become `[erased]`.** Orders and cases keep their integrity and show an anonymised stub. A handler may delete only records with no business value, subject to legal minimums and holds. Uploaded file bytes are deleted, with a tombstone row kept.
 
 ### Handler contract
 
@@ -44,7 +48,7 @@ Without a shared contract, each Domain (a CRM first) would build its own export,
 - `Subject` is a `bilibi_party_ids::PersonId` plus listed identifiers (email, phone). It never carries free text from the requester.
 - `locate` returns counts per record kind, split into matches by Person and matches only by identifier.
 - `export` returns JSON plus file references (media and artifact IDs). Base resolves the files; the handler never copies bytes.
-- `erase` anonymises or deletes, and returns counts per record kind plus records kept, each with a reason (`legal_hold`, `retained_until`, `legal_minimum`, `deferred`) and a date when known.
+- `erase` anonymises in place, or deletes records with no business value, and returns counts per record kind plus records kept, each with a reason (`legal_hold`, `retained_until`, `legal_minimum`, `deferred`) and a date when known.
 - Every call is idempotent: a retried job that finds work already done returns the same counts.
 - `erase` writes through `MutationBoundary` like any other owner write. Its `Change` names the erased fields with the value `[erased]`.
 
@@ -72,7 +76,7 @@ Without a shared contract, each Domain (a CRM first) would build its own export,
 ### Export and certificate
 
 - The export is one artifact with an expiry, read through `Artifacts::read`, so every download is audited.
-- The certificate is rendered through A4 and stored with `put_retained`. It lists each store, its action, counts, records kept and why, deferrals with dates, and the approver.
+- The certificate is rendered through A4 and stored with `put_retained`. It lists each store, its action, counts, records kept and why, deferrals with dates, and the approver. For records still within their legal period, it states `kept until <date>` and the reason.
 
 ### Legal hold
 
@@ -84,10 +88,13 @@ Without a shared contract, each Domain (a CRM first) would build its own export,
 
 ### Retention
 
-**Modules contribute record classes; tenants override periods; nothing runs until an operator enables it.**
+**Modules contribute record classes; each company holds its retention periods and legal minimums in settings.**
 
-- A `RecordClass` declares a default period (or none, which keeps forever), the clock start, `purge` or `anonymise`, an optional legal minimum, and its sweep handler.
-- Tenants override periods in tenant-scoped settings on an operator page. An override below the legal minimum is refused.
+- A `RecordClass` declares a default period (or none, which keeps forever), the clock start, `purge` or `anonymise`, a legal minimum, and its sweep handler. Purging is only for records with no business value.
+- Each company sets its periods and legal minimums per class in tenant-scoped company settings on an operator page. A period below the company's legal minimum is refused.
+- Bilibi ships no country rules. Ready-made rule sets, such as Malaysia PDPA or EU GDPR, come later as plug-ins that fill those company settings.
+- Audit and financial records (payroll, claims, ledgers) keep their personal fields for their legal period. An erasure request acts at once on everything else, subject to holds and declared deferrals. An ordinary retention period does not delay a request.
+- The certificate lists the legal deadline and reason for each record kept. The sweep anonymises its declared personal fields after that date, subject to holds.
 - One contributed schedule definition runs the sweeps in batches. Like every contributed task, it runs only after an operator enables it.
 - Schedule definitions are installation-wide today. The sweep worker visits each tenant that has enabled classes, under a system scope for that tenant. If per-tenant scheduled work ([issue 138](https://github.com/BelimbingApp/bilibi/issues/138)) lands first, the sweep uses it instead.
 
@@ -104,8 +111,11 @@ Without a shared contract, each Domain (a CRM first) would build its own export,
 | Append-only promise | One narrow, ledgered exception | Kept literally, but key destruction is itself unrecorded state |
 
 - The function is callable only inside a privacy erasure transaction. It checks a transaction-local marker that only `base/privacy` sets, and the declared field list for the record kinds.
-- It replaces those fields in `old_values`, `new_values` and the subject identifier of that subject's rows with `[erased]`. Who, when, which record and which fields remain.
+- Audit evidence within its legal period is kept until that date, with the reason on the certificate. The request erases everything else at once, subject to holds and declared deferrals; the sweep anonymises retained evidence after its legal deadline.
+- It replaces those fields in `old_values`, `new_values` and declared personal subject identifiers with `[erased]`. Row IDs, actor IDs, time, action, record references and field names remain.
 - It writes one append-only ledger row per call: request, record kinds, row counts, fields and actor.
+- A hash chain links each audit row to the previous row over its non-personal fields: ID, time, actor ID, action, record and field names. Personal values are excluded, so approved redaction does not break the chain. Deleting a row or changing an ID, actor or time breaks it.
+- A “verify audit log” check verifies the chain and reports any break.
 - The evidence guard still refuses every other update, delete and truncate.
 
 ### File erasure
@@ -122,25 +132,24 @@ Without a shared contract, each Domain (a CRM first) would build its own export,
 
 ### Tenancy
 
-**Requests, holds, overrides and certificates are tenant-scoped.** The platform operator cannot read another tenant's requests or exports.
-
-### Anonymise by default
-
-**Erasure keeps rows, keys, amounts and links and replaces personal fields with a placeholder.** Orders and cases keep their integrity and show an anonymised stub. A handler may delete records with no business value.
+**Requests, holds, company retention settings and certificates are tenant-scoped.** The platform operator cannot read another tenant's requests or exports.
 
 ## Phases
 
 | Phase | Contents |
 | --- | --- |
-| First | Registry, personal field marks, legal hold, requests with approval and certificate, audit erasure path, media erasure, Platform handlers (`core/person`, `core/user`, `core/affiliation`, `base/media`, `base/artifacts` through each Owner, `base/events` payloads, `base/integration` previews, `base/audit`) |
-| Second | Retention classes, tenant overrides, sweeps and operator page |
+| First | Registry, personal field marks, legal hold, requests with approval and certificate, audit erasure path with hash chain and “verify audit log” check, record classes with company legal-minimum settings and deferred-erasure sweep, media erasure, Platform handlers (`core/person`, `core/user`, `core/affiliation`, `base/media`, `base/artifacts` through each Owner, `base/events` payloads, `base/integration` previews, `base/audit`) |
+| Second | General retention periods and company settings, class sweeps and operator page |
 | Third | Partial masking and audited reveal |
 
 ## Consequences
 
 - A Domain declares what personal data it holds and how to export and erase it. It builds no request flow, certificate or retention page of its own.
 - A Domain that marks a Grid field personal must contribute a handler, or boot fails. Marks are opt-in, so official Domains keep booting unchanged.
-- `base/audit` evidence is no longer strictly append-only. The one exception is narrow, guarded and ledgered, and its README says so.
+- Erasure preserves business rows, IDs, keys, links and amounts. Only declared personal fields are anonymised; file bytes are removed with tombstones kept.
+- Audit and financial records keep personal fields until their legal deadline. Certificates explain what remains and why; the sweep anonymises it when due.
+- `base/audit` evidence is no longer strictly append-only. The one exception is narrow, guarded and ledgered, and its README says so. The hash chain survives approved redaction; the verification check reports breaks in the non-personal evidence.
+- Companies maintain their own retention periods and legal minimums. Bilibi supplies no country rules; plug-in rule sets may fill those settings later.
 - With nothing configured, pages, writes and audit behave exactly as before.
 - Proof follows issue 132's acceptance list on the walkthrough fixture, with browser evidence per [runtime parity](../../runtime-parity.md). No unit tests.
 
