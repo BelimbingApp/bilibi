@@ -76,6 +76,7 @@ Without a shared contract, each Domain (a CRM first) would build its own export,
 ### Export and certificate
 
 - The export is one artifact with an expiry, read through `Artifacts::read`, so every download is audited.
+- No erasure trail (request, certificate, ledger or sweep summary) may store the erased values.
 - The certificate is rendered through A4 and stored with `put_retained`. It lists each store, its action, counts, records kept and why, deferrals with dates, and the approver. For records still within their legal period, it states `kept until <date>` and the reason.
 
 ### Legal hold
@@ -95,6 +96,8 @@ Without a shared contract, each Domain (a CRM first) would build its own export,
 - Bilibi ships no country rules. Ready-made rule sets, such as Malaysia PDPA or EU GDPR, come later as plug-ins that fill those company settings.
 - Audit and financial records (payroll, claims, ledgers) keep their personal fields for their legal period. An erasure request acts at once on everything else, subject to holds and declared deferrals. An ordinary retention period does not delay a request.
 - The certificate lists the legal deadline and reason for each record kept. The sweep anonymises its declared personal fields after that date, subject to holds.
+- Every sweep anonymisation or purge writes through `MutationBoundary`, like request erasure. Audit records the record, field names and actor or system scope, with the sweep run as the cause.
+- Each sweep run writes one append-only summary row: tenant, record class, counts, and records skipped for legal hold or legal minimum.
 - One contributed schedule definition runs the sweeps in batches. Like every contributed task, it runs only after an operator enables it.
 - Schedule definitions are installation-wide today. The sweep worker visits each tenant that has enabled classes, under a system scope for that tenant. If per-tenant scheduled work ([issue 138](https://github.com/BelimbingApp/bilibi/issues/138)) lands first, the sweep uses it instead.
 
@@ -138,7 +141,7 @@ Without a shared contract, each Domain (a CRM first) would build its own export,
 
 | Phase | Contents |
 | --- | --- |
-| First | Registry, personal field marks, legal hold, requests with approval and certificate, audit erasure path with hash chain and “verify audit log” check, record classes with company legal-minimum settings and deferred-erasure sweep, media erasure, Platform handlers (`core/person`, `core/user`, `core/affiliation`, `base/media`, `base/artifacts` through each Owner, `base/events` payloads, `base/integration` previews, `base/audit`) |
+| First | Registry, personal field marks, legal hold, requests with approval and certificate, audit erasure path with hash chain and “verify audit log” check, record classes with company legal-minimum settings and deferred-erasure sweep with audit and summary, media erasure, Platform handlers (`core/person`, `core/user`, `core/affiliation`, `base/media`, `base/artifacts` through each Owner, `base/events` payloads, `base/integration` previews, `base/audit`) |
 | Second | General retention periods and company settings, class sweeps and operator page |
 | Third | Partial masking and audited reveal |
 
