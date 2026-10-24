@@ -3,17 +3,24 @@ mod agent_operations;
 mod contributions;
 mod directory;
 mod files;
-pub mod identity;
-pub mod model;
+mod identity;
+mod model;
 mod step_up;
 mod web;
 
 use bilibi_database::{Db, Error, MutationBoundary, MutationTransaction, Result};
 use bilibi_tenancy::{Authentication, Scope};
 pub use contributions::{CAPS, CREATE, LIST, RETIRE, SYSTEM_MANAGE, UPDATE, VIEW};
-pub use files::{ARTIFACT_OWNER, ATTACHMENT_SUBJECT, FILES};
+pub use files::{PersonFiles, ARTIFACT_OWNER, ATTACHMENT_SUBJECT, FILES};
+// Other owners' transactions: a person read, searched, previewed or created
+// on the caller's connection, and the account binder's locks and standing.
+pub use identity::{
+    account_standing, create as create_person, lock_for_account_binding, preview as preview_person,
+    read as read_person, search as search_persons, BindingIdentity,
+};
 pub use model::{
-    DuplicateQuery, FieldError, Page, Person, PersonId, PersonInput, PersonKind, Search, Update,
+    validate as validate_person, DuplicateQuery, FieldError, Page, Person, PersonId, PersonInput,
+    PersonKind, Search, Update,
 };
 use std::sync::{Arc, OnceLock};
 use tokio::sync::broadcast;

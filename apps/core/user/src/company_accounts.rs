@@ -14,7 +14,7 @@
 //! in no list, as a nil `company_id` does in Bilimbi. An archived company stays
 //! readable, its accounts included: archiving freezes sign-in, not history.
 use crate::UserService;
-use bilibi_company::organisation::require_live;
+use bilibi_company::require_live;
 use bilibi_database::{Error, Result};
 use bilibi_party_ids::{AffiliationId, OrganisationId, PersonId};
 use bilibi_security::Scope;

@@ -4,30 +4,61 @@
 //! and audited inline facts. See `README.md` for the contracts.
 mod agent_operations;
 mod contributions;
-pub mod departments;
-pub mod eligibility;
+mod departments;
+mod eligibility;
 mod files;
-pub mod lifecycle;
-pub mod organisation;
+mod lifecycle;
+mod organisation;
 mod page_data;
 mod tenant_provisioning;
 pub use tenant_provisioning::TenantCompanyErrors;
 mod primary;
-pub mod reference_types;
+mod reference_types;
 mod relationship_operations;
-pub mod relationship_roles;
-pub mod relationships;
+mod relationship_roles;
+mod relationships;
 mod web;
 
 pub use contributions::{CAPABILITIES, CREATE, DELETE, LIST, TENANT_WIDE, UPDATE, VIEW};
-pub use files::{ARTIFACT_OWNER, ATTACHMENT_SUBJECT, FILES};
+// Departments, and the head directory another owner binds (K3).
+pub use departments::{
+    available_types as available_department_types, bind_head_directory,
+    create as create_department, list as list_departments, Department, DepartmentSort,
+    HeadCandidate, HeadClient, HeadDirectory, HeadFuture, Outcome as DepartmentOutcome,
+};
+// The company facts and locks other owners' transactions need (K9).
+pub use eligibility::{
+    account_eligibility, lock_account_company, lock_account_company_in, lock_writable_companies,
+    AccountEligibility,
+};
+pub use files::{CompanyFiles, ARTIFACT_OWNER, ATTACHMENT_SUBJECT, FILES};
+// A transition on another owner's transaction, and what it offers or refuses.
+pub use lifecycle::{
+    apply as apply_lifecycle, operations_from as lifecycle_operations, LifecycleError,
+    Operation as LifecycleOperation,
+};
+// A company as another owner reads, authorizes or writes into it.
 pub use organisation::{
-    CreateOutcome, Identity, NewCompany, SearchPage, SearchQuery, ValidCompany,
+    authorize_target, identity, list_tenant_company_ids, require_live, require_writable,
+    require_writable_in, search, CreateOutcome, Directory, Entry as SearchEntry, Identity,
+    NewCompany, SearchPage, SearchQuery, ValidCompany, RESTRICTABLE,
 };
 pub use primary::{
     assign, is_primary, platform_operator_company, primary_company, provision_platform_operator,
     provision_platform_operator_in, provision_tenant, AssignmentError, AssignmentStatus,
     ProvisionOutcome, Provisioned,
+};
+pub use reference_types::{
+    list_legal_entity_types, DepartmentType, Direction as SortDirection, LegalEntityType, NewType,
+    Outcome as TypeOutcome, TypeSort, TypeUpdate,
+};
+pub use relationship_roles::{
+    ensure_defaults_if_empty as ensure_default_relationship_roles, RelationshipRole,
+    RoleUpdate as RelationshipRoleUpdate,
+};
+pub use relationships::{
+    assign as assign_relationship, Direction as RelationshipDirection, Entry as RelationshipEntry,
+    Relationship, RelationshipUpdate,
 };
 
 use bilibi_database::{Change, Db, Error, MutationBoundary, Result};
@@ -133,7 +164,7 @@ impl Params {
 }
 
 /// The read model of one company as the reader may see it: a restricted
-/// field carries `MASK` instead of its value (`organisation::RESTRICTABLE`).
+/// field carries `MASK` instead of its value (`RESTRICTABLE`).
 #[derive(Clone, Debug)]
 pub struct Company {
     pub id: i64,

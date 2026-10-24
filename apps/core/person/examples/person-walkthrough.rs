@@ -6,7 +6,8 @@ use bilibi_agent_api::{
 };
 use bilibi_database::{pool, Error, MutationBoundary};
 use bilibi_person::{
-    identity, DuplicateQuery, PersonInput, PersonKind, PersonService, Search, Update, SERVICE,
+    create_person, lock_for_account_binding, DuplicateQuery, PersonInput, PersonKind,
+    PersonService, Search, Update, SERVICE,
 };
 use bilibi_tenancy::{PartyProofs, ProofFuture};
 use serde_json::json;
@@ -262,7 +263,7 @@ async fn main() -> Result<(), Failure> {
         .await?;
     show(
         "optional account binding identity without creating account/link",
-        identity::lock_for_account_binding(&tx, &manager, alice.id).await,
+        lock_for_account_binding(&tx, &manager, alice.id).await,
     );
     tx.rollback().await?;
 
@@ -356,7 +357,7 @@ async fn main() -> Result<(), Failure> {
             manager.mutation_context("person.create.rollback-specimen"),
         )
         .await?;
-    let rolled_back = identity::create(&mut tx, &manager, &human("Rolled Back")).await?;
+    let rolled_back = create_person(&mut tx, &manager, &human("Rolled Back")).await?;
     tx.rollback().await?;
     show(
         "rolled-back contact absent",
@@ -439,7 +440,7 @@ async fn main() -> Result<(), Failure> {
         .await?;
     show(
         "generic account binding refuses protected system identity",
-        identity::lock_for_account_binding(&tx, &manager, system.id).await,
+        lock_for_account_binding(&tx, &manager, system.id).await,
     );
     tx.rollback().await?;
     client
@@ -497,7 +498,7 @@ async fn main() -> Result<(), Failure> {
         .await?;
     show(
         "retired new account binding refused",
-        identity::lock_for_account_binding(&tx, &manager, retired.id).await,
+        lock_for_account_binding(&tx, &manager, retired.id).await,
     );
     tx.rollback().await?;
 

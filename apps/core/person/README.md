@@ -1,7 +1,9 @@
 # Person identity and personal contacts
 
-`PersonService` (`core/person.persons`) and the transaction APIs in
-`src/identity.rs` own `persons`. They use K0's `PersonInput`, `PersonKind` and
+`PersonService` (`core/person.persons`) and the transaction APIs the crate
+root exports from the private `src/identity.rs` (`read_person`,
+`search_persons`, `preview_person`, `create_person`,
+`lock_for_account_binding`, `account_standing`) own `persons`. They use K0's `PersonInput`, `PersonKind` and
 `PersonId`; an identity is never an employee or login account. Core works with
 People absent. `/contacts` and `/contacts/{id}` (Bilimbi's Contacts) provide the capability-gated directory and inline record/contact editor. Creating a contact opens a dialog on the list; `/contacts/new` redirects there with that dialog open. The earlier `/persons` addresses answer with a permanent redirect to the Contacts addresses (`Moved` contributions in `src/contributions.rs`).
 
@@ -71,7 +73,7 @@ tenant requires explicit identity/reference reconciliation; provisioning refuses
 to manufacture a replacement in that tenant.
 
 User owns optional account links (K9); Person does not add competing account
-storage or depend on User. `identity::lock_for_account_binding` supplies the
+storage or depend on User. `bilibi_person::lock_for_account_binding` supplies the
 small integration seam: a scoped, live, non-system Person locked on the caller's
 mutation transaction. It returns a non-deserializable `BindingIdentity` borrowed
 from that transaction with tenant, Person ID and kind, containing no contacts.
