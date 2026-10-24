@@ -91,14 +91,15 @@ Without a shared contract, each Domain (a CRM first) would build its own export,
 
 **Modules contribute record classes; each company holds its retention periods and legal minimums in settings.**
 
-- A `RecordClass` declares a default period (or none, which keeps forever), the clock start, `purge` or `anonymise`, a legal minimum, and its sweep handler. When a record's period ends, the sweep anonymises its declared personal fields. `purge` (row deletion) is allowed only for classes that declare they hold no business value, such as temporary logs or abandoned drafts.
-- Each company sets its periods and legal minimums per class in tenant-scoped company settings on an operator page. A period below the company's legal minimum is refused.
+- A `RecordClass` declares the clock start, `purge` or `anonymise`, a legal minimum, and its sweep handler. When a record's period ends, the sweep anonymises its declared personal fields. `purge` (row deletion) is allowed only for classes that declare they hold no business value, such as temporary logs or abandoned drafts.
+- Every class defaults to no period: records are kept until a company chooses otherwise. A module may not ship a default period that erases data on its own. Bilibi sets no upper limit by default.
+- Each company sets an optional period and its legal minimum per class through the retention settings page in the existing `base/settings_editor`, under tenant-scoped company settings. A period below the company's legal minimum for that class is refused.
 - Bilibi ships no country rules. Ready-made rule sets, such as Malaysia PDPA or EU GDPR, come later as plug-ins that fill those company settings.
 - Audit and financial records (payroll, claims, ledgers) keep their personal fields for their legal period. An erasure request acts at once on everything else, subject to holds and declared deferrals. An ordinary retention period does not delay a request.
 - The certificate lists the legal deadline and reason for each record kept. The sweep anonymises its declared personal fields after that date, subject to holds.
 - Every sweep anonymisation or purge writes through `MutationBoundary`, like request erasure. Audit records the record, field names and actor or system scope, with the sweep run as the cause.
 - Each sweep run writes one append-only summary row: tenant, record class, counts, and records skipped for legal hold or legal minimum.
-- One contributed schedule definition runs the sweeps in batches. Like every contributed task, it runs only after an operator enables it.
+- One contributed schedule definition runs the sweeps in batches. Like every contributed task, it runs only after an operator enables it. General retention sweeps act only on classes that have a period set and are enabled.
 - Schedule definitions are installation-wide today. The sweep worker visits each tenant that has enabled classes, under a system scope for that tenant. If per-tenant scheduled work ([issue 138](https://github.com/BelimbingApp/bilibi/issues/138)) lands first, the sweep uses it instead.
 
 ### Audit erasure
@@ -142,7 +143,7 @@ Without a shared contract, each Domain (a CRM first) would build its own export,
 | Phase | Contents |
 | --- | --- |
 | First | Registry, personal field marks, legal hold, requests with approval and certificate, audit erasure path with hash chain and “verify audit log” check, record classes with company legal-minimum settings and deferred-erasure sweep with audit and summary, media erasure, Platform handlers (`core/person`, `core/user`, `core/affiliation`, `base/media`, `base/artifacts` through each Owner, `base/events` payloads, `base/integration` previews, `base/audit`) |
-| Second | General retention periods and company settings, class sweeps and operator page |
+| Second | Optional company retention periods (default none, no upper limit by default), sweeps for classes with a period set and enabled, retention page in the existing settings editor |
 | Third | Partial masking and audited reveal |
 
 ## Consequences
