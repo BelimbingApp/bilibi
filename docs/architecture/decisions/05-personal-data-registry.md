@@ -90,7 +90,7 @@ Without a shared contract, each Domain (a CRM first) would build its own export,
 
 **Modules contribute record classes; each company holds its retention periods and legal minimums in settings.**
 
-- A `RecordClass` declares a default period (or none, which keeps forever), the clock start, `purge` or `anonymise`, a legal minimum, and its sweep handler. Purging is only for records with no business value.
+- A `RecordClass` declares a default period (or none, which keeps forever), the clock start, `purge` or `anonymise`, a legal minimum, and its sweep handler. When a record's period ends, the sweep anonymises its declared personal fields. `purge` (row deletion) is allowed only for classes that declare they hold no business value, such as temporary logs or abandoned drafts.
 - Each company sets its periods and legal minimums per class in tenant-scoped company settings on an operator page. A period below the company's legal minimum is refused.
 - Bilibi ships no country rules. Ready-made rule sets, such as Malaysia PDPA or EU GDPR, come later as plug-ins that fill those company settings.
 - Audit and financial records (payroll, claims, ledgers) keep their personal fields for their legal period. An erasure request acts at once on everything else, subject to holds and declared deferrals. An ordinary retention period does not delay a request.
