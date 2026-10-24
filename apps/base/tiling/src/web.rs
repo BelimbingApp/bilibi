@@ -48,7 +48,7 @@ use crate::layouts::{Entry, LayoutError, Layouts, Mode, Refusal, Saved, PUBLISH}
 use askama::Template;
 use bilibi_database::{Db, Error, Result};
 use bilibi_menu::Menu;
-use bilibi_module_registry::contributions::{Access, Method, Route};
+use bilibi_module_registry::contributions::{Method, Route, Viewer};
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
     lists::EmptyState,
@@ -217,16 +217,11 @@ impl Core {
             return Reach::Unserved;
         };
         // A step-up page still opens in a tile; the frame shows its prompt.
-        let allowed = match route.access.base() {
-            Access::Public | Access::SignedIn | Access::StepUp { .. } => true,
-            Access::Capability(key) => standing.capabilities.contains(key),
-            Access::Operator => standing.operator,
-            Access::AnyOf(keys) => keys.iter().any(|key| standing.capabilities.contains(key)),
-            Access::Owner => standing.owner,
-            Access::OperatorCapability(key) => {
-                standing.operator && standing.capabilities.contains(key)
-            }
-        };
+        let allowed = route.access.admits(&Viewer {
+            capabilities: &standing.capabilities,
+            operator: standing.operator,
+            owner: standing.owner,
+        });
         if allowed {
             Reach::Open
         } else {

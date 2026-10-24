@@ -4,10 +4,12 @@
 (`apps/core/party/CONTRACT.md`): the `companies` table, its reference catalogs
 (legal entity types, department types), a company's departments, the tenant's
 primary company and the provisioning commands. The public API is the
-`core/company.companies` service (`CompanyService`) and the free functions of
-`organisation`, `reference_types`, `departments`, `lifecycle`,
-`eligibility`, `relationship_roles` and `relationships`; primary-company functions and types are re-exported at the crate root. table layout and
-SQL stay private. The module-owned pages (`web.rs`, `web/views.rs`) serve
+`core/company.companies` service (`CompanyService`) and what the crate root
+exports: the functions other owners call on their own connection or
+transaction (`authorize_target`, `require_writable`, `lock_account_company`,
+`create_department`, `apply_lifecycle`, `assign_relationship`, the primary-company
+functions, ...) and the types they take and return. Every module is private, so
+table layout and SQL stay private too. The module-owned pages (`web.rs`, `web/views.rs`) serve
 `/companies`, `/companies/create` and `/companies/{id}`, and
 `web/relationships.rs` serves `/companies/relationship-types`,
 `/companies/{id}/relationships` and the `company.relationships` embed,
@@ -44,7 +46,7 @@ The production seed `company-legal-entity-types-v1` inserts Belimbing's eleven c
 extends `tenant_owner` (all). The walkthrough fixture grants its `manager`
 (all), `staff` (view, list, update) and `viewer` (view, list) the same keys;
 `bilibi-web authz-reconcile` reconciles an older database. A write to a
-company or into it is authorized with `organisation::authorize_target`: the
+company or into it is authorized with `bilibi_company::authorize_target`: the
 capability now, and either the company the actor is affiliated with
 (`Scope::actor().organisation()`, bound by K9) or the tenant-wide reach for
 any other company of the tenant. The pages and Grid catalog ask these same durable keys. List and detail use
@@ -66,13 +68,13 @@ saved outcome. A refusal (`CreateOutcome::Refused`, `Outcome::Refused`) lists
   legal entity type, jurisdiction (`bilibi_geonames::country_known`, so no
   jurisdiction is recordable until countries are imported) and code
   uniqueness on the write's transaction under a per-code advisory lock.
-- `organisation::require_writable` is the one archived check: a live company
+- `bilibi_company::require_writable` is the one archived check: a live company
   whose status is `archived` is read-only for good, for its own facts and
   every record it owns. Reads never ask it.
 - `organisation::Provider` is the `OrganisationProvider` Tenancy's
   `PartyProofs` proves targets with: a live, unarchived company of the
   actor's tenant, bound at the service factory.
-- `organisation::Directory` is Tenancy's `OrganisationDirectory` (K15), bound
+- `bilibi_company::Directory` is Tenancy's `OrganisationDirectory` (K15), bound
   beside it: the companies a Base picker may offer (`in_scope`: every live
   company, archived flagged; `selectable`: the unarchived ones the actor may
   target with a capability, own company or tenant-wide) and `target`, the
@@ -81,7 +83,7 @@ saved outcome. A refusal (`CreateOutcome::Refused`, `Outcome::Refused`) lists
   never queries `companies`. Migration `006-authz-role-owner` contributes the
   scoped foreign key behind Authz's `roles.company_id`.
 - `files` (K15) is the private-file owner: the Media attachment subject
-  `core.company` and the Artifacts owner `core.company` (`files::FILES`).
+  `core.company` and the Artifacts owner `core.company` (`bilibi_company::FILES`).
   Reads need `admin.company.view` and a live company of the tenant; writes
   need `.update` (purge `.delete`), the actor's reach and an unarchived
   company; a document's reference must name the company it is filed under.
@@ -192,8 +194,8 @@ assignment holding the role `FOR SHARE`.
 
 `relationships`: `source → target: vendor` means the target supplies the
 source. `assign` needs `admin.company.update` with reach over the source
-(`organisation::authorize_target`), locks the source and an organisation
-target ascending through `eligibility::lock_account_company` (so an archive
+(`bilibi_company::authorize_target`), locks the source and an organisation
+target ascending through `bilibi_company::lock_account_company` (so an archive
 on either side serializes with it), proves a person target live and
 unretired, locks the role unretired, and refuses a self link, an archived or
 missing target and an exact duplicate (same source, target, role and
@@ -257,7 +259,7 @@ UI (`core/company.relationship_pages`):
   follows the kind; a person picker needs `admin.person.list`, which the
   form says when the reader lacks it. Edit changes only the dates, so
   ending a link is setting its last day; Unlink confirms and keeps the row
-  as history. Every opening and write asks `organisation::authorize_target`
+  as history. Every opening and write asks `bilibi_company::authorize_target`
   and `require_writable` again; a denial, an archived company (either
   side), a stale version and an already unlinked link are flash messages,
   never a fatal error.
@@ -285,9 +287,9 @@ The relationship table and its record panels also offer **Effective From** and *
 
 Use `CompanyService::{activate_company,reactivate_company,suspend_company,
 archive_company}` for explicit business commands, or `transition_company`
-with an expected version for a dialog. `lifecycle::apply` shares an existing
+with an expected version for a dialog. `apply_lifecycle` shares an existing
 `MutationTransaction` for headless/owner composition. The transition table
-is `lifecycle::Operation`; `operations_from` returns the offered actions in
+is `LifecycleOperation`; `lifecycle_operations` returns the offered actions in
 activate/reactivate/suspend/archive order. Pending → activate → active;
 active → suspend → suspended; suspended → reactivate → active. Archive
 accepts pending/active/suspended and is final. Creation still accepts only
@@ -314,7 +316,7 @@ records its usual `company.lifecycle` boundary action. Either audit failure
 rolls everything back, even if a caller catches it. The returned company
 honors the actor's field restrictions.
 
-`eligibility::account_eligibility` supplies the company fact to the User
+`bilibi_company::account_eligibility` supplies the company fact to the User
 account binder (`bilibi_user::standing`) for login, session/bearer
 validation and reset issue / redeem. Only archived/deleted/missing freezes an
 account; pending and suspended do not. No role or business relationship confers
@@ -323,14 +325,14 @@ derived account status; impersonation (K14) must do the same. Core remains
 independent of People.
 
 Account/affiliation/attached-owner writes take the company lock **before**
-the child row and retain it until commit. Use `eligibility::lock_account_company`
+the child row and retain it until commit. Use `bilibi_company::lock_account_company`
 for an account write and `lock_writable_companies` for moves / relationships
 whose two companies must both be writable. The latter sorts and deduplicates
 IDs before locking; use the same order in either direction. A write that wins
 finishes before archive; a write that loses sees `WriteError::Archived`.
-`organisation::require_writable(..., false)` alone is a preview, never an
+`bilibi_company::require_writable(..., false)` alone is a preview, never an
 atomic write guard. Existing department writes already hold the company lock.
-`organisation::list_tenant_company_ids` includes archived and deleted IDs for
+`bilibi_company::list_tenant_company_ids` includes archived and deleted IDs for
 User's historical read model; the caller authorizes the read separately, and
 these IDs grant no write/login authority.
 
@@ -363,7 +365,7 @@ long-text controls, activity chips with confirmed removal, per-field commit
 outcomes and version fencing. Legacy activity JSON objects remain editable
 without silently converting their business meaning. Parent
 changes serialize on the tenant and reject a cycle. Lifecycle buttons come
-only from `lifecycle::operations_from`, hold the record version in server state,
+only from `lifecycle_operations`, hold the record version in server state,
 and confirm with an optional reason; archive remains final. Record pins use
 the shell's existing account pin API, with a resolved record label and URL. The Audit history
 panel retains its mount through detail patches. Child-owned panels are attached
@@ -390,7 +392,7 @@ again, and a refusal is a page flash, never a page-clearing error.
 
 `web/departments.rs` serves `/companies/{id}/departments` (Bilimbi
 `DepartmentsLive`): the company header, the archived alert, Add Department
-from `departments::available_types`, one event per status change, Set
+from `available_department_types`, one event per status change, Set
 Department Head, and Remove behind the confirm dialog. Every persisting event
 passes one gate (`admin.company.update` now, then `require_writable`) before
 the API's own checks, so an archived company answers in Bilimbi's words. The
@@ -398,7 +400,7 @@ detail page's Departments card (`views::departments_section`, built-ins
 `department_builtins`, event `departments_grid`) leads here through Manage.
 
 A department's head is an affiliation. Company cannot name one across the
-module boundary, so `departments::HeadDirectory` is the seam: the affiliation
+module boundary, so `HeadDirectory` is the seam: the affiliation
 owner binds one at boot with `bind_head_directory` (candidates and names,
 scoped by the query); `departments::update_head` accepts only an affiliation
 the directory offers for that company at the moment of the write, under the

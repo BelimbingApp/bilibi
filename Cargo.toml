@@ -76,6 +76,7 @@ bilibi-perf = { path = "apps/base/perf" }
 bilibi-ports = { path = "apps/base/ports" }
 bilibi-queue = { path = "apps/base/queue" }
 bilibi-schedule = { path = "apps/base/schedule" }
+bilibi-search = { path = "apps/base/search" }
 bilibi-session = { path = "apps/base/session" }
 bilibi-settings = { path = "apps/base/settings" }
 bilibi-settings-editor = { path = "apps/base/settings_editor" }
