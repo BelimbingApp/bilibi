@@ -11,6 +11,37 @@
     }
   },
   "domains": {
+    "people": {
+      "name": "People",
+      "description": "Employment, attendance, leave, claims, skills, training, performance, progression and payroll.",
+      "repository": "https://github.com/BelimbingApp/bilibi-dom-people",
+      "modules": [
+        "attendance",
+        "claims",
+        "employee_workspace",
+        "leave",
+        "organisation",
+        "payroll",
+        "performance",
+        "progression",
+        "reference_data",
+        "settings",
+        "skills",
+        "training",
+        "workforce"
+      ],
+      "versions": {}
+    },
+    "people_connector": {
+      "name": "People connector",
+      "description": "People directory connections, synchronisation, file exchange, backups and recovery.",
+      "repository": "https://github.com/BelimbingApp/bilibi-dom-people-connector",
+      "modules": [
+        "connector",
+        "native_people_adapter"
+      ],
+      "versions": {}
+    },
     "finance": {
       "name": "Finance",
       "description": "A company's bookkeeping: the ledger, bills and payments, invoices and receipts, bank statements and reports.",
