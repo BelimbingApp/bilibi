@@ -14,7 +14,9 @@ use axum::{
 };
 use bilibi_base::{authz, menu, tenancy};
 use bilibi_database::{Error, Result};
-use bilibi_module_registry::contributions::{Access, Embed, EmbedContext, Method, Route, EMBEDS};
+use bilibi_module_registry::contributions::{
+    Access, Embed, EmbedContext, Method, Route, Viewer, EMBEDS,
+};
 use bilibi_security::Scope;
 use bilibi_ui::page::{PageRequest, PageService};
 use bilibi_ui::{AppShell, DisplayPreferences, Framed, Html, NavNode, SearchPage, ShellContext};
@@ -165,22 +167,25 @@ async fn context<'a>(
             .get::<bilibi_base::system::Instances>(bilibi_base::system::SERVICE)?
             .is_core_administrator(scope)
             .await?;
-    // The search lists the pages the person may open, decided as the menu
-    // decides its items: display only and unlogged, since each route checks
-    // its own access again when opened. Two pages the status bar links to
-    // under a condition use the same condition here: Instance settings also
+    // The search lists the pages the person may open, decided by the shared
+    // display check (`Access::admits`, as tiles and record hits are): display
+    // only and unlogged, since each route checks its own access again. Two
+    // pages the status bar links to under a condition use the same condition
+    // here: Instance settings also
     // needs the Core Administrator standing, and the operator setup page only
     // helps while the operator stands on no primary company (afterwards it
     // sends everyone to that company).
+    let viewer = Viewer {
+        capabilities: &capabilities,
+        operator: platform_operator,
+        owner,
+    };
     let may_open = |access: Access| match access.base() {
-        Access::SignedIn => true,
-        Access::Capability(key) => capabilities.contains(key),
-        Access::AnyOf(keys) => keys.iter().any(|key| capabilities.contains(*key)),
-        Access::Operator => platform_operator,
+        // Sign-in and the other public pages are no place to send someone
+        // already signed in.
+        Access::Public => false,
         Access::OperatorCapability(bilibi_base::system::INSTANCE_MANAGE) => manage_instance,
-        Access::OperatorCapability(key) => platform_operator && capabilities.contains(key),
-        Access::Owner => owner,
-        Access::Public | Access::StepUp { .. } => false,
+        access => access.admits(&viewer),
     };
     let pages = search_pages(app, &tree, |route| {
         may_open(route.access) && (route.path != OPERATOR_SETUP || operator_company_missing)

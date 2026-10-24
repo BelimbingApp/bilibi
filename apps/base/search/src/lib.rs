@@ -9,8 +9,9 @@
 //! keeps the kinds whose table the reader may read and whose record page
 //! admits them, and runs one bounded read-only statement that matches inside
 //! each owner's source (`query.rs`). The search box (the
-//! `shell.search.records` panel), the `/search` page and the agent operation
-//! `base.search.records` all call this facade, so they find the same records.
+//! `shell.search.records` panel), the `/search` page and agents all search
+//! through the operation `base.search.records`, which calls this facade, so
+//! they find the same records.
 mod contributions;
 mod model;
 mod query;
@@ -21,7 +22,10 @@ pub use query::{MAX_KIND_HITS, MAX_TEXT, MAX_WORDS};
 
 use bilibi_authz::authorize_key;
 use bilibi_database::{Db, Error, MutationBoundary, Result};
-use bilibi_module_registry::{contributions::Access, Catalog, RegistryError};
+use bilibi_module_registry::{
+    contributions::{Access, Viewer},
+    Catalog, RegistryError,
+};
 use bilibi_settings::{Settings, Target};
 use bilibi_tenancy::{ReadClient, Scope};
 use query::Planned;
@@ -108,8 +112,9 @@ impl Count {
 pub struct Found {
     /// The text as searched: trimmed, at most [`MAX_TEXT`] characters.
     pub text: String,
-    /// The hits, best first: up to the search box's limit of each kind, or
-    /// the results page asked for.
+    /// The hits, each kind's together and best first, the kinds in the
+    /// order of their best hit: up to the search box's limit of each kind,
+    /// or the results page asked for.
     pub hits: Vec<Hit>,
     /// Each kind searched and its matches, by label; results pages only.
     pub counts: Vec<Count>,
@@ -178,8 +183,8 @@ impl Tuning {
     }
 }
 
-/// What opens a record page for this reader: the page routes' access kinds,
-/// decided as the menu decides (display only; the page checks again).
+/// What opens a record page for this reader, decided by the shared display
+/// check ([`Access::admits`]); the page checks again when opened.
 struct Standing {
     capabilities: BTreeSet<&'static str>,
     operator: bool,
@@ -187,15 +192,11 @@ struct Standing {
 }
 impl Standing {
     fn admits(&self, access: Access) -> bool {
-        match access.base() {
-            Access::Public | Access::SignedIn => true,
-            Access::Capability(key) => self.capabilities.contains(key),
-            Access::AnyOf(keys) => keys.iter().any(|key| self.capabilities.contains(key)),
-            Access::Operator => self.operator,
-            Access::OperatorCapability(key) => self.operator && self.capabilities.contains(key),
-            Access::Owner => self.owner,
-            Access::StepUp { .. } => false,
-        }
+        access.admits(&Viewer {
+            capabilities: &self.capabilities,
+            operator: self.operator,
+            owner: self.owner,
+        })
     }
 }
 
@@ -244,12 +245,12 @@ impl Search {
     }
 
     /// The search box: the best records of each kind, up to the tenant's
-    /// per-kind limit, merged by rank.
+    /// per-kind limit, grouped by kind.
     pub async fn suggest(&self, scope: &Scope, text: &str) -> Result<Found> {
         self.run(scope, text, Mode::Suggest).await
     }
 
-    /// A results page: `page_size` hits from `page` of the merged ranking,
+    /// A results page: `page_size` hits from `page` of the grouped ranking,
     /// of `kind` or of every kind, and how many records each kind matched.
     pub async fn find(
         &self,
@@ -282,7 +283,7 @@ impl Search {
             .isolation_level(tokio_postgres::IsolationLevel::RepeatableRead)
             .start()
             .await?;
-        tx.batch_execute(query::BOUNDS).await?;
+        tx.batch_execute(bilibi_grid::BOUNDS).await?;
         let tuning = self.tuning(&*tx, scope).await?;
         let catalog = bilibi_grid::Catalog::for_scope(&*tx, scope).await?;
         let standing = self.standing(&*tx, scope).await?;
@@ -406,7 +407,7 @@ impl Search {
 
     async fn run(&self, scope: &Scope, text: &str, mode: Mode<'_>) -> Result<Found> {
         let mut client = self.db.get().await?;
-        // One logged decision per search, as a list's own search makes.
+        // The owner decides again, logged, after the contract's own decision.
         authorize_key(&**client, scope, SEARCH).await?;
         let tx = client
             .build_transaction()
@@ -414,7 +415,7 @@ impl Search {
             .isolation_level(tokio_postgres::IsolationLevel::RepeatableRead)
             .start()
             .await?;
-        tx.batch_execute(query::BOUNDS).await?;
+        tx.batch_execute(bilibi_grid::BOUNDS).await?;
         let tuning = self.tuning(&*tx, scope).await?;
         let terms = query::terms(text);
         let mut found = Found {
@@ -481,7 +482,9 @@ impl Search {
         let cost = explain[0]["Plan"]["Total Cost"]
             .as_f64()
             .ok_or(Error::Internal)?;
-        if !cost.is_finite() || cost > query::MAX_ESTIMATED_COST {
+        // Above Grid's planner estimate a search is not run: too many records
+        // match to rank within the bounds, and the person is asked for another word.
+        if !cost.is_finite() || cost > bilibi_grid::MAX_ESTIMATED_COST {
             found.broad = true;
             return Ok(found);
         }
@@ -569,6 +572,7 @@ inventory::submit! {
                 Ok(Arc::new(bilibi_ui::page::PageService::<Scope, Error>(Arc::new(web::Pages::new(
                     services.get::<Db>("base/database.pool")?.as_ref().clone(),
                     services.get(SERVICE)?,
+                    services.get(bilibi_agent_api::page::SERVICE)?,
                     services.get("base/datetime.display")?,
                     services.get("base/locale.locales")?,
                 )))))

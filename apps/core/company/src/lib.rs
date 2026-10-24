@@ -6,7 +6,7 @@ mod agent_operations;
 mod contributions;
 pub mod departments;
 pub mod eligibility;
-pub mod files;
+mod files;
 pub mod lifecycle;
 pub mod organisation;
 mod page_data;
@@ -20,6 +20,7 @@ pub mod relationships;
 mod web;
 
 pub use contributions::{CAPABILITIES, CREATE, DELETE, LIST, TENANT_WIDE, UPDATE, VIEW};
+pub use files::{ARTIFACT_OWNER, ATTACHMENT_SUBJECT, FILES};
 pub use organisation::{
     CreateOutcome, Identity, NewCompany, SearchPage, SearchQuery, ValidCompany,
 };

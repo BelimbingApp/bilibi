@@ -1,6 +1,7 @@
 //! What Search plugs in: its capability, its settings, the search box's
-//! records panel, the `/search` and `/settings/search` pages and the agent
-//! operation `base.search.records`, which calls the same facade as the pages.
+//! records panel, the `/search` and `/settings/search` pages and the
+//! operation `base.search.records`, the one contract the pages and agents
+//! search through (ADR 01).
 use crate::{model, Found, BOOST, HIDDEN, KINDS, MIN_CHARS, SEARCH, SUGGESTIONS};
 use bilibi_agent_api::{
     json::{Data, Output},
@@ -28,6 +29,10 @@ macro_rules! provenance {
 }
 
 pub(crate) const PAGES: &str = "base/search.pages";
+/// The operation every door searches records through.
+pub(crate) const RECORDS: &str = "base.search.records";
+/// The last results page the operation reads.
+pub(crate) const MAX_PAGE: u64 = 1_000;
 
 /// Authz's built-in roles search too; Core Administrator holds every
 /// capability already. A tenant grants it to its own roles.
@@ -49,7 +54,7 @@ inventory::submit! { Contribution::new(VOCABULARY, "base/search", provenance!(),
 
 // ---- Settings ---------------------------------------------------------------
 
-/// Set on System Settings, and per company on its settings page.
+/// Set on System Settings: globally, for this tenant, or per company.
 const OPERATOR: &[ScopeKind] = &[ScopeKind::Global, ScopeKind::Tenant, ScopeKind::Company];
 /// The person's own, from their Search settings tab.
 const PERSON: &[ScopeKind] = &[ScopeKind::User];
@@ -147,27 +152,31 @@ fn field_error(field: &str, message: &str) -> AgentError {
     AgentError::InvalidInput(BTreeMap::from([(field.into(), vec![message.into()])]))
 }
 
-/// The answer as the page shows it: the page of hits best first and how many
+/// The answer as the pages show it: the hits grouped by kind and, for a
+/// results page (`kind`, `page`, `page_size`), which page it is and how many
 /// records each kind matched.
-fn answer(found: &Found, kind: Option<&str>, page: u64, page_size: u64) -> Value {
+fn answer(found: &Found, page: Option<(Option<&str>, u64, u64)>) -> Value {
     let iso =
         |at: std::time::SystemTime| jiff::Timestamp::try_from(at).ok().map(|at| at.to_string());
-    json!({
+    let mut answer = json!({
         "query": found.text,
         "too_short": found.short,
         "min_chars": found.min_chars,
         "too_broad": found.broad,
-        "page": page,
-        "page_size": page_size,
-        "total": found.total(kind),
-        "counts": found.counts.iter().map(|count| json!({
-            "kind": count.kind.id, "label": count.kind.label, "matched": count.matched, "capped": count.capped(),
-        })).collect::<Vec<_>>(),
         "hits": found.hits.iter().map(|hit| json!({
             "kind": hit.kind.id, "kind_label": hit.kind.label, "id": hit.id, "title": hit.title,
             "detail": hit.detail, "state": hit.state, "link": hit.href, "updated": hit.updated.and_then(iso),
         })).collect::<Vec<_>>(),
-    })
+    });
+    if let Some((kind, page, page_size)) = page {
+        answer["page"] = json!(page);
+        answer["page_size"] = json!(page_size);
+        answer["total"] = json!(found.total(kind));
+        answer["counts"] = found.counts.iter().map(|count| json!({
+            "kind": count.kind.id, "label": count.kind.label, "matched": count.matched, "capped": count.capped(),
+        })).collect();
+    }
+    answer
 }
 
 struct Records;
@@ -183,23 +192,21 @@ impl ReadHandler for Records {
     ) -> OperationFuture<'a> {
         Box::pin(async move {
             let search = crate::bound()?;
+            let text = input["q"].as_str().unwrap_or_default();
+            if input["mode"].as_str() == Some("suggest") {
+                let found = search.suggest(scope, text).await?;
+                return Ok(Output::Data(Data::Json(answer(&found, None))));
+            }
             let kind = input["kind"].as_str().filter(|kind| !kind.is_empty());
             if kind.is_some_and(|kind| search.kind(kind).is_none()) {
                 return Err(field_error("kind", "is not a kind of record search knows"));
             }
             let page = input["page"].as_u64().unwrap_or(1).max(1);
             let page_size = input["page_size"].as_u64().unwrap_or(25).clamp(1, 100);
-            let found = search
-                .find(
-                    scope,
-                    input["q"].as_str().unwrap_or_default(),
-                    kind,
-                    page,
-                    page_size,
-                )
-                .await?;
+            let found = search.find(scope, text, kind, page, page_size).await?;
             Ok(Output::Data(Data::Json(answer(
-                &found, kind, page, page_size,
+                &found,
+                Some((kind, page, page_size)),
             ))))
         })
     }
@@ -208,16 +215,17 @@ impl ReadHandler for Records {
 fn input_schema() -> Value {
     json!({"type":"object","required":["q"],"properties":{
         "q":{"type":"string","maxLength":1000,"description":"What to find: a name, code or other words of the record. Each word matches the start of a word; \"a phrase\" in quotes matches in order, -word leaves records with it out. The first 200 characters and 8 words count."},
+        "mode":{"type":"string","enum":["page","suggest"],"description":"page, the default: one page of every hit, with how many records each kind matched. suggest: the best few of each kind, as the search box shows them while typing; kind, page and page_size do not apply."},
         "kind":{"type":"string","maxLength":64,"description":"Only this kind of record: a kind id from counts, such as persons or companies."},
-        "page":{"type":"integer","minimum":1,"maximum":1000},
+        "page":{"type":"integer","minimum":1,"maximum":MAX_PAGE},
         "page_size":{"type":"integer","minimum":1,"maximum":100}}})
 }
 fn output_schema() -> Value {
-    json!({"type":"object","description":"The page of hits, best first: kind, id, title, detail, state (set when no longer current), link and updated; how many records each kind matched (capped at 500); too_short and too_broad when nothing was searched."})
+    json!({"type":"object","description":"The hits, each kind's together and best first, the kinds in the order of their best hit: kind, id, title, detail, state (set when no longer current), link and updated. A page also says which page it is and how many records each kind matched (capped at 500). too_short and too_broad when nothing was searched."})
 }
 
 inventory::submit! { Contribution::new(bilibi_agent_api::DEFINITIONS, "base/search", provenance!(), &Definitions {
-    operations: &[Operation { key: "base.search.records", title: "Search records", summary: "Find records of every kind the person may open, such as contacts and companies, by name, code or other words, without knowing which list holds them. Returns each hit's kind, id, title and link.", keywords: &["search", "find", "lookup", "record", "name", "code", "contact", "company"], capability: SEARCH, input: input_schema, output: output_schema, handler: Handler::Read(&Records), channels: Channels::Every, step_up: &[] }],
+    operations: &[Operation { key: RECORDS, title: "Search records", summary: "Find records of every kind the person may open, such as contacts and companies, by name, code or other words, without knowing which list holds them. Returns each hit's kind, id, title and link.", keywords: &["search", "find", "lookup", "record", "name", "code", "contact", "company"], capability: SEARCH, input: input_schema, output: output_schema, handler: Handler::Read(&Records), channels: Channels::Every, step_up: &[] }],
     guides: &[Guide { key: "base.search", title: "Finding a record", summary: "How to look up a record when you do not know which list holds it.", keywords: &["search", "find", "lookup", "record"], capability: SEARCH,
-        body: "Call base.search.records with the words you have: a name, a code, an email or phone the person may see. Hits come best first, each with its kind, id, title and link; counts say how many records of each kind matched, and kind narrows to one. To read or change a hit, find that kind's own operations (search for the kind, for example core.person.get with the id) and use them; search only finds. A hit marked with a state such as retired or archived is no longer current. too_short means the query has fewer characters than the tenant asks for; too_broad means too many records matched, so add a word." }],
+        body: "Call base.search.records with the words you have: a name, a code, an email or phone the person may see. Hits come grouped by kind, best first within each kind and the kinds in the order of their best hit, each with its kind, id, title and link; counts say how many records of each kind matched, and kind narrows to one. To read or change a hit, find that kind's own operations (search for the kind, for example core.person.get with the id) and use them; search only finds. A hit marked with a state such as retired or archived is no longer current. too_short means the query has fewer characters than the tenant asks for; too_broad means too many records matched, so add a word." }],
 }) }

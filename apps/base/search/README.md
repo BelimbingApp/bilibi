@@ -1,6 +1,6 @@
 # Search
 
-One search over the records of every mounted module, trimmed to what the person may open. The search box in the top bar, the `/search` page and the agent operation `base.search.records` call the same facade, so they find the same records. Bilimbi has no cross-module record search, so this module mirrors none. The decision is [ADR 05](../../../docs/architecture/decisions/05-query-time-record-search.md).
+One search over the records of every mounted module, trimmed to what the person may open. The search box in the top bar, the `/search` page and agents all search through the operation `base.search.records` (ADR 01), so they find the same records. Bilimbi has no cross-module record search, so this module mirrors none. The decision is [ADR 05](../../../docs/architecture/decisions/05-query-time-record-search.md).
 
 ## Make a table searchable
 
@@ -45,21 +45,21 @@ Discovery refuses a malformed declaration and a second one for the same table. B
 
 - **Who may search.** Capability `base.search.records.list`, which Authz's built-in roles hold (Core Administrator holds everything). A tenant grants it to its own roles. The search box shows records only to a person holding it; it searches pages for everyone.
 - **What is searched.** A fresh Grid catalog for the scope keeps the tables the reader may read; a kind also needs its record page to admit the reader, the operator's settings to have it on and the person not to have hidden it. A direct deny or a revoked role takes a kind away on the next keystroke. There is no cache of grants.
-- **One statement.** Each kind matches and ranks inside its owner's Grid source with the scope's tenant and user bound, so tenant, soft delete and company filters apply with the match. The branches merge by rank. The read is read-only and repeatable-read, with Grid's statement and lock timeouts and an estimated-cost check before it runs.
+- **One statement.** Each kind matches and ranks inside its owner's Grid source with the scope's tenant and user bound, so tenant, soft delete and company filters apply with the match. The branches merge by rank, then group by kind (see Ranking). The read is read-only and repeatable-read, with Grid's statement and lock timeouts and an estimated-cost check before it runs.
 - **Matching.** The first 200 characters and 8 words count. Words are runs of letters and digits, lower-cased and bound; what a person typed never becomes `tsquery` syntax. Each word matches the start of a word (`acm` finds Acme) and every word must match; `"a phrase"` matches in order and `-word` leaves records with it out. `%`, quotes and `&|!:*` are literal and never error.
-- **Ranking.** `ts_rank_cd` (the title weighs most, as the owner's `setweight` says) times the kind's boost, then newer first by the table's time field; records that are no longer current come after current ones.
+- **Ranking.** `ts_rank_cd` (the title weighs most, as the owner's `setweight` says) times the kind's boost, then newer first by the table's time field; records that are no longer current come after current ones. The search box and results pages keep each kind's hits together, the kinds in the order of their best hit; on a results page a kind's group continues on the next page.
 - **Fresh.** The vector is a generated column of the owner's row, so a record is findable as soon as its write commits. There is no index to keep in step.
 - **Bounded.** A query that matches too many records to rank within the bounds returns no hits and asks for another word. Results pages count up to 500 matches per kind ("500+").
-- **Private.** Query text is not stored or logged, and audit records no search event. Each search makes one logged capability decision, as a list's own search does.
+- **Private.** Query text is not stored or logged, and audit records no search event. Each search logs two capability decisions: the contract's, then the owner's own.
 
 ## Callers
 
 | Caller | Where | What it shows |
 | --- | --- | --- |
-| Search box | Shell embed `shell.search.records`, rendered into the top bar's search dialog between Pages and Account (`bilibi_ui::SearchRecords`) | The best few records of each kind once the query is long enough; Enter or a click opens one; "All results" opens `/search` |
-| Results page | `/search?q=…&kind=…` (`FlexTable` on `ListState`) | Every hit, best first, with a kind filter counted per kind; the address is shareable |
+| Search box | Shell embed `shell.search.records`, rendered into the top bar's search dialog between Pages and Account (`bilibi_ui::SearchRecords`); calls `base.search.records` with `mode: suggest` | The best few records of each kind once the query is long enough; Enter or a click opens one; "All results" opens `/search` |
+| Results page | `/search?q=…&kind=…` (`FlexTable` on `ListState`); calls `base.search.records` | Every hit, grouped by kind as the search box groups them, with a kind filter counted per kind; the address is shareable |
 | Own settings | `/settings/search`, the Search tab of My Settings | A tick per kind the person may search, to keep it in or out of their results |
-| Agents | Operation `base.search.records`, guide `base.search` | The same page of hits: kind, id, title, detail, state, link, updated, and the counts. Read a hit through its kind's own operations |
+| Agents | Operation `base.search.records`, guide `base.search` | The same page of hits: kind, id, title, detail, state, link, updated, and the counts; `mode: suggest` gives the search box's few of each kind. Read a hit through its kind's own operations |
 
 ## Settings
 
@@ -71,7 +71,7 @@ Discovery refuses a malformed declaration and a second one for the same table. B
 | `search.suggestions` | Global, tenant, company | 5 | Records of each kind the search box shows |
 | `search.hidden_kinds` | User | `[]` | Kinds the person keeps out of their own results (their Search tab) |
 
-The operator edits the first four on System Settings, and a company administrator for one company; the person edits the last on My Settings. A search reads them for the person's company, falling back to the tenant's when the company directory refuses it.
+The operator edits the first four on System Settings, for every tenant (Global), for its own tenant (This tenant) or for one company; the person edits the last on My Settings. A search reads them for the person's company, falling back to the tenant's when the company directory refuses it.
 
 ## Not in this phase
 
@@ -87,6 +87,8 @@ No unit tests. On a disposable database with the walkthrough fixture, signed in 
 | A contact's email start, as a reader whose role restricts email | No contact by email; with the restriction lifted, the contact |
 | Revoke a kind's list capability, type again | The kind's group and count are gone without signing in again |
 | Rename a record, search the new name | Found at once |
+| `/search` for a word several kinds match | Each kind's hits together, best first; the kinds in the order of their best hit, as in the search box |
+| Type a query, change it and press Enter before the answer comes | The earlier query's records are gone at once; Enter opens nothing of them |
 | `%`, `'"`, `&|!:*`, 1,000 characters | Results or none, never an error |
 | Turn a kind off (`search.kinds`), hide another (Search tab) | Both leave the box, `/search` and `base.search.records` |
 | `EXPLAIN` of the statement | The GIN index of each kind is used |

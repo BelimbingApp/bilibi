@@ -1,8 +1,8 @@
 //! Core identities and personal contacts. No HR or implicit account creation.
 mod agent_operations;
-pub mod contributions;
+mod contributions;
 mod directory;
-pub mod files;
+mod files;
 pub mod identity;
 pub mod model;
 mod step_up;
@@ -10,6 +10,8 @@ mod web;
 
 use bilibi_database::{Db, Error, MutationBoundary, MutationTransaction, Result};
 use bilibi_tenancy::{Authentication, Scope};
+pub use contributions::{CAPS, CREATE, LIST, RETIRE, SYSTEM_MANAGE, UPDATE, VIEW};
+pub use files::{ARTIFACT_OWNER, ATTACHMENT_SUBJECT, FILES};
 pub use model::{
     DuplicateQuery, FieldError, Page, Person, PersonId, PersonInput, PersonKind, Search, Update,
 };

@@ -1,7 +1,8 @@
 //! The one bounded, read-only statement behind every search. Each searched
 //! kind is a branch that matches and ranks inside its owner's Grid source, so
 //! the tenant predicate, soft delete and company filters apply in the same
-//! statement as the match; the branches are merged by rank. Only catalog
+//! statement as the match; the branches are merged by rank, then grouped by
+//! kind in the order of each kind's best hit. Only catalog
 //! identifiers and boot-checked declaration values enter the SQL; what a person
 //! typed is bound, as a `tsquery` built from its letters and digits alone.
 use crate::model::Kind;
@@ -13,11 +14,6 @@ pub const MAX_TEXT: usize = 200;
 pub const MAX_WORDS: usize = 8;
 /// The most hits one kind ranks for a results page; its count stops there.
 pub const MAX_KIND_HITS: i64 = 500;
-/// Above this planner estimate a search is not run: too many records match
-/// to rank within the bounds, and the person is asked for another word.
-pub const MAX_ESTIMATED_COST: f64 = 100_000.0;
-/// Every search: bounded locally, on the UTC calendar, as Grid's reads are.
-pub const BOUNDS: &str = "SET LOCAL statement_timeout = '2000ms'; SET LOCAL lock_timeout = '500ms'; SET LOCAL TimeZone = 'UTC'";
 
 /// What a person typed, made safe to search with.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -222,22 +218,32 @@ fn hits(planned: &[Planned<'_>], limit: i64, prefix: bool) -> String {
 const ORDER: &str = "ORDER BY inactive, rank DESC, at DESC NULLS LAST, title, kind, id";
 const COLUMNS: &str = "kind, id, title, sub0, sub1, state, inactive, updated";
 
-/// The search box: the best `per_kind` hits of each kind, merged by rank.
+/// The hits (those `filter` keeps) as every caller lists them: each kind's
+/// together in their ranking, the kinds in the order of their best hit.
+/// Select from `grouped` `ORDER BY lead, pos`.
+fn grouped(filter: &str) -> String {
+    format!("ranked AS (SELECT *, row_number() OVER ({ORDER}) AS pos FROM hits{filter}), grouped AS (SELECT *, min(pos) OVER (PARTITION BY kind) AS lead FROM ranked)")
+}
+
+/// The search box: the best `per_kind` hits of each kind, grouped by kind.
 pub fn suggestions(planned: &[Planned<'_>], per_kind: i64, prefix: bool) -> String {
     format!(
-        "{} SELECT NULL::jsonb AS counts, {COLUMNS} FROM hits {ORDER}",
-        hits(planned, per_kind, prefix)
+        "{}, {} SELECT NULL::jsonb AS counts, {COLUMNS} FROM grouped ORDER BY lead, pos",
+        hits(planned, per_kind, prefix),
+        grouped("")
     )
 }
 
 /// A results page: how many records each kind matched (up to
-/// [`MAX_KIND_HITS`]) and one page of the merged ranking, of the kind `$5`
-/// names or of every kind when it is empty, `$6` rows from `$7`. One row
-/// carries the counts even when the page is empty.
+/// [`MAX_KIND_HITS`]) and one page of the hits of the kind `$5` names or of
+/// every kind when it is empty, `$6` rows from `$7`, grouped as the search box
+/// groups them, so a kind's group continues on the next page. One row carries
+/// the counts even when the page is empty.
 pub fn page(planned: &[Planned<'_>], prefix: bool) -> String {
     format!(
-        "{}, counted AS (SELECT kind, count(*) AS n FROM hits GROUP BY kind) SELECT (SELECT COALESCE(jsonb_object_agg(kind, n), '{{}}'::jsonb) FROM counted) AS counts, {} FROM (SELECT 1) one LEFT JOIN LATERAL (SELECT * FROM hits WHERE ($5::text = '' OR kind = $5::text) {ORDER} LIMIT $6::bigint OFFSET $7::bigint) page ON true",
+        "{}, counted AS (SELECT kind, count(*) AS n FROM hits GROUP BY kind), {} SELECT (SELECT COALESCE(jsonb_object_agg(kind, n), '{{}}'::jsonb) FROM counted) AS counts, {} FROM (SELECT 1) one LEFT JOIN LATERAL (SELECT * FROM grouped ORDER BY lead, pos LIMIT $6::bigint OFFSET $7::bigint) page ON true",
         hits(planned, MAX_KIND_HITS, prefix),
+        grouped(" WHERE ($5::text = '' OR kind = $5::text)"),
         COLUMNS
             .split(", ")
             .map(|name| format!("page.{name}"))

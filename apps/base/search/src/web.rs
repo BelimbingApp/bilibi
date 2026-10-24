@@ -1,9 +1,14 @@
 //! The search box's records (the `shell.search.records` panel), the `/search`
 //! results page and the person's own Search settings tab (`/settings/search`).
-//! No Bilimbi counterpart. Every read goes through the facade, so each shows
-//! only records the reader may open; these own presentation only.
-use crate::{Found, Hit, Search};
+//! No Bilimbi counterpart. Every search goes through the `base.search.records`
+//! contract (ADR 01), as an agent's does, so each shows only records the
+//! reader may open; these own presentation only.
+use crate::{
+    contributions::{MAX_PAGE, RECORDS},
+    Count, Found, Hit, Search,
+};
 use askama::Template;
+use bilibi_agent_api::{page::PageContracts, Error as ContractError};
 use bilibi_database::{Db, Error, Result};
 use bilibi_datetime::{DisplayContext, DisplayPolicy, Format, Precision};
 use bilibi_locale::Locales;
@@ -21,7 +26,7 @@ use bilibi_ui::{
     SettingsTab, TableEmpty, ToolbarControl,
 };
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     sync::{Arc, OnceLock},
@@ -52,11 +57,79 @@ fn results_href(text: &str) -> String {
     format!("/search?{query}")
 }
 
+/// `base.search.records`' answer (`contributions::answer`), read back.
+#[derive(Deserialize)]
+struct Answer {
+    query: String,
+    too_short: bool,
+    min_chars: usize,
+    too_broad: bool,
+    #[serde(default)]
+    counts: Vec<AnswerCount>,
+    hits: Vec<AnswerHit>,
+}
+#[derive(Deserialize)]
+struct AnswerCount {
+    kind: String,
+    matched: u64,
+}
+#[derive(Deserialize)]
+struct AnswerHit {
+    kind: String,
+    id: String,
+    title: String,
+    detail: Vec<String>,
+    state: Option<String>,
+    link: String,
+    updated: Option<String>,
+}
+impl Answer {
+    fn found(self, search: &Search) -> Result<Found> {
+        let kind = |id: &str| search.kind(id).ok_or(Error::Internal);
+        Ok(Found {
+            text: self.query,
+            hits: self
+                .hits
+                .into_iter()
+                .map(|hit| {
+                    Ok(Hit {
+                        kind: kind(&hit.kind)?,
+                        updated: hit
+                            .updated
+                            .map(|at| at.parse::<jiff::Timestamp>().map(SystemTime::from))
+                            .transpose()
+                            .map_err(|_| Error::Internal)?,
+                        id: hit.id,
+                        title: hit.title,
+                        detail: hit.detail,
+                        state: hit.state,
+                        href: hit.link,
+                    })
+                })
+                .collect::<Result<_>>()?,
+            counts: self
+                .counts
+                .into_iter()
+                .map(|count| {
+                    Ok(Count {
+                        kind: kind(&count.kind)?,
+                        matched: count.matched,
+                    })
+                })
+                .collect::<Result<_>>()?,
+            min_chars: self.min_chars,
+            short: self.too_short,
+            broad: self.too_broad,
+        })
+    }
+}
+
 /// The module's page adapter; every field is shared by mounted states.
 #[derive(Clone)]
 pub struct Pages {
     db: Db,
     search: Arc<Search>,
+    contracts: Arc<PageContracts>,
     display: Arc<DisplayPolicy>,
     locales: Arc<Locales>,
 }
@@ -65,15 +138,33 @@ impl Pages {
     pub fn new(
         db: Db,
         search: Arc<Search>,
+        contracts: Arc<PageContracts>,
         display: Arc<DisplayPolicy>,
         locales: Arc<Locales>,
     ) -> Self {
         Self {
             db,
             search,
+            contracts,
             display,
             locales,
         }
+    }
+
+    /// One search through the contract, its answer read back into hits.
+    async fn found(&self, scope: &Scope, input: Value) -> Result<Found> {
+        let mut reply = self
+            .contracts
+            .read(scope, RECORDS, &input)
+            .await
+            .map_err(|error| match error {
+                ContractError::Backend(error) => error,
+                ContractError::Forbidden => Error::Forbidden,
+                _ => Error::Internal,
+            })?;
+        let answer: Answer =
+            serde_json::from_value(reply["result"].take()).map_err(|_| Error::Internal)?;
+        answer.found(&self.search)
     }
 
     async fn display(&self, scope: &Scope) -> Result<DisplayContext> {
@@ -100,7 +191,10 @@ impl Pages {
         let found = if query.trim().is_empty() {
             Found::default()
         } else {
-            match self.search.suggest(scope, &query).await {
+            match self
+                .found(scope, json!({"q": query, "mode": "suggest"}))
+                .await
+            {
                 Ok(found) => found,
                 // Revoked since the panel was drawn.
                 Err(Error::Forbidden) => return off(),
@@ -351,16 +445,15 @@ impl Results {
     }
 
     async fn find(&self, scope: &Scope) -> Result<Found> {
-        self.pages
-            .search
-            .find(
-                scope,
-                &self.list.search,
-                self.kind(),
-                self.list.page,
-                self.list.page_size,
-            )
-            .await
+        // A page past the operation's last reads that one; the view then
+        // clamps to the real last page.
+        let input = json!({
+            "q": self.list.search,
+            "kind": self.kind().unwrap_or_default(),
+            "page": self.list.page.min(MAX_PAGE),
+            "page_size": self.list.page_size,
+        });
+        self.pages.found(scope, input).await
     }
 
     fn row(&self, display: &DisplayContext, hit: &Hit) -> Result<FlexRow> {

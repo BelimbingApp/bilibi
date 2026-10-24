@@ -322,7 +322,7 @@ async fn lock_owner(
                 .map_err(company_error)?;
         }
         PartyId::Person(id) => {
-            authorize_key(tx.sql(), scope, bilibi_person::contributions::UPDATE).await?;
+            authorize_key(tx.sql(), scope, bilibi_person::UPDATE).await?;
             match bilibi_person::identity::lock_for_account_binding(tx, scope, id).await {
                 Ok(_) => {}
                 Err(Error::NotFound) => return Err(WriteError::NotFound),
@@ -710,7 +710,7 @@ pub(crate) async fn preview_owner(
             Ok(serde_json::json!({"company_id":id,"name":company.display_name,"code":company.code}))
         }
         PartyId::Person(id) => {
-            authorize_key(client, scope, bilibi_person::contributions::UPDATE).await?;
+            authorize_key(client, scope, bilibi_person::UPDATE).await?;
             let person = bilibi_person::identity::read(client, scope, id).await?;
             if person.retired_at.is_some() || person.system_key.is_some() {
                 return Err(WriteError::OwnerReadOnly);

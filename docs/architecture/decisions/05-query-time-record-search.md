@@ -26,8 +26,8 @@ What a search must not do:
 | --- | --- | --- |
 | Searchable | The owning module | One `Searchable` contribution naming its Grid table, title, subtitles, record page and state |
 | Vector | The owner's migration | A stored generated `tsvector` (`simple` configuration) built only from fields operators cannot restrict, with a GIN index, selected by the owner's Grid source as a hidden field |
-| Query | `base/search` | A fresh Grid catalog for the scope; one read-only statement whose branches match and rank inside each kind's source, merged by rank, under Grid's timeouts and cost check |
-| Callers | Top bar, `/search`, `base.search.records` | One facade; one capability, `base.search.records.list` |
+| Query | `base/search` | A fresh Grid catalog for the scope; one read-only statement whose branches match and rank inside each kind's source, merged by rank and grouped by kind, under Grid's timeouts and cost check |
+| Callers | Top bar, `/search`, agents | One contract, `base.search.records`, over one facade; one capability, `base.search.records.list` |
 
 - **Trimming by construction.** The catalog keeps only the tables the reader may read and drops restricted fields; each branch binds the scope's tenant and user into the owner's source, so its tenant predicate, soft delete and company filters apply in the same statement as the match. A kind is also offered only when its record page admits the reader.
 - **No oracle.** The vector holds only fields no operator can restrict. A restrictable field (a personal email) may be a prefix field, matched only for a reader no held role restricts.

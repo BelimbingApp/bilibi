@@ -84,7 +84,7 @@ Person creation never writes users, sessions, credentials or grants.
 Tenancy's `PartyProofs::person` uses this owner to prove live scoped Person IDs;
 that proof conveys existence, not a capability or account binding. `files`
 (K15) is the private-file owner: the Media attachment subject `core.person`
-and the Artifacts owner `core.person` (`files::FILES`), deciding on the sealed
+and the Artifacts owner `core.person` (`bilibi_person::FILES`), deciding on the sealed
 proof connection with `admin.person.view` for reads, `.update` for writes and
 `.retire` for purge, a person of the actor's tenant (unretired for a write),
 and the filing company reproved through `PartyProofs`. Use these, not a

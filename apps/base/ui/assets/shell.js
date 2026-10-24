@@ -216,7 +216,8 @@
   // the server's: once the query is as long as the panel asks, it goes to the
   // panel after a pause in typing, and the rows the panel sends back are never
   // filtered here, only shown and highlighted with the pages around them.
-  // "Nothing found" waits while the answer for the query is on its way.
+  // While the answer for the query is on its way, rows answering an earlier
+  // one stay hidden and "Nothing found" waits.
   const TYPING = 'input, textarea, select, [contenteditable]:not([contenteditable="false"])';
   const RECORDS_PAUSE = 150;
   const RECORDS_TEXT = 200;
@@ -324,9 +325,10 @@
       const searching = this.searchesRecords();
       const asked = this.recordQuery();
       const answered = this.records()?.dataset.query ?? '';
-      // Record rows answer the panel's last query; when the field asks for
-      // none they go at once rather than waiting for the reply.
-      const records = asked !== '' && answered !== '';
+      // Record rows show only while they answer the field's query. Rows of an
+      // earlier query go at once, with their groups, "All results" and the
+      // notice, so neither Enter nor a click opens one; the reply shows them.
+      const records = asked !== '' && answered === asked;
       const shown = [];
       for (const option of this.options()) {
         let hit;
@@ -343,6 +345,8 @@
         const empty = !group.querySelector('[data-page-search-option]:not([hidden])');
         if (group.hidden !== empty) group.hidden = empty;
       }
+      const notice = this.root.querySelector('#app-search-records-notice');
+      if (notice && notice.hidden !== !records) notice.hidden = !records;
       const hint = this.root.querySelector('#app-search-hint');
       this.word(hint, searching);
       if (hint && hint.hidden !== (query !== '')) hint.hidden = query !== '';
