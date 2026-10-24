@@ -138,7 +138,32 @@ else
     highlight() { printf '%s%s' "$1" "$2"; }
 fi
 echo "$(highlight 'Open ' "$APP_ORIGIN") — sign in as ai@agent.my / bilibi-dev (the platform operator's administrator)."
-echo 'Cargo output stays visible. Edit Rust/templates/assets to rebuild; Ctrl-C stops this app, leaving shared Caddy running.'
+# Open the sign-in page in the browser once the app answers: on WSL through
+# Windows, on a Linux desktop through xdg-open. Without either, the printed
+# address is enough. BILIBI_OPEN_BROWSER=0 turns this off. The waiter stops
+# when this launcher does; exec below keeps the launcher's process ID.
+opener=()
+if [[ ${BILIBI_OPEN_BROWSER:-1} != 0 ]] && command -v curl >/dev/null; then
+    if [[ -n ${WSL_DISTRO_NAME-} ]] && command -v wslview >/dev/null; then
+        opener=(wslview)
+    elif [[ -n ${WSL_DISTRO_NAME-} && -x /mnt/c/Windows/explorer.exe ]]; then
+        opener=(/mnt/c/Windows/explorer.exe)
+    elif [[ -n ${DISPLAY-}${WAYLAND_DISPLAY-} ]] && command -v xdg-open >/dev/null; then
+        opener=(xdg-open)
+    fi
+fi
+if (( ${#opener[@]} )); then
+    echo 'Your browser opens the sign-in page when the app is ready. BILIBI_OPEN_BROWSER=0 turns this off.'
+    launcher=$$
+    (
+        # -f: Caddy answers 502 until the app is up.
+        until curl -skf -o /dev/null --max-time 2 "$APP_ORIGIN/login"; do
+            kill -0 "$launcher" 2>/dev/null || exit 0
+            sleep 2
+        done
+        exec "${opener[@]}" "$APP_ORIGIN/login"
+    ) >/dev/null 2>&1 &
+fi
 # The asset build rewrites app.css, writes a scratch css/.mounted-<pid>.css (and
 # npm may touch node_modules, Python its __pycache__) under apps/ and scripts/;
 # watching them would make every rebuild trigger the next one, so they are

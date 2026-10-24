@@ -43,19 +43,30 @@ Bilibi is MIT-licensed, like the earlier iterations. The architecture is the sam
 - **Agent access:** agents sign in for a person through OAuth and work through `/api/v1` and `/mcp`. Connection details are on My settings, under AI connections. The tab holds one prompt the person pastes into their AI app, so the agent connects itself.
 - **Database tables:** an owner-only, read-only view of every table, with data, schema and relationships.
 
-## Which repository?
+## Where to start
 
-Bilibi has three kinds of repository. You start in this one.
+Start in one of two places, depending on what you want to do:
 
-| Repository | What it holds | Use it to |
+| You want to… | Start in | What you get |
 | --- | --- | --- |
-| `bilibi` (this one) | The Platform's source code | Try Bilibi, change the Platform, and add Domains and Extensions to develop or test them |
-| [`bilibi-app-template`](https://github.com/BelimbingApp/bilibi-app-template) | The template for applications | Change what every new application starts with. Most people never work in it. |
-| Your application, such as `your-company/my-bilibi` | One product: the Platform, Domain and Extension versions it uses | Develop your product, build releases, and install them on your servers |
+| Build your own product on Bilibi | [`bilibi-app-maker`](https://github.com/BelimbingApp/bilibi-app-maker) | Your own application: Bilibi at a tested version, ready for you to add Domains, release, and install on your servers |
+| Change Bilibi itself, or build a Domain or Extension for everyone | `bilibi` (this one) | Bilibi's latest source code, to change and send back as pull requests |
 
-For example, you try Bilibi here and add the Finance Domain. When you want to keep that setup as your own product, run `./bilibi new my-bilibi`. It copies the template into a new `my-bilibi` folder next to this one and records the Platform and Finance versions in it. From then on, you develop and release from `my-bilibi`.
+Both start the same way: clone the repository, then run `./bilibi start`. Bilibi opens in your browser at the sign-in page.
 
-A template is a ready-made starting copy. You don't work in it; you copy it and change the copy. Your copy keeps the template's working parts as they are, such as the `./bilibi` commands and the release scripts, and you replace its sample parts with your own.
+For example, a company that wants Bilibi for its own business clones the app maker, runs `./bilibi start`, and adds the Finance Domain. When it works for them, they push it to their own private repository and release it to their server. Someone fixing a Bilibi bug clones this repository instead, and sends the fix as a pull request.
+
+If you started here and want to keep what you built as your own product, `./bilibi new my-bilibi` turns it into an application, in a new folder next to this one.
+
+### The three kinds of repository
+
+| Repository | What it holds |
+| --- | --- |
+| `bilibi` (this one) | Bilibi's source code: the Platform |
+| [`bilibi-app-maker`](https://github.com/BelimbingApp/bilibi-app-maker) | The app maker: where every application starts, with its starting files and the `./bilibi` commands |
+| Your application, such as `your-company/my-bilibi` | One product: the Bilibi, Domain and Extension versions it uses, and its releases |
+
+You clone the app maker, and your clone becomes your application. It keeps the maker's working parts as they are, such as the `./bilibi` commands and the release scripts, and you replace its sample parts with your own.
 
 ## Run it locally
 
@@ -74,7 +85,7 @@ cd bilibi
 
 `start` checks the tools, runs the existing setup when needed, activates newly installed Rust tools in the same shell, and launches local sources. Setup installs Rust, PostgreSQL 18, Caddy, mkcert and Node.js. You do not need a GitHub account. An AI agent follows these same steps.
 
-Open the address printed by the launcher and sign in as `ai@agent.my` / `bilibi-dev` (development seed only). One checkout owns <https://bilibi.localhost>; other checkouts use their own `http://127.0.0.1:<port>` address. Setting `BILIBI_DEV_PORT` selects a backend port, without taking over another checkout's HTTPS address.
+Bilibi opens in your browser at the sign-in page when it is ready. Sign in as `ai@agent.my` / `bilibi-dev` (development seed only). If no browser opens, open the address the launcher prints. To stop it opening a browser, set `BILIBI_OPEN_BROWSER=0`. One checkout owns <https://bilibi.localhost>; other checkouts use their own `http://127.0.0.1:<port>` address. Setting `BILIBI_DEV_PORT` selects a backend port, without taking over another checkout's HTTPS address.
 
 ### Supported environment
 
@@ -84,26 +95,27 @@ Python 3.11 or newer is required. Ubuntu 20.04 and 22.04, and Debian 11, ship ol
 
 ### Commands in a Platform clone
 
-Run commands from the clone's root. Use `./bilibi help` to see the command list. Local branches, staged files and uncommitted edits are kept.
+Run commands from the clone's root. `./bilibi help` shows the same list. Your branches, staged files and uncommitted edits are always kept.
 
-| Command | What it does |
-| --- | --- |
-| `./bilibi start` | Prepare missing tools, install the commit safeguard, show local changes and start the development app |
-| `./bilibi setup` | Run the repeatable setup and install the commit safeguard without starting the app |
-| `./bilibi add <component>` | Install or verify the safeguard, then mount an official Domain or Extension from `catalogue.json`, or at the `--kind`, `--source` and `--commit` that Software shows |
-| `./bilibi status` | Show each component's path, branch, commit and local changes |
-| `./bilibi update` | Pull safe Platform changes, move clean official components installed at a release to the recommended one, and rebuild local composition |
-| `./bilibi help` | Show the command list; `-h`, `--help` and no command also work |
-| `./bilibi new <name>` | Keep this source composition in a separate sibling application repository |
-| `./bilibi check`, `pin`, `build` | Require an application repository; create one with `new` |
+| Command | What it does | When to use it |
+| --- | --- | --- |
+| `./bilibi start` | Installs anything missing, runs Bilibi, and opens it in your browser | Every time you want to run Bilibi |
+| `./bilibi add <name>` | Adds a Domain or Extension, such as `finance`. You can also paste the `add` command that the Software page shows. | When you want to try or develop a Domain or Extension. Run `start` again afterwards. |
+| `./bilibi update` | Gets the latest Bilibi changes, and moves the Domains and Extensions you added to their newest recommended versions | Before you start work, to stay current |
+| `./bilibi status` | Lists Bilibi and what you added, with each one's branch and uncommitted changes | When you want to see what you have changed |
+| `./bilibi setup` | Installs the tools only, without starting Bilibi | When you want the tools ready in advance |
+| `./bilibi new <name>` | Turns what you have here into your own application, in a new folder next to this one | When you want to keep what you built as your own product |
+| `./bilibi help` | Shows the command list | Any time |
 
-`new` copies the [application template](https://github.com/BelimbingApp/bilibi-app-template). The [application workspace guide](docs/application-workspaces.md) covers the next step, Git ownership and migration; [ADR 03](docs/architecture/decisions/03-application-workspaces-one-front-door.md) records the decision. `scripts/setup.sh` and `scripts/start-app.sh` remain available directly. Direct setup also installs the safeguard; after installing tools directly, load `$HOME/.cargo/env` before using the direct launcher.
+`check`, `pin` and `build` work only in an application; here they say how to make one.
+
+`new` copies the [app maker](https://github.com/BelimbingApp/bilibi-app-maker). The [application workspace guide](docs/application-workspaces.md) covers the next step, Git ownership and migration; [ADR 03](docs/architecture/decisions/03-application-workspaces-one-front-door.md) records the decision. `scripts/setup.sh` and `scripts/start-app.sh` remain available directly. Direct setup also installs the safeguard; after installing tools directly, load `$HOME/.cargo/env` before using the direct launcher.
 
 Run `./bilibi update` before `./bilibi start` to bring an existing clone up to date. It fast-forwards your branch from its upstream. A published branch whose changes already reached the default branch, including an exact squash merge, can safely return to that default branch. Other local commits and source edits stop the update with a concrete next step. Recognised generated composition and its reproduced dependency lock are regenerated; real edits are never discarded or silently stashed. Update never downgrades a component. A component on a branch, dirty, symlinked, unlisted or off its official origin stays where it is, with its path and reason printed; this does not fail the update.
 
 ### Commit safeguard
 
-**Commit component changes in their own repositories.** The Platform pre-commit hook runs `python3 scripts/discover-modules.py --check --staged`. It rejects staged mounted Domain or Extension linkage and foreign path packages in `Cargo.lock`, and ignores HEAD, so a commit that removes a mounted composition already at HEAD is allowed. CI runs the full `--check`, which also judges the committed tip, and remains authoritative because Git hooks can be bypassed.
+**Commit component changes in their own repositories.** `start`, `setup` and `add` install a pre-commit hook in this repository. The hook runs `python3 scripts/discover-modules.py --check --staged`. It rejects staged mounted Domain or Extension linkage and foreign path packages in `Cargo.lock`, and ignores HEAD, so a commit that removes a mounted composition already at HEAD is allowed. CI runs the full `--check`, which also judges the committed tip, and remains authoritative because Git hooks can be bypassed.
 
 Installation is local to this repository and safe to repeat. An existing executable `pre-commit` is retained as `pre-commit.bilibi-original` and runs after the discovery check; other hooks and `core.hooksPath` stay unchanged. Relative and absolute hook paths inside the repository are supported. Installation refuses external shared directories, symlinks, tracked hooks and a conflicting backup rather than overwrite them. `start` and `setup` print that refusal and carry on; `add` stops until you resolve it.
 

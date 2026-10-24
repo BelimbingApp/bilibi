@@ -1,4 +1,4 @@
-# ADR 05: Record search at query time, in the owner's source
+# ADR 06: Record search at query time, in the owner's source
 
 **Document Type:** Architecture Decision Record
 **Status:** Proposed

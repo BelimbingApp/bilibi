@@ -55,8 +55,14 @@ Every record carries these header lines: Document Type, Status, Agents, Scope, L
 | --- | --- |
 | [04 Provider-neutral single sign-on](./04-provider-neutral-single-sign-on.md) | Accepted |
 
+### Personal data
+
+| Record | Status |
+| --- | --- |
+| [05 Personal-data registry, data-subject requests and audit erasure](./05-personal-data-registry.md) | Proposed |
+
 ### Search
 
 | Record | Status |
 | --- | --- |
-| [05 Record search at query time, in the owner's source](./05-query-time-record-search.md) | Proposed |
+| [06 Record search at query time, in the owner's source](./06-query-time-record-search.md) | Proposed |
