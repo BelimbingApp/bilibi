@@ -72,7 +72,8 @@ pub struct Settings {
     encryption: Encryption,
     parties: Arc<PartyProofs>,
     /// Tenancy's bound Authz decision, for the one enforcement Settings makes
-    /// itself: a system principal reading an encrypted value (SP1).
+    /// itself: a system principal reading an encrypted value (SP1). Unbound
+    /// until `with_authorization`, and an unbound decision refuses.
     authorization: Arc<Authorization>,
     changes: broadcast::Sender<Changed>,
 }
@@ -81,15 +82,18 @@ impl Settings {
         definitions: Definitions,
         encryption: Encryption,
         parties: Arc<PartyProofs>,
-        authorization: Arc<Authorization>,
     ) -> Self {
         Self {
             definitions,
             encryption,
             parties,
-            authorization,
+            authorization: Arc::default(),
             changes: broadcast::channel(256).0,
         }
+    }
+    pub fn with_authorization(mut self, authorization: Arc<Authorization>) -> Self {
+        self.authorization = authorization;
+        self
     }
     pub fn definitions(&self) -> &Definitions {
         &self.definitions
@@ -478,8 +482,8 @@ inventory::submit! {
             let catalog = Catalog::discover(&bilibi_module_registry::discover()?)?;
             Ok(Arc::new(Settings::new(Definitions::from_catalog(&catalog)?,
                 Encryption::from_hex(std::env::var("BILIBI_SETTINGS_KEY").ok().as_deref()),
-                services.get::<PartyProofs>("base/tenancy.parties")?,
-                services.get::<Authorization>("base/tenancy.authorization")?)))
+                services.get::<PartyProofs>("base/tenancy.parties")?)
+                .with_authorization(services.get::<Authorization>("base/tenancy.authorization")?)))
         }}],
     }
 }

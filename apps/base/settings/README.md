@@ -44,7 +44,8 @@ job) reads plain values like any scope, has no user target, writes no global
 value (that reproves the operator), and receives a stored encrypted value only
 when it is granted that definition's editor `capability` in the tenant, decided
 through Tenancy's `Authorization::authorize_scope` on the same connection; a
-definition without an editor capability, or a missing grant, refuses the read. Each company read,
+definition without an editor capability, or a missing grant, refuses the read.
+`Settings::new` leaves that decision unbound, so a principal is refused until `with_authorization` binds Tenancy's decision (the module factory does). Each company read,
 write, and delete calls `base/tenancy.parties` on the same DB connection. A missing
 provider refuses. Core owns this binding; Settings never queries Company tables.
 Global writes/delete additionally reprove the explicit platform operator.
