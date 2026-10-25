@@ -164,8 +164,8 @@ if (( ${#opener[@]} )); then
         exec "${opener[@]}" "$APP_ORIGIN/login"
     ) >/dev/null 2>&1 &
 fi
-# The asset build rewrites app.css, writes a scratch css/.mounted-<pid>.css (and
-# npm may touch node_modules, Python its __pycache__) under apps/ and scripts/;
+# The optional local asset build writes ignored app.css (and npm may touch
+# node_modules, Python its __pycache__) under apps/ and scripts/;
 # watching them would make every rebuild trigger the next one, so they are
 # ignored here. .gitignore is not used: it ignores the mounted Domain and
 # Extension checkouts under apps/, whose edits must rebuild too. (cargo-watch
