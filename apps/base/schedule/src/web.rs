@@ -1,6 +1,7 @@
 //! The `/system/schedule` operator board (Bilimbi `Schedule.Web.IndexLive`).
 //!
-//! Definitions are immutable contributor facts; the board reads tasks, run
+//! Contributions supply defaults; operators can set a fixed clock time and zone.
+//! The board reads tasks, run
 //! history and diagnostics through the Schedule API and polls them on the host's
 //! refresh. `can_execute`/`can_manage` only choose which controls to draw. Every
 //! command re-asks Authz before it acts (`authorize_operator`, the same check
@@ -16,7 +17,7 @@
 //! in: the company, browser-local or UTC zone, named under the controls.
 use crate::{
     board::{self, Availability, Diagnostics, DueWork, RunQuery, RunSort, TaskSort},
-    phrase, Claimed, Refusal, ReviewState, Run, Schedule, Task, Trigger, EXECUTE, MANAGE,
+    phrase, timing, Claimed, Refusal, ReviewState, Run, Schedule, Task, Trigger, EXECUTE, MANAGE,
 };
 use askama::Template;
 use bilibi_authz::{authorize_operator, effective_capabilities};
@@ -34,9 +35,10 @@ use bilibi_ui::{
         PageFuture, PageRequest,
     },
     params, Alert, BadgeKind, BuiltinColumn, Button, ButtonVariant, Card, ColumnType,
-    ColumnsOutcome, ConfirmDialog, Filter, FilterToolbar, FlashMap, FlexRow, FlexTable, Html,
-    ListColumns, ListSpec, ListState, PageCounts, Pagination, RowMode, SortDir, StatusKind, Tab,
-    TableEmpty, Tabs, ToolbarControl, NO_FLASH,
+    ColumnsOutcome, CommitStates, CommitStatus, ConfirmDialog, ErrorSummary, Filter, FilterToolbar,
+    FlashMap, FlexRow, FlexTable, Form, Html, InlineForm, ListColumns, ListSpec, ListState,
+    PageCounts, Pagination, RowMode, SortDir, StatusKind, Tab, TableEmpty, Tabs, ToolbarControl,
+    NO_FLASH,
 };
 use jiff::{civil::Date, tz::TimeZone, Timestamp};
 use serde_json::Value;
@@ -189,6 +191,7 @@ enum Command {
     Enable,
     Pause,
     Disable,
+    ResetTime,
 }
 impl Command {
     fn parse(event: &str) -> Option<Self> {
@@ -196,6 +199,7 @@ impl Command {
             "request_enable" | "enable" => Some(Self::Enable),
             "request_pause" | "pause" => Some(Self::Pause),
             "request_disable" | "disable" => Some(Self::Disable),
+            "request_reset_time" | "reset_time" => Some(Self::ResetTime),
             _ => None,
         }
     }
@@ -204,6 +208,7 @@ impl Command {
             Self::Enable => "enable",
             Self::Pause => "pause",
             Self::Disable => "disable",
+            Self::ResetTime => "reset_time",
         }
     }
     fn verb(self) -> &'static str {
@@ -211,6 +216,7 @@ impl Command {
             Self::Enable => "Enable",
             Self::Pause => "Pause",
             Self::Disable => "Disable",
+            Self::ResetTime => "Reset to code default",
         }
     }
     fn working(self) -> &'static str {
@@ -218,15 +224,20 @@ impl Command {
             Self::Enable => "Enabling…",
             Self::Pause => "Pausing…",
             Self::Disable => "Disabling…",
+            Self::ResetTime => "Resetting…",
         }
     }
     /// What the command sets running, or what it does to queued work, which
     /// resuming or re-enabling does not bring back.
     fn consequence(self, task: &Task) -> String {
+        if self == Self::ResetTime {
+            return format!("Task “{}” will use its code default time again.", task.name);
+        }
         let done = match self {
             Self::Enable => "enabled",
             Self::Pause => "paused",
             Self::Disable => "disabled",
+            Self::ResetTime => unreachable!(),
         };
         format!("Task “{}” will be {done}.", task.name)
     }
@@ -238,10 +249,11 @@ impl Command {
             ),
             Self::Enable => format!(
                 "It will run on its schedule ({}, {}) using this version ({print}). Any later change to the task stops it until approved.",
-                task.expression, task.timezone
+                task.clock_expression, task.clock_timezone
             ),
             Self::Pause => "Runs already queued are cancelled. You can resume the task later.".into(),
             Self::Disable => "Runs already queued are cancelled, and it will not run again until it is reviewed and enabled.".into(),
+            Self::ResetTime => format!("The default is {}. Runs already queued at the old time are cancelled. Its enabled and paused state stays the same.", phrase::show(task.expression,task.timezone,task.timezone,Timestamp::now()).words),
         }
     }
 }
@@ -251,6 +263,12 @@ enum Loaded {
     Available,
     Unavailable,
     InvalidFilters,
+}
+
+struct TimeEditor {
+    task: Task,
+    zone: String,
+    value: String,
 }
 
 struct Board {
@@ -268,6 +286,9 @@ struct Board {
     /// A fresh server mount must obtain a report even if its DOM hook survives.
     timezone_request: String,
     pending: Option<(Command, Task)>,
+    time_editor: Option<TimeEditor>,
+    time_outcomes: CommitStates,
+    viewer_zone: Option<String>,
     flash: Option<(StatusKind, String)>,
 }
 impl Board {
@@ -286,6 +307,9 @@ impl Board {
             browser_zone: None,
             timezone_request: uuid::Uuid::new_v4().to_string(),
             pending: None,
+            time_editor: None,
+            time_outcomes: CommitStates::default(),
+            viewer_zone: None,
             flash: None,
         })
     }
@@ -333,6 +357,10 @@ impl Board {
         match result {
             Ok(()) => self.flash(StatusKind::Success, success),
             Err(Error::Forbidden) => self.flash(StatusKind::Error, DENIED),
+            Err(Error::Conflict) => self.flash(
+                StatusKind::Error,
+                "This schedule changed. Reopen the action and try again.",
+            ),
             Err(Error::NotFound) => self.flash(
                 StatusKind::Error,
                 "That schedule definition is no longer installed.",
@@ -411,6 +439,85 @@ impl Board {
                     self.flash = None;
                 }
             }
+            "edit_time" => {
+                if !self.allowed(scope, MANAGE).await? {
+                    self.flash(StatusKind::Error, DENIED);
+                    return Ok(());
+                }
+                let Some(zone) = self.viewer_zone.clone() else {
+                    return Ok(());
+                };
+                let client = self.core.db.get().await?;
+                let task = schedule
+                    .tasks(&**client, scope, Timestamp::now())
+                    .await?
+                    .into_iter()
+                    .find(|task| task.key == key)
+                    .ok_or(Error::NotFound)?;
+                let Some(expression) = phrase::editable(
+                    &task.clock_expression,
+                    &task.clock_timezone,
+                    &zone,
+                    Timestamp::now(),
+                ) else {
+                    return Ok(());
+                };
+                let cron = crate::cron::Cron::parse(&expression).map_err(|_| Error::Invalid)?;
+                let time = format!(
+                    "{:02}:{:02}",
+                    cron.hour_values()[0],
+                    cron.minute_values()[0]
+                );
+                self.time_editor = Some(TimeEditor {
+                    task,
+                    zone,
+                    value: time,
+                });
+            }
+            "cancel_time" => self.time_editor = None,
+            "save_time" => {
+                if !self.allowed(scope, MANAGE).await? {
+                    self.time_editor = None;
+                    self.flash(StatusKind::Error, DENIED);
+                    return Ok(());
+                }
+                let Some(editor) = &mut self.time_editor else {
+                    return Ok(());
+                };
+                editor.value = params::form_values(value, "timing")
+                    .get("time")
+                    .cloned()
+                    .unwrap_or_default();
+                let mut client = self.core.db.get().await?;
+                let result = schedule
+                    .set_time(
+                        &mut client,
+                        scope,
+                        editor.task.key,
+                        &editor.task.timing_version,
+                        &editor.value,
+                        &editor.zone,
+                    )
+                    .await;
+                let status = match result {
+                    Ok(()) => CommitStatus::Saved,
+                    Err(Error::Invalid) => {
+                        CommitStatus::Error("Time must be a valid hour and minute.".into())
+                    }
+                    Err(Error::Conflict) => CommitStatus::Error(
+                        "This schedule changed. Cancel and reopen the time picker.".into(),
+                    ),
+                    Err(Error::Forbidden) => CommitStatus::Error(DENIED.into()),
+                    Err(Error::Unauthorized) => return Err(Error::Unauthorized),
+                    Err(_) => CommitStatus::failure(),
+                };
+                let saved = status == CommitStatus::Saved;
+                self.time_outcomes.put(editor.task.key, status);
+                if saved {
+                    self.time_editor = None;
+                    self.flash(StatusKind::Success, "Task time saved.");
+                }
+            }
             "run_now" => {
                 if !self.allowed(scope, EXECUTE).await? {
                     self.flash(StatusKind::Error, DENIED);
@@ -436,7 +543,8 @@ impl Board {
                 self.outcome(result, "Task resumed.")?;
             }
             "cancel_command" => self.pending = None,
-            event @ ("request_enable" | "request_pause" | "request_disable") => {
+            event @ ("request_enable" | "request_pause" | "request_disable"
+            | "request_reset_time") => {
                 let command = Command::parse(event).ok_or(Error::Invalid)?;
                 if !self.allowed(scope, MANAGE).await? {
                     self.flash(StatusKind::Error, DENIED);
@@ -454,7 +562,7 @@ impl Board {
                     Err(error) => self.outcome(Err(error), "")?,
                 }
             }
-            event @ ("enable" | "pause" | "disable") => {
+            event @ ("enable" | "pause" | "disable" | "reset_time") => {
                 let command = Command::parse(event).ok_or(Error::Invalid)?;
                 // The refusal comes first, so a revoked operator hears it even
                 // from a forged event.
@@ -479,6 +587,12 @@ impl Board {
                         schedule.review(&mut client, scope, task.key, false).await,
                         "Task disabled.",
                     ),
+                    Command::ResetTime => (
+                        schedule
+                            .reset_time(&mut client, scope, task.key, &task.timing_version)
+                            .await,
+                        "Task time reset to code default.",
+                    ),
                     Command::Pause => (
                         schedule
                             .suppress(&mut client, scope, task.key)
@@ -487,6 +601,16 @@ impl Board {
                         "Task paused.",
                     ),
                 };
+                if result.is_ok() && command == Command::ResetTime {
+                    if self
+                        .time_editor
+                        .as_ref()
+                        .is_some_and(|editor| editor.task.key == task.key)
+                    {
+                        self.time_editor = None;
+                    }
+                    self.time_outcomes.put(task.key, CommitStatus::Saved);
+                }
                 self.outcome(result, success)?;
             }
             "save_retention" => {
@@ -533,6 +657,8 @@ impl Board {
             .diagnostics(&**client, all_tasks.as_deref(), now)
             .await;
         let zone_name = display.clock(self.browser_zone.as_deref(), now).timezone;
+        self.viewer_zone =
+            (display.mode != Mode::Local || self.browser_zone.is_some()).then(|| zone_name.clone());
         let mut body = Html::default();
         match self.tab {
             "tasks" => body.push(&self.tasks_panel(
@@ -691,7 +817,12 @@ impl Board {
                 task.misfire.as_str()
             );
             let duration = duration(task.last_runtime_ms);
-            let schedule = phrase::show(task.expression, task.timezone, viewer_zone, now);
+            let schedule = phrase::show(
+                &task.clock_expression,
+                &task.clock_timezone,
+                viewer_zone,
+                now,
+            );
             let cells = [
                 (
                     "name",
@@ -741,6 +872,22 @@ impl Board {
                 .slot("overlap", Html::text(task.overlap.as_str()))
                 .slot("misfire", Html::text(task.misfire.as_str()))
                 .slot("last_runtime", Html::text(&duration));
+            if can_manage
+                && self.viewer_zone.is_some()
+                && timing::fixed(task.expression)
+                && phrase::editable(
+                    &task.clock_expression,
+                    &task.clock_timezone,
+                    viewer_zone,
+                    now,
+                )
+                .is_some()
+            {
+                row = row.slot(
+                    "cron",
+                    self.time_cell(task, &dom, &schedule.words, compact)?,
+                );
+            }
             row.actions = actions(task, &dom, can_execute, can_manage)?;
             rows.push(row);
         }
@@ -788,6 +935,71 @@ impl Board {
             status: select,
             unavailable,
             card,
+        })
+    }
+
+    fn time_cell(&self, task: &Task, dom: &str, words: &str, compact: bool) -> Result<Html> {
+        let editor = self
+            .time_editor
+            .as_ref()
+            .filter(|editor| editor.task.key == task.key);
+        let mut form = Html::default();
+        let status = self.time_outcomes.get(task.key);
+        if let Some(editor) = editor {
+            let field_id = format!("{dom}-time-input");
+            let mut field = Field::in_form("timing", "time")
+                .id(&field_id)
+                .kind(InputKind::Time)
+                .label("Time")
+                .value(&editor.value)
+                .required()
+                .wrapper_class("mb-0")
+                .attr("step", "60")
+                .hint(format!("Time zone: {}", editor.zone));
+            let mut errors = ErrorSummary::new(format!("{dom}-time-errors"));
+            if let CommitStatus::Error(message) = &status {
+                field.errors.push(message.clone());
+                errors.push(&field_id, message);
+            }
+            let mut body = render(errors)?;
+            body.push(&render(TimeField { field })?);
+            let mut actions = render(Button {
+                button_type: "submit",
+                working: "Saving…",
+                variant: ButtonVariant::Primary,
+                body: Html::text("Save time"),
+                ..Button::default()
+            })?;
+            actions.push(&render(Button {
+                button_type: "button",
+                event: "cancel_time",
+                body: Html::text("Cancel"),
+                ..Button::default()
+            })?);
+            form = render(Form {
+                id: &format!("{dom}-time-form"),
+                event: "save_time",
+                body,
+                actions,
+                ..Form::default()
+            })?;
+        }
+        render(InlineForm {
+            compact,
+            id: format!("{dom}-time"),
+            key: task.key.into(),
+            label: format!("time for {}", task.name),
+            value: words.to_owned(),
+            hint: if task.time_overridden {
+                format!("Saved time zone: {}", task.clock_timezone)
+            } else {
+                String::new()
+            },
+            editing: editor.is_some(),
+            open_event: "edit_time".into(),
+            cancel_event: "cancel_time".into(),
+            form,
+            status,
         })
     }
 
@@ -1101,6 +1313,12 @@ fn actions(task: &Task, dom: &str, can_execute: bool, can_manage: bool) -> Resul
         "request_disable",
         "Disable",
     )?;
+    add(
+        can_manage && task.time_overridden,
+        "reset-time",
+        "request_reset_time",
+        "Reset to code default",
+    )?;
     render(Actions { buttons })
 }
 
@@ -1299,6 +1517,11 @@ fn cell(cell: Cell<'_>, compact: bool) -> Result<Html> {
 #[template(path = "schedule_actions.html")]
 struct Actions {
     buttons: Html,
+}
+#[derive(Template)]
+#[template(path = "schedule_time.html")]
+struct TimeField {
+    field: Field,
 }
 #[derive(Template)]
 #[template(path = "schedule_tasks.html")]
