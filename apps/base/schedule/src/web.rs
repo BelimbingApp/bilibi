@@ -1028,12 +1028,11 @@ fn retention_panel(days: Option<i64>, can_manage: bool) -> Result<Html> {
         .id("schedule-retention-days")
         .kind(InputKind::Number)
         .label("Days")
-        .wrapper_class("mb-0")
+        .wrapper_class("mb-0 w-40")
         .attr("min", &board::KEEP_DAYS_MIN.to_string())
         .attr("max", &board::KEEP_DAYS_MAX.to_string())
         .required()
-        .value(days.map(|d| d.to_string()).unwrap_or_default())
-        .class("mt-1 w-40 rounded-md border border-line bg-surface px-3 py-1.5 text-sm text-ink focus:border-brand-strong focus:outline-none");
+        .value(days.map(|d| d.to_string()).unwrap_or_default());
     let save = render(Button {
         variant: ButtonVariant::Primary,
         id: "schedule-retention-save",
