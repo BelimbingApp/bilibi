@@ -87,16 +87,28 @@ pub trait ActorVerifier: Send + Sync {
     }
 }
 
+/// Who a sealed scope acts as: an account with its live party facets, or a
+/// named system principal (SP1) with none of them.
 #[derive(Clone, Debug)]
 pub struct Actor {
     user: i64,
     person: Option<PersonId>,
     organisation: Option<OrganisationId>,
     affiliation: Option<AffiliationId>,
+    principal: Option<String>,
 }
 impl Actor {
+    /// The account acted as. `0` for a named system principal: no account has
+    /// that id, so every user-shaped grant or ownership read matches nothing
+    /// and the principal holds only what `Authz` grants it by name.
     pub fn user(&self) -> i64 {
         self.user
+    }
+    /// The named system principal this scope runs as (`sbg.ax_import`,
+    /// `scheduler`), sealed by `Authentication::for_principal`; `None` for an
+    /// account. Audit shows it as `System · <principal>`.
+    pub fn principal(&self) -> Option<&str> {
+        self.principal.as_deref()
     }
     pub fn person(&self) -> Option<PersonId> {
         self.person
@@ -287,6 +299,12 @@ impl Scope {
     pub fn actor(&self) -> &Actor {
         &self.actor
     }
+    /// The named system principal this scope runs as, `None` for an account
+    /// (`Actor::principal`). A principal scope has no user, person,
+    /// organisation, affiliation, agent facet, impersonator or step-up code.
+    pub fn principal(&self) -> Option<&str> {
+        self.actor.principal()
+    }
     /// Present only on a bearer request; self-service account and grant
     /// management refuse a scope that carries it.
     pub fn agent(&self) -> Option<&AgentFacet> {
@@ -357,6 +375,11 @@ impl Scope {
         self.step_up.as_deref()
     }
     pub fn mutation_context(&self, action: impl Into<String>) -> Context {
+        // A principal's writes are system-attributed by name (`System ·
+        // <principal>`); it never carries an impersonator or agent facet.
+        if let Some(principal) = self.principal() {
+            return Context::system(self.tenant, principal, action);
+        }
         let mut context = Context::user(self.tenant, self.user(), action);
         context.impersonator = self
             .impersonator
@@ -380,6 +403,9 @@ impl Scope {
 pub trait AgentVerifier: Send + Sync {
     fn verify<'a>(&'a self, client: &'a dyn ProofClient, scope: &'a Scope) -> ProofFuture<'a, ()>;
 }
+/// The longest principal name a sealed scope carries: Audit's
+/// `system_principal` column width.
+const PRINCIPAL_MAX: usize = 100;
 #[derive(Clone, Default)]
 pub struct Authentication {
     verifier: Arc<OnceLock<Arc<dyn ActorVerifier>>>,
@@ -420,7 +446,8 @@ impl Authentication {
     ) -> Result<bool> {
         // The operator behind an impersonated session does not hold the
         // account's credential, and a re-proof must never be lent to them.
-        if scope.impersonator().is_some() {
+        // A system principal has no credential to confirm.
+        if scope.impersonator().is_some() || scope.principal().is_some() {
             return Err(Error::Forbidden);
         }
         self.verifier
@@ -484,6 +511,7 @@ impl Authentication {
                 person: identity.person,
                 organisation: identity.organisation,
                 affiliation: identity.affiliation,
+                principal: None,
             },
             agent: None,
             impersonator,
@@ -495,6 +523,50 @@ impl Authentication {
             csrf,
         })
     }
+    /// The trusted worker edge for a named system principal (SP1): a sealed
+    /// scope whose actor is the principal, with no account, party facet,
+    /// agent, impersonator or step-up code, in a live tenant. Its CSRF value
+    /// is fresh so no form check can match. Never a browser constructor: the
+    /// principal comes from a worker's rehydrated job row or a schedule
+    /// definition, and `Authz` (`SystemAuthentication::for_system`) proves
+    /// the declaration first. Identity only: the principal holds exactly the
+    /// capabilities an administrator granted it by name in this tenant, which
+    /// every decision re-reads.
+    pub async fn for_principal(
+        &self,
+        client: &(impl GenericClient + Sync),
+        tenant: i64,
+        principal: &str,
+    ) -> Result<Scope> {
+        if tenant <= 0 || principal.is_empty() || principal.chars().count() > PRINCIPAL_MAX {
+            return Err(Error::Unauthorized);
+        }
+        let row = client
+            .query_opt(
+                "SELECT name FROM tenants WHERE id=$1 AND deleted_at IS NULL AND status='active'",
+                &[&tenant],
+            )
+            .await?
+            .ok_or(Error::Unauthorized)?;
+        Ok(Scope {
+            tenant,
+            actor: Actor {
+                user: 0,
+                person: None,
+                organisation: None,
+                affiliation: None,
+                principal: Some(principal.to_owned()),
+            },
+            agent: None,
+            impersonator: None,
+            authentication: self.clone(),
+            step_up: None,
+            tenant_name: row.get(0),
+            user_name: format!("System · {principal}"),
+            email: String::new(),
+            csrf: uuid::Uuid::new_v4().simple().to_string(),
+        })
+    }
     /// Re-proves a scope an edge already sealed, keeping its impersonator,
     /// agent facet and presented step-up code: owners refresh eligibility with this rather than
     /// `authenticate`, which would drop the operator from the audit pair.
@@ -503,6 +575,11 @@ impl Authentication {
         client: &(impl GenericClient + Sync),
         scope: &Scope,
     ) -> Result<Scope> {
+        // A principal scope is re-sealed against the live tenant; it carries
+        // no agent facet or step-up code to keep.
+        if let Some(principal) = scope.principal() {
+            return self.for_principal(client, scope.tenant(), principal).await;
+        }
         let mut fresh = self
             .authenticate_session(
                 client,
@@ -555,6 +632,17 @@ pub trait OperatorAuthorizer: Send + Sync {
         scope: &'a Scope,
         key: &'a str,
     ) -> ProofFuture<'a, OperatorProof>;
+
+    /// One capability decision for `scope` on the caller's connection (Authz
+    /// `authorize_proof`): the way a module below Authz (Settings) enforces a
+    /// capability on a sealed scope, including a system principal's named
+    /// grant. `Err(Forbidden)` is a refusal, logged by the implementation.
+    fn authorize_scope_in<'a>(
+        &'a self,
+        client: &'a dyn ProofClient,
+        scope: &'a Scope,
+        key: &'a str,
+    ) -> ProofFuture<'a, ()>;
 }
 /// `base/tenancy.authorization`: once-bound; without a binding every decision
 /// refuses and boot is refused by the readiness check.
@@ -595,6 +683,20 @@ impl Authorization {
             .authorize_operator(scope, key)
             .await
     }
+    /// Enforces `key` for `scope` on the caller's connection through the
+    /// bound Authz decision; without a binding every decision refuses.
+    pub async fn authorize_scope(
+        &self,
+        client: &dyn ProofClient,
+        scope: &Scope,
+        key: &str,
+    ) -> Result<()> {
+        self.authorizer
+            .get()
+            .ok_or(Error::Forbidden)?
+            .authorize_scope_in(client, scope, key)
+            .await
+    }
 }
 async fn require_operator_marker(client: &(impl GenericClient + Sync), tenant: i64) -> Result<()> {
     client
@@ -607,6 +709,12 @@ pub async fn prove_operator(
     client: &(impl GenericClient + Sync),
     scope: &Scope,
 ) -> Result<OperatorProof> {
+    // Operator standing is an account's: a principal decides a platform
+    // capability through Authz's own operator gate and never holds a proof
+    // that administers tenants or writes global settings.
+    if scope.principal().is_some() {
+        return Err(Error::Forbidden);
+    }
     require_operator_marker(client, scope.tenant()).await?;
     let fresh = scope.authentication.reprove(client, scope).await?;
     Ok(OperatorProof { scope: fresh })
@@ -630,7 +738,9 @@ pub async fn prove_owner(
     client: &(impl GenericClient + Sync),
     scope: &Scope,
 ) -> Result<OwnerProof> {
-    if scope.impersonator().is_some() {
+    // Owner standing belongs to a person; neither an operator behind an
+    // impersonated session nor a system principal holds it.
+    if scope.impersonator().is_some() || scope.principal().is_some() {
         return Err(Error::Forbidden);
     }
     require_operator_marker(client, scope.tenant()).await?;

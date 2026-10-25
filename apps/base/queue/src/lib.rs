@@ -38,6 +38,8 @@ impl Queue {
     /// `JobRef` is provisional until that outer transaction commits.
     /// This grants no capability: the owner must authorize its command and Q2
     /// must rehydrate current actor eligibility and reauthorize every execution.
+    /// A named system principal's scope (SP1, `Execution::scope` of a system
+    /// job) enqueues a system job as that principal, like `enqueue_system`.
     pub async fn enqueue_for(
         &self,
         tx: &mut MutationTransaction<'_>,
@@ -45,6 +47,22 @@ impl Queue {
         worker_id: &str,
         args: Value,
     ) -> Result<JobRef> {
+        if let Some(principal) = scope.principal() {
+            if tx.context().tenant != scope.tenant()
+                || tx.context().actor.kind != "system"
+                || tx.context().actor.id != principal
+                || tx.context().impersonator.is_some()
+                || !bilibi_authz::vocabulary()?
+                    .system_principals
+                    .contains_key(principal)
+            {
+                return Err(Error::Forbidden);
+            }
+            let actor = Actor::System(principal.to_owned());
+            return self
+                .insert(tx, scope.tenant(), actor, worker_id, args)
+                .await;
+        }
         if tx.context().tenant != scope.tenant()
             || tx.context().actor.kind != "user"
             || tx.context().actor.id != scope.user().to_string()

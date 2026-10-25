@@ -47,7 +47,11 @@ extends `tenant_owner` (all). The walkthrough fixture grants its `manager`
 company or into it is authorized with `organisation::authorize_target`: the
 capability now, and either the company the actor is affiliated with
 (`Scope::actor().organisation()`, bound by K9) or the tenant-wide reach for
-any other company of the tenant. The pages and Grid catalog ask these same durable keys. List and detail use
+any other company of the tenant. A named system principal's scope
+(`Scope::principal()`, SP1) is affiliated with no company: once granted the
+capability in the tenant it reaches every live company of that tenant, in
+`authorize_target`, `Directory::selectable` and `Directory::target` alike;
+`require_writable` is the same archived check for it. The pages and Grid catalog ask these same durable keys. List and detail use
 `.list` and `.view`; field saves and lifecycle commands use `.update` plus
 company reach. The generic field editor never accepts `status`.
 

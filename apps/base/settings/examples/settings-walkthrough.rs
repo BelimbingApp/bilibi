@@ -236,6 +236,7 @@ async fn main() -> Result<()> {
             Definitions::from_catalog(&catalog)?,
             Encryption::from_hex(key),
             parties.clone(),
+            services.get("base/tenancy.authorization")?,
         );
         println!(
             "{label} secret read refusal: {:?}",

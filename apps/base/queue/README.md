@@ -71,9 +71,15 @@ declared in the Authz vocabulary. A system job carries `actor_kind='system'`,
 (`SystemScope::rehydrate`: live tenant plus current declaration) and checks the
 binding's capability through `authorize_system`, which also needs the durable
 tenant grant (`Grants::set_system`); a principal without that grant cancels with
-`actor_refused`. `Execution::identity` says which kind of actor is running;
-`Execution::scope` is `None` for a system job. `Execution::begin` re-proves the
-same identity inside the owner's transaction.
+`actor_refused`. `Execution::identity` says which kind of actor is running.
+`Execution::scope` is `Some` for both kinds (SP1): for a system job it is the
+principal's sealed scope, built on every attempt from the rehydrated principal
+through `SystemAuthentication::for_system`, so the handler calls owner facades
+(Settings, Company targets, Domain facades) with it and each decides by the
+principal's name and grants. A handler written when a system job had no scope
+may still refuse `Identity::System`. `Execution::begin` re-proves the same
+identity inside the owner's transaction. `Queue::enqueue_for` with a
+principal's scope enqueues a system job as that principal.
 
 `store::lookup` and bounded `store::states` return redacted state/attempt/failure
 facts including terminal states. Trusted owner/scheduler adapters supply a
@@ -105,12 +111,23 @@ rollback and commit, argument refusals, and mismatched scope/context refusal.
 The two contributed workers are linked only into the example; production has no
 specimen worker. An empty production worker catalog is valid.
 
+The private executor walkthrough below also proves SP1: `enqueue-system secret`
+enqueues the specimen job as the declared principal `queue-specimen`; the
+worker cancels it with `actor_refused` until `grant` gives the principal its
+two capabilities (`Grants::set_system`, step-up off for this fixture binary),
+then runs it as `System · queue-specimen`, reads the encrypted company setting
+`queue.specimen.secret` through `Execution::scope()` (printing only that it
+decrypted and its length), and records its effect; `revoke-secret` keeps the
+job running but makes Settings refuse the secret (`secret_refused`).
+`inspect` prints the audit rows of the effects with their principal.
+
 
 ## Private executor walkthrough
 
-The private executable links Queue and its actual Base prerequisites, with a
-bounded account verifier contributed only by this specimen host. It needs no
-Core or UI. On a fresh disposable database:
+The private executable links Queue and the Platform it runs in; the fixture's
+accounts sign in through Core User's verifier (the executable binds none of
+its own), and `prepare` migrates the database and installs the fixture. On a
+fresh disposable database, with `BILIBI_SETTINGS_KEY` set:
 
 ```sh
 export BILIBI_DISPOSABLE_QUEUE_DEMO=yes
@@ -127,13 +144,18 @@ stops the private executable gracefully. It never drives Herdr or shared app
 processes. The contributed worker/handler is absent from production.
 
 Other enqueue modes: `retry`, `discard`, `cancel`, `panic`, `invalid`,
-`heartbeat`, `timeout`, `late-write`, `fenced-write`, `complete`. `cancel JOB_ID` and
+`heartbeat`, `timeout`, `late-write`, `fenced-write`, `complete`, `secret`
+(reads the company secret as the actor; `enqueue-system secret` as the
+principal; `BILIBI_SETTINGS_KEY` must be set for `prepare` and `worker`).
+`grant`, `revoke-secret` and `revoke` change the principal's grants as the
+fixture administrator. `cancel JOB_ID` and
 `retry JOB_ID` use the production audited owner commands. `QUEUE_DEMO_RUNTIME`
 sets the private attempt timeout (seconds). The heartbeat mode takes eight
 seconds, exceeding the three-second lease without a second attempt. The effect
 uses job ID as an owner idempotency key. To demonstrate current actor refusal,
-set `queue_execution_accounts.active=false` after enqueue and before starting
-the private worker. To demonstrate reauthorization before a delayed write,
-change the specimen's `principal_capabilities` row for `companies.update` to
-false while `late-write` is executing. Both refuse the owner effect. All such
-manual database changes belong exclusively in the disposable specimen DB.
+set the enqueuing account's `users.status` to `suspended` after enqueue and
+before starting the private worker. To demonstrate reauthorization before a
+delayed write, change the specimen's `principal_capabilities` row for
+`companies.update` to false while `late-write` is executing. Both refuse the
+owner effect. All such manual database changes belong exclusively in the
+disposable specimen DB.

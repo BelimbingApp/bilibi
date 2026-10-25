@@ -15,13 +15,15 @@ mod step_up_web;
 pub mod vocabulary;
 mod web;
 use bilibi_database::{Error, Result};
-use bilibi_tenancy::{ProofClient, Scope};
-pub use effective::{effective_capabilities, effective_capabilities_of, Effective};
+use bilibi_tenancy::{Authentication, ProofClient, ProofFuture, Scope};
+pub use effective::{
+    effective_capabilities, effective_capabilities_of, effective_system, Effective,
+};
 use std::{
     collections::HashSet,
     sync::{Arc, OnceLock},
 };
-use tokio_postgres::GenericClient;
+use tokio_postgres::{types::ToSql, GenericClient, Row};
 pub use vocabulary::{
     CapabilityDefinition, RoleDefinition, SystemPrincipalDefinition, Vocabulary,
     VocabularyContribution, VOCABULARY,
@@ -97,6 +99,11 @@ pub async fn decide(client: &impl GenericClient, scope: &Scope, key: &str) -> Re
     if key.is_empty() || key.len() > 200 {
         return Err(Error::Invalid);
     }
+    // A named system principal's scope (SP1) is decided by its name: the
+    // declaration and the durable tenant grant, never roles or grant-all.
+    if let Some(principal) = scope.principal() {
+        return system_decision(client, scope.tenant(), Some(principal), key).await;
+    }
     let decision = match vocabulary()?.capabilities.get(key) {
         None => Decision::deny("denied_unknown_capability"),
         Some(cap) => {
@@ -127,6 +134,9 @@ pub async fn decide(client: &impl GenericClient, scope: &Scope, key: &str) -> Re
 pub async fn decide_proof(client: &dyn ProofClient, scope: &Scope, key: &str) -> Result<Decision> {
     if key.is_empty() || key.len() > 200 {
         return Err(Error::Invalid);
+    }
+    if let Some(principal) = scope.principal() {
+        return system_decision(&Proof(client), scope.tenant(), Some(principal), key).await;
     }
     let decision = match vocabulary()?.capabilities.get(key) {
         None => Decision::deny("denied_unknown_capability"),
@@ -179,6 +189,7 @@ const LIVE_TENANT_SQL: &str =
     "SELECT id FROM tenants WHERE id=$1 AND status='active' AND deleted_at IS NULL";
 const OPERATOR_SQL: &str = "SELECT o.tenant_id FROM platform_operator o JOIN tenants t ON t.id=o.tenant_id WHERE o.singleton AND o.tenant_id=$1 AND t.status='active' AND t.deleted_at IS NULL";
 const GRANTS_SQL: &str = "SELECT EXISTS(SELECT 1 FROM principal_capabilities WHERE tenant_id=$1 AND user_id=$2 AND capability=$3 AND NOT is_allowed), EXISTS(SELECT 1 FROM principal_capabilities WHERE tenant_id=$1 AND user_id=$2 AND capability=$3 AND is_allowed), EXISTS(SELECT 1 FROM effective_principal_roles p JOIN roles r ON r.tenant_id=p.tenant_id AND r.id=p.role_id WHERE p.tenant_id=$1 AND p.user_id=$2 AND r.grant_all), EXISTS(SELECT 1 FROM effective_principal_roles p JOIN role_capabilities r ON r.tenant_id=p.tenant_id AND r.role_id=p.role_id WHERE p.tenant_id=$1 AND p.user_id=$2 AND r.capability=$3)";
+const SYSTEM_GRANT_SQL: &str = "SELECT is_allowed FROM authz_system_grants WHERE tenant_id=$1 AND principal=$2 AND capability=$3";
 const LOG_SQL: &str = "INSERT INTO authz_decision_log(tenant_id,user_id,capability,allowed,reason,principal_type,system_principal) VALUES($1,$2,$3,$4,$5,$6,$7)";
 const LOG_RETURNING_SQL: &str = "INSERT INTO authz_decision_log(tenant_id,user_id,capability,allowed,reason,principal_type,system_principal) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id";
 /// Deny wins over every allow; an allow names the grant that carried it.
@@ -280,40 +291,110 @@ pub async fn decide_system(
     scope: &SystemScope,
     key: &str,
 ) -> Result<Decision> {
+    system_decision(client, scope.tenant, scope.principal(), key).await
+}
+/// The one read the named-principal rule needs, so the same decision runs on
+/// a pooled client, a transaction or Tenancy's sealed proof connection.
+trait Reader {
+    async fn one(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> Result<Option<Row>>;
+}
+impl<T: GenericClient> Reader for T {
+    async fn one(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> Result<Option<Row>> {
+        Ok(self.query_opt(sql, params).await?)
+    }
+}
+struct Proof<'a>(&'a dyn ProofClient);
+impl Reader for Proof<'_> {
+    async fn one(&self, sql: &str, params: &[&(dyn ToSql + Sync)]) -> Result<Option<Row>> {
+        self.0.query_opt(sql, params).await
+    }
+}
+/// The named-principal rule, shared by `decide_system` and by `decide` /
+/// `decide_proof` on a principal's sealed scope: a live tenant, a known key, a
+/// named principal, the platform gate, the installed declaration, then the
+/// durable tenant grant, where a denying grant wins. Logged as `system` with
+/// the principal; roles and grant-all never apply.
+async fn system_decision(
+    client: &impl Reader,
+    tenant: i64,
+    principal: Option<&str>,
+    key: &str,
+) -> Result<Decision> {
     if key.is_empty() || key.len() > 200 {
         return Err(Error::Invalid);
     }
     let vocab = vocabulary()?;
-    let live = client
-        .query_opt(
-            "SELECT id FROM tenants WHERE id=$1 AND status='active' AND deleted_at IS NULL",
-            &[&scope.tenant],
-        )
-        .await?
-        .is_some();
-    let d = if !live {
-        Decision::deny("denied_invalid_actor_context")
-    } else if !vocab.capabilities.contains_key(key) {
-        Decision::deny("denied_unknown_capability")
-    } else if scope.principal.is_none() {
-        Decision::deny("denied_no_principal")
-    } else if vocab.capabilities[key].definition.platform
-        && !is_operator(client, scope.tenant).await?
-    {
-        Decision::deny("denied_platform_scope")
-    } else if !vocab
-        .system_principals
-        .get(scope.principal().unwrap())
-        .is_some_and(|p| p.capabilities.contains(&key))
-    {
-        Decision::deny("denied_undeclared_capability")
-    } else {
-        match client.query_opt("SELECT is_allowed FROM authz_system_grants WHERE tenant_id=$1 AND principal=$2 AND capability=$3",&[&scope.tenant,&scope.principal(),&key]).await?.map(|r|r.get::<_,bool>(0)) {
-            Some(true)=>Decision::allow("system_principal_grant"), Some(false)=>Decision::deny("denied_explicitly"),None=>Decision::deny("denied_missing_capability"),
+    let live = client.one(LIVE_TENANT_SQL, &[&tenant]).await?.is_some();
+    let decision = match principal {
+        _ if !live => Decision::deny("denied_invalid_actor_context"),
+        _ if !vocab.capabilities.contains_key(key) => Decision::deny("denied_unknown_capability"),
+        None => Decision::deny("denied_no_principal"),
+        Some(name) => {
+            let platform = vocab.capabilities[key].definition.platform;
+            if platform && client.one(OPERATOR_SQL, &[&tenant]).await?.is_none() {
+                Decision::deny("denied_platform_scope")
+            } else if !vocab
+                .system_principals
+                .get(name)
+                .is_some_and(|declared| declared.capabilities.contains(&key))
+            {
+                Decision::deny("denied_undeclared_capability")
+            } else {
+                match client
+                    .one(SYSTEM_GRANT_SQL, &[&tenant, &name, &key])
+                    .await?
+                    .map(|row| row.get::<_, bool>(0))
+                {
+                    Some(true) => Decision::allow("system_principal_grant"),
+                    Some(false) => Decision::deny("denied_explicitly"),
+                    None => Decision::deny("denied_missing_capability"),
+                }
+            }
         }
     };
-    log(client, scope.tenant, 0, scope.principal(), key, d).await?;
-    Ok(d)
+    let kind = "system";
+    client
+        .one(
+            LOG_RETURNING_SQL,
+            &[
+                &tenant,
+                &0_i64,
+                &key,
+                &decision.allowed,
+                &decision.reason,
+                &kind,
+                &principal,
+            ],
+        )
+        .await?;
+    Ok(decision)
+}
+/// `Authentication::for_system`: the sealed `Scope` a worker runs a named
+/// system principal's job under (SP1). Authz proves the declaration, then
+/// Tenancy seals the principal (`Authentication::for_principal`); every
+/// decision on that scope comes back here as the named-principal rule. An
+/// anonymous `SystemScope` gets no scope: it can hold no capability.
+pub trait SystemAuthentication {
+    fn for_system<'a, C: GenericClient + Sync>(
+        &'a self,
+        client: &'a C,
+        scope: &'a SystemScope,
+    ) -> ProofFuture<'a, Scope>;
+}
+impl SystemAuthentication for Authentication {
+    fn for_system<'a, C: GenericClient + Sync>(
+        &'a self,
+        client: &'a C,
+        scope: &'a SystemScope,
+    ) -> ProofFuture<'a, Scope> {
+        Box::pin(async move {
+            let principal = scope.principal().ok_or(Error::Forbidden)?;
+            if !vocabulary()?.system_principals.contains_key(principal) {
+                return Err(Error::Forbidden);
+            }
+            self.for_principal(client, scope.tenant(), principal).await
+        })
+    }
 }
 pub async fn authorize_system(
     client: &impl GenericClient,
@@ -355,6 +436,18 @@ pub async fn explicitly_granted(
     scope: &Scope,
     key: &str,
 ) -> Result<bool> {
+    // A principal's only grants are by name: declared, allowed and not denied.
+    if let Some(principal) = scope.principal() {
+        let declared = vocabulary()?
+            .system_principals
+            .get(principal)
+            .is_some_and(|declared| declared.capabilities.contains(&key));
+        return Ok(declared
+            && client
+                .query_opt(SYSTEM_GRANT_SQL, &[&scope.tenant(), &principal, &key])
+                .await?
+                .is_some_and(|row| row.get::<_, bool>(0)));
+    }
     Ok(client.query_one("SELECT NOT EXISTS(SELECT 1 FROM principal_capabilities WHERE tenant_id=$1 AND user_id=$2 AND capability=$3 AND NOT is_allowed) AND (EXISTS(SELECT 1 FROM principal_capabilities WHERE tenant_id=$1 AND user_id=$2 AND capability=$3 AND is_allowed) OR EXISTS(SELECT 1 FROM effective_principal_roles p JOIN role_capabilities r ON r.tenant_id=p.tenant_id AND r.role_id=p.role_id WHERE p.tenant_id=$1 AND p.user_id=$2 AND r.capability=$3))",&[&scope.tenant(),&scope.user(),&key]).await?.get(0))
 }
 /// The `base/tenancy.authorization` binding: `authorize_operator` on a pooled
@@ -380,6 +473,14 @@ impl bilibi_tenancy::OperatorAuthorizer for OperatorAuthorizer {
             let client = self.db.get().await?;
             authorize_operator(&**client, scope, key).await
         })
+    }
+    fn authorize_scope_in<'a>(
+        &'a self,
+        client: &'a dyn ProofClient,
+        scope: &'a Scope,
+        key: &'a str,
+    ) -> ProofFuture<'a, ()> {
+        Box::pin(async move { authorize_proof(client, scope, key).await })
     }
 }
 pub async fn restrictions(client: &impl GenericClient, scope: &Scope) -> Result<HashSet<String>> {
