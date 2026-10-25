@@ -10,6 +10,10 @@ Use `Authentication` and `Scope` from `src/lib.rs` for authenticated identity. R
 
 `prove_owner` proves the installation owner named by Core User's bootstrap receipt (`user_bootstrap`). It re-reads the account, eligibility, receipt and operator marker on the caller's connection every time. An agent can hold that person's standing while its grant remains live; an impersonated session never can. No role or capability confers ownership. `Authentication` carries the bound verifier into each sealed scope so an old scope cannot retain revoked standing. Core Agent Access binds `AgentVerifier`: every reproof checks the connection's tenant, person, organisation, expiry and revocation against the refreshed actor. Missing bindings refuse agent proofs. Reviewed commits also hold the credential row through the existing plan authority, preventing revocation from racing the write. Owner-only actions still require their declared Base Step-up policy.
 
+## Organisation summaries
+
+`OrganisationDirectory` and `PartyProofs` return `NamedOrganisation` with `id`, display `name`, full `status` and the existing `archived` flag. Core Company populates both status fields through the same scoped directory reads. See [Core Company's public summary contract](../../core/company/README.md#public-company-summaries) for lifecycle values, authorization, chooser policies and custom directory updates.
+
 ## Named system principals (SP1)
 
 `Authentication::for_principal(client, tenant, principal)` is the trusted worker edge: it seals a `Scope` whose `Actor` is the named system principal, in a live tenant, with no account, person, organisation, affiliation, agent facet, impersonator or step-up code and a fresh CSRF value. Call it through Authz's `SystemAuthentication::for_system(client, &SystemScope)`, which proves the declaration first; Queue does this on every attempt of a system job, so `Execution::scope()` is `Some` for a principal too. It is never a browser constructor and never deserialized: the principal comes from a worker's rehydrated job row or a schedule definition.

@@ -779,12 +779,17 @@ pub trait PersonProvider: Send + Sync {
     ) -> ProofFuture<'a, ()>;
 }
 /// One organisation of the actor's tenant, named as the actor may see it.
-/// `archived` companies are listed so a picker can show them read-only, and
-/// an id here is still a request: every write reproves it.
+/// Mirrors Bilimbi `Authz.CompanyDirectory`'s company summary.
+/// `status` carries the full company lifecycle state; `archived` is retained
+/// for callers that only need the read-only flag. An id here is still a
+/// request: every write reproves it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NamedOrganisation {
     pub id: OrganisationId,
     pub name: String,
+    /// Core Company's stored status: active, pending, suspended or archived.
+    pub status: String,
+    /// Equivalent to `status == "archived"` for summaries from Core Company.
     pub archived: bool,
 }
 /// Core Company's naming half of the organisation seam (Bilimbi

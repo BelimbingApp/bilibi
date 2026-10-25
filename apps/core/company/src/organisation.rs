@@ -203,10 +203,13 @@ const NAMED_SQL: &str =
 fn named(row: &tokio_postgres::Row) -> Result<NamedOrganisation> {
     let legal_name: Option<String> = row.get(2);
     let name: String = row.get(1);
+    let status: String = row.get(3);
+    let archived = status == ARCHIVED;
     Ok(NamedOrganisation {
         id: OrganisationId::new(row.get(0)).map_err(|_| Error::Internal)?,
         name: display_name(legal_name.as_deref(), &name),
-        archived: row.get::<_, String>(3) == ARCHIVED,
+        status,
+        archived,
     })
 }
 async fn named_in_scope(client: &dyn ProofClient, scope: &Scope) -> Result<Vec<NamedOrganisation>> {
@@ -238,6 +241,7 @@ async fn named_in_scope(client: &dyn ProofClient, scope: &Scope) -> Result<Vec<N
         companies.push(NamedOrganisation {
             id: OrganisationId::new(id).map_err(|_| Error::Internal)?,
             name: display_name(legal_name, name),
+            status: status.to_owned(),
             archived: status == ARCHIVED,
         });
     }

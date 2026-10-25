@@ -55,6 +55,21 @@ capability in the tenant it reaches every live company of that tenant, in
 `.list` and `.view`; field saves and lifecycle commands use `.update` plus
 company reach. The generic field editor never accepts `status`.
 
+## Public company summaries
+
+`organisation::Directory` returns `bilibi_tenancy::NamedOrganisation` with the company's `id`, display `name`, full `status` and existing `archived` flag.
+
+| Field | Meaning |
+| --- | --- |
+| `status` | Stored lifecycle state: `active`, `pending`, `suspended` or `archived` |
+| `archived` | `true` exactly when `status == "archived"`; retained for existing readers |
+
+All four directory methods (`in_scope`, `selectable`, `target`, `lookup`) carry the status. They retain their existing tenant, capability and reach rules. `selectable` excludes archived companies but still includes pending and suspended companies when otherwise permitted. Status grants no authority and does not change account eligibility.
+
+Domains that need an active-company chooser can carry `summary.status` through their own summary and filter with `summary.status == "active"`. Keep authorization at the existing directory or owner boundary; do not query Company's tables. This Platform change supplies the status only; each Domain owns its chooser policy.
+
+Existing readers can keep using `archived`. A custom `OrganisationDirectory` implementation that constructs `NamedOrganisation` must also set `status` from its company lifecycle state and keep `archived` consistent. Exhaustive destructuring must include `status` or `..`.
+
 ## Writes
 
 Every write takes the sealed scope, checks its capability at the moment of
