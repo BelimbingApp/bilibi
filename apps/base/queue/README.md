@@ -78,8 +78,7 @@ through `SystemAuthentication::for_system`, so the handler calls owner facades
 (Settings, Company targets, Domain facades) with it and each decides by the
 principal's name and grants. A handler written when a system job had no scope
 may still refuse `Identity::System`. `Execution::begin` re-proves the same
-identity inside the owner's transaction. `Queue::enqueue_for` with a
-principal's scope enqueues a system job as that principal.
+identity inside the owner's transaction.
 
 `store::lookup` and bounded `store::states` return redacted state/attempt/failure
 facts including terminal states. Trusted owner/scheduler adapters supply a

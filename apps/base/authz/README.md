@@ -92,8 +92,9 @@ any held restricting role masks, even alongside an admin. `fields::mask` removes
 restricted fields before JSON serialization, including arrays, audit old/new
 objects and headless projections. `fields::refuse_attempts` refuses any submitted
 restricted key regardless of its value. Owner-typed read models must also clear
-those values before rendering (Companies already does). Named system identities
-hold no roles and therefore have no role-based field restrictions. P8 owns the
+those values before rendering (Companies already does). A named system
+principal holds no roles, so it fails closed: every restriction in its tenant
+applies to it, and it never sees or writes a role-restricted field. P8 owns the
 protected-field catalog contract and restriction administration; Grid supplies
 that catalog as data, with no Authz→Grid dependency.
 

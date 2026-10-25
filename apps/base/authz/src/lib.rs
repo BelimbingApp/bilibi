@@ -417,7 +417,7 @@ pub async fn authorize_operator(
             client,
             scope.tenant(),
             scope.user(),
-            None,
+            scope.principal(),
             key,
             Decision::deny("denied_platform_scope"),
         )
@@ -493,6 +493,12 @@ pub async fn restrictions_for(
 ) -> Result<HashSet<String>> {
     if table.is_empty() || table.len() > 200 {
         return Err(Error::Invalid);
+    }
+    // A principal holds no roles, so no role's restriction can be shown to
+    // hold for it: every field any role in the tenant is restricted from stays
+    // withheld.
+    if scope.principal().is_some() {
+        return Ok(client.query("SELECT DISTINCT field_id FROM field_restrictions WHERE tenant_id=$1 AND table_id=$2",&[&scope.tenant(),&table]).await?.iter().map(|row|row.get(0)).collect());
     }
     Ok(client.query("SELECT DISTINCT f.field_id FROM field_restrictions f JOIN effective_principal_roles p ON p.tenant_id=f.tenant_id AND p.role_id=f.role_id WHERE f.tenant_id=$1 AND p.user_id=$2 AND f.table_id=$3",&[&scope.tenant(),&scope.user(),&table]).await?.iter().map(|row|row.get(0)).collect())
 }
