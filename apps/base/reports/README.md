@@ -72,7 +72,7 @@ Grid's cost bound and timeouts apply to every run on top of these.
 
 Reads: `base.reports.list` (with `built_in`), `get` and `run` (by `id`, or `builtin` key), `fields` (record types, or one type's column paths), `exports`, `subscriptions`. Reviewed writes: `create`, `update`, `copy` (also of a built-in), `share`, `delete`, `prepare_export`, `subscribe`, `pause_subscription`, `unsubscribe`. Guide: `base.reports`.
 
-## Schedules (ADR 06, decision 4)
+## Schedules (ADR 07, decision 4)
 
 - A subscription delivers one report daily, weekly (a weekday) or monthly (day 1–28) at a wall-clock time in the subscriber's display zone, as CSV or PDF, to the subscriber and, with `reports.share`, to the holders of chosen roles.
 - Schedule's recurrence `base/reports.deliveries` (every 15 minutes, the `scheduler` principal) sweeps due subscriptions: one delivery per recipient (unique per due time), audited in each tenant as `scheduler`. Like every contributed recurrence it runs nothing until an operator enables it on `/system/schedule`.
