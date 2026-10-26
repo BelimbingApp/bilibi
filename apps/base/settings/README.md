@@ -37,7 +37,7 @@ for consumers with no session (signed links, workers). Encrypted definitions,
 runtime claims and keys without a global scope refuse; a secret needs an
 explicit, authorized `get`.
 
-`Settings::get_tenant(client, tenant, key)` is the same read for a trusted worker acting for one tenant without a session (a `base/privacy` retention sweep): that tenant's value, else the global one where the key allows it, else the default. The same refusals apply, plus keys that cannot hold a tenant value.
+**A constraint (`CONSTRAINTS`) is a rule over 2–8 defined, unencrypted settings at one scope.** Writing any of them locks all of them in key order, then refuses the write (`Invalid`) unless the rule holds for the values that scope resolves; `constraint_messages(key)` gives the rule's sentence, which System Settings shows beside the refused value. `base/privacy` uses it so a retention period is never below its legal minimum.
 
 `Target` is a request, not permission. The actor is a sealed Tenancy `Scope`.
 User means the actor's own account; tenant means their tenant. A named system

@@ -9,8 +9,8 @@
 //! acts on that held request, never on a client value. A refusal is a flash;
 //! a Step-up refusal goes to the host, which asks for the code and comes back.
 use crate::{
-    ClassView, Hold, HoldTarget, Privacy, RequestKind, RequestView, RetentionAction, HOLD_MANAGE,
-    REQUEST_APPROVE, REQUEST_RECEIVE, RETENTION_MANAGE,
+    ClassView, ConfirmedRecord, Hold, HoldTarget, Privacy, RequestKind, RequestView,
+    RetentionAction, HOLD_MANAGE, REQUEST_APPROVE, REQUEST_RECEIVE, RETENTION_MANAGE,
 };
 use askama::Template;
 use bilibi_agent_api::{
@@ -32,8 +32,8 @@ use bilibi_ui::{
     },
     params, Badge, BadgeKind, BuiltinColumn, Button, ButtonVariant, Card, ColumnsOutcome,
     ConfirmDialog, CreateButton, Fact, Facts, FilterToolbar, FlashMap, FlexRow, FlexTable, Header,
-    Html, IconButton, IconKind, ListColumns, ListSpec, ListState, Modal, Pagination, RecordLink,
-    SectionHeading, StatusKind, TableEmpty, ToolbarControl, NO_FLASH,
+    Html, IconButton, IconKind, ListColumns, ListSpec, ListState, Modal, PageCounts, Pagination,
+    RecordLink, SectionHeading, StatusKind, TableEmpty, ToolbarControl, NO_FLASH,
 };
 use serde_json::{json, Value};
 use std::{
@@ -50,7 +50,7 @@ const PAGE_SIZES: [u64; 3] = [25, 50, 100];
 const REQUEST_FORM: &str = "request";
 const HOLD_FORM: &str = "hold";
 const NOTE_FORM: &str = "note";
-const PERIOD_FORM: &str = "period";
+const REVEAL_FORM: &str = "reveal";
 
 static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
     ListSpec {
@@ -350,19 +350,37 @@ impl Requests {
         let can_receive = effective_capabilities(&**client, scope)
             .await?
             .contains(REQUEST_RECEIVE);
-        let mut all = pages.privacy.requests(&**client, scope, false, 500).await?;
         let search = self.state.search.trim().to_lowercase();
-        if !search.is_empty() {
-            all.retain(|r| {
-                r.id.to_string() == search
-                    || r.person.get().to_string() == search
-                    || r.kind.as_str().contains(&search)
-                    || r.status.contains(&search)
-            });
+        let size = self.state.page_size as i64;
+        let (mut rows, mut total) = pages
+            .privacy
+            .requests(
+                &**client,
+                scope,
+                &search,
+                false,
+                self.state.offset() as i64,
+                size,
+            )
+            .await?;
+        if self
+            .state
+            .clamp_to_last_page((total as u64).div_ceil(self.state.page_size), true)
+        {
+            (rows, total) = pages
+                .privacy
+                .requests(
+                    &**client,
+                    scope,
+                    &search,
+                    false,
+                    self.state.offset() as i64,
+                    size,
+                )
+                .await?;
         }
-        let page = self.state.paginate(&all);
-        let counts = page.counts;
-        self.rows = page.entries.to_vec();
+        let counts = PageCounts::new(self.state.page, self.state.page_size, total as u64);
+        self.rows = rows;
         if self.rows_changed {
             self.columns.load(&self.rows, |row| row.id.to_string());
         }
@@ -391,7 +409,7 @@ impl Requests {
                 "search",
                 "Search requests",
                 &form["search"],
-                "Search by request, person, kind or status...",
+                "Search by request or person ID, kind or status...",
             )],
         ))?;
         let mut rows = Vec::with_capacity(self.rows.len());
@@ -563,8 +581,19 @@ struct StoreRow {
     result: String,
     attempts: i32,
 }
+/// The most identifier-only candidates the verify dialog offers to confirm
+/// (its form must stay within the 64 fields a form event keeps).
+const MAX_CONFIRM: usize = 60;
 enum Dialog {
     Verify {
+        values: HashMap<String, String>,
+        errors: BTreeMap<String, Vec<String>>,
+        /// The candidates offered, held here so a forged index confirms nothing.
+        candidates: Vec<(ConfirmedRecord, String)>,
+        more: bool,
+    },
+    /// A reader with restricted fields gives a reason before the export.
+    Export {
         values: HashMap<String, String>,
         errors: BTreeMap<String, Vec<String>>,
     },
@@ -583,6 +612,8 @@ struct RequestPage {
     rows: Vec<StoreRow>,
     dialog: Option<Dialog>,
     flash: Option<(StatusKind, String)>,
+    /// The reason given for this export download, once.
+    export_reason: Option<String>,
 }
 fn summary(result: &Option<Value>) -> String {
     let Some(result) = result else {
@@ -640,6 +671,7 @@ impl RequestPage {
             rows: Vec::new(),
             dialog: None,
             flash: None,
+            export_reason: None,
         })
     }
     fn version(&self) -> i64 {
@@ -658,10 +690,50 @@ impl RequestPage {
             },
             "clear-flash" => clear_flash(&mut self.flash, value),
             "open_verify" => {
+                let client = self.pages.db.get().await?;
+                let mut candidates = Vec::new();
+                for (store, label, found) in self.pages.privacy.locate(&client, scope, id).await? {
+                    for candidate in found.candidates {
+                        candidates.push((
+                            ConfirmedRecord {
+                                store: store.clone(),
+                                kind: candidate.kind,
+                                id: candidate.id,
+                            },
+                            format!("{label}: {}", candidate.summary),
+                        ));
+                    }
+                }
+                let more = candidates.len() > MAX_CONFIRM;
+                candidates.truncate(MAX_CONFIRM);
                 self.dialog = Some(Dialog::Verify {
                     values: HashMap::new(),
                     errors: BTreeMap::new(),
+                    candidates,
+                    more,
                 })
+            }
+            "open_export" => {
+                self.dialog = Some(Dialog::Export {
+                    values: HashMap::new(),
+                    errors: BTreeMap::new(),
+                })
+            }
+            "export_reason" => {
+                let values = params::form_values(value, REVEAL_FORM);
+                let reason = values.get("reason").map(|r| r.trim()).unwrap_or("");
+                if reason.is_empty() || reason.chars().count() > 255 {
+                    self.dialog = Some(Dialog::Export {
+                        values,
+                        errors: BTreeMap::from([(
+                            "reason".to_owned(),
+                            vec!["Give a case or ticket reference of 1-255 characters.".to_owned()],
+                        )]),
+                    });
+                    return Ok(());
+                }
+                self.export_reason = Some(reason.to_owned());
+                self.dialog = None;
             }
             "open_refuse" => {
                 self.dialog = Some(Dialog::Refuse {
@@ -675,11 +747,22 @@ impl RequestPage {
                 let verify = value["type"] == "verify";
                 let values = params::form_values(value, NOTE_FORM);
                 let note = values.get("note").cloned().unwrap_or_default();
+                let confirm: Vec<&ConfirmedRecord> = match &self.dialog {
+                    Some(Dialog::Verify { candidates, .. }) if verify => candidates
+                        .iter()
+                        .enumerate()
+                        .filter(|(index, _)| {
+                            values.get(&format!("c{index}")).map(String::as_str) == Some("true")
+                        })
+                        .map(|(_, (record, _))| record)
+                        .collect(),
+                    _ => Vec::new(),
+                };
                 let (event, contract, input) = if verify {
                     (
                         "verify",
                         "base.privacy.request.verify",
-                        json!({"id": id, "version": self.version(), "verification": note}),
+                        json!({"id": id, "version": self.version(), "verification": note, "confirm": confirm}),
                     )
                 } else {
                     (
@@ -705,10 +788,16 @@ impl RequestPage {
                         {
                             errors.insert("note".into(), message);
                         }
-                        self.dialog = Some(if verify {
-                            Dialog::Verify { values, errors }
-                        } else {
-                            Dialog::Refuse { values, errors }
+                        self.dialog = Some(match self.dialog.take() {
+                            Some(Dialog::Verify {
+                                candidates, more, ..
+                            }) if verify => Dialog::Verify {
+                                values,
+                                errors,
+                                candidates,
+                                more,
+                            },
+                            _ => Dialog::Refuse { values, errors },
                         });
                         self.flash = Some(refusal(
                             error,
@@ -748,6 +837,12 @@ impl RequestPage {
             capabilities.contains(REQUEST_APPROVE),
         );
         let request = pages.privacy.request(&**client, scope, self.id).await?;
+        // The version every write from this page sends: the one shown.
+        self.request = Some(request.clone());
+        let restricted = !bilibi_authz::fields::restricted(&**client, scope)
+            .await?
+            .values()
+            .all(|fields| fields.is_empty());
         let open = matches!(request.status.as_str(), "received" | "verified");
         let located = if open {
             pages.privacy.locate(&client, scope, self.id).await?
@@ -831,8 +926,22 @@ impl RequestPage {
                 ..Button::default()
             })?);
         }
-        if request.export_artifact.is_some() || request.certificate_artifact.is_some() {
-            let href = format!("{REQUESTS_PATH}/{}/document", request.id);
+        if request.export_artifact.is_some() && restricted && self.export_reason.is_none() {
+            actions.push(&render(Button {
+                event: "open_export",
+                id: "privacy-document",
+                body: Html::text("Download export"),
+                ..Button::default()
+            })?);
+        } else if request.export_artifact.is_some() || request.certificate_artifact.is_some() {
+            let path = format!("{REQUESTS_PATH}/{}/document", request.id);
+            let href = match (&self.export_reason, request.export_artifact.is_some()) {
+                (Some(reason), true) => params::address(
+                    &path,
+                    &HashMap::from([("reason".to_owned(), reason.clone())]),
+                ),
+                _ => path,
+            };
             let label = if request.export_artifact.is_some() {
                 "Download export"
             } else {
@@ -905,6 +1014,20 @@ impl RequestPage {
                     ),
                 },
                 Fact {
+                    title: "Confirmed matches",
+                    id: "privacy-request-confirmed",
+                    value: Html::text(&if request.confirmed.is_empty() {
+                        "None".to_owned()
+                    } else {
+                        request
+                            .confirmed
+                            .iter()
+                            .map(|c| format!("{} {}", c.kind, c.id))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    }),
+                },
+                Fact {
                     title: "Approved",
                     id: "privacy-request-approved",
                     value: Html::text(&request.approved_by.map_or_else(
@@ -920,9 +1043,18 @@ impl RequestPage {
                 Fact {
                     title: "Outcome",
                     id: "privacy-request-outcome",
-                    value: Html::text(&match (&request.refused_reason, &request.completed_at) {
-                        (Some(reason), _) => format!("Refused: {reason}"),
-                        (None, Some(at)) => format!("Completed {}", when(&display, Some(at))),
+                    value: Html::text(&match (
+                        &request.refused_reason,
+                        &request.completed_at,
+                        &request.finish_error,
+                    ) {
+                        (Some(reason), _, _) => format!("Refused: {reason}"),
+                        (None, Some(at), _) => format!("Completed {}", when(&display, Some(at))),
+                        (None, None, Some(code)) => format!(
+                            "Finishing failed {} time(s) ({}); it is retried",
+                            request.finish_attempts,
+                            code.replace('_', " ")
+                        ),
                         _ => "Open".into(),
                     }),
                 },
@@ -985,8 +1117,10 @@ impl RequestPage {
                          hint: &str,
                          values: &HashMap<String, String>,
                          errors: &BTreeMap<String, Vec<String>>,
-                         submit: &str|
+                         submit: &str,
+                         before: Html|
          -> Result<Html> {
+            let mut body = before;
             let field = Field::in_form(NOTE_FORM, "note")
                 .id("privacy-note")
                 .label(label)
@@ -1007,31 +1141,116 @@ impl RequestPage {
                 body: Html::text(submit),
                 ..Button::default()
             })?);
+            body.push(&render(field)?);
             render(Form {
                 id: "privacy-note-form",
                 event,
-                body: render(field)?,
+                body,
                 actions,
                 ..Form::default()
             })
         };
         let dialog = match &self.dialog {
-            Some(Dialog::Verify { values, errors }) => render(Modal {
-                id: "privacy-verify-modal",
-                title: "Verify identity",
-                cancel_event: "close_modal",
-                description: "Record how you checked that the requester is this person. Verifying also confirms the email and phone matches in the Stores table.",
-                flash: Some(flash_map(&self.flash)),
-                body: note_form("verify", "How the identity was checked", "For example: matched NRIC against the account holder, in person.", values, errors, "Verify")?,
-                ..Modal::default()
-            })?,
+            Some(Dialog::Verify {
+                values,
+                errors,
+                candidates,
+                more,
+            }) => {
+                let mut body = Html::EMPTY;
+                if !candidates.is_empty() {
+                    body.push(&render(SectionHeading {
+                        title: "Found only by email or phone",
+                        id: "privacy-verify-candidates",
+                        description: if *more {
+                            "Tick each record that is this person's. Only ticked records are acted on. More were found than can be listed here; confirm the rest through the agent operation."
+                        } else {
+                            "Tick each record that is this person's. Only ticked records are acted on."
+                        },
+                        ..SectionHeading::default()
+                    })?);
+                    for (index, (_, summary)) in candidates.iter().enumerate() {
+                        let key = format!("c{index}");
+                        body.push(&render(
+                            Field::in_form(NOTE_FORM, &key)
+                                .id(format!("privacy-verify-candidate-{index}"))
+                                .kind(InputKind::Checkbox)
+                                .label(summary)
+                                .checked(values.get(&key).map(String::as_str) == Some("true")),
+                        )?);
+                    }
+                }
+                // The ticks are part of the form, so they post with the note.
+                let body = note_form(
+                    "verify",
+                    "How the identity was checked",
+                    "For example: matched NRIC against the account holder, in person.",
+                    values,
+                    errors,
+                    "Verify",
+                    body,
+                )?;
+                render(Modal {
+                    id: "privacy-verify-modal",
+                    title: "Verify identity",
+                    cancel_event: "close_modal",
+                    description: "Record how you checked that the requester is this person, and confirm any records found only by email or phone.",
+                    flash: Some(flash_map(&self.flash)),
+                    body,
+                    ..Modal::default()
+                })?
+            }
+            Some(Dialog::Export { values, errors }) => {
+                let field = Field::in_form(REVEAL_FORM, "reason")
+                    .id("privacy-export-reason")
+                    .label("Reason")
+                    .hint("A case or ticket reference. The download is recorded with it.")
+                    .value(values.get("reason").cloned().unwrap_or_default())
+                    .errors(errors.get("reason").cloned().unwrap_or_default())
+                    .required();
+                let mut actions = render(Button {
+                    button_type: "button",
+                    event: "close_modal",
+                    body: Html::text("Cancel"),
+                    ..Button::default()
+                })?;
+                actions.push(&render(Button {
+                    button_type: "submit",
+                    variant: ButtonVariant::Primary,
+                    body: Html::text("Continue"),
+                    ..Button::default()
+                })?);
+                render(Modal {
+                    id: "privacy-export-modal",
+                    title: "Download export",
+                    cancel_event: "close_modal",
+                    description: "The export shows every field in full, including fields masked or withheld for you. Downloading it needs permission to reveal fields and a reason.",
+                    flash: Some(flash_map(&self.flash)),
+                    body: render(Form {
+                        id: "privacy-export-form",
+                        event: "export_reason",
+                        body: render(field)?,
+                        actions,
+                        ..Form::default()
+                    })?,
+                    ..Modal::default()
+                })?
+            }
             Some(Dialog::Refuse { values, errors }) => render(Modal {
                 id: "privacy-refuse-modal",
                 title: "Refuse request",
                 cancel_event: "close_modal",
                 description: "Say why the request is refused. The reason is kept with the request.",
                 flash: Some(flash_map(&self.flash)),
-                body: note_form("refuse", "Reason", "For example: identity could not be verified.", values, errors, "Refuse")?,
+                body: note_form(
+                    "refuse",
+                    "Reason",
+                    "For example: identity could not be verified.",
+                    values,
+                    errors,
+                    "Refuse",
+                    Html::EMPTY,
+                )?,
                 ..Modal::default()
             })?,
             Some(Dialog::Approve) => {
@@ -1057,7 +1276,7 @@ impl RequestPage {
         };
         let shows_modal = matches!(
             self.dialog,
-            Some(Dialog::Verify { .. } | Dialog::Refuse { .. })
+            Some(Dialog::Verify { .. } | Dialog::Refuse { .. } | Dialog::Export { .. })
         );
         PageView {
             id: "privacy-request",
@@ -1261,18 +1480,23 @@ impl Holds {
         let can_manage = effective_capabilities(&**client, scope)
             .await?
             .contains(HOLD_MANAGE);
-        let mut all = pages.privacy.holds(&**client, scope, 500).await?;
         let search = self.state.search.trim().to_lowercase();
-        if !search.is_empty() {
-            all.retain(|h| {
-                h.reason.to_lowercase().contains(&search)
-                    || target_text(&h.target).to_lowercase().contains(&search)
-                    || h.id.to_string() == search
-            });
+        let size = self.state.page_size as i64;
+        let mut page = pages
+            .privacy
+            .holds(&**client, scope, &search, self.state.offset() as i64, size)
+            .await?;
+        if self
+            .state
+            .clamp_to_last_page((page.total as u64).div_ceil(self.state.page_size), true)
+        {
+            page = pages
+                .privacy
+                .holds(&**client, scope, &search, self.state.offset() as i64, size)
+                .await?;
         }
-        let page = self.state.paginate(&all);
-        let counts = page.counts;
-        self.rows = page.entries.to_vec();
+        let counts = PageCounts::new(self.state.page, self.state.page_size, page.total as u64);
+        self.rows = page.holds;
         if self.rows_changed {
             self.columns.load(&self.rows, |row| row.id.to_string());
         }
@@ -1497,31 +1721,28 @@ fn retention_columns() -> Vec<BuiltinColumn> {
         BuiltinColumn::new("class", "Records"),
         BuiltinColumn::new("clock", "Clock starts"),
         BuiltinColumn::new("action", "Then"),
-        BuiltinColumn::new("default", "Default"),
+        BuiltinColumn::new("enabled", "Sweep"),
+        BuiltinColumn::new("period", "Kept for"),
         BuiltinColumn::new("minimum", "Legal minimum"),
-        BuiltinColumn::new("period", "This tenant keeps"),
         BuiltinColumn::new("sweep", "Last sweep"),
     ]
 }
-fn days_text(days: Option<u32>) -> String {
+fn days_text(days: Option<i64>) -> String {
     match days {
-        None => "Forever".into(),
+        None => "Not set".into(),
         Some(1) => "1 day".into(),
         Some(days) => format!("{days} days"),
     }
 }
-struct PeriodDialog {
-    class: String,
-    values: HashMap<String, String>,
-    errors: BTreeMap<String, Vec<String>>,
-}
+/// Read-only: each company sets its periods and legal minimums in System
+/// Settings (company scope), where the settings constraint refuses a period
+/// below the legal minimum.
 struct Retention {
     pages: Pages,
     state: ListState,
     columns: ListColumns,
     rows_changed: bool,
     rows: Vec<ClassView>,
-    dialog: Option<PeriodDialog>,
     flash: Option<(StatusKind, String)>,
 }
 impl Retention {
@@ -1533,11 +1754,10 @@ impl Retention {
                 .map_err(|_| Error::Internal)?,
             rows_changed: true,
             rows: Vec::new(),
-            dialog: None,
             flash: None,
         })
     }
-    async fn event(&mut self, scope: &Scope, credential: &str, value: &Value) -> Result<()> {
+    async fn event(&mut self, value: &Value) -> Result<()> {
         match value
             .get("type")
             .and_then(Value::as_str)
@@ -1554,83 +1774,6 @@ impl Retention {
                 ColumnsOutcome::Update | ColumnsOutcome::Noop => self.rows_changed = false,
             },
             "clear-flash" => clear_flash(&mut self.flash, value),
-            "open_period" => {
-                let class = value.get("value").and_then(Value::as_str).unwrap_or("");
-                // Gone since the list was drawn: the redraw shows that.
-                if let Some(row) = self.rows.iter().find(|row| row.key == class) {
-                    self.flash = None;
-                    self.dialog = Some(PeriodDialog {
-                        class: row.key.to_owned(),
-                        values: HashMap::from([(
-                            "days".to_owned(),
-                            row.tenant_days.map(|d| d.to_string()).unwrap_or_default(),
-                        )]),
-                        errors: BTreeMap::new(),
-                    });
-                }
-            }
-            "close_modal" => self.dialog = None,
-            "set_retention" => {
-                let Some(dialog) = &self.dialog else {
-                    return Ok(());
-                };
-                let class = dialog.class.clone();
-                let values = params::form_values(value, PERIOD_FORM);
-                let days = values.get("days").map(|d| d.trim()).unwrap_or("");
-                let input = if days.is_empty() {
-                    json!({"class": class})
-                } else {
-                    match days.parse::<u64>() {
-                        Ok(days) => json!({"class": class, "days": days}),
-                        Err(_) => {
-                            self.dialog = Some(PeriodDialog {
-                                class,
-                                values,
-                                errors: BTreeMap::from([(
-                                    "days".to_owned(),
-                                    vec!["Give a whole number of days, or leave it empty for the default.".to_owned()],
-                                )]),
-                            });
-                            return Ok(());
-                        }
-                    }
-                };
-                match self
-                    .pages
-                    .contracts
-                    .submit(
-                        &call(
-                            scope,
-                            credential,
-                            "set_retention",
-                            "base.privacy.retention.set",
-                        ),
-                        input,
-                    )
-                    .await
-                {
-                    Ok(_) => {
-                        self.dialog = None;
-                        self.flash = Some((
-                            StatusKind::Success,
-                            "Retention period saved. The next sweep uses it.".into(),
-                        ));
-                    }
-                    Err(error) => {
-                        let errors = field_errors(&error);
-                        self.flash = Some(refusal(
-                            error,
-                            "You do not have permission to set retention periods.",
-                            "The retention period could not be saved.",
-                        )?);
-                        self.dialog = Some(PeriodDialog {
-                            class,
-                            values,
-                            errors,
-                        });
-                    }
-                }
-            }
             _ => return Err(Error::Invalid),
         }
         Ok(())
@@ -1642,7 +1785,11 @@ impl Retention {
         let can_manage = effective_capabilities(&**client, scope)
             .await?
             .contains(RETENTION_MANAGE);
-        let mut all = pages.privacy.retention_classes(&client, scope).await?;
+        let (company, mut all) = pages
+            .privacy
+            .retention_classes(&client, scope, None)
+            .await?;
+        let evidence = pages.privacy.last_evidence_sweep(&client, scope).await?;
         let search = self.state.search.trim().to_lowercase();
         if !search.is_empty() {
             all.retain(|c| {
@@ -1655,9 +1802,32 @@ impl Retention {
         if self.rows_changed {
             self.columns.load(&self.rows, |row| row.key.to_owned());
         }
+        let company_name = match company {
+            Some(id) => pages
+                .parties
+                .organisation_name(&**client, scope, id)
+                .await?
+                .map(|named| named.name),
+            None => None,
+        };
+        let settings_href = company.map(|id| format!("/system/settings?company={}", id.get()));
+        let actions = match (&settings_href, can_manage) {
+            (Some(href), true) => render(Button {
+                href,
+                id: "privacy-retention-settings",
+                body: Html::text("Change in System Settings"),
+                ..Button::default()
+            })?,
+            _ => Html::EMPTY,
+        };
+        let subtitle = match &company_name {
+            Some(name) => format!("What {name} keeps of each kind of record, and when the sweep acts. Records that belong to no one company follow the primary company. Legal holds keep what they name."),
+            None => "This tenant has no primary company yet, so no record class is swept.".to_owned(),
+        };
         let header = render(Header {
             title: Html::text("Retention"),
-            subtitle: "How long this tenant keeps each kind of record before it is purged or anonymised. Legal holds keep what they name.",
+            subtitle: &subtitle,
+            actions,
             ..Header::default()
         })?;
         let form = self.state.filters_form();
@@ -1677,52 +1847,45 @@ impl Retention {
                 RetentionAction::Purge => "Purge",
                 RetentionAction::Anonymise => "Anonymise",
             };
-            let period = match (class.tenant_days, class.effective_days) {
-                (Some(_), days) => render(Badge::status(BadgeKind::Success, &days_text(days)))?,
-                (None, days) => Html::text(&format!("{} (default)", days_text(days))),
+            let enabled = if class.enabled && class.period_days.is_some() {
+                render(Badge::status(BadgeKind::Success, "On"))?
+            } else if class.enabled {
+                render(Badge::status(BadgeKind::Warning, "On, no period"))?
+            } else {
+                Html::text("Off")
             };
             let sweep = match &class.last_sweep {
-                Some(sweep) => Html::text(&format!(
-                    "{}: {} acted on, {} kept",
-                    when(&display, Some(&sweep.finished_at)),
-                    sweep.acted,
-                    sweep.kept
-                )),
+                Some(sweep) => Html::text(&match &sweep.finished_at {
+                    Some(at) => format!(
+                        "{}: {} acted on, {} kept by holds",
+                        when(&display, Some(at)),
+                        sweep.acted,
+                        sweep.kept
+                    ),
+                    None => format!(
+                        "{}: stopped before it finished",
+                        when(&display, Some(&sweep.started_at))
+                    ),
+                }),
                 None => Html::text("Not swept yet"),
+            };
+            let minimum = match (class.legal_minimum_days, class.floor_days) {
+                (Some(days), _) => days_text(Some(days)),
+                (None, Some(floor)) => format!("{} (by law)", days_text(Some(i64::from(floor)))),
+                (None, None) => "None set".into(),
             };
             let mut row = FlexRow::new(class.key.to_owned())
                 .slot("class", Html::text(class.label))
                 .slot("clock", Html::text(class.clock_start))
                 .slot("action", Html::text(action))
-                .slot("default", Html::text(&days_text(class.default_days)))
-                .slot(
-                    "minimum",
-                    Html::text(
-                        &class
-                            .minimum_days
-                            .map_or("None".into(), |d| days_text(Some(d))),
-                    ),
-                )
-                .slot("period", period)
+                .slot("enabled", enabled)
+                .slot("period", Html::text(&days_text(class.period_days)))
+                .slot("minimum", Html::text(&minimum))
                 .slot("sweep", sweep);
             row.dom_id = Some(format!(
                 "privacy-retention-{}",
                 class.key.replace(['/', '.'], "-")
             ));
-            if can_manage {
-                let id = format!(
-                    "privacy-retention-set-{}",
-                    class.key.replace(['/', '.'], "-")
-                );
-                row.actions = render(IconButton {
-                    id: &id,
-                    kind: IconKind::Neutral,
-                    event: "open_period",
-                    name: "value",
-                    value: class.key,
-                    ..IconButton::new("hero-pencil", "Set period")
-                })?;
-            }
             rows.push(row);
         }
         let mut table = FlexTable::new("privacy-retention", self.columns.flex_columns(), rows);
@@ -1731,7 +1894,6 @@ impl Retention {
         table.add_query = &self.columns.add_query;
         table.caption = "Record classes";
         table.framed = false;
-        table.actions = can_manage;
         if counts.total_entries == 0 {
             table.empty = Some(TableEmpty::Content(Html::text(if search.is_empty() {
                 "No mounted module keeps records on a retention clock."
@@ -1751,70 +1913,26 @@ impl Retention {
             body: list,
             ..Card::default()
         })?);
-        let dialog = match &self.dialog {
-            Some(dialog) => {
-                let class = self.rows.iter().find(|row| row.key == dialog.class);
-                let hint = class.map_or(String::new(), |class| {
-                    format!(
-                        "Leave empty for the default ({}).{}",
-                        days_text(class.default_days),
-                        class.minimum_days.map_or(String::new(), |m| format!(
-                            " No shorter than the legal minimum of {}.",
-                            days_text(Some(m))
-                        ))
-                    )
-                });
-                let field = Field::in_form(PERIOD_FORM, "days")
-                    .id("privacy-retention-days")
-                    .label("Days to keep")
-                    .kind(InputKind::Number)
-                    .hint(&hint)
-                    .value(dialog.values.get("days").cloned().unwrap_or_default())
-                    .errors(dialog.errors.get("days").cloned().unwrap_or_default());
-                let mut actions = render(Button {
-                    button_type: "button",
-                    event: "close_modal",
-                    body: Html::text("Cancel"),
-                    ..Button::default()
-                })?;
-                actions.push(&render(Button {
-                    button_type: "submit",
-                    variant: ButtonVariant::Primary,
-                    body: Html::text("Save period"),
-                    ..Button::default()
-                })?);
-                let title = format!(
-                    "Retention: {}",
-                    class.map_or(dialog.class.as_str(), |c| c.label)
-                );
-                render(Modal {
-                    id: "privacy-retention-modal",
-                    title: &title,
-                    cancel_event: "close_modal",
-                    description: "Sweeps purge or anonymise records once this period has passed since the clock started.",
-                    flash: Some(flash_map(&self.flash)),
-                    body: render(Form {
-                        id: "privacy-retention-form",
-                        event: "set_retention",
-                        body: render(field)?,
-                        actions,
-                        ..Form::default()
-                    })?,
-                    ..Modal::default()
-                })?
-            }
-            None => Html::EMPTY,
+        let evidence_text = match evidence {
+            Some(sweep) => format!(
+                "Audit evidence kept for its legal minimum: last erased {} ({} records).",
+                when(&display, sweep.finished_at.as_deref().or(Some(&sweep.started_at))),
+                sweep.acted
+            ),
+            None => "Audit evidence kept for its legal minimum is erased by the same sweep once the minimum has passed.".to_owned(),
         };
+        body.push(&render(SectionHeading {
+            title: "Audit evidence",
+            id: "privacy-retention-evidence",
+            description: &evidence_text,
+            ..SectionHeading::default()
+        })?);
         PageView {
             id: "privacy-retention",
-            flash: if self.dialog.is_some() {
-                NO_FLASH
-            } else {
-                flash_map(&self.flash)
-            },
+            flash: flash_map(&self.flash),
             header,
             body,
-            dialog,
+            dialog: Html::EMPTY,
         }
         .render()
         .map_err(|_| Error::Internal)
@@ -1887,9 +2005,7 @@ impl LiveState<Scope, Error> for State {
                     Self::Holds(page) => {
                         page.event(request.scope, request.credential, value).await?
                     }
-                    Self::Retention(page) => {
-                        page.event(request.scope, request.credential, value).await?
-                    }
+                    Self::Retention(page) => page.event(value).await?,
                 },
             }
             if let Self::Requests(page) = self {
@@ -1969,9 +2085,10 @@ impl Download<Scope, Error> for Documents {
                 .filter(|id| *id > 0)
                 .ok_or(Error::NotFound)?;
             let mut client = self.db.get().await?;
+            let reason = request.query.get("reason").map(String::as_str);
             let (content_type, bytes, name) = self
                 .privacy
-                .request_document(&mut client, request.scope, id)
+                .request_document(&mut client, request.scope, id, reason)
                 .await?;
             Ok(FileBody::attachment(bytes, &content_type, &name))
         })

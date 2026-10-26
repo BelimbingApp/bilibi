@@ -3,13 +3,11 @@
 //! verified → approved → running → completed, or refused). Approval starts one
 //! idempotent Queue job per mounted store; `runner` answers them and finishes
 //! the request with an export bundle or a completion certificate.
-use crate::{
-    registry::{Identifier, Located, Subject},
-    Privacy, REQUEST_APPROVE, REQUEST_RECEIVE, REQUEST_VIEW, STEP_UP_ERASURE,
-};
+use crate::{Privacy, REQUEST_APPROVE, REQUEST_RECEIVE, REQUEST_VIEW, STEP_UP_ERASURE};
 use bilibi_database::{Change, Error, MutationTransaction, Result};
 use bilibi_module_registry::{Contribution, Provenance};
 use bilibi_party_ids::{OrganisationId, PersonId};
+use bilibi_personal_data::{Confirmed, Identifier, Located, Subject, MAX_CANDIDATES};
 use bilibi_tenancy::Scope;
 use bilibi_workflow::{
     Contribution as Flowing, Edge, Flow, Guard, Load, Operation, OwnerFuture, Request as Move,
@@ -27,11 +25,14 @@ pub const FLOW: &str = "privacy.request";
 pub(crate) const REQUEST_KIND: &str = "base/privacy.request";
 pub(crate) const STORE_KIND: &str = "base/privacy.request_store";
 pub(crate) const EXPORT_KIND: &str = "base/privacy.request_export";
+pub(crate) const CANDIDATE_KIND: &str = "base/privacy.request_candidate";
 /// Tenant setting: days from receipt a request is due (PDPA access period).
 pub const DUE_DAYS: &str = "privacy.request.due_days";
 pub(crate) const DUE_DEFAULT: i64 = 21;
 const MAX_TEXT: usize = 1000;
 const MAX_IDENTIFIERS: usize = 10;
+/// The text an erased person's requests keep in place of their personal text.
+const ERASED: &str = bilibi_personal_data::ERASED;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -110,7 +111,21 @@ pub struct RequestView {
     pub certificate_artifact: Option<String>,
     /// Open past its due date, or running with a store that has failed.
     pub late: bool,
+    /// Failed attempts of the finish step, and the last failure's code.
+    pub finish_attempts: i32,
+    pub finish_error: Option<String>,
+    /// An erasure of this person cleared this request's personal text.
+    pub erased: bool,
     pub stores: Vec<StoreProgress>,
+    /// Records the operator confirmed are the person's, per store.
+    pub confirmed: Vec<ConfirmedRecord>,
+}
+/// One identifier-only record the operator confirmed when verifying.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct ConfirmedRecord {
+    pub store: String,
+    pub kind: String,
+    pub id: String,
 }
 
 const TIME: &str = "'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'";
@@ -121,6 +136,7 @@ fn columns() -> String {
          to_char(due_at AT TIME ZONE 'UTC',{TIME}) AS due_at,verification,verified_by,approved_by,\
          to_char(approved_at AT TIME ZONE 'UTC',{TIME}) AS approved_at,refused_reason,\
          to_char(completed_at AT TIME ZONE 'UTC',{TIME}) AS completed_at,export_artifact,certificate_artifact,\
+         finish_attempts,finish_error,erased_at IS NOT NULL AS erased,\
          (status NOT IN ('completed','refused') AND (due_at < clock_timestamp() OR EXISTS (\
             SELECT 1 FROM base_privacy_request_stores s WHERE s.request_id=base_privacy_requests.id \
             AND (s.state='pending' OR NOT s.finished) AND s.attempts>0))) AS late"
@@ -147,7 +163,11 @@ fn view(row: &Row) -> Result<RequestView> {
         export_artifact: row.get("export_artifact"),
         certificate_artifact: row.get("certificate_artifact"),
         late: row.get("late"),
+        finish_attempts: row.get("finish_attempts"),
+        finish_error: row.get("finish_error"),
+        erased: row.get("erased"),
         stores: Vec::new(),
+        confirmed: Vec::new(),
     })
 }
 /// The facts a request change records: never an identifier value.
@@ -179,17 +199,70 @@ pub(crate) async fn load(
         .ok_or(Error::NotFound)?;
     view(&row)
 }
-pub(crate) fn subject_of(request: &RequestView) -> Subject {
+/// The subject one store answers for: the person, the identifiers given and
+/// that store's confirmed records. `request.confirmed` must be loaded.
+pub(crate) fn subject_for(request: &RequestView, store: &str) -> Subject {
     Subject {
         person: request.person,
         identifiers: request.identifiers.clone(),
+        confirmed: request
+            .confirmed
+            .iter()
+            .filter(|c| c.store == store)
+            .map(|c| Confirmed {
+                kind: c.kind.clone(),
+                id: c.id.clone(),
+            })
+            .collect(),
     }
+}
+/// The request's confirmed records, by store.
+pub(crate) async fn confirmed(
+    client: &impl GenericClient,
+    tenant: i64,
+    id: i64,
+) -> Result<Vec<ConfirmedRecord>> {
+    Ok(client
+        .query(
+            "SELECT store,kind,record_id FROM base_privacy_request_candidates WHERE tenant_id=$1 AND request_id=$2 ORDER BY store,kind,record_id",
+            &[&tenant, &id],
+        )
+        .await?
+        .iter()
+        .map(|row| ConfirmedRecord {
+            store: row.get(0),
+            kind: row.get(1),
+            id: row.get(2),
+        })
+        .collect())
+}
+/// A request's company must be one the approver can file documents under:
+/// their own company, or (unaffiliated) one Company lets them reach. Checked
+/// before anything runs, so a request no one here can finish never starts.
+pub(crate) async fn eligible(
+    privacy: &Privacy,
+    client: &(impl GenericClient + Sync),
+    scope: &Scope,
+    company: OrganisationId,
+) -> Result<()> {
+    if scope
+        .actor()
+        .organisation()
+        .is_some_and(|own| own != company)
+    {
+        return Err(Error::Forbidden);
+    }
+    privacy
+        .parties
+        .organisation_target(client, scope, company, REQUEST_APPROVE)
+        .await
+        .map(|_| ())
 }
 
 fn text(value: &str) -> Result<String> {
     let value = value.trim();
     if value.is_empty()
-        || value.len() > MAX_TEXT
+        || value.chars().count() > MAX_TEXT
         || value.chars().any(|c| c.is_control() && c != '\n')
     {
         return Err(Error::Invalid);
@@ -524,9 +597,9 @@ impl Privacy {
         .await
     }
 
-    /// What every mounted store holds about the request's subject, so the
-    /// operator can confirm matches found only by email or phone before
-    /// verifying: verifying confirms the identifiers the request carries.
+    /// What every mounted store holds about the request's subject, with each
+    /// store's records that match only an email or phone listed one by one,
+    /// for the operator to confirm when verifying.
     pub async fn locate(
         &self,
         client: &Client,
@@ -534,17 +607,35 @@ impl Privacy {
         id: i64,
     ) -> Result<Vec<(String, String, Located)>> {
         bilibi_authz::authorize_key(client, scope, REQUEST_VIEW).await?;
-        let request = load(client, scope.tenant(), id, false).await?;
-        let subject = subject_of(&request);
+        let mut request = load(client, scope.tenant(), id, false).await?;
+        request.confirmed = confirmed(client, scope.tenant(), id).await?;
+        self.locate_all(client, scope, &request).await
+    }
+    async fn locate_all(
+        &self,
+        client: &Client,
+        scope: &Scope,
+        request: &RequestView,
+    ) -> Result<Vec<(String, String, Located)>> {
         let mut found = Vec::new();
-        for (key, (_, data)) in &self.stores.by_key {
-            let located = data.handler.locate(client, scope, &subject).await?;
-            found.push(((*key).to_owned(), data.label.to_owned(), located));
+        for (key, _, data) in self.stores.iter() {
+            let mut located = data
+                .handler
+                .locate(client, scope, &subject_for(request, key))
+                .await?;
+            if located.candidates.len() > MAX_CANDIDATES {
+                located.candidates.truncate(MAX_CANDIDATES);
+                located.truncated = true;
+            }
+            found.push((key.to_owned(), data.label.to_owned(), located));
         }
         Ok(found)
     }
 
-    /// `received → verified`, recording how the requester's identity was checked.
+    /// `received → verified`, recording how the requester's identity was
+    /// checked and which of the stores' identifier-only candidates the
+    /// operator confirmed are the person's. A confirmation that is not a
+    /// current candidate is `Invalid`; candidates not confirmed are left alone.
     pub async fn verify(
         &self,
         client: &mut Client,
@@ -552,13 +643,14 @@ impl Privacy {
         id: i64,
         expected_version: i64,
         verification: &str,
+        confirm: &[ConfirmedRecord],
     ) -> Result<RequestView> {
         let mut tx = self
             .boundary
             .begin(client, scope.mutation_context("privacy.request.verify"))
             .await?;
         let done = self
-            .verify_in(&mut tx, scope, id, expected_version, verification)
+            .verify_in(&mut tx, scope, id, expected_version, verification, confirm)
             .await?;
         tx.commit().await?;
         Ok(done)
@@ -571,8 +663,33 @@ impl Privacy {
         id: i64,
         expected_version: i64,
         verification: &str,
+        confirm: &[ConfirmedRecord],
     ) -> Result<RequestView> {
         let note = text(verification)?;
+        if confirm.len() > MAX_CANDIDATES * 4 {
+            return Err(Error::Invalid);
+        }
+        let request = load(tx.sql(), scope.tenant(), id, false).await?;
+        let mut confirm: Vec<ConfirmedRecord> = confirm.to_vec();
+        confirm.sort();
+        confirm.dedup();
+        if !confirm.is_empty() {
+            // Read on another connection: the handlers read committed data.
+            let client = self.db.get().await?;
+            let located = self.locate_all(&client, scope, &request).await?;
+            let listed = |c: &ConfirmedRecord| {
+                located.iter().any(|(store, _, found)| {
+                    *store == c.store
+                        && found
+                            .candidates
+                            .iter()
+                            .any(|candidate| candidate.kind == c.kind && candidate.id == c.id)
+                })
+            };
+            if !confirm.iter().all(listed) {
+                return Err(Error::Invalid);
+            }
+        }
         let request = Move {
             expected_version: Some(expected_version),
             input: json!({"verification": note}),
@@ -581,12 +698,36 @@ impl Privacy {
         self.engine
             .transition_in(tx, scope, SUBJECT, id, "verified", request)
             .await?;
-        load(tx.sql(), scope.tenant(), id, false).await
+        let (tenant, user) = (scope.tenant(), scope.user());
+        for record in confirm {
+            tx.mutate(move |sql| {
+                Box::pin(async move {
+                    let row: i64 = sql
+                        .query_one(
+                            "INSERT INTO base_privacy_request_candidates(request_id,tenant_id,store,kind,record_id,confirmed_by) \
+                             VALUES($1,$2,$3,$4,$5,$6) RETURNING id",
+                            &[&id, &tenant, &record.store, &record.kind, &record.id, &user],
+                        )
+                        .await?
+                        .get(0);
+                    let change = Change {
+                        kind: CANDIDATE_KIND.into(),
+                        id: row,
+                        old: json!({}),
+                        new: json!({"request": id, "store": record.store, "kind": record.kind, "record": record.id}),
+                    };
+                    Ok(((), vec![change]))
+                })
+            })
+            .await?;
+        }
+        load(tx.sql(), tenant, id, false).await
     }
 
     /// `verified → approved → running`, then one job per mounted store. Only a
-    /// person approves (never an agent facet); an erasure also needs a second
-    /// person and Step-up (`base.privacy.erasure.approve`).
+    /// person approves (never an agent facet), and only someone who can file
+    /// under the request's company; an erasure also needs a second person and
+    /// Step-up (`base.privacy.erasure.approve`).
     pub async fn approve(
         &self,
         client: &mut Client,
@@ -612,10 +753,12 @@ impl Privacy {
         id: i64,
         expected_version: i64,
     ) -> Result<RequestView> {
-        if scope.agent().is_some() {
+        if scope.agent().is_some() || scope.principal().is_some() {
             return Err(Error::Forbidden);
         }
         let subject = load(tx.sql(), scope.tenant(), id, false).await?;
+        // Before any write and before any store runs.
+        eligible(self, tx.sql(), scope, subject.company).await?;
         if subject.kind == RequestKind::Erasure {
             if scope.actor().person() == Some(subject.person) {
                 return Err(Error::Forbidden);
@@ -647,7 +790,7 @@ impl Privacy {
         id: i64,
     ) -> Result<()> {
         let tenant = scope.tenant();
-        for &key in self.stores.by_key.keys() {
+        for (key, _, _) in self.stores.iter() {
             tx.mutate(move |sql| {
                 Box::pin(async move {
                     let row: i64 = sql
@@ -676,7 +819,7 @@ impl Privacy {
                 )
                 .await?;
         }
-        if self.stores.by_key.is_empty() {
+        if self.stores.is_empty() {
             self.queue
                 .enqueue_for(
                     tx,
@@ -729,7 +872,7 @@ impl Privacy {
         load(tx.sql(), scope.tenant(), id, false).await
     }
 
-    /// One request with each store's answer.
+    /// One request with each store's answer and its confirmed records.
     pub async fn request(
         &self,
         client: &impl GenericClient,
@@ -751,8 +894,7 @@ impl Privacy {
                 let store: String = row.get(0);
                 let label = self
                     .stores
-                    .by_key
-                    .get(store.as_str())
+                    .get(&store)
                     .map_or_else(|| store.clone(), |(_, data)| data.label.to_owned());
                 StoreProgress {
                     store,
@@ -765,28 +907,98 @@ impl Privacy {
                 }
             })
             .collect();
+        request.confirmed = confirmed(client, scope.tenant(), id).await?;
         Ok(request)
     }
 
-    /// The tenant's requests, newest first. `open` keeps only unfinished ones.
+    /// One page of the tenant's requests, newest first, counted and searched
+    /// in SQL: `search` matches a request or person ID, a kind or a status;
+    /// `open` keeps only unfinished ones. Returns the page and the total.
     pub async fn requests(
         &self,
         client: &impl GenericClient,
         scope: &Scope,
+        search: &str,
         open: bool,
+        offset: i64,
         limit: i64,
-    ) -> Result<Vec<RequestView>> {
+    ) -> Result<(Vec<RequestView>, i64)> {
         bilibi_authz::authorize_key(client, scope, REQUEST_VIEW).await?;
+        let search = search.trim().to_lowercase();
+        let number = search.parse::<i64>().ok();
+        let filter = "tenant_id=$1 AND (NOT $2 OR status NOT IN ('completed','refused')) \
+             AND ($3 = '' OR id=$4 OR person_id=$4 OR kind=$3 OR status=$3)";
+        let total: i64 = client
+            .query_one(
+                &format!("SELECT count(*) FROM base_privacy_requests WHERE {filter}"),
+                &[&scope.tenant(), &open, &search, &number],
+            )
+            .await?
+            .get(0);
         let rows = client
             .query(
                 &format!(
-                    "SELECT {} FROM base_privacy_requests WHERE tenant_id=$1 \
-                     AND (NOT $2 OR status NOT IN ('completed','refused')) ORDER BY id DESC LIMIT $3",
+                    "SELECT {} FROM base_privacy_requests WHERE {filter} ORDER BY id DESC OFFSET $5 LIMIT $6",
                     columns()
                 ),
-                &[&scope.tenant(), &open, &limit.clamp(1, 500)],
+                &[&scope.tenant(), &open, &search, &number, &offset.max(0), &limit.clamp(1, 500)],
             )
             .await?;
-        rows.iter().map(view).collect()
+        Ok((rows.iter().map(view).collect::<Result<_>>()?, total))
     }
+}
+
+/// Clears the personal text of every request about `person` in the tenant
+/// once an erasure of that person completes (ADR 05: no erasure trail keeps
+/// the erased values): the identifiers given, the identity note and a refusal
+/// reason, in this request and every other, open or closed. Staged exports of
+/// those requests are dropped. Rows are locked in ID order, so concurrent
+/// completions for one person take turns. The caller deletes their export
+/// artifacts first.
+pub(crate) async fn forget_person(
+    sql: &Transaction<'_>,
+    tenant: i64,
+    person: PersonId,
+) -> Result<Vec<Change>> {
+    let rows = sql
+        .query(
+            "SELECT id,jsonb_array_length(identifiers),verification IS NOT NULL,refused_reason IS NOT NULL \
+             FROM base_privacy_requests WHERE tenant_id=$1 AND person_id=$2 ORDER BY id FOR UPDATE",
+            &[&tenant, &person.get()],
+        )
+        .await?;
+    let mut changes = Vec::new();
+    for row in rows {
+        let id: i64 = row.get(0);
+        let (given, noted, refused): (i32, bool, bool) = (row.get(1), row.get(2), row.get(3));
+        sql.execute(
+            "UPDATE base_privacy_requests SET identifiers='[]',\
+             verification=CASE WHEN verification IS NULL THEN NULL ELSE $3 END,\
+             refused_reason=CASE WHEN refused_reason IS NULL THEN NULL ELSE $3 END,\
+             erased_at=coalesce(erased_at,clock_timestamp()) WHERE tenant_id=$1 AND id=$2",
+            &[&tenant, &id, &ERASED],
+        )
+        .await?;
+        let staged = sql
+            .query(
+                "DELETE FROM base_privacy_request_exports WHERE tenant_id=$1 AND request_id=$2 RETURNING id,store",
+                &[&tenant, &id],
+            )
+            .await?;
+        changes.push(Change {
+            kind: REQUEST_KIND.into(),
+            id,
+            old: json!({"identifiers": given, "verification": noted, "refused_reason": refused}),
+            new: json!({"identifiers": 0, "verification": noted.then_some(ERASED), "refused_reason": refused.then_some(ERASED)}),
+        });
+        for staged in staged {
+            changes.push(Change {
+                kind: EXPORT_KIND.into(),
+                id: staged.get(0),
+                old: json!({"request": id, "store": staged.get::<_, String>(1), "staged": true}),
+                new: json!({}),
+            });
+        }
+    }
+    Ok(changes)
 }

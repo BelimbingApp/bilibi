@@ -134,7 +134,7 @@ proof; the shell does so on the first operator page that finds these facts
 
 ## Personal data
 
-**Erasure clears lines, phone, label, postcode, locality and raw input of an address only this person uses, and keeps its country.** Store `core/address.addresses` ("Addresses") under [`base/privacy`](../../base/privacy/README.md), [ADR 05](../../../docs/architecture/decisions/05-personal-data-registry.md).
+**Erasure clears lines, phone, label, postcode, locality and raw input of an address only this person uses, and keeps its country.** Store `core/address.addresses` under [`base/personal_data`](../../base/personal_data/README.md), kind `address`, [ADR 05](../../../docs/architecture/decisions/05-personal-data-registry.md).
 
 - An address another party also uses (a company office) is kept and reported.
 - Attachments stay as links to the anonymised address.

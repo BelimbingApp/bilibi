@@ -175,8 +175,9 @@ impl PersonService {
 inventory::submit! {
     bilibi_module_registry::Module {
         id: "core/person", layer: bilibi_module_registry::Layer::Core,
-        dependencies: &["base/database", "base/tenancy", "base/authz", "base/grid", "base/agent_api", "base/principal_directory", "base/ui", "base/menu", "base/datetime", "base/locale", "base/media", "base/artifacts", "base/step_up", "base/privacy", "core/party"],
-        migrations: &[("001-core-person", include_str!("../migrations/001-person.sql"))],
+        dependencies: &["base/database", "base/tenancy", "base/authz", "base/grid", "base/agent_api", "base/principal_directory", "base/ui", "base/menu", "base/datetime", "base/locale", "base/media", "base/artifacts", "base/step_up", "base/personal_data", "base/privacy", "core/party"],
+        migrations: &[("001-core-person", include_str!("../migrations/001-person.sql")),
+            ("core-person-002-erasure", include_str!("../migrations/002-erasure.sql"))],
         services: &[bilibi_module_registry::Service { id: SERVICE, factory: |services| {
             let parties = services.get::<bilibi_tenancy::PartyProofs>("base/tenancy.parties")?;
             parties.bind_persons(Arc::new(identity::Provider))?;
@@ -194,7 +195,6 @@ inventory::submit! {
             Ok(Arc::new(bilibi_ui::page::PageService::<Scope, Error>(Arc::new(web::Pages {
                 db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
                 person_panels: web::person_panels()?,
-                privacy: services.get(bilibi_privacy::SERVICE)?,
                 persons: services.get(SERVICE)?, contracts: services.get(bilibi_agent_api::page::SERVICE)?, views: services.get(bilibi_grid::PAGE_VIEWS)?,
                 display: services.get("base/datetime.display")?, locales: services.get("base/locale.locales")?,
             }))))

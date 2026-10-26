@@ -4,9 +4,9 @@
 //! approval needs a person, and an erasure approval also asks for that
 //! person's Step-up code. No Bilimbi counterpart.
 use crate::{
-    HoldTarget, Identifier, NewRequest, Privacy, RequestKind, RequestView, FIELD_REVEAL,
-    HOLD_MANAGE, HOLD_VIEW, MAX_DAYS, REQUEST_APPROVE, REQUEST_RECEIVE, REQUEST_VIEW,
-    RETENTION_MANAGE, RETENTION_VIEW, STEP_UP_ERASURE, STEP_UP_REVEAL,
+    ConfirmedRecord, HoldTarget, NewRequest, Privacy, RequestKind, RequestView, FIELD_REVEAL,
+    HOLD_MANAGE, HOLD_VIEW, REQUEST_APPROVE, REQUEST_RECEIVE, REQUEST_VIEW, RETENTION_VIEW,
+    STEP_UP_ERASURE, STEP_UP_REVEAL,
 };
 use bilibi_agent_api::{
     json::{Data, Output},
@@ -16,6 +16,7 @@ use bilibi_agent_api::{
 use bilibi_database::{Error, MutationTransaction};
 use bilibi_module_registry::{Contribution, Provenance};
 use bilibi_party_ids::{OrganisationId, PersonId};
+use bilibi_personal_data::Identifier;
 use bilibi_tenancy::Scope;
 use serde_json::{json, Value};
 use std::{
@@ -56,6 +57,8 @@ pub(crate) fn request_json(request: &RequestView) -> Value {
         "received_by": request.received_by, "received_at": request.received_at, "due_at": request.due_at,
         "verified_by": request.verified_by, "approved_by": request.approved_by, "approved_at": request.approved_at,
         "refused_reason": request.refused_reason, "completed_at": request.completed_at, "late": request.late,
+        "finish_attempts": request.finish_attempts, "finish_error": request.finish_error, "erased": request.erased,
+        "confirmed": request.confirmed,
         "has_export": request.export_artifact.is_some(), "has_certificate": request.certificate_artifact.is_some(),
         "stores": request.stores.iter().map(|s| json!({
             "store": s.store, "label": s.label, "state": s.state, "attempts": s.attempts,
@@ -87,25 +90,47 @@ impl ReadHandler for Read {
             let data = match self {
                 Self::Requests => {
                     let open = input["open"].as_bool().unwrap_or(false);
+                    let search = input["search"].as_str().unwrap_or("");
+                    let offset = input["offset"].as_i64().unwrap_or(0);
                     let limit = input["limit"].as_i64().unwrap_or(100);
-                    let rows = privacy.requests(&**client, scope, open, limit).await?;
-                    json!({"requests": rows.iter().map(request_json).collect::<Vec<_>>()})
+                    let (rows, total) = privacy
+                        .requests(&**client, scope, search, open, offset, limit)
+                        .await?;
+                    json!({"requests": rows.iter().map(request_json).collect::<Vec<_>>(), "total": total})
                 }
                 Self::Request => {
                     json!({"request": request_json(&privacy.request(&**client, scope, id(input, "id")?).await?)})
                 }
                 Self::Locate => {
                     let found = privacy.locate(&client, scope, id(input, "id")?).await?;
-                    json!({"stores": found.iter().map(|(store, label, located)| json!({"store": store, "label": label, "kinds": located.kinds})).collect::<Vec<_>>()})
+                    json!({"stores": found.iter().map(|(store, label, located)| json!({
+                        "store": store, "label": label, "kinds": located.kinds,
+                        "candidates": located.candidates, "truncated": located.truncated,
+                    })).collect::<Vec<_>>()})
                 }
                 Self::Holds => {
-                    let holds = privacy
-                        .holds(&**client, scope, input["limit"].as_i64().unwrap_or(100))
+                    let page = privacy
+                        .holds(
+                            &**client,
+                            scope,
+                            input["search"].as_str().unwrap_or(""),
+                            input["offset"].as_i64().unwrap_or(0),
+                            input["limit"].as_i64().unwrap_or(100),
+                        )
                         .await?;
-                    json!({"holds": holds})
+                    json!(page)
                 }
                 Self::Retention => {
-                    json!({"classes": privacy.retention_classes(&client, scope).await?})
+                    let company = match input.get("company_id") {
+                        Some(_) => Some(
+                            OrganisationId::new(id(input, "company_id")?)
+                                .map_err(|_| field_error("company_id", "is invalid"))?,
+                        ),
+                        None => None,
+                    };
+                    let (company, classes) =
+                        privacy.retention_classes(&client, scope, company).await?;
+                    json!({"company_id": company.map(OrganisationId::get), "classes": classes})
                 }
             };
             Ok(Output::Data(Data::Json(data)))
@@ -185,7 +210,6 @@ enum Write {
     Refuse,
     PlaceHold,
     ReleaseHold,
-    SetRetention,
     Reveal,
 }
 fn reveal_record(input: &Value) -> bilibi_agent_api::Result<Value> {
@@ -194,16 +218,12 @@ fn reveal_record(input: &Value) -> bilibi_agent_api::Result<Value> {
         _ => Err(field_error("record", "must be the record's key")),
     }
 }
-/// `days` left out (or null) returns the class to its default period.
-fn retention_days(input: &Value) -> bilibi_agent_api::Result<Option<u32>> {
-    match input.get("days") {
-        None | Some(Value::Null) => Ok(None),
-        Some(days) => days
-            .as_u64()
-            .and_then(|d| u32::try_from(d).ok())
-            .filter(|d| (1..=MAX_DAYS).contains(d))
-            .map(Some)
-            .ok_or_else(|| field_error("days", "must be a whole number of days from 1 to 36500")),
+/// The records the operator confirms, as `base.privacy.request.locate` listed them.
+fn confirm(input: &Value) -> bilibi_agent_api::Result<Vec<ConfirmedRecord>> {
+    match input.get("confirm") {
+        None | Some(Value::Null) => Ok(Vec::new()),
+        Some(list) => serde_json::from_value(list.clone())
+            .map_err(|_| field_error("confirm", "must be a list of {store, kind, id}")),
     }
 }
 impl WriteHandler for Write {
@@ -247,13 +267,6 @@ impl WriteHandler for Write {
                 Self::Reveal => {
                     json!({"summary": format!("Reveal {}.{} of record {} (recorded with the reason)", text(input, "table")?, text(input, "field")?, reveal_record(input)?), "step_up": [STEP_UP_REVEAL]})
                 }
-                Self::SetRetention => {
-                    let class = text(input, "class")?;
-                    json!({"summary": match retention_days(input)? {
-                        Some(days) => format!("Keep {class} records for {days} days"),
-                        None => format!("Return {class} to its default retention period"),
-                    }})
-                }
             };
             Ok(facts.into())
         })
@@ -286,9 +299,16 @@ impl WriteHandler for Write {
                             id(input, "id")?,
                             version()?,
                             text(input, "verification")?,
+                            &confirm(input)?,
                         )
                         .await
-                        .map_err(refusal)?,
+                        .map_err(|error| match error {
+                            Error::Invalid => field_error(
+                                "confirm",
+                                "names a record that is not a current candidate, or the note is invalid",
+                            ),
+                            error => refusal(error),
+                        })?,
                 ),
                 Self::Approve => request_json(
                     &privacy
@@ -319,29 +339,28 @@ impl WriteHandler for Write {
                 Self::Reveal => json!({"value": privacy
                     .reveal_field(scope, text(input, "table")?, text(input, "field")?, &reveal_record(input)?, text(input, "reason")?)
                     .await?}),
-                Self::SetRetention => json!(privacy
-                    .set_retention_in(tx, scope, text(input, "class")?, retention_days(input)?)
-                    .await
-                    .map_err(|error| match error {
-                        Error::Invalid => field_error(
-                            "days",
-                            "is below the class's legal minimum, or the class is unknown"
-                        ),
-                        error => error.into(),
-                    })?),
             };
             Ok(result.into())
         })
     }
 }
 
-fn empty() -> Value {
-    json!({"type":"object","properties":{}})
-}
 fn list_schema() -> Value {
     json!({"type":"object","properties":{
         "open":{"type":"boolean","description":"Only requests not yet completed or refused"},
+        "search":{"type":"string","maxLength":100,"description":"A request or person ID, a kind or a status"},
+        "offset":{"type":"integer","minimum":0,"description":"Requests to skip; default 0"},
         "limit":{"type":"integer","minimum":1,"maximum":500,"description":"Default 100"}}})
+}
+fn holds_schema() -> Value {
+    json!({"type":"object","properties":{
+        "search":{"type":"string","maxLength":100,"description":"A hold, person or record ID, or a record kind"},
+        "offset":{"type":"integer","minimum":0,"description":"Holds to skip; default 0"},
+        "limit":{"type":"integer","minimum":1,"maximum":500,"description":"Default 100"}}})
+}
+fn retention_list_schema() -> Value {
+    json!({"type":"object","properties":{
+        "company_id":{"type":"integer","minimum":1,"description":"The company whose settings to show; default the tenant's primary company"}}})
 }
 fn id_schema() -> Value {
     json!({"type":"object","required":["id"],"properties":{"id":{"type":"integer","minimum":1}}})
@@ -357,7 +376,9 @@ fn receive_schema() -> Value {
 fn verify_schema() -> Value {
     json!({"type":"object","required":["id","version","verification"],"properties":{
         "id":{"type":"integer","minimum":1},"version":{"type":"integer","minimum":0},
-        "verification":{"type":"string","maxLength":1000,"description":"How the requester's identity was checked. Verifying also confirms the matches base.privacy.request.locate found by email or phone"}}})
+        "verification":{"type":"string","maxLength":1000,"description":"How the requester's identity was checked"},
+        "confirm":{"type":"array","items":{"type":"object","required":["store","kind","id"],"properties":{"store":{"type":"string"},"kind":{"type":"string"},"id":{"type":"string"}}},
+            "description":"The candidates from base.privacy.request.locate that are this person's records; only these, and records linked to the person, are acted on"}}})
 }
 fn approve_schema() -> Value {
     json!({"type":"object","required":["id","version"],"properties":{"id":{"type":"integer","minimum":1},"version":{"type":"integer","minimum":0}}})
@@ -376,11 +397,6 @@ fn place_schema() -> Value {
 fn release_schema() -> Value {
     json!({"type":"object","required":["id","reason"],"properties":{"id":{"type":"integer","minimum":1},"reason":{"type":"string","maxLength":255}}})
 }
-fn retention_schema() -> Value {
-    json!({"type":"object","required":["class"],"properties":{
-        "class":{"type":"string","maxLength":255,"description":"A record class key from base.privacy.retention.list"},
-        "days":{"type":"integer","minimum":1,"maximum":36500,"description":"Days to keep the class's records; leave it out to return to the class default. Never below the class's legal minimum"}}})
-}
 fn reveal_schema() -> Value {
     json!({"type":"object","required":["table","field","record","reason"],"properties":{
         "table":{"type":"string","maxLength":200,"description":"The Grid table, such as persons"},
@@ -392,7 +408,7 @@ fn reveal_output() -> Value {
     json!({"type":"object","description":"The field's full value (null when empty). The reveal is recorded with the reason."})
 }
 fn retention_output() -> Value {
-    json!({"type":"object","description":"Every record class: what starts its clock, purge or anonymise, default period, legal minimum, this tenant's period, the period sweeps use (null keeps forever) and the last sweep."})
+    json!({"type":"object","description":"Every record class: what starts its clock, purge or anonymise, the company's sweep switch, period and legal minimum (set in System Settings), and the last sweep."})
 }
 fn requests_output() -> Value {
     json!({"type":"object","description":"Requests newest first: kind, person, status, version, due date, late, and each store's answer (counts, records kept and why, deferrals). Identifier values are never returned."})
@@ -401,7 +417,7 @@ fn request_output() -> Value {
     json!({"type":"object","description":"One request with each store's answer."})
 }
 fn locate_output() -> Value {
-    json!({"type":"object","description":"Per store and record kind: records linked to the person, and records matched only by an email or phone the request carries."})
+    json!({"type":"object","description":"Per store and record kind: records linked to the person, and records matched only by an email or phone the request carries, each listed as a candidate to confirm when verifying."})
 }
 fn holds_output() -> Value {
     json!({"type":"object","description":"Legal holds, active first: target, reason, who placed and released it."})
@@ -451,7 +467,7 @@ inventory::submit! { Contribution::new(DEFINITIONS, "base/privacy", Provenance {
         read!("base.privacy.request.list", "List data-subject requests", "This tenant's access, portability and erasure requests with their progress.", REQUEST_VIEW, list_schema, requests_output, &Read::Requests),
         read!("base.privacy.request.get", "Read a data-subject request", "One request and each store's answer.", REQUEST_VIEW, id_schema, request_output, &Read::Request),
         read!("base.privacy.request.locate", "Find a request's personal data", "What every store holds about the request's person, including matches found only by email or phone, which verifying confirms.", REQUEST_VIEW, id_schema, locate_output, &Read::Locate),
-        read!("base.privacy.hold.list", "List legal holds", "This tenant's legal holds on people and records.", HOLD_VIEW, empty, holds_output, &Read::Holds),
+        read!("base.privacy.hold.list", "List legal holds", "One page of this tenant's legal holds on people and records, active first, with the total.", HOLD_VIEW, holds_schema, holds_output, &Read::Holds),
         Operation {
             key: "base.privacy.field.reveal",
             title: "Reveal a masked field",
@@ -464,15 +480,14 @@ inventory::submit! { Contribution::new(DEFINITIONS, "base/privacy", Provenance {
             channels: Channels::Every,
             step_up: &[STEP_UP_REVEAL],
         },
-        read!("base.privacy.retention.list", "List retention rules", "Every record class, its periods and its last sweep in this tenant.", RETENTION_VIEW, empty, retention_output, &Read::Retention),
+        read!("base.privacy.retention.list", "List retention rules", "Every record class with one company's retention settings and the last sweep.", RETENTION_VIEW, retention_list_schema, retention_output, &Read::Retention),
         write!("base.privacy.request.receive", "Record a data-subject request", "Record an access, portability or erasure request for a person; it is due after privacy.request.due_days.", REQUEST_RECEIVE, receive_schema, &Write::Receive, &[]),
-        write!("base.privacy.request.verify", "Verify a requester's identity", "Record how the requester's identity was checked and confirm the request's email and phone matches.", REQUEST_RECEIVE, verify_schema, &Write::Verify, &[]),
+        write!("base.privacy.request.verify", "Verify a requester's identity", "Record how the requester's identity was checked and confirm which records found only by email or phone are the person's.", REQUEST_RECEIVE, verify_schema, &Write::Verify, &[]),
         write!("base.privacy.request.approve", "Approve a data-subject request", "Approve and run a verified request in every store. A person must approve; an erasure needs someone other than whoever entered it, and Step-up: base.privacy.erasure.approve.", REQUEST_APPROVE, approve_schema, &Write::Approve, &[STEP_UP_ERASURE]),
         write!("base.privacy.request.refuse", "Refuse a data-subject request", "Refuse a request that is not yet approved, with the reason.", REQUEST_RECEIVE, refuse_schema, &Write::Refuse, &[]),
         write!("base.privacy.hold.place", "Place a legal hold", "Stop erasure and retention sweeps for a person or one record.", HOLD_MANAGE, place_schema, &Write::PlaceHold, &[]),
         write!("base.privacy.hold.release", "Release a legal hold", "Release an active legal hold; the next erasure or sweep acts on what it kept.", HOLD_MANAGE, release_schema, &Write::ReleaseHold, &[]),
-        write!("base.privacy.retention.set", "Set a retention period", "Set how long this tenant keeps one record class, or return it to the default; never below a legal minimum.", RETENTION_MANAGE, retention_schema, &Write::SetRetention, &[]),
     ],
     guides: &[Guide { key: "base.privacy", title: "Data-subject requests", summary: "Answer a person's access or erasure request in every store.", keywords: &["privacy", "pdpa", "gdpr", "erasure", "access request", "legal hold"], capability: REQUEST_VIEW,
-        body: "Record the request with base.privacy.request.receive (kind, person_id, company_id, and the emails or phones the person gave). Read base.privacy.request.locate to see what every store holds, including matches found only by email or phone. Record how the person's identity was checked with base.privacy.request.verify; that also confirms those matches. A person with privacy.request.approve then approves; an agent cannot approve, and an erasure needs someone other than whoever entered it plus that person's Step-up code. Running answers each store in the background; read base.privacy.request.get until status is completed. A store that fails stays pending and the request shows late. Legal holds (base.privacy.hold.place) keep what they name through erasure; the certificate lists every store, what was kept and why." }],
+        body: "Record the request with base.privacy.request.receive (kind, person_id, company_id, and the emails or phones the person gave). Read base.privacy.request.locate to see what every store holds; records found only by email or phone are listed as candidates. Record how the person's identity was checked with base.privacy.request.verify, passing in confirm only the candidates that are this person's; nothing else found only by an identifier is touched. A person with privacy.request.approve then approves; an agent cannot approve, and an erasure needs someone other than whoever entered it plus that person's Step-up code. Running answers each store in the background; read base.privacy.request.get until status is completed. A store that fails stays pending and the request shows late. Legal holds (base.privacy.hold.place) keep what they name through erasure; the certificate lists every store, what was kept and why." }],
 }) }

@@ -1,10 +1,11 @@
-//! Personal data (ADR 05): one registry in which every module that keeps a
-//! person's data answers for it, legal holds that stop erasure and sweeps,
-//! and data-subject requests (access, portability, erasure) that reach every
-//! store through one approved, audited Workflow flow and end with an export
-//! bundle or a completion certificate. Base never reads another module's
-//! tables; it asks each store's handler. No Bilimbi counterpart: Bilimbi keeps
-//! per-store retention workers only.
+//! Personal data (ADR 05): the requests, legal holds, retention sweeps and
+//! masked-field reveals above the `base/personal_data` contract, in which
+//! every module that keeps a person's data answers for it. Data-subject
+//! requests (access, portability, erasure) reach every store through one
+//! approved, audited Workflow flow and end with an export bundle or a
+//! completion certificate. Base never reads another module's tables; it asks
+//! each store's handler, with a sealed grant only this module issues. No
+//! Bilimbi counterpart: Bilimbi keeps per-store retention workers only.
 mod agent;
 mod documents;
 mod due;
@@ -17,16 +18,13 @@ mod runner;
 mod web;
 pub use documents::{RequestDocuments, ARTIFACT_OWNER, CERTIFICATE_YEARS, DOCUMENTS, EXPORT_DAYS};
 pub use due::{DUE_SCHEDULE, DUE_WORKER, NOTICE_DAYS};
-pub use holds::TenantHolds;
-pub use holds::{Hold, HoldEvent, HoldTarget, Holds};
-pub use registry::{
-    Action, Deferral, Erased, ErasedRecord, Exported, FileRef, Handler, HandlerFuture, Identifier,
-    Kept, KeptReason, KindAction, KindCount, Located, PersonalData, Subject, ERASED, PERSONAL_DATA,
+pub use holds::{Hold, HoldEvent, HoldPage, HoldTarget};
+pub use requests::{
+    ConfirmedRecord, NewRequest, RequestKind, RequestView, StoreProgress, DUE_DAYS,
 };
-pub use requests::{NewRequest, RequestKind, RequestView, StoreProgress, DUE_DAYS};
 pub use retention::{
-    ClassView, RecordClass, RetentionAction, SweepView, Sweeper, Swept, MAX_DAYS, PERIODS,
-    RECORD_CLASSES, SWEEP_SCHEDULE, SWEEP_WORKER,
+    period_accepts, setting_keys, ClassView, RecordClass, RetentionAction, SweepView, Sweeper,
+    Swept, AUDIT_EVIDENCE, RECORD_CLASSES, SWEEP_SCHEDULE, SWEEP_WORKER,
 };
 pub use runner::{FINISH_WORKER, STORE_WORKER};
 
@@ -36,7 +34,7 @@ use bilibi_module_registry::{
     Catalog, Consumer, Contribution, Layer, Module, Provenance, Ready, Result as RegistryResult,
     Service,
 };
-use bilibi_party_ids::PersonId;
+use bilibi_personal_data::{Issuer, Stores};
 use bilibi_queue::{
     execution::{HandlerBinding, HandlerService, HANDLERS},
     Queue, Worker, WORKERS,
@@ -46,6 +44,18 @@ use bilibi_tenancy::Scope;
 use serde_json::json;
 use std::sync::Arc;
 use tokio_postgres::{Client, GenericClient};
+
+/// What `record_class!` expands to; not part of the facade.
+#[doc(hidden)]
+pub mod __private {
+    pub use crate::retention::period_accepts;
+    pub use bilibi_module_registry::{Contribution, Provenance};
+    pub use bilibi_settings::{
+        Constraint, Definition, Editor, ScopeKind, Setting, ValueType, CONSTRAINTS, DEFINITIONS,
+    };
+    pub use inventory;
+    pub use serde_json::{json, Value};
+}
 
 /// The `Privacy` service, after declaring `base/privacy`.
 pub const SERVICE: &str = "base/privacy.facade";
@@ -69,6 +79,11 @@ pub const FIELD_REVEAL: &str = "privacy.field.reveal";
 pub const STEP_UP_REVEAL: &str = "base.privacy.field.reveal";
 /// The Step-up operation an erasure approval asks for; tenants cannot turn it off.
 pub const STEP_UP_ERASURE: &str = "base.privacy.erasure.approve";
+/// Company setting: days audit evidence keeps personal values after an
+/// erasure (its legal minimum); the retention sweep erases them after.
+pub const AUDIT_MINIMUM: &str = "privacy.audit.legal_minimum_days";
+pub const EXPORT_PURGE_WORKER: &str = "base/privacy-export-purge";
+pub const EXPORT_PURGE_SCHEDULE: &str = "base/privacy.export-purge";
 
 /// The mounted personal-data stores, the holds over them and the requests
 /// that reach them.
@@ -81,16 +96,14 @@ pub struct Privacy {
     settings: Arc<bilibi_settings::Settings>,
     parties: Arc<bilibi_tenancy::PartyProofs>,
     artifacts: Arc<bilibi_artifacts::Artifacts>,
-    stores: registry::Stores,
+    issuer: Issuer,
+    stores: &'static Stores,
     classes: retention::Classes,
 }
 impl Privacy {
     /// Every mounted store key with its label, sorted by key.
     pub fn stores(&self) -> impl Iterator<Item = (&'static str, &'static str)> + '_ {
-        self.stores
-            .by_key
-            .iter()
-            .map(|(key, (_, data))| (*key, data.label))
+        self.stores.iter().map(|(key, _, data)| (key, data.label))
     }
     /// Places a legal hold. A second active hold on the same target is `Conflict`;
     /// a record kind no mounted store declares is `Invalid`, since a hold on it
@@ -124,7 +137,9 @@ impl Privacy {
     }
     fn known_target(&self, target: &HoldTarget) -> Result<()> {
         match target {
-            HoldTarget::Record { kind, .. } if !self.stores.declares(kind) => Err(Error::Invalid),
+            HoldTarget::Record { kind, .. } if self.stores.kind(kind).is_none() => {
+                Err(Error::Invalid)
+            }
             _ => Ok(()),
         }
     }
@@ -154,14 +169,17 @@ impl Privacy {
     ) -> Result<Hold> {
         holds::release_in(tx, scope, id, reason).await
     }
-    /// The tenant's holds, active first then newest, at most `limit` (1–500).
+    /// One page of the tenant's holds, active first then newest: `search`
+    /// matches a hold, person or record ID or a record kind; `limit` is 1–500.
     pub async fn holds(
         &self,
         client: &impl GenericClient,
         scope: &Scope,
+        search: &str,
+        offset: i64,
         limit: i64,
-    ) -> Result<Vec<Hold>> {
-        holds::list(client, scope, limit).await
+    ) -> Result<HoldPage> {
+        holds::list(client, scope, search, offset, limit).await
     }
     /// One hold's placed and released events, oldest first.
     pub async fn hold_history(
@@ -171,18 +189,6 @@ impl Privacy {
         id: i64,
     ) -> Result<Vec<HoldEvent>> {
         holds::history(client, scope, id).await
-    }
-    /// The active holds over `person` and every held record in the tenant, for
-    /// an erasure or sweep. Read it inside the transaction that acts, so a hold
-    /// placed meanwhile waits for that transaction.
-    pub async fn active_holds(
-        &self,
-        client: &impl GenericClient,
-        scope: &Scope,
-        person: Option<PersonId>,
-    ) -> Result<Holds> {
-        bilibi_authz::authorize_key(client, scope, HOLD_VIEW).await?;
-        Holds::load(client, scope.tenant(), person).await
     }
 }
 
@@ -195,7 +201,6 @@ macro_rules! provenance {
         }
     };
 }
-inventory::submit! { Consumer::new::<PersonalData>(PERSONAL_DATA, "base/privacy", registry::validate) }
 inventory::submit! { Consumer::new::<RecordClass>(RECORD_CLASSES, "base/privacy", retention::validate) }
 inventory::submit! { Contribution::new(VOCABULARY, "base/privacy.vocabulary", provenance!(), &VocabularyContribution {
     domains: &["privacy"],
@@ -243,12 +248,12 @@ inventory::submit! { Contribution::new(DEFINITIONS, NOTICE_DAYS, provenance!(), 
     editor: Some(Editor { group: "Personal data", label: "Request notice days",
         help: "Days before a request's due date that the people handling it are notified.", capability: Some(REQUEST_APPROVE), reveal_duration_ms: 5_000 }),
 })) }
-inventory::submit! { Contribution::new(DEFINITIONS, PERIODS, provenance!(), &Setting::Definition(Definition {
-    value_type: ValueType::Array, scopes: &[ScopeKind::Tenant], default: || json!({}),
-    nullable: false, encrypted: false, minimum: None, maximum: None,
-    validator: Some(bilibi_settings::Validator { accepts: retention::valid_periods, message: "Give each record class a whole number of days from 1 to 36500." }),
-    // Edited on the retention page, which enforces each class's legal minimum.
-    editor: None,
+inventory::submit! { Contribution::new(DEFINITIONS, AUDIT_MINIMUM, provenance!(), &Setting::Definition(Definition {
+    value_type: ValueType::Integer, scopes: &[ScopeKind::Company], default: || serde_json::Value::Null,
+    nullable: true, encrypted: false, minimum: Some(1.0), maximum: Some(36500.0), validator: None,
+    editor: Some(Editor { group: "Personal data retention", label: "Audit evidence: legal minimum days",
+        help: "Days audit evidence keeps a person's values after an erasure, as the law requires this company. Empty erases them at once; the retention sweep erases them once the period has passed.",
+        capability: Some(RETENTION_MANAGE), reveal_duration_ms: 5_000 }),
 })) }
 // Retention sweeps: a daily scheduled task, run only after an operator enables it.
 inventory::submit! { Contribution::new(WORKERS, SWEEP_WORKER, provenance!(), &Worker { max_attempts: 3, validate: |args| bilibi_schedule::worker::validate(args, retention::arguments) }) }
@@ -257,6 +262,14 @@ inventory::submit! { Contribution::new(bilibi_schedule::DEFINITIONS, SWEEP_SCHED
     name: "Personal-data retention sweep", expression: "0 2 * * *", timezone: "UTC",
     task_name: "Personal-data retention sweep", worker: SWEEP_WORKER, args: || json!({}),
     overlap: bilibi_schedule::Overlap::Forbid, misfire: bilibi_schedule::Misfire::Coalesce, owner_route: Some(web::RETENTION_PATH),
+}) }
+// Expired exports: a daily scheduled task, run only after an operator enables it.
+inventory::submit! { Contribution::new(WORKERS, EXPORT_PURGE_WORKER, provenance!(), &Worker { max_attempts: 3, validate: |args| bilibi_schedule::worker::validate(args, retention::arguments) }) }
+inventory::submit! { Contribution::new(HANDLERS, EXPORT_PURGE_WORKER, provenance!(), &HandlerBinding { service: "base/privacy.export_purge_job", capability: bilibi_schedule::EXECUTE }) }
+inventory::submit! { Contribution::new(bilibi_schedule::DEFINITIONS, EXPORT_PURGE_SCHEDULE, provenance!(), &bilibi_schedule::Definition {
+    name: "Personal-data export purge", expression: "30 3 * * *", timezone: "UTC",
+    task_name: "Personal-data export purge", worker: EXPORT_PURGE_WORKER, args: || json!({}),
+    overlap: bilibi_schedule::Overlap::Forbid, misfire: bilibi_schedule::Misfire::Coalesce, owner_route: Some(web::REQUESTS_PATH),
 }) }
 // Due notices: a daily scheduled task, run only after an operator enables it.
 inventory::submit! { Contribution::new(WORKERS, DUE_WORKER, provenance!(), &Worker { max_attempts: 3, validate: |args| bilibi_schedule::worker::validate(args, due::arguments) }) }
@@ -314,7 +327,6 @@ inventory::submit! { Contribution::new(PAGE_WRITES, web::SERVICE, provenance!(),
         ("refuse", "base.privacy.request.refuse"),
         ("place", "base.privacy.hold.place"),
         ("release", "base.privacy.hold.release"),
-        ("set_retention", "base.privacy.retention.set"),
     ],
     pending: Pending::None,
 }) }
@@ -359,8 +371,15 @@ fn build(services: &bilibi_module_registry::Services) -> RegistryResult<Privacy>
         step_up: step_up.clone(),
         parties: parties.clone(),
     })?;
+    let issuer = Issuer::claim().ok_or_else(|| {
+        bilibi_module_registry::RegistryError::Service(
+            "the personal-data grant issuer was already claimed".into(),
+        )
+    })?;
+    let db = services.get::<Db>("base/database.pool")?.as_ref().clone();
+    bilibi_personal_data::bind_holds(Arc::new(holds::Source { db: db.clone() }))?;
     Ok(Privacy {
-        db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
+        db,
         boundary: services.get("base/database.mutations")?,
         engine: services.get("base/workflow.engine")?,
         queue: services.get("base/queue.store")?,
@@ -368,7 +387,8 @@ fn build(services: &bilibi_module_registry::Services) -> RegistryResult<Privacy>
         settings: services.get("base/settings.store")?,
         parties,
         artifacts: services.get("base/artifacts.store")?,
-        stores: registry::Stores::from_catalog(&catalog, &modules)?,
+        issuer,
+        stores: Stores::installed()?,
         classes: retention::Classes::from_catalog(&catalog, &modules)?,
     })
 }
@@ -376,7 +396,7 @@ fn build(services: &bilibi_module_registry::Services) -> RegistryResult<Privacy>
 inventory::submit! {
     Module {
         id: "base/privacy", layer: Layer::Base,
-        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/grid", "base/party_ids",
+        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/grid", "base/party_ids", "base/personal_data",
             "base/audit", "base/workflow", "base/queue", "base/step_up", "base/settings", "base/artifacts", "base/agent_api", "base/ui", "base/menu", "base/datetime", "base/locale", "base/notifications", "base/schedule"],
         migrations: &[
             ("base-privacy-001-holds", include_str!("../migrations/001-holds.sql")),
@@ -418,6 +438,14 @@ inventory::submit! {
                 Ok(Arc::new(HandlerService(Arc::new(retention::SweepJob {
                     privacy: services.get(SERVICE)?,
                     schedule: services.get("base/schedule.store")?,
+                    authentication: services.get("base/tenancy.authentication")?,
+                }))))
+            } },
+            Service { id: "base/privacy.export_purge_job", factory: |services| {
+                Ok(Arc::new(HandlerService(Arc::new(retention::ExportPurgeJob {
+                    privacy: services.get(SERVICE)?,
+                    schedule: services.get("base/schedule.store")?,
+                    authentication: services.get("base/tenancy.authentication")?,
                 }))))
             } },
             Service { id: "base/privacy.due_job", factory: |services| {
@@ -434,6 +462,6 @@ inventory::submit! {
 inventory::submit! {
     Ready { module: "base/privacy", check: |services| {
         let privacy = services.get::<Privacy>(SERVICE)?;
-        registry::check_marks(&privacy.stores)
+        registry::check_marks(privacy.stores)
     } }
 }

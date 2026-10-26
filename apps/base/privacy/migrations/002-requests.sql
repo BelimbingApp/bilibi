@@ -29,6 +29,13 @@ CREATE TABLE base_privacy_requests (
     completed_at timestamptz,
     export_artifact text CHECK (length(export_artifact) BETWEEN 1 AND 64),
     certificate_artifact text CHECK (length(certificate_artifact) BETWEEN 1 AND 64),
+    -- The finish step (bundle or certificate) has failed this many times, and
+    -- why, as a short code: shown on the request so a failure is never silent.
+    finish_attempts integer NOT NULL DEFAULT 0 CHECK (finish_attempts >= 0),
+    finish_error text CHECK (length(finish_error) <= 64),
+    -- When an erasure of this request's person cleared this row's personal
+    -- text (identifiers, identity note, refusal reason).
+    erased_at timestamptz,
     -- Four eyes: whoever entered an erasure request does not approve it.
     CHECK (kind <> 'erasure' OR approved_by IS NULL OR approved_by <> received_by),
     CHECK (status IN ('received','refused') OR (verification IS NOT NULL AND verified_by IS NOT NULL)),
@@ -71,3 +78,21 @@ CREATE TABLE base_privacy_request_exports (
     files jsonb NOT NULL DEFAULT '[]' CHECK (jsonb_typeof(files) = 'array'),
     UNIQUE (request_id, store)
 );
+
+-- Records the operator confirmed are the person's although a store found them
+-- only by an email or phone (ADR 05, no silent matching). Confirmed when the
+-- request is verified; a store acts on these and on records linked to the
+-- person, never on another match.
+CREATE TABLE base_privacy_request_candidates (
+    id bigserial PRIMARY KEY,
+    request_id bigint NOT NULL REFERENCES base_privacy_requests(id) ON DELETE RESTRICT,
+    tenant_id bigint NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT,
+    store text NOT NULL CHECK (length(store) BETWEEN 1 AND 255),
+    kind text NOT NULL CHECK (length(kind) BETWEEN 1 AND 255),
+    record_id text NOT NULL CHECK (length(record_id) BETWEEN 1 AND 128),
+    confirmed_by bigint NOT NULL CHECK (confirmed_by > 0),
+    confirmed_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    UNIQUE (request_id, store, kind, record_id)
+);
+CREATE INDEX base_privacy_request_candidates_store ON base_privacy_request_candidates(tenant_id, request_id, store);
+CREATE INDEX base_privacy_requests_person ON base_privacy_requests(tenant_id, person_id, id);

@@ -113,3 +113,7 @@ restricts the company tax ID and revenue for staff, which the Companies rows
 show the same way); open `/companies/1` and press History for the trail.
 
 Actions, Data Mutations and record history show "Client identity" separately from "Model (as reported)". Both are evidence; neither replaces the account attribution or grants permissions.
+
+## Verify audit log
+
+**`/audit/integrity` (platform operators with `admin.audit.log.list`) seals rows written since the last seal, recomputes both evidence chains and says where one breaks** (ADR 05; `base/audit` README, Hash chain). Each check is recorded as `audit.chain.verified`. The contributed schedule `base/audit.chain-seal` seals every 15 minutes once an operator enables it.

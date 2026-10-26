@@ -15,6 +15,7 @@ use crate::{
     SubjectAction, Upload,
 };
 use bilibi_database::{Change, Context, MutationTransaction, Principal};
+use bilibi_personal_data::{Disclosure, Erasure, Holds};
 use bilibi_tenancy::Scope;
 use serde_json::{json, Value};
 use std::time::Duration;
@@ -586,24 +587,47 @@ impl Media {
     }
 }
 
-/// One attachment an erasure turned into a tombstone.
+/// The audit record kinds of an attachment row and of its asset.
+pub const ATTACHMENT_KIND: &str = "base/media/attachment";
+pub const ASSET_KIND: &str = "base/media/asset";
+/// Attachments read per page when a request lists a subject's files.
+const DISCLOSE_PAGE: i64 = 500;
+
+/// One attachment an erasure turned into a tombstone. Its row and its removed
+/// asset are both audit records whose evidence the erasure clears.
 #[derive(Clone, Debug)]
 pub struct ErasedAttachment {
     pub public_id: String,
-    /// The attachment row ID, the audit record kind `base/media/attachment`.
+    /// The attachment row, kind [`ATTACHMENT_KIND`].
     pub id: i64,
+    /// The removed asset row, kind [`ASSET_KIND`].
+    pub asset_id: i64,
+}
+/// What `erase_attachments` did.
+#[derive(Clone, Debug, Default)]
+pub struct AttachmentErasure {
+    pub erased: Vec<ErasedAttachment>,
+    /// Attachments a legal hold kept: (attachment row, hold).
+    pub held: Vec<(i64, i64)>,
+}
+/// What one `remove_erased_bytes` call did.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Removal {
+    /// Files removed by this call; each is one audited change.
+    pub removed: u64,
+    /// Files still waiting: call again (another call may be removing them now).
+    pub more: bool,
 }
 
 impl Media {
-    /// One subject's live attachments (draft and submitted, at most 500), after
-    /// its owner allows `Download` for this scope now. For a data-subject
-    /// request (ADR 05): the export names them by public id.
-    pub async fn subject_attachments(
+    /// How many live attachments `subject` has, after its owner allows
+    /// `Download` for this scope now.
+    pub async fn count_attachments(
         &self,
         client: &(impl GenericClient + Sync),
         scope: &Scope,
         subject: AttachmentSubject<'_>,
-    ) -> Result<Vec<Attachment>> {
+    ) -> Result<i64> {
         self.subjects
             .authorize(
                 client,
@@ -613,40 +637,98 @@ impl Media {
                 subject.id,
             )
             .await?;
-        let rows = client
-            .query(
-                &format!("{SELECT} WHERE a.tenant_id=$1 AND a.subject_type=$2 AND a.subject_id=$3 ORDER BY a.id LIMIT 500"),
+        Ok(client
+            .query_one(
+                "SELECT count(*) FROM base_media_attachments WHERE tenant_id=$1 AND subject_type=$2 AND subject_id=$3 AND state<>'erased'",
                 &[&scope.tenant(), &subject.kind, &subject.id],
             )
-            .await?;
-        rows.iter()
-            .map(|row| bound(row).map(|row| row.summary))
-            .collect()
+            .await?
+            .get(0))
     }
 
-    /// Erasure (ADR 05): turn every submitted attachment of `subject` into a
-    /// tombstone and remove its asset row, in the caller's privacy erasure
-    /// transaction. The owner of the subject calls this from its personal-data
-    /// handler; the approved request is the authority, so no `SubjectAction` is
-    /// asked. Outside a privacy erasure transaction the database refuses. Drafts
-    /// become tombstones too. Bytes go afterwards, through
-    /// [`Media::remove_erased_bytes`] on a plain connection. Repeating it finds
-    /// nothing left to erase.
+    /// Every live attachment of `subject` (ADR 05), however many, for an
+    /// approved access request. The grant is the authority: the subject's
+    /// owner is not asked, so a retired record's files are still listed.
+    pub async fn disclosed_attachments(
+        &self,
+        client: &(impl GenericClient + Sync),
+        scope: &Scope,
+        grant: &Disclosure,
+        subject: AttachmentSubject<'_>,
+    ) -> Result<Vec<Attachment>> {
+        grant.check(scope)?;
+        let (mut all, mut after) = (Vec::new(), 0_i64);
+        loop {
+            let rows = client
+                .query(
+                    &format!("{SELECT} WHERE a.tenant_id=$1 AND a.subject_type=$2 AND a.subject_id=$3 AND a.id>$4 ORDER BY a.id LIMIT $5"),
+                    &[&scope.tenant(), &subject.kind, &subject.id, &after, &DISCLOSE_PAGE],
+                )
+                .await?;
+            let done = (rows.len() as i64) < DISCLOSE_PAGE;
+            for row in &rows {
+                let row = bound(row)?;
+                after = row.id;
+                all.push(row.summary);
+            }
+            if done {
+                return Ok(all);
+            }
+        }
+    }
+
+    /// The bytes of one of `subject`'s live attachments, for an approved
+    /// access request's bundle. Another subject's file is `NotFound`.
+    pub async fn disclosed_attachment(
+        &self,
+        client: &(impl GenericClient + Sync),
+        scope: &Scope,
+        grant: &Disclosure,
+        subject: AttachmentSubject<'_>,
+        public_id: &str,
+    ) -> Result<StreamFile> {
+        grant.check(scope)?;
+        if !valid_public_id(public_id) {
+            return Err(Error::NotFound);
+        }
+        let row = client
+            .query_opt(
+                &format!("{SELECT} WHERE a.tenant_id=$1 AND a.public_id=$2 AND a.subject_type=$3 AND a.subject_id=$4"),
+                &[&scope.tenant(), &public_id, &subject.kind, &subject.id],
+            )
+            .await?
+            .ok_or(Error::NotFound)?;
+        let row = bound(&row)?;
+        let asset = self.fetch(client, scope.tenant(), row.asset_id).await?;
+        let bytes = storage::read(&self.disks(client).await?, &asset.disk, &asset.key).await?;
+        Ok(StreamFile {
+            bytes,
+            filename: asset
+                .asset
+                .original_filename
+                .unwrap_or_else(|| public_id.to_owned()),
+            mime_type: asset.asset.mime_type,
+        })
+    }
+
+    /// Erasure (ADR 05): turn every live attachment of `subject` that no hold
+    /// names into a tombstone and remove its asset row, in the caller's
+    /// erasure transaction. The grant is the authority, so no `SubjectAction`
+    /// is asked; the database admits the change only through
+    /// `base_media_erase_attachment`. The asset's change records its filename
+    /// as `[erased]`; the caller clears the earlier evidence of both records.
+    /// Bytes go afterwards, through [`Media::remove_erased_bytes`]. Repeating
+    /// it finds nothing left to erase.
     pub async fn erase_attachments(
         &self,
         tx: &mut MutationTransaction<'_>,
         scope: &Scope,
+        grant: &Erasure,
         subject: AttachmentSubject<'_>,
-    ) -> Result<Vec<ErasedAttachment>> {
-        let marked = tx
-            .sql()
-            .query_one(
-                "SELECT coalesce(current_setting('bilibi.privacy_erasure', true), '') <> ''",
-                &[],
-            )
-            .await?
-            .get::<_, bool>(0);
-        if !marked || tx.context().tenant != scope.tenant() {
+        holds: &Holds,
+    ) -> Result<AttachmentErasure> {
+        grant.check(scope)?;
+        if tx.context().tenant != scope.tenant() {
             return Err(Error::Database(bilibi_database::Error::Forbidden));
         }
         let rows = tx
@@ -656,70 +738,76 @@ impl Media {
                 &[&scope.tenant(), &subject.kind, &subject.id],
             )
             .await?;
-        let mut erased = Vec::with_capacity(rows.len());
-        for row in &rows {
-            let row = bound(row)?;
+        let rows = rows.iter().map(bound).collect::<Result<Vec<_>>>()?;
+        let ids: Vec<i64> = rows.iter().map(|row| row.id).collect();
+        let held = holds.records(ATTACHMENT_KIND, &ids).await?;
+        let mut done = AttachmentErasure::default();
+        for row in rows {
+            if let Some(hold) = held.get(&row.id) {
+                done.held.push((row.id, *hold));
+                continue;
+            }
             let asset = self.fetch(tx.sql(), scope.tenant(), row.asset_id).await?;
-            let (disk, key) = (asset.disk.clone(), asset.key.clone());
-            let (id, asset_id, user) = (row.id, row.asset_id, scope.user());
+            let mut old_asset = audit(&asset);
+            if old_asset
+                .get("original_filename")
+                .is_some_and(|name| !name.is_null())
+            {
+                old_asset["original_filename"] = json!(bilibi_personal_data::ERASED);
+            }
+            let (tenant, id, asset_id, user) = (scope.tenant(), row.id, row.asset_id, scope.user());
             let changes = vec![
                 Change {
-                    kind: "base/media/attachment".into(),
+                    kind: ATTACHMENT_KIND.into(),
                     id,
                     old: facts(&row.summary),
                     new: json!({"public_id": row.summary.public_id, "subject_type": row.summary.subject_type,
                         "subject_id": row.summary.subject_id, "state": "erased", "uploaded_by_id": row.summary.uploaded_by_id}),
                 },
                 Change {
-                    kind: "base/media/asset".into(),
+                    kind: ASSET_KIND.into(),
                     id: asset_id,
-                    old: audit(&asset),
+                    old: old_asset,
                     new: json!({}),
                 },
             ];
             tx.mutate(move |sql| {
                 Box::pin(async move {
                     sql.execute(
-                        "UPDATE base_media_attachments SET state='erased',media_asset_id=NULL,erased_at=now(),erased_by=$2,erased_disk=$3,erased_key=$4,updated_at=now() WHERE id=$1",
-                        &[&id, &user, &disk, &key],
+                        "SELECT base_media_erase_attachment($1,$2,$3)",
+                        &[&tenant, &id, &user],
                     )
                     .await?;
-                    sql.execute("DELETE FROM base_media_assets WHERE id=$1", &[&asset_id])
-                        .await?;
                     Ok(((), changes))
                 })
             })
             .await?;
-            erased.push(ErasedAttachment {
+            done.erased.push(ErasedAttachment {
                 public_id: row.summary.public_id.clone(),
                 id,
+                asset_id,
             });
         }
-        Ok(erased)
+        Ok(done)
     }
 
-    /// Removes the bytes of this tenant's erased attachments and records each
-    /// removal. Safe to repeat: a file already gone counts as removed. Returns
-    /// how many files were removed now; a file that will not go stays pending
-    /// for the next call and the result is `CleanupFailed`.
-    pub async fn remove_erased_bytes(&self, client: &mut Client, scope: &Scope) -> Result<usize> {
-        let pending = client
-            .query(
-                "SELECT id,erased_disk,erased_key FROM base_media_attachments WHERE tenant_id=$1 AND state='erased' AND bytes_removed_at IS NULL ORDER BY id LIMIT $2",
-                &[&scope.tenant(), &CLEANUP_BATCH],
-            )
-            .await?;
-        if pending.is_empty() {
-            return Ok(0);
-        }
+    /// Removes the bytes of `subject`'s erased attachments, one file per
+    /// transaction: each file is claimed under its row lock, removed, and
+    /// recorded once, so concurrent calls never remove or record one file
+    /// twice. A file already gone counts as removed. Removes at most one batch;
+    /// `more` says files remain, and a file that will not go is
+    /// `CleanupFailed`, left pending for the next call.
+    pub async fn remove_erased_bytes(
+        &self,
+        client: &mut Client,
+        scope: &Scope,
+        grant: &Erasure,
+        subject: AttachmentSubject<'_>,
+    ) -> Result<Removal> {
+        grant.check(scope)?;
         let roots = self.disks(&*client).await?;
-        let (mut removed, mut failed) = (0, false);
-        for row in pending {
-            let (id, disk, key): (i64, String, String) = (row.get(0), row.get(1), row.get(2));
-            if storage::delete(&roots, &disk, &key).await.is_err() {
-                failed = true;
-                continue;
-            }
+        let mut removal = Removal::default();
+        for _ in 0..CLEANUP_BATCH {
             let mut tx = self
                 .boundary
                 .begin(
@@ -727,6 +815,31 @@ impl Media {
                     scope.mutation_context("media.attachment.bytes_removed"),
                 )
                 .await?;
+            let Some(row) = tx
+                .sql()
+                .query_opt(
+                    "SELECT id,erased_disk,erased_key FROM base_media_attachments WHERE tenant_id=$1 AND subject_type=$2 AND subject_id=$3 \
+                     AND state='erased' AND bytes_removed_at IS NULL ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED",
+                    &[&scope.tenant(), &subject.kind, &subject.id],
+                )
+                .await?
+            else {
+                tx.rollback().await?;
+                removal.more = client
+                    .query_one(
+                        "SELECT EXISTS (SELECT 1 FROM base_media_attachments WHERE tenant_id=$1 AND subject_type=$2 AND subject_id=$3 \
+                         AND state='erased' AND bytes_removed_at IS NULL)",
+                        &[&scope.tenant(), &subject.kind, &subject.id],
+                    )
+                    .await?
+                    .get(0);
+                return Ok(removal);
+            };
+            let (id, disk, key): (i64, String, String) = (row.get(0), row.get(1), row.get(2));
+            if storage::delete(&roots, &disk, &key).await.is_err() {
+                tx.rollback().await?;
+                return Err(Error::CleanupFailed);
+            }
             tx.mutate(move |sql| {
                 Box::pin(async move {
                     sql.execute(
@@ -735,7 +848,7 @@ impl Media {
                     )
                     .await?;
                     let change = Change {
-                        kind: "base/media/attachment".into(),
+                        kind: ATTACHMENT_KIND.into(),
                         id,
                         old: json!({"bytes": "present"}),
                         new: json!({"bytes": "removed"}),
@@ -745,11 +858,9 @@ impl Media {
             })
             .await?;
             tx.commit().await?;
-            removed += 1;
+            removal.removed += 1;
         }
-        if failed {
-            return Err(Error::CleanupFailed);
-        }
-        Ok(removed)
+        removal.more = true;
+        Ok(removal)
     }
 }

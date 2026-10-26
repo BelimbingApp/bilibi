@@ -8,7 +8,7 @@ use std::{
 use tokio_postgres::Row;
 
 pub const COLUMNS: &str =
-    "id,name,kind,email,phone,system_key,retired_at,version,created_at,updated_at";
+    "id,name,kind,email,phone,system_key,retired_at,erased_at,version,created_at,updated_at";
 pub const CONTACT_FIELDS: &[&str] = &["email", "phone"];
 
 /// What this reader may not see of persons: every restricted field, and of
@@ -38,6 +38,8 @@ pub struct Person {
     pub phone: Option<String>,
     pub system_key: Option<String>,
     pub retired_at: Option<SystemTime>,
+    /// When an erasure anonymised the person (ADR 05).
+    pub erased_at: Option<SystemTime>,
     pub version: i64,
     pub created_at: SystemTime,
     pub updated_at: SystemTime,
@@ -59,6 +61,7 @@ impl Person {
             phone: row.get("phone"),
             system_key: row.get("system_key"),
             retired_at: row.get("retired_at"),
+            erased_at: row.get("erased_at"),
             version: row.get("version"),
             created_at: row.get("created_at"),
             updated_at: row.get("updated_at"),
@@ -93,6 +96,7 @@ impl Person {
             ("created_at", Some(self.created_at)),
             ("updated_at", Some(self.updated_at)),
             ("retired_at", self.retired_at),
+            ("erased_at", self.erased_at),
         ] {
             value[key] = match instant.and_then(|t| jiff::Timestamp::try_from(t).ok()) {
                 Some(stamp) => serde_json::Value::String(stamp.to_string()),

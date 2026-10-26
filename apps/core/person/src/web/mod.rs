@@ -22,7 +22,8 @@ pub const SERVICE: &str = "core/person.pages";
 // Every write these pages make is a Person contract (ADR 01).
 inventory::submit! { bilibi_module_registry::Contribution::new(PAGE_WRITES, SERVICE, bilibi_module_registry::Provenance { module: "core/person", source: file!(), line: line!() }, &PageWrites {
     service: SERVICE,
-    contracts: &[("create", "core.person.create"), ("save_field", "core.person.update"), ("retire", "core.person.retire")],
+    contracts: &[("create", "core.person.create"), ("save_field", "core.person.update"), ("retire", "core.person.retire"),
+        ("reveal", "base.privacy.field.reveal")],
     pending: Pending::None,
 }) }
 #[derive(Clone)]
@@ -40,8 +41,6 @@ pub struct Pages {
     pub display: Arc<DisplayPolicy>,
     pub locales: Arc<Locales>,
     pub person_panels: Vec<RecordPanel>,
-    /// Reveals a masked contact with a reason (ADR 05).
-    pub privacy: Arc<bilibi_privacy::Privacy>,
 }
 impl Pages {
     /// One of these pages' write events, as the contract it declared.

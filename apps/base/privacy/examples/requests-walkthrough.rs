@@ -8,8 +8,9 @@ use bilibi_base::media::{AttachmentSubject, Media, Rules, Upload};
 use bilibi_core::person::files as person_files;
 use bilibi_database::{pool, MutationBoundary};
 use bilibi_party_ids::{OrganisationId, PersonId};
+use bilibi_personal_data::Identifier;
 use bilibi_privacy::{
-    HoldTarget, Identifier, NewRequest, Privacy, RequestKind, RequestView, SERVICE,
+    ConfirmedRecord, HoldTarget, NewRequest, Privacy, RequestKind, RequestView, SERVICE,
 };
 use bilibi_settings::{Settings, Target};
 use bilibi_tenancy::Scope;
@@ -225,10 +226,14 @@ async fn main() -> Result<()> {
                 admin.mutation_context("privacy.walkthrough.configure"),
             )
             .await?;
+        // The certificate prints through Chromium (A4).
+        let chromium =
+            std::env::var("BILIBI_PRIVACY_DEMO_CHROMIUM").unwrap_or_else(|_| "chromium".into());
         for (key, value) in [
             ("media.disks", json!({"local": root})),
             ("media.attachment_disk", json!("local")),
             ("artifacts.storage_root", json!(root)),
+            ("pdf.chromium.binary", json!(chromium)),
         ] {
             settings
                 .put(&mut tx, &admin, Target::Global, key, value)
@@ -313,6 +318,7 @@ async fn main() -> Result<()> {
             access.id,
             access.version,
             "Passport checked at counter",
+            &[],
         )
         .await?;
     let access = privacy
@@ -321,11 +327,25 @@ async fn main() -> Result<()> {
     let access = settle(&privacy, &client, &admin, access.id, 60).await?;
     summary(&access);
     match privacy
-        .request_document(&mut client, &admin, access.id)
+        .request_document(&mut client, &admin, access.id, None)
         .await
     {
         Ok((content_type, bytes, name)) => {
-            let bundle: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+            let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes.clone()))?;
+            let entries: Vec<String> = (0..zip.len())
+                .filter_map(|i| {
+                    zip.by_index(i)
+                        .ok()
+                        .map(|f| format!("{:?} ({} bytes)", f.name(), f.size()))
+                })
+                .collect();
+            println!("export entries: {entries:?}");
+            let bundle: Value = {
+                use std::io::Read;
+                let mut text = String::new();
+                zip.by_name("export.json")?.read_to_string(&mut text)?;
+                serde_json::from_str(&text).unwrap_or(Value::Null)
+            };
             let stores: Vec<String> =
                 bundle
                     .get("stores")
@@ -362,6 +382,33 @@ async fn main() -> Result<()> {
          WHERE event='artifacts.read' ORDER BY id DESC LIMIT 2",
     )
     .await?;
+    println!("== a reader who sees a field masked needs a reason for the export");
+    client
+        .batch_execute("INSERT INTO field_restrictions(tenant_id,role_id,table_id,field_id,mode) VALUES(1,4,'persons','email','mask')")
+        .await?;
+    show(
+        "download with no reason",
+        privacy
+            .request_document(&mut client, &admin, access.id, None)
+            .await
+            .map(|(_, bytes, _)| bytes.len()),
+    );
+    show(
+        "download with a reason",
+        privacy
+            .request_document(&mut client, &admin, access.id, Some("Ticket 9001"))
+            .await
+            .map(|(_, bytes, _)| bytes.len()),
+    );
+    rows(
+        &client,
+        "audit action",
+        "SELECT event||' actor='||actor_id||' '||payload::text FROM base_audit_actions WHERE event='privacy.export.revealed' ORDER BY id",
+    )
+    .await?;
+    client
+        .batch_execute("DELETE FROM field_restrictions WHERE tenant_id=1 AND role_id=4 AND table_id='persons' AND field_id='email'")
+        .await?;
 
     println!("== due notices: an open request due tomorrow");
     let open = privacy
@@ -383,6 +430,7 @@ async fn main() -> Result<()> {
             open.id,
             open.version,
             "Phone call, account details confirmed",
+            &[],
         )
         .await?;
     // Stands in for twenty days passing.
@@ -467,9 +515,9 @@ async fn main() -> Result<()> {
     show(
         "tenant 2 list",
         privacy
-            .requests(&**client, &other, false, 50)
+            .requests(&**client, &other, "", false, 0, 50)
             .await
-            .map(|r| r.len()),
+            .map(|r| r.1),
     );
     show(
         "tenant 2 read",
@@ -499,6 +547,56 @@ async fn main() -> Result<()> {
             },
         )
         .await?;
+    // An event that names no person but carries Ada's email: a candidate only.
+    let event_id: i64 = client
+        .query_one(
+            "INSERT INTO base_events(tenant_id,publisher,name,version,subject,event_key,payload,trace_id) \
+             VALUES(1,'walkthrough','walkthrough.contact_noted',1,'note:1','privacy-walkthrough-1',\
+             '{\"from\":\"Ada Manager\",\"reply_to\":\"ADA@example.test\",\"phone\":\"+60 12-345 6789\"}','walkthrough') RETURNING id",
+            &[],
+        )
+        .await?
+        .get(0);
+    let unrelated: i64 = client
+        .query_one(
+            "INSERT INTO base_events(tenant_id,publisher,name,version,subject,event_key,payload,trace_id) \
+             VALUES(1,'walkthrough','walkthrough.contact_noted',1,'note:2','privacy-walkthrough-2',\
+             '{\"reply_to\":\"ada@example.test\",\"about\":\"someone else\"}','walkthrough') RETURNING id",
+            &[],
+        )
+        .await?
+        .get(0);
+    for (store, _, located) in privacy.locate(&client, &admin, erasure.id).await? {
+        if !located.candidates.is_empty() {
+            println!(
+                "  candidates in {store}: {:?}",
+                located
+                    .candidates
+                    .iter()
+                    .map(|c| (&c.id, &c.summary))
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+    show(
+        "confirm a record that is not a candidate",
+        privacy
+            .verify(
+                &mut client,
+                &admin,
+                erasure.id,
+                erasure.version,
+                "Signed request, ID checked",
+                &[ConfirmedRecord {
+                    store: "base/events.payloads".into(),
+                    kind: "base/events.event".into(),
+                    id: "999999".into(),
+                }],
+            )
+            .await
+            .map(|r| r.status),
+    );
+    // Only the first event is the person's; the second is left alone.
     let erasure = privacy
         .verify(
             &mut client,
@@ -506,8 +604,14 @@ async fn main() -> Result<()> {
             erasure.id,
             erasure.version,
             "Signed request, ID checked",
+            &[ConfirmedRecord {
+                store: "base/events.payloads".into(),
+                kind: "base/events.event".into(),
+                id: event_id.to_string(),
+            }],
         )
         .await?;
+    println!("confirmed event {event_id}; left event {unrelated} unconfirmed");
     show(
         "approve with a code by whoever received it",
         privacy
@@ -560,6 +664,13 @@ async fn main() -> Result<()> {
         "SELECT row_to_json(e)::text FROM base_audit_erasures e ORDER BY id",
     )
     .await?;
+    rows(
+        &client,
+        "events",
+        "SELECT id||' '||payload::text FROM base_events WHERE publisher='walkthrough' ORDER BY id",
+    )
+    .await?;
+    rows(&client, "requests of person 1", "SELECT row_to_json(r)::text FROM (SELECT id,kind,status,identifiers,verification,refused_reason,export_artifact,erased_at IS NOT NULL AS erased FROM base_privacy_requests WHERE person_id=1 ORDER BY id) r").await?;
     let files = walk(std::path::Path::new(&root));
     println!("files under the media root containing the scan: {}", files);
 
@@ -568,6 +679,7 @@ async fn main() -> Result<()> {
         &client,
         &[
             "ada@example.test",
+            "Passport checked",
             "Ada Manager",
             "manager@example.test",
             "Operations Manager",
@@ -623,6 +735,7 @@ async fn main() -> Result<()> {
             held.id,
             held.version,
             "Email from own address",
+            &[],
         )
         .await?;
     let held = privacy
@@ -666,6 +779,7 @@ async fn main() -> Result<()> {
             again.id,
             again.version,
             "Email from own address",
+            &[],
         )
         .await?;
     // A code is accepted once: wait for the authenticator's next step.
@@ -686,21 +800,140 @@ async fn main() -> Result<()> {
     )
     .await?;
 
+    println!("== an approver affiliated with another company cannot start a request");
+    // Account 6 now works for Company 002; the request is filed under Company 001.
+    client
+        .batch_execute(
+            "INSERT INTO person_affiliations(tenant_id,person_id,organisation_id) VALUES(1,3,2); \
+             UPDATE users SET organisation_id=2,affiliation_id=(SELECT max(id) FROM person_affiliations WHERE person_id=3) WHERE id=6;",
+        )
+        .await?;
+    let elsewhere = login(&app, "ai@agent.my").await?;
+    let filed = privacy
+        .receive(
+            &mut client,
+            &admin,
+            NewRequest {
+                kind: RequestKind::Access,
+                person: kim,
+                identifiers: vec![],
+                company: one,
+            },
+        )
+        .await?;
+    let filed = privacy
+        .verify(&mut client, &admin, filed.id, filed.version, "Letter", &[])
+        .await?;
+    show(
+        "approve it as a Company 002 employee",
+        privacy
+            .approve(&mut client, &elsewhere, filed.id, filed.version)
+            .await
+            .map(|r| r.status),
+    );
+    let request = privacy.request(&**client, &admin, filed.id).await?;
+    println!(
+        "request {} is still {} with {} store jobs started",
+        request.id,
+        request.status,
+        request.stores.len()
+    );
+
+    println!("== 502 requests: the list counts and searches in SQL");
+    client
+        .batch_execute(
+            "INSERT INTO base_privacy_requests(tenant_id,kind,person_id,company_id,received_by,due_at,received_at) \
+             SELECT 1,'access',3,1,4,clock_timestamp()+interval '30 days',clock_timestamp()-make_interval(mins => g) FROM generate_series(1,502) g",
+        )
+        .await?;
+    let oldest: i64 = client
+        .query_one(
+            "SELECT min(id) FROM base_privacy_requests WHERE tenant_id=1 AND person_id=3",
+            &[],
+        )
+        .await?
+        .get(0);
+    let (page, total) = privacy
+        .requests(&**client, &admin, "", false, 0, 25)
+        .await?;
+    println!("first page {} of total {total}", page.len());
+    let (found, total) = privacy
+        .requests(&**client, &admin, &oldest.to_string(), false, 0, 25)
+        .await?;
+    println!(
+        "search for the oldest ({oldest}): {total} found, ids {:?}",
+        found.iter().map(|r| r.id).collect::<Vec<_>>()
+    );
+
+    println!("== due notices page past requests no one can be told about");
+    client
+        .batch_execute(
+            "UPDATE base_privacy_requests SET received_by=999999,due_at=clock_timestamp()+interval '1 hour' WHERE tenant_id=1 AND person_id=3; \
+             INSERT INTO base_privacy_requests(tenant_id,kind,person_id,company_id,received_by,due_at) \
+             VALUES(1,'access',3,1,4,clock_timestamp()+interval '2 days');",
+        )
+        .await?;
+    let last: i64 = client
+        .query_one(
+            "SELECT max(id) FROM base_privacy_requests WHERE tenant_id=1",
+            &[],
+        )
+        .await?
+        .get(0);
+    for run in 1..=2 {
+        show(
+            &format!("due run {run}"),
+            schedule
+                .run_now(
+                    &mut client,
+                    &admin,
+                    bilibi_privacy::DUE_SCHEDULE,
+                    jiff::Timestamp::now(),
+                )
+                .await
+                .map(|r| r.is_ok()),
+        );
+        tokio::time::sleep(Duration::from_secs(8)).await;
+        rows(
+            &client,
+            "  latest request notified",
+            &format!("SELECT (due_notified_at IS NOT NULL)::text FROM base_privacy_requests WHERE id={last}"),
+        )
+        .await?;
+    }
+    rows(
+        &client,
+        "notice",
+        &format!("SELECT user_id||' '||title||' | '||body FROM notifications WHERE tenant_id=1 AND type='privacy.request' AND url LIKE '%/{last}'"),
+    )
+    .await?;
+
     stop.send(true)?;
     let _ = workers.await;
     Ok(())
 }
 /// Downloads a certificate and prints the readable lines of its PDF text.
 async fn certificate(privacy: &Privacy, client: &mut Client, scope: &Scope, id: i64) -> Result<()> {
-    match privacy.request_document(client, scope, id).await {
+    match privacy.request_document(client, scope, id, None).await {
         Ok((content_type, bytes, name)) => {
             println!("certificate {name} {content_type} {} bytes", bytes.len());
-            let text = String::from_utf8_lossy(&bytes);
-            for line in text
-                .split("Tj")
-                .filter_map(|t| t.rsplit_once('(').map(|(_, s)| s.trim_end_matches(')')))
+            // The A4 renderer embeds fonts; read the text back with pdftotext.
+            let path = std::env::temp_dir().join(format!("privacy-certificate-{id}.pdf"));
+            std::fs::write(&path, &bytes)?;
+            match std::process::Command::new("pdftotext")
+                .arg(&path)
+                .arg("-")
+                .output()
             {
-                println!("  | {line}");
+                Ok(out) => {
+                    for line in String::from_utf8_lossy(&out.stdout)
+                        .lines()
+                        .filter(|l| !l.trim().is_empty())
+                    {
+                        println!("  | {line}");
+                    }
+                }
+                Err(_) => println!("  (pdftotext not installed: open {})", path.display()),
             }
         }
         Err(error) => println!("certificate: refused — {error}"),

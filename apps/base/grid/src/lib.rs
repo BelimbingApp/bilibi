@@ -128,7 +128,7 @@ inventory::submit! { Consumer::new::<GridContribution>(TABLES, "base/grid", |ent
 inventory::submit! {
     Module {
         id: "base/grid", layer: Layer::Base,
-        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/ui", "base/datetime", "base/settings"],
+        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/ui", "base/datetime", "base/settings", "base/personal_data"],
         migrations: &[
             ("base-grid-001", include_str!("../migrations/001-reference.sql")),
             ("base-grid-002", include_str!("../migrations/002-reference-recorded-at.sql")),

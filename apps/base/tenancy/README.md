@@ -14,6 +14,8 @@ Use `Authentication` and `Scope` from `src/lib.rs` for authenticated identity. R
 
 `OrganisationDirectory` and `PartyProofs` return `NamedOrganisation` with `id`, display `name`, full `status` and the existing `archived` flag. Core Company populates both status fields through the same scoped directory reads. See [Core Company's public summary contract](../../core/company/README.md#public-company-summaries) for lifecycle values, authorization, chooser policies and custom directory updates.
 
+**`PartyProofs::primary_organisation(client, scope)` names the tenant's live primary company** (Company's `OrganisationDirectory::primary`, defaulting to none): the company whose settings govern records that belong to no one company, such as a retention sweep's.
+
 ## Named system principals (SP1)
 
 `Authentication::for_principal(client, tenant, principal)` is the trusted worker edge: it seals a `Scope` whose `Actor` is the named system principal, in a live tenant, with no account, person, organisation, affiliation, agent facet, impersonator or step-up code and a fresh CSRF value. Call it through Authz's `SystemAuthentication::for_system(client, &SystemScope)`, which proves the declaration first; Queue does this on every attempt of a system job, so `Execution::scope()` is `Some` for a principal too. It is never a browser constructor and never deserialized: the principal comes from a worker's rehydrated job row or a schedule definition.

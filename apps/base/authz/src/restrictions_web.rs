@@ -369,7 +369,7 @@ impl Screen {
                         role_ids: list(value, "role_ids"),
                         table_ids: list(value, "table_ids"),
                         field_keys: list(value, "field_keys"),
-                        mode: list(value, "mode").into_iter().next().unwrap_or_default(),
+                        mode: scalar(value, "mode"),
                     });
                 }
             }
@@ -772,6 +772,15 @@ impl LiveState<Scope, Error> for Screen {
 
 /// The values of one posted picker: an array (every checked box) or one
 /// string; blanks dropped, duplicates collapsed, bounded before use.
+/// A single-value control (the mode select posts `restriction[mode]`).
+fn scalar(payload: &Value, key: &str) -> String {
+    payload
+        .get(format!("{FORM}[{key}]"))
+        .and_then(Value::as_str)
+        .filter(|text| text.len() <= 32)
+        .unwrap_or_default()
+        .to_owned()
+}
 fn list(payload: &Value, key: &str) -> Vec<String> {
     let mut values: Vec<String> = Vec::new();
     let mut keep = |value: &Value| {

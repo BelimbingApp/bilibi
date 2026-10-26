@@ -165,15 +165,21 @@ pub async fn project_lenses<S: AsRef<str>>(
 /// The full value of one masked field of one record (ADR 05): the same read
 /// as [`project`], with only that field unmasked. `None` when the record is
 /// gone or the scope may not read it. The field must be masked for this scope
-/// now: a withheld or unrestricted field is `Forbidden`. The caller authorizes
-/// the reveal and records it; Grid only reads.
+/// now: a withheld or unrestricted field is `Forbidden`. Only a sealed
+/// [`Reveal`](bilibi_personal_data::Reveal) for this reader and this field
+/// opens it: `base/privacy` issues one after the reader's capability, reason
+/// and Step-up, and records the reveal.
 pub async fn reveal(
     db: &Db,
     scope: &Scope,
+    grant: &bilibi_personal_data::Reveal,
     table: &str,
     field: &str,
     key: &Value,
 ) -> Result<Option<Value>, QueryError> {
+    grant
+        .check(scope, table, field)
+        .map_err(QueryError::Database)?;
     {
         let client = db.get().await.map_err(Error::from)?;
         let catalog = Catalog::for_scope(&**client, scope).await?;

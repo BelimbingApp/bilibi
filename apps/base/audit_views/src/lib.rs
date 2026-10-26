@@ -17,6 +17,7 @@ mod actions;
 mod activity;
 mod diff;
 mod history;
+mod integrity;
 mod mutations;
 mod present;
 
@@ -90,6 +91,19 @@ inventory::submit! {
         operation: "actions", access: Access::Capability(LIST), framed: true,
     })
 }
+bilibi_menu::contribute!(
+    "base/audit_views",
+    bilibi_menu::MenuItem::page("admin.audit.integrity", "Verify audit log", integrity::PATH)
+        .under("admin.audit")
+        .requires(bilibi_menu::Requirement::Capability(LIST))
+        .order(30)
+);
+inventory::submit! {
+    Contribution::new(ROUTES, "base/audit_views.integrity", provenance!(), &Route {
+        method: Method::Get, path: integrity::PATH, service: "base/audit_views.integrity",
+        operation: "integrity", access: Access::OperatorCapability(LIST), framed: true,
+    })
+}
 inventory::submit! {
     Contribution::new(ROUTES, "base/audit_views.mutations", provenance!(), &Route {
         method: Method::Get, path: "/audit/mutations", service: "base/audit_views.mutations",
@@ -130,7 +144,7 @@ bilibi_dashboard::contribute!(
 
 inventory::submit! {
     Module { id: MODULE, layer: bilibi_module_registry::Layer::Base,
-        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/audit", "base/authz", "base/ui", "base/dashboard", "base/menu", "base/datetime", "base/locale"],
+        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/audit", "base/authz", "base/ui", "base/dashboard", "base/menu", "base/datetime", "base/locale", "base/queue", "base/schedule"],
         migrations: &[],
         services: &[
             Service { id: "base/audit_views.pages", factory: |services| {
@@ -139,6 +153,17 @@ inventory::submit! {
                     boundary: services.get("base/database.mutations")?,
                     display: services.get("base/datetime.display")?,
                     locales: services.get("base/locale.locales")?,
+                }))))
+            } },
+            Service { id: "base/audit_views.integrity", factory: |services| {
+                Ok(Arc::new(PageService::<Scope, Error>(Arc::new(integrity::Pages {
+                    db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
+                }))))
+            } },
+            Service { id: "base/audit_views.seal_job", factory: |services| {
+                Ok(Arc::new(bilibi_queue::execution::HandlerService(Arc::new(integrity::SealJob {
+                    db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
+                    schedule: services.get("base/schedule.store")?,
                 }))))
             } },
             Service { id: "base/audit_views.mutations", factory: |services| {

@@ -44,8 +44,11 @@ pub(super) struct Detail {
     pending_retire: Option<(String, Value, String)>,
     pub(super) notice: String,
     reveal: Option<Reveal>,
-    /// Contacts revealed in this view (ADR 05). Never stored; a new view masks again.
-    revealed: BTreeMap<String, String>,
+    /// Contacts revealed in this view (ADR 05), with the record version they
+    /// were read at. Never stored; a new view masks again, and a value is
+    /// shown only while the reader still may reveal it and the record has not
+    /// changed.
+    revealed: BTreeMap<String, (String, i64)>,
 }
 impl Detail {
     pub fn new(pages: Pages, id: PersonId, _framed: bool) -> Self {
@@ -81,12 +84,27 @@ impl Detail {
         }
         field
     }
-    pub async fn contacts(&self, scope: &Scope, person: &Person, prefix: &str) -> Result<Html> {
+    /// The contact facts. `revealable` is the record page's own view: an
+    /// embedded panel shows masked contacts without the reveal control.
+    pub async fn contacts(
+        &self,
+        scope: &Scope,
+        person: &Person,
+        prefix: &str,
+        revealable: bool,
+    ) -> Result<Html> {
         let editable = person.retired_at.is_none() && self.pages.allowed(scope, UPDATE).await?;
-        let can_reveal = self
-            .pages
-            .allowed(scope, bilibi_privacy::FIELD_REVEAL)
-            .await?;
+        let can_reveal = revealable
+            && self
+                .pages
+                .allowed(scope, bilibi_privacy::FIELD_REVEAL)
+                .await?;
+        let revealed = |key: &str| {
+            self.revealed
+                .get(key)
+                .filter(|(_, version)| can_reveal && *version == person.version)
+                .map(|(value, _)| value.as_str())
+        };
         let mut items = Vec::new();
         for (key, label, value) in [
             (
@@ -104,9 +122,10 @@ impl Detail {
                 title: super::fields::get(key).label,
                 value: if person.masked.iter().any(|m| m == key) {
                     // A partial value, or the full one revealed in this view.
-                    let shown = self.revealed.get(key).map_or(value, String::as_str);
+                    let full = revealed(key);
+                    let shown = full.unwrap_or(value);
                     let mut cell = Html::text(if shown.is_empty() { "—" } else { shown });
-                    if can_reveal && !shown.is_empty() && !self.revealed.contains_key(key) {
+                    if can_reveal && !shown.is_empty() && full.is_none() {
                         cell.push(&render(bilibi_ui::IconButton {
                             id: &format!("{prefix}-{key}-reveal"),
                             kind: bilibi_ui::IconKind::Neutral,
@@ -334,7 +353,9 @@ impl Detail {
             person: &person,
             header,
             identity,
-            contacts: self.contacts(scope, &person, "person-contact").await?,
+            contacts: self
+                .contacts(scope, &person, "person-contact", true)
+                .await?,
             panels: self
                 .panels()
                 .into_iter()
@@ -371,12 +392,15 @@ impl Detail {
                     .and_then(|v| v.parse::<i64>().ok())
                     .ok_or(Error::Invalid)?;
                 let person = self.pages.persons.read(scope, self.id).await?;
-                // Never carry a restricted contact into a replacement input.
+                // Never carry a restricted contact into a replacement input: a
+                // masked one holds only its partial value. Left out, the owner
+                // keeps the stored value.
+                let masked = |key: &str| person.masked.iter().any(|m| m == key);
                 let mut identity = PersonInput {
+                    email: person.email.clone().filter(|_| !masked("email")),
+                    phone: person.phone.clone().filter(|_| !masked("phone")),
                     name: person.name,
                     kind: person.kind,
-                    email: person.email,
-                    phone: person.phone,
                 };
                 match field {
                     "name" => identity.name = submitted.into(),
@@ -527,28 +551,29 @@ impl Detail {
                     .get("reason")
                     .cloned()
                     .unwrap_or_default();
+                let version = self.pages.persons.read(scope, self.id).await?.version;
+                // The privacy contract checks the capability, reason and Step-up
+                // and records the reveal before it answers.
                 match self
                     .pages
-                    .privacy
-                    .reveal_field(
-                        scope,
-                        "persons",
-                        &open.field,
-                        &json!(self.id.get()),
-                        &reason,
+                    .contracts
+                    .submit(
+                        &self.pages.call(scope, credential, "reveal", "base.privacy.field.reveal"),
+                        json!({"table": "persons", "field": open.field, "record": self.id.get(), "reason": reason}),
                     )
                     .await
                 {
-                    Ok(full) => {
-                        self.revealed.insert(open.field, full.unwrap_or_default());
+                    Ok(result) => {
+                        let full = result["result"]["value"].as_str().unwrap_or_default().to_owned();
+                        self.revealed.insert(open.field, (full, version));
                         self.notice =
                             "Revealed for this view. The reveal is recorded with your reason."
                                 .into();
                     }
-                    Err(error @ (Error::Unauthorized | Error::StepUpRequired { .. })) => {
-                        return Err(error)
-                    }
-                    Err(Error::Invalid) => {
+                    Err(ContractError::Backend(
+                        error @ (Error::Unauthorized | Error::StepUpRequired { .. }),
+                    )) => return Err(error),
+                    Err(ContractError::InvalidInput(_) | ContractError::Backend(Error::Invalid)) => {
                         self.reveal = Some(Reveal {
                             errors: vec!["Give a reason of up to 255 characters.".into()],
                             reason,

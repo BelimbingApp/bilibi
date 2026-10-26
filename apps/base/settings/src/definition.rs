@@ -4,6 +4,9 @@ use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const DEFINITIONS: &str = "base/settings.definitions";
+/// The catalog of rules over several settings:
+/// `Contribution::new(CONSTRAINTS, "<module>.<name>", provenance, &Constraint { .. })`.
+pub const CONSTRAINTS: &str = "base/settings.constraints";
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub enum ScopeKind {
     Global,
@@ -84,6 +87,15 @@ impl Definition {
         Ok(())
     }
 }
+/// A rule over 2–8 defined settings, as one scope resolves them (its own
+/// values, else inherited, else defaults). Writing any of them at that scope
+/// locks all of them, then refuses the write unless `accepts` holds for the
+/// values in `keys` order: for example a period never below its minimum.
+pub struct Constraint {
+    pub keys: &'static [&'static str],
+    pub accepts: fn(&[Value]) -> bool,
+    pub message: &'static str,
+}
 /// Runtime claims have no default, reject null writes and store JSON without
 /// encryption. Use a Definition for secrets or user-editable configuration.
 pub enum Setting {
@@ -99,10 +111,51 @@ pub struct OwnedSetting {
 #[derive(Clone, Default)]
 pub struct Definitions {
     entries: BTreeMap<&'static str, OwnedSetting>,
+    constraints: Vec<&'static Constraint>,
 }
 impl Definitions {
     pub fn from_catalog(catalog: &Catalog) -> bilibi_module_registry::Result<Self> {
-        Self::from_entries(catalog.entries::<Setting>(DEFINITIONS)?)
+        let mut definitions = Self::from_entries(catalog.entries::<Setting>(DEFINITIONS)?)?;
+        definitions.constraints =
+            definitions.constraints_from(catalog.entries::<Constraint>(CONSTRAINTS)?)?;
+        Ok(definitions)
+    }
+    fn constraints_from(
+        &self,
+        entries: &[Entry],
+    ) -> bilibi_module_registry::Result<Vec<&'static Constraint>> {
+        let mut constraints = Vec::with_capacity(entries.len());
+        for entry in entries {
+            let constraint = entry.get::<Constraint>()?;
+            let unique: BTreeSet<_> = constraint.keys.iter().collect();
+            let defined = constraint.keys.iter().all(|key| {
+                self.entries.get(key).is_some_and(
+                    |owned| matches!(owned.setting, Setting::Definition(d) if !d.encrypted),
+                )
+            });
+            if !(2..=8).contains(&constraint.keys.len())
+                || unique.len() != constraint.keys.len()
+                || !defined
+                || constraint.message.is_empty()
+            {
+                return Err(RegistryError::Contribution(format!(
+                    "settings constraint {} declared by {} at {}:{} must name 2-8 distinct, unencrypted, defined settings and a message",
+                    entry.id, entry.provenance.module, entry.provenance.source, entry.provenance.line
+                )));
+            }
+            constraints.push(constraint);
+        }
+        Ok(constraints)
+    }
+    /// The rules that name `key`.
+    pub fn constraints_for<'a>(
+        &'a self,
+        key: &'a str,
+    ) -> impl Iterator<Item = &'static Constraint> + 'a {
+        self.constraints
+            .iter()
+            .copied()
+            .filter(move |constraint| constraint.keys.contains(&key))
     }
     fn from_entries(entries: &[Entry]) -> bilibi_module_registry::Result<Self> {
         let mut result = Self::default();
@@ -198,4 +251,8 @@ fn matches(pattern: &str, key: &str) -> bool {
 }
 inventory::submit! {
     Consumer::new::<Setting>(DEFINITIONS, "base/settings", |entries| Definitions::from_entries(entries).map(|_| ()))
+}
+// Checked against the definitions when the store is built.
+inventory::submit! {
+    Consumer::new::<Constraint>(CONSTRAINTS, "base/settings", |_| Ok(()))
 }

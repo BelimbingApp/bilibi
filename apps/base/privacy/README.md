@@ -1,64 +1,26 @@
 # Personal data (privacy)
 
-**Each module that keeps a person's data answers for it through one contributed handler.** The decision is [ADR 05](../../../docs/architecture/decisions/05-personal-data-registry.md); the work is tracked in [issue 132](https://github.com/BelimbingApp/bilibi/issues/132). No Bilimbi counterpart.
+**Data-subject requests, legal holds, retention sweeps and masked-field reveals, above the `base/personal_data` contract.** The decision is [ADR 05](../../../docs/architecture/decisions/05-personal-data-registry.md); the work is tracked in [issue 132](https://github.com/BelimbingApp/bilibi/issues/132). No Bilimbi counterpart.
+
+Stores, record kinds, grants and the hold guard are contracts in [`base/personal_data`](../personal_data/README.md). This module runs them.
 
 ## What exists now
 
 | Part | Status |
 | --- | --- |
-| Personal-data registry and handler contract | Built |
-| Grid personal field marks and boot check | Built |
-| Legal holds | Built (facade, operator page, agent operations) |
-| Access and erasure requests, export, certificate | Built |
-| Audit and media erasure paths | Built |
-| Platform handlers: Person, User, Affiliation, Address, Events, Integration | Built |
-| Notice as a request nears its due date | Built |
-| Retention classes, tenant periods, sweeps and operator page | Built |
-| Partial masking and audited reveal | Built |
+| Registry contract (`base/personal_data`), Grid personal field marks, boot check | Built |
+| Legal holds, guarded against running erasures and sweeps | Built |
+| Access and erasure requests, confirmed identifier-only candidates, export ZIP, A4 certificate | Built |
+| Audit erasure with legal minimum and deferral, hash chain and "Verify audit log" | Built (`base/audit`, `base/audit_views`) |
+| Media and Artifacts erasure and disclosure under a sealed grant | Built |
+| Platform stores: Person, User, Affiliation, Address, Events, Integration, Audit | Built |
+| Due notices | Built |
+| Record classes, company periods and legal minimums, sweeps with one summary per run | Built |
+| Partial masking and audited reveal, export reveal | Built |
 
-## Contribute a store
+## Boot check
 
-**Declare `base/privacy` as a dependency, then contribute one `PersonalData` per store.**
-
-```rust,ignore
-static HANDLER: PeopleData = PeopleData;
-inventory::submit! { Contribution::new(bilibi_privacy::PERSONAL_DATA, "core/person.people",
-    Provenance { module: "core/person", source: file!(), line: line!() },
-    &bilibi_privacy::PersonalData {
-        label: "People",
-        record_kinds: &["person"],
-        handler: &HANDLER,
-    }) }
-```
-
-- The contribution ID is the store key: `<module>.<snake_case name>`.
-- `record_kinds` are the `Change::kind` values the store writes, so audit erasure knows whose evidence to clear.
-- Boot refuses a store from a module that does not depend on `base/privacy`.
-
-## Handler contract
-
-**Every call takes a sealed `Scope` and a `Subject`, and is idempotent.**
-
-| Call | Client | Answers |
-| --- | --- | --- |
-| `locate` | plain connection | `Located`: counts per record kind, by person and by identifier only |
-| `export` | plain connection | `Exported`: the records as JSON, plus media and artifact references |
-| `erase` | the request's `MutationTransaction` | `Erased`: actions per kind, records kept with a reason, an optional deferral, and the erased fields of each record for audit |
-| `after_erase` | plain connection, after commit | Work outside the transaction (removing files, deleting artifacts). Retried until it succeeds, so idempotent; keeps what holds name |
-
-- `Subject` is a `PersonId` plus identifiers (email, phone). Match by person first. A match by identifier alone is counted, never acted on, until the operator confirms it.
-- Anonymise by default: keep rows, keys, amounts and links, and replace personal fields with `ERASED` (`[erased]`). Delete only records with no business value.
-- Write through the supplied transaction and return every change. Never open a second transaction.
-- Report what the store must keep (`KeptReason`) instead of erasing it. A store that cannot finish now answers with a `Deferral` and a date.
-- `base/privacy` checks the request's approval and Step-up before calling `erase`; the handler does not recheck its own edit capability.
-
-## Personal field marks
-
-**Mark a Grid field that holds a person's data with `Field::personal(PersonalKind::…)`.**
-
-- Kinds: `Name`, `Email`, `Phone`, `Identifier`, `Date`, `FreeText`.
-- Boot fails when a Grid table marks a field personal and its module contributes no store, naming the table, the field and the module.
-- Marks are opt-in. A table without marks behaves exactly as before.
+**A Grid table that marks a field personal needs a store from the same module, or boot fails naming the table, field and module.** Marks are opt-in.
 
 ## Legal holds
 
@@ -66,144 +28,102 @@ inventory::submit! { Contribution::new(bilibi_privacy::PERSONAL_DATA, "core/pers
 
 | Call | Needs | Does |
 | --- | --- | --- |
-| `place_hold(client, scope, target, reason)` | `privacy.hold.manage` | Places a hold on `HoldTarget::Person` or `HoldTarget::Record { kind, id }`. A second active hold on the same target is `Conflict` |
-| `release_hold(client, scope, id, reason)` | `privacy.hold.manage` | Releases an active hold once. Another tenant's hold is `NotFound` |
-| `holds(client, scope, limit)` | `privacy.hold.view` | The tenant's holds, active first then newest, at most 500 |
-| `hold_history(client, scope, id)` | `privacy.hold.view` | Placed and released events, oldest first |
-| `active_holds(client, scope, person)` | `privacy.hold.view` | `Holds` for an erasure or sweep: `person_held()`, `record_held(kind, id)` |
+| `place_hold(client, scope, target, reason)` | `privacy.hold.manage` | `HoldTarget::Person` or `HoldTarget::Record { kind, id }`. A second active hold on the same target is `Conflict`, also when two arrive at once |
+| `release_hold(client, scope, id, reason)` | `privacy.hold.manage` | Once. Another tenant's hold is `NotFound` |
+| `holds(client, scope, search, offset, limit)` | `privacy.hold.view` | One page, active first, and the total; `search` matches a hold, person or record ID or a record kind |
+| `hold_history(client, scope, id)` | `privacy.hold.view` | Placed and released events |
 
-- A record is named by its audit record kind (`Change::kind`, as a store lists it in `record_kinds`, such as `person`) and ID. A kind no mounted store declares is `Invalid`: a hold on it would protect nothing.
-- A reason is required: 1–255 characters, no control characters. It is a case reference, never personal data.
-- Place and release are `MutationBoundary` writes recorded as `base/privacy.hold` (created, then updated).
-- `erase` receives the `Holds` read inside the erasure transaction. A held person keeps everything; a held record is listed as kept with `KeptReason::LegalHold`.
-- The database guards the same rules for any client (`migrations/001-holds.sql`):
-  - a hold has exactly one target
-  - a hold is released once, and nothing else about it changes
-  - no hold row is deleted or truncated
-  - `base_privacy_hold_events` is append-only, with `recorded_at` stamped by PostgreSQL
+- A record is named by a kind some module declared (`RECORD_KINDS`); another kind is `Invalid`.
+- A reason is 1–255 characters, no control characters: a case reference.
+- **Guard:** erasures and sweeps hold the tenant's hold guard (a shared advisory lock on its own connection) from before their transaction until after it commits; placement takes it exclusively. A hold placed meanwhile waits; the next erasure sees it.
+- Erasure and sweep reads ask only about the records in hand (`Holds::records`, `persons`), never every hold in the tenant.
+- The database refuses a second target, re-release, edits, deletes and truncates (`migrations/001-holds.sql`).
 
 ## Requests
 
-**An access or erasure request runs through one contributed Workflow flow, `received → verified → approved → running → completed`, or `refused`.**
+**One Workflow flow: `received → verified → approved → running → completed`, or `refused`.**
 
 | Step | Needs | Rule |
 | --- | --- | --- |
-| Receive | `privacy.request.receive` | Kind (`access` or `erasure`), the Person and any identifiers. Due date is receipt plus `privacy.request.due_days` |
-| Verify | `privacy.request.receive` | A note saying how the requester's identity was checked |
-| Approve | `privacy.request.approve` | An erasure needs someone other than whoever received it, and Step-up `base.privacy.erasure.approve` (`.floor()`). Approval moves the request to `running` and queues one job per store |
+| Receive | `privacy.request.receive` | Kind, Person, identifiers, filing company. Due after `privacy.request.due_days` |
+| Locate | `privacy.request.view` | Counts per store and kind; records found only by an email or phone (phones by their digits) are listed as candidates |
+| Verify | `privacy.request.receive` | How the identity was checked, and which candidates are the person's. A confirmation that is not a current candidate is `Invalid` |
+| Approve | `privacy.request.approve` | A person, never an agent or principal, who can file under the request's company (their own, or reachable when unaffiliated). An erasure also needs someone other than its receiver and Step-up `base.privacy.erasure.approve` (`.floor()`). Checked before any store runs |
 | Refuse | `privacy.request.receive` | From `received` or `verified`, with a reason |
 
-- Each store answers in its own Queue job (`base/privacy-request-store`), run as the approver and retried up to 25 times. A failing store leaves the request `running` and marks it late; it never completes.
-- When every store has answered or deferred, `base/privacy-request-finish` writes the document and completes the request.
-- An erasure runs each store's `erase` in that store's own `MutationTransaction`, marked as the request's erasure and with holds read inside it, clears the returned fields from audit evidence, then calls `after_erase` on a plain connection.
-- Agents may list, read, locate, receive, verify, approve and refuse (`base.privacy.request.*`); approving an erasure still needs a person's Step-up.
-- Pages: `/privacy/requests`, `/privacy/requests/{id}`, `/privacy/holds` and `/privacy/retention`, under Admin → Personal data.
+- One Queue job per store (`base/privacy-request-store`), as the approver, retried 25 times. A failing store keeps the request `running` and late.
+- Each store gets a sealed grant for this request: `Disclosure` to export, `Erasure` to erase.
+- Erasure: the store's `erase` runs in its own transaction under the hold guard; every record it returns has its kind's declared audit fields cleared (`bilibi_audit::erase_record`), honouring the filing company's `privacy.audit.legal_minimum_days`; evidence kept for it is listed with its end date. `after_erase` saves each step as it goes, so a retry still counts earlier steps.
+- Finish (`base/privacy-request-finish`): one at a time per request; writes the export or certificate and completes. A failure is recorded on the request (`finish_attempts`, `finish_error`) and shown on its page.
+- On erasure completion every request about the person forgets its personal text (identifiers, identity note, refusal reason), staged exports are dropped and earlier exports deleted.
+- Lists page, count and search in SQL. Agents: `base.privacy.request.*` (approve needs a person).
+
+## Documents
+
+| Document | Kept | Read |
+| --- | --- | --- |
+| Export: one ZIP, `export.json` with every store's records plus each listed file, read through its store | `privacy.export_days`, then removed by the export purge schedule | `GET /privacy/requests/{id}/document`, through `Artifacts::read` |
+| Certificate: A4 PDF (`render_inline`): each store, action and counts, every record kept with reason and end date, the holds that kept them, receiver, verifier and approver; never the identity note | Retained for `privacy.certificate_years` | Same route |
+
+- An export larger than `artifacts.max_bytes` fails as `export_too_large`, never shorter.
+- A reader who sees any field restricted needs `privacy.field.reveal` and a reason (`?reason=`) to download an export; it is recorded as `privacy.export.revealed`.
+- Export purge: definition `base/privacy.export-purge` (03:30 UTC), runs once enabled.
 
 ## Due notices
 
-**A daily scheduled task tells the people handling an open request that its due date is near, once.**
+**A daily task tells a request's handlers its due date is near, once.**
 
-- Definition `base/privacy.due-notices` (07:00 UTC, worker `base/privacy-due-notices`). Like every contributed task it runs only after an operator reviews and enables it on `/system/schedule` and grants the `scheduler` principal `admin.system.schedule.execute`.
-- Each run visits every tenant's open requests whose due date falls within that tenant's `privacy.request.notice_days`, at most 500 per tenant.
-- It notifies the request's receiver, verifier and approver who are still active accounts, through `base/notifications`, and records `due_notified_at` in the same audited write (actor: system principal `scheduler`). A request is notified once.
+- Definition `base/privacy.due-notices` (07:00 UTC), runs once enabled and the `scheduler` principal is granted.
+- Each tenant, as the `scheduler` principal: open requests due within `privacy.request.notice_days`, in due order, page after page, so ones nobody can be told about never hold back the rest.
+- Rechecked under the request's row lock: a request closed meanwhile is not notified.
+- Recipients: receiver, verifier, approver still active (`NotificationBoundary::eligible`), never a scope built for them.
+- The due time is shown in the request's company zone, named, and in UTC.
 
 ## Retention
 
-**Modules contribute record classes; each tenant sets its own periods; one daily sweep acts on what is past its period.** A class with no period keeps forever.
+**Modules contribute record classes; each company turns a class on and sets its period and legal minimum in System Settings; one daily sweep acts.** Nothing is swept by default; no upper limit; no country rules.
 
 ```rust,ignore
-static SWEEPER: ClosedAccounts = ClosedAccounts;
-inventory::submit! { Contribution::new(bilibi_privacy::RECORD_CLASSES, "core/user.closed_accounts",
-    Provenance { module: "core/user", source: file!(), line: line!() },
-    &bilibi_privacy::RecordClass {
-        label: "Closed user accounts",
-        clock_start: "When the account was closed",
-        action: RetentionAction::Anonymise,
-        default_days: None,
-        minimum_days: None,
-        sweeper: &SWEEPER,
-    }) }
+bilibi_privacy::record_class! {
+    module: "core/user", key: "core/user.notifications", label: "Notifications",
+    clock_start: "when the notification was sent", action: Purge,
+    business_value: false, floor_days: None, sweeper: &NOTIFICATIONS,
+}
 ```
 
-- The contribution ID is the class key: `<module>.<snake_case name>`. The module depends on `base/privacy`.
-- `default_days`: the period when the tenant sets none; `None` keeps forever. `minimum_days`: a legal minimum no tenant period may go below. Boot refuses a default shorter than its minimum, or either beyond 36,500 days.
-- `Sweeper::sweep(tx, system scope, cutoff, holds, limit)` purges or anonymises at most `limit` records whose clock started before `cutoff`, skips what `TenantHolds` names (the record, or its person) and what an earlier sweep already did, and returns `Swept`: counts acted on and kept, and every record acted on with its personal fields. Write through `tx` and return every change; nothing to act on is not a write.
-
-| Part | Rule |
-| --- | --- |
-| Tenant periods | Setting `privacy.retention.periods` (tenant scope): `{ "<class key>": days }`. Set on `/privacy/retention` or with `base.privacy.retention.set` (`privacy.retention.manage`). An unknown class, 0 days, more than 36,500 or below the legal minimum is `Invalid`. Clearing returns to the default |
-| Sweep | Definition `base/privacy.retention-sweep` (02:00 UTC, worker `base/privacy-retention-sweep`). Runs only after an operator reviews and enables it and grants `scheduler` the execute capability. Visits every active tenant, as `scheduler` under that tenant's `SystemScope` |
-| Batches | Each batch is one `MutationTransaction`: a `base_privacy_sweeps` row, the tenant's holds read inside it, the sweeper's writes, and the acted-on records' fields cleared from audit evidence (`erase_sweep_values`). At most 200 records per batch and 25 batches per class per run |
-| Log | `base_privacy_sweeps` (migration `base-privacy-004-retention`): class, cutoff, period, acted on, kept. A sweep records its result once; rows are never changed otherwise or removed |
-| Reading | `/privacy/retention` and `base.privacy.retention.list` (`privacy.retention.view`): every class, its clock, action, default, minimum, this tenant's period, the period in use and the last sweep |
+- The macro contributes the class and its company settings: `privacy.retention.<key>.enabled` (off), `.period_days` (empty), `.legal_minimum_days` (empty), and a constraint refusing a period below the legal minimum or the class floor.
+- `Purge` is refused at boot for a class with business value.
+- `Sweeper::sweep(tx, scope, grant, cutoff, holds, after, limit)` examines records above `after` in ID order, skips held ones (counted as kept once), and returns `next` until done.
+- Records of no one company follow the tenant's primary company.
+- Definition `base/privacy.retention-sweep` (02:00 UTC), as the `scheduler` principal per tenant. Each class run writes one `base_privacy_sweeps` summary: company, period, cutoff, acted, kept, batches. The same run erases audit evidence whose legal minimum has passed (class `base/privacy.audit_evidence`).
+- `/privacy/retention` reads one company's settings and the last sweeps, and links to System Settings.
 
 ## Masking and reveal
 
 **A field restricted in mask mode shows a partial value; revealing the full value needs `privacy.field.reveal`, a reason, and is recorded.**
 
-- An operator chooses the mode per restricted field on `/authz/field-restrictions`: withhold (removed, as before) or mask. Only a field its Grid table marks personal can be masked; a role that withholds wins over one that masks.
-- Partial values by kind (`bilibi_authz::fields::partial`): email `a•••@example.com`, phone `•••• 1234`, date the year, name initials, identifier the last four characters, free text nothing.
-- Masked values reach every reader path: owner records and lists (Person, Affiliation, Address), Grid columns, agent JSON (with `masked` naming the fields) and history. Masked fields are not searchable and refuse writes, like withheld ones.
-- Reveal: `Privacy::reveal_field(scope, table, field, record, reason)`, the person record page's Reveal action, or `base.privacy.field.reveal` (a reviewed write). It checks `privacy.field.reveal`, a 1–255 character reason and Step-up `base.privacy.field.reveal` (off until the tenant turns it on), reads through `bilibi_grid::query::reveal`, and records the action `privacy.field.revealed` with table, field, record and reason, never the value, before returning it. A withheld or unrestricted field is `Forbidden`.
-- The access export is the data subject's own copy and is not masked.
-
-## Documents
-
-**An access request ends with an export; an erasure ends with a certificate. Both are `base/artifacts` documents owned by `base.privacy`.**
-
-| Document | Kept | Read |
-| --- | --- | --- |
-| Export: one JSON bundle of every store's records, with media and artifact references | `privacy.export_days`, then purged | `GET /privacy/requests/{id}/document` through `Artifacts::read`, so each download is audited |
-| Certificate: each store, action, counts, records kept and why, deferrals with dates, approver | `put_retained` for `privacy.certificate_years` | Same route |
-
-## Erasure in audit and media
-
-**Values go; who, when, which record and which fields stay.**
-
-- `bilibi_audit::erase_values` replaces a record's declared fields with `[erased]` in its mutation evidence and writes an append-only `base_audit_erasures` row (`base/audit` README).
-- `Media::erase_attachments` turns a person's attachments into tombstones; `Media::remove_erased_bytes` removes the bytes after commit (`base/media` README).
-- Both refuse outside a privacy erasure transaction.
+- Mode per restricted field on `/authz/field-restrictions`; only Grid-marked personal fields can be masked.
+- Reveal: `Privacy::reveal_field`, the contact page's Reveal (through the page contract `base.privacy.field.reveal`), or the agent operation. Capability, reason and Step-up `base.privacy.field.reveal` (off until the tenant turns it on) come first; Grid reads only with the sealed `Reveal` grant; `privacy.field.revealed` is recorded without the value before it is returned.
+- A revealed value stays only in that page view, only while the reader may still reveal and the record is unchanged. Embedded contact panels show no Reveal.
 
 ## Settings
 
 | Key | Scope | Default | Meaning |
 | --- | --- | --- | --- |
-| `privacy.request.due_days` | Global, Tenant | 21 | Days from receipt to answer |
-| `privacy.request.notice_days` | Global, Tenant | 3 | Days before the due date that a request's handlers are notified |
+| `privacy.request.due_days` | Global, Tenant | 21 | Days to answer |
+| `privacy.request.notice_days` | Global, Tenant | 3 | Days before due that handlers are told |
 | `privacy.export_days` | Global, Tenant | 30 | Days an export stays downloadable |
 | `privacy.certificate_years` | Global, Tenant | 7 | Years a certificate is retained |
-| `privacy.retention.periods` | Tenant | `{}` | Each record class's period in days; edited on `/privacy/retention` |
+| `privacy.audit.legal_minimum_days` | Company | empty | Days audit evidence keeps values after an erasure |
+| `privacy.retention.<class>.*` | Company | off, empty, empty | Per class: sweep on, period, legal minimum |
 
 ## Runtime checks
 
-No unit tests. Prove on a disposable database ([runtime parity](../../../docs/runtime-parity.md)).
+No unit tests. Each walkthrough runs on a fresh disposable database ([runtime parity](../../../docs/runtime-parity.md)) with `BILIBI_DISPOSABLE_PRIVACY_DEMO=yes` and `DATABASE_URL`.
 
-| Case | Exercise | Expected |
-| --- | --- | --- |
-| Nothing marked | Boot the app | Boots; pages unchanged |
-| Mark without a store | Mark a Core Grid field personal, boot | Boot fails naming the table, field and module |
-| Store without the dependency | Contribute a store from a module that does not declare `base/privacy` | Boot fails naming the store |
-| Legal holds | `examples/holds-walkthrough.rs` on a disposable database, then again with `report` | Place, duplicate `Conflict`, release once, history; viewer refused; tenant 2 sees none and gets `NotFound`; every raw edit, delete and truncate refused by the database |
-
-| Requests | `examples/requests-walkthrough.rs` with `seed`, then without, on a disposable database with the queue running | Access: one export covering every store, download audited as `artifacts.read`. Tenant 2 sees no request. Erasure: refused for whoever received it, approved by a second person with an authenticator code; a failing store leaves it `running` and late until a retry answers; afterwards person and account are stubs, attachment bytes gone, document deleted, audit values `[erased]` with ledger rows, certificate lists every store; a console search finds no erased value. Due notices: refused before the definition is enabled; once enabled, a request due tomorrow notifies its receiver and verifier once, and a second run adds nothing. A hold on an unknown kind is `Invalid`; a held person is kept and named on the certificate; after release a new erasure acts |
-
-| Retention | `examples/retention-walkthrough.rs` with `seed`, then without, on a disposable database with the queue running | Viewer refused, unknown class and 0 days `Invalid`; tenant 2 keeps its own (empty) periods. Before enabling, run-now is refused. Run 1: a closed account past 30 days anonymised with `[erased]` audit ledger rows, a held one kept, a recently closed one untouched, notices past 10 days purged, tenant 2's untouched. After release, run 2 anonymises the held account; run 3 acts on nothing. The sweep log refuses edits and deletes |
-
-| Masking | `examples/masking-walkthrough.rs` on a disposable database | Masking a non-personal field refused. For viewer and staff (email and work email masked, phone withheld): agent JSON, list and Grid columns show `a•••@corp.example` and `m•••@example.test`, phone restricted; search by the email finds nothing for them and the person for admin; the record page shows the partial email with a Reveal action; history shows `a•••@example.test` → `a•••@corp.example`; a write to the email is refused. Reveal: no reason `Invalid`; with a reason the full value, recorded as `privacy.field.revealed` without the value; withheld, unrestricted, no capability and full-view readers refused; the agent operation reveals the work email |
-
-Run the holds walkthrough only against a fresh disposable database:
-
-```sh
-BILIBI_DISPOSABLE_PRIVACY_DEMO=yes DATABASE_URL=postgres://…/disposable \
-  cargo run -p bilibi-privacy --example holds-walkthrough
-cargo run -p bilibi-privacy --example holds-walkthrough -- report   # same env
-```
-
-The requests walkthrough also needs a private folder for files and the three development keys (`./scripts/start-app.sh` creates them under `.local/dev/`):
-
-```sh
-export BILIBI_DISPOSABLE_PRIVACY_DEMO=yes BILIBI_PRIVACY_DEMO_ROOT=/tmp/privacy-demo DATABASE_URL=postgres://…/disposable
-export BILIBI_SETTINGS_KEY=… BILIBI_USER_SIGNING_KEY=… BILIBI_MEDIA_SIGNING_KEY=…
-cargo run -p bilibi-privacy --example requests-walkthrough -- seed   # production seeds, own process
-cargo run -p bilibi-privacy --example requests-walkthrough
-```
+| Walkthrough | Shows |
+| --- | --- |
+| `holds-walkthrough` (then `report`) | Place, release, history, isolation, database guards; two simultaneous placements give one hold and one `Conflict`; a hold placed while an erasure guard is open waits for it and the next erasure sees it; paged list with total |
+| `requests-walkthrough` (`seed` first; needs `BILIBI_PRIVACY_DEMO_ROOT`, the three dev keys, and `BILIBI_PRIVACY_DEMO_CHROMIUM` for the A4 certificate) | ZIP export with files; masked reader needs a reason; candidates confirmed one by one, unconfirmed untouched; failing store retried; certificate with kept records and their holds only; every request of the person forgets its personal text; another company's employee cannot approve; 508 requests searched in SQL; due notices past 500 un-notifiable requests |
+| `retention-walkthrough` (`seed` first) | Constraint refusals; concurrent period and minimum saves; nothing swept until turned on; 205 records in one summary; a name already `[erased]` still anonymised; evidence inside the legal minimum kept with a deferral; audit ledger and evidence refuse direct writes |
+| `masking-walkthrough` | Partial values on every read path, reveal rules and records |

@@ -1,18 +1,17 @@
 //! User's record classes (ADR 05, `base/privacy` retention). Closed accounts
-//! are anonymised once the tenant's period has passed since they were closed:
-//! the row, its ID and its links stay, the name and sign-in email do not, and
-//! the sign-in links that remain are deleted. Notifications are purged once
-//! the period has passed since they were sent. Both keep forever until a
-//! tenant sets a period, and both skip what legal holds name: the record, or
-//! the account's person. No Bilimbi counterpart.
-use bilibi_authz::SystemScope;
+//! are anonymised once the company's period has passed since they were
+//! closed: the row, its ID and its links stay, the name and sign-in email do
+//! not, and the sign-in links that remain are deleted. Notifications, which
+//! have no business value, are purged once the period has passed since they
+//! were sent. Neither is swept until a company turns it on and sets a period,
+//! and both skip what legal holds name: the record, or the account's person.
+//! No Bilimbi counterpart.
 use bilibi_database::{Change, MutationTransaction};
-use bilibi_module_registry::{Contribution, Provenance};
-use bilibi_privacy::{
-    ErasedRecord, HandlerFuture, RecordClass, RetentionAction, Sweeper, Swept, TenantHolds, ERASED,
-    RECORD_CLASSES,
-};
+use bilibi_personal_data::{ErasedRecord, Erasure, HandlerFuture, Holds, ERASED};
+use bilibi_privacy::{Sweeper, Swept};
+use bilibi_tenancy::Scope;
 use serde_json::json;
+use std::collections::BTreeMap;
 
 const USER_KIND: &str = "user";
 const NOTIFICATION_KIND: &str = "notification";
@@ -25,55 +24,80 @@ const LINKS: [&str; 5] = [
     "user_sign_ins",
 ];
 
+/// Which of `rows` (record ID, its person) a hold keeps.
+async fn held(
+    holds: &Holds,
+    kind: &str,
+    rows: &[(i64, Option<i64>)],
+) -> bilibi_database::Result<Vec<i64>> {
+    let ids: Vec<i64> = rows.iter().map(|(id, _)| *id).collect();
+    let persons: Vec<i64> = rows.iter().filter_map(|(_, person)| *person).collect();
+    let records = holds.records(kind, &ids).await?;
+    let people: BTreeMap<i64, i64> = holds.persons(&persons).await?;
+    Ok(rows
+        .iter()
+        .filter(|(id, person)| {
+            records.contains_key(id) || person.is_some_and(|p| people.contains_key(&p))
+        })
+        .map(|(id, _)| *id)
+        .collect())
+}
+fn next(rows: &[(i64, Option<i64>)], limit: i64) -> Option<i64> {
+    (rows.len() as i64 == limit)
+        .then(|| rows.last().map(|(id, _)| *id))
+        .flatten()
+}
+
 struct ClosedAccounts;
 static CLOSED_ACCOUNTS: ClosedAccounts = ClosedAccounts;
 impl Sweeper for ClosedAccounts {
     fn sweep<'a>(
         &'a self,
         tx: &'a mut MutationTransaction<'_>,
-        scope: &'a SystemScope,
+        scope: &'a Scope,
+        grant: &'a Erasure,
         cutoff: &'a str,
-        holds: &'a TenantHolds,
+        holds: &'a Holds,
+        after: i64,
         limit: i64,
     ) -> HandlerFuture<'a, Swept> {
         Box::pin(async move {
+            grant.check(scope)?;
             let tenant = scope.tenant();
-            let (held_users, held_persons) = (holds.records_of(USER_KIND), holds.persons());
-            let past = "tenant_id=$1 AND status='deleted' AND deleted_at < $2::text::timestamptz AND name <> $3";
-            let held = "(id = ANY($4) OR coalesce(person_id = ANY($5), false))";
-            let kept: i64 = tx
-                .sql()
-                .query_one(
-                    &format!("SELECT count(*) FROM users WHERE {past} AND {held}"),
-                    &[&tenant, &cutoff, &ERASED, &held_users, &held_persons],
-                )
-                .await?
-                .get(0);
             let rows = tx
                 .sql()
                 .query(
-                    &format!("SELECT id,name,email FROM users WHERE {past} AND NOT {held} ORDER BY id LIMIT $6 FOR UPDATE"),
-                    &[&tenant, &cutoff, &ERASED, &held_users, &held_persons, &limit],
+                    "SELECT id,person_id,name,email FROM users WHERE tenant_id=$1 AND status='deleted' AND anonymised_at IS NULL \
+                     AND deleted_at < $2::text::timestamptz AND id>$3 ORDER BY id LIMIT $4 FOR UPDATE",
+                    &[&tenant, &cutoff, &after, &limit],
                 )
                 .await?;
+            let keys: Vec<(i64, Option<i64>)> =
+                rows.iter().map(|row| (row.get(0), row.get(1))).collect();
+            let kept = held(holds, USER_KIND, &keys).await?;
+            let due: Vec<(i64, String, String)> = rows
+                .iter()
+                .filter(|row| !kept.contains(&row.get::<_, i64>(0)))
+                .map(|row| (row.get(0), row.get(2), row.get(3)))
+                .collect();
+            let mut swept = Swept {
+                kept: kept.len() as i64,
+                next: next(&keys, limit),
+                ..Swept::default()
+            };
             // A write must return changes: nothing to act on is not a write.
-            if rows.is_empty() {
-                return Ok(Swept {
-                    kept,
-                    ..Swept::default()
-                });
+            if due.is_empty() {
+                return Ok(swept);
             }
             let ids: Vec<i64> = tx
                 .mutate(move |sql| {
                     Box::pin(async move {
-                        let mut ids = Vec::with_capacity(rows.len());
-                        let mut changes = Vec::with_capacity(rows.len());
-                        for row in rows {
-                            let (user, name, email): (i64, String, String) =
-                                (row.get(0), row.get(1), row.get(2));
+                        let mut ids = Vec::with_capacity(due.len());
+                        let mut changes = Vec::with_capacity(due.len());
+                        for (user, name, email) in due {
                             let placeholder = format!("erased-{user}@erased.invalid");
                             sql.execute(
-                                "UPDATE users SET name=$3,email=$4,password_hash='!erased',version=version+1,updated_at=now() WHERE tenant_id=$1 AND id=$2",
+                                "UPDATE users SET name=$3,email=$4,password_hash='!erased',anonymised_at=now(),version=version+1,updated_at=now() WHERE tenant_id=$1 AND id=$2",
                                 &[&tenant, &user, &ERASED, &placeholder],
                             )
                             .await?;
@@ -87,7 +111,7 @@ impl Sweeper for ClosedAccounts {
                                 kind: USER_KIND.into(),
                                 id: user,
                                 old: json!({"name": name, "email": email}),
-                                new: json!({"name": ERASED, "email": placeholder, "links_removed": links}),
+                                new: json!({"name": ERASED, "email": ERASED, "links_removed": links}),
                             });
                             ids.push(user);
                         }
@@ -95,18 +119,15 @@ impl Sweeper for ClosedAccounts {
                     })
                 })
                 .await?;
-            Ok(Swept {
-                acted: ids.len() as i64,
-                kept,
-                records: ids
-                    .into_iter()
-                    .map(|id| ErasedRecord {
-                        kind: USER_KIND.into(),
-                        id,
-                        fields: vec!["name".into(), "email".into()],
-                    })
-                    .collect(),
-            })
+            swept.acted = ids.len() as i64;
+            swept.records = ids
+                .into_iter()
+                .map(|id| ErasedRecord {
+                    kind: USER_KIND.into(),
+                    id,
+                })
+                .collect();
+            Ok(swept)
         })
     }
 }
@@ -117,45 +138,40 @@ impl Sweeper for Notifications {
     fn sweep<'a>(
         &'a self,
         tx: &'a mut MutationTransaction<'_>,
-        scope: &'a SystemScope,
+        scope: &'a Scope,
+        grant: &'a Erasure,
         cutoff: &'a str,
-        holds: &'a TenantHolds,
+        holds: &'a Holds,
+        after: i64,
         limit: i64,
     ) -> HandlerFuture<'a, Swept> {
         Box::pin(async move {
+            grant.check(scope)?;
             let tenant = scope.tenant();
-            let (held_notices, held_persons) =
-                (holds.records_of(NOTIFICATION_KIND), holds.persons());
-            let held = "(n.id = ANY($3) OR coalesce(u.person_id = ANY($4), false))";
-            let from =
-                "FROM notifications n JOIN users u ON u.tenant_id=n.tenant_id AND u.id=n.user_id \
-                        WHERE n.tenant_id=$1 AND n.created_at < $2::text::timestamptz";
-            let kept: i64 = tx
-                .sql()
-                .query_one(
-                    &format!("SELECT count(*) {from} AND {held}"),
-                    &[&tenant, &cutoff, &held_notices, &held_persons],
-                )
-                .await?
-                .get(0);
-            let due: Vec<i64> = tx
+            let rows = tx
                 .sql()
                 .query(
-                    &format!(
-                        "SELECT n.id {from} AND NOT {held} ORDER BY n.id LIMIT $5 FOR UPDATE OF n"
-                    ),
-                    &[&tenant, &cutoff, &held_notices, &held_persons, &limit],
+                    "SELECT n.id,u.person_id FROM notifications n JOIN users u ON u.tenant_id=n.tenant_id AND u.id=n.user_id \
+                     WHERE n.tenant_id=$1 AND n.created_at < $2::text::timestamptz AND n.id>$3 ORDER BY n.id LIMIT $4 FOR UPDATE OF n",
+                    &[&tenant, &cutoff, &after, &limit],
                 )
-                .await?
+                .await?;
+            let keys: Vec<(i64, Option<i64>)> =
+                rows.iter().map(|row| (row.get(0), row.get(1))).collect();
+            let kept = held(holds, NOTIFICATION_KIND, &keys).await?;
+            let due: Vec<i64> = keys
                 .iter()
-                .map(|row| row.get(0))
+                .map(|(id, _)| *id)
+                .filter(|id| !kept.contains(id))
                 .collect();
+            let mut swept = Swept {
+                kept: kept.len() as i64,
+                next: next(&keys, limit),
+                ..Swept::default()
+            };
             // A write must return changes: nothing to act on is not a write.
             if due.is_empty() {
-                return Ok(Swept {
-                    kept,
-                    ..Swept::default()
-                });
+                return Ok(swept);
             }
             let ids: Vec<i64> = tx
                 .mutate(move |sql| {
@@ -179,39 +195,26 @@ impl Sweeper for Notifications {
                     })
                 })
                 .await?;
-            Ok(Swept {
-                acted: ids.len() as i64,
-                kept,
-                records: ids
-                    .into_iter()
-                    .map(|id| ErasedRecord {
-                        kind: NOTIFICATION_KIND.into(),
-                        id,
-                        fields: vec!["title".into(), "body".into()],
-                    })
-                    .collect(),
-            })
+            swept.acted = ids.len() as i64;
+            swept.records = ids
+                .into_iter()
+                .map(|id| ErasedRecord {
+                    kind: NOTIFICATION_KIND.into(),
+                    id,
+                })
+                .collect();
+            Ok(swept)
         })
     }
 }
 
-inventory::submit! { Contribution::new(RECORD_CLASSES, "core/user.closed_accounts",
-Provenance { module: "core/user", source: file!(), line: line!() },
-&RecordClass {
-    label: "Closed user accounts",
-    clock_start: "When the account was closed",
-    action: RetentionAction::Anonymise,
-    default_days: None,
-    minimum_days: None,
-    sweeper: &CLOSED_ACCOUNTS,
-}) }
-inventory::submit! { Contribution::new(RECORD_CLASSES, "core/user.notifications",
-Provenance { module: "core/user", source: file!(), line: line!() },
-&RecordClass {
-    label: "Notifications",
-    clock_start: "When the notification was sent",
-    action: RetentionAction::Purge,
-    default_days: None,
-    minimum_days: None,
-    sweeper: &NOTIFICATIONS,
-}) }
+bilibi_privacy::record_class! {
+    module: "core/user", key: "core/user.closed_accounts", label: "Closed user accounts",
+    clock_start: "when the account was closed", action: Anonymise,
+    business_value: true, floor_days: None, sweeper: &CLOSED_ACCOUNTS,
+}
+bilibi_privacy::record_class! {
+    module: "core/user", key: "core/user.notifications", label: "Notifications",
+    clock_start: "when the notification was sent", action: Purge,
+    business_value: false, floor_days: None, sweeper: &NOTIFICATIONS,
+}

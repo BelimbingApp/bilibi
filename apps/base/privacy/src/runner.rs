@@ -1,24 +1,32 @@
 //! The request jobs (ADR 05). Each runs as the approver who started it, through
 //! `Execution::begin`, which re-proves that person and `privacy.request.approve`
-//! on every attempt. One store job per mounted store answers that store; once
-//! every store has answered or deferred, the finish job bundles the export or
-//! writes the certificate and completes the request. Every step is idempotent:
-//! a retried job finds its answer recorded and moves on.
+//! on every attempt. One store job per mounted store answers that store with a
+//! sealed grant for this request; once every store has answered or deferred,
+//! the finish job bundles the export or writes the certificate and completes
+//! the request. Every step is idempotent: a retried job finds its answer
+//! recorded and moves on. Erasure holds the tenant's hold guard from before
+//! its transaction until after it commits, so a hold placed meanwhile waits.
 use crate::{
     documents,
-    holds::Holds,
-    registry::Erased,
     requests::{self, RequestKind, RequestView, EXPORT_KIND, STORE_KIND, SUBJECT},
-    Privacy,
+    Privacy, AUDIT_MINIMUM,
 };
-use bilibi_database::{Change, Error, MutationTransaction, Result};
-use bilibi_queue::execution::{Execution, Handler, HandlerFuture, Outcome};
+use bilibi_database::{Change, Db, Error, MutationTransaction, Result};
+use bilibi_personal_data::{
+    Cause, Deferral, Erased, Erasure, HandlerFuture, Holds, Kept, KeptReason, KindAction, Progress,
+};
+use bilibi_queue::execution::{Execution, Handler, HandlerFuture as JobFuture, Outcome};
 use bilibi_tenancy::Scope;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::Arc;
 
 pub const STORE_WORKER: &str = "base/privacy-request-store";
 pub const FINISH_WORKER: &str = "base/privacy-request-finish";
+/// The record kind a store's kept audit evidence is listed under.
+const EVIDENCE_KIND: &str = "base/audit.evidence";
+/// One finish job per request at a time (with the request ID).
+const FINISH_GUARD: i32 = 841_331;
 
 pub(crate) fn store_arguments(args: Value) -> Result<Value> {
     match args.as_object() {
@@ -50,8 +58,8 @@ pub(crate) fn finish_arguments(args: Value) -> Result<Value> {
     }
 }
 
-/// A short, stable code for the store row; never an error message, which may
-/// quote personal data.
+/// A short, stable code for the store or request row; never an error
+/// message, which may quote personal data.
 fn code(error: &Error) -> &'static str {
     match error {
         Error::Forbidden | Error::Unauthorized => "forbidden",
@@ -63,11 +71,54 @@ fn code(error: &Error) -> &'static str {
     }
 }
 
+/// A store's answer as the request keeps it: counts, kinds, IDs and reasons,
+/// never a personal value. `records` counts the records whose audit evidence
+/// was cleared.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub(crate) struct Answer {
+    #[serde(default)]
+    pub(crate) actions: Vec<KindAction>,
+    #[serde(default)]
+    pub(crate) kept: Vec<Kept>,
+    #[serde(default)]
+    pub(crate) deferral: Option<Deferral>,
+    #[serde(default)]
+    pub(crate) records: u64,
+}
+impl Answer {
+    fn add(&mut self, step: &Erased) {
+        for action in &step.actions {
+            match self
+                .actions
+                .iter_mut()
+                .find(|a| a.kind == action.kind && a.action == action.action)
+            {
+                Some(known) => known.count += action.count,
+                None => self.actions.push(action.clone()),
+            }
+        }
+        // A retried step reports what it kept again; list each record once.
+        for kept in &step.kept {
+            if !self
+                .kept
+                .iter()
+                .any(|k| k.kind == kept.kind && k.id == kept.id && k.reason == kept.reason)
+            {
+                self.kept.push(kept.clone());
+            }
+        }
+        if step.deferral.is_some() {
+            self.deferral = step.deferral.clone();
+        }
+        self.records += step.records.len() as u64;
+    }
+}
+
 pub(crate) struct StoreJob {
     pub(crate) privacy: Arc<Privacy>,
 }
 impl Handler for StoreJob {
-    fn perform<'a>(&'a self, execution: &'a Execution, args: Value) -> HandlerFuture<'a> {
+    fn perform<'a>(&'a self, execution: &'a Execution, args: Value) -> JobFuture<'a> {
         Box::pin(async move {
             let (Some(id), Some(store)) = (
                 args.get("request_id").and_then(Value::as_i64),
@@ -78,7 +129,8 @@ impl Handler for StoreJob {
             let Some(scope) = execution.scope() else {
                 return Outcome::Cancel("needs_approver");
             };
-            match answer(&self.privacy, execution, scope, id, store).await {
+            // Boxed: a store's erase and an export nest deep futures.
+            match Box::pin(answer(&self.privacy, execution, scope, id, store)).await {
                 Ok(()) => Outcome::Completed,
                 Err(Error::NotFound) => Outcome::Cancel("request_unavailable"),
                 Err(error) => {
@@ -130,6 +182,55 @@ async fn failed(
     tx.commit().await
 }
 
+impl Privacy {
+    /// A company's legal minimum for audit evidence, in days: evidence newer
+    /// than this stays until it has passed (`privacy.audit.legal_minimum_days`).
+    pub(crate) async fn evidence_minimum(
+        &self,
+        client: &tokio_postgres::Client,
+        scope: &Scope,
+        company: bilibi_party_ids::OrganisationId,
+    ) -> Result<Option<i32>> {
+        Ok(self
+            .settings
+            .get(
+                client,
+                scope,
+                bilibi_settings::Target::Company(company),
+                AUDIT_MINIMUM,
+            )
+            .await?
+            .value
+            .as_i64()
+            .and_then(|days| i32::try_from(days).ok())
+            .filter(|days| (1..=36_500).contains(days)))
+    }
+}
+
+/// Clears the audit evidence of every record a step erased, in the step's
+/// transaction, and lists evidence kept for its legal minimum.
+pub(crate) async fn clear_evidence(
+    tx: &MutationTransaction<'_>,
+    grant: &Erasure,
+    step: &mut Erased,
+    keep_days: Option<i32>,
+) -> Result<()> {
+    for record in &step.records {
+        let cleared =
+            bilibi_audit::erase_record(tx, grant, &record.kind, record.id, keep_days).await?;
+        if cleared.kept > 0 {
+            step.kept.push(Kept {
+                kind: EVIDENCE_KIND.into(),
+                id: format!("{} {}", record.kind, record.id),
+                reason: KeptReason::LegalMinimum,
+                until: cleared.kept_until,
+                hold: None,
+            });
+        }
+    }
+    Ok(())
+}
+
 async fn answer(
     privacy: &Privacy,
     execution: &Execution,
@@ -138,17 +239,13 @@ async fn answer(
     store: &str,
 ) -> Result<()> {
     let mut client = privacy.db.get().await?;
-    let request = requests::load(&**client, scope.tenant(), id, false).await?;
+    let mut request = requests::load(&**client, scope.tenant(), id, false).await?;
     if request.status != "running" {
         return Ok(());
     }
-    let (key, data) = privacy
-        .stores
-        .by_key
-        .get_key_value(store)
-        .map(|(key, (_, data))| (*key, *data))
-        .ok_or(Error::Conflict)?;
-    let subject = requests::subject_of(&request);
+    request.confirmed = requests::confirmed(&**client, scope.tenant(), id).await?;
+    let (key, data) = privacy.stores.get(store).ok_or(Error::Conflict)?;
+    let subject = requests::subject_for(&request, key);
     let state = client
         .query_opt(
             "SELECT state,finished FROM base_privacy_request_stores WHERE tenant_id=$1 AND request_id=$2 AND store=$3",
@@ -162,7 +259,13 @@ async fn answer(
             if state != "pending" {
                 return Ok(());
             }
-            let exported = data.handler.export(&client, scope, &subject).await?;
+            let grant = privacy
+                .issuer
+                .disclosure(scope.tenant(), id, request.person);
+            let exported = data
+                .handler
+                .export(&client, scope, &subject, &grant)
+                .await?;
             let mut tx = execution
                 .begin(&mut client, "privacy.request.export")
                 .await?;
@@ -209,17 +312,17 @@ async fn answer(
             tx.commit().await
         }
         RequestKind::Erasure => {
+            let grant =
+                privacy
+                    .issuer
+                    .erasure(scope.tenant(), Cause::Request(id), Some(request.person));
+            let keep_days = privacy
+                .evidence_minimum(&client, scope, request.company)
+                .await?;
             if state == "pending" {
+                let holds = Holds::acquire(scope.tenant(), Some(request.person)).await?;
                 let mut tx = execution
                     .begin(&mut client, "privacy.request.erase")
-                    .await?;
-                // Marks this transaction as the request's erasure: the audit and
-                // media erasure paths refuse without it.
-                tx.sql()
-                    .execute(
-                        "SELECT set_config($1, $2, true)",
-                        &[&bilibi_audit::ERASURE_MARKER, &id.to_string()],
-                    )
                     .await?;
                 let locked = tx
                     .sql()
@@ -231,81 +334,111 @@ async fn answer(
                     .ok_or(Error::NotFound)?
                     .get::<_, String>(0);
                 if locked == "pending" {
-                    let holds = Holds::load(tx.sql(), scope.tenant(), Some(request.person)).await?;
-                    let erased = data.handler.erase(&mut tx, scope, &subject, &holds).await?;
-                    for record in &erased.records {
-                        bilibi_audit::erase_values(
-                            &tx,
-                            id,
-                            &record.kind,
-                            record.id,
-                            &record.fields,
-                        )
+                    let mut erased = data
+                        .handler
+                        .erase(&mut tx, scope, &subject, &grant, &holds)
                         .await?;
-                    }
-                    record_answer(&mut tx, scope, id, key, &erased, false, 0).await?;
+                    clear_evidence(&tx, &grant, &mut erased, keep_days).await?;
+                    let mut answer = Answer::default();
+                    answer.add(&erased);
+                    record_answer(&mut tx, scope, id, key, &answer, false).await?;
                     tx.commit().await?;
                 } else {
                     tx.rollback().await?;
                 }
+                // Released only now: the erasure is committed.
+                holds.release().await?;
             } else if finished {
                 return Ok(());
             }
-            let holds = Holds::load(&**client, scope.tenant(), Some(request.person)).await?;
-            let more = data
-                .handler
-                .after_erase(&mut client, scope, &subject, &holds)
+            let holds = Holds::acquire(scope.tenant(), Some(request.person)).await?;
+            let progress = Steps {
+                db: privacy.db.clone(),
+                execution,
+                scope,
+                id,
+                key,
+                grant: &grant,
+                keep_days,
+            };
+            data.handler
+                .after_erase(&mut client, scope, &subject, &grant, &holds, &progress)
                 .await?;
+            holds.release().await?;
             let mut tx = execution
                 .begin(&mut client, "privacy.request.erase_finished")
                 .await?;
-            let tenant = scope.tenant();
-            let mut current: Value = tx
-                .sql()
-                .query_one(
-                    "SELECT result FROM base_privacy_request_stores WHERE tenant_id=$1 AND request_id=$2 AND store=$3 FOR UPDATE",
-                    &[&tenant, &id, &key],
-                )
-                .await?
-                .get(0);
-            // The stored answer keeps only the count of erased records.
-            let prior = current
-                .as_object_mut()
-                .and_then(|answer| answer.remove("records"))
-                .and_then(|count| count.as_u64())
-                .unwrap_or(0);
-            let mut erased: Erased =
-                serde_json::from_value(current).map_err(|_| Error::Internal)?;
-            erased.merge(more);
-            record_answer(&mut tx, scope, id, key, &erased, true, prior).await?;
+            let answer = stored_answer(&tx, scope, id, key).await?;
+            record_answer(&mut tx, scope, id, key, &answer, true).await?;
             finish_when_done(privacy, &mut tx, scope, id).await?;
             tx.commit().await
         }
     }
 }
 
-/// Saves a store's erasure answer. The stored result keeps counts, kinds, IDs
-/// and reasons; the per-record field names are dropped once audit is cleared.
-/// `prior` is the count an earlier step of the same erasure already recorded.
+async fn stored_answer(
+    tx: &MutationTransaction<'_>,
+    scope: &Scope,
+    id: i64,
+    key: &str,
+) -> Result<Answer> {
+    let current: Option<Value> = tx
+        .sql()
+        .query_one(
+            "SELECT result FROM base_privacy_request_stores WHERE tenant_id=$1 AND request_id=$2 AND store=$3 FOR UPDATE",
+            &[&scope.tenant(), &id, &key],
+        )
+        .await?
+        .get(0);
+    match current {
+        Some(value) => serde_json::from_value(value).map_err(|_| Error::Internal),
+        None => Ok(Answer::default()),
+    }
+}
+
+/// `after_erase` steps, each saved in its own transaction as soon as the
+/// handler reports it, so a retry still counts what earlier attempts did.
+struct Steps<'a> {
+    db: Db,
+    execution: &'a Execution,
+    scope: &'a Scope,
+    id: i64,
+    key: &'static str,
+    grant: &'a Erasure,
+    keep_days: Option<i32>,
+}
+impl Progress for Steps<'_> {
+    fn record<'a>(&'a self, mut step: Erased) -> HandlerFuture<'a, ()> {
+        Box::pin(async move {
+            let mut client = self.db.get().await?;
+            let mut tx = self
+                .execution
+                .begin(&mut client, "privacy.request.erase_step")
+                .await?;
+            clear_evidence(&tx, self.grant, &mut step, self.keep_days).await?;
+            let mut answer = stored_answer(&tx, self.scope, self.id, self.key).await?;
+            answer.add(&step);
+            record_answer(&mut tx, self.scope, self.id, self.key, &answer, false).await?;
+            tx.commit().await
+        })
+    }
+}
+
+/// Saves a store's erasure answer.
 async fn record_answer(
     tx: &mut MutationTransaction<'_>,
     scope: &Scope,
     id: i64,
     key: &'static str,
-    erased: &Erased,
+    answer: &Answer,
     finished: bool,
-    prior: u64,
 ) -> Result<()> {
-    let state = if erased.deferral.is_some() {
+    let state = if answer.deferral.is_some() {
         "deferred"
     } else {
         "answered"
     };
-    let mut result = serde_json::to_value(erased).map_err(|_| Error::Internal)?;
-    if let Some(object) = result.as_object_mut() {
-        let count = prior + erased.records.len() as u64;
-        object.insert("records".into(), json!(count));
-    }
+    let result = serde_json::to_value(answer).map_err(|_| Error::Internal)?;
     let tenant = scope.tenant();
     let summary = json!({"request": id, "store": key, "state": state, "finished": finished});
     tx.mutate(move |sql| {
@@ -363,7 +496,7 @@ pub(crate) struct FinishJob {
     pub(crate) privacy: Arc<Privacy>,
 }
 impl Handler for FinishJob {
-    fn perform<'a>(&'a self, execution: &'a Execution, args: Value) -> HandlerFuture<'a> {
+    fn perform<'a>(&'a self, execution: &'a Execution, args: Value) -> JobFuture<'a> {
         Box::pin(async move {
             let Some(id) = args.get("request_id").and_then(Value::as_i64) else {
                 return Outcome::Cancel("invalid_request_reference");
@@ -371,34 +504,138 @@ impl Handler for FinishJob {
             let Some(scope) = execution.scope() else {
                 return Outcome::Cancel("needs_approver");
             };
-            match finish(&self.privacy, execution, scope, id).await {
+            // Boxed: the certificate's A4 render nests deep futures.
+            match Box::pin(finish(&self.privacy, execution, scope, id)).await {
                 Ok(()) => Outcome::Completed,
                 Err(Error::NotFound) => Outcome::Cancel("request_unavailable"),
-                Err(_) => Outcome::Retry("finish_failed"),
+                Err(error) => {
+                    // Shown on the request; the queue retries.
+                    let _ = finish_failed(&self.privacy, execution, scope, id, &error).await;
+                    Outcome::Retry("finish_failed")
+                }
             }
         })
     }
 }
 
+/// Records one failed finish attempt on the request, in its own transaction.
+async fn finish_failed(
+    privacy: &Privacy,
+    execution: &Execution,
+    scope: &Scope,
+    id: i64,
+    error: &Error,
+) -> Result<()> {
+    let code = match error {
+        Error::Invalid => "export_too_large",
+        Error::Internal | Error::Database(_) | Error::Pool(_) => "finish_failed",
+        error => code(error),
+    };
+    let mut client = privacy.db.get().await?;
+    let mut tx = execution
+        .begin(&mut client, "privacy.request.finish_failed")
+        .await?;
+    let tenant = scope.tenant();
+    tx.mutate(move |sql| {
+        Box::pin(async move {
+            let attempts: i32 = sql
+                .query_opt(
+                    "UPDATE base_privacy_requests SET finish_attempts=finish_attempts+1,finish_error=$3 \
+                     WHERE tenant_id=$1 AND id=$2 AND status='running' RETURNING finish_attempts",
+                    &[&tenant, &id, &code],
+                )
+                .await?
+                .ok_or(Error::NotFound)?
+                .get(0);
+            let change = Change {
+                kind: requests::REQUEST_KIND.into(),
+                id,
+                old: json!({}),
+                new: json!({"finish_failed": code, "finish_attempts": attempts}),
+            };
+            Ok(((), vec![change]))
+        })
+    })
+    .await?;
+    tx.commit().await
+}
+
+/// Holds the request's finish guard on its own connection; dropping it
+/// without `release` closes the connection, which ends the guard.
+struct FinishGuard(Option<deadpool_postgres::Object>, i64);
+impl FinishGuard {
+    async fn take(db: &Db, id: i64) -> Result<Self> {
+        let client = db.get().await?;
+        let taken: bool = client
+            .query_one(
+                "SELECT pg_try_advisory_lock($1,$2::bigint::int)",
+                &[&FINISH_GUARD, &(id % i64::from(i32::MAX))],
+            )
+            .await?
+            .get(0);
+        if !taken {
+            return Err(Error::Conflict);
+        }
+        Ok(Self(Some(client), id))
+    }
+    async fn release(mut self) -> Result<()> {
+        if let Some(client) = self.0.take() {
+            client
+                .execute(
+                    "SELECT pg_advisory_unlock($1,$2::bigint::int)",
+                    &[&FINISH_GUARD, &(self.1 % i64::from(i32::MAX))],
+                )
+                .await?;
+        }
+        Ok(())
+    }
+}
+impl Drop for FinishGuard {
+    fn drop(&mut self) {
+        if let Some(client) = self.0.take() {
+            drop(deadpool_postgres::Object::take(client));
+        }
+    }
+}
+
 async fn finish(privacy: &Privacy, execution: &Execution, scope: &Scope, id: i64) -> Result<()> {
+    let guard = FinishGuard::take(&privacy.db, id).await?;
     let mut client = privacy.db.get().await?;
     let request = privacy.request(&**client, scope, id).await?;
     if request.status != "running" {
-        return Ok(());
+        return guard.release().await;
     }
     if request.stores.iter().any(|s| s.state == "pending") {
         return Err(Error::Conflict);
     }
+    requests::eligible(privacy, &**client, scope, request.company).await?;
     let artifact = match request.kind {
         RequestKind::Access | RequestKind::Portability => match &request.export_artifact {
             Some(id) => id.clone(),
-            None => documents::export(privacy, &mut client, scope, &request).await?,
+            None => Box::pin(documents::export(privacy, &mut client, scope, &request)).await?,
         },
         RequestKind::Erasure => match &request.certificate_artifact {
             Some(id) => id.clone(),
-            None => documents::certificate(privacy, &mut client, scope, &request).await?,
+            None => {
+                Box::pin(documents::certificate(
+                    privacy,
+                    &mut client,
+                    scope,
+                    &request,
+                ))
+                .await?
+            }
         },
     };
+    if request.kind == RequestKind::Erasure {
+        // The person's earlier exports go before their requests forget them;
+        // deleting an already deleted one is a no-op, so a retry is safe.
+        let grant =
+            privacy
+                .issuer
+                .erasure(scope.tenant(), Cause::Request(id), Some(request.person));
+        documents::delete_exports(privacy, &mut client, scope, &grant, request.person).await?;
+    }
     let mut tx = execution
         .begin(&mut client, "privacy.request.complete")
         .await?;
@@ -414,31 +651,32 @@ async fn finish(privacy: &Privacy, execution: &Execution, scope: &Scope, id: i64
             bilibi_workflow::Request::default(),
         )
         .await?;
-    tx.commit().await
+    tx.commit().await?;
+    guard.release().await
 }
 
-/// Files the artifact on the request, drops staged exports, and for an erasure
-/// forgets the identifiers the requester gave.
+/// Files the artifact on the request and drops its staged exports; for an
+/// erasure, every request about the person forgets its personal text.
 async fn complete(
     tx: &mut MutationTransaction<'_>,
     scope: &Scope,
     request: &RequestView,
     artifact: String,
 ) -> Result<()> {
-    let (tenant, id) = (scope.tenant(), request.id);
+    let (tenant, id, person) = (scope.tenant(), request.id, request.person);
     let before = requests::evidence(request);
     let erasure = request.kind == RequestKind::Erasure;
     tx.mutate(move |sql| {
         Box::pin(async move {
             if erasure {
                 sql.execute(
-                    "UPDATE base_privacy_requests SET certificate_artifact=$3,identifiers='[]' WHERE tenant_id=$1 AND id=$2",
+                    "UPDATE base_privacy_requests SET certificate_artifact=$3,finish_error=NULL WHERE tenant_id=$1 AND id=$2",
                     &[&tenant, &id, &artifact],
                 )
                 .await?;
             } else {
                 sql.execute(
-                    "UPDATE base_privacy_requests SET export_artifact=$3 WHERE tenant_id=$1 AND id=$2",
+                    "UPDATE base_privacy_requests SET export_artifact=$3,finish_error=NULL WHERE tenant_id=$1 AND id=$2",
                     &[&tenant, &id, &artifact],
                 )
                 .await?;
@@ -456,29 +694,6 @@ async fn complete(
                 old: before,
                 new: requests::evidence(&after),
             }];
-            if erasure {
-                // The person's earlier, closed requests keep their email or
-                // phone too; an erased person leaves none behind.
-                let person = after.person.get();
-                for row in sql
-                    .query(
-                        "WITH earlier AS (SELECT id,jsonb_array_length(identifiers) AS given FROM base_privacy_requests \
-                         WHERE tenant_id=$1 AND person_id=$2 AND id<>$3 AND status IN ('completed','refused') \
-                         AND identifiers<>'[]' FOR UPDATE) \
-                         UPDATE base_privacy_requests r SET identifiers='[]' FROM earlier e \
-                         WHERE r.tenant_id=$1 AND r.id=e.id RETURNING r.id,e.given",
-                        &[&tenant, &person, &id],
-                    )
-                    .await?
-                {
-                    changes.push(Change {
-                        kind: requests::REQUEST_KIND.into(),
-                        id: row.get(0),
-                        old: json!({"identifiers": row.get::<_, i32>(1)}),
-                        new: json!({"identifiers": 0}),
-                    });
-                }
-            }
             for row in staged {
                 changes.push(Change {
                     kind: EXPORT_KIND.into(),
@@ -486,6 +701,14 @@ async fn complete(
                     old: json!({"request": id, "store": row.get::<_, String>(1), "staged": true}),
                     new: json!({}),
                 });
+            }
+            if erasure {
+                changes.extend(requests::forget_person(sql, tenant, person).await?);
+                sql.execute(
+                    "UPDATE base_privacy_requests SET export_artifact=NULL WHERE tenant_id=$1 AND person_id=$2 AND export_artifact IS NOT NULL",
+                    &[&tenant, &person.get()],
+                )
+                .await?;
             }
             Ok(((), changes))
         })

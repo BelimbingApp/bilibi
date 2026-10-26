@@ -119,14 +119,13 @@ drafts for one tenant with the host command, which has no automatic schedule:
 
 ### Personal-data erasure
 
-**A submitted attachment is erased only for a `base/privacy` erasure, and leaves a tombstone** ([ADR 05](../../../docs/architecture/decisions/05-personal-data-registry.md), migration `base-media-003-erasure`).
+**Only a sealed `base/personal_data` grant reaches a subject's files for a request** ([ADR 05](../../../docs/architecture/decisions/05-personal-data-registry.md), migration `base-media-003-erasure`).
 
-- `erase_attachments` (owner's `MutationTransaction`) turns a subject's attachments, drafts included, into tombstones: the row keeps who uploaded what, for which record and when; the asset row goes. Outside a privacy erasure transaction the database refuses. Repeating it finds nothing left.
-- `remove_erased_bytes` (plain connection, after commit) deletes the files the tombstones name. Call it from the store's `after_erase`.
+- `disclosed_attachments` / `disclosed_attachment` (with `Disclosure`): every live attachment of the subject and its bytes, for an export; the subject's owner is not asked.
+- `erase_attachments(tx, scope, &Erasure, subject, &Holds)`: each attachment no hold names becomes a tombstone and its asset row goes, through `base_media_erase_attachment` (the only path the guard admits). The asset's change records `original_filename` as `[erased]`; the caller clears both kinds' evidence (`base/media/attachment`, `base/media/asset`).
+- `remove_erased_bytes(client, scope, &Erasure, subject)`: one file per transaction, claimed under its row lock, removed and recorded once; `Removal.more` says files remain.
+- `count_attachments` counts a subject's files for a reader its owner allows.
 - An erased row never changes again. `ImmutableAttachment` still refuses every other update or delete.
-
-Photo cleanup (background removal and the like) is not part of this module.
-Per-owner adapters for Company and Person records follow K15.
 
 ## Manual walkthroughs
 

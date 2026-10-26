@@ -10,7 +10,7 @@ askama.workspace = true
 bilibi-agent-api.workspace = true
 bilibi-artifacts.workspace = true
 bilibi-audit.workspace = true
-bilibi-authz = { path = "../authz" }
+bilibi-authz.workspace = true
 bilibi-database.workspace = true
 bilibi-datetime.workspace = true
 bilibi-grid.workspace = true
@@ -19,24 +19,27 @@ bilibi-menu.workspace = true
 bilibi-notifications.workspace = true
 bilibi-module-registry.workspace = true
 bilibi-party-ids.workspace = true
+bilibi-personal-data.workspace = true
 bilibi-queue.workspace = true
 bilibi-schedule.workspace = true
 bilibi-settings.workspace = true
 bilibi-step-up.workspace = true
-bilibi-tenancy = { path = "../tenancy" }
+bilibi-tenancy.workspace = true
 bilibi-ui.workspace = true
 bilibi-workflow.workspace = true
+deadpool-postgres.workspace = true
 inventory.workspace = true
 jiff.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio-postgres.workspace = true
+zip.workspace = true
 
 [dev-dependencies]
 hmac.workspace = true
 sha1.workspace = true
 bilibi-walkthrough-fixture = { path = "../../../fixtures/walkthrough" }
-bilibi-base = { path = ".." }
-bilibi-core = { path = "../../core" }
-bilibi-web = { path = "../../web" }
+bilibi-base.workspace = true
+bilibi-core.workspace = true
+bilibi-web.workspace = true
 tokio.workspace = true

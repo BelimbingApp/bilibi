@@ -23,7 +23,7 @@ pub use redirect::RedirectPolicy;
 pub use transport::{Failure, Outgoing, Reply, Streamed};
 
 use bilibi_authz::{authorize_key, SystemScope};
-use bilibi_database::{Change, Db, Error, MutationBoundary, Result};
+use bilibi_database::{Change, Context, Db, Error, MutationBoundary, Result};
 use bilibi_module_registry::{Module, Service};
 use bilibi_tenancy::Scope;
 use serde_json::{json, Value};
@@ -624,10 +624,12 @@ impl Integration {
     }
 
     /// Clears retained previews older than `days` before `now`, keeping the
-    /// metadata. Installation-wide machine housekeeping: no Audit copy.
+    /// metadata, in batches per tenant. A preview a legal hold names stays
+    /// (ADR 05), checked under the tenant's hold guard; each cleared preview
+    /// is an audited change attributed to the scheduler.
     pub async fn prune_payloads(
         &self,
-        client: &impl GenericClient,
+        client: &mut tokio_postgres::Client,
         days: i64,
         now: SystemTime,
     ) -> Result<u64> {
@@ -635,13 +637,72 @@ impl Integration {
             return Err(Error::Invalid);
         }
         let cutoff = now - std::time::Duration::from_secs(days as u64 * 86_400);
-        Ok(client
-            .execute(
-                "UPDATE base_integration_exchanges SET request_headers=NULL,request_body=NULL,response_headers=NULL,response_body=NULL \
-                 WHERE occurred_at<$1 AND (request_headers IS NOT NULL OR request_body IS NOT NULL OR response_headers IS NOT NULL OR response_body IS NOT NULL)",
-                &[&cutoff],
-            )
-            .await?)
+        let (mut pruned, mut after) = (0_u64, 0_i64);
+        loop {
+            let rows = client
+                .query(
+                    "SELECT id,coalesce(tenant_id,0) FROM base_integration_exchanges WHERE occurred_at<$1 AND id>$2 \
+                     AND (request_headers IS NOT NULL OR request_body IS NOT NULL OR response_headers IS NOT NULL OR response_body IS NOT NULL) \
+                     ORDER BY id LIMIT 500",
+                    &[&cutoff, &after],
+                )
+                .await?;
+            let done = rows.len() < 500;
+            let mut by_tenant: std::collections::BTreeMap<i64, Vec<i64>> = Default::default();
+            for row in &rows {
+                after = row.get(0);
+                by_tenant.entry(row.get(1)).or_default().push(row.get(0));
+            }
+            for (tenant, ids) in by_tenant {
+                let holds = bilibi_personal_data::Holds::acquire(tenant, None).await?;
+                let held = holds.records(privacy::KIND, &ids).await?;
+                let ids: Vec<i64> = ids
+                    .into_iter()
+                    .filter(|id| !held.contains_key(id))
+                    .collect();
+                if !ids.is_empty() {
+                    let mut tx = self
+                        .boundary
+                        .begin(
+                            client,
+                            Context::system(
+                                tenant,
+                                bilibi_schedule::PRINCIPAL,
+                                "integration.payload.prune",
+                            ),
+                        )
+                        .await?;
+                    pruned += tx
+                        .mutate(move |sql| {
+                            Box::pin(async move {
+                                let rows = sql
+                                    .query(
+                                        "UPDATE base_integration_exchanges SET request_headers=NULL,request_body=NULL,response_headers=NULL,response_body=NULL \
+                                         WHERE id=ANY($1) RETURNING id",
+                                        &[&ids],
+                                    )
+                                    .await?;
+                                let changes: Vec<Change> = rows
+                                    .iter()
+                                    .map(|row| Change {
+                                        kind: privacy::KIND.into(),
+                                        id: row.get(0),
+                                        old: json!({"preview": "kept"}),
+                                        new: json!({"preview": "expired"}),
+                                    })
+                                    .collect();
+                                Ok((changes.len() as u64, changes))
+                            })
+                        })
+                        .await?;
+                    tx.commit().await?;
+                }
+                holds.release().await?;
+            }
+            if done {
+                return Ok(pruned);
+            }
+        }
     }
 }
 
@@ -660,7 +721,7 @@ async fn visible_tenant(
 
 inventory::submit! {
     Module { id: "base/integration", layer: bilibi_module_registry::Layer::Base,
-        dependencies: &["base/module_registry", "base/database", "base/audit", "base/tenancy", "base/authz", "base/queue", "base/schedule", "base/settings", "base/ui", "base/datetime", "base/locale", "base/menu", "base/grid", "base/privacy"],
+        dependencies: &["base/module_registry", "base/database", "base/audit", "base/tenancy", "base/authz", "base/queue", "base/schedule", "base/settings", "base/ui", "base/datetime", "base/locale", "base/menu", "base/grid", "base/personal_data"],
         migrations: &[("base-integration-001", include_str!("../migrations/001-exchanges.sql")),
             ("base-integration-002", include_str!("../migrations/002-reference-webhook.sql")),
             ("base-integration-003-agent-self-report", include_str!("../migrations/003-agent-self-report.sql")),

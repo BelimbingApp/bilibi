@@ -1,12 +1,13 @@
-//! Affiliation's personal-data store (ADR 05, `base/privacy`): the person's
+//! Affiliation's personal-data store (ADR 05, `base/personal_data`): the person's
 //! affiliations with companies. Erasure keeps each affiliation, its company
 //! link and its dates, so the company's records stay whole, and clears the
 //! job title, work email and work phone. No Bilimbi counterpart.
 use bilibi_database::{Change, MutationTransaction};
 use bilibi_module_registry::{Contribution, Provenance};
-use bilibi_privacy::{
-    Action, Erased, ErasedRecord, Exported, Handler, HandlerFuture, Holds, Identifier, Kept,
-    KeptReason, KindAction, KindCount, Located, PersonalData, Subject, PERSONAL_DATA,
+use bilibi_personal_data::{
+    Action, Disclosure, Erased, ErasedRecord, Erasure, Exported, Handler, HandlerFuture, Holds,
+    Identifier, Kept, KindCount, Located, PersonalData, RecordKind, Subject, ERASED, PERSONAL_DATA,
+    RECORD_KINDS,
 };
 use bilibi_tenancy::Scope;
 use serde_json::{json, Value};
@@ -51,6 +52,7 @@ impl Handler for Affiliations {
                     by_person: row.get(0),
                     by_identifier: row.get(1),
                 }],
+                ..Located::default()
             })
         })
     }
@@ -59,8 +61,10 @@ impl Handler for Affiliations {
         client: &'a Client,
         scope: &'a Scope,
         subject: &'a Subject,
+        grant: &'a Disclosure,
     ) -> HandlerFuture<'a, Exported> {
         Box::pin(async move {
+            grant.check(scope)?;
             let rows = client
                 .query(
                     "SELECT id,organisation_id,title,work_email,work_phone,effective_from::text,effective_to::text,unlinked_at::text \
@@ -90,9 +94,11 @@ impl Handler for Affiliations {
         tx: &'a mut MutationTransaction<'_>,
         scope: &'a Scope,
         subject: &'a Subject,
+        grant: &'a Erasure,
         holds: &'a Holds,
     ) -> HandlerFuture<'a, Erased> {
         Box::pin(async move {
+            grant.check(scope)?;
             let tenant = scope.tenant();
             let rows = tx
                 .sql()
@@ -103,15 +109,12 @@ impl Handler for Affiliations {
                 .await?;
             let mut erased = Erased::default();
             let mut count = 0;
+            let ids: Vec<i64> = rows.iter().map(|row| row.get(0)).collect();
+            let held = holds.records(KIND, &ids).await?;
             for row in rows {
                 let id: i64 = row.get(0);
-                if holds.record_held(KIND, id) {
-                    erased.kept.push(Kept {
-                        kind: KIND.into(),
-                        id: id.to_string(),
-                        reason: KeptReason::LegalHold,
-                        until: None,
-                    });
+                if let Some(hold) = held.get(&id) {
+                    erased.kept.push(Kept::held(KIND, id, *hold));
                     continue;
                 }
                 let before = json!({"title": row.get::<_, Option<String>>(1), "work_email": row.get::<_, Option<String>>(2), "work_phone": row.get::<_, Option<String>>(3)});
@@ -126,7 +129,8 @@ impl Handler for Affiliations {
                                 &[&tenant, &id],
                             )
                             .await?;
-                            let after = json!({"title": null, "work_email": null, "work_phone": null});
+                            // `[erased]` where a value was, so the trail tells erasure from absence.
+                            let after = Value::Object(before.as_object().into_iter().flatten().map(|(f, v)| (f.clone(), if v.is_null() { Value::Null } else { json!(ERASED) })).collect());
                             Ok(((), vec![Change { kind: KIND.into(), id, old: before, new: after }]))
                         })
                     })
@@ -136,16 +140,9 @@ impl Handler for Affiliations {
                 erased.records.push(ErasedRecord {
                     kind: KIND.into(),
                     id,
-                    fields: FIELDS.map(String::from).to_vec(),
                 });
             }
-            if count > 0 {
-                erased.actions.push(KindAction {
-                    kind: KIND.into(),
-                    action: Action::Anonymised,
-                    count,
-                });
-            }
+            erased.count(KIND, Action::Anonymised, count);
             Ok(erased)
         })
     }
@@ -153,4 +150,7 @@ impl Handler for Affiliations {
 
 inventory::submit! { Contribution::new(PERSONAL_DATA, "core/affiliation.affiliations",
 Provenance { module: "core/affiliation", source: file!(), line: line!() },
-&PersonalData { label: "Affiliations (work contact)", record_kinds: &[KIND], handler: &AFFILIATIONS }) }
+&PersonalData { label: "Affiliations (work contact)", kinds: &[KIND], handler: &AFFILIATIONS }) }
+inventory::submit! { Contribution::new(RECORD_KINDS, "core/affiliation.affiliation",
+Provenance { module: "core/affiliation", source: file!(), line: line!() },
+&RecordKind { kind: KIND, fields: &FIELDS, subject_identifier: false, person: false }) }

@@ -1,12 +1,16 @@
 //! Manual running-service walkthrough of legal holds (ADR 05). Explicit
 //! disposable DB only; prints real outcomes and durable state for inspection.
 //! No assertions or test harness. Run once, then again with `report` from a
-//! fresh process.
+//! fresh process. It also races two placements of one hold and places a hold
+//! while an erasure's hold guard is open.
 use bilibi_database::pool;
+use bilibi_database::Db;
 use bilibi_module_registry::Services;
 use bilibi_party_ids::PersonId;
+use bilibi_personal_data::Holds;
 use bilibi_privacy::{HoldTarget, Privacy, SERVICE};
 use bilibi_tenancy::Authentication;
+use bilibi_tenancy::Scope;
 use std::sync::Arc;
 use tokio_postgres::Client;
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -15,6 +19,23 @@ fn show<T: std::fmt::Debug, E: std::fmt::Display>(label: &str, result: std::resu
     match result {
         Ok(value) => println!("{label}: ok {value:?}"),
         Err(error) => println!("{label}: refused — {error}"),
+    }
+}
+/// Places a hold on its own connection, so two can run at once.
+async fn place(
+    privacy: &Privacy,
+    db: &Db,
+    scope: &Scope,
+    target: HoldTarget,
+    reason: &str,
+) -> String {
+    let mut client = match db.get().await {
+        Ok(client) => client,
+        Err(error) => return format!("no connection — {error}"),
+    };
+    match privacy.place_hold(&mut client, scope, target, reason).await {
+        Ok(hold) => format!("placed hold {}", hold.id),
+        Err(error) => format!("refused — {error}"),
     }
 }
 /// Raw SQL from "another client": the database guards must hold without the facade.
@@ -176,26 +197,77 @@ async fn main() -> Result<()> {
             .await,
     );
 
-    println!("== what an erasure would see");
-    let holds = privacy
-        .active_holds(&**client, &admin, Some(person))
-        .await?;
+    println!("== what an erasure sees: only the records it asks about");
+    let holds = Holds::acquire(1, Some(person)).await?;
     println!(
-        "person 1: person_held={} record person:2 held={} record person:3 held={}",
-        holds.person_held(),
-        holds.record_held("person", 2),
-        holds.record_held("person", 3)
+        "person 1 erasure: person hold={:?} person:2 held={:?} person:3 held={:?}",
+        holds.person_hold().await?,
+        holds.record("person", 2).await?,
+        holds.record("person", 3).await?
     );
-    let other_person = PersonId::new(9).map_err(|_| "invalid person")?;
-    let holds = privacy
-        .active_holds(&**client, &admin, Some(other_person))
-        .await?;
+    holds.release().await?;
+    let holds = Holds::acquire(1, PersonId::new(9).ok()).await?;
     println!(
-        "person 9: person_held={} record person:2 held={} record person:3 held={}",
-        holds.person_held(),
-        holds.record_held("person", 2),
-        holds.record_held("person", 3)
+        "person 9 erasure: person hold={:?} person:2 held={:?} person:3 held={:?}",
+        holds.person_hold().await?,
+        holds.record("person", 2).await?,
+        holds.record("person", 3).await?
     );
+    holds.release().await?;
+
+    println!("== two placements of the same hold at once");
+    let target = HoldTarget::Record {
+        kind: "person".into(),
+        id: 4,
+    };
+    let (first, second) = tokio::join!(
+        place(&privacy, &db, &admin, target.clone(), "Race A"),
+        place(&privacy, &db, &admin, target.clone(), "Race B")
+    );
+    println!("first: {first}; second: {second}");
+
+    println!("== a hold placed while an erasure runs waits for it");
+    let guard = Holds::acquire(1, PersonId::new(3).ok()).await?;
+    println!(
+        "erasure guard open; person 3 held now: {:?}",
+        guard.person_hold().await?
+    );
+    let started = std::time::Instant::now();
+    let placing = {
+        let (privacy, db, admin) = (privacy.clone(), db.clone(), admin.clone());
+        tokio::spawn(async move {
+            let outcome = place(
+                &privacy,
+                &db,
+                &admin,
+                HoldTarget::Person {
+                    person: PersonId::new(3).expect("person"),
+                },
+                "Placed during erasure",
+            )
+            .await;
+            (outcome, std::time::Instant::now())
+        })
+    };
+    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+    println!(
+        "after 1.5 s the placement finished: {}",
+        placing.is_finished()
+    );
+    guard.release().await?;
+    let released = std::time::Instant::now();
+    let (outcome, done) = placing.await?;
+    println!(
+        "erasure committed and released its guard; placement: {outcome}, finished {} ms after the release (waited {} ms)",
+        done.saturating_duration_since(released).as_millis(),
+        done.saturating_duration_since(started).as_millis()
+    );
+    let next = Holds::acquire(1, PersonId::new(3).ok()).await?;
+    println!(
+        "the next erasure of person 3 sees the hold: {:?}",
+        next.person_hold().await?
+    );
+    next.release().await?;
 
     println!("== release, release twice, list, history");
     show(
@@ -212,21 +284,28 @@ async fn main() -> Result<()> {
             .await
             .map(|h| h.id),
     );
-    let holds = privacy
-        .active_holds(&**client, &admin, Some(person))
-        .await?;
+    let holds = Holds::acquire(1, Some(person)).await?;
     println!(
-        "person 1 after release: person_held={}",
-        holds.person_held()
+        "person 1 after release: person hold={:?}",
+        holds.person_hold().await?
     );
-    for hold in privacy.holds(&**client, &admin, 50).await? {
+    holds.release().await?;
+    let page = privacy.holds(&**client, &admin, "", 0, 2).await?;
+    println!("list tenant 1, first page of 2: total {}", page.total);
+    for hold in page.holds {
         println!(
-            "list tenant 1: hold {} {:?} released={}",
+            "  hold {} {:?} released={}",
             hold.id,
             hold.target,
             hold.released_at.is_some()
         );
     }
+    let page = privacy.holds(&**client, &admin, "person", 2, 2).await?;
+    println!(
+        "list tenant 1 searching person, second page: total {}, ids {:?}",
+        page.total,
+        page.holds.iter().map(|h| h.id).collect::<Vec<_>>()
+    );
     println!(
         "history {}: {:?}",
         on_person.id,
@@ -241,7 +320,10 @@ async fn main() -> Result<()> {
     println!("== tenant isolation");
     show(
         "tenant 2 lists holds",
-        privacy.holds(&**client, &other, 50).await.map(|h| h.len()),
+        privacy
+            .holds(&**client, &other, "", 0, 50)
+            .await
+            .map(|h| h.total),
     );
     show(
         "tenant 2 releases a tenant 1 hold",
@@ -252,7 +334,10 @@ async fn main() -> Result<()> {
     );
     show(
         "viewer lists holds",
-        privacy.holds(&**client, &viewer, 50).await.map(|h| h.len()),
+        privacy
+            .holds(&**client, &viewer, "", 0, 50)
+            .await
+            .map(|h| h.total),
     );
 
     println!("== database guards without the facade");

@@ -3,15 +3,29 @@
 //! value of one field of one record by giving a reason, after the Step-up
 //! check the tenant sets for `base.privacy.field.reveal`. Every reveal is an
 //! audit action naming the table, field, record and reason, never the value,
-//! recorded before the value is returned. The value is read through Grid, so
-//! the record must be one the reader may read. No Bilimbi counterpart.
+//! recorded before the value is returned. Grid reads the value only with the
+//! sealed grant this module issues, so the record must also be one the reader
+//! may read. An access export is the same disclosure: a reader with any field
+//! restricted downloads it only through this path. No Bilimbi counterpart.
 use crate::{Privacy, FIELD_REVEAL, STEP_UP_REVEAL};
 use bilibi_database::{Error, Result};
 use bilibi_grid::query::QueryError;
 use bilibi_tenancy::Scope;
 use serde_json::{json, Value};
+use tokio_postgres::GenericClient;
 
 const MAX_REASON: usize = 255;
+
+fn reason_text(reason: &str) -> Result<&str> {
+    let reason = reason.trim();
+    if reason.is_empty()
+        || reason.chars().count() > MAX_REASON
+        || reason.chars().any(char::is_control)
+    {
+        return Err(Error::Invalid);
+    }
+    Ok(reason)
+}
 
 impl Privacy {
     /// The full value of `field` of the `table` record keyed `record`, for a
@@ -27,11 +41,8 @@ impl Privacy {
         record: &Value,
         reason: &str,
     ) -> Result<Option<String>> {
-        let reason = reason.trim();
-        if reason.is_empty()
-            || reason.chars().count() > MAX_REASON
-            || reason.chars().any(char::is_control)
-            || table.is_empty()
+        let reason = reason_text(reason)?;
+        if table.is_empty()
             || table.len() > 200
             || field.is_empty()
             || field.len() > 200
@@ -44,7 +55,8 @@ impl Privacy {
         bilibi_authz::authorize_key(&**client, scope, FIELD_REVEAL).await?;
         let target = format!("{table}.{field}:{}", record_text(record));
         self.step_up.require(scope, STEP_UP_REVEAL, &target).await?;
-        let value = bilibi_grid::query::reveal(&self.db, scope, table, field, record)
+        let grant = self.issuer.reveal(scope, table, field);
+        let value = bilibi_grid::query::reveal(&self.db, scope, &grant, table, field, record)
             .await
             .map_err(|error| match error {
                 QueryError::Database(error) => error,
@@ -53,15 +65,11 @@ impl Privacy {
             })?
             .ok_or(Error::NotFound)?;
         // Recorded before the value leaves: no record, no value.
-        bilibi_audit::record_action(
+        record_action(
             &**client,
-            &bilibi_audit::Attribution::from_context(
-                &scope.mutation_context("privacy.field.reveal"),
-            )?,
-            None,
+            scope,
             "privacy.field.revealed",
             json!({"table": table, "field": field, "record": record, "reason": reason}),
-            false,
         )
         .await?;
         Ok(match value {
@@ -70,6 +78,55 @@ impl Privacy {
             other => Some(other.to_string()),
         })
     }
+
+    /// Before an export leaves: a reader who sees no field restricted reads it
+    /// as before. Anyone else needs `privacy.field.reveal` and a reason, and
+    /// the download is recorded like a reveal (`privacy.export.revealed`).
+    pub(crate) async fn reveal_export(
+        &self,
+        client: &impl GenericClient,
+        scope: &Scope,
+        request: i64,
+        reason: Option<&str>,
+    ) -> Result<()> {
+        if bilibi_authz::fields::restricted(client, scope)
+            .await?
+            .values()
+            .all(|fields| fields.is_empty())
+        {
+            return Ok(());
+        }
+        let reason = reason_text(reason.ok_or(Error::Forbidden)?)?;
+        bilibi_authz::authorize_key(client, scope, FIELD_REVEAL).await?;
+        self.step_up
+            .require(scope, STEP_UP_REVEAL, &format!("privacy.request:{request}"))
+            .await?;
+        record_action(
+            client,
+            scope,
+            "privacy.export.revealed",
+            json!({"request": request, "reason": reason}),
+        )
+        .await
+    }
+}
+
+async fn record_action(
+    client: &impl GenericClient,
+    scope: &Scope,
+    event: &str,
+    payload: Value,
+) -> Result<()> {
+    bilibi_audit::record_action(
+        client,
+        &bilibi_audit::Attribution::from_context(&scope.mutation_context(event))?,
+        None,
+        event,
+        payload,
+        false,
+    )
+    .await?;
+    Ok(())
 }
 
 fn record_text(record: &Value) -> String {

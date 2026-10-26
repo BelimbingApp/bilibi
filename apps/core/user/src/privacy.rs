@@ -1,16 +1,17 @@
-//! User's personal-data store (ADR 05, `base/privacy`): the accounts linked to
+//! User's personal-data store (ADR 05, `base/personal_data`): the accounts linked to
 //! the person and their notifications. Erasure closes each account the way
 //! `delete_account` does (sessions ended, step-up factors removed, reset
 //! tokens dropped) and anonymises it: the row, its ID and its links stay, the
 //! name and sign-in email do not. Single sign-on links, pending sign-ins and
 //! failed-attempt counters have no business value and are deleted, as are
-//! notifications. Accounts that only share an email are counted, never
-//! touched. No Bilimbi counterpart.
+//! notifications, each unless a legal hold names it. Accounts that only share
+//! an email are counted, never touched. No Bilimbi counterpart.
 use bilibi_database::{Change, Error, MutationTransaction};
 use bilibi_module_registry::{Contribution, Provenance};
-use bilibi_privacy::{
-    Action, Erased, ErasedRecord, Exported, Handler, HandlerFuture, Holds, Identifier, Kept,
-    KeptReason, KindAction, KindCount, Located, PersonalData, Subject, ERASED, PERSONAL_DATA,
+use bilibi_personal_data::{
+    Action, Disclosure, Erased, ErasedRecord, Erasure, Exported, Handler, HandlerFuture, Holds,
+    Identifier, Kept, KindCount, Located, PersonalData, RecordKind, Subject, ERASED, PERSONAL_DATA,
+    RECORD_KINDS,
 };
 use bilibi_security::Sessions;
 use bilibi_tenancy::Scope;
@@ -78,6 +79,7 @@ impl Handler for Accounts {
                         by_identifier: 0,
                     },
                 ],
+                ..Located::default()
             })
         })
     }
@@ -86,8 +88,10 @@ impl Handler for Accounts {
         client: &'a Client,
         scope: &'a Scope,
         subject: &'a Subject,
+        grant: &'a Disclosure,
     ) -> HandlerFuture<'a, Exported> {
         Box::pin(async move {
+            grant.check(scope)?;
             let accounts = client
                 .query(
                     "SELECT u.id,u.name,u.email,u.status,u.email_verified_at::text,u.deleted_at::text,\
@@ -118,69 +122,94 @@ impl Handler for Accounts {
         tx: &'a mut MutationTransaction<'_>,
         scope: &'a Scope,
         subject: &'a Subject,
+        grant: &'a Erasure,
         holds: &'a Holds,
     ) -> HandlerFuture<'a, Erased> {
         Box::pin(async move {
+            grant.check(scope)?;
             let bound = BOUND.get().ok_or(Error::Internal)?;
             let tenant = scope.tenant();
             let users = tx
                 .sql()
                 .query(
-                    "SELECT id,name,email,status FROM users WHERE tenant_id=$1 AND person_id=$2 ORDER BY id FOR UPDATE",
+                    "SELECT id,name,email,status,anonymised_at IS NOT NULL FROM users WHERE tenant_id=$1 AND person_id=$2 ORDER BY id FOR UPDATE",
                     &[&tenant, &subject.person.get()],
                 )
                 .await?;
+            let ids: Vec<i64> = users.iter().map(|row| row.get(0)).collect();
+            let held_users = holds.records(USER_KIND, &ids).await?;
             let mut erased = Erased::default();
-            let (mut accounts, mut notifications) = (0, 0);
             for row in users {
-                let (user, name, email, status): (i64, String, String, String) =
-                    (row.get(0), row.get(1), row.get(2), row.get(3));
-                if holds.record_held(USER_KIND, user) {
-                    erased.kept.push(Kept {
-                        kind: USER_KIND.into(),
-                        id: user.to_string(),
-                        reason: KeptReason::LegalHold,
-                        until: None,
-                    });
+                let (user, name, email, status, done): (i64, String, String, String, bool) =
+                    (row.get(0), row.get(1), row.get(2), row.get(3), row.get(4));
+                if let Some(hold) = held_users.get(&user) {
+                    erased.kept.push(Kept::held(USER_KIND, user, *hold));
                     continue;
                 }
                 if user == scope.user() {
                     // The approver's own account cannot be the one erased.
                     return Err(Error::Forbidden);
                 }
+                // Each notification on its own: a held one stays.
+                let notices: Vec<i64> = tx
+                    .sql()
+                    .query(
+                        "SELECT id FROM notifications WHERE tenant_id=$1 AND user_id=$2 ORDER BY id FOR UPDATE",
+                        &[&tenant, &user],
+                    )
+                    .await?
+                    .iter()
+                    .map(|row| row.get(0))
+                    .collect();
+                let held_notices = holds.records(NOTIFICATION_KIND, &notices).await?;
+                for (notice, hold) in &held_notices {
+                    erased
+                        .kept
+                        .push(Kept::held(NOTIFICATION_KIND, notice, *hold));
+                }
+                let gone: Vec<i64> = notices
+                    .into_iter()
+                    .filter(|id| !held_notices.contains_key(id))
+                    .collect();
                 let before = json!({"name": name, "email": email, "status": status});
-                let removed = tx
-                    .mutate(move |sql| {
+                // Already anonymised with nothing to delete: not a write.
+                let removed = if done && gone.is_empty() {
+                    Vec::new()
+                } else {
+                    tx.mutate(move |sql| {
                         Box::pin(async move {
                             let placeholder = format!("erased-{user}@erased.invalid");
-                            sql.execute(
-                                "UPDATE users SET name=$3,email=$4,password_hash='!erased',status='deleted',deleted_at=coalesce(deleted_at,now()),\
-                                 version=version+1,updated_at=now() WHERE tenant_id=$1 AND id=$2",
-                                &[&tenant, &user, &ERASED, &placeholder],
-                            )
-                            .await?;
-                            let mut links = 0;
-                            for table in [
-                                "password_reset_tokens",
-                                "user_external_sessions",
-                                "user_external_identities",
-                                "user_credential_attempts",
-                                "user_sign_ins",
-                            ] {
-                                links += sql
-                                    .execute(&format!("DELETE FROM {table} WHERE tenant_id=$1 AND user_id=$2"), &[&tenant, &user])
-                                    .await?;
-                            }
-                            let gone = sql
-                                .query("DELETE FROM notifications WHERE tenant_id=$1 AND user_id=$2 RETURNING id", &[&tenant, &user])
+                            let mut changes = Vec::new();
+                            if !done {
+                                sql.execute(
+                                    "UPDATE users SET name=$3,email=$4,password_hash='!erased',status='deleted',deleted_at=coalesce(deleted_at,now()),\
+                                     anonymised_at=now(),version=version+1,updated_at=now() WHERE tenant_id=$1 AND id=$2",
+                                    &[&tenant, &user, &ERASED, &placeholder],
+                                )
                                 .await?;
-                            let mut changes = vec![Change {
-                                kind: USER_KIND.into(),
-                                id: user,
-                                old: before,
-                                new: json!({"name": ERASED, "email": placeholder, "status": "deleted", "links_removed": links}),
-                            }];
-                            let ids: Vec<i64> = gone.iter().map(|row| row.get(0)).collect();
+                                let mut links = 0;
+                                for table in [
+                                    "password_reset_tokens",
+                                    "user_external_sessions",
+                                    "user_external_identities",
+                                    "user_credential_attempts",
+                                    "user_sign_ins",
+                                ] {
+                                    links += sql
+                                        .execute(&format!("DELETE FROM {table} WHERE tenant_id=$1 AND user_id=$2"), &[&tenant, &user])
+                                        .await?;
+                                }
+                                changes.push(Change {
+                                    kind: USER_KIND.into(),
+                                    id: user,
+                                    old: before,
+                                    new: json!({"name": ERASED, "email": ERASED, "status": "deleted", "links_removed": links}),
+                                });
+                            }
+                            let rows = sql
+                                .query("DELETE FROM notifications WHERE tenant_id=$1 AND id=ANY($2) RETURNING id", &[&tenant, &gone])
+                                .await?;
+                            let ids: Vec<i64> = rows.iter().map(|row| row.get(0)).collect();
                             changes.extend(ids.iter().map(|id| Change {
                                 kind: NOTIFICATION_KIND.into(),
                                 id: *id,
@@ -190,42 +219,29 @@ impl Handler for Accounts {
                             Ok((ids, changes))
                         })
                     })
-                    .await?;
-                bound
-                    .step_up
-                    .lifecycle(tx, user, bilibi_step_up::Lifecycle::Delete)
-                    .await?;
-                let ended = bound.sessions.revoke(tx, user, None).await?;
-                let sessions = bound.sessions.clone();
-                tx.after_commit(move || sessions.announce(ended));
-                accounts += 1;
-                notifications += removed.len() as i64;
+                    .await?
+                };
+                if !done {
+                    bound
+                        .step_up
+                        .lifecycle(tx, user, bilibi_step_up::Lifecycle::Delete)
+                        .await?;
+                    let ended = bound.sessions.revoke(tx, user, None).await?;
+                    let sessions = bound.sessions.clone();
+                    tx.after_commit(move || sessions.announce(ended));
+                }
+                erased.count(USER_KIND, Action::Anonymised, 1);
+                erased.count(NOTIFICATION_KIND, Action::Deleted, removed.len() as i64);
                 erased.records.push(ErasedRecord {
                     kind: USER_KIND.into(),
                     id: user,
-                    fields: vec!["name".into(), "email".into()],
                 });
                 erased
                     .records
                     .extend(removed.into_iter().map(|id| ErasedRecord {
                         kind: NOTIFICATION_KIND.into(),
                         id,
-                        fields: vec!["title".into(), "body".into()],
                     }));
-            }
-            if accounts > 0 {
-                erased.actions.push(KindAction {
-                    kind: USER_KIND.into(),
-                    action: Action::Anonymised,
-                    count: accounts,
-                });
-            }
-            if notifications > 0 {
-                erased.actions.push(KindAction {
-                    kind: NOTIFICATION_KIND.into(),
-                    action: Action::Deleted,
-                    count: notifications,
-                });
             }
             Ok(erased)
         })
@@ -234,4 +250,10 @@ impl Handler for Accounts {
 
 inventory::submit! { Contribution::new(PERSONAL_DATA, "core/user.accounts",
 Provenance { module: "core/user", source: file!(), line: line!() },
-&PersonalData { label: "User accounts and notifications", record_kinds: &[USER_KIND, NOTIFICATION_KIND], handler: &ACCOUNTS }) }
+&PersonalData { label: "User accounts and notifications", kinds: &[USER_KIND, NOTIFICATION_KIND], handler: &ACCOUNTS }) }
+inventory::submit! { Contribution::new(RECORD_KINDS, "core/user.user",
+Provenance { module: "core/user", source: file!(), line: line!() },
+&RecordKind { kind: USER_KIND, fields: &["name", "email"], subject_identifier: false, person: false }) }
+inventory::submit! { Contribution::new(RECORD_KINDS, "core/user.notification",
+Provenance { module: "core/user", source: file!(), line: line!() },
+&RecordKind { kind: NOTIFICATION_KIND, fields: &["title", "body"], subject_identifier: false, person: false }) }

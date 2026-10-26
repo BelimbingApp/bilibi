@@ -1,46 +1,46 @@
-//! Retention (ADR 05): modules contribute record classes, each tenant may set
-//! its own period for a class (never below the class's legal minimum), and
-//! one contributed daily schedule definition, run only after an operator
-//! enables it, sweeps each tenant's records past their period in batches,
-//! skipping what legal holds name. A class with no period keeps forever.
-//! Bilimbi's per-store retention workers (`base/integration`, `base/perf`,
-//! `base/schedule`) are prior art for the sweep only.
-use crate::{
-    holds::TenantHolds, registry::ErasedRecord, registry::HandlerFuture, Privacy, RETENTION_MANAGE,
-    RETENTION_VIEW,
-};
-use bilibi_authz::SystemScope;
+//! Retention (ADR 05): modules contribute record classes with
+//! [`record_class!`](crate::record_class), each company turns a class on and
+//! sets its period and legal minimum in System Settings (company scope; no
+//! class ships a default period, Bilibi sets no upper limit and no country
+//! rules), and one contributed daily schedule definition, run only after an
+//! operator enables it, sweeps each tenant in batches. Records that belong to
+//! no one company follow the tenant's primary company. The same run erases
+//! audit evidence whose legal minimum has passed. Each run writes one summary
+//! per class. Bilimbi's per-store retention workers (`base/integration`,
+//! `base/perf`, `base/schedule`) are prior art for the sweep only.
+use crate::{runner, Privacy, RETENTION_VIEW};
+use bilibi_authz::{SystemAuthentication, SystemScope};
 use bilibi_database::{Change, Error, MutationTransaction, Result};
 use bilibi_module_registry::{Catalog, Entry, Module, RegistryError, Result as RegistryResult};
+use bilibi_party_ids::OrganisationId;
+use bilibi_personal_data::{Cause, ErasedRecord, Erasure, HandlerFuture, Holds};
 use bilibi_queue::execution::{Execution, Handler, HandlerFuture as JobFuture, Outcome};
 use bilibi_schedule::Schedule;
 use bilibi_settings::Target;
-use bilibi_tenancy::Scope;
+use bilibi_tenancy::{Authentication, Scope};
 use serde::Serialize;
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
 use std::{collections::BTreeMap, sync::Arc};
 use tokio_postgres::Client;
 
-/// The catalog record classes contribute to:
-/// `Contribution::new(RECORD_CLASSES, "<module>.<class>", provenance, &RecordClass { .. })`.
+/// The catalog record classes contribute to, through [`record_class!`](crate::record_class).
 pub const RECORD_CLASSES: &str = "base/privacy.record_classes";
-/// Tenant setting: `{ "<class key>": days }`, the tenant's own periods.
-pub const PERIODS: &str = "privacy.retention.periods";
+/// The summary class of the deferred audit erasure.
+pub const AUDIT_EVIDENCE: &str = "base/privacy.audit_evidence";
 pub const SWEEP_WORKER: &str = "base/privacy-retention-sweep";
 pub const SWEEP_SCHEDULE: &str = "base/privacy.retention-sweep";
 const SWEEP_KIND: &str = "base/privacy.sweep";
-/// The longest period a tenant may set: one hundred years.
-pub const MAX_DAYS: u32 = 36_500;
-/// Records one sweep transaction acts on, and transactions per class per run.
+/// Records one sweep transaction examines.
 const BATCH: i64 = 200;
-const BATCHES: usize = 25;
+/// The longest period PostgreSQL date arithmetic accepts here, in days.
+const MAX_INTERVAL: i64 = 3_650_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RetentionAction {
-    /// Delete the records.
+    /// Delete the records. Only for a class that holds no business value.
     Purge,
-    /// Keep the rows, keys and links; replace personal fields.
+    /// Keep the rows, keys and links; replace declared personal fields.
     Anonymise,
 }
 impl RetentionAction {
@@ -52,17 +52,20 @@ impl RetentionAction {
     }
 }
 
-/// Contribution payload: one class of records and how long they are kept.
+/// Contribution payload: one class of records. Contribute it with
+/// [`record_class!`](crate::record_class), which also declares its settings.
 pub struct RecordClass {
-    /// Shown on the retention page.
+    /// Shown on the retention page and in System Settings.
     pub label: &'static str,
     /// What starts the clock, as operators read it: "when the account was closed".
     pub clock_start: &'static str,
     pub action: RetentionAction,
-    /// The period when the tenant sets none. `None` keeps forever.
-    pub default_days: Option<u32>,
-    /// A legal minimum: no tenant period, and no default, may be shorter.
-    pub minimum_days: Option<u32>,
+    /// Whether the records have business value. `Purge` is refused unless
+    /// they have none (temporary logs, abandoned drafts).
+    pub business_value: bool,
+    /// A minimum the law sets everywhere, in days: no company may set a
+    /// shorter period or legal minimum. `None` for most classes.
+    pub floor_days: Option<u32>,
     pub sweeper: &'static dyn Sweeper,
 }
 
@@ -73,44 +76,135 @@ pub struct Swept {
     pub acted: i64,
     /// Records past their period kept because a legal hold names them or their person.
     pub kept: i64,
-    /// Every record acted on, with the personal fields it held: `base/privacy`
-    /// clears them from the record's audit evidence in the same transaction.
+    /// Every record acted on: `base/privacy` clears the declared personal
+    /// fields of its audit evidence in the same transaction.
     pub records: Vec<ErasedRecord>,
+    /// The highest record ID this batch examined when it examined `limit`
+    /// candidates (pass it back as `after`); `None` when the class is done.
+    pub next: Option<i64>,
 }
 
 /// Implement on the owning module's type.
 pub trait Sweeper: Send + Sync {
-    /// Purge or anonymise at most `limit` of the tenant's records whose clock
-    /// started before `cutoff` (RFC 3339), skipping what `holds` names and
-    /// what an earlier sweep already acted on. Write through `tx` and return
-    /// every change; never open a second transaction. Fewer than `limit`
-    /// records acted on and kept means the class is done for this run.
+    /// Examine at most `limit` of the tenant's records with an ID above
+    /// `after`, in ID order, whose clock started before `cutoff` (RFC 3339)
+    /// and that an earlier sweep has not already acted on. Purge or anonymise
+    /// those `holds` does not name, writing through `tx` and returning every
+    /// change; never open a second transaction. Count the held ones as kept.
+    #[allow(clippy::too_many_arguments)]
     fn sweep<'a>(
         &'a self,
         tx: &'a mut MutationTransaction<'_>,
-        scope: &'a SystemScope,
+        scope: &'a Scope,
+        grant: &'a Erasure,
         cutoff: &'a str,
-        holds: &'a TenantHolds,
+        holds: &'a Holds,
+        after: i64,
         limit: i64,
     ) -> HandlerFuture<'a, Swept>;
 }
 
+/// The keys of a class's company settings.
+pub fn setting_keys(class: &str) -> [String; 3] {
+    [
+        format!("privacy.retention.{class}.enabled"),
+        format!("privacy.retention.{class}.period_days"),
+        format!("privacy.retention.{class}.legal_minimum_days"),
+    ]
+}
+
+/// The settings constraint of every class: a period, when set, is no shorter
+/// than the legal minimum or the class floor, and a legal minimum no shorter
+/// than the floor. `values` are `[period_days, legal_minimum_days]`.
+pub fn period_accepts(values: &[Value], floor: Option<u32>) -> bool {
+    let floor = i64::from(floor.unwrap_or(0));
+    let (period, minimum) = (
+        values.first().and_then(Value::as_i64),
+        values.get(1).and_then(Value::as_i64),
+    );
+    minimum.is_none_or(|m| m >= floor)
+        && period.is_none_or(|p| p <= MAX_INTERVAL && p >= floor.max(minimum.unwrap_or(0)))
+}
+
+/// Contributes one record class and its three company settings (on/off, the
+/// period, the legal minimum) and their constraint. Keys:
+/// `privacy.retention.<key>.enabled`, `.period_days`, `.legal_minimum_days`.
+///
+/// ```rust,ignore
+/// bilibi_privacy::record_class! {
+///     module: "core/user", key: "core/user.notifications", label: "Notifications",
+///     clock_start: "When the notification was sent", action: Purge,
+///     business_value: false, floor_days: None, sweeper: &NOTIFICATIONS,
+/// }
+/// ```
+#[macro_export]
+macro_rules! record_class {
+    (module: $module:literal, key: $key:literal, label: $label:literal, clock_start: $clock:literal,
+     action: $action:ident, business_value: $value:expr, floor_days: $floor:expr, sweeper: $sweeper:expr $(,)?) => {
+        $crate::__private::inventory::submit! { $crate::__private::Contribution::new($crate::RECORD_CLASSES, $key,
+            $crate::__private::Provenance { module: $module, source: file!(), line: line!() },
+            &$crate::RecordClass { label: $label, clock_start: $clock, action: $crate::RetentionAction::$action,
+                business_value: $value, floor_days: $floor, sweeper: $sweeper }) }
+        $crate::__private::inventory::submit! { $crate::__private::Contribution::new($crate::__private::DEFINITIONS,
+            concat!("privacy.retention.", $key, ".enabled"),
+            $crate::__private::Provenance { module: $module, source: file!(), line: line!() },
+            &$crate::__private::Setting::Definition($crate::__private::Definition {
+                value_type: $crate::__private::ValueType::Boolean, scopes: &[$crate::__private::ScopeKind::Company],
+                default: || $crate::__private::json!(false), nullable: false, encrypted: false, minimum: None, maximum: None, validator: None,
+                editor: Some($crate::__private::Editor { group: "Personal data retention", label: concat!($label, ": sweep"),
+                    help: concat!("Sweep these records once this company's period has passed, counted from ", $clock, ". Off until turned on."),
+                    capability: Some($crate::RETENTION_MANAGE), reveal_duration_ms: 5_000 }),
+            })) }
+        $crate::__private::inventory::submit! { $crate::__private::Contribution::new($crate::__private::DEFINITIONS,
+            concat!("privacy.retention.", $key, ".period_days"),
+            $crate::__private::Provenance { module: $module, source: file!(), line: line!() },
+            &$crate::__private::Setting::Definition($crate::__private::Definition {
+                value_type: $crate::__private::ValueType::Integer, scopes: &[$crate::__private::ScopeKind::Company],
+                default: || $crate::__private::Value::Null, nullable: true, encrypted: false, minimum: Some(1.0), maximum: None, validator: None,
+                editor: Some($crate::__private::Editor { group: "Personal data retention", label: concat!($label, ": keep for days"),
+                    help: "Days to keep these records before the sweep acts. Empty keeps them until you choose otherwise. Never below the legal minimum.",
+                    capability: Some($crate::RETENTION_MANAGE), reveal_duration_ms: 5_000 }),
+            })) }
+        $crate::__private::inventory::submit! { $crate::__private::Contribution::new($crate::__private::DEFINITIONS,
+            concat!("privacy.retention.", $key, ".legal_minimum_days"),
+            $crate::__private::Provenance { module: $module, source: file!(), line: line!() },
+            &$crate::__private::Setting::Definition($crate::__private::Definition {
+                value_type: $crate::__private::ValueType::Integer, scopes: &[$crate::__private::ScopeKind::Company],
+                default: || $crate::__private::Value::Null, nullable: true, encrypted: false, minimum: Some(1.0), maximum: None, validator: None,
+                editor: Some($crate::__private::Editor { group: "Personal data retention", label: concat!($label, ": legal minimum days"),
+                    help: "The shortest period the law lets this company keep these records. A shorter period is refused.",
+                    capability: Some($crate::RETENTION_MANAGE), reveal_duration_ms: 5_000 }),
+            })) }
+        $crate::__private::inventory::submit! { $crate::__private::Contribution::new($crate::__private::CONSTRAINTS,
+            concat!($key, ".retention_period"),
+            $crate::__private::Provenance { module: $module, source: file!(), line: line!() },
+            &$crate::__private::Constraint {
+                keys: &[concat!("privacy.retention.", $key, ".period_days"), concat!("privacy.retention.", $key, ".legal_minimum_days")],
+                accepts: {
+                    fn accepts(values: &[$crate::__private::Value]) -> bool {
+                        $crate::__private::period_accepts(values, $floor)
+                    }
+                    accepts
+                },
+                message: "The period may not be shorter than the legal minimum.",
+            }) }
+    };
+}
+
 /// Boot check of every contribution: named `<module>.<snake_case name>`, a
-/// label and clock start, and periods within [`MAX_DAYS`] with the default
-/// no shorter than the minimum.
+/// label and clock start, a positive floor, and no purge of records with
+/// business value.
 pub(crate) fn validate(entries: &[Entry]) -> RegistryResult<()> {
     for entry in entries {
         let class = entry.get::<RecordClass>()?;
-        let within = |days: Option<u32>| days.is_none_or(|d| (1..=MAX_DAYS).contains(&d));
-        if !crate::registry::store_key(entry.provenance.module, entry.id)
+        if !bilibi_personal_data::module_key(entry.provenance.module, entry.id)
             || class.label.trim().is_empty()
             || class.clock_start.trim().is_empty()
-            || !within(class.default_days)
-            || !within(class.minimum_days)
-            || matches!((class.default_days, class.minimum_days), (Some(d), Some(m)) if d < m)
+            || class.floor_days == Some(0)
+            || (class.action == RetentionAction::Purge && class.business_value)
         {
             return Err(RegistryError::Contribution(format!(
-                "record class {} at {}:{} must be named {}.<snake_case name> with a label, a clock start, and a default no shorter than its minimum",
+                "record class {} at {}:{} must be named {}.<snake_case name> with a label and a clock start, and may purge only records with no business value",
                 entry.id, entry.provenance.source, entry.provenance.line, entry.provenance.module
             )));
         }
@@ -143,21 +237,8 @@ impl Classes {
     }
 }
 
-/// The setting's own check, for any writer: class keys to whole days.
-pub(crate) fn valid_periods(value: &Value) -> bool {
-    value.as_object().is_some_and(|periods| {
-        periods.len() <= 256
-            && periods.iter().all(|(key, days)| {
-                !key.is_empty()
-                    && key.len() <= 255
-                    && days
-                        .as_u64()
-                        .is_some_and(|d| (1..=u64::from(MAX_DAYS)).contains(&d))
-            })
-    })
-}
-
-/// One record class as the retention page and agents read it.
+/// One record class as the retention page and agents read it, with one
+/// company's settings.
 #[derive(Clone, Debug, Serialize)]
 pub struct ClassView {
     pub key: &'static str,
@@ -165,62 +246,77 @@ pub struct ClassView {
     pub label: &'static str,
     pub clock_start: &'static str,
     pub action: RetentionAction,
-    pub default_days: Option<u32>,
-    pub minimum_days: Option<u32>,
-    /// The tenant's own period, if it set one.
-    pub tenant_days: Option<u32>,
-    /// What the sweep uses: the tenant's period, else the default; `None` keeps forever.
-    pub effective_days: Option<u32>,
+    pub business_value: bool,
+    pub floor_days: Option<u32>,
+    /// The company's settings: swept only when on and a period is set.
+    pub enabled: bool,
+    pub period_days: Option<i64>,
+    pub legal_minimum_days: Option<i64>,
     pub last_sweep: Option<SweepView>,
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct SweepView {
     pub id: i64,
-    pub cutoff: String,
+    pub company: Option<i64>,
+    pub period_days: Option<i32>,
     pub acted: i64,
     pub kept: i64,
-    pub finished_at: String,
+    pub started_at: String,
+    /// `None` for a run that stopped before it finished.
+    pub finished_at: Option<String>,
 }
 
-fn periods_of(value: &Value) -> BTreeMap<String, u32> {
-    value
-        .as_object()
-        .map(|periods| {
-            periods
-                .iter()
-                .filter_map(|(key, days)| Some((key.clone(), u32::try_from(days.as_u64()?).ok()?)))
-                .collect()
-        })
-        .unwrap_or_default()
+/// One company's settings for one class.
+#[derive(Clone, Copy, Debug, Default)]
+struct Policy {
+    enabled: bool,
+    period_days: Option<i64>,
+    legal_minimum_days: Option<i64>,
 }
-fn effective(class: &RecordClass, tenant: Option<u32>) -> Option<u32> {
-    tenant
-        .or(class.default_days)
-        .map(|days| days.max(class.minimum_days.unwrap_or(0)))
-}
+
+const TIME: &str = "'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'";
 
 impl Privacy {
-    /// Every mounted record class with this tenant's period and last sweep.
-    /// Needs `privacy.retention.view`.
+    async fn policy(
+        &self,
+        client: &Client,
+        scope: &Scope,
+        company: OrganisationId,
+        class: &str,
+    ) -> Result<Policy> {
+        let keys = setting_keys(class);
+        let names: Vec<&str> = keys.iter().map(String::as_str).collect();
+        let mut values = self
+            .settings
+            .resolve_many(client, scope, Target::Company(company), &names)
+            .await?;
+        let mut take = |key: &String| values.remove(key).map(|r| r.value).unwrap_or(Value::Null);
+        Ok(Policy {
+            enabled: take(&keys[0]).as_bool().unwrap_or(false),
+            period_days: take(&keys[1]).as_i64(),
+            legal_minimum_days: take(&keys[2]).as_i64(),
+        })
+    }
+    /// Every mounted record class with one company's settings (the tenant's
+    /// primary company when `company` is `None`) and its last sweep. Needs
+    /// `privacy.retention.view`. Returns the company shown.
     pub async fn retention_classes(
         &self,
         client: &Client,
         scope: &Scope,
-    ) -> Result<Vec<ClassView>> {
+        company: Option<OrganisationId>,
+    ) -> Result<(Option<OrganisationId>, Vec<ClassView>)> {
         bilibi_authz::authorize_key(client, scope, RETENTION_VIEW).await?;
-        let periods = periods_of(
-            &self
-                .settings
-                .get(client, scope, Target::Tenant, PERIODS)
-                .await?
-                .value,
-        );
+        let company = match company {
+            Some(company) => Some(company),
+            None => self.parties.primary_organisation(client, scope).await?,
+        };
         let mut last = BTreeMap::new();
         for row in client
             .query(
-                "SELECT DISTINCT ON (class) class,id,to_char(cutoff AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),acted,kept,\
-                 to_char(finished_at AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') \
-                 FROM base_privacy_sweeps WHERE tenant_id=$1 ORDER BY class,id DESC",
+                &format!("SELECT DISTINCT ON (class) class,id,company_id,period_days,acted,kept,\
+                 to_char(started_at AT TIME ZONE 'UTC',{TIME}),to_char(finished_at AT TIME ZONE 'UTC',{TIME}) \
+                 FROM base_privacy_sweeps WHERE tenant_id=$1 ORDER BY class,id DESC"),
                 &[&scope.tenant()],
             )
             .await?
@@ -229,198 +325,253 @@ impl Privacy {
                 row.get::<_, String>(0),
                 SweepView {
                     id: row.get(1),
-                    cutoff: row.get(2),
-                    acted: row.get(3),
-                    kept: row.get(4),
-                    finished_at: row.get(5),
+                    company: row.get(2),
+                    period_days: row.get(3),
+                    acted: row.get(4),
+                    kept: row.get(5),
+                    started_at: row.get(6),
+                    finished_at: row.get(7),
                 },
             );
         }
-        Ok(self
-            .classes
-            .by_key
-            .iter()
-            .map(|(key, (module, class))| {
-                let tenant_days = periods.get(*key).copied();
-                ClassView {
-                    key,
-                    module,
-                    label: class.label,
-                    clock_start: class.clock_start,
-                    action: class.action,
-                    default_days: class.default_days,
-                    minimum_days: class.minimum_days,
-                    tenant_days,
-                    effective_days: effective(class, tenant_days),
-                    last_sweep: last.remove(*key),
-                }
-            })
-            .collect())
-    }
-    /// Sets (`Some`) or clears (`None`, back to the class default) this
-    /// tenant's period for one class, in the caller's transaction. Needs
-    /// `privacy.retention.manage`. An unknown class, a period below the
-    /// class's legal minimum or beyond [`MAX_DAYS`] is `Invalid`.
-    pub async fn set_retention_in(
-        &self,
-        tx: &mut MutationTransaction<'_>,
-        scope: &Scope,
-        class: &str,
-        days: Option<u32>,
-    ) -> Result<ClassView> {
-        bilibi_authz::authorize_key(tx.sql(), scope, RETENTION_MANAGE).await?;
-        let (_, record_class) = self.classes.by_key.get(class).ok_or(Error::Invalid)?;
-        if days.is_some_and(|d| {
-            d == 0 || d > MAX_DAYS || record_class.minimum_days.is_some_and(|m| d < m)
-        }) {
-            return Err(Error::Invalid);
+        let mut views = Vec::with_capacity(self.classes.by_key.len());
+        for (key, (module, class)) in &self.classes.by_key {
+            let policy = match company {
+                Some(company) => self.policy(client, scope, company, key).await?,
+                None => Policy::default(),
+            };
+            views.push(ClassView {
+                key,
+                module,
+                label: class.label,
+                clock_start: class.clock_start,
+                action: class.action,
+                business_value: class.business_value,
+                floor_days: class.floor_days,
+                enabled: policy.enabled,
+                period_days: policy.period_days,
+                legal_minimum_days: policy.legal_minimum_days,
+                last_sweep: last.remove(*key),
+            });
         }
-        let current = self
-            .settings
-            .get(tx.sql(), scope, Target::Tenant, PERIODS)
-            .await?;
-        let mut periods = match (current.overridden, current.value) {
-            (true, Value::Object(periods)) => periods,
-            _ => Map::new(),
-        };
-        match days {
-            Some(days) => periods.insert(class.to_owned(), json!(days)),
-            None => periods.remove(class),
-        };
-        self.settings
-            .put(tx, scope, Target::Tenant, PERIODS, Value::Object(periods))
-            .await?;
-        let tenant_days = days;
-        Ok(ClassView {
-            key: self
-                .classes
-                .by_key
-                .get_key_value(class)
-                .map(|(key, _)| *key)
-                .ok_or(Error::Invalid)?,
-            module: self.classes.by_key[class].0,
-            label: record_class.label,
-            clock_start: record_class.clock_start,
-            action: record_class.action,
-            default_days: record_class.default_days,
-            minimum_days: record_class.minimum_days,
-            tenant_days,
-            effective_days: effective(record_class, tenant_days),
-            last_sweep: None,
-        })
+        Ok((company, views))
     }
-    /// [`Privacy::set_retention_in`] in its own transaction.
-    pub async fn set_retention(
+    /// The last deferred audit erasure run.
+    pub async fn last_evidence_sweep(
+        &self,
+        client: &Client,
+        scope: &Scope,
+    ) -> Result<Option<SweepView>> {
+        bilibi_authz::authorize_key(client, scope, RETENTION_VIEW).await?;
+        Ok(client
+            .query_opt(
+                &format!("SELECT id,company_id,period_days,acted,kept,to_char(started_at AT TIME ZONE 'UTC',{TIME}),\
+                 to_char(finished_at AT TIME ZONE 'UTC',{TIME}) FROM base_privacy_sweeps WHERE tenant_id=$1 AND class=$2 ORDER BY id DESC LIMIT 1"),
+                &[&scope.tenant(), &AUDIT_EVIDENCE],
+            )
+            .await?
+            .map(|row| SweepView {
+                id: row.get(0),
+                company: row.get(1),
+                period_days: row.get(2),
+                acted: row.get(3),
+                kept: row.get(4),
+                started_at: row.get(5),
+                finished_at: row.get(6),
+            }))
+    }
+
+    /// Opens a run's summary row in its own transaction.
+    async fn open_sweep(
         &self,
         client: &mut Client,
         scope: &Scope,
-        class: &str,
-        days: Option<u32>,
-    ) -> Result<ClassView> {
+        class: &'static str,
+        company: Option<OrganisationId>,
+        period_days: Option<i64>,
+    ) -> Result<(i64, Option<String>)> {
+        let tenant = scope.tenant();
+        let company = company.map(OrganisationId::get);
+        let days = period_days.map(|d| d as i32);
         let mut tx = self
             .boundary
-            .begin(client, scope.mutation_context("privacy.retention.set"))
+            .begin(client, scope.mutation_context("privacy.retention.sweep"))
             .await?;
-        let view = self.set_retention_in(&mut tx, scope, class, days).await?;
-        tx.commit().await?;
-        Ok(view)
-    }
-    /// Sweeps every class with a period in one tenant, as the scheduler.
-    async fn sweep_tenant(&self, client: &mut Client, tenant: i64) -> Result<()> {
-        let scope =
-            SystemScope::rehydrate(&*client, tenant, Some(bilibi_schedule::PRINCIPAL)).await?;
-        let periods = periods_of(&self.settings.get_tenant(&*client, tenant, PERIODS).await?);
-        for (key, (_, class)) in &self.classes.by_key {
-            let Some(days) = effective(class, periods.get(*key).copied()) else {
-                continue;
-            };
-            let cutoff: String = client
-                .query_one(
-                    "SELECT to_char((clock_timestamp() - make_interval(days => $1::integer)) AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')",
-                    &[&(days as i32)],
-                )
-                .await?
-                .get(0);
-            for _ in 0..BATCHES {
-                let mut tx = self
-                    .boundary
-                    .begin(client, scope.mutation_context("privacy.retention.sweep"))
-                    .await?;
-                let key: &'static str = key;
-                let cutoff_at = cutoff.clone();
-                let sweep: i64 = tx
-                    .mutate(move |sql| {
-                        Box::pin(async move {
-                            let id: i64 = sql
-                                .query_one(
-                                    "INSERT INTO base_privacy_sweeps(tenant_id,class,cutoff,period_days) \
-                                     VALUES($1,$2,$3::text::timestamptz,$4) RETURNING id",
-                                    &[&tenant, &key, &cutoff_at, &(days as i32)],
-                                )
-                                .await?
-                                .get(0);
-                            Ok((
-                                id,
-                                vec![Change {
-                                    kind: SWEEP_KIND.into(),
-                                    id,
-                                    old: json!({}),
-                                    new: json!({"class": key, "cutoff": cutoff_at, "period_days": days}),
-                                }],
-                            ))
-                        })
-                    })
-                    .await?;
-                // Marks this transaction as the sweep's: audit erasure refuses without it.
-                tx.sql()
-                    .execute(
-                        "SELECT set_config($1, $2, true)",
-                        &[&bilibi_audit::SWEEP_MARKER, &sweep.to_string()],
-                    )
-                    .await?;
-                let holds = TenantHolds::load(tx.sql(), tenant).await?;
-                let swept = class
-                    .sweeper
-                    .sweep(&mut tx, &scope, &cutoff, &holds, BATCH)
-                    .await?;
-                for record in &swept.records {
-                    bilibi_audit::erase_sweep_values(
-                        &tx,
-                        sweep,
-                        &record.kind,
-                        record.id,
-                        &record.fields,
-                    )
-                    .await?;
-                }
-                let (acted, kept) = (swept.acted, swept.kept);
-                tx.mutate(move |sql| {
-                    Box::pin(async move {
-                        sql.execute(
-                            "UPDATE base_privacy_sweeps SET acted=$3,kept=$4,finished_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2",
-                            &[&tenant, &sweep, &acted, &kept],
+        let opened = tx
+            .mutate(move |sql| {
+                Box::pin(async move {
+                    let row = sql
+                        .query_one(
+                            &format!("INSERT INTO base_privacy_sweeps(tenant_id,class,company_id,cutoff,period_days) \
+                             VALUES($1,$2,$3,clock_timestamp()-make_interval(days => $4::integer),$4) \
+                             RETURNING id,to_char(cutoff AT TIME ZONE 'UTC',{TIME})"),
+                            &[&tenant, &class, &company, &days],
                         )
                         .await?;
-                        Ok((
-                            (),
-                            vec![Change {
-                                kind: SWEEP_KIND.into(),
-                                id: sweep,
-                                old: json!({"acted": 0, "kept": 0}),
-                                new: json!({"acted": acted, "kept": kept}),
-                            }],
-                        ))
-                    })
+                    let (id, cutoff): (i64, Option<String>) = (row.get(0), row.get(1));
+                    Ok((
+                        (id, cutoff.clone()),
+                        vec![Change {
+                            kind: SWEEP_KIND.into(),
+                            id,
+                            old: json!({}),
+                            new: json!({"class": class, "company": company, "cutoff": cutoff, "period_days": days}),
+                        }],
+                    ))
                 })
+            })
+            .await?;
+        tx.commit().await?;
+        Ok(opened)
+    }
+    /// Records a run's totals once, in its own transaction.
+    async fn close_sweep(
+        &self,
+        client: &mut Client,
+        scope: &Scope,
+        sweep: i64,
+        (acted, kept, batches): (i64, i64, i32),
+    ) -> Result<()> {
+        let tenant = scope.tenant();
+        let mut tx = self
+            .boundary
+            .begin(client, scope.mutation_context("privacy.retention.sweep"))
+            .await?;
+        tx.mutate(move |sql| {
+            Box::pin(async move {
+                sql.execute(
+                    "UPDATE base_privacy_sweeps SET acted=$3,kept=$4,batches=$5,finished_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2",
+                    &[&tenant, &sweep, &acted, &kept, &batches],
+                )
                 .await?;
-                tx.commit().await?;
-                // Kept records stay past their period; only acted ones leave the batch.
-                if swept.acted < BATCH {
-                    break;
-                }
+                Ok((
+                    (),
+                    vec![Change {
+                        kind: SWEEP_KIND.into(),
+                        id: sweep,
+                        old: json!({"finished": false}),
+                        new: json!({"acted": acted, "kept": kept, "batches": batches}),
+                    }],
+                ))
+            })
+        })
+        .await?;
+        tx.commit().await
+    }
+
+    /// One class's run: batches in ID order until the class is done, each
+    /// under the hold guard, with one summary for the whole run.
+    #[allow(clippy::too_many_arguments)]
+    async fn sweep_class(
+        &self,
+        client: &mut Client,
+        scope: &Scope,
+        key: &'static str,
+        class: &'static RecordClass,
+        company: OrganisationId,
+        period_days: i64,
+        keep_days: Option<i32>,
+    ) -> Result<()> {
+        let (sweep, cutoff) = self
+            .open_sweep(client, scope, key, Some(company), Some(period_days))
+            .await?;
+        let cutoff = cutoff.ok_or(Error::Internal)?;
+        let grant = self
+            .issuer
+            .erasure(scope.tenant(), Cause::Sweep(sweep), None);
+        let (mut acted, mut kept, mut batches, mut after) = (0, 0, 0, 0);
+        loop {
+            let holds = Holds::acquire(scope.tenant(), None).await?;
+            let mut tx = self
+                .boundary
+                .begin(client, scope.mutation_context("privacy.retention.sweep"))
+                .await?;
+            let swept = class
+                .sweeper
+                .sweep(&mut tx, scope, &grant, &cutoff, &holds, after, BATCH)
+                .await?;
+            let mut step = bilibi_personal_data::Erased {
+                records: swept.records,
+                ..Default::default()
+            };
+            runner::clear_evidence(&tx, &grant, &mut step, keep_days).await?;
+            tx.commit().await?;
+            holds.release().await?;
+            acted += swept.acted;
+            kept += swept.kept;
+            batches += 1;
+            match swept.next {
+                Some(next) if next > after => after = next,
+                _ => break,
             }
         }
-        Ok(())
+        self.close_sweep(client, scope, sweep, (acted, kept, batches))
+            .await
+    }
+
+    /// The deferred audit erasure: evidence kept for its legal minimum whose
+    /// minimum has now passed.
+    async fn sweep_evidence(&self, client: &mut Client, scope: &Scope) -> Result<()> {
+        if !bilibi_audit::evidence_due(&*client, scope.tenant()).await? {
+            return Ok(());
+        }
+        let (sweep, _) = self
+            .open_sweep(client, scope, AUDIT_EVIDENCE, None, None)
+            .await?;
+        let grant = self
+            .issuer
+            .erasure(scope.tenant(), Cause::Sweep(sweep), None);
+        let (mut acted, mut batches) = (0, 0);
+        loop {
+            let tx = self
+                .boundary
+                .begin(
+                    client,
+                    scope.mutation_context("privacy.retention.audit_evidence"),
+                )
+                .await?;
+            let done = bilibi_audit::erase_due(&tx, &grant, BATCH as i32).await?;
+            tx.commit().await?;
+            acted += i64::from(done);
+            batches += 1;
+            if i64::from(done) < BATCH {
+                break;
+            }
+        }
+        self.close_sweep(client, scope, sweep, (acted, 0, batches))
+            .await
+    }
+
+    /// Sweeps one tenant as the scheduler: every class its primary company
+    /// turned on with a period, then due audit evidence.
+    async fn sweep_tenant(
+        &self,
+        client: &mut Client,
+        authentication: &Authentication,
+        tenant: i64,
+    ) -> Result<()> {
+        let system =
+            SystemScope::rehydrate(&*client, tenant, Some(bilibi_schedule::PRINCIPAL)).await?;
+        let scope = authentication.for_system(&*client, &system).await?;
+        if let Some(company) = self.parties.primary_organisation(&*client, &scope).await? {
+            let keep_days = self.evidence_minimum(client, &scope, company).await?;
+            for (key, (_, class)) in &self.classes.by_key {
+                let policy = self.policy(client, &scope, company, key).await?;
+                let Some(days) = policy.period_days.filter(|_| policy.enabled) else {
+                    continue;
+                };
+                // A setting saved before its constraint existed still may not shorten the law.
+                if !period_accepts(
+                    &[json!(days), json!(policy.legal_minimum_days)],
+                    class.floor_days,
+                ) {
+                    continue;
+                }
+                self.sweep_class(client, &scope, key, class, company, days, keep_days)
+                    .await?;
+            }
+        }
+        self.sweep_evidence(client, &scope).await
     }
 }
 
@@ -432,9 +583,23 @@ pub(crate) fn arguments(args: Value) -> Result<Value> {
     }
 }
 
+/// Active tenants, in ID order.
+pub(crate) async fn tenants(client: &Client) -> Result<Vec<i64>> {
+    Ok(client
+        .query(
+            "SELECT id FROM tenants WHERE status='active' AND deleted_at IS NULL ORDER BY id",
+            &[],
+        )
+        .await?
+        .iter()
+        .map(|row| row.get(0))
+        .collect())
+}
+
 pub(crate) struct SweepJob {
     pub(crate) privacy: Arc<Privacy>,
     pub(crate) schedule: Arc<Schedule>,
+    pub(crate) authentication: Arc<Authentication>,
 }
 impl Handler for SweepJob {
     fn perform<'a>(&'a self, execution: &'a Execution, args: Value) -> JobFuture<'a> {
@@ -453,21 +618,12 @@ impl Handler for SweepJob {
 impl SweepJob {
     async fn run(&self) -> Result<()> {
         let mut client = self.privacy.db.get().await?;
-        let tenants: Vec<i64> = client
-            .query(
-                "SELECT id FROM tenants WHERE status='active' AND deleted_at IS NULL ORDER BY id",
-                &[],
-            )
-            .await?
-            .iter()
-            .map(|row| row.get(0))
-            .collect();
         // One tenant's failure does not stop the others; the run retries.
         let mut failed = false;
-        for tenant in tenants {
+        for tenant in tenants(&client).await? {
             failed |= self
                 .privacy
-                .sweep_tenant(&mut client, tenant)
+                .sweep_tenant(&mut client, &self.authentication, tenant)
                 .await
                 .is_err();
         }
@@ -476,5 +632,41 @@ impl SweepJob {
         } else {
             Ok(())
         }
+    }
+}
+
+/// Removes expired exports, tenant by tenant, as the scheduler.
+pub(crate) struct ExportPurgeJob {
+    pub(crate) privacy: Arc<Privacy>,
+    pub(crate) schedule: Arc<Schedule>,
+    pub(crate) authentication: Arc<Authentication>,
+}
+impl Handler for ExportPurgeJob {
+    fn perform<'a>(&'a self, execution: &'a Execution, args: Value) -> JobFuture<'a> {
+        Box::pin(async move {
+            self.schedule
+                .run(execution, args, |_| async move {
+                    match self.run().await {
+                        Ok(true) => Outcome::Completed,
+                        _ => Outcome::Retry("export_purge_failed"),
+                    }
+                })
+                .await
+        })
+    }
+}
+impl ExportPurgeJob {
+    async fn run(&self) -> Result<bool> {
+        let mut client = self.privacy.db.get().await?;
+        let mut whole = true;
+        for tenant in tenants(&client).await? {
+            let system =
+                SystemScope::rehydrate(&**client, tenant, Some(bilibi_schedule::PRINCIPAL)).await?;
+            let scope = self.authentication.for_system(&**client, &system).await?;
+            whole &= crate::documents::purge_exports(&self.privacy, &mut client, &scope)
+                .await
+                .unwrap_or(false);
+        }
+        Ok(whole)
     }
 }

@@ -53,24 +53,6 @@ async fn authorize(
     write: bool,
 ) -> Result<()> {
     authorize_proof(client, scope, capability).await?;
-    live(client, scope, id, write).await
-}
-/// A data-subject request runs as its approver (ADR 05): reading a person's
-/// files for an export and deleting them for an erasure also accept
-/// `privacy.request.approve`. Nothing else does.
-async fn authorize_or_request(
-    client: &dyn ProofClient,
-    scope: &Scope,
-    id: PersonId,
-    capability: &str,
-    write: bool,
-) -> Result<()> {
-    if authorize_proof(client, scope, capability).await.is_err() {
-        authorize_proof(client, scope, bilibi_privacy::REQUEST_APPROVE).await?;
-    }
-    live(client, scope, id, write).await
-}
-async fn live(client: &dyn ProofClient, scope: &Scope, id: PersonId, write: bool) -> Result<()> {
     let row = client
         .query_opt(
             "SELECT retired_at IS NULL FROM persons WHERE tenant_id=$1 AND id=$2",
@@ -113,9 +95,7 @@ impl SubjectOwner for PersonFiles {
         Box::pin(async move {
             let id = person_id(subject_id)?;
             match action {
-                SubjectAction::Download => {
-                    authorize_or_request(client, scope, id, VIEW, false).await
-                }
+                SubjectAction::Download => authorize(client, scope, id, VIEW, false).await,
                 SubjectAction::Upload
                 | SubjectAction::Submit
                 | SubjectAction::Retain
@@ -149,9 +129,8 @@ impl Owner for PersonFiles {
             };
             let id = person_id(&reference.subject)?;
             match operation {
-                Operation::Read => authorize_or_request(client, scope, id, VIEW, false).await,
-                Operation::Delete => authorize_or_request(client, scope, id, UPDATE, true).await,
-                Operation::Create | Operation::Retain => {
+                Operation::Read => authorize(client, scope, id, VIEW, false).await,
+                Operation::Create | Operation::Delete | Operation::Retain => {
                     authorize(client, scope, id, UPDATE, true).await
                 }
                 Operation::Purge => authorize(client, scope, id, RETIRE, true).await,

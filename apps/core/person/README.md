@@ -95,12 +95,12 @@ tables directly; the providers contain the owning queries.
 
 ## Personal data
 
-**Erasure anonymises the person to a stub that keeps its ID, kind and links.** Store `core/person.people` ("People (contacts)") under [`base/privacy`](../../base/privacy/README.md), [ADR 05](../../../docs/architecture/decisions/05-personal-data-registry.md).
+**Erasure anonymises the person to a stub that keeps its ID, kind and links, and marks it erased (`erased_at`).** Store `core/person.people` under [`base/personal_data`](../../base/personal_data/README.md), [ADR 05](../../../docs/architecture/decisions/05-personal-data-registry.md).
 
-- Affiliations, accounts and other records still point at the stub.
-- The person's own attachments (`core.person` Media subject) become tombstones and their bytes are removed; their documents (`core.person` Artifacts owner) are deleted unless held or retained.
-- Other people sharing an email or phone are counted for the operator, never touched.
-- **Masking.** A masked `email` or `phone` holds its partial value in `Person`, named in `masked` (absent from `restricted`), in reads, lists, Grid columns and agent JSON. The record page shows it with a Reveal action for readers holding `privacy.field.reveal`, which asks for a reason and shows the full value in that view only. Masked contacts are not searched or duplicate-matched and refuse writes.
+- Declares kind `person` (name, email, phone; the record is a person) and erases `person`, `base/media/attachment` and `base/media/asset` evidence.
+- Files are read and removed only through the grant-checked Media and Artifacts paths: a retired person's documents and those filed under another company are reached; no capability opens them otherwise. Each document deletion is recorded as it happens.
+- Other people sharing an email or phone are counted, never touched.
+- **Masking.** A masked `email` or `phone` holds its partial value, named in `masked`. The record page offers Reveal (the page contract `base.privacy.field.reveal`) to readers holding `privacy.field.reveal`; the full value stays only in that view while the record is unchanged and the reader may still reveal. Embedded contact panels show no Reveal. Saving another field leaves a masked contact as stored.
 
 ## Runtime walkthrough without unit tests
 

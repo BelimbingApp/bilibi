@@ -95,13 +95,20 @@ the checks and which fields are withheld.
 
 ## Personal-data erasure
 
-**One narrow exception to append-only evidence, for a `base/privacy` erasure only** ([ADR 05](../../../docs/architecture/decisions/05-personal-data-registry.md), migration `base-audit-009-erasure`).
+**One narrow exception to append-only evidence, opened only by a sealed `base/personal_data` grant** ([ADR 05](../../../docs/architecture/decisions/05-personal-data-registry.md), migration `base-audit-009-erasure`).
 
-- `erase_values(tx, request, kind, id, fields)` replaces the named top-level fields with `[erased]` in `old_values` and `new_values` of every mutation row of that record in the transaction's tenant, and its subject identifier.
-- Each call writes one append-only `base_audit_erasures` row: request, record kind and ID, fields, rows changed, actor.
-- It works only in a transaction marked with `ERASURE_MARKER` (`bilibi.privacy_erasure`, transaction-local), which `base/privacy` sets for one request. The evidence guard refuses every other update, every delete and every truncate, as before.
-- Who, when, which record and which fields changed all remain; only values go. Null and missing keys stay as they were.
-- Retention sweeps use the same path: `erase_sweep_values(tx, sweep, kind, id, fields)` in a transaction marked with `SWEEP_MARKER` (`bilibi.privacy_sweep`) for one sweep (migration `base-audit-010-sweep-erasure`). A ledger row names exactly one of the request or the sweep.
+- `erase_record(tx, &Erasure, kind, id, keep_days)` clears the personal fields that the kind's owner declared (`RECORD_KINDS`) in every mutation row of that record, and the subject identifier only when declared. An undeclared kind is `Invalid`; the caller never names fields.
+- `keep_days` is a legal minimum: rows newer than it stay and an open `base_audit_erasure_deferrals` row says when; the erasure's own rows (its trace) are always cleared. `erase_due(tx, &Erasure, limit)` finishes due deferrals for a sweep; `evidence_due` says whether any are due.
+- Each call writes one append-only `base_audit_erasures` row in the same statement: request or sweep, kind, ID, fields, rows erased and kept, actor.
+- No session setting opens the path: the guard admits a change only while `base_audit_erase_values` runs as the evidence's owner (call stack and `current_user`), and `EXECUTE` is revoked from `PUBLIC`. Every other update, delete and truncate is refused.
+- Audit's own store, `base/audit.history`, exports the evidence history of the subject's person record.
+
+## Hash chain
+
+**Every mutation and action row is linked to the one before it over its ID, tenant, time, actor, event, record and field names; values are excluded, so approved erasure keeps the chain whole.**
+
+- `seal(client, limit)` links committed, unsealed rows (one sealer at a time); `verify(client)` recomputes both chains and names the first `missing`, `changed` or `tail` break.
+- `base/audit_views` seals on a schedule (`base/audit.chain-seal`, every 15 minutes once enabled) and offers **Verify audit log** at `/audit/integrity` to platform operators; every check is recorded as `audit.chain.verified`.
 
 ## Runtime evidence
 

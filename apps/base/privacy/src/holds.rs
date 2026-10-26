@@ -1,17 +1,24 @@
 //! Legal holds on a person or one record (ADR 05). Erasure and retention sweeps
-//! ask [`Holds`] before acting; what a hold names is kept and listed with its
-//! reason on the completion certificate.
+//! see them through `bilibi_personal_data::Holds`, which this module serves: a
+//! session on its own connection holds the tenant's hold guard (a shared
+//! transaction-level advisory lock) until the work it guards has committed,
+//! and placing a hold takes the same guard exclusively. A hold placed while an
+//! erasure runs waits for it; an erasure that starts after a hold committed
+//! sees it. Reads ask only about the records in hand.
 use crate::{HOLD_MANAGE, HOLD_VIEW};
-use bilibi_database::{Change, Error, MutationTransaction, Result};
+use bilibi_database::{Change, Db, Error, MutationTransaction, Result};
 use bilibi_party_ids::PersonId;
+use bilibi_personal_data::{HandlerFuture, HoldSession, HoldSource};
 use bilibi_tenancy::Scope;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::BTreeMap;
-use tokio_postgres::{GenericClient, Row};
+use tokio_postgres::{error::SqlState, GenericClient, Row};
 
 const MAX_REASON: usize = 255;
 const RECORD_KIND: &str = "base/privacy.hold";
+/// The tenant's hold guard: shared by erasures and sweeps, exclusive to placement.
+const GUARD: i32 = 841_330;
 
 /// What a hold keeps.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -46,115 +53,108 @@ pub struct HoldEvent {
     pub recorded_at: String,
 }
 
-/// The active holds a handler or sweep must respect, read inside its own
-/// transaction so a hold placed meanwhile waits for it.
-#[derive(Clone, Debug, Default)]
-pub struct Holds {
-    person: Option<(i64, String)>,
-    records: BTreeMap<(String, i64), (i64, String)>,
-}
-impl Holds {
-    /// Whether the subject person is held: every store keeps everything.
-    pub fn person_held(&self) -> bool {
-        self.person.is_some()
-    }
-    pub fn record_held(&self, kind: &str, id: i64) -> bool {
-        self.person.is_some() || self.records.contains_key(&(kind.to_owned(), id))
-    }
-    /// The hold IDs and reasons, for the certificate.
-    pub fn reasons(&self) -> impl Iterator<Item = (i64, &str)> {
-        self.person
-            .iter()
-            .chain(self.records.values())
-            .map(|(id, reason)| (*id, reason.as_str()))
-    }
-    /// The active holds for `person` and every held record in `tenant`. Record
-    /// holds are few; they are read whole rather than joined to every store.
-    pub(crate) async fn load(
-        client: &impl GenericClient,
-        tenant: i64,
-        person: Option<PersonId>,
-    ) -> Result<Self> {
-        let person_id = person.map(PersonId::get);
-        let rows = client
-            .query(
-                "SELECT id,person_id,record_kind,record_id,reason FROM base_privacy_holds \
-                 WHERE tenant_id=$1 AND released_at IS NULL \
-                 AND (record_kind IS NOT NULL OR person_id=$2) FOR SHARE",
-                &[&tenant, &person_id],
-            )
-            .await?;
-        let mut holds = Self::default();
-        for row in rows {
-            let entry = (row.get::<_, i64>(0), row.get::<_, String>(4));
-            match row.get::<_, Option<String>>(2) {
-                Some(kind) => {
-                    holds.records.insert((kind, row.get(3)), entry);
-                }
-                None => holds.person = Some(entry),
-            }
-        }
-        Ok(holds)
-    }
+/// One page of the tenant's holds.
+#[derive(Clone, Debug, Serialize)]
+pub struct HoldPage {
+    pub holds: Vec<Hold>,
+    pub total: i64,
 }
 
-/// Every active hold in one tenant, for a retention sweep: the people held
-/// (everything about them stays) and the records held. Read inside the
-/// sweep's transaction, like [`Holds`].
-#[derive(Clone, Debug, Default)]
-pub struct TenantHolds {
-    persons: std::collections::BTreeSet<i64>,
-    records: std::collections::BTreeSet<(String, i64)>,
+fn tenant_key(tenant: i64) -> Result<i32> {
+    i32::try_from(tenant).map_err(|_| Error::Invalid)
 }
-impl TenantHolds {
-    pub fn person_held(&self, person: i64) -> bool {
-        self.persons.contains(&person)
+
+/// The hold source `base/personal_data` hands out sessions from.
+pub(crate) struct Source {
+    pub(crate) db: Db,
+}
+impl HoldSource for Source {
+    fn open<'a>(&'a self, tenant: i64) -> HandlerFuture<'a, Box<dyn HoldSession>> {
+        Box::pin(async move {
+            let key = tenant_key(tenant)?;
+            let client = self.db.get().await?;
+            client.batch_execute("BEGIN").await?;
+            let session = Session {
+                client: Some(client),
+                tenant,
+            };
+            session
+                .client()?
+                .execute(
+                    "SELECT pg_advisory_xact_lock_shared($1,$2)",
+                    &[&GUARD, &key],
+                )
+                .await?;
+            Ok(Box::new(session) as Box<dyn HoldSession>)
+        })
     }
-    pub fn record_held(&self, kind: &str, id: i64) -> bool {
-        self.records.contains(&(kind.to_owned(), id))
+}
+/// A read-only transaction holding the shared guard.
+struct Session {
+    client: Option<deadpool_postgres::Object>,
+    tenant: i64,
+}
+impl Session {
+    fn client(&self) -> Result<&deadpool_postgres::Object> {
+        self.client.as_ref().ok_or(Error::Internal)
     }
-    /// The held people, for a sweep that skips everything about them in SQL.
-    pub fn persons(&self) -> Vec<i64> {
-        self.persons.iter().copied().collect()
+}
+impl HoldSession for Session {
+    fn persons<'a>(&'a self, persons: &'a [i64]) -> HandlerFuture<'a, BTreeMap<i64, i64>> {
+        Box::pin(async move {
+            Ok(self
+                .client()?
+                .query(
+                    "SELECT person_id,id FROM base_privacy_holds WHERE tenant_id=$1 AND released_at IS NULL AND person_id=ANY($2)",
+                    &[&self.tenant, &persons],
+                )
+                .await?
+                .iter()
+                .map(|row| (row.get(0), row.get(1)))
+                .collect())
+        })
     }
-    /// The held record IDs of one kind, for a sweep that skips them in SQL.
-    pub fn records_of(&self, kind: &str) -> Vec<i64> {
-        self.records
-            .iter()
-            .filter(|(held, _)| held == kind)
-            .map(|(_, id)| *id)
-            .collect()
+    fn records<'a>(
+        &'a self,
+        kind: &'a str,
+        ids: &'a [i64],
+    ) -> HandlerFuture<'a, BTreeMap<i64, i64>> {
+        Box::pin(async move {
+            Ok(self
+                .client()?
+                .query(
+                    "SELECT record_id,id FROM base_privacy_holds WHERE tenant_id=$1 AND released_at IS NULL AND record_kind=$2 AND record_id=ANY($3)",
+                    &[&self.tenant, &kind, &ids],
+                )
+                .await?
+                .iter()
+                .map(|row| (row.get(0), row.get(1)))
+                .collect())
+        })
     }
-    pub(crate) async fn load(client: &impl GenericClient, tenant: i64) -> Result<Self> {
-        let rows = client
-            .query(
-                "SELECT person_id,record_kind,record_id FROM base_privacy_holds \
-                 WHERE tenant_id=$1 AND released_at IS NULL FOR SHARE",
-                &[&tenant],
-            )
-            .await?;
-        let mut holds = Self::default();
-        for row in rows {
-            match (
-                row.get::<_, Option<i64>>(0),
-                row.get::<_, Option<String>>(1),
-            ) {
-                (Some(person), _) => {
-                    holds.persons.insert(person);
-                }
-                (None, Some(kind)) => {
-                    holds.records.insert((kind, row.get(2)));
-                }
-                (None, None) => {}
+    fn release(mut self: Box<Self>) -> HandlerFuture<'static, ()> {
+        let client = self.client.take();
+        Box::pin(async move {
+            if let Some(client) = client {
+                client.batch_execute("COMMIT").await?;
             }
+            Ok(())
+        })
+    }
+}
+impl Drop for Session {
+    /// A session dropped without `release` (a failed erasure) must not go
+    /// back to the pool mid-transaction: closing it ends the guard.
+    fn drop(&mut self) {
+        if let Some(client) = self.client.take() {
+            drop(deadpool_postgres::Object::take(client));
         }
-        Ok(holds)
     }
 }
 
 fn reason(text: &str) -> Result<String> {
     let text = text.trim();
-    if text.is_empty() || text.len() > MAX_REASON || text.chars().any(char::is_control) {
+    if text.is_empty() || text.chars().count() > MAX_REASON || text.chars().any(char::is_control) {
         return Err(Error::Invalid);
     }
     Ok(text.to_owned())
@@ -191,7 +191,8 @@ fn snapshot(hold: &Hold) -> Value {
 }
 
 /// Places a hold in the caller's transaction. A second active hold on the
-/// same target is `Conflict`.
+/// same target is `Conflict`, however close together the two arrive. The
+/// exclusive guard waits for running erasures and sweeps to commit.
 pub(crate) async fn place_in(
     tx: &mut MutationTransaction<'_>,
     scope: &Scope,
@@ -209,6 +210,12 @@ pub(crate) async fn place_in(
         }
     };
     bilibi_authz::authorize_key(tx.sql(), scope, HOLD_MANAGE).await?;
+    tx.sql()
+        .execute(
+            "SELECT pg_advisory_xact_lock($1,$2)",
+            &[&GUARD, &tenant_key(scope.tenant())?],
+        )
+        .await?;
     let taken = tx
         .sql()
         .query_opt(
@@ -225,37 +232,43 @@ pub(crate) async fn place_in(
     let (tenant, user) = (scope.tenant(), scope.user());
     let impersonator = scope.impersonator().map(|i| i.user());
     let trace = tx.context().trace_id.clone();
-    let placed = tx
-        .mutate(move |sql| {
-            Box::pin(async move {
-                let row = sql
-                    .query_one(
-                        &format!(
-                            "INSERT INTO base_privacy_holds(tenant_id,person_id,record_kind,record_id,reason,placed_by,placed_at) \
-                             VALUES($1,$2,$3,$4,$5,$6,clock_timestamp()) RETURNING {HOLD_COLUMNS}"
-                        ),
-                        &[&tenant, &person, &kind, &record, &text, &user],
-                    )
-                    .await?;
-                let placed = hold(&row);
-                sql.execute(
-                    "INSERT INTO base_privacy_hold_events(hold_id,tenant_id,event,reason,actor_id,impersonator_id,trace_id,recorded_at) \
-                     VALUES($1,$2,'placed',$3,$4,$5,$6,clock_timestamp())",
-                    &[&placed.id, &tenant, &placed.reason, &user, &impersonator, &trace],
+    tx.mutate(move |sql| {
+        Box::pin(async move {
+            let row = sql
+                .query_one(
+                    &format!(
+                        "INSERT INTO base_privacy_holds(tenant_id,person_id,record_kind,record_id,reason,placed_by,placed_at) \
+                         VALUES($1,$2,$3,$4,$5,$6,clock_timestamp()) RETURNING {HOLD_COLUMNS}"
+                    ),
+                    &[&tenant, &person, &kind, &record, &text, &user],
                 )
-                .await?;
-                let change = Change {
-                    kind: RECORD_KIND.into(),
-                    id: placed.id,
-                    // An empty object, so audit records the hold as created.
-                    old: Value::Object(serde_json::Map::new()),
-                    new: snapshot(&placed),
-                };
-                Ok((placed, vec![change]))
-            })
+                .await
+                // The unique index is the last word on a race the guard missed.
+                .map_err(|error| {
+                    if error.code() == Some(&SqlState::UNIQUE_VIOLATION) {
+                        Error::Conflict
+                    } else {
+                        error.into()
+                    }
+                })?;
+            let placed = hold(&row);
+            sql.execute(
+                "INSERT INTO base_privacy_hold_events(hold_id,tenant_id,event,reason,actor_id,impersonator_id,trace_id,recorded_at) \
+                 VALUES($1,$2,'placed',$3,$4,$5,$6,clock_timestamp())",
+                &[&placed.id, &tenant, &placed.reason, &user, &impersonator, &trace],
+            )
+            .await?;
+            let change = Change {
+                kind: RECORD_KIND.into(),
+                id: placed.id,
+                // An empty object, so audit records the hold as created.
+                old: Value::Object(serde_json::Map::new()),
+                new: snapshot(&placed),
+            };
+            Ok((placed, vec![change]))
         })
-        .await?;
-    Ok(placed)
+    })
+    .await
 }
 
 /// Releases an active hold in the caller's transaction; the next erasure or
@@ -285,55 +298,100 @@ pub(crate) async fn release_in(
     let (tenant, user) = (scope.tenant(), scope.user());
     let impersonator = scope.impersonator().map(|i| i.user());
     let trace = tx.context().trace_id.clone();
-    let released = tx
-        .mutate(move |sql| {
-            Box::pin(async move {
-                let row = sql
-                    .query_one(
-                        &format!(
-                            "UPDATE base_privacy_holds SET released_at=clock_timestamp(),released_by=$3,release_reason=$4 \
-                             WHERE tenant_id=$1 AND id=$2 RETURNING {HOLD_COLUMNS}"
-                        ),
-                        &[&tenant, &id, &user, &text],
-                    )
-                    .await?;
-                let released = hold(&row);
-                sql.execute(
-                    "INSERT INTO base_privacy_hold_events(hold_id,tenant_id,event,reason,actor_id,impersonator_id,trace_id,recorded_at) \
-                     VALUES($1,$2,'released',$3,$4,$5,$6,clock_timestamp())",
-                    &[&id, &tenant, &text, &user, &impersonator, &trace],
+    tx.mutate(move |sql| {
+        Box::pin(async move {
+            let row = sql
+                .query_one(
+                    &format!(
+                        "UPDATE base_privacy_holds SET released_at=clock_timestamp(),released_by=$3,release_reason=$4 \
+                         WHERE tenant_id=$1 AND id=$2 RETURNING {HOLD_COLUMNS}"
+                    ),
+                    &[&tenant, &id, &user, &text],
                 )
                 .await?;
-                let change = Change {
-                    kind: RECORD_KIND.into(),
-                    id,
-                    old: snapshot(&before),
-                    new: snapshot(&released),
-                };
-                Ok((released, vec![change]))
-            })
+            let released = hold(&row);
+            sql.execute(
+                "INSERT INTO base_privacy_hold_events(hold_id,tenant_id,event,reason,actor_id,impersonator_id,trace_id,recorded_at) \
+                 VALUES($1,$2,'released',$3,$4,$5,$6,clock_timestamp())",
+                &[&id, &tenant, &text, &user, &impersonator, &trace],
+            )
+            .await?;
+            let change = Change {
+                kind: RECORD_KIND.into(),
+                id,
+                old: snapshot(&before),
+                new: snapshot(&released),
+            };
+            Ok((released, vec![change]))
         })
-        .await?;
-    Ok(released)
+    })
+    .await
 }
 
-/// The tenant's holds, active first then newest, at most `limit`.
+/// One page of the tenant's holds, active first then newest. `search` matches
+/// a hold ID, a person ID or a record kind.
 pub(crate) async fn list(
     client: &impl GenericClient,
     scope: &Scope,
+    search: &str,
+    offset: i64,
     limit: i64,
-) -> Result<Vec<Hold>> {
+) -> Result<HoldPage> {
     bilibi_authz::authorize_key(client, scope, HOLD_VIEW).await?;
+    let search = search.trim();
+    let number = search.parse::<i64>().ok();
+    let pattern = format!(
+        "%{}%",
+        search
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_")
+    );
+    let filter = "tenant_id=$1 AND ($2 = '' OR id=$3 OR person_id=$3 OR record_id=$3 OR record_kind ILIKE $4)";
+    let total: i64 = client
+        .query_one(
+            &format!("SELECT count(*) FROM base_privacy_holds WHERE {filter}"),
+            &[&scope.tenant(), &search, &number, &pattern],
+        )
+        .await?
+        .get(0);
     let rows = client
         .query(
             &format!(
-                "SELECT {HOLD_COLUMNS} FROM base_privacy_holds WHERE tenant_id=$1 \
-                 ORDER BY released_at IS NOT NULL, id DESC LIMIT $2"
+                "SELECT {HOLD_COLUMNS} FROM base_privacy_holds WHERE {filter} \
+                 ORDER BY released_at IS NOT NULL, id DESC OFFSET $5 LIMIT $6"
             ),
-            &[&scope.tenant(), &limit.clamp(1, 500)],
+            &[
+                &scope.tenant(),
+                &search,
+                &number,
+                &pattern,
+                &offset.max(0),
+                &limit.clamp(1, 500),
+            ],
         )
         .await?;
-    Ok(rows.iter().map(hold).collect())
+    Ok(HoldPage {
+        holds: rows.iter().map(hold).collect(),
+        total,
+    })
+}
+
+/// The holds named by `ids` in the tenant, for a certificate: ID → reason.
+pub(crate) async fn reasons(
+    client: &impl GenericClient,
+    tenant: i64,
+    ids: &[i64],
+) -> Result<BTreeMap<i64, String>> {
+    Ok(client
+        .query(
+            "SELECT id,reason FROM base_privacy_holds WHERE tenant_id=$1 AND id=ANY($2)",
+            &[&tenant, &ids],
+        )
+        .await?
+        .iter()
+        .map(|row| (row.get(0), row.get(1)))
+        .collect())
 }
 
 /// One hold's events, oldest first.

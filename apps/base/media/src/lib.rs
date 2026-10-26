@@ -17,7 +17,10 @@ mod signing;
 mod storage;
 mod upload;
 
-pub use attachments::{Attachment, AttachmentState, AttachmentSubject, Cleanup, ErasedAttachment};
+pub use attachments::{
+    Attachment, AttachmentErasure, AttachmentState, AttachmentSubject, Cleanup, ErasedAttachment,
+    Removal, ASSET_KIND, ATTACHMENT_KIND,
+};
 pub use owner::{Subject, SubjectAction, SubjectOwner, Subjects, SUBJECTS};
 pub use response::{Delivery, StreamFile};
 pub use signing::Signer;
@@ -704,10 +707,19 @@ fn safe_external_url(url: &str) -> bool {
         && url.bytes().all(|b| b.is_ascii_graphic())
 }
 
+// Erasure clears the evidence of both records (ADR 05); only the asset's
+// filename is personal.
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_personal_data::RECORD_KINDS, "base/media.attachment",
+bilibi_module_registry::Provenance { module: "base/media", source: file!(), line: line!() },
+&bilibi_personal_data::RecordKind { kind: ATTACHMENT_KIND, fields: &[], subject_identifier: false, person: false }) }
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_personal_data::RECORD_KINDS, "base/media.asset",
+bilibi_module_registry::Provenance { module: "base/media", source: file!(), line: line!() },
+&bilibi_personal_data::RecordKind { kind: ASSET_KIND, fields: &["original_filename"], subject_identifier: false, person: false }) }
+
 inventory::submit! {
     bilibi_module_registry::Module {
         id: "base/media", layer: bilibi_module_registry::Layer::Base,
-        dependencies: &["base/audit", "base/authz", "base/database", "base/settings", "base/tenancy"],
+        dependencies: &["base/audit", "base/authz", "base/database", "base/personal_data", "base/settings", "base/tenancy"],
         migrations: &[
             ("base-media-001", include_str!("../migrations/001-media.sql")),
             ("base-media-002", include_str!("../migrations/002-attachments.sql")),

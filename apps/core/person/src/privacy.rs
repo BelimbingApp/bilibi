@@ -1,20 +1,26 @@
-//! Person's personal-data store (ADR 05, `base/privacy`): the person record,
-//! the person's own attachments (`core.person` Media subject) and documents
-//! (`core.person` Artifacts owner). Erasure anonymises the person to a stub
-//! that keeps its ID, kind and links, so affiliations, accounts and other
-//! records still point at it. Other people sharing an email or phone are
-//! counted for the operator, never touched. No Bilimbi counterpart.
+//! Person's personal-data store (ADR 05, `base/personal_data`): the person
+//! record, the person's own attachments (`core.person` Media subject) and
+//! documents (`core.person` Artifacts owner). Erasure anonymises the person to
+//! a stub that keeps its ID, kind and links, so affiliations, accounts and
+//! other records still point at it, and marks it erased. Files are read and
+//! removed only through the grant-checked paths of Media and Artifacts, so a
+//! retired person's documents and those filed under another company are
+//! reached too, and nothing else gains that reach. Other people sharing an
+//! email or phone are counted for the operator, never touched. No Bilimbi
+//! counterpart.
 use crate::{
-    files::{ARTIFACT_OWNER, ATTACHMENT_SUBJECT, FILES},
+    files::{ATTACHMENT_SUBJECT, FILES},
     model::{Person, COLUMNS},
 };
 use bilibi_artifacts::Artifacts;
 use bilibi_database::{Change, Error, MutationTransaction, Result};
-use bilibi_media::{AttachmentSubject, Media};
+use bilibi_media::{AttachmentSubject, Media, ASSET_KIND, ATTACHMENT_KIND};
 use bilibi_module_registry::{Contribution, Provenance};
-use bilibi_privacy::{
-    Action, Erased, ErasedRecord, Exported, FileRef, Handler, HandlerFuture, Holds, Identifier,
-    Kept, KeptReason, KindAction, KindCount, Located, PersonalData, Subject, ERASED, PERSONAL_DATA,
+use bilibi_party_ids::OrganisationId;
+use bilibi_personal_data::{
+    Action, Disclosure, Erased, ErasedRecord, Erasure, Exported, File, FileRef, Handler,
+    HandlerFuture, Holds, Identifier, Kept, KeptReason, KindCount, Located, PersonalData, Progress,
+    RecordKind, Subject, ERASED, PERSONAL_DATA, RECORD_KINDS,
 };
 use bilibi_tenancy::Scope;
 use serde_json::json;
@@ -24,6 +30,8 @@ use tokio_postgres::{Client, GenericClient};
 /// The audit record kind person changes use.
 const PERSON_KIND: &str = "person";
 const FIELDS: [&str; 3] = ["name", "email", "phone"];
+/// The kind a kept document is listed under.
+const DOCUMENT_KIND: &str = "core.person document";
 
 struct Files {
     media: Arc<Media>,
@@ -41,6 +49,20 @@ pub(crate) fn bind(
 }
 fn services() -> Result<&'static Files> {
     SERVICES.get().ok_or(Error::Internal)
+}
+fn media_error(error: bilibi_media::Error) -> Error {
+    match error {
+        bilibi_media::Error::Database(error) => error,
+        bilibi_media::Error::NotFound => Error::NotFound,
+        _ => Error::Internal,
+    }
+}
+fn artifact_error(error: bilibi_artifacts::Error) -> Error {
+    match error {
+        bilibi_artifacts::Error::Database(error) => error,
+        bilibi_artifacts::Error::NotFound => Error::NotFound,
+        _ => Error::Internal,
+    }
 }
 
 fn identifiers(subject: &Subject) -> (Vec<String>, Vec<String>) {
@@ -69,6 +91,9 @@ async fn person(
         .map(|row| Person::from_row(&row))
         .transpose()
 }
+fn files_of(subject: &Subject) -> String {
+    subject.person.get().to_string()
+}
 
 struct People;
 static PEOPLE: People = People;
@@ -94,11 +119,11 @@ impl Handler for People {
                 by_identifier: row.get(1),
             }];
             let files = services()?;
-            let id = subject.person.get().to_string();
+            let id = files_of(subject);
             // Files are counted only when this reader may see them.
-            if let Ok(attachments) = files
+            if let Ok(count) = files
                 .media
-                .subject_attachments(
+                .count_attachments(
                     client,
                     scope,
                     AttachmentSubject {
@@ -109,8 +134,8 @@ impl Handler for People {
                 .await
             {
                 kinds.push(KindCount {
-                    kind: "attachment".into(),
-                    by_person: attachments.len() as i64,
+                    kind: ATTACHMENT_KIND.into(),
+                    by_person: count,
                     by_identifier: 0,
                 });
             }
@@ -120,12 +145,15 @@ impl Handler for People {
                 .await
             {
                 kinds.push(KindCount {
-                    kind: "document".into(),
+                    kind: DOCUMENT_KIND.into(),
                     by_person: documents.len() as i64,
                     by_identifier: 0,
                 });
             }
-            Ok(Located { kinds })
+            Ok(Located {
+                kinds,
+                ..Located::default()
+            })
         })
     }
     fn export<'a>(
@@ -133,39 +161,52 @@ impl Handler for People {
         client: &'a Client,
         scope: &'a Scope,
         subject: &'a Subject,
+        grant: &'a Disclosure,
     ) -> HandlerFuture<'a, Exported> {
         Box::pin(async move {
+            grant.check(scope)?;
             let Some(person) = person(client, scope, subject, false).await? else {
                 return Ok(Exported::default());
             };
             let files = services()?;
-            let id = subject.person.get().to_string();
+            let id = files_of(subject);
             let attachments = files
                 .media
-                .subject_attachments(
+                .disclosed_attachments(
                     client,
                     scope,
+                    grant,
                     AttachmentSubject {
                         kind: ATTACHMENT_SUBJECT,
                         id: &id,
                     },
                 )
                 .await
-                .map_err(|_| Error::Forbidden)?;
+                .map_err(media_error)?;
             let documents = files
                 .artifacts
-                .subject_documents(client, scope, &FILES, &id)
+                .disclosed_documents(client, scope, grant, &FILES, &id)
                 .await
-                .map_err(|_| Error::Forbidden)?;
+                .map_err(artifact_error)?;
             let mut refs: Vec<FileRef> = attachments
                 .iter()
-                .map(|a| FileRef::Media(a.public_id.clone()))
+                .map(|a| FileRef {
+                    reference: format!("media:{}", a.public_id),
+                    name: a
+                        .original_filename
+                        .clone()
+                        .unwrap_or_else(|| a.public_id.clone()),
+                    content_type: a
+                        .mime_type
+                        .clone()
+                        .unwrap_or_else(|| "application/octet-stream".into()),
+                })
                 .collect();
-            refs.extend(
-                documents
-                    .iter()
-                    .map(|(_, d)| FileRef::Artifact(d.id.clone())),
-            );
+            refs.extend(documents.iter().map(|(company, d)| FileRef {
+                reference: format!("artifact:{}:{}", company.get(), d.id),
+                name: format!("{}-{}", d.reference.kind, d.id),
+                content_type: d.content_type.clone(),
+            }));
             Ok(Exported {
                 records: json!({
                     "person": person.json(),
@@ -181,14 +222,70 @@ impl Handler for People {
             })
         })
     }
+    fn file<'a>(
+        &'a self,
+        client: &'a mut Client,
+        scope: &'a Scope,
+        grant: &'a Disclosure,
+        reference: &'a str,
+    ) -> HandlerFuture<'a, File> {
+        Box::pin(async move {
+            grant.check(scope)?;
+            let files = services()?;
+            let id = grant.person().get().to_string();
+            if let Some(public_id) = reference.strip_prefix("media:") {
+                let file = files
+                    .media
+                    .disclosed_attachment(
+                        &*client,
+                        scope,
+                        grant,
+                        AttachmentSubject {
+                            kind: ATTACHMENT_SUBJECT,
+                            id: &id,
+                        },
+                        public_id,
+                    )
+                    .await
+                    .map_err(media_error)?;
+                return Ok(File {
+                    content_type: file
+                        .mime_type
+                        .unwrap_or_else(|| "application/octet-stream".into()),
+                    bytes: file.bytes,
+                });
+            }
+            let (company, document) = reference
+                .strip_prefix("artifact:")
+                .and_then(|rest| rest.split_once(':'))
+                .ok_or(Error::NotFound)?;
+            let company = company
+                .parse::<i64>()
+                .ok()
+                .and_then(|c| OrganisationId::new(c).ok())
+                .ok_or(Error::NotFound)?;
+            let read = files
+                .artifacts
+                .for_disclosure(scope, company, &FILES, grant, &id)
+                .read(client, document)
+                .await
+                .map_err(artifact_error)?;
+            Ok(File {
+                content_type: read.metadata.content_type,
+                bytes: read.bytes,
+            })
+        })
+    }
     fn erase<'a>(
         &'a self,
         tx: &'a mut MutationTransaction<'_>,
         scope: &'a Scope,
         subject: &'a Subject,
+        grant: &'a Erasure,
         holds: &'a Holds,
     ) -> HandlerFuture<'a, Erased> {
         Box::pin(async move {
+            grant.check(scope)?;
             let Some(old) = person(tx.sql(), scope, subject, true).await? else {
                 return Ok(Erased::default());
             };
@@ -196,62 +293,68 @@ impl Handler for People {
                 return Err(Error::Forbidden);
             }
             let id = old.id.get();
-            if holds.record_held(PERSON_KIND, id) {
-                return Ok(Erased {
-                    kept: vec![Kept {
-                        kind: PERSON_KIND.into(),
-                        id: id.to_string(),
-                        reason: KeptReason::LegalHold,
-                        until: None,
-                    }],
-                    ..Erased::default()
-                });
-            }
             let mut erased = Erased::default();
-            if old.name != ERASED || old.email.is_some() || old.phone.is_some() {
-                let tenant = scope.tenant();
-                let before = old.json();
-                tx.mutate(move |sql| {
-                    Box::pin(async move {
-                        let row = sql
-                            .query_one(
-                                &format!("UPDATE persons SET name=$3,email=NULL,phone=NULL,version=version+1,updated_at=now() WHERE tenant_id=$1 AND id=$2 RETURNING {COLUMNS}"),
-                                &[&tenant, &id, &ERASED],
-                            )
-                            .await?;
-                        let after = Person::from_row(&row)?;
-                        Ok(((), vec![Change { kind: PERSON_KIND.into(), id, old: before, new: after.json() }]))
-                    })
-                })
-                .await?;
+            match holds.record(PERSON_KIND, id).await? {
+                Some(hold) => erased.kept.push(Kept::held(PERSON_KIND, id, hold)),
+                None => {
+                    if old.erased_at.is_none() {
+                        let tenant = scope.tenant();
+                        let before = old.json();
+                        tx.mutate(move |sql| {
+                            Box::pin(async move {
+                                let row = sql
+                                    .query_one(
+                                        &format!("UPDATE persons SET name=$3,email=NULL,phone=NULL,erased_at=now(),version=version+1,updated_at=now() WHERE tenant_id=$1 AND id=$2 RETURNING {COLUMNS}"),
+                                        &[&tenant, &id, &ERASED],
+                                    )
+                                    .await?;
+                                // `[erased]` where a value was: erasure, not absence.
+                                let mut after = Person::from_row(&row)?.json();
+                                for field in FIELDS {
+                                    if !before[field].is_null() {
+                                        after[field] = json!(ERASED);
+                                    }
+                                }
+                                Ok(((), vec![Change { kind: PERSON_KIND.into(), id, old: before, new: after }]))
+                            })
+                        })
+                        .await?;
+                    }
+                    erased.count(PERSON_KIND, Action::Anonymised, 1);
+                    erased.records.push(ErasedRecord {
+                        kind: PERSON_KIND.into(),
+                        id,
+                    });
+                }
             }
-            erased.actions.push(KindAction {
-                kind: PERSON_KIND.into(),
-                action: Action::Anonymised,
-                count: 1,
-            });
-            erased.records.push(ErasedRecord {
-                kind: PERSON_KIND.into(),
-                id,
-                fields: FIELDS.map(String::from).to_vec(),
-            });
-            let attachments = services()?
+            let files = services()?
                 .media
                 .erase_attachments(
                     tx,
                     scope,
+                    grant,
                     AttachmentSubject {
                         kind: ATTACHMENT_SUBJECT,
                         id: &id.to_string(),
                     },
+                    holds,
                 )
                 .await
-                .map_err(|_| Error::Forbidden)?;
-            if !attachments.is_empty() {
-                erased.actions.push(KindAction {
-                    kind: "attachment".into(),
-                    action: Action::Deleted,
-                    count: attachments.len() as i64,
+                .map_err(media_error)?;
+            for (attachment, hold) in files.held {
+                erased
+                    .kept
+                    .push(Kept::held(ATTACHMENT_KIND, attachment, hold));
+            }
+            erased.count(ATTACHMENT_KIND, Action::Deleted, files.erased.len() as i64);
+            for file in files.erased {
+                erased.records.push(ErasedRecord {
+                    kind: ATTACHMENT_KIND.into(),
+                    id: file.id,
+                });
+                erased.records.push(ErasedRecord {
+                    kind: ASSET_KIND.into(),
+                    id: file.asset_id,
                 });
             }
             Ok(erased)
@@ -262,63 +365,85 @@ impl Handler for People {
         client: &'a mut Client,
         scope: &'a Scope,
         subject: &'a Subject,
+        grant: &'a Erasure,
         holds: &'a Holds,
-    ) -> HandlerFuture<'a, Erased> {
+        progress: &'a dyn Progress,
+    ) -> HandlerFuture<'a, ()> {
         Box::pin(async move {
+            grant.check(scope)?;
             let files = services()?;
-            files
-                .media
-                .remove_erased_bytes(client, scope)
-                .await
-                .map_err(|_| Error::Internal)?;
-            let mut erased = Erased::default();
-            if holds.record_held(PERSON_KIND, subject.person.get()) {
-                return Ok(erased);
+            let id = files_of(subject);
+            loop {
+                let removal = files
+                    .media
+                    .remove_erased_bytes(
+                        client,
+                        scope,
+                        grant,
+                        AttachmentSubject {
+                            kind: ATTACHMENT_SUBJECT,
+                            id: &id,
+                        },
+                    )
+                    .await
+                    .map_err(media_error)?;
+                if !removal.more {
+                    break;
+                }
+                if removal.removed == 0 {
+                    // Another attempt is removing them now: try again later.
+                    return Err(Error::Conflict);
+                }
             }
-            let id = subject.person.get().to_string();
             let documents = files
                 .artifacts
-                .subject_documents(client, scope, &FILES, &id)
+                .erasable_documents(client, scope, grant, &FILES, &id)
                 .await
-                .map_err(|_| Error::Forbidden)?;
-            let mut deleted = 0;
+                .map_err(artifact_error)?;
+            let person_hold = holds.person_hold().await?;
             for (company, document) in documents {
-                let kept = |reason, until| Kept {
-                    kind: format!("{ARTIFACT_OWNER} document"),
+                let kept = |reason, until, hold| Kept {
+                    kind: DOCUMENT_KIND.into(),
                     id: document.id.clone(),
                     reason,
                     until,
+                    hold,
                 };
+                let mut step = Erased::default();
+                if let Some(hold) = person_hold {
+                    step.kept
+                        .push(kept(KeptReason::LegalHold, None, Some(hold)));
+                    progress.record(step).await?;
+                    continue;
+                }
                 match files
                     .artifacts
-                    .for_owner(scope, company, &FILES)
+                    .for_erasure(scope, company, &FILES, grant, &id)
                     .delete(client, &document.id)
                     .await
                 {
-                    Ok(()) => deleted += 1,
+                    Ok(()) => step.count(DOCUMENT_KIND, Action::Deleted, 1),
                     Err(bilibi_artifacts::Error::LegalHold) => {
-                        erased.kept.push(kept(KeptReason::LegalHold, None))
+                        step.kept.push(kept(KeptReason::LegalHold, None, None))
                     }
-                    Err(bilibi_artifacts::Error::Retained) => erased.kept.push(kept(
+                    Err(bilibi_artifacts::Error::Retained) => step.kept.push(kept(
                         KeptReason::RetainedUntil,
                         document.retain_until.clone(),
+                        None,
                     )),
-                    Err(bilibi_artifacts::Error::Database(error)) => return Err(error),
-                    Err(_) => return Err(Error::Internal),
+                    Err(error) => return Err(artifact_error(error)),
                 }
+                // Saved now: a failure on the next document keeps this one counted.
+                progress.record(step).await?;
             }
-            if deleted > 0 {
-                erased.actions.push(KindAction {
-                    kind: "document".into(),
-                    action: Action::Deleted,
-                    count: deleted,
-                });
-            }
-            Ok(erased)
+            Ok(())
         })
     }
 }
 
 inventory::submit! { Contribution::new(PERSONAL_DATA, "core/person.people",
 Provenance { module: "core/person", source: file!(), line: line!() },
-&PersonalData { label: "People (contacts)", record_kinds: &[PERSON_KIND], handler: &PEOPLE }) }
+&PersonalData { label: "People (contacts)", kinds: &[PERSON_KIND, ATTACHMENT_KIND, ASSET_KIND], handler: &PEOPLE }) }
+inventory::submit! { Contribution::new(RECORD_KINDS, "core/person.person",
+Provenance { module: "core/person", source: file!(), line: line!() },
+&RecordKind { kind: PERSON_KIND, fields: &FIELDS, subject_identifier: true, person: true }) }

@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-bilibi-privacy.workspace = true
+bilibi-personal-data.workspace = true
 askama.workspace = true
 bilibi-agent-api.workspace = true
 jiff.workspace = true

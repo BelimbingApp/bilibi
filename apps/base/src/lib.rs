@@ -20,6 +20,7 @@ pub use bilibi_module_registry as module_registry;
 pub use bilibi_notifications as notifications;
 pub use bilibi_party_ids as party_ids;
 pub use bilibi_perf as perf;
+pub use bilibi_personal_data as personal_data;
 pub use bilibi_ports as ports;
 pub use bilibi_principal_directory as principal_directory;
 pub use bilibi_privacy as privacy;

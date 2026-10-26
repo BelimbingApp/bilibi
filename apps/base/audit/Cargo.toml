@@ -8,8 +8,10 @@ license.workspace = true
 [dependencies]
 bilibi-database.workspace = true
 bilibi-module-registry.workspace = true
+bilibi-personal-data.workspace = true
 bilibi-tenancy = { path = "../tenancy" }
 inventory.workspace = true
+serde.workspace = true
 serde_json = { workspace = true, features = ["arbitrary_precision"] }
 tokio.workspace = true
 tokio-postgres.workspace = true

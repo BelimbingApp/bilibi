@@ -1,4 +1,4 @@
-//! Address's personal-data store (ADR 05, `base/privacy`): addresses attached
+//! Address's personal-data store (ADR 05, `base/personal_data`): addresses attached
 //! to the person. Erasure clears the lines, phone, label, postcode, locality
 //! and raw input of an address only this person uses, keeping its country so
 //! the record still says where in the world it was; an address another party
@@ -6,9 +6,10 @@
 //! attachments stay as links to the anonymised address. No Bilimbi counterpart.
 use bilibi_database::{Change, MutationTransaction};
 use bilibi_module_registry::{Contribution, Provenance};
-use bilibi_privacy::{
-    Action, Erased, ErasedRecord, Exported, Handler, HandlerFuture, Holds, Kept, KeptReason,
-    KindAction, KindCount, Located, PersonalData, Subject, PERSONAL_DATA,
+use bilibi_personal_data::{
+    Action, Disclosure, Erased, ErasedRecord, Erasure, Exported, Handler, HandlerFuture, Holds,
+    Kept, KeptReason, KindCount, Located, PersonalData, RecordKind, Subject, ERASED, PERSONAL_DATA,
+    RECORD_KINDS,
 };
 use bilibi_tenancy::Scope;
 use serde_json::{json, Value};
@@ -50,6 +51,7 @@ impl Handler for Addresses {
                     by_person: count,
                     by_identifier: 0,
                 }],
+                ..Located::default()
             })
         })
     }
@@ -58,8 +60,10 @@ impl Handler for Addresses {
         client: &'a Client,
         scope: &'a Scope,
         subject: &'a Subject,
+        grant: &'a Disclosure,
     ) -> HandlerFuture<'a, Exported> {
         Box::pin(async move {
+            grant.check(scope)?;
             let rows = client
                 .query(
                     "SELECT a.id,a.label,a.phone,a.line1,a.line2,a.line3,a.locality,a.postcode,a.country_iso,t.kinds,t.is_primary \
@@ -90,9 +94,11 @@ impl Handler for Addresses {
         tx: &'a mut MutationTransaction<'_>,
         scope: &'a Scope,
         subject: &'a Subject,
+        grant: &'a Erasure,
         holds: &'a Holds,
     ) -> HandlerFuture<'a, Erased> {
         Box::pin(async move {
+            grant.check(scope)?;
             let tenant = scope.tenant();
             // Shared: another party (a company or another person) also uses it.
             let rows = tx
@@ -108,15 +114,12 @@ impl Handler for Addresses {
                 .await?;
             let mut erased = Erased::default();
             let mut count = 0;
+            let ids: Vec<i64> = rows.iter().map(|row| row.get(0)).collect();
+            let held = holds.records(KIND, &ids).await?;
             for row in rows {
                 let id: i64 = row.get(0);
-                if holds.record_held(KIND, id) {
-                    erased.kept.push(Kept {
-                        kind: KIND.into(),
-                        id: id.to_string(),
-                        reason: KeptReason::LegalHold,
-                        until: None,
-                    });
+                if let Some(hold) = held.get(&id) {
+                    erased.kept.push(Kept::held(KIND, id, *hold));
                     continue;
                 }
                 if row.get::<_, bool>("shared") {
@@ -125,6 +128,7 @@ impl Handler for Addresses {
                         id: id.to_string(),
                         reason: KeptReason::Shared,
                         until: None,
+                        hold: None,
                     });
                     continue;
                 }
@@ -146,7 +150,8 @@ impl Handler for Addresses {
                                 &[&tenant, &id],
                             )
                             .await?;
-                            let after = Value::Object(FIELDS.iter().map(|f| ((*f).to_owned(), Value::Null)).collect());
+                            // `[erased]` where a value was, so the trail tells erasure from absence.
+                            let after = Value::Object(before.as_object().into_iter().flatten().map(|(f, v)| (f.clone(), if v.is_null() { Value::Null } else { json!(ERASED) })).collect());
                             Ok(((), vec![Change { kind: KIND.into(), id, old: before, new: after }]))
                         })
                     })
@@ -156,16 +161,9 @@ impl Handler for Addresses {
                 erased.records.push(ErasedRecord {
                     kind: KIND.into(),
                     id,
-                    fields: FIELDS.map(String::from).to_vec(),
                 });
             }
-            if count > 0 {
-                erased.actions.push(KindAction {
-                    kind: KIND.into(),
-                    action: Action::Anonymised,
-                    count,
-                });
-            }
+            erased.count(KIND, Action::Anonymised, count);
             Ok(erased)
         })
     }
@@ -173,4 +171,7 @@ impl Handler for Addresses {
 
 inventory::submit! { Contribution::new(PERSONAL_DATA, "core/address.addresses",
 Provenance { module: "core/address", source: file!(), line: line!() },
-&PersonalData { label: "Addresses", record_kinds: &[KIND], handler: &ADDRESSES }) }
+&PersonalData { label: "Addresses", kinds: &[KIND], handler: &ADDRESSES }) }
+inventory::submit! { Contribution::new(RECORD_KINDS, "core/address.address",
+Provenance { module: "core/address", source: file!(), line: line!() },
+&RecordKind { kind: KIND, fields: &FIELDS, subject_identifier: false, person: false }) }

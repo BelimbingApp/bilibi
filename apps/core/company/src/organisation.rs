@@ -328,6 +328,23 @@ impl OrganisationDirectory for Directory {
                 .transpose()
         })
     }
+    fn primary<'a>(
+        &'a self,
+        client: &'a dyn ProofClient,
+        scope: &'a Scope,
+    ) -> ProofFuture<'a, Option<OrganisationId>> {
+        Box::pin(async move {
+            client
+                .query_opt(
+                    "SELECT a.company_id FROM tenant_primary_companies a JOIN companies c ON c.tenant_id=a.tenant_id AND c.id=a.company_id \
+                     WHERE a.tenant_id=$1 AND c.deleted_at IS NULL",
+                    &[&scope.tenant()],
+                )
+                .await?
+                .map(|row| OrganisationId::new(row.get(0)).map_err(|_| Error::Internal))
+                .transpose()
+        })
+    }
 }
 
 /// `BlbStr::code`: Belimbing's slug of a name, kept so a code generated here

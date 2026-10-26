@@ -9,6 +9,7 @@ license.workspace = true
 bilibi-authz = { path = "../authz" }
 bilibi-database.workspace = true
 bilibi-module-registry.workspace = true
+bilibi-personal-data.workspace = true
 bilibi-settings = { path = "../settings" }
 bilibi-tenancy = { path = "../tenancy" }
 tokio-postgres.workspace = true

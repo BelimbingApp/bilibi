@@ -414,20 +414,21 @@ Two limits, both operator settings (Settings › Session), with these defaults:
 
 ## Personal data
 
-**Erasure closes each linked account as `delete_account` does, then anonymises it.** Store `core/user.accounts` ("User accounts and notifications") under [`base/privacy`](../../base/privacy/README.md), [ADR 05](../../../docs/architecture/decisions/05-personal-data-registry.md).
+**Erasure closes each linked account as `delete_account` does, then anonymises it and marks it (`anonymised_at`).** Store `core/user.accounts` under [`base/personal_data`](../../base/personal_data/README.md), [ADR 05](../../../docs/architecture/decisions/05-personal-data-registry.md).
 
-- Sessions end; step-up factors and reset tokens go. The row, its ID and links stay; the name and sign-in email do not.
-- Single sign-on links, pending sign-ins, failed-attempt counters and notifications have no business value and are deleted.
+- Sessions end; step-up factors, reset tokens, sign-in links and notifications go, each unless a hold names it.
+- Kinds `user` (name, email) and `notification` (title, body).
 - Accounts that only share an email are counted, never touched.
+- `NotificationBoundary::eligible` answers which recipients are active accounts.
 
-Retention classes (`src/retention.rs`), both keeping forever until the tenant sets a period on `/privacy/retention`:
+Record classes (`src/retention.rs`, `bilibi_privacy::record_class!`), off until a company turns them on and sets a period:
 
 | Class | Clock starts | Then |
 | --- | --- | --- |
-| `core/user.closed_accounts` | When the account was closed | Anonymise: name and sign-in email replaced, remaining sign-in links deleted |
-| `core/user.notifications` | When the notification was sent | Purge |
+| `core/user.closed_accounts` | When the account was closed | Anonymise: name and email replaced, sign-in links deleted, `anonymised_at` set |
+| `core/user.notifications` | When the notification was sent | Purge (no business value) |
 
-Both skip a held record (`user` or `notification`) and everything of a held person.
+Both keep a held record and everything of a held person.
 
 ## Known gaps
 
