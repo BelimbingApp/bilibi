@@ -14,7 +14,9 @@ use axum::{
 };
 use bilibi_base::{authz, menu, tenancy};
 use bilibi_database::{Error, Result};
-use bilibi_module_registry::contributions::{Access, Embed, EmbedContext, Method, Route, EMBEDS};
+use bilibi_module_registry::contributions::{
+    Access, Embed, EmbedContext, Method, Route, Viewer, EMBEDS,
+};
 use bilibi_security::Scope;
 use bilibi_ui::page::{PageRequest, PageService};
 use bilibi_ui::{AppShell, DisplayPreferences, Framed, Html, NavNode, SearchPage, ShellContext};
@@ -142,14 +144,19 @@ async fn context<'a>(
             bilibi_core::company::platform_operator_company(&**client).await,
             Ok(None)
         );
-    // A module contributes the bell through the `shell.notifications` embed;
-    // an account the embed refuses has none.
+    // A module contributes the bell through the `shell.notifications` embed
+    // and the search dialog's records through `shell.search.records`; an
+    // account an embed refuses has none.
     let mut notifications = Html::default();
+    let mut records = Html::default();
     for slot in embeds(app)? {
-        if slot.embed.slot == "shell.notifications"
-            && permits(app, scope, slot.embed.access).await?
-        {
-            notifications = render_embed(app, scope, &slot.embed).await?;
+        let rendered = match slot.embed.slot {
+            "shell.notifications" => &mut notifications,
+            "shell.search.records" => &mut records,
+            _ => continue,
+        };
+        if permits(app, scope, slot.embed.access).await? {
+            *rendered = render_embed(app, scope, &slot.embed).await?;
         }
     }
     // Display only and unlogged: the editor and its save authorize for real.
@@ -160,22 +167,25 @@ async fn context<'a>(
             .get::<bilibi_base::system::Instances>(bilibi_base::system::SERVICE)?
             .is_core_administrator(scope)
             .await?;
-    // The search lists the pages the person may open, decided as the menu
-    // decides its items: display only and unlogged, since each route checks
-    // its own access again when opened. Two pages the status bar links to
-    // under a condition use the same condition here: Instance settings also
+    // The search lists the pages the person may open, decided by the shared
+    // display check (`Access::admits`, as tiles and record hits are): display
+    // only and unlogged, since each route checks its own access again. Two
+    // pages the status bar links to under a condition use the same condition
+    // here: Instance settings also
     // needs the Core Administrator standing, and the operator setup page only
     // helps while the operator stands on no primary company (afterwards it
     // sends everyone to that company).
+    let viewer = Viewer {
+        capabilities: &capabilities,
+        operator: platform_operator,
+        owner,
+    };
     let may_open = |access: Access| match access.base() {
-        Access::SignedIn => true,
-        Access::Capability(key) => capabilities.contains(key),
-        Access::AnyOf(keys) => keys.iter().any(|key| capabilities.contains(*key)),
-        Access::Operator => platform_operator,
+        // Sign-in and the other public pages are no place to send someone
+        // already signed in.
+        Access::Public => false,
         Access::OperatorCapability(bilibi_base::system::INSTANCE_MANAGE) => manage_instance,
-        Access::OperatorCapability(key) => platform_operator && capabilities.contains(key),
-        Access::Owner => owner,
-        Access::Public | Access::StepUp { .. } => false,
+        access => access.admits(&viewer),
     };
     let pages = search_pages(app, &tree, |route| {
         may_open(route.access) && (route.path != OPERATOR_SETUP || operator_company_missing)
@@ -224,7 +234,7 @@ async fn context<'a>(
         },
         versions: bilibi_ui::version_badges(&crate::composition()),
         topbar_actions,
-        page_search: bilibi_ui::page_search(&pages).map_err(|_| Error::Internal)?,
+        page_search: bilibi_ui::page_search(&pages, records).map_err(|_| Error::Internal)?,
     })
 }
 
@@ -338,8 +348,9 @@ fn menu_rows(
 }
 
 /// One `EmbedContext::Shell` contribution and the id of the element it
-/// renders: slot `shell.notifications` is `#app-notifications`. The live
-/// socket mounts it as a panel under that id, outside framed pages.
+/// renders: slot `shell.notifications` is `#app-notifications`, and
+/// `shell.search.records` is `#app-search-records`. The live socket mounts it
+/// as a panel under that id, outside framed pages.
 pub struct ShellEmbed {
     pub id: String,
     pub embed_id: &'static str,

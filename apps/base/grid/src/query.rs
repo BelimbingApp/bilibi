@@ -427,9 +427,10 @@ pub async fn text_search_sql(
     Ok(format!("SELECT {} FROM {} r CROSS JOIN (SELECT $1::bigint AS tenant, $2::bigint AS usr) actor WHERE ({predicate})", field("r", root, root.key()), source(root)))
 }
 
-// Every Grid read: bounded locally, and on the UTC calendar so a trend month
-// or a change-since date means the same day whatever the pool's zone.
-pub(crate) const BOUNDS: &str = "SET LOCAL statement_timeout = '2000ms'; SET LOCAL lock_timeout = '500ms'; SET LOCAL TimeZone = 'UTC'";
+/// Every Grid read, and every read through an owner's Grid source (Base
+/// Search): bounded locally, and on the UTC calendar so a trend month or a
+/// change-since date means the same day whatever the pool's zone.
+pub const BOUNDS: &str = "SET LOCAL statement_timeout = '2000ms'; SET LOCAL lock_timeout = '500ms'; SET LOCAL TimeZone = 'UTC'";
 
 // Only catalog-owned identifiers enter SQL. Quote them even though declaration
 // validation limits them to lowercase ASCII. Values always use bind parameters.

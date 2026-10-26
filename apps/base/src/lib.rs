@@ -25,6 +25,7 @@ pub use bilibi_principal_directory as principal_directory;
 pub use bilibi_queue as queue;
 pub use bilibi_reports as reports;
 pub use bilibi_schedule as schedule;
+pub use bilibi_search as search;
 pub use bilibi_security as security;
 pub use bilibi_session as session;
 pub use bilibi_settings as settings;

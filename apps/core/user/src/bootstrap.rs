@@ -115,7 +115,7 @@ impl UserService {
             tx.commit().await?;
             return Ok(BootstrapAffiliation::AlreadyLinked);
         }
-        let person = match bilibi_person::identity::create(
+        let person = match bilibi_person::create_person(
             &mut tx,
             &scope,
             &PersonInput {
