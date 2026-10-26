@@ -73,7 +73,7 @@ interactive role-grant writes; reconciliation is their explicit update path.
 Capture failure or cancellation prevents commit. No browser-provided actor ID is
 accepted as attribution. Callers cannot pass a SystemScope to grant administration.
 
-Named system principals require an installed declaration and a durable grant in the execution tenant. `SystemScope::rehydrate` is a trusted worker/maintenance edge, never a browser constructor. Anonymous system identities always deny; declaration alone grants nothing. Removed declarations make old grants inert. Named identities hold no user roles, gain no grant-all bypass, and obey platform gates. Decisions stay tenant-scoped; company ownership of custom roles (K15) and the account binder (K9) use Tenancy owner proofs. An owner adapter that holds only Tenancy's sealed proof connection (`OrganisationDirectory`, Media `SubjectOwner`, Artifacts `Owner`) decides through `decide_proof` / `authorize_proof`: the same rules and decision log as `decide`, on that connection. Queue execution must rehydrate at execution, rather than retaining a Scope captured when enqueued.
+Named system principals require an installed declaration and a durable grant in the execution tenant. `SystemScope::rehydrate` is a trusted worker/maintenance edge, never a browser constructor. `SystemAuthentication::for_system(client, &SystemScope)` (SP1) seals a declared principal into a Tenancy `Scope` (`Authentication::for_principal`), so owner facades that take `&Scope` serve a worker: `decide`, `decide_proof`, `authorize_key`, `authorize_any`, `effective_capabilities` and `explicitly_granted` on that scope apply the named-principal rule (live tenant, declaration, platform gate, durable `authz_system_grants` row, deny wins), log `system` with the principal, and never consult roles or grant-all. `effective_system` lists what a principal holds. `Grants` refuse a principal scope as the administrator. Tenancy's `Authorization::authorize_scope` is bound here (`authorize_proof`) for modules below Authz. Anonymous system identities always deny; declaration alone grants nothing. Removed declarations make old grants inert. Named identities hold no user roles, gain no grant-all bypass, and obey platform gates. Decisions stay tenant-scoped; company ownership of custom roles (K15) and the account binder (K9) use Tenancy owner proofs. An owner adapter that holds only Tenancy's sealed proof connection (`OrganisationDirectory`, Media `SubjectOwner`, Artifacts `Owner`) decides through `decide_proof` / `authorize_proof`: the same rules and decision log as `decide`, on that connection. Queue execution must rehydrate at execution, rather than retaining a Scope captured when enqueued.
 
 `/authz/field-restrictions` (Administration › Authorization › Field Restrictions,
 `src/restrictions_web.rs`, Bilimbi `FieldRestrictionsLive`) is the operator's
@@ -92,8 +92,9 @@ any held restricting role masks, even alongside an admin. `fields::mask` removes
 restricted fields before JSON serialization, including arrays, audit old/new
 objects and headless projections. `fields::refuse_attempts` refuses any submitted
 restricted key regardless of its value. Owner-typed read models must also clear
-those values before rendering (Companies already does). Named system identities
-hold no roles and therefore have no role-based field restrictions. P8 owns the
+those values before rendering (Companies already does). A named system
+principal holds no roles, so it fails closed: every restriction in its tenant
+applies to it, and it never sees or writes a role-restricted field. P8 owns the
 protected-field catalog contract and restriction administration; Grid supplies
 that catalog as data, with no Authz→Grid dependency.
 

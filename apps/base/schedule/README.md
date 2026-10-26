@@ -114,6 +114,19 @@ repeated `suppress`/`resume` changes nothing and records nothing. `tasks` needs
 transaction that holds `lock`: `Eligible` only for an enabled, unsuppressed
 current fingerprint. Any database error is an `Err`, never `Eligible`.
 
+## Changing a task's time
+
+Operators with Schedule manage permission can select a fixed-time task's schedule, choose a time, and save it in the zone shown beside the picker. For example, a daily task at 03:17 UTC opens at 11:17 in Asia/Kuala_Lumpur; saving 09:30 stores `30 9 * * *` with `Asia/Kuala_Lumpur`.
+
+- The picker uses the account's top-bar clock: company, browser-local, or UTC. The browser reports its IANA zone before local editing becomes available. Changing the top-bar clock while editing leaves the open draft and its displayed zone together.
+- The saved zone stays with the setting; daylight saving follows that zone. Gaps skip the missing occurrence and folds can run twice, using the recurrence rules below.
+- Only schedules with one fixed hour and minute have a picker. Intervals and multiple daily times keep their cadence. Calendar rules convert with the clock where one cron can represent them; a month-boundary conversion that cannot be represented keeps the saved-zone read view.
+- **Reset to code default** asks for confirmation and restores the contribution's time and zone. Saving and resetting preserve the task's enabled/disabled and paused state; they do not enable an unreviewed task.
+
+`Schedule::set_time` and `reset_time` require the sealed operator scope and recheck `MANAGE` inside `MutationBoundary`, under the same per-key lock used by claims. The installation-wide `base_schedule_timings` row holds the cron, IANA zone, contributed fingerprint and revision; Audit records the operator, old value and new value as `schedule.time.changed` or `schedule.time.reset`. The submitted timing version refuses stale edits. These writes use the board's existing declared pending allowance until Schedule has operation contracts.
+
+A new contributed fingerprint ignores both the old override and its review. A timing revision also changes queued-job metadata, so work queued at an earlier time is cancelled before the owner runs. Reset retains a revision tombstone, preventing old default-time jobs from becoming valid again. Dispatch and diagnostics use the effective recurrence; a changed setting starts with future occurrences rather than immediately catching up an occurrence from before the change. `Task.expression` and `Task.timezone` remain the code defaults; `clock_expression`, `clock_timezone`, `timing_version` and `time_overridden` describe the effective setting.
+
 ## Time
 
 `cron` knows only civil minutes. `recurrence` is the only place a zone matters,
@@ -129,7 +142,7 @@ and every function takes the instant as an argument:
   wall-clock search skips to the following day while the first pass of a fold is
   running, so `next` here also considers the repeat that is still ahead.
 
-The board's Schedule column reads each cron in plain words in the viewer's top-bar zone, converted at the zone's offset now ("Every day at 11:17 PM EDT"). The words name that zone, because a daylight-saving change moves a fixed clock time. A cadence with no clock time ("Every 5 minutes") has no zone to name. When no single clock time reads right in the viewer's zone, the words stay in the saved zone and say so ("Every day at 3:17 AM (UTC; shown in saved time zone)"). The exact saved cron and zone are the tooltip. This is display only: the contributed expression and zone still decide when the task runs, and Next run is the real next instant in the viewer's zone.
+The board's Schedule column reads each cron in plain words in the viewer's top-bar zone, converted at the zone's offset now ("Every day at 11:17 PM EDT"). The words name that zone, because a daylight-saving change moves a fixed clock time. A cadence with no clock time ("Every 5 minutes") has no zone to name. When no single clock time reads right in the viewer's zone, the words stay in the saved zone and say so ("Every day at 3:17 AM (UTC; shown in saved time zone)"). Read-only schedules keep the exact saved cron and zone in the tooltip. The words do not change dispatch: the effective cron and saved zone decide when the task runs, and Next run is the real next instant in the viewer's zone.
 
 Replay any moment with `cargo run -p bilibi-schedule --example schedule-walkthrough -- dst [key instant]`
 (no database). The other modes use a disposable database
@@ -139,6 +152,7 @@ production does not have:
 
 ```sh
 export BILIBI_DISPOSABLE_SCHEDULE_DEMO=yes
+cargo run -p bilibi-schedule --example schedule-walkthrough -- timing    # clock settings, stale work, DST, authorization, audit
 cargo run -p bilibi-schedule --example schedule-walkthrough -- review    # Q3: review, suppression, audit
 cargo run -p bilibi-schedule --example schedule-walkthrough -- prepare   # operator tenant, enable, grant scheduler
 cargo run -p bilibi-schedule --example schedule-walkthrough -- coalesce  # one claim after five missed hours

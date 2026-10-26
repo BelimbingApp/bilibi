@@ -7,11 +7,25 @@ use std::collections::{BTreeMap, HashSet};
 use tokio_postgres::GenericClient;
 
 /// All restrictions for an actor, in one fresh database read. Any restricting
-/// role wins, including alongside an admin/grant_all role.
+/// role wins, including alongside an admin/grant_all role. A named principal
+/// holds no roles, so every restriction in its tenant applies to it.
 pub async fn restricted(
     client: &impl GenericClient,
     scope: &Scope,
 ) -> Result<BTreeMap<String, HashSet<String>>> {
+    if scope.principal().is_some() {
+        let rows = client
+            .query(
+                "SELECT DISTINCT table_id,field_id FROM field_restrictions WHERE tenant_id=$1",
+                &[&scope.tenant()],
+            )
+            .await?;
+        let mut result: BTreeMap<String, HashSet<String>> = BTreeMap::new();
+        for row in rows {
+            result.entry(row.get(0)).or_default().insert(row.get(1));
+        }
+        return Ok(result);
+    }
     let rows=client.query("SELECT DISTINCT f.table_id,f.field_id FROM field_restrictions f JOIN effective_principal_roles p ON p.tenant_id=f.tenant_id AND p.role_id=f.role_id WHERE f.tenant_id=$1 AND p.user_id=$2",&[&scope.tenant(),&scope.user()]).await?;
     let mut result: BTreeMap<String, HashSet<String>> = BTreeMap::new();
     for row in rows {
