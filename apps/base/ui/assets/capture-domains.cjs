@@ -1,5 +1,5 @@
 // Refresh only when deliberately updating the pinned Bilimbi domain snapshots.
-// Mounting a Domain must not rewrite the committed CSS, so every utility the
+// Platform candidates cover mounted Domains, so every utility the
 // Bilimbi domain sources use is already generated from this candidate list.
 const fs = require('node:fs');
 const path = require('node:path');

@@ -1,7 +1,7 @@
 //! Tokio execution edge. DB leases provide at-least-once delivery, not exactly-once
 //! effects. Handlers must use owner idempotency and reauthorize owner operations.
 use crate::{arguments, store, Queue};
-use bilibi_authz::SystemScope;
+use bilibi_authz::{SystemAuthentication, SystemScope};
 use bilibi_database::{Db, Error, MutationBoundary, MutationTransaction, Result};
 use bilibi_module_registry::{Catalog, Consumer, Entry, RegistryError, Services};
 use bilibi_tenancy::{Authentication, Scope};
@@ -114,6 +114,9 @@ pub struct Execution {
     pub attempt: i32,
     pub max_attempts: i32,
     identity: Identity,
+    /// The sealed scope this attempt runs under: the user's, or the system
+    /// principal's (`Authentication::for_system`, SP1), built per attempt.
+    scope: Box<Scope>,
     token: String,
     trace: String,
     capability: &'static str,
@@ -124,12 +127,12 @@ impl Execution {
     pub fn identity(&self) -> &Identity {
         &self.identity
     }
-    /// The user behind a user-enqueued job; `None` for a system principal.
+    /// The sealed scope to hand owner facades: the user behind a
+    /// user-enqueued job, or the named system principal of a system job
+    /// (SP1), re-sealed on every attempt. `Some` for both kinds; the
+    /// `Option` is kept for the owners written when a system job had none.
     pub fn scope(&self) -> Option<&Scope> {
-        match &self.identity {
-            Identity::User(scope) => Some(scope),
-            Identity::System(_) => None,
-        }
+        Some(&self.scope)
     }
     pub fn tenant(&self) -> i64 {
         match &self.identity {
@@ -333,7 +336,7 @@ impl Executor {
         }
         let bound = self.handlers.get(worker.id).ok_or(Error::Invalid)?;
         let client = self.db.get().await?;
-        let identity = match row.get::<_, &str>("actor_kind") {
+        let (identity, scope) = match row.get::<_, &str>("actor_kind") {
             "user" => {
                 let scope = self
                     .authentication
@@ -356,7 +359,8 @@ impl Executor {
                     return Err(Error::Unauthorized);
                 }
                 bilibi_authz::authorize_key(&**client, &scope, bound.capability).await?;
-                Identity::User(Box::new(scope))
+                let sealed = Box::new(scope.clone());
+                (Identity::User(Box::new(scope)), sealed)
             }
             "system" => {
                 // Declaration and durable grant are read live; a principal whose
@@ -369,7 +373,10 @@ impl Executor {
                     return Err(Error::Unauthorized);
                 }
                 bilibi_authz::authorize_system(&**client, &scope, bound.capability).await?;
-                Identity::System(scope)
+                // The principal's sealed scope for this attempt (SP1): owner
+                // facades decide on it by the principal's name.
+                let sealed = Box::new(self.authentication.for_system(&**client, &scope).await?);
+                (Identity::System(scope), sealed)
             }
             _ => return Err(Error::Invalid),
         };
@@ -383,6 +390,7 @@ impl Executor {
                 attempt: row.get("attempt"),
                 max_attempts: row.get("max_attempts"),
                 identity,
+                scope,
                 token: claim.token.clone(),
                 trace: row.get("trace_id"),
                 capability: bound.capability,

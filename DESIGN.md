@@ -27,7 +27,7 @@ Professional, compact, warm, trustworthy. Dense enough for operations, calm enou
 - Controls use `rounded-md`. Surfaces use `rounded-xl`.
 - Lime marks orientation only: card top edge, active navigation, selection, unseen markers. Lime never reports status.
 - Font: Instrument Sans, vendored locally (SIL OFL). No remote font requests.
-- Tailwind CSS 4.3.0 builds one committed `app.css`. Node is needed only to rebuild it.
+- Tailwind CSS 4.3.0 builds one generated stylesheet, embedded by Cargo. Commit its sources only; Node is needed on build machines.
 
 ## Tokens
 

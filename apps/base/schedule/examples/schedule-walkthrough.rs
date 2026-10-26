@@ -591,6 +591,208 @@ async fn execute(services: &Services, db: &Db, now: Timestamp) -> Result<()> {
     occurrences(db, Some(key)).await?;
     history(&schedule, db, &admin, Some(key)).await
 }
+/// Manual clock-setting evidence against the real facade, Queue and Audit.
+async fn timing(services: &Services, db: &Db) -> Result<()> {
+    prepare(services, db).await?;
+    let key = "schedule/walkthrough.fold";
+    only(services, db, &[key]).await?;
+    let (schedule, admin) = admin(services, db).await?;
+    let task = |tasks: Vec<bilibi_schedule::Task>| {
+        tasks
+            .into_iter()
+            .find(|task| task.key == key)
+            .ok_or(Error::NotFound)
+    };
+    let mut client = db.get().await?;
+    let original = task(schedule.tasks(&**client, &admin, Timestamp::now()).await?)?;
+    println!("== Queued default-time work, then change the clock");
+    println!(
+        "queued: {:?}",
+        schedule
+            .run_now(&mut client, &admin, key, Timestamp::now())
+            .await?
+    );
+    schedule
+        .set_time(
+            &mut client,
+            &admin,
+            key,
+            &original.timing_version,
+            "09:30",
+            "Asia/Kuala_Lumpur",
+        )
+        .await?;
+    let changed = task(schedule.tasks(&**client, &admin, Timestamp::now()).await?)?;
+    println!(
+        "saved: {} {} review={:?} overridden={} next={:?}",
+        changed.clock_expression,
+        changed.clock_timezone,
+        changed.review,
+        changed.time_overridden,
+        changed.next_due_at
+    );
+    println!(
+        "stale save: {:?}",
+        schedule
+            .set_time(
+                &mut client,
+                &admin,
+                key,
+                &original.timing_version,
+                "10:00",
+                "Asia/Kuala_Lumpur"
+            )
+            .await
+    );
+    println!(
+        "invalid time: {:?}",
+        schedule
+            .set_time(
+                &mut client,
+                &admin,
+                key,
+                &changed.timing_version,
+                "24:00",
+                "Asia/Kuala_Lumpur"
+            )
+            .await
+    );
+    println!(
+        "invalid zone: {:?}",
+        schedule
+            .set_time(
+                &mut client,
+                &admin,
+                key,
+                &changed.timing_version,
+                "10:00",
+                "Not/A_Zone"
+            )
+            .await
+    );
+    let authentication = services.get::<Authentication>("base/tenancy.authentication")?;
+    let manager = authentication
+        .authenticate(&**client, 1, 1, String::new())
+        .await?;
+    println!(
+        "non-operator manager edit: {:?}",
+        schedule
+            .set_time(
+                &mut client,
+                &manager,
+                key,
+                &changed.timing_version,
+                "10:00",
+                "Asia/Kuala_Lumpur"
+            )
+            .await
+    );
+    println!(
+        "interval edit: {:?}",
+        schedule
+            .set_time(
+                &mut client,
+                &admin,
+                "schedule/walkthrough.hourly",
+                "unused",
+                "10:00",
+                "Asia/Kuala_Lumpur"
+            )
+            .await
+    );
+    drop(client);
+    execute_for(services, 3).await?;
+    jobs(db).await?;
+    println!("== Poll before the new time: no catch-up from before the change");
+    poll(services, db, Timestamp::now()).await?;
+    println!("== Poll at the new next occurrence");
+    poll(services, db, changed.next_due_at.ok_or(Error::Invalid)?).await?;
+    execute_for(services, 3).await?;
+    let mut client = db.get().await?;
+    println!("== Save New York 01:30; DST repeats remain two real instants");
+    schedule
+        .set_time(
+            &mut client,
+            &admin,
+            key,
+            &changed.timing_version,
+            "01:30",
+            "America/New_York",
+        )
+        .await?;
+    for at in [
+        "2026-11-01T05:29:00Z",
+        "2026-11-01T05:45:00Z",
+        "2026-11-01T06:31:00Z",
+    ] {
+        let current = task(
+            schedule
+                .tasks(&**client, &admin, at.parse().map_err(|_| Error::Invalid)?)
+                .await?,
+        )?;
+        println!(
+            "at {at}: next={:?} saved zone={}",
+            current.next_due_at, current.clock_timezone
+        );
+    }
+    let current = task(schedule.tasks(&**client, &admin, Timestamp::now()).await?)?;
+    println!(
+        "queued before reset: {:?}",
+        schedule
+            .run_now(&mut client, &admin, key, Timestamp::now())
+            .await?
+    );
+    schedule
+        .reset_time(&mut client, &admin, key, &current.timing_version)
+        .await?;
+    let reset = task(schedule.tasks(&**client, &admin, Timestamp::now()).await?)?;
+    println!(
+        "reset: {} {} review={:?} overridden={} version_changed={}",
+        reset.clock_expression,
+        reset.clock_timezone,
+        reset.review,
+        reset.time_overridden,
+        reset.timing_version != current.timing_version
+    );
+    drop(client);
+    execute_for(services, 3).await?;
+    jobs(db).await?;
+    let mut client = db.get().await?;
+    println!("== Code fingerprint drift ignores the old override and review");
+    schedule
+        .set_time(
+            &mut client,
+            &admin,
+            key,
+            &reset.timing_version,
+            "09:00",
+            "Asia/Kuala_Lumpur",
+        )
+        .await?;
+    client
+        .execute(
+            "UPDATE base_schedule_timings SET definition_fingerprint=repeat('0',64) WHERE key=$1",
+            &[&key],
+        )
+        .await?;
+    client
+        .execute(
+            "UPDATE base_schedule_definition_reviews SET fingerprint=repeat('0',64) WHERE key=$1",
+            &[&key],
+        )
+        .await?;
+    let drifted = task(schedule.tasks(&**client, &admin, Timestamp::now()).await?)?;
+    println!(
+        "new definition: {} {} review={:?} overridden={}",
+        drifted.clock_expression, drifted.clock_timezone, drifted.review, drifted.time_overridden
+    );
+    println!("== Audited settings (actor, old, new)");
+    for row in client.query("SELECT actor_type,actor_id,old_values::text,new_values::text FROM base_audit_mutations WHERE auditable_type='base/schedule.timing' ORDER BY id",&[]).await? {
+        println!("{} {:?} old={} new={}",row.get::<_,String>(0),row.get::<_,Option<i64>>(1),row.get::<_,String>(2),row.get::<_,String>(3));
+    }
+    Ok(())
+}
+
 async fn live(services: &Services, db: &Db) -> Result<()> {
     let schedule = services.get::<Schedule>("base/schedule.store")?;
     let executor = Executor::from_services(
@@ -719,6 +921,7 @@ async fn main() -> Result<()> {
     match command.as_str() {
         "review" => review(&services, &db).await,
         "prepare" => prepare(&services, &db).await,
+        "timing" => timing(&services, &db).await,
         "poll" => poll(&services, &db, instant(0)?).await.map(|_| ()),
         "race" => {
             only(&services, &db, &["schedule/walkthrough.minutely"]).await?;
