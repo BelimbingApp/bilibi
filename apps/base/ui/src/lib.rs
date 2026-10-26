@@ -90,7 +90,7 @@ pub use lists::{
     Column, EmptyState, FilterToolbar, Pagination, RecordLink, Row, SortView, Table, TableEmpty,
     ToolbarControl,
 };
-pub use page_search::{page_search, SearchPage};
+pub use page_search::{page_search, RecordGroup, RecordHit, SearchPage, SearchRecords};
 pub use settings::{SettingsTab, SETTINGS_LOCATION};
 pub use specimen::ComponentsSpecimen;
 pub use upload::{

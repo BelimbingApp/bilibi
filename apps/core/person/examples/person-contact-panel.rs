@@ -6,7 +6,7 @@ use bilibi_module_registry::{
     contributions::{Access, Method, Route, ROUTES},
     Contribution, Layer, Module, Provenance, Service,
 };
-use bilibi_person::{contributions::VIEW, PersonId, PersonService, SERVICE};
+use bilibi_person::{PersonId, PersonService, SERVICE, VIEW};
 use bilibi_tenancy::Scope;
 use bilibi_ui::page::*;
 use std::{collections::HashMap, sync::Arc};
