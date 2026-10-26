@@ -136,6 +136,22 @@ def listeners():
     return in_use
 
 
+def reserved_ports():
+    """Ports a running launcher chose but whose app is not listening yet."""
+    ports = set()
+    reservations = Path(f"/tmp/bilibi-ports-{os.getuid()}")
+    for entry in reservations.glob("[0-9]*") if reservations.is_dir() else ():
+        try:
+            os.kill(int(entry.read_text().strip()), 0)
+        except PermissionError:
+            pass
+        except (OSError, ValueError):
+            entry.unlink(missing_ok=True)
+            continue
+        ports.add(int(entry.name))
+    return ports
+
+
 def owns_route(route):
     """Keep the claim in Caddy, including while the owner's app is stopped.
 
@@ -171,7 +187,7 @@ def choose_port(servers, requested_port, own_route=None):
     configured_port = route_port(own_route) if own_route else None
     if configured_port and not os.environ.get("BILIBI_DEV_PORT"):
         return configured_port
-    in_use = listeners()
+    in_use = listeners() | reserved_ports()
     for server in servers.values():
         for route in caddy_routes(server):
             if route != own_route:

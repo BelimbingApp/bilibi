@@ -135,6 +135,10 @@ host=$BILIBI_DEV_HOST
 # The registrar rechecks ownership under its lock in case two first launches race.
 # Lines: scheme, host, backend port, Caddy's HTTPS port (443 unless configured),
 # and why not https: "owned" by another checkout, or Caddy "unavailable".
+# Two first launches at the same moment must not pick the same backend port:
+# the lock covers choosing a port and reserving it until the app listens.
+exec 9>"/tmp/bilibi-ports-$(id -u).lock"
+flock 9
 plan=$(python3 "$root/scripts/local-https-api.py" --plan "$host" "${BILIBI_DEV_PORT:-4300}")
 readarray -t origin_plan <<< "$plan"
 scheme=${origin_plan[0]}
@@ -164,6 +168,10 @@ if [[ -n $(ss -H -ltn "sport = :${instance[1]}") ]]; then
     echo "This checkout already has a listener at $APP_ORIGIN. Stop its dev command before starting another." >&2
     exit 1
 fi
+# exec below keeps this process ID, so the reservation lasts as long as the launcher.
+mkdir -p "/tmp/bilibi-ports-$(id -u)"
+printf '%s\n' "$$" > "/tmp/bilibi-ports-$(id -u)/${instance[1]}"
+flock -u 9
 # Colour the address on a terminal without NO_COLOR, as the app's own "listening" line does.
 if [[ -t 1 && -z ${NO_COLOR-} ]]; then
     highlight() { printf '\e[1;32m%s\e[4m%s\e[0m' "$1" "$2"; }
