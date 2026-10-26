@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # PostgreSQL server and client binaries. No cluster is created: the app runs its own
-# private one on 5438 under .local/postgres18 (scripts/start-app.sh).
+# private one under .local/postgres18, on its own port (scripts/start-app.sh).
 set -euo pipefail
 # shellcheck source=scripts/lib/install.sh
 source "$(dirname -- "${BASH_SOURCE[0]}")/../lib/install.sh"

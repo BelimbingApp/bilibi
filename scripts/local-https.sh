@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Register the owner's HTTPS route and certificate; the API rejects other checkouts.
+# Register this checkout's HTTPS route and certificate for its own host; the
+# API rejects a checkout that does not own the host. start-app.sh resolves
+# BILIBI_DEV_HOST first (scripts/dev-env.py).
 set -euo pipefail
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 host=${BILIBI_DEV_HOST:-bilibi.localhost}
@@ -17,7 +19,14 @@ flock 8
 certificate="$root/.local/https/$host.pem"
 key="$root/.local/https/$host-key.pem"
 # Ownership is checked before the API helper creates or renews these files.
-port=$(python3 "$root/scripts/local-https-api.py" \
+# It prints the backend port, then Caddy's HTTPS port (443 unless configured).
+registration=$(python3 "$root/scripts/local-https-api.py" \
     "$host" "$port" "$certificate" "$key")
-printf '%s\n%s\n' "$host" "$port" > "$root/.local/https/instance"
-echo "Local HTTPS configured through Caddy's admin API: https://$host → 127.0.0.1:$port"
+readarray -t registered <<< "$registration"
+[[ ${#registered[@]} == 2 ]] || exit 1
+port=${registered[0]}
+https_port=${registered[1]}
+printf '%s\n%s\n%s\n' "$host" "$port" "$https_port" > "$root/.local/https/instance"
+address="https://$host"
+[[ $https_port == 443 ]] || address+=":$https_port"
+echo "Local HTTPS configured through Caddy's admin API: $address → 127.0.0.1:$port"
