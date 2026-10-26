@@ -102,10 +102,10 @@ async fn lock_owners(
     input: &AffiliationInput,
 ) -> Result<()> {
     // Use public owners, never duplicate their archived/retired/system rules.
-    bilibi_company::eligibility::lock_account_company(tx.sql(), scope, input.organisation_id)
+    bilibi_company::lock_account_company(tx.sql(), scope, input.organisation_id)
         .await
         .map_err(company_error)?;
-    bilibi_person::identity::lock_for_account_binding(tx, scope, input.person_id).await?;
+    bilibi_person::lock_for_account_binding(tx, scope, input.person_id).await?;
     Ok(())
 }
 fn company_error(error: bilibi_company::WriteError) -> Error {
@@ -143,7 +143,7 @@ pub async fn provision(
     }
     let input = validate(input)?;
     let tenant = tx.context().tenant;
-    bilibi_company::eligibility::lock_account_company_in(tx.sql(), tenant, input.organisation_id)
+    bilibi_company::lock_account_company_in(tx.sql(), tenant, input.organisation_id)
         .await
         .map_err(company_error)?;
     let affiliation = insert(tx, tenant, input).await?;
@@ -396,8 +396,8 @@ pub(crate) async fn lock_for_employment_at<'tx>(
     check_context(tx, scope)?;
     authorize_key(tx.sql(), scope, PROVE).await?;
     lock_active_tenant(tx, scope).await?;
-    bilibi_company::organisation::authorize_target(tx.sql(), scope, company.get(), PROVE).await?;
-    bilibi_company::eligibility::lock_account_company(tx.sql(), scope, company)
+    bilibi_company::authorize_target(tx.sql(), scope, company.get(), PROVE).await?;
+    bilibi_company::lock_account_company(tx.sql(), scope, company)
         .await
         .map_err(company_error)?;
     let affiliation = raw(tx.sql(), scope, id, false).await?;
@@ -448,14 +448,9 @@ pub async fn preview_contact(
     {
         return Err(Error::Forbidden);
     }
-    bilibi_company::organisation::require_writable(
-        client,
-        scope,
-        facts.organisation_id.get(),
-        false,
-    )
-    .await
-    .map_err(company_error)?;
+    bilibi_company::require_writable(client, scope, facts.organisation_id.get(), false)
+        .await
+        .map_err(company_error)?;
     Ok(facts)
 }
 /// Review an update, end or unlink without locks: the capability, current

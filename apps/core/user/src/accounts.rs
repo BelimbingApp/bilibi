@@ -13,7 +13,7 @@ use crate::{
     UserService,
 };
 use bilibi_affiliation::identity::account_standing as affiliation_standing;
-use bilibi_company::eligibility::{lock_account_company, lock_writable_companies};
+use bilibi_company::{lock_account_company, lock_writable_companies};
 use bilibi_database::{Change, Error, MutationTransaction, Result};
 use bilibi_party_ids::{AffiliationId, OrganisationId, PersonId};
 use bilibi_security::Scope;
@@ -319,7 +319,7 @@ impl UserService {
             });
         }
         if let Some(person) = person {
-            let person = bilibi_person::identity::lock_for_account_binding(tx, scope, person)
+            let person = bilibi_person::lock_for_account_binding(tx, scope, person)
                 .await
                 .map_err(|error| match error {
                     Error::NotFound => AccountError::NotFound,

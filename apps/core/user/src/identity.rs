@@ -13,12 +13,12 @@ use crate::{
     password, CredentialError, UserService,
 };
 use bilibi_affiliation::identity::account_standing as affiliation_standing;
-use bilibi_company::eligibility::{
+use bilibi_company::{
     account_eligibility, lock_account_company, lock_writable_companies, AccountEligibility,
 };
 use bilibi_database::{Change, Error, MutationTransaction, Result};
 use bilibi_party_ids::{AffiliationId, OrganisationId, PersonId};
-use bilibi_person::identity::account_standing as person_standing;
+use bilibi_person::account_standing as person_standing;
 use bilibi_security::{AccountIdentity, ActorVerifier, ProofClient, ProofFuture, Scope};
 use serde::Serialize;
 use serde_json::json;
@@ -392,7 +392,7 @@ impl UserService {
         }
         // The proof borrows the transaction; take its identity before the
         // account write borrows it mutably. The database locks stay held.
-        let person = bilibi_person::identity::lock_for_account_binding(&tx, &scope, person)
+        let person = bilibi_person::lock_for_account_binding(&tx, &scope, person)
             .await
             .map_err(|error| match error {
                 Error::NotFound => LinkError::NotFound,

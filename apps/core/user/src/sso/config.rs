@@ -282,7 +282,7 @@ impl UserService {
                     "Your account cannot manage sign-in for this company.",
                 )
             })?;
-        bilibi_company::eligibility::lock_account_company(
+        bilibi_company::lock_account_company(
             tx.sql(),
             &scope,
             bilibi_party_ids::OrganisationId::new(company).map_err(|_| Error::Invalid)?,

@@ -2,9 +2,8 @@
 //! database. No assertions or unit tests. Includes deliberate audit failure and
 //! two concurrent connections; never run against a shared database.
 use bilibi_company::{
-    eligibility::{account_eligibility, lock_account_company, AccountEligibility},
-    lifecycle::{self, Operation},
-    organisation, CompanyService, CreateOutcome, Edit, NewCompany, SERVICE,
+    account_eligibility, lifecycle_operations, lock_account_company, AccountEligibility,
+    CompanyService, CreateOutcome, Edit, LifecycleOperation, NewCompany, SERVICE,
 };
 use bilibi_database::{pool, MutationBoundary};
 use bilibi_party_ids::OrganisationId;
@@ -109,7 +108,7 @@ async fn main() -> Result<(), Error> {
         .authenticate(client, 1, staff.user(), String::new())
         .await?;
     for status in ["pending", "active", "suspended", "archived"] {
-        show(status, lifecycle::operations_from(status));
+        show(status, lifecycle_operations(status));
     }
     show(
         "pending account eligibility",
@@ -195,7 +194,7 @@ async fn main() -> Result<(), Error> {
     show(
         "stale lifecycle dialog",
         companies
-            .transition_company(&manager, id, Operation::Reactivate, None, Some(1))
+            .transition_company(&manager, id, LifecycleOperation::Reactivate, None, Some(1))
             .await,
     );
     show(
@@ -276,7 +275,7 @@ async fn main() -> Result<(), Error> {
     show("PostgreSQL company-row lock waiters", waiters);
     show(
         "owned child insert while archive waits (tenant FK remains compatible)",
-        bilibi_company::departments::create(&mut tx, &manager, id, 1, "active").await,
+        bilibi_company::create_department(&mut tx, &manager, id, 1, "active").await,
     );
     tx.commit().await?;
     show(
@@ -333,7 +332,7 @@ async fn main() -> Result<(), Error> {
     );
     show(
         "tenant-wide IDs retain archived company",
-        organisation::list_tenant_company_ids(client, &manager)
+        bilibi_company::list_tenant_company_ids(client, &manager)
             .await?
             .contains(&org),
     );
