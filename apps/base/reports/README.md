@@ -16,7 +16,7 @@ Operator-built reports: a saved question over one Grid table, run as each reader
 |---|---|---|
 | `list`, `get` | `reports.view` | Reports the reader may run: their own, shared with everyone, or shared with one of their roles. |
 | `page` | `reports.view` | One page of those reports by name, searched by name and description in the same query, with the number that match. |
-| `run` | `reports.view` | One page of rows (each with its record's own page where the owner declares one, and the totals line), or a grouped summary with subtotals and a total. Answers ask-when-run filters by position; `as_rows` with drill filters lists the records behind a group. |
+| `run` | `reports.view` | One page of rows (each with its record's own page where the owner declares one, and the totals line), or a grouped summary with subtotals and a total. Answers ask-when-run filters by position; `as_rows` with drill filters lists the records behind a group; agents drill as the page does (`equals`, `empty`, or a date bucket's `range` of days). |
 | `csv` | `reports.export` | The whole result as CSV, up to the export cap, for the same `RunInput` as the page (answers, drill-downs, records view). Audited as `base.reports.exported` with report id and row count, never the data. Leading `=`, `+`, `-`, `@` are neutralised. |
 | `record_types`, `columns` | `reports.view` | What a builder may offer: readable record types, and a type's own fields plus fields one link away. |
 | `check` | — | Shape bounds, every column against the author's catalog, then a bounded dry run. A dry run refused only by size or cost still saves. |
@@ -31,7 +31,7 @@ Operator-built reports: a saved question over one Grid table, run as each reader
 | `rows` | `columns` (up to 32 Grid column paths), `filters`, `sort` (up to 3) |
 | `summary` | `filters`, `groupings` (up to 2; a date column takes a `bucket`), `measures` (up to 8: `count`, `sum`, `avg`, `min`, `max`), `chart` |
 
-- A rows report with `totals` adds a line summing each number column (not the key) over every row, on the page and in the CSV.
+- A rows report lists each column once (a repeat is refused when saved). With `totals` it adds a line summing each number column (not the key) over every row, on the page and in the CSV, one Grid read per eight columns; an empty result shows no totals line.
 
 - Filter tests: `equals`, `one_of`, `contains`, `range`, `within` (a period such as `this_month`), `empty`, `not_empty`. A filter with `ask` takes the reader's value at run time; the stored value is the default, and an ask filter left blank is skipped.
 - Text values from forms and agents are typed for the column at run time (numbers, yes/no).

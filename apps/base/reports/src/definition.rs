@@ -193,6 +193,14 @@ impl Definition {
         let mut errors = FieldErrors::new();
         match kind {
             Kind::Rows => {
+                let mut once = std::collections::HashSet::new();
+                if !self.columns.iter().all(|c| once.insert(c)) {
+                    err(
+                        &mut errors,
+                        "definition.columns",
+                        "each column can appear once",
+                    );
+                }
                 if self.columns.is_empty() || self.columns.len() > MAX_COLUMNS {
                     err(
                         &mut errors,

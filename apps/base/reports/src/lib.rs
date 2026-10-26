@@ -591,7 +591,15 @@ impl Reports {
                 } else {
                     behind(root, definition)
                 };
-                let columns: Vec<Column> = specs.iter().filter_map(|s| keep(s)).collect();
+                // Each column once, as the projection draws it, so a totals
+                // cell always sits under its own column (a definition saved
+                // before duplicates were refused may still hold one).
+                let mut once = std::collections::HashSet::new();
+                let columns: Vec<Column> = specs
+                    .iter()
+                    .filter(|s| once.insert(s.as_str()))
+                    .filter_map(|s| keep(s))
+                    .collect();
                 let sorts = if report.kind == Kind::Rows {
                     definition
                         .sorts()
@@ -656,22 +664,28 @@ impl Reports {
                     .collect();
                 let pages = rows.iter().map(|(key, _)| root.page_for(key)).collect();
                 let totals = if totals_of.iter().any(Option::is_some) {
+                    // Grid totals up to 8 measures a read; a wider list
+                    // (up to 32 columns) takes one read per eight.
                     let measures: Vec<_> = totals_of.iter().flatten().cloned().collect();
-                    let summary = bilibi_grid::summarize(
-                        &self.db,
-                        scope,
-                        &report.record_type,
-                        &SummarySpec {
-                            filters: totals_filters,
-                            groupings: Vec::new(),
-                            measures,
-                            timezone: timezone.clone(),
-                            max_groups: 1,
-                        },
-                    )
-                    .await
-                    .map_err(grid)?;
-                    let mut sums = summary.total.values.into_iter();
+                    let mut values = Vec::with_capacity(measures.len());
+                    for chunk in measures.chunks(bilibi_grid::MAX_MEASURES) {
+                        let summary = bilibi_grid::summarize(
+                            &self.db,
+                            scope,
+                            &report.record_type,
+                            &SummarySpec {
+                                filters: totals_filters.clone(),
+                                groupings: Vec::new(),
+                                measures: chunk.to_vec(),
+                                timezone: timezone.clone(),
+                                max_groups: 1,
+                            },
+                        )
+                        .await
+                        .map_err(grid)?;
+                        values.extend(summary.total.values);
+                    }
+                    let mut sums = values.into_iter();
                     Some(
                         totals_of
                             .iter()

@@ -322,8 +322,9 @@ impl Show {
             }
             // The pager's page-size form: a report's page size is a setting.
             "filters" => {}
+            // The table on screen: a summary's records once drilled into.
             "grid" => {
-                let tab = if report.kind == Kind::Rows {
+                let tab = if report.kind == Kind::Rows || self.as_rows {
                     "rows"
                 } else {
                     "summary"
@@ -694,7 +695,9 @@ impl Show {
         let actions = if actions.is_empty() {
             actions
         } else {
-            render(Row { body: actions })?
+            render(Row {
+                parts: vec![actions],
+            })?
         };
         render(Header {
             title: Html::text(&report.name),
@@ -1027,7 +1030,7 @@ impl Show {
             body: Html::text("Back to the summary"),
             ..Button::default()
         })?);
-        render(Breadcrumb { body: parts })
+        render(Breadcrumb { parts: vec![parts] })
     }
 
     async fn definition(&mut self, scope: &Scope, report: &Report, can: Can) -> Result<Html> {
@@ -1133,17 +1136,17 @@ fn alert(id: &str, kind: StatusKind, message: &str) -> Result<Html> {
 
 #[derive(Template)]
 #[template(
-    source = r#"<div class="flex flex-wrap items-center gap-2">{{ body|safe }}</div>"#,
+    source = r#"{% import "components.html" as ui %}{% call ui::cluster(parts=parts) %}{% endcall %}"#,
     ext = "html"
 )]
 struct Row {
-    body: Html,
+    parts: Vec<Html>,
 }
 
 /// One group a drill-down narrows to, with its remove button.
 #[derive(Template)]
 #[template(
-    source = r#"<span class="inline-flex items-center gap-1 text-sm font-medium text-ink">{{ label }}{{ button|safe }}</span>"#,
+    source = r#"{% import "components.html" as ui %}{% call ui::removable(label=label, button=button, strong=true) %}{% endcall %}"#,
     ext = "html"
 )]
 struct Narrowed<'a> {
@@ -1153,11 +1156,11 @@ struct Narrowed<'a> {
 
 #[derive(Template)]
 #[template(
-    source = r#"<nav id="report-drill" aria-label="Narrowed to" class="flex flex-wrap items-center gap-2"><span class="text-sm text-ink-muted">Records behind</span>{{ body|safe }}</nav>"#,
+    source = r#"{% import "components.html" as ui %}{% call ui::narrowing(id="report-drill", label="Narrowed to", lead="Records behind", parts=parts) %}{% endcall %}"#,
     ext = "html"
 )]
 struct Breadcrumb {
-    body: Html,
+    parts: Vec<Html>,
 }
 
 impl LiveState<Scope, Error> for Show {

@@ -8,7 +8,7 @@ use crate::{ColumnInfo, RunResult};
 use bilibi_database::{Error, Result};
 use bilibi_ui::{
     BuiltinColumn, Chart, ChartKind, ColumnType, FlexRow, FlexTable, Html, IconButton, IconKind,
-    ListColumns, PageCounts, Pagination, Series, TableEmpty,
+    ListColumns, PageCounts, Pagination, RecordLink, Series, TableEmpty,
 };
 use serde_json::Value;
 
@@ -123,9 +123,13 @@ pub(crate) fn rows(host: &ListColumns, list: &RowsPage<'_>, sizes: &[u64]) -> Re
         for (i, value) in cells.iter().enumerate() {
             let text = cell(value);
             let html = match list.pages.get(n).and_then(Option::as_ref) {
-                Some(href) if i == 0 => render(RecordCell {
+                Some(href) if i == 0 => render(RecordLink {
+                    workspace: false,
+                    kind: "record",
+                    record_id: "",
                     href,
-                    text: if text.is_empty() { "(none)" } else { &text },
+                    class: "font-medium text-link hover:underline",
+                    body: Html::text(if text.is_empty() { "(none)" } else { &text }),
                 })?,
                 _ => Html::text(&text),
             };
@@ -133,7 +137,8 @@ pub(crate) fn rows(host: &ListColumns, list: &RowsPage<'_>, sizes: &[u64]) -> Re
         }
         flex.push(row);
     }
-    if let Some(totals) = list.totals {
+    // No rows, no totals line: the table says nothing matches instead.
+    if let Some(totals) = list.totals.filter(|_| list.total > 0) {
         let mut last = FlexRow::new("total");
         for (i, value) in totals.iter().enumerate() {
             let text = if i == 0 && value.is_null() {
@@ -167,16 +172,6 @@ pub(crate) fn rows(host: &ListColumns, list: &RowsPage<'_>, sizes: &[u64]) -> Re
         sizes,
     ))?);
     Ok(body)
-}
-
-#[derive(askama::Template)]
-#[template(
-    source = r#"<a href="{{ href }}" class="font-medium text-link hover:underline">{{ text }}</a>"#,
-    ext = "html"
-)]
-struct RecordCell<'a> {
-    href: &'a str,
-    text: &'a str,
 }
 
 /// The table columns of a summary: its groups, the record count, then
@@ -296,10 +291,15 @@ pub(crate) fn summary(
     } else {
         Some("Total")
     };
-    if let Some(label) = label {
-        last = last.slot("g0", drill_cell(label, "total")?);
-    }
-    last = last.slot("rows", Html::text(&total.0.to_string()));
+    // The total opens every record behind it; with no grouping its count
+    // carries the control, so a one-number summary drills too.
+    let count = total.0.to_string();
+    last = match label {
+        Some(label) => last
+            .slot("g0", drill_cell(label, "total")?)
+            .slot("rows", Html::text(&count)),
+        None => last.slot("rows", drill_cell(&count, "total")?),
+    };
     for (i, value) in total.1.iter().enumerate() {
         last = last.slot(&format!("m{i}"), Html::text(&cell(value)));
     }
@@ -310,22 +310,22 @@ pub(crate) fn summary(
     table.caption = "Report summary";
     table.framed = false;
     out.push(&render(table)?);
-    Ok((render(Stack { body: out })?, drillables(lines)))
+    Ok((render(Stack { parts: vec![out] })?, drillables(lines)))
 }
 
 #[derive(askama::Template)]
 #[template(
-    source = r#"<div class="space-y-4">{{ body|safe }}</div>"#,
+    source = r#"{% import "components.html" as ui %}{% call ui::stack(parts=parts, wide=true) %}{% endcall %}"#,
     ext = "html"
 )]
-struct Stack {
-    body: Html,
+pub(crate) struct Stack {
+    pub parts: Vec<Html>,
 }
 
 /// A group's value with its drill button on the same line.
 #[derive(askama::Template)]
 #[template(
-    source = r#"<span class="inline-flex items-center gap-1">{{ text }}{{ button|safe }}</span>"#,
+    source = r#"{% import "components.html" as ui %}{% call ui::removable(label=text, button=button) %}{% endcall %}"#,
     ext = "html"
 )]
 struct DrillCell<'a> {

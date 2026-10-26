@@ -95,10 +95,30 @@ ui-icon-button grid shrink-0 place-items-center transition focus-visible:outline
     rest attributes: role="region" aria-labelledby="<heading id>").
     Askama refuses a macro nested in its own body, so a card inside a card
     renders the inner one through the typed `bilibi_ui::Card` model as Html. -#}
-{#- Fragments the shared models rendered (a notice, a chart, a link),
-    stacked a compact step apart; no Bilimbi counterpart. -#}
-{% macro stack(parts) %}
-<div class="space-y-2">{% for part in parts %}{{ part|safe }}{% endfor %}</div>
+{#- Fragments the shared models rendered (a notice, a chart, a table),
+    stacked a compact step apart, or a section step apart when wide; no
+    Bilimbi counterpart. -#}
+{% macro stack(parts, wide=false) %}
+<div class="{% if wide %}space-y-4{% else %}space-y-2{% endif %}">{% for part in parts %}{{ part|safe }}{% endfor %}</div>
+{% endmacro %}
+
+{#- Fragments on one wrapping line (a page header's several actions); no
+    Bilimbi counterpart. -#}
+{% macro cluster(parts) %}
+<div class="flex flex-wrap items-center gap-2">{% for part in parts %}{{ part|safe }}{% endfor %}</div>
+{% endmacro %}
+
+{#- What a view is narrowed to (no Bilimbi counterpart): a lead word, then
+    its parts (removable labels, a way back), as one labelled strip. -#}
+{% macro narrowing(id, label, lead, parts) %}
+<nav id="{{ id }}" aria-label="{{ label }}" class="flex flex-wrap items-center gap-2"><span class="text-sm text-ink-muted">{{ lead }}</span>{% for part in parts %}{{ part|safe }}{% endfor %}</nav>
+{% endmacro %}
+
+{#- A value as text with the one control that acts on it (removes it, opens
+    what is behind it), on one line; no Bilimbi counterpart. Data keeps its
+    own spelling, which a badge would capitalise. -#}
+{% macro removable(label, button, strong=false) %}
+<span class="inline-flex items-center gap-1{% if strong %} text-sm font-medium text-ink{% endif %}">{{ label }}{{ button|safe }}</span>
 {% endmacro %}
 
 {% macro card(id="", title="", class="", inner_class="", role="", labelledby="") %}
