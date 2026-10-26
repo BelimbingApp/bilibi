@@ -400,7 +400,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             format!("{total} rows, first {first}"),
         );
     }
-    let csv = reports.csv(&manager, rows_id, &BTreeMap::new()).await?;
+    let csv = reports.csv(&manager, rows_id, &RunInput::default()).await?;
     let lines_out: Vec<&str> = csv.text.split("\r\n").filter(|l| !l.is_empty()).collect();
     checks.check(
         "the CSV holds a header and every row",
@@ -420,7 +420,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             && !exported.to_string().contains("Bench"),
         exported.to_string(),
     );
-    let refused = reports.csv(&viewer, id, &BTreeMap::new()).await;
+    let refused = reports.csv(&viewer, id, &RunInput::default()).await;
     checks.check(
         "a reader without reports.export cannot download",
         matches!(refused, Err(ReportError::Forbidden)),
@@ -465,7 +465,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             format!("{got} against {want}"),
         );
     }
-    let csv = reports.csv(&manager, totals_id, &BTreeMap::new()).await?;
+    let csv = reports
+        .csv(&manager, totals_id, &RunInput::default())
+        .await?;
     checks.check(
         "the CSV ends with the totals line",
         csv.text.trim_end().ends_with(&format!("Total,{want}")),
@@ -489,6 +491,66 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         matches!(&run, Ok(r) if matches!(&r.result, RunResult::Rows { total, .. } if *total == parts)),
         format!("{parts} parts expected"),
     );
+
+    println!("== Drill-downs in the file, and search past 500 reports (review of #168)");
+    let drill = vec![filter("category", "equals", json!("tools"), false)];
+    let drilled = reports
+        .csv(
+            &manager,
+            rows_id,
+            &RunInput {
+                drill: drill.clone(),
+                ..RunInput::default()
+            },
+        )
+        .await?;
+    let tools: i64 = client
+        .query_one(
+            "SELECT count(*) FROM base_grid_ref_items WHERE tenant_id=1 AND category='tools'",
+            &[],
+        )
+        .await?
+        .get(0);
+    checks.check(
+        "a drilled CSV holds only the drilled rows",
+        drilled.rows == tools as usize && tools < 12,
+        format!("{} rows, {tools} in SQL", drilled.rows),
+    );
+    // 500 earlier-sorting reports, written directly as filler, then one the
+    // author saves: it must still be found by search and by paging.
+    client
+        .execute(
+            "INSERT INTO base_reports (tenant_id, owner_id, name, record_type, kind, definition) SELECT tenant_id, owner_id, 'A filler ' || lpad(n::text, 3, '0'), record_type, kind, definition FROM base_reports, generate_series(1, 500) n WHERE id=$1",
+            &[&rows_id],
+        )
+        .await?;
+    let late = Draft {
+        name: "Zz late report".into(),
+        ..rows.clone()
+    };
+    let late_id = write(&boundary, &db, &manager, "reports.create", async |tx| {
+        reports.create(tx, &manager, &late).await
+    })
+    .await?;
+    let (found, matched) = reports.page(&manager, "ZZ LATE", 0, 25).await?;
+    checks.check(
+        "search finds a report after the first 500, in any case",
+        matched == 1 && found.first().is_some_and(|r| r.id == late_id),
+        format!("{matched} match(es)"),
+    );
+    let (_, all) = reports.page(&manager, "", 0, 25).await?;
+    let (last, _) = reports.page(&manager, "", all - 1, 25).await?;
+    checks.check(
+        "and the last page of all reports holds it",
+        all > 500 && last.first().is_some_and(|r| r.id == late_id),
+        format!("{all} report(s)"),
+    );
+    client
+        .execute(
+            "DELETE FROM base_reports WHERE tenant_id=1 AND (name LIKE 'A filler %' OR id=$1)",
+            &[&late_id],
+        )
+        .await?;
 
     println!("== Deleting");
     let refused = write(&boundary, &db, &viewer, "reports.delete", async |tx| {

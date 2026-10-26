@@ -275,6 +275,30 @@ impl Reports {
         Ok(store::list(&**client, scope.tenant(), scope.user()).await?)
     }
 
+    /// One page of the reports the reader may run, searched by name and
+    /// description, with the number that match. Needs `reports.view`.
+    pub async fn page(
+        &self,
+        scope: &Scope,
+        search: &str,
+        offset: u64,
+        limit: u64,
+    ) -> Outcome<(Vec<Report>, u64)> {
+        let client = self.db.get().await.map_err(Error::from)?;
+        authorize(&**client, scope, VIEW).await?;
+        let clamp = |n: u64| i64::try_from(n).unwrap_or(i64::MAX);
+        let (reports, total) = store::page(
+            &**client,
+            scope.tenant(),
+            scope.user(),
+            search,
+            clamp(offset),
+            clamp(limit),
+        )
+        .await?;
+        Ok((reports, total.max(0) as u64))
+    }
+
     /// One report the reader may run, with its definition.
     pub async fn get(&self, scope: &Scope, id: i64) -> Outcome<Report> {
         let client = self.db.get().await.map_err(Error::from)?;
@@ -475,6 +499,43 @@ impl Reports {
         Ok(store::roles(&**client, scope.tenant()).await?)
     }
 
+    /// What this reader may see of a report now, as a key that changes when
+    /// it does: its version and which of its columns their catalog resolves.
+    /// A cached drawing is reused only while this key holds, so a field
+    /// restriction or a lost share shows at the next refresh, not the next
+    /// run. Cheaper than a run: no Grid read. Needs `reports.view`.
+    pub async fn access(&self, scope: &Scope, id: i64) -> Outcome<String> {
+        let client = self.db.get().await.map_err(Error::from)?;
+        authorize(&**client, scope, VIEW).await?;
+        let report = match store::read(&**client, scope.tenant(), scope.user(), id, false).await {
+            Err(Error::NotFound) => return Err(ReportError::NotFound),
+            other => other?,
+        };
+        let catalog = Catalog::for_scope(&**client, scope)
+            .await
+            .map_err(|e| ReportError::Database(e.into()))?;
+        let Some(root) = catalog.table(&report.record_type) else {
+            return Ok(format!("{}:unreadable", report.version));
+        };
+        let d = &report.definition;
+        let seen: String = d
+            .columns
+            .iter()
+            .chain(d.groupings.iter().map(|g| &g.column))
+            .chain(d.measures.iter().map(|m| &m.column))
+            .chain(d.sort.iter().map(|s| &s.column))
+            .chain(d.filters.iter().map(|f| &f.column))
+            .map(|spec| {
+                if catalog.resolve(root, spec).is_ok() {
+                    '1'
+                } else {
+                    '0'
+                }
+            })
+            .collect();
+        Ok(format!("{}:{seen}", report.version))
+    }
+
     /// Runs a report as the reader: their catalog, grants and time zone.
     /// Columns, groupings, measures and sorts the reader cannot see are left
     /// out and listed; a filter on one refuses the run, so it cannot be used
@@ -556,9 +617,11 @@ impl Reports {
                     Vec::new()
                 };
                 let totals_filters = filters.clone();
+                // A value saved before the setting's bound was 100 still runs.
                 let page_size = self
                     .setting(&**client, scope, contributions::PAGE_SIZE_KEY)
-                    .await?;
+                    .await?
+                    .clamp(1, 100);
                 drop(client);
                 let page: KeyPage = bilibi_grid::page_keys(
                     &self.db,
@@ -693,14 +756,11 @@ impl Reports {
     }
 
     /// The whole result as CSV, up to the export cap: every page of a Rows
-    /// report, or every line of a Summary. Audited with the report, the reader
+    /// report, or every line of a Summary, narrowed by the same answers and
+    /// drill-downs as the page (and as its records when the page shows a
+    /// summary's records). Audited with the report, the reader
     /// and the row count, never the data. Needs `reports.export`.
-    pub async fn csv(
-        &self,
-        scope: &Scope,
-        id: i64,
-        answers: &BTreeMap<usize, Value>,
-    ) -> Outcome<Csv> {
+    pub async fn csv(&self, scope: &Scope, id: i64, input: &RunInput) -> Outcome<Csv> {
         let client = self.db.get().await.map_err(Error::from)?;
         authorize(&**client, scope, EXPORT).await?;
         let cap = self
@@ -708,8 +768,8 @@ impl Reports {
             .await?;
         drop(client);
         let mut input = RunInput {
-            answers: answers.clone(),
-            ..RunInput::default()
+            page: 0,
+            ..input.clone()
         };
         let first = self.run(scope, id, &input).await?;
         let mut out = String::new();

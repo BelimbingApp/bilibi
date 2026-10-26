@@ -95,6 +95,12 @@ ui-icon-button grid shrink-0 place-items-center transition focus-visible:outline
     rest attributes: role="region" aria-labelledby="<heading id>").
     Askama refuses a macro nested in its own body, so a card inside a card
     renders the inner one through the typed `bilibi_ui::Card` model as Html. -#}
+{#- Fragments the shared models rendered (a notice, a chart, a link),
+    stacked a compact step apart; no Bilimbi counterpart. -#}
+{% macro stack(parts) %}
+<div class="space-y-2">{% for part in parts %}{{ part|safe }}{% endfor %}</div>
+{% endmacro %}
+
 {% macro card(id="", title="", class="", inner_class="", role="", labelledby="") %}
 <div{% if !id.is_empty() %} id="{{ id }}"{% endif %} data-card class="{% if !bilibi_ui::card_flat(inner_class) %}rounded-xl {% endif %}border border-line bg-surface shadow-xs{% if !class.is_empty() %} {{ class }}{% endif %}"{% if !role.is_empty() %} role="{{ role }}"{% endif %}{% if !labelledby.is_empty() %} aria-labelledby="{{ labelledby }}"{% endif %}>{% if !title.is_empty() %}<div class="border-b border-line px-panel py-2"><h3 class="text-sm font-semibold text-ink">{{ title }}</h3></div>{% endif %}<div data-card-body class="{{ bilibi_ui::card_body_class(inner_class) }}">{{ caller() }}</div></div>
 {% endmacro %}

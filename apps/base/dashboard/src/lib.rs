@@ -117,8 +117,10 @@ pub type ProvidedFuture<'a> =
     Pin<Box<dyn Future<Output = bilibi_database::Result<Vec<Provided>>> + Send + 'a>>;
 
 /// Entries that exist only at run time. The page calls `entries` with the
-/// reader's sealed scope on every update; the owner answers only what that
-/// reader may see. Each entry mounts `embed` with its id as the panel's
+/// reader's sealed scope and the keys of this provider's entries the reader
+/// has placed, on every update; the owner answers only what that reader may
+/// see: each placed key it still may (however many others it has), then up
+/// to [`MAX_PROVIDED`] more to offer. Each entry mounts `embed` with its id as the panel's
 /// `entry`, and the embed's `access` still guards every mount and refresh.
 /// Provided entries are offered in Customize, never placed unasked.
 #[derive(Clone, Copy)]
@@ -130,7 +132,7 @@ pub struct Provider {
     /// Offers the provider's entries at all.
     pub capability: Option<&'static str>,
     pub refresh_interval: u32,
-    pub entries: for<'a> fn(&'a Scope) -> ProvidedFuture<'a>,
+    pub entries: for<'a> fn(&'a Scope, &'a [String]) -> ProvidedFuture<'a>,
 }
 
 #[doc(hidden)]
