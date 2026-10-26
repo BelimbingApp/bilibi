@@ -85,7 +85,7 @@ cd bilibi
 
 `start` checks the tools, runs the existing setup when needed, activates newly installed Rust tools in the same shell, and launches local sources. Setup installs Rust, PostgreSQL 18, Caddy, mkcert and Node.js. You do not need a GitHub account. An AI agent follows these same steps.
 
-Bilibi opens in your browser at the sign-in page when it is ready. Sign in as `ai@agent.my` / `bilibi-dev` (development seed only). If no browser opens, open the address the launcher prints. To stop it opening a browser, set `BILIBI_OPEN_BROWSER=0`. One checkout owns <https://bilibi.localhost>; other checkouts use their own `http://127.0.0.1:<port>` address. Setting `BILIBI_DEV_PORT` selects a backend port, without taking over another checkout's HTTPS address.
+Bilibi opens in your browser at the sign-in page when it is ready. Sign in as `ai@agent.my` / `bilibi-dev` (development seed only). If no browser opens, open the address the launcher prints. To stop it opening a browser, set `BILIBI_OPEN_BROWSER=0`. Each checkout gets its own HTTPS address, `https://<name>.localhost`, and its own private database, so several run side by side. The Platform checkout is <https://bilibi.localhost>; an application made with the app maker is named after its origin repository (`SB-Tape/sbg-bilibi` becomes <https://sbg-bilibi.localhost>). To choose a name, put `BILIBI_DEV_HOST=<name>.localhost` in `.env` (see [Local launcher](#local-launcher)). A second checkout that would use a name another checkout owns falls back to its own `http://127.0.0.1:<port>` address and says so. Setting `BILIBI_DEV_PORT` selects a backend port, without taking over another checkout's HTTPS address.
 
 ### Supported environment
 
@@ -131,6 +131,16 @@ The application saves source URLs, exact commits and the resolved dependency loc
 
 ### Local launcher
 
+The launcher reads its settings from your shell first, then from an optional `.env` in the folder of the `./bilibi` you ran (the application root for an app-maker application), then uses defaults. `.env` is never committed; copy `.env.example` to `.env` and uncomment a line to change it. A line the launcher does not know is ignored with a message. Restart the launcher after editing it. The lines it accepts:
+
+| Line in `.env` | What it changes | Default |
+|----------------|-----------------|---------|
+| `BILIBI_DEV_HOST` | This instance's address, a name under `.localhost`, served over HTTPS | `bilibi.localhost` here; an application is named after its origin repository |
+| `BILIBI_DEV_PORT` | The port Bilibi itself listens on behind Caddy. With it set, a checkout never claims `bilibi.localhost` first | The first free port from 4300 |
+| `BILIBI_OPEN_BROWSER` | Open the sign-in page in your browser when the app is ready, `1` or `0` | `1` |
+
+Servers never read `.env`: `install-server.sh` writes each server instance its own `env` file ([server installation](docs/server-install.md)).
+
 The launcher sets `BILIBI_ENV=development` unless you already set it, so the install seed identifies a fresh local copy as Dev. A saved role in Instance settings takes precedence. It starts a private database, builds, migrates, seeds and rebuilds on change. While the HTTPS app is down, its waiting page shows the current build step and elapsed time. A failed build shows the latest diagnostics; fix the error and save a file to rebuild. Cargo output stays in the terminal, and a previous successful build keeps serving until its replacement is ready. Restart it after changing an environment variable.
 
 `start-app.sh` stores three keys for this checkout when they are not already set. `BILIBI_SETTINGS_KEY` is `.local/dev/settings.key`. `BILIBI_USER_SIGNING_KEY` is `.local/dev/user-signing.key`. `BILIBI_MEDIA_SIGNING_KEY` is `.local/dev/media-signing.key`. The first run creates a missing file as 64 hex characters (32 random bytes) with mode 0600. Later runs read that same file. The launcher leaves an existing key file as it is. Replacing `settings.key` would make every secret setting and authenticator key unreadable. `.local/` is not committed. Restart the launcher after you change one of these files.
@@ -139,7 +149,7 @@ The launcher sets `BILIBI_ENV=development` unless you already set it, so the ins
 
 | Variable | Use |
 |----------|-----|
-| `DATABASE_URL` | PostgreSQL 18. Unset: the private instance on port 5438 |
+| `DATABASE_URL` | PostgreSQL 18. Unset: this checkout's private instance under `.local/postgres18`, on a port chosen once (5438 when free) and remembered in `.local/postgres18/port` |
 | `APP_ORIGIN` | The exact browser origin, no trailing slash. Staging and Production refuse to start unless it is HTTPS; see [HTTPS for OAuth](docs/server-install.md#https-for-oauth) |
 | `BIND_ADDR` | Listen address, default `127.0.0.1:3000` |
 | `MAIL_HOST` | SMTP relay. Unset: write mail to `.local/mailbox/` |

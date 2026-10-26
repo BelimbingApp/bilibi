@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
-"""Plan a local origin; only the HTTPS owner's checkout may register with Caddy.
+"""Plan a local origin; only a host's owning checkout may register it with Caddy.
 
 Local launcher plumbing, with no Bilimbi module counterpart.
+
+Every Caddy object this script writes (route, TLS policy, certificate, waiting
+route) carries an @id keyed by host, so several checkouts register side by
+side and one never replaces or steals another's. A checkout owns a host when
+the host's route carries its owner claim (a hash of the checkout path).
 """
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -16,12 +22,20 @@ from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 
+spec = importlib.util.spec_from_file_location("dev_env", Path(__file__).with_name("dev-env.py"))
+dev_env = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(dev_env)
+
 API = os.environ.get("BILIBI_CADDY_ADMIN_URL", "http://localhost:2019").rstrip("/")
-ROUTE_ID = "bilibi-local-route"
-TLS_POLICY_ID = "bilibi-local-tls-policy"
-CERT_ID = "bilibi-local-certificate"
-CERT_TAG = "bilibi-local-certificate"
-ERROR_ROUTE_ID = "bilibi-local-error-route"
+# One @id per kind and host: <base>-<host>. Before per-host IDs, bilibi.localhost
+# used the bare bases; find() still locates them and the owner's next
+# registration rewrites each in place under its per-host @id.
+BASES = {
+    "route": "bilibi-local-route",
+    "tls_policy": "bilibi-local-tls-policy",
+    "certificate": "bilibi-local-certificate",
+    "error_route": "bilibi-local-error-route",
+}
 WAITING_PAGE = Path(__file__).resolve().with_name("waiting-page.html")
 ROOT = Path(__file__).resolve().parent.parent
 # What reverse_proxy reports when the backend refuses, resets or times out.
@@ -63,12 +77,28 @@ def get_id(item_id):
         raise
 
 
+def find(item_id):
+    """(existing @id, value) for a per-host ID, falling back to the bare ID it replaces."""
+    value = get_id(item_id)
+    if value is None and item_id in LEGACY_IDS:
+        item_id = LEGACY_IDS[item_id]
+        value = get_id(item_id)
+    return (item_id if value is not None else None), value
+
+
 def upsert_id(item_id, value, create_path, create_value):
-    encoded = quote(item_id, safe="")
-    if get_id(item_id) is None:
+    existing, _ = find(item_id)
+    if existing is None:
         request("POST", create_path, create_value)
     else:
-        request("PATCH", "/id/" + encoded, value)
+        # The new value carries the per-host @id; Caddy re-indexes IDs on every change.
+        request("PATCH", "/id/" + quote(existing, safe=""), value)
+
+
+def https_port():
+    """The port of Caddy's HTTPS server: its https_port, 443 unless configured."""
+    port = request("GET", "/config/apps/http/https_port")
+    return int(port) if port else 443
 
 
 def walk(value):
@@ -109,15 +139,18 @@ def listeners():
 def owns_route(route):
     """Keep the claim in Caddy, including while the owner's app is stopped.
 
-    Adopt a pre-claim route only if its live backend runs in this checkout or
-    its loaded certificate matches this checkout's certificate. Unknown legacy
-    ownership fails closed; a free port never grants ownership of a host.
+    A host nobody registered yet is free to claim, except the default name by
+    a checkout that set BILIBI_DEV_PORT: worker checkouts set a port and must
+    not take bilibi.localhost from the developer's checkout. Adopt a pre-claim
+    route only if its live backend runs in this checkout or its loaded
+    certificate matches this checkout's certificate. Unknown legacy ownership
+    fails closed; a free port never grants ownership of a host.
     """
     if route is None:
-        return not os.environ.get("BILIBI_DEV_PORT")
-    claims = [value["@id"] for value in walk(route) if value.get("@id", "").startswith(OWNER_PREFIX)]
+        return not os.environ.get("BILIBI_DEV_PORT") or HOST != dev_env.DEFAULT_HOST
+    claims = [value["@id"] for value in walk(route) if value.get("@id", "").startswith(OWNER_PREFIXES)]
     if claims:
-        return claims == [OWNER_ID]
+        return len(claims) == 1 and claims[0] in OWNER_IDS
     port = route_port(route)
     if port in listeners():
         result = subprocess.run(["ss", "-H", "-ltnp", f"sport = :{port}"],
@@ -130,7 +163,7 @@ def owns_route(route):
                 pass
         return False
     certificate = ROOT / ".local" / "https" / f"{HOST}.pem"
-    loaded = get_id(CERT_ID)
+    loaded = find(CERT_ID)[1]
     return bool(certificate.is_file() and loaded and loaded.get("certificate") == certificate.read_text())
 
 
@@ -154,9 +187,11 @@ def choose_port(servers, requested_port, own_route=None):
 
 
 def plan(requested_port, http_only=False):
+    """Print scheme, host, backend port and HTTPS port, one per line."""
     try:
-        route = get_id(ROUTE_ID)
+        route = find(ROUTE_ID)[1]
         servers = request("GET", "/config/apps/http/servers") or {}
+        tls_port = https_port()
         owner = not http_only and owns_route(route)
         # Do not claim a host already registered by a different launcher.
         if route is None and any(HOST in matcher.get("host", [])
@@ -164,11 +199,12 @@ def plan(requested_port, http_only=False):
                                  for matcher in entry.get("match", [])):
             owner = False
     except (ApiError, RuntimeError):
-        servers, route, owner = {}, None, False
+        servers, route, owner, tls_port = {}, None, False, 443
     port = choose_port(servers, requested_port, route if owner else None)
     print("https" if owner else "http")
     print(HOST if owner else "127.0.0.1")
     print(port)
+    print(tls_port)
 
 
 def waiting_route(host):
@@ -234,8 +270,9 @@ def build_status_route(port):
 
 def install_waiting_route(server_path, server, host):
     route = waiting_route(host)
-    if get_id(ERROR_ROUTE_ID) is not None:
-        request("PATCH", "/id/" + quote(ERROR_ROUTE_ID, safe=""), route)
+    existing, _ = find(ERROR_ROUTE_ID)
+    if existing is not None:
+        request("PATCH", "/id/" + quote(existing, safe=""), route)
     elif server.get("errors"):
         request("POST", server_path + "/errors/routes", route)
     else:
@@ -303,22 +340,23 @@ def certificate_files(host, certificate, key):
 
 
 def main():
-    global HOST, ROUTE_ID, TLS_POLICY_ID, CERT_ID, CERT_TAG, ERROR_ROUTE_ID, OWNER_PREFIX, OWNER_ID
+    global HOST, ROUTE_ID, TLS_POLICY_ID, CERT_ID, CERT_TAG, ERROR_ROUTE_ID, LEGACY_IDS, OWNER_PREFIXES, OWNER_IDS
     planning = len(sys.argv) == 4 and sys.argv[1] in ("--plan", "--http")
     host = sys.argv[2] if planning else sys.argv[1] if len(sys.argv) == 5 else ""
-    if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*(?:\.[a-z0-9]+(?:-[a-z0-9]+)*)*\.localhost", host):
-        raise RuntimeError("BILIBI_DEV_HOST must be a hostname under .localhost.")
+    if not dev_env.HOST_PATTERN.fullmatch(host):
+        raise RuntimeError("BILIBI_DEV_HOST must be a name under .localhost, such as my-bilibi.localhost.")
     HOST = host
-    # Preserve the existing default IDs; a lab host must never patch that route.
-    if host != "bilibi.localhost":
-        suffix = "-" + host
-        ROUTE_ID += suffix
-        TLS_POLICY_ID += suffix
-        CERT_ID += suffix
-        CERT_TAG += suffix
-        ERROR_ROUTE_ID += suffix
-    OWNER_PREFIX = ROUTE_ID + "-owner-"
-    OWNER_ID = OWNER_PREFIX + hashlib.sha256(str(ROOT).encode()).hexdigest()
+    ROUTE_ID, TLS_POLICY_ID, CERT_ID, ERROR_ROUTE_ID = (
+        f"{BASES[kind]}-{host}" for kind in ("route", "tls_policy", "certificate", "error_route")
+    )
+    CERT_TAG = CERT_ID
+    LEGACY_IDS = {f"{base}-{host}": base for base in BASES.values()} if host == dev_env.DEFAULT_HOST else {}
+    # The owner claim lives inside the route; the pre-per-host form is accepted
+    # for bilibi.localhost so the developer's existing route stays theirs.
+    checkout = hashlib.sha256(str(ROOT).encode()).hexdigest()
+    OWNER_PREFIXES = tuple(f"{route_id}-owner-" for route_id in (ROUTE_ID, *LEGACY_IDS.get(ROUTE_ID, ())))
+    OWNER_IDS = {prefix + checkout for prefix in OWNER_PREFIXES}
+    OWNER_ID = ROUTE_ID + "-owner-" + checkout
     requested_port = int(sys.argv[3] if planning else sys.argv[2])
     if not 1024 <= requested_port <= 65535:
         raise RuntimeError("BILIBI_DEV_PORT must be 1024..65535.")
@@ -331,7 +369,7 @@ def main():
         raise RuntimeError("usage: local-https-api.py HOST PORT CERTIFICATE KEY")
     # local-https.sh serializes registration. Recheck even after --plan, and
     # before any TLS or HTTP write, so a port override cannot steal the host.
-    own_route = get_id(ROUTE_ID)
+    own_id, own_route = find(ROUTE_ID)
     if not owns_route(own_route):
         raise RuntimeError(f"This checkout does not own https://{host}; use its local HTTP address.")
     try:
@@ -343,13 +381,14 @@ def main():
         tls_config = {}
     config = request("GET", "/config/apps/http/servers")
     report_missing_certificate_files(tls_config, config)
+    tls_port = https_port()
     candidates = [
         (name, server)
         for name, server in config.items()
-        if ":443" in server.get("listen", [])
+        if any(listen.endswith(f":{tls_port}") for listen in server.get("listen", []))
     ]
     if not candidates:
-        raise RuntimeError("Caddy has no HTTPS server listening on :443.")
+        raise RuntimeError(f"Caddy has no HTTPS server listening on :{tls_port}.")
     server_name, server = candidates[0]
     server_path = "/config/apps/http/servers/" + quote(server_name, safe="")
     if own_route is None:
@@ -389,8 +428,9 @@ def main():
         "match": {"sni": [host]},
         "certificate_selection": {"any_tag": [CERT_TAG]},
     }
-    if get_id(TLS_POLICY_ID) is not None:
-        request("PATCH", "/id/" + quote(TLS_POLICY_ID, safe=""), tls_policy)
+    existing_policy, _ = find(TLS_POLICY_ID)
+    if existing_policy is not None:
+        request("PATCH", "/id/" + quote(existing_policy, safe=""), tls_policy)
     else:
         policies = server.get("tls_connection_policies", [])
         default_policy = next((i for i, policy in enumerate(policies) if not policy.get("match")), None)
@@ -429,15 +469,16 @@ def main():
     }
     if status_port := os.environ.get('BILIBI_DEV_STATUS_PORT'):
         route_config['handle'][0]['routes'].insert(1, build_status_route(status_port))
-    if own_route is None:
+    if own_id is None:
         if "routes" in server:
             request("POST", server_path + "/routes", route_config)
         else:
             request("PUT", server_path + "/routes", [route_config])
     else:
-        request("PATCH", "/id/" + quote(ROUTE_ID, safe=""), route_config)
+        request("PATCH", "/id/" + quote(own_id, safe=""), route_config)
     install_waiting_route(server_path, server, host)
     print(port)
+    print(tls_port)
 
 
 if __name__ == "__main__":

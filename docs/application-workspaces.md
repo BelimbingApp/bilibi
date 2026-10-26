@@ -63,7 +63,7 @@ my-bilibi/                           # application Git root
 
 ## Work and release
 
-Clone an existing application and run `./bilibi start` from its outer root. Startup obtains missing sources and preserves existing branches, staged files, untracked work and edits. `./bilibi status` shows their differences from the saved recipe. Startup runs local source; it does not silently pin edits or claim a stale release identity.
+Clone an existing application and run `./bilibi start` from its outer root. Startup obtains missing sources and preserves existing branches, staged files, untracked work and edits. The application runs at its own `https://<name>.localhost`, named after its `origin` repository (`SB-Tape/sbg-bilibi` becomes `sbg-bilibi.localhost`), with its own private database, beside any Platform clone on the same machine. To choose another name, put `BILIBI_DEV_HOST=<name>.localhost` in `.env` in the application root; the Platform `README.md`, Local launcher, lists every line `.env` accepts. `./bilibi status` shows their differences from the saved recipe. Startup runs local source; it does not silently pin edits or claim a stale release identity.
 
 After component changes are committed and pushed, run:
 
