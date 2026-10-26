@@ -176,7 +176,9 @@ impl Schedule {
         lock(&tx, &metadata.key).await?;
         let refusal = match self.definitions.get(metadata.key.as_str()) {
             None => Some("schedule_removed"),
-            Some(item) if item.fingerprint != metadata.fingerprint => Some("schedule_changed"),
+            Some(_) if self.timing(&tx, &metadata.key).await?.version != metadata.fingerprint => {
+                Some("schedule_changed")
+            }
             Some(_) => match self.eligibility(&tx, &metadata.key).await? {
                 Eligibility::Eligible => None,
                 Eligibility::Unreviewed => Some("schedule_unreviewed"),

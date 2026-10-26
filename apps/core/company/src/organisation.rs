@@ -139,6 +139,9 @@ pub async fn require_writable_in(
 /// `authorize_company_target/3`): the capability now, and either the company
 /// the actor is affiliated with or `admin.company.tenant-wide.manage` for any
 /// other company of the tenant. Missing and cross-tenant ids are `NotFound`.
+/// A named system principal (`Scope::principal`, SP1) is affiliated with no
+/// company: once an administrator granted it the capability in this tenant,
+/// its reach is every live company of the tenant, with no second key.
 pub async fn authorize_target(
     client: &impl GenericClient,
     scope: &Scope,
@@ -151,7 +154,7 @@ pub async fn authorize_target(
         .actor()
         .organisation()
         .is_some_and(|organisation| organisation.get() == id);
-    if !own {
+    if !own && scope.principal().is_none() {
         authorize_key(client, scope, TENANT_WIDE).await?;
     }
     Ok(id)
@@ -200,10 +203,13 @@ const NAMED_SQL: &str =
 fn named(row: &tokio_postgres::Row) -> Result<NamedOrganisation> {
     let legal_name: Option<String> = row.get(2);
     let name: String = row.get(1);
+    let status: String = row.get(3);
+    let archived = status == ARCHIVED;
     Ok(NamedOrganisation {
         id: OrganisationId::new(row.get(0)).map_err(|_| Error::Internal)?,
         name: display_name(legal_name.as_deref(), &name),
-        archived: row.get::<_, String>(3) == ARCHIVED,
+        status,
+        archived,
     })
 }
 async fn named_in_scope(client: &dyn ProofClient, scope: &Scope) -> Result<Vec<NamedOrganisation>> {
@@ -235,18 +241,21 @@ async fn named_in_scope(client: &dyn ProofClient, scope: &Scope) -> Result<Vec<N
         companies.push(NamedOrganisation {
             id: OrganisationId::new(id).map_err(|_| Error::Internal)?,
             name: display_name(legal_name, name),
+            status: status.to_owned(),
             archived: status == ARCHIVED,
         });
     }
     companies.sort_by_cached_key(|company| (company.name.to_lowercase(), company.id.get()));
     Ok(companies)
 }
-/// Own company, or the whole tenant with the tenant-wide reach.
+/// Own company, or the whole tenant with the tenant-wide reach; a granted
+/// system principal reaches every company of its tenant (`authorize_target`).
 async fn reaches(client: &dyn ProofClient, scope: &Scope, id: i64) -> Result<bool> {
-    if scope
-        .actor()
-        .organisation()
-        .is_some_and(|organisation| organisation.get() == id)
+    if scope.principal().is_some()
+        || scope
+            .actor()
+            .organisation()
+            .is_some_and(|organisation| organisation.get() == id)
     {
         return Ok(true);
     }
@@ -270,7 +279,8 @@ impl OrganisationDirectory for Directory {
             if !decide_proof(client, scope, capability).await?.allowed {
                 return Ok(Vec::new());
             }
-            let tenant_wide = decide_proof(client, scope, TENANT_WIDE).await?.allowed;
+            let tenant_wide = scope.principal().is_some()
+                || decide_proof(client, scope, TENANT_WIDE).await?.allowed;
             let own = scope.actor().organisation();
             Ok(named_in_scope(client, scope)
                 .await?

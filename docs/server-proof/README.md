@@ -4,7 +4,7 @@ Build on your own machine, then prove installation, 2FA, Undo and automatic swit
 
 ## Prepare the lab
 
-Use a disposable Bilibi checkout on a Linux host with `sudo -n`, `systemd-nspawn`, `machinectl`, `debootstrap`, `iptables`, Rust, Python 3 and `chrome-devtools-axi`.
+Use a disposable Bilibi checkout on a Linux host with `sudo -n`, `systemd-nspawn`, `machinectl`, `debootstrap`, `iptables`, Rust, Node.js >=22, npm, Python 3 and `chrome-devtools-axi`.
 
 - The lab owns machine `fsproof`, network `10.77.61.0/24` and its tagged firewall rules. It refuses an existing machine or interface with that name.
 - Host IP forwarding must already be enabled. The script does not change it or any host service, Caddy configuration or database.

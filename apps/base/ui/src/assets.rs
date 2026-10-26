@@ -146,7 +146,7 @@ fn catalogue() -> &'static [StaticAsset] {
         assets
     })
 }
-const CSS: &str = include_str!("../assets/app.css");
+const CSS: &str = include_str!(concat!(env!("OUT_DIR"), "/app.css"));
 const JS: &str = include_str!("../assets/live.js");
 /// The hook controllers of the feedback, dialog and tab components.
 const SHELL_JS: &str = include_str!("../assets/shell.js");
