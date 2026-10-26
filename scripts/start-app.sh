@@ -133,7 +133,8 @@ host=$BILIBI_DEV_HOST
 # Plan before calling local-https.sh: a checkout registers only the host it
 # owns, and every host has its own Caddy route, so instances run side by side.
 # The registrar rechecks ownership under its lock in case two first launches race.
-# Lines: scheme, host, backend port, Caddy's HTTPS port (443 unless configured).
+# Lines: scheme, host, backend port, Caddy's HTTPS port (443 unless configured),
+# and why not https: "owned" by another checkout, or Caddy "unavailable".
 plan=$(python3 "$root/scripts/local-https-api.py" --plan "$host" "${BILIBI_DEV_PORT:-4300}")
 readarray -t origin_plan <<< "$plan"
 scheme=${origin_plan[0]}
@@ -149,6 +150,8 @@ if [[ $scheme == https ]]; then
         scheme=${origin_plan[0]}
         instance=("${origin_plan[1]}" "${origin_plan[2]}" "${origin_plan[3]}")
     fi
+elif [[ ${origin_plan[4]:-} == owned ]]; then
+    echo "Another checkout owns https://$host. To give this one its own address, put BILIBI_DEV_HOST=<name>.localhost in $BILIBI_DEV_ENV_FILE (see .env.example)." >&2
 fi
 if [[ $scheme == https ]]; then
     export APP_ORIGIN="https://${instance[0]}"

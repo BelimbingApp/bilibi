@@ -187,7 +187,11 @@ def choose_port(servers, requested_port, own_route=None):
 
 
 def plan(requested_port, http_only=False):
-    """Print scheme, host, backend port and HTTPS port, one per line."""
+    """Print scheme, host, backend port, HTTPS port and why not https, one per line.
+
+    The last line is empty for https, "owned" when another checkout holds the
+    host, and "unavailable" when Caddy does not answer.
+    """
     try:
         route = find(ROUTE_ID)[1]
         servers = request("GET", "/config/apps/http/servers") or {}
@@ -198,13 +202,15 @@ def plan(requested_port, http_only=False):
                                  for server in servers.values() for entry in caddy_routes(server)
                                  for matcher in entry.get("match", [])):
             owner = False
+        reason = "" if owner else "owned"
     except (ApiError, RuntimeError):
-        servers, route, owner, tls_port = {}, None, False, 443
+        servers, route, owner, tls_port, reason = {}, None, False, 443, "unavailable"
     port = choose_port(servers, requested_port, route if owner else None)
     print("https" if owner else "http")
     print(HOST if owner else "127.0.0.1")
     print(port)
     print(tls_port)
+    print("" if http_only else reason)
 
 
 def waiting_route(host):
