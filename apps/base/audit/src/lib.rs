@@ -74,12 +74,19 @@ impl Attribution {
     /// impersonation, the operator behind it. `trace_id` is minted per
     /// recorded action.
     pub fn from_scope(scope: &Scope) -> Self {
+        // A named system principal's scope (SP1) is attributed by name, as
+        // `Scope::mutation_context` attributes its writes.
+        let principal = scope.principal().map(str::to_owned);
         Self {
             tenant: Some(scope.tenant()),
-            actor_type: "user",
+            actor_type: if principal.is_some() {
+                "system"
+            } else {
+                "user"
+            },
             actor_id: scope.user(),
             impersonator_id: scope.impersonator().map(|operator| operator.user()),
-            system_principal: None,
+            system_principal: principal,
             trace_id: None,
             client_identity: scope
                 .agent()

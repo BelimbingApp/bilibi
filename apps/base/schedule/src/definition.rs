@@ -1,5 +1,5 @@
-//! Immutable contributed recurrences. Code owns what runs and when; the database
-//! only records an operator's decision about a definition's exact fingerprint.
+//! Immutable recurrence defaults, mirroring Bilimbi Schedule definitions. Code
+//! owns the work; operator clock settings bind to this exact fingerprint.
 use bilibi_module_registry::{Consumer, Entry, RegistryError};
 use serde_json::Value;
 use sha2::{Digest, Sha256};

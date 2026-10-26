@@ -387,6 +387,11 @@ impl Grants {
         actor: &Scope,
         user: i64,
     ) -> Result<()> {
+        // Grant administration is an account's act: a system principal's
+        // scope (SP1) never administers grants, its own included.
+        if actor.principal().is_some() {
+            return Err(Error::Forbidden);
+        }
         self.authentication
             .authenticate(client, actor.tenant(), user, String::new())
             .await

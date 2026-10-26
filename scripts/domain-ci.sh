@@ -28,7 +28,7 @@ step 'Discovery refuses any container shape the Platform does not accept'
 python3 scripts/discover-modules.py
 python3 scripts/discover-modules.py --check
 
-step 'Committed CSS already covers the mounted container (no CSS change when mounting)'
+step 'CSS compiles reproducibly and Platform utilities cover the mounted container'
 ./scripts/build-assets.sh --check
 
 # --locked cannot add the mounted crates to Cargo.lock; plain metadata does, and
