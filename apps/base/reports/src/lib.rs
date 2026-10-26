@@ -470,6 +470,43 @@ impl Reports {
         Ok(store::roles(&**client, scope.tenant()).await?)
     }
 
+    /// What this reader may see of a report now, as a key that changes when
+    /// it does: its version and which of its columns their catalog resolves.
+    /// A cached drawing is reused only while this key holds, so a field
+    /// restriction or a lost share shows at the next refresh, not the next
+    /// run. Cheaper than a run: no Grid read. Needs `reports.view`.
+    pub async fn access(&self, scope: &Scope, id: i64) -> Outcome<String> {
+        let client = self.db.get().await.map_err(Error::from)?;
+        authorize(&**client, scope, VIEW).await?;
+        let report = match store::read(&**client, scope.tenant(), scope.user(), id, false).await {
+            Err(Error::NotFound) => return Err(ReportError::NotFound),
+            other => other?,
+        };
+        let catalog = Catalog::for_scope(&**client, scope)
+            .await
+            .map_err(|e| ReportError::Database(e.into()))?;
+        let Some(root) = catalog.table(&report.record_type) else {
+            return Ok(format!("{}:unreadable", report.version));
+        };
+        let d = &report.definition;
+        let seen: String = d
+            .columns
+            .iter()
+            .chain(d.groupings.iter().map(|g| &g.column))
+            .chain(d.measures.iter().map(|m| &m.column))
+            .chain(d.sort.iter().map(|s| &s.column))
+            .chain(d.filters.iter().map(|f| &f.column))
+            .map(|spec| {
+                if catalog.resolve(root, spec).is_ok() {
+                    '1'
+                } else {
+                    '0'
+                }
+            })
+            .collect();
+        Ok(format!("{}:{seen}", report.version))
+    }
+
     /// Runs a report as the reader: their catalog, grants and time zone.
     /// Columns, groupings, measures and sorts the reader cannot see are left
     /// out and listed; a filter on one refuses the run, so it cannot be used

@@ -93,23 +93,6 @@ impl Core {
             .filter(|widget| offered(widget.capability))
             .map(|widget| Item::widget(widget))
             .collect();
-        let mut provided: Vec<Item> = Vec::new();
-        for provider in self.dashboard.providers() {
-            if !offered(provider.capability) {
-                continue;
-            }
-            let entries = match (provider.entries)(scope).await {
-                Ok(entries) => entries,
-                Err(Error::Forbidden) => continue,
-                Err(error) => return Err(error),
-            };
-            provided.extend(
-                entries
-                    .into_iter()
-                    .take(crate::MAX_PROVIDED)
-                    .filter_map(|entry| Item::provided(provider, entry)),
-            );
-        }
         let mut stored = self
             .settings
             .resolve_many(
@@ -119,6 +102,38 @@ impl Core {
                 &[LAYOUT, SECTIONS],
             )
             .await?;
+        // Placed ids, so a provider answers those before choosing which of
+        // its other entries to offer: a pin never falls past the offer cap.
+        let placed_ids: Vec<String> = stored
+            .values()
+            .filter(|s| s.overridden)
+            .filter_map(|s| s.value.as_array())
+            .flatten()
+            .filter_map(|id| id.as_str().map(str::to_owned))
+            .collect();
+        let mut provided: Vec<Item> = Vec::new();
+        for provider in self.dashboard.providers() {
+            if !offered(provider.capability) {
+                continue;
+            }
+            let prefix = format!("{}-", provider.prefix);
+            let pinned: Vec<String> = placed_ids
+                .iter()
+                .filter_map(|id| id.strip_prefix(&prefix).map(str::to_owned))
+                .collect();
+            let entries = match (provider.entries)(scope, &pinned).await {
+                Ok(entries) => entries,
+                Err(Error::Forbidden) => continue,
+                Err(error) => return Err(error),
+            };
+            let (kept, others): (Vec<_>, Vec<_>) =
+                entries.into_iter().partition(|e| pinned.contains(&e.key));
+            provided.extend(
+                kept.into_iter()
+                    .chain(others.into_iter().take(crate::MAX_PROVIDED))
+                    .filter_map(|entry| Item::provided(provider, entry)),
+            );
+        }
         let mut arrange = |key: &str, placement: Placement| -> Result<_> {
             let stored = stored.remove(key).ok_or(Error::Internal)?;
             let own: Vec<_> = contributed
