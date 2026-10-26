@@ -8,16 +8,14 @@ server never does (install-server.sh writes each instance's own env file).
 Each setting comes from the first place that has it: a variable set in the
 shell, the .env file beside the ./bilibi front door you ran (the application
 root for an app-maker application, otherwise this checkout), then its default.
-The default address names an application after its origin repository, so one
-made with the app maker gets its own <name>.localhost without anyone typing a
-setting, while the Platform checkout keeps bilibi.localhost. .env.example at
-the Platform root lists every line .env accepts.
+Every checkout defaults to bilibi.localhost. Set BILIBI_DEV_HOST in .env to
+choose another address. .env.example at the Platform root lists every line
+.env accepts.
 """
 import os
 from pathlib import Path
 import re
 import shlex
-import subprocess
 import sys
 
 
@@ -49,22 +47,6 @@ def application_root():
     if ROOT.name == "platform" and ROOT.parent.name == "sources" and (candidate / "setup.toml").is_file():
         return candidate
     return None
-
-
-def label(text):
-    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
-
-
-def default_host(application):
-    if application is None:
-        return DEFAULT_HOST
-    origin = subprocess.run(["git", "-C", str(application), "remote", "get-url", "origin"],
-                            capture_output=True, text=True)
-    name = ""
-    if origin.returncode == 0:
-        url = origin.stdout.strip().rstrip("/").removesuffix(".git")
-        name = label(re.split(r"[/:]", url)[-1])
-    return f"{name or label(application.name) or 'bilibi'}.localhost"
 
 
 def read_env(path):
@@ -102,7 +84,7 @@ def main():
         print(f"{env_file}: {', '.join(sorted(exports))}", file=sys.stderr)
     host = os.environ.get("BILIBI_DEV_HOST") or exports.get("BILIBI_DEV_HOST")
     if not host:
-        exports["BILIBI_DEV_HOST"] = default_host(application)
+        exports["BILIBI_DEV_HOST"] = DEFAULT_HOST
     elif not HOST_PATTERN.fullmatch(host):
         raise ValueError("BILIBI_DEV_HOST must be a name under .localhost, such as my-bilibi.localhost.")
     # The launcher names this file when it tells someone how to rename an instance.

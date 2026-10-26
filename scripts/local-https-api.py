@@ -48,6 +48,10 @@ class ApiError(RuntimeError):
         self.status = status
 
 
+class HostConflict(RuntimeError):
+    pass
+
+
 def request(method, path, body=None):
     data = None if body is None else json.dumps(body).encode()
     headers = {} if data is None else {"Content-Type": "application/json"}
@@ -155,15 +159,13 @@ def reserved_ports():
 def owns_route(route):
     """Keep the claim in Caddy, including while the owner's app is stopped.
 
-    A host nobody registered yet is free to claim, except the default name by
-    a checkout that set BILIBI_DEV_PORT: worker checkouts set a port and must
-    not take bilibi.localhost from the developer's checkout. Adopt a pre-claim
+    A host nobody registered yet is free to claim. Adopt a pre-claim
     route only if its live backend runs in this checkout or its loaded
     certificate matches this checkout's certificate. Unknown legacy ownership
     fails closed; a free port never grants ownership of a host.
     """
     if route is None:
-        return not os.environ.get("BILIBI_DEV_PORT") or HOST != dev_env.DEFAULT_HOST
+        return True
     claims = [value["@id"] for value in walk(route) if value.get("@id", "").startswith(OWNER_PREFIXES)]
     if claims:
         return len(claims) == 1 and claims[0] in OWNER_IDS
@@ -202,23 +204,48 @@ def choose_port(servers, requested_port, own_route=None):
     return port
 
 
+def check_host(route, servers):
+    conflicting = next((entry for server in servers.values() for entry in caddy_routes(server)
+                        if any(HOST in matcher.get("host", []) for matcher in entry.get("match", []))
+                        and entry != route), None)
+    if owns_route(route) and conflicting is None:
+        return
+    owner = next((value['bilibi_checkout'] for value in walk(route or conflicting or {})
+                  if value.get('handler') == 'vars' and value.get('bilibi_checkout')), 'unknown checkout folder')
+    hosts = {host for server in servers.values() for entry in caddy_routes(server)
+             for matcher in entry.get('match', []) for host in matcher.get('host', [])}
+    number = 2
+    while f'bilibi-{number}.localhost' in hosts:
+        number += 1
+    env_file = os.environ.get('BILIBI_DEV_ENV_FILE') or str((dev_env.application_root() or ROOT) / '.env')
+    raise HostConflict(f'https://{HOST} is already owned by {owner}. '
+                       f'Put BILIBI_DEV_HOST=bilibi-{number}.localhost in {env_file}, then run ./bilibi start again.')
+
+
+def check_available():
+    try:
+        route = find(ROUTE_ID)[1]
+        servers = request('GET', '/config/apps/http/servers') or {}
+    except (ApiError, RuntimeError):
+        return  # Missing HTTPS still permits the loopback HTTP address.
+    check_host(route, servers)
+
+
 def plan(requested_port, http_only=False):
     """Print scheme, host, backend port, HTTPS port and why not https, one per line.
 
-    The last line is empty for https, "owned" when another checkout holds the
-    host, and "unavailable" when Caddy does not answer.
+    The last line is empty for https or "unavailable" when Caddy does not answer.
+    A host owned by another checkout stops startup with a concrete .env fix.
     """
     try:
         route = find(ROUTE_ID)[1]
         servers = request("GET", "/config/apps/http/servers") or {}
         tls_port = https_port()
-        owner = not http_only and owns_route(route)
-        # Do not claim a host already registered by a different launcher.
-        if route is None and any(HOST in matcher.get("host", [])
-                                 for server in servers.values() for entry in caddy_routes(server)
-                                 for matcher in entry.get("match", [])):
-            owner = False
-        reason = "" if owner else "owned"
+        check_host(route, servers)
+        owner = not http_only
+        reason = ""
+    except HostConflict:
+        raise
     except (ApiError, RuntimeError):
         servers, route, owner, tls_port, reason = {}, None, False, 443, "unavailable"
     port = choose_port(servers, requested_port, route if owner else None)
@@ -363,7 +390,7 @@ def certificate_files(host, certificate, key):
 
 def main():
     global HOST, ROUTE_ID, TLS_POLICY_ID, CERT_ID, CERT_TAG, ERROR_ROUTE_ID, LEGACY_IDS, OWNER_PREFIXES, OWNER_IDS
-    planning = len(sys.argv) == 4 and sys.argv[1] in ("--plan", "--http")
+    planning = len(sys.argv) == 4 and sys.argv[1] in ("--plan", "--http", "--check")
     host = sys.argv[2] if planning else sys.argv[1] if len(sys.argv) == 5 else ""
     if not dev_env.HOST_PATTERN.fullmatch(host):
         raise RuntimeError("BILIBI_DEV_HOST must be a name under .localhost, such as my-bilibi.localhost.")
@@ -383,6 +410,9 @@ def main():
     if not 1024 <= requested_port <= 65535:
         raise RuntimeError("BILIBI_DEV_PORT must be 1024..65535.")
     if planning:
+        if sys.argv[1] == '--check':
+            check_available()
+            return
         # Even after losing a first-launch race, avoid the new owner's reserved
         # backend port while its app is still building and not listening yet.
         plan(requested_port, http_only=sys.argv[1] == "--http")
@@ -392,8 +422,8 @@ def main():
     # local-https.sh serializes registration. Recheck even after --plan, and
     # before any TLS or HTTP write, so a port override cannot steal the host.
     own_id, own_route = find(ROUTE_ID)
-    if not owns_route(own_route):
-        raise RuntimeError(f"This checkout does not own https://{host}; use its local HTTP address.")
+    config = request("GET", "/config/apps/http/servers") or {}
+    check_host(own_route, config)
     try:
         tls_config = request("GET", "/config/apps/tls/certificates") or {}
     except ApiError as error:
@@ -401,7 +431,6 @@ def main():
         if error.status != 400:
             raise
         tls_config = {}
-    config = request("GET", "/config/apps/http/servers")
     report_missing_certificate_files(tls_config, config)
     tls_port = https_port()
     candidates = [
@@ -468,6 +497,9 @@ def main():
         "@id": ROUTE_ID,
         "match": [{"host": [host]}],
         "handle": [{
+            "handler": "vars",
+            "bilibi_checkout": str(ROOT),
+        }, {
             "@id": OWNER_ID,
             "handler": "subroute",
             "routes": [
@@ -490,7 +522,7 @@ def main():
         "terminal": True,
     }
     if status_port := os.environ.get('BILIBI_DEV_STATUS_PORT'):
-        route_config['handle'][0]['routes'].insert(1, build_status_route(status_port))
+        route_config['handle'][1]['routes'].insert(1, build_status_route(status_port))
     if own_id is None:
         if "routes" in server:
             request("POST", server_path + "/routes", route_config)
@@ -499,6 +531,25 @@ def main():
     else:
         request("PATCH", "/id/" + quote(own_id, safe=""), route_config)
     install_waiting_route(server_path, server, host)
+    # A restarted checkout keeps only its chosen name. Claims from other
+    # checkouts stay untouched, even if an old instance file names their host.
+    for old_server in config.values():
+        for old_route in caddy_routes(old_server):
+            old_hosts = [name for matcher in old_route.get('match', []) for name in matcher.get('host', [])]
+            if len(old_hosts) != 1 or old_hosts[0] == host:
+                continue
+            old_host = old_hosts[0]
+            old_owners = {f'{BASES["route"]}-{old_host}-owner-{checkout}'}
+            if old_host == dev_env.DEFAULT_HOST:
+                old_owners.add(f'{BASES["route"]}-owner-{checkout}')
+            if not any(value.get('@id') in old_owners for value in walk(old_route)):
+                continue
+            for base in BASES.values():
+                item_id = f'{base}-{old_host}'
+                if get_id(item_id) is None and old_host == dev_env.DEFAULT_HOST:
+                    item_id = base
+                if get_id(item_id) is not None:
+                    request('DELETE', '/id/' + quote(item_id, safe=''))
     print(port)
     print(tls_port)
 

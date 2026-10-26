@@ -20,8 +20,9 @@ certificate="$root/.local/https/$host.pem"
 key="$root/.local/https/$host-key.pem"
 # Ownership is checked before the API helper creates or renews these files.
 # It prints the backend port, then Caddy's HTTPS port (443 unless configured).
-readarray -t registered < <(python3 "$root/scripts/local-https-api.py" \
+registration=$(python3 "$root/scripts/local-https-api.py" \
     "$host" "$port" "$certificate" "$key")
+readarray -t registered <<< "$registration"
 [[ ${#registered[@]} == 2 ]] || exit 1
 port=${registered[0]}
 https_port=${registered[1]}

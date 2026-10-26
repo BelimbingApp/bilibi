@@ -12,6 +12,8 @@ cd "$root"
 # resolves BILIBI_DEV_HOST, the instance's own <name>.localhost (scripts/dev-env.py).
 dev_env_exports=$(python3 scripts/dev-env.py)
 eval "$dev_env_exports"
+# Refuse an address clash before creating keys, a status server or a database.
+python3 "$root/scripts/local-https-api.py" --check "$BILIBI_DEV_HOST" "${BILIBI_DEV_PORT:-4300}"
 # A full local copy needs these keys. When a variable is already set, leave it
 # and its file alone. Otherwise read the file, or create it once: 64 hex
 # characters from 32 random bytes, mode 0600, under gitignored .local/dev/.
@@ -134,7 +136,7 @@ host=$BILIBI_DEV_HOST
 # owns, and every host has its own Caddy route, so instances run side by side.
 # The registrar rechecks ownership under its lock in case two first launches race.
 # Lines: scheme, host, backend port, Caddy's HTTPS port (443 unless configured),
-# and why not https: "owned" by another checkout, or Caddy "unavailable".
+# and whether Caddy is "unavailable". An address clash stops startup.
 # Two first launches at the same moment must not pick the same backend port:
 # the lock covers choosing a port and reserving it until the app listens.
 exec 9>"/tmp/bilibi-ports-$(id -u).lock"
@@ -147,15 +149,14 @@ if [[ $scheme == https ]]; then
     if "$root/scripts/local-https.sh"; then
         readarray -t instance < "$root/.local/https/instance"
     else
+        # A different checkout may have claimed the host since planning.
+        python3 "$root/scripts/local-https-api.py" --check "$host" "${BILIBI_DEV_PORT:-4300}"
         echo "Local HTTPS is unavailable for this checkout. Continuing with its loopback HTTP address." >&2
-        echo "Another checkout owns https://$host. To give this one its own address, put BILIBI_DEV_HOST=<name>.localhost in $BILIBI_DEV_ENV_FILE (see .env.example)." >&2
         plan=$(python3 "$root/scripts/local-https-api.py" --http "$host" "${BILIBI_DEV_PORT:-4300}")
         readarray -t origin_plan <<< "$plan"
         scheme=${origin_plan[0]}
         instance=("${origin_plan[1]}" "${origin_plan[2]}" "${origin_plan[3]}")
     fi
-elif [[ ${origin_plan[4]:-} == owned ]]; then
-    echo "Another checkout owns https://$host. To give this one its own address, put BILIBI_DEV_HOST=<name>.localhost in $BILIBI_DEV_ENV_FILE (see .env.example)." >&2
 fi
 if [[ $scheme == https ]]; then
     export APP_ORIGIN="https://${instance[0]}"
@@ -179,6 +180,7 @@ else
     highlight() { printf '%s%s' "$1" "$2"; }
 fi
 echo "$(highlight 'Open ' "$APP_ORIGIN") — sign in as ai@agent.my / bilibi-dev (the platform operator's administrator)."
+echo "After changing BILIBI_DEV_HOST in $BILIBI_DEV_ENV_FILE, restart the launcher to use the new address."
 # Open the sign-in page in the browser once the app answers: on WSL through
 # Windows, on a Linux desktop through xdg-open. Without either, the printed
 # address is enough. BILIBI_OPEN_BROWSER=0 turns this off. The waiter stops

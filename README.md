@@ -85,7 +85,7 @@ cd bilibi
 
 `start` checks the tools, runs the existing setup when needed, activates newly installed Rust tools in the same shell, and launches local sources. Setup installs Rust, PostgreSQL 18, Caddy, mkcert and Node.js. You do not need a GitHub account. An AI agent follows these same steps.
 
-Bilibi opens in your browser at the sign-in page when it is ready. Sign in as `ai@agent.my` / `bilibi-dev` (development seed only). If no browser opens, open the address the launcher prints. To stop it opening a browser, set `BILIBI_OPEN_BROWSER=0`. Each checkout gets its own HTTPS address, `https://<name>.localhost`, and its own private database, so several run side by side. The Platform checkout is <https://bilibi.localhost>; an application made with the app maker is named after its origin repository (`SB-Tape/sbg-bilibi` becomes <https://sbg-bilibi.localhost>). To choose a name, put `BILIBI_DEV_HOST=<name>.localhost` in `.env` (see [Local launcher](#local-launcher)). A second checkout that would use a name another checkout owns falls back to its own `http://127.0.0.1:<port>` address and says so. Setting `BILIBI_DEV_PORT` selects a backend port, without taking over another checkout's HTTPS address.
+Bilibi opens in your browser at the sign-in page when it is ready. Sign in as `ai@agent.my` / `bilibi-dev` (development seed only). If no browser opens, open the address the launcher prints. To stop it opening a browser, set `BILIBI_OPEN_BROWSER=0`. Every checkout defaults to <https://bilibi.localhost> and gets its own private database. To choose another address, put `BILIBI_DEV_HOST=<name>.localhost` in `.env` (see [Local launcher](#local-launcher)). If another checkout owns the address, startup stops and names that checkout. Follow the printed `BILIBI_DEV_HOST` line in your `.env`, then start again. Restart the launcher after changing the address; it releases its old name when it registers the new one. Setting `BILIBI_DEV_PORT` selects a backend port, without taking over another checkout's HTTPS address.
 
 ### Supported environment
 
@@ -135,8 +135,8 @@ The launcher reads its settings from your shell first, then from an optional `.e
 
 | Line in `.env` | What it changes | Default |
 |----------------|-----------------|---------|
-| `BILIBI_DEV_HOST` | This instance's address, a name under `.localhost`, served over HTTPS | `bilibi.localhost` here; an application is named after its origin repository |
-| `BILIBI_DEV_PORT` | The port Bilibi itself listens on behind Caddy. With it set, a checkout never claims `bilibi.localhost` first | The first free port from 4300 |
+| `BILIBI_DEV_HOST` | This instance's address, a name under `.localhost`, served over HTTPS | `bilibi.localhost` for every checkout |
+| `BILIBI_DEV_PORT` | The port Bilibi itself listens on behind Caddy | The first free port from 4300 |
 | `BILIBI_OPEN_BROWSER` | Open the sign-in page in your browser when the app is ready, `1` or `0` | `1` |
 
 Servers never read `.env`: `install-server.sh` writes each server instance its own `env` file ([server installation](docs/server-install.md)).
