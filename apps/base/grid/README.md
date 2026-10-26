@@ -194,6 +194,9 @@ BILIBI_GRID_DEMO=disposable cargo run -p bilibi-web --example g5-grid-summary
 
 
 Both specs carry `bounds` (`Bounds { statement_ms, max_cost }`): `Default` is the interactive bound every other Grid read uses (2 s, `MAX_ESTIMATED_COST`); a background caller may pass a larger pair, up to `MAX_STATEMENT_MS` and `MAX_COST_BOUND`. A statement stopped by its timeout is refused as `QueryError::Limit`, like the cost bound, not reported as a database fault.
+
+Equals and one-of compare typed values: each value is checked against the column's type (a number for a number column, yes/no, text, a `YYYY-MM-DD` date, or a date-time with its offset) and refused as `Unsupported` otherwise, so a wrong type is an answer in words rather than an empty result, and `…+00:00` and `…Z` name the same instant. The owner's source SQL is copied into each statement untouched.
+
 ## Searching related text
 
 `query::text_search_sql(client, scope, root, paths)` builds a membership subquery for an owner's paginated search and count. Execute it immediately under the same scope, binding tenant, user and normalized search text to `$1`, `$2` and `$3`. The owner retains its pagination and statement timeout. Paths resolve against a fresh catalog; unavailable tables and restricted fields contribute no matches. Many-links search every text value before cell truncation, so a value beyond the displayed rollup still matches.

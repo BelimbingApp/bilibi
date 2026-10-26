@@ -492,18 +492,17 @@ pub async fn page_keys(
     }
     let key = field("r", root, root.key());
     order.push(format!("{key} ASC"));
-    let from = format!(
-        "WITH actor AS (SELECT $1::bigint AS tenant, $2::bigint AS usr, $3::text AS zone) SELECT {{}} FROM {} r CROSS JOIN actor WHERE {predicate}",
-        source(root)
-    );
+    // Composed from its parts, never by replacing a marker: the owner's
+    // source SQL may itself contain `{}` and is copied in untouched.
+    let head = "WITH actor AS (SELECT $1::bigint AS tenant, $2::bigint AS usr, $3::text AS zone)";
+    let tail = format!("FROM {} r CROSS JOIN actor WHERE {predicate}", source(root));
     let page = format!(
-        "{} ORDER BY {} LIMIT {} OFFSET {}",
-        from.replace("{}", &format!("to_jsonb({key})")),
+        "{head} SELECT to_jsonb({key}) {tail} ORDER BY {} LIMIT {} OFFSET {}",
         order.join(", "),
         spec.limit,
         spec.offset
     );
-    let count = from.replace("{}", "count(*)");
+    let count = format!("{head} SELECT count(*) {tail}");
     let estimated_cost = admit(&tx, &page, &binds, spec.bounds.max_cost)
         .await?
         .max(admit(&tx, &count, &binds, spec.bounds.max_cost).await?);
@@ -602,14 +601,6 @@ fn local(value: &str, ty: FieldType) -> String {
     }
 }
 
-fn scalar(value: &Value) -> bool {
-    match value {
-        Value::Number(_) | Value::Bool(_) => true,
-        Value::String(text) => text.len() <= MAX_TEXT,
-        _ => false,
-    }
-}
-
 /// Every filter, joined with AND (`true` when there are none).
 fn filters(
     catalog: &Catalog,
@@ -635,6 +626,41 @@ fn filters(
     })
 }
 
+/// An equals or one-of value checked against the column's type and written
+/// in one canonical form, with the SQL type it compares as: the comparison is
+/// then of typed values, so `…+00:00` and `…Z` name the same instant and a
+/// number column refuses text instead of matching nothing. The cast names
+/// come from the column type, never from the request.
+fn operand(column: &Column, value: &Value) -> Result<(&'static str, String), QueryError> {
+    let refused = |why: &'static str| Err(unsupported(column, why));
+    match (column.ty, value) {
+        (FieldType::Integer | FieldType::Float | FieldType::Decimal, Value::Number(n)) => {
+            Ok(("numeric", n.to_string()))
+        }
+        (FieldType::Integer | FieldType::Float | FieldType::Decimal, _) => {
+            refused("this column takes numbers")
+        }
+        (FieldType::Boolean, Value::Bool(b)) => Ok(("boolean", b.to_string())),
+        (FieldType::Boolean, _) => refused("this column takes yes or no"),
+        (FieldType::String | FieldType::Enum, Value::String(text)) if text.len() <= MAX_TEXT => {
+            Ok(("text", text.clone()))
+        }
+        (FieldType::String | FieldType::Enum, _) => {
+            refused("this column takes text of at most 256 bytes")
+        }
+        (FieldType::Date, Value::String(text)) => match text.parse::<Date>() {
+            Ok(day) => Ok(("date", day.to_string())),
+            Err(_) => refused("this column takes a YYYY-MM-DD date"),
+        },
+        (FieldType::Date, _) => refused("this column takes a YYYY-MM-DD date"),
+        (FieldType::DateTime, Value::String(text)) => match text.parse::<Timestamp>() {
+            Ok(at) => Ok(("timestamptz", at.to_string())),
+            Err(_) => refused("this column takes a date and time with its offset"),
+        },
+        (FieldType::DateTime, _) => refused("this column takes a date and time with its offset"),
+    }
+}
+
 fn test(
     column: &Column,
     value: &str,
@@ -646,21 +672,23 @@ fn test(
     let dated = matches!(ty, FieldType::Date | FieldType::DateTime);
     Ok(match test {
         Test::Equals(wanted) => {
-            if !scalar(wanted) {
-                return Err(unsupported(
-                    column,
-                    "equals takes one number, text or yes/no",
-                ));
-            }
-            format!("to_jsonb({value}) = {}::jsonb", binds.push(wanted.clone()))
+            let (cast, text) = operand(column, wanted)?;
+            format!("({value})::{cast} = {}::text::{cast}", binds.push(text))
         }
         Test::OneOf(choices) => {
-            if choices.is_empty() || choices.len() > MAX_CHOICES || !choices.iter().all(scalar) {
+            if choices.is_empty() || choices.len() > MAX_CHOICES {
                 return Err(unsupported(column, "one of takes 1 to 100 values"));
             }
+            let mut cast = "text";
+            let mut texts = Vec::with_capacity(choices.len());
+            for choice in choices {
+                let (typed, text) = operand(column, choice)?;
+                cast = typed;
+                texts.push(text);
+            }
             format!(
-                "to_jsonb({value}) IN (SELECT jsonb_array_elements({}::jsonb))",
-                binds.push(Value::Array(choices.clone()))
+                "({value})::{cast} = ANY({}::text[]::{cast}[])",
+                binds.push(texts)
             )
         }
         Test::Contains(text) => {

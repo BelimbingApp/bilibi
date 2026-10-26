@@ -28,6 +28,16 @@ static EXTRA: GridContribution = GridContribution {
         Source::global("SELECT row_number() OVER () AS id FROM generate_series(1,1000000) a CROSS JOIN generate_series(1,1000000) b"),
         "id",
         &[Field::new("id", "ID", FieldType::Integer)],
+    ),
+    // An owner source whose own SQL holds `{}` (text and jsonb): Grid must copy
+    // it in untouched.
+    TableDecl::new(
+        "g5_braces",
+        "Owner SQL with braces",
+        "grid.reference.view",
+        Source::global("SELECT id FROM (SELECT '{}'::text AS id, '{}'::jsonb AS doc) s"),
+        "id",
+        &[Field::new("id", "ID", FieldType::String)],
     )],
     links: &[],
 };
@@ -551,6 +561,127 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         matches!(forbidden, Err(grid::QueryError::ForbiddenRoot)),
         "refused",
     );
+
+    println!("== Owner SQL and typed values (review of #157)");
+    let braces = page_keys(
+        &db,
+        &manager,
+        "g5_braces",
+        &PageSpec {
+            filters: vec![],
+            sorts: vec![],
+            timezone: ZONE.into(),
+            offset: 0,
+            bounds: grid::Bounds::default(),
+            limit: 10,
+        },
+    )
+    .await;
+    let keys = braces
+        .as_ref()
+        .map(|page| page.keys.clone())
+        .unwrap_or_default();
+    report.check(
+        "an owner source holding {} is copied in untouched: its real key comes back",
+        keys == vec![json!("{}")],
+        format!("{:?}", braces.as_ref().map(|p| &p.keys)),
+    );
+    let projected = grid::project(&db, &manager, "g5_braces", &keys, &["id"]).await;
+    report.check(
+        "and that key projects its row",
+        projected.as_ref().is_ok_and(|p| p.rows.len() == 1),
+        format!("{:?}", projected.as_ref().map(|p| p.rows.len())),
+    );
+    let text_on_number = summarize(
+        &db,
+        &manager,
+        "reference_items",
+        &spec(
+            vec![filter("quantity", Test::Equals(json!("6")))],
+            vec![],
+            vec![],
+        ),
+    )
+    .await;
+    report.check(
+        "equals with text on a number column is refused, not an empty result",
+        matches!(text_on_number, Err(grid::QueryError::Unsupported(..))),
+        format!("{:?}", text_on_number.err()),
+    );
+    let mixed = summarize(
+        &db,
+        &manager,
+        "reference_items",
+        &spec(
+            vec![filter("quantity", Test::OneOf(vec![json!(6), json!("7")]))],
+            vec![],
+            vec![],
+        ),
+    )
+    .await;
+    report.check(
+        "one of with a text value on a number column is refused",
+        matches!(mixed, Err(grid::QueryError::Unsupported(..))),
+        format!("{:?}", mixed.err()),
+    );
+    let six = summarize(
+        &db,
+        &manager,
+        "reference_items",
+        &spec(
+            vec![filter("quantity", Test::Equals(json!(6)))],
+            vec![],
+            vec![],
+        ),
+    )
+    .await?;
+    let want: i64 = client
+        .query_one(
+            "SELECT count(*) FROM base_grid_ref_items WHERE tenant_id=1 AND quantity=6",
+            &[],
+        )
+        .await?
+        .get(0);
+    report.check(
+        "equals with a number on a number column matches SQL",
+        six.total.rows == want,
+        format!("{} against {want}", six.total.rows),
+    );
+    let row = client
+        .query_one(
+            "SELECT id, to_char(recorded_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS') FROM base_grid_ref_movements WHERE tenant_id=1 ORDER BY id LIMIT 1",
+            &[],
+        )
+        .await?;
+    let (id, at): (i64, String) = (row.get(0), row.get(1));
+    let same: i64 = client
+        .query_one(
+            "SELECT count(*) FROM base_grid_ref_movements WHERE tenant_id=1 AND recorded_at = $1::text::timestamptz",
+            &[&format!("{at}Z")],
+        )
+        .await?
+        .get(0);
+    for spelled in [format!("{at}+00:00"), format!("{at}Z")] {
+        let page = page_keys(
+            &db,
+            &manager,
+            "reference_movements",
+            &PageSpec {
+                filters: vec![filter("recorded_at", Test::Equals(json!(spelled)))],
+                sorts: vec![],
+                timezone: ZONE.into(),
+                offset: 0,
+                bounds: grid::Bounds::default(),
+                limit: 100,
+            },
+        )
+        .await?;
+        report.check(
+            &format!("a timestamp written {spelled} finds the same instant"),
+            page.total == same && page.keys.contains(&json!(id)),
+            format!("{} row(s), {same} in SQL", page.total),
+        );
+    }
 
     client.batch_execute("DELETE FROM base_grid_ref_movements; DELETE FROM base_grid_ref_items; DELETE FROM base_grid_ref_groups;").await?;
     println!("\n{} check(s) failed", report.failed);
