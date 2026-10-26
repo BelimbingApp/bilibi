@@ -246,6 +246,30 @@ impl Reports {
         Ok(store::list(&**client, scope.tenant(), scope.user()).await?)
     }
 
+    /// One page of the reports the reader may run, searched by name and
+    /// description, with the number that match. Needs `reports.view`.
+    pub async fn page(
+        &self,
+        scope: &Scope,
+        search: &str,
+        offset: u64,
+        limit: u64,
+    ) -> Outcome<(Vec<Report>, u64)> {
+        let client = self.db.get().await.map_err(Error::from)?;
+        authorize(&**client, scope, VIEW).await?;
+        let clamp = |n: u64| i64::try_from(n).unwrap_or(i64::MAX);
+        let (reports, total) = store::page(
+            &**client,
+            scope.tenant(),
+            scope.user(),
+            search,
+            clamp(offset),
+            clamp(limit),
+        )
+        .await?;
+        Ok((reports, total.max(0) as u64))
+    }
+
     /// One report the reader may run, with its definition.
     pub async fn get(&self, scope: &Scope, id: i64) -> Outcome<Report> {
         let client = self.db.get().await.map_err(Error::from)?;
@@ -502,9 +526,11 @@ impl Reports {
                     .into_iter()
                     .filter(|s| keep(&s.column).is_some())
                     .collect();
+                // A value saved before the setting's bound was 100 still runs.
                 let page_size = self
                     .setting(&**client, scope, contributions::PAGE_SIZE_KEY)
-                    .await?;
+                    .await?
+                    .clamp(1, 100);
                 drop(client);
                 let page: KeyPage = bilibi_grid::page_keys(
                     &self.db,
@@ -604,13 +630,15 @@ impl Reports {
     }
 
     /// The whole result as CSV, up to the export cap: every page of a Rows
-    /// report, or every line of a Summary. Audited with the report, the reader
+    /// report, or every line of a Summary, narrowed by the same answers and
+    /// drill-downs as the page. Audited with the report, the reader
     /// and the row count, never the data. Needs `reports.export`.
     pub async fn csv(
         &self,
         scope: &Scope,
         id: i64,
         answers: &BTreeMap<usize, Value>,
+        drill: &[FilterDef],
     ) -> Outcome<Csv> {
         let client = self.db.get().await.map_err(Error::from)?;
         authorize(&**client, scope, EXPORT).await?;
@@ -620,6 +648,7 @@ impl Reports {
         drop(client);
         let mut input = RunInput {
             answers: answers.clone(),
+            drill: drill.to_vec(),
             ..RunInput::default()
         };
         let first = self.run(scope, id, &input).await?;

@@ -17,7 +17,8 @@ use std::collections::BTreeMap;
 
 /// Filter rows the editor shows at most (the definition allows more).
 const MAX_FILTER_ROWS: usize = 8;
-/// Measure rows the editor shows.
+/// Measure rows the editor shows at least; one blank row follows the last
+/// chosen measure, up to Grid's bound, so a saved definition opens whole.
 const MEASURE_ROWS: usize = 4;
 const TESTS: [(&str, &str); 7] = [
     ("is", "equals"),
@@ -63,17 +64,21 @@ struct FilterRow {
     ask: bool,
 }
 
-/// What the form holds, as text: the definition being edited.
+/// What the form holds, as text: the definition being edited, and the
+/// version it was opened at, so a save never overwrites a newer one.
 #[derive(Clone)]
 pub(crate) struct Builder {
     pub name: String,
     pub description: String,
     pub kind: String,
+    version: i64,
+    /// Changed since opened: a newer saved version does not replace it.
+    pub dirty: bool,
     columns: Vec<String>,
-    sort: String,
-    descending: bool,
+    /// `(column, descending)`; a blank row follows the last, up to Grid's bound.
+    sorts: Vec<(String, bool)>,
     groupings: [(String, String); 2],
-    measures: [(String, String); MEASURE_ROWS],
+    measures: Vec<(String, String)>,
     chart: String,
     filters: Vec<FilterRow>,
     pub errors: BTreeMap<String, Vec<String>>,
@@ -94,10 +99,11 @@ impl Builder {
         for (slot, g) in groupings.iter_mut().zip(&d.groupings) {
             *slot = (g.column.clone(), g.bucket.clone().unwrap_or_default());
         }
-        let mut measures: [(String, String); MEASURE_ROWS] = Default::default();
-        for (slot, m) in measures.iter_mut().zip(&d.measures) {
-            *slot = (m.column.clone(), m.agg.clone());
-        }
+        let measures = d
+            .measures
+            .iter()
+            .map(|m| (m.column.clone(), m.agg.clone()))
+            .collect();
         let filters = d
             .filters
             .iter()
@@ -119,19 +125,42 @@ impl Builder {
                 }
             })
             .collect();
-        Self {
+        let mut builder = Self {
             name: report.name.clone(),
             description: report.description.clone(),
             kind: report.kind.key().into(),
+            version: report.version,
+            dirty: false,
             columns: d.columns.clone(),
-            sort: d.sort.first().map(|s| s.column.clone()).unwrap_or_default(),
-            descending: d.sort.first().is_some_and(|s| s.descending),
+            sorts: d
+                .sort
+                .iter()
+                .map(|s| (s.column.clone(), s.descending))
+                .collect(),
             groupings,
             measures,
             chart: d.chart.clone().unwrap_or_default(),
             filters,
             errors: BTreeMap::new(),
-        }
+        };
+        builder.pad();
+        builder
+    }
+
+    /// Keeps one blank sort and measure row after the last chosen one (and
+    /// at least [`MEASURE_ROWS`] measures), within Grid's bounds.
+    fn pad(&mut self) {
+        let used = |rows: usize, blank: &dyn Fn(usize) -> bool| {
+            (0..rows).rev().find(|i| !blank(*i)).map_or(0, |i| i + 1)
+        };
+        let sorts = used(self.sorts.len(), &|i| self.sorts[i].0.is_empty());
+        self.sorts
+            .resize((sorts + 1).min(bilibi_grid::MAX_SORTS), Default::default());
+        let measures = used(self.measures.len(), &|i| self.measures[i].0.is_empty());
+        self.measures.resize(
+            (measures + 1).clamp(MEASURE_ROWS, bilibi_grid::MAX_MEASURES),
+            Default::default(),
+        );
     }
 
     /// Takes the posted form: every field the editor draws, under `def`.
@@ -158,8 +187,9 @@ impl Builder {
                     .collect()
             })
             .unwrap_or_default();
-        self.sort = get("sort");
-        self.descending = get("sort_dir") == "desc";
+        for (i, slot) in self.sorts.iter_mut().enumerate() {
+            *slot = (get(&format!("s{i}")), get(&format!("d{i}")) == "desc");
+        }
         for (i, slot) in self.groupings.iter_mut().enumerate() {
             *slot = (get(&format!("g{i}")), get(&format!("b{i}")));
         }
@@ -176,9 +206,12 @@ impl Builder {
                 ask: get(&format!("f{i}_ask")) == "true",
             };
         }
+        self.pad();
+        self.dirty = true;
     }
 
     pub fn add_filter(&mut self) {
+        self.dirty = true;
         if self.filters.len() < MAX_FILTER_ROWS {
             self.filters.push(FilterRow {
                 test: "equals".into(),
@@ -187,13 +220,15 @@ impl Builder {
         }
     }
     pub fn remove_filter(&mut self, index: usize) {
+        self.dirty = true;
         if index < self.filters.len() {
             self.filters.remove(index);
         }
     }
 
     /// The contract's input for this report: name, description, kind and
-    /// the definition, with blank rows left out.
+    /// the definition, with blank rows left out, at the version the draft
+    /// was opened at (a newer save makes it a conflict, never an overwrite).
     pub fn input(&self, report: &Report) -> Value {
         let kind = Kind::from_key(&self.kind).unwrap_or(report.kind);
         // The agent dialect (`definition::schema`): no nulls, a list as
@@ -234,9 +269,14 @@ impl Builder {
         match kind {
             Kind::Rows => {
                 definition["columns"] = json!(self.columns);
-                if !self.sort.is_empty() {
-                    definition["sort"] =
-                        json!([{"column": self.sort, "descending": self.descending}]);
+                let sorts: Vec<Value> = self
+                    .sorts
+                    .iter()
+                    .filter(|(column, _)| !column.is_empty())
+                    .map(|(column, descending)| json!({"column": column, "descending": descending}))
+                    .collect();
+                if !sorts.is_empty() {
+                    definition["sort"] = json!(sorts);
                 }
             }
             Kind::Summary => {
@@ -265,7 +305,7 @@ impl Builder {
                 }
             }
         }
-        json!({"id": report.id, "version": report.version, "name": self.name.trim(), "description": self.description, "record_type": report.record_type, "kind": kind.key(), "definition": definition})
+        json!({"id": report.id, "version": self.version, "name": self.name.trim(), "description": self.description, "record_type": report.record_type, "kind": kind.key(), "definition": definition})
     }
 
     /// Draws the editor. `editable` false shows the definition read-only.
@@ -299,7 +339,7 @@ impl Builder {
         let dated = |spec: &str| matches!(ty(spec), "date" | "datetime");
         let numeric = |spec: &str| matches!(ty(spec), "integer" | "float" | "decimal");
 
-        let mut summary = Html::EMPTY;
+        let mut summary = Vec::new();
         if !self.errors.is_empty() {
             let mut list = ErrorSummary::new("report-builder-errors");
             for (key, messages) in &self.errors {
@@ -307,7 +347,7 @@ impl Builder {
                     list.push(target(key), error_sentence(&subject(key, offered), message));
                 }
             }
-            summary = render(list)?;
+            summary.push(render(list)?);
         }
         let about = vec![
             render(
@@ -331,7 +371,7 @@ impl Builder {
         ];
 
         let mut shape = Vec::new();
-        let mut wide = Html::EMPTY;
+        let mut wide = Vec::new();
         if self.kind == "rows" {
             let mut columns = MultiSelect::new("def-columns", "def[columns]")
                 .label("Columns")
@@ -359,19 +399,26 @@ impl Builder {
                     ..bilibi_ui::Attrs::default()
                 };
             }
-            wide = render(columns)?;
-            shape.push(render(
-                field("sort", "Sort by")
-                    .kind(InputKind::Select)
-                    .options(column_choices("No sort", &|_| true))
-                    .value(&self.sort),
-            )?);
-            shape.push(render(
-                field("sort_dir", "Order")
-                    .kind(InputKind::Select)
-                    .options(choices(&[("Ascending", "asc"), ("Descending", "desc")]))
-                    .value(if self.descending { "desc" } else { "asc" }),
-            )?);
+            wide.push(render(columns)?);
+            for (i, (column, descending)) in self.sorts.iter().enumerate() {
+                let (label, prompt) = if i == 0 {
+                    ("Sort by", "No sort")
+                } else {
+                    ("Then by", "No further sort")
+                };
+                shape.push(render(
+                    field(&format!("s{i}"), label)
+                        .kind(InputKind::Select)
+                        .options(column_choices(prompt, &|_| true))
+                        .value(column),
+                )?);
+                shape.push(render(
+                    field(&format!("d{i}"), "Order")
+                        .kind(InputKind::Select)
+                        .options(choices(&[("Ascending", "asc"), ("Descending", "desc")]))
+                        .value(if *descending { "desc" } else { "asc" }),
+                )?);
+            }
         } else {
             for (i, (column, bucket)) in self.groupings.iter().enumerate() {
                 let label = if i == 0 { "Group by" } else { "Then by" };
@@ -497,33 +544,40 @@ impl Builder {
             };
             filters.push(FilterView {
                 id: format!("def-filter-{i}"),
-                column: render(
-                    field(&format!("f{i}_column"), "Field")
-                        .kind(InputKind::Select)
-                        .options(column_choices("Choose a field", &|_| true))
-                        .value(&row.column),
-                )?,
-                test: render(
-                    field(&format!("f{i}_test"), "Test")
-                        .kind(InputKind::Select)
-                        .options(choices(&TESTS))
-                        .value(&row.test),
-                )?,
-                value,
-                to,
-                ask: render(
-                    field(&format!("f{i}_ask"), "Ask when run")
-                        .kind(InputKind::Checkbox)
-                        .checked(row.ask),
-                )?,
-                remove,
+                fields: vec![
+                    render(
+                        field(&format!("f{i}_column"), "Field")
+                            .kind(InputKind::Select)
+                            .options(column_choices("Choose a field", &|_| true))
+                            .value(&row.column),
+                    )?,
+                    render(
+                        field(&format!("f{i}_test"), "Test")
+                            .kind(InputKind::Select)
+                            .options(choices(&TESTS))
+                            .value(&row.test),
+                    )?,
+                    value,
+                    to,
+                ],
+                controls: vec![
+                    render(
+                        field(&format!("f{i}_ask"), "Ask when run")
+                            .kind(InputKind::Checkbox)
+                            .checked(row.ask),
+                    )?,
+                    remove,
+                ],
             });
         }
-        let add_filter = if editable && self.filters.len() < MAX_FILTER_ROWS {
-            render(AddMore::new("def-add-filter", "Add filter", "add_filter"))?
-        } else {
-            Html::EMPTY
-        };
+        let mut add_filter = Vec::new();
+        if editable && self.filters.len() < MAX_FILTER_ROWS {
+            add_filter.push(render(AddMore::new(
+                "def-add-filter",
+                "Add filter",
+                "add_filter",
+            ))?);
+        }
         let actions = if editable {
             let mut actions = render(Button {
                 id: "def-save",
@@ -556,6 +610,11 @@ impl Builder {
             },
             shape,
             measures,
+            filters_note: if self.filters.is_empty() {
+                "Every record is counted. Add a filter to narrow it; one marked Ask when run takes the reader's value each time."
+            } else {
+                ""
+            },
             filters,
             add_filter,
             actions,
@@ -601,25 +660,26 @@ fn subject(key: &str, offered: &[ColumnInfo]) -> String {
 
 struct FilterView {
     id: String,
-    column: Html,
-    test: Html,
-    value: Html,
-    to: Html,
-    ask: Html,
-    remove: Html,
+    /// Field, test, value and (for a range) to.
+    fields: Vec<Html>,
+    /// Ask when run, and the remove button.
+    controls: Vec<Html>,
 }
 
 #[derive(Template)]
 #[template(path = "reports_builder.html")]
 struct BuilderView {
-    summary: Html,
+    /// The error summary, when there are errors.
+    summary: Vec<Html>,
     about: Vec<Html>,
     shape_heading: &'static str,
     /// A rows report's column picker, across the whole section.
-    wide: Html,
+    wide: Vec<Html>,
     shape: Vec<Html>,
     measures: Vec<[Html; 2]>,
+    /// Shown while there are no filters.
+    filters_note: &'static str,
     filters: Vec<FilterView>,
-    add_filter: Html,
+    add_filter: Vec<Html>,
     actions: Html,
 }
