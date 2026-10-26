@@ -589,7 +589,7 @@ fn operand(column: &Column, value: &Value) -> Result<(&'static str, String), Que
     let refused = |why: &'static str| Err(unsupported(column, why));
     match (column.ty, value) {
         (FieldType::Integer | FieldType::Float | FieldType::Decimal, Value::Number(n)) => {
-            Ok(("numeric", n.to_string()))
+            Ok((number_cast(column.ty), n.to_string()))
         }
         (FieldType::Integer | FieldType::Float | FieldType::Decimal, _) => {
             refused("this column takes numbers")
@@ -602,17 +602,43 @@ fn operand(column: &Column, value: &Value) -> Result<(&'static str, String), Que
         (FieldType::String | FieldType::Enum, _) => {
             refused("this column takes text of at most 256 bytes")
         }
-        (FieldType::Date, Value::String(text)) => match text.parse::<Date>() {
-            Ok(day) => Ok(("date", day.to_string())),
-            Err(_) => refused("this column takes a YYYY-MM-DD date"),
+        (FieldType::Date, Value::String(text)) => match calendar_day(text) {
+            Some(day) => Ok(("date", day.to_string())),
+            None => refused("this column takes a YYYY-MM-DD date from year 1"),
         },
-        (FieldType::Date, _) => refused("this column takes a YYYY-MM-DD date"),
-        (FieldType::DateTime, Value::String(text)) => match text.parse::<Timestamp>() {
-            Ok(at) => Ok(("timestamptz", at.to_string())),
-            Err(_) => refused("this column takes a date and time with its offset"),
+        (FieldType::Date, _) => refused("this column takes a YYYY-MM-DD date from year 1"),
+        (FieldType::DateTime, Value::String(text)) => match calendar_instant(text) {
+            Some(at) => Ok(("timestamptz", at.to_string())),
+            None => refused("this column takes a date and time with its offset, from year 1"),
         },
-        (FieldType::DateTime, _) => refused("this column takes a date and time with its offset"),
+        (FieldType::DateTime, _) => {
+            refused("this column takes a date and time with its offset, from year 1")
+        }
     }
+}
+
+/// The SQL type a number column compares as. A float stays `float8`:
+/// through `numeric` PostgreSQL rounds it to 15 digits, so a stored value
+/// would miss itself and a near neighbour would match.
+fn number_cast(ty: FieldType) -> &'static str {
+    match ty {
+        FieldType::Float => "float8",
+        _ => "numeric",
+    }
+}
+
+/// A `YYYY-MM-DD` day PostgreSQL can take. It has no year 0 and reads no
+/// negative years, so days before year 1 are refused here, not as a
+/// database error.
+fn calendar_day(text: &str) -> Option<Date> {
+    text.parse::<Date>().ok().filter(|day| day.year() >= 1)
+}
+
+/// An instant with its offset, from year 1 in UTC (see [`calendar_day`]).
+fn calendar_instant(text: &str) -> Option<Timestamp> {
+    text.parse::<Timestamp>()
+        .ok()
+        .filter(|at| at.to_zoned(TimeZone::UTC).year() >= 1)
 }
 
 fn test(
@@ -668,8 +694,9 @@ fn test(
                     return Err(unsupported(column, "a number range takes numbers"));
                 };
                 let placeholder = binds.push(number.to_string());
+                let cast = number_cast(ty);
                 parts.push(format!(
-                    "({value})::numeric {op} {placeholder}::text::numeric"
+                    "({value})::{cast} {op} {placeholder}::text::{cast}"
                 ));
             }
             parts.join(" AND ")
@@ -678,11 +705,13 @@ fn test(
             let day = |bound: &Option<Value>| -> Result<Option<Date>, QueryError> {
                 match bound {
                     None => Ok(None),
-                    Some(Value::String(text)) => text
-                        .parse::<Date>()
-                        .map(Some)
-                        .map_err(|_| unsupported(column, "a date range takes YYYY-MM-DD days")),
-                    Some(_) => Err(unsupported(column, "a date range takes YYYY-MM-DD days")),
+                    Some(Value::String(text)) => calendar_day(text).map(Some).ok_or_else(|| {
+                        unsupported(column, "a date range takes YYYY-MM-DD days from year 1")
+                    }),
+                    Some(_) => Err(unsupported(
+                        column,
+                        "a date range takes YYYY-MM-DD days from year 1",
+                    )),
                 }
             };
             let (from, to) = (day(min)?, day(max)?);
