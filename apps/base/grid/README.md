@@ -172,7 +172,7 @@ reference rows on success. No unit tests or test runner are involved.
 
 ## Grouped summaries and row pages (G5)
 
-The report builder's reads ([ADR 05](../../../docs/architecture/decisions/05-report-builder-reads-owner-sources.md)), in `src/summary.rs`, with `project`'s rules: a fresh scoped catalog, a read-only repeatable-read transaction, owner sources with tenant and user bindings, the `EXPLAIN` bound of 100,000 and the 2 s and 500 ms timeouts.
+The report builder's reads ([ADR 06](../../../docs/architecture/decisions/06-report-builder-reads-owner-sources.md)), in `src/summary.rs`, with `project`'s rules: a fresh scoped catalog, a read-only repeatable-read transaction, owner sources with tenant and user bindings, the `EXPLAIN` bound of 100,000 and the 2 s and 500 ms timeouts.
 
 | Call | Returns |
 | --- | --- |
