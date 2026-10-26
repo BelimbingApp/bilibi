@@ -44,6 +44,12 @@ pub(crate) fn show(
     let pattern = Pattern::from(&cron);
     let stored_words = words(&pattern);
     if stored_zone == viewer_zone || stored_words == CUSTOM {
+        let stored_words =
+            if pattern.minutes.len() == 1 && pattern.hours.len() == 1 && stored_words != CUSTOM {
+                format!("{stored_words} {}", zone_label(stored_zone))
+            } else {
+                stored_words
+            };
         return Shown {
             words: stored_words,
             tooltip,
@@ -377,4 +383,41 @@ fn delta_at(stored: &TimeZone, viewer: &TimeZone, at: Timestamp) -> Option<i32> 
         return None;
     }
     Some((to - from) / 60)
+}
+
+/// A fixed-time cron expressed in the editor's zone, preserving its calendar
+/// where one cron can represent it. Refuse month-boundary conversions that
+/// cannot be represented honestly, just as the read presentation does.
+pub(crate) fn editable(
+    expression: &str,
+    stored_zone: &str,
+    viewer_zone: &str,
+    now: Timestamp,
+) -> Option<String> {
+    let cron = Cron::parse(expression).ok()?;
+    if cron.minute_values().len() != 1 || cron.hour_values().len() != 1 {
+        return None;
+    }
+    let from = TimeZone::get(stored_zone).ok()?;
+    let to = TimeZone::get(viewer_zone).ok()?;
+    let pattern = shift(&Pattern::from(&cron), delta_at(&from, &to, now)?)?;
+    let field = |values: &[u8], min, max| {
+        if full(values, min, max) {
+            "*".to_owned()
+        } else {
+            values
+                .iter()
+                .map(u8::to_string)
+                .collect::<Vec<_>>()
+                .join(",")
+        }
+    };
+    Some(format!(
+        "{} {} {} {} {}",
+        pattern.minutes[0],
+        pattern.hours[0],
+        field(&pattern.days, 1, 31),
+        field(&pattern.months, 1, 12),
+        field(&pattern.weekdays, 0, 6)
+    ))
 }

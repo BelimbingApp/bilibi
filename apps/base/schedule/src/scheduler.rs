@@ -112,8 +112,15 @@ impl Scheduler {
         let keys: Vec<&str> = self.schedule.definitions().map(|item| item.key()).collect();
         let latest = occurrence::latest_scheduled(&**client, &keys).await?;
         for item in self.schedule.definitions() {
-            let intended = match item.previous(now) {
-                Ok(at) => at,
+            let intended = match self.schedule.timing(&**client, item.key()).await {
+                Ok(timing) => match timing.previous(now) {
+                    Ok(Some(at)) => at,
+                    Ok(None) => continue,
+                    Err(error) => {
+                        report.failed.push((item.key().into(), error.to_string()));
+                        continue;
+                    }
+                },
                 Err(error) => {
                     report.failed.push((item.key().into(), error.to_string()));
                     continue;

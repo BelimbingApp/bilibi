@@ -13,9 +13,70 @@ pub async fn effective_capabilities(
     client: &impl GenericClient,
     scope: &Scope,
 ) -> Result<BTreeSet<&'static str>> {
+    if let Some(principal) = scope.principal() {
+        return Ok(effective_system(client, scope.tenant(), principal)
+            .await?
+            .allowed);
+    }
     Ok(effective_capabilities_of(client, scope, scope.user())
         .await?
         .allowed)
+}
+
+/// What a named system principal holds in `tenant` right now (SP1): its
+/// declared keys with an allowing durable grant and no denying one, a
+/// platform key only in the operator tenant. Roles and grant-all never apply
+/// to a principal, so `grant_all` is false and the overrides are the grants.
+pub async fn effective_system(
+    client: &impl GenericClient,
+    tenant: i64,
+    principal: &str,
+) -> Result<Effective> {
+    let vocabulary = crate::vocabulary()?;
+    let Some(declared) = vocabulary.system_principals.get(principal) else {
+        return Ok(Effective::default());
+    };
+    let live = client
+        .query_opt(
+            "SELECT id FROM tenants WHERE id=$1 AND status='active' AND deleted_at IS NULL",
+            &[&tenant],
+        )
+        .await?
+        .is_some();
+    if !live {
+        return Ok(Effective::default());
+    }
+    let operator = crate::is_operator(client, tenant).await?;
+    let mut effective = Effective::default();
+    for row in client
+        .query(
+            "SELECT capability,is_allowed FROM authz_system_grants WHERE tenant_id=$1 AND principal=$2",
+            &[&tenant, &principal],
+        )
+        .await?
+    {
+        let key: String = row.get(0);
+        if row.get::<_, bool>(1) {
+            effective.direct_allowed.insert(key);
+        } else {
+            effective.direct_denied.insert(key);
+        }
+    }
+    effective.allowed = declared
+        .capabilities
+        .iter()
+        .copied()
+        .filter(|key| {
+            effective.direct_allowed.contains(*key)
+                && !effective.direct_denied.contains(*key)
+                && (operator
+                    || !vocabulary
+                        .capabilities
+                        .get(key)
+                        .is_some_and(|capability| capability.definition.platform))
+        })
+        .collect();
+    Ok(effective)
 }
 
 /// What one account of the actor's tenant holds, as a screen that administers

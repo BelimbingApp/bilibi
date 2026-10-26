@@ -4,7 +4,7 @@
 
 ## The short version
 
-Build both programs on your own machine, from your local Bilibi checkout:
+Build both programs on your own machine, from your local Bilibi checkout. Install Node.js >=22 and npm there; Cargo generates and embeds the stylesheet during the build:
 
 ```sh
 cargo build --release --locked -p bilibi-web -p bilibi-installer
