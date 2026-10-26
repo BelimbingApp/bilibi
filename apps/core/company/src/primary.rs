@@ -241,7 +241,7 @@ pub async fn provision_tenant(
     let sql: &Transaction<'_> = &tx;
     let tenant = bilibi_tenancy::provision_tenant(sql, tenant_name).await?;
     crate::relationship_roles::ensure_defaults(sql, tenant.id).await?;
-    bilibi_picklists::provision(sql, tenant.id).await?;
+    bilibi_picklists::provision_deployment(sql, tenant.id).await?;
     let created = match provisioned_company(sql, tenant.id, company).await? {
         Ok(created) => created,
         Err(errors) => {
@@ -301,7 +301,7 @@ pub async fn provision_platform_operator_in(
         bilibi_tenancy::provision_platform_operator(sql, tenant_name).await?;
     crate::relationship_roles::ensure_defaults(sql, tenant.id).await?;
     // After the operator is marked, so it also gets installation-wide lists.
-    bilibi_picklists::provision(sql, tenant.id).await?;
+    bilibi_picklists::provision_deployment(sql, tenant.id).await?;
     tx.execute(
         "SELECT id FROM tenants WHERE id=$1 FOR UPDATE",
         &[&tenant.id],

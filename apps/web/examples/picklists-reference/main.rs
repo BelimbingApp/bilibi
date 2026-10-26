@@ -26,6 +26,7 @@ use bilibi_base::agent_api::{
     Registry,
 };
 mod cases;
+mod review;
 
 use bilibi_base::authz::{
     grants::Grants, CapabilityDefinition, RoleDefinition, VocabularyContribution, VOCABULARY,
@@ -65,7 +66,11 @@ inventory::submit! { Contribution::new(VOCABULARY, MODULE, Provenance { module: 
     // The fixture managers curate pick-lists, including tenant 2's, which
     // reads the installation-wide region list but cannot change it.
     roles: &[RoleDefinition { code: "manager", name: "manager", description: "Walkthrough fixture role", grant_all: false,
-        capabilities: &["base.picklists.view", "base.picklists.manage", "reference.cases.manage"] }],
+        capabilities: &["base.picklists.view", "base.picklists.manage", "reference.cases.manage"] },
+        // Staff (in the platform-operator tenant) curate only the
+        // installation-wide lists.
+        RoleDefinition { code: "staff", name: "staff", description: "Walkthrough fixture role", grant_all: false,
+        capabilities: &["base.picklists.view", "base.picklists.installation.manage"] }],
     system_principals: &[],
 }) }
 bilibi_base::picklists::declare!(
@@ -470,6 +475,9 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let other = authentication
         .authenticate(&**client, 2, 5, "picklists".into())
         .await?;
+    let staff = authentication
+        .authenticate(&**client, 1, 3, "picklists".into())
+        .await?;
     drop(client);
     proof.show(&admin, "seeded").await?;
 
@@ -588,7 +596,10 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 
     seed(&db, &modules, services).await?;
     let inserted = picklists::provision(&**db.get().await?, 1).await?;
-    println!("reconcile tenant 1 again: {inserted} value(s) inserted");
+    println!(
+        "reconcile tenant 1 again: {} value(s) inserted",
+        inserted.len()
+    );
     proof.show(&admin, "edits survive the repeat").await?;
     proof.show(&other, "the other tenant keeps its own").await?;
 
@@ -637,6 +648,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     }
 
     agent(&app, &db).await?;
+    review::run(&app, &proof, &admin, &staff).await?;
 
     let client = db.get().await?;
     println!("-- audit (tenant 1, picklist_value):");

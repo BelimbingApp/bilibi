@@ -13,8 +13,8 @@
 //! person picked, never a client value.
 use crate::{
     declaration::{PickList, Reach},
-    values::{home, PickLists, PickValue},
-    INSTALLATION_MANAGE, MANAGE, PAGES,
+    values::{home, required, PickLists, PickValue},
+    PAGES,
 };
 use askama::Template;
 use bilibi_agent_api::{
@@ -115,8 +115,20 @@ pub(crate) struct Pages {
 fn render(fragment: impl Template) -> Result<Html> {
     Html::render(&fragment).map_err(|_| Error::Internal)
 }
-fn dom(code: &str) -> String {
-    code.replace(['.', '_'], "-")
+/// A list key as an element id, one-to-one: letters and digits stay, and
+/// `-`, `.` and `_` become `-h`, `-d` and `-u`, so `a.b`, `a_b` and `a-b`
+/// never share an id. Value rows use the value's numeric id instead.
+fn dom(key: &str) -> String {
+    let mut id = String::with_capacity(key.len());
+    for c in key.chars() {
+        match c {
+            '-' => id.push_str("-h"),
+            '.' => id.push_str("-d"),
+            '_' => id.push_str("-u"),
+            c => id.push(c),
+        }
+    }
+    id
 }
 fn flash_map(flash: &Option<(StatusKind, String)>) -> FlashMap<'_> {
     let mut map = NO_FLASH;
@@ -185,15 +197,16 @@ impl Standing {
         list.capability
             .is_none_or(|capability| self.capabilities.contains(capability))
     }
-    /// Hides the editors only; the contract decides in its own transaction.
+    /// The facade's rule (`values::required`) read against the effective
+    /// set: hides the editors only, the contract decides in its transaction.
+    /// The installation list's home is the operator's tenant.
     fn edits(&self, list: &PickList, home: Option<i64>) -> bool {
-        self.sees(list)
-            && match list.reach {
-                Reach::Tenant => self.capabilities.contains(MANAGE),
-                Reach::Installation => {
-                    self.capabilities.contains(INSTALLATION_MANAGE) && home == Some(self.tenant)
-                }
-            }
+        let required = required(list);
+        self.capabilities.contains(required.capability)
+            && required
+                .list_capability
+                .is_none_or(|capability| self.capabilities.contains(capability))
+            && (!required.operator || home == Some(self.tenant))
     }
 }
 
@@ -776,14 +789,10 @@ impl Values {
         text: &str,
         edits: bool,
     ) -> InlineField {
-        let mut inline = InlineField::new(
-            format!("picklist-{}-{field}", dom(&value.code)),
-            field,
-            label,
-            text,
-        )
-        .version(value.version)
-        .status(self.statuses.get(&format!("{}-{field}", value.code)));
+        let mut inline =
+            InlineField::new(format!("picklist-{}-{field}", value.id), field, label, text)
+                .version(value.version)
+                .status(self.statuses.get(&format!("{}-{field}", value.code)));
         inline.id_value = value.code.clone();
         if field != "label" {
             inline = inline.allow_empty();
@@ -965,7 +974,7 @@ impl Values {
             if edits {
                 row.actions = self.actions(value, position, last)?;
             }
-            row.dom_id = Some(format!("picklist-value-{}", dom(&value.code)));
+            row.dom_id = Some(format!("picklist-value-{}", value.id));
             rows.push(row);
         }
         let mut table = FlexTable::new("picklist-values", self.columns.flex_columns(), rows);
@@ -1030,7 +1039,7 @@ impl Values {
 
     /// Move up and down, make or clear the default, retire or restore.
     fn actions(&self, value: &PickValue, position: usize, last: usize) -> Result<Html> {
-        let id = |action: &str| format!("picklist-{}-{action}", dom(&value.code));
+        let id = |action: &str| format!("picklist-{}-{action}", value.id);
         let mut html = Html::EMPTY;
         let mut button = |icon: &str, label: &str, event: &str, action: &str| -> Result<()> {
             let id = id(action);

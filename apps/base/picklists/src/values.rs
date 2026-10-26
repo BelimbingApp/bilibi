@@ -21,7 +21,7 @@ use std::{
 };
 use tokio_postgres::{GenericClient, Row};
 
-const COLUMNS: &str = "id,list,code,label,labels,hint,position,is_default,parent_codes,retired_on::text AS retired_on,version";
+pub(crate) const COLUMNS: &str = "id,list,code,label,labels,hint,position,is_default,parent_codes,retired_on::text AS retired_on,version";
 
 /// One stored value as the operator sees it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -43,7 +43,7 @@ pub struct PickValue {
     pub version: i64,
 }
 impl PickValue {
-    fn from_row(row: &Row, list: &PickList) -> Result<Self> {
+    pub(crate) fn from_row(row: &Row, list: &PickList) -> Result<Self> {
         let code: String = row.get("code");
         Ok(Self {
             id: row.get("id"),
@@ -67,7 +67,7 @@ impl PickValue {
     pub fn label_in(&self, language: &str) -> &str {
         self.labels.get(language).unwrap_or(&self.label)
     }
-    fn to_json(&self) -> serde_json::Value {
+    pub(crate) fn to_json(&self) -> serde_json::Value {
         serde_json::to_value(self).expect("pick value serializes")
     }
 }
@@ -148,13 +148,48 @@ pub struct PickLists {
     pub(crate) locales: Arc<Locales>,
 }
 
-fn change(old: serde_json::Value, saved: &PickValue) -> Change {
+pub(crate) fn change(old: serde_json::Value, saved: &PickValue) -> Change {
     Change {
         kind: "picklist_value".into(),
         id: saved.id,
         old,
         new: saved.to_json(),
     }
+}
+
+/// What changing a list takes. The one rule: the facade enforces it in the
+/// write's transaction, and the page reads it to show or hide its editors.
+/// A tenant list needs `base.picklists.manage`; an installation-wide list
+/// needs `base.picklists.installation.manage` in the platform-operator
+/// tenant; a list's own capability applies to both.
+pub(crate) struct Required {
+    pub capability: &'static str,
+    pub operator: bool,
+    pub list_capability: Option<&'static str>,
+}
+pub(crate) fn required(list: &PickList) -> Required {
+    let (capability, operator) = match list.reach {
+        Reach::Tenant => (MANAGE, false),
+        Reach::Installation => (INSTALLATION_MANAGE, true),
+    };
+    Required {
+        capability,
+        operator,
+        list_capability: list.capability,
+    }
+}
+
+/// Serializes the writes of one tenant's list (create, default, reorder,
+/// reconcile) for the rest of the transaction, so a count, a missing code or
+/// the current default read after it cannot change underneath the write.
+pub(crate) async fn lock_list(client: &impl GenericClient, tenant: i64, list: &str) -> Result<()> {
+    client
+        .execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended('base-picklists-' || $1::text || ':' || $2, 0))",
+            &[&tenant.to_string(), &list],
+        )
+        .await?;
+    Ok(())
 }
 
 /// The tenant whose rows hold `list` for this reader: the reader's own, or
@@ -343,21 +378,21 @@ impl PickLists {
             .collect())
     }
 
-    /// Proves the actor may change `list` and returns the tenant holding it.
-    /// An installation-wide list is the platform operator's alone.
+    /// Proves the actor may change `list` (`required`) and returns the
+    /// tenant holding it.
     async fn manage(
         &self,
         client: &(impl GenericClient + Sync),
         scope: &Scope,
         list: &PickList,
     ) -> Result<i64> {
-        match list.reach {
-            Reach::Tenant => authorize_key(client, scope, MANAGE).await?,
-            Reach::Installation => {
-                authorize_operator(client, scope, INSTALLATION_MANAGE).await?;
-            }
+        let required = required(list);
+        if required.operator {
+            authorize_operator(client, scope, required.capability).await?;
+        } else {
+            authorize_key(client, scope, required.capability).await?;
         }
-        if let Some(capability) = list.capability {
+        if let Some(capability) = required.list_capability {
             authorize_key(client, scope, capability).await?;
         }
         Ok(scope.tenant())
@@ -466,12 +501,7 @@ impl PickLists {
             .await?;
         if lock {
             // Two creates of one code (or past the cap) cannot both pass.
-            client
-                .execute(
-                    "SELECT pg_advisory_xact_lock(hashtextextended('base-picklists-' || $1::text || ':' || $2, 0))",
-                    &[&tenant.to_string(), &list.key],
-                )
-                .await?;
+            lock_list(client, tenant, list.key).await?;
         }
         let count: i64 = client
             .query_one(
@@ -553,6 +583,7 @@ impl PickLists {
 
     async fn save(
         tx: &mut MutationTransaction<'_>,
+        tenant: i64,
         list: &'static PickList,
         before: PickValue,
         set: &'static str,
@@ -560,11 +591,12 @@ impl PickLists {
     ) -> Result<PickValue> {
         tx.mutate(move |sql| {
             Box::pin(async move {
-                let mut all: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = vec![&before.id];
+                let mut all: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> =
+                    vec![&tenant, &before.id];
                 all.extend(params.iter().map(|param| &**param as &(dyn tokio_postgres::types::ToSql + Sync)));
                 let row = sql
                     .query_one(
-                        &format!("UPDATE base_picklist_values SET {set},version=version+1,updated_at=now() WHERE id=$1 RETURNING {COLUMNS}"),
+                        &format!("UPDATE base_picklist_values SET {set},version=version+1,updated_at=now() WHERE tenant_id=$1 AND id=$2 RETURNING {COLUMNS}"),
                         &all,
                     )
                     .await?;
@@ -645,9 +677,10 @@ impl PickLists {
         };
         let saved = Self::save(
             tx,
+            scope.tenant(),
             list,
             before,
-            "label=$2,labels=$3,hint=$4,parent_codes=$5",
+            "label=$3,labels=$4,hint=$5,parent_codes=$6",
             vec![
                 Box::new(update.label),
                 Box::new(json!(update.labels)),
@@ -667,7 +700,10 @@ impl PickLists {
         codes: &[String],
         lock: bool,
     ) -> Result<Checked<Vec<(PickValue, i32)>>> {
-        self.manage(client, scope, list).await?;
+        let tenant = self.manage(client, scope, list).await?;
+        if lock {
+            lock_list(client, tenant, list.key).await?;
+        }
         let current = self
             .rows(client, scope, list, if lock { " FOR UPDATE" } else { "" })
             .await?;
@@ -732,14 +768,15 @@ impl PickLists {
             Err(errors) => return Ok(Err(errors)),
         };
         if !moves.is_empty() {
+            let tenant = scope.tenant();
             tx.mutate(move |sql| {
                 Box::pin(async move {
                     let mut changes = Vec::with_capacity(moves.len());
                     for (before, position) in moves {
                         let row = sql
                             .query_one(
-                                &format!("UPDATE base_picklist_values SET position=$2,version=version+1,updated_at=now() WHERE id=$1 RETURNING {COLUMNS}"),
-                                &[&before.id, &position],
+                                &format!("UPDATE base_picklist_values SET position=$3,version=version+1,updated_at=now() WHERE tenant_id=$1 AND id=$2 RETURNING {COLUMNS}"),
+                                &[&tenant, &before.id, &position],
                             )
                             .await?;
                         let saved = PickValue::from_row(&row, list)?;
@@ -763,6 +800,11 @@ impl PickLists {
         lock: bool,
     ) -> Result<Checked<(Option<PickValue>, Option<PickValue>)>> {
         let tenant = self.manage(client, scope, list).await?;
+        if lock {
+            // Before reading the default: a concurrent change, including the
+            // first default of a list that has none, waits for this one.
+            lock_list(client, tenant, list.key).await?;
+        }
         let previous = client
             .query_opt(
                 &format!("SELECT {COLUMNS} FROM base_picklist_values WHERE tenant_id=$1 AND list=$2 AND is_default{}", if lock { " FOR UPDATE" } else { "" }),
@@ -823,12 +865,13 @@ impl PickLists {
         if previous.as_ref().map(|value| &value.code) == chosen.as_ref().map(|value| &value.code) {
             return Ok(Ok(chosen));
         }
+        let tenant = scope.tenant();
         if let Some(previous) = previous {
-            Self::save(tx, list, previous, "is_default=false", Vec::new()).await?;
+            Self::save(tx, tenant, list, previous, "is_default=false", Vec::new()).await?;
         }
         Ok(Ok(match chosen {
             Some(before) => {
-                Some(Self::save(tx, list, before, "is_default=true", Vec::new()).await?)
+                Some(Self::save(tx, tenant, list, before, "is_default=true", Vec::new()).await?)
             }
             None => None,
         }))
@@ -903,6 +946,7 @@ impl PickLists {
         };
         let saved = Self::save(
             tx,
+            scope.tenant(),
             list,
             before,
             "retired_on=CURRENT_DATE,is_default=false",
@@ -941,7 +985,15 @@ impl PickLists {
             Ok(before) => before,
             Err(errors) => return Ok(Err(errors)),
         };
-        let saved = Self::save(tx, list, before, "retired_on=NULL", Vec::new()).await?;
+        let saved = Self::save(
+            tx,
+            scope.tenant(),
+            list,
+            before,
+            "retired_on=NULL",
+            Vec::new(),
+        )
+        .await?;
         Ok(Ok(saved))
     }
 }

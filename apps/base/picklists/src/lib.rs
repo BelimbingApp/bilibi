@@ -13,7 +13,7 @@ mod values;
 mod web;
 
 pub use declaration::{PickList, Reach, Start, CODE_MAX, HINT_MAX, LABEL_MAX, LISTS, VALUES_MAX};
-pub use seeds::provision;
+pub use seeds::{provision, provision_deployment};
 pub use values::{
     Checked, FieldError, Label, NewValue, PickLists, PickValue, Refusal, ValueUpdate,
 };

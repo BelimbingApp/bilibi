@@ -89,7 +89,11 @@ impl CompanyService {
         if primary::primary_company(tx.sql(), tenant).await?.is_some() {
             return Err(Error::Conflict);
         }
-        bilibi_picklists::provision(tx.sql(), tenant).await?;
+        // The starting pick-list values, attributed to this transaction's
+        // person or agent like the companies below.
+        for change in bilibi_picklists::provision(tx.sql(), tenant).await? {
+            tx.record(change).await?;
+        }
         let created = tx
             .mutate(move |sql| {
                 Box::pin(async move {

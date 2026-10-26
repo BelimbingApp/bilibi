@@ -85,10 +85,11 @@ Starting values go in by code: a missing code is inserted, an existing one is le
 | When | How |
 | --- | --- |
 | Existing tenants | The declaring module's production seed (service `base/picklists.seeds`, operation `reconcile`) runs over every live tenant when `seed-production` first sees its version. |
-| A new tenant | `core/company` provisioning (all three tenant-creation paths) calls `bilibi_picklists::provision(tx, tenant)` on its transaction. |
+| A new tenant | `core/company` provisioning calls `bilibi_picklists::provision`, which returns one `Change` per inserted value: tenant administration records each on its `MutationTransaction`, attributed to the person or agent; the deployment helpers (`tenant-provision`, the platform operator) use `provision_deployment`, which lists every value in one retained system action, as their company rows are recorded. |
 | A module adds values later | It contributes the next seed version. |
 
 - Each seed inserts the missing codes of every linked list, so running one module's seed never harms another's lists.
+- Each list is reconciled under its list lock and within the 500-value cap: a run that would pass the cap is refused whole, naming the tenant, the list and the codes it could not add.
 - `base/picklists` contributes no seed of its own: it declares no list.
 
 ## Curating values
@@ -104,7 +105,7 @@ Each write runs on the caller's `MutationTransaction` and records one `Change` o
 | `retire` / `restore` | Version-checked. A locked value cannot be retired; a retired default stops being the default. |
 
 - A refusal is `Ok(Err(Vec<FieldError>))`. A stale version is a refusal on `version`.
-- Reading every value (`values`) needs `base.picklists.view`. Writing needs `base.picklists.manage`. A list's `.requires(key)` capability is needed for both.
+- Reading every value (`values`) needs `base.picklists.view`. **Changing a list** follows one rule (`values::required`), which the facade enforces in the write's transaction and the page reads to show its editors: a tenant list needs `base.picklists.manage`; an installation-wide list needs `base.picklists.installation.manage` in the platform-operator tenant; a list's `.requires(key)` capability applies to both.
 - **Installation-wide lists** keep their rows on the platform-operator tenant. Every tenant reads them; only the platform operator writes them, with `base.picklists.installation.manage`.
 
 ## Operator page
@@ -123,13 +124,13 @@ Agents curate through `base.picklists.*` (`src/operations.rs`). Each write is a 
 | --- | --- | --- |
 | `base.picklists.lists` | `base.picklists.view` | The mounted lists the caller may see: key, label, reach, parent list, extra capability, locked codes. |
 | `base.picklists.values` | `base.picklists.view` | One list's values in order; retired ones with `include_retired`. |
-| `base.picklists.value.create` | `base.picklists.manage` | Add a value. |
-| `base.picklists.value.update` | `base.picklists.manage` | Rename, translate, re-hint or re-parent; needs `version`. |
-| `base.picklists.value.reorder` | `base.picklists.manage` | Name every code once, in the new order. |
-| `base.picklists.value.default` | `base.picklists.manage` | Set the default, or omit `code` to clear it. |
-| `base.picklists.value.retire` / `.restore` | `base.picklists.manage` | Retire or restore; needs `version`. |
+| `base.picklists.value.create` | `base.picklists.view`, then by reach | Add a value. |
+| `base.picklists.value.update` | `base.picklists.view`, then by reach | Rename, translate, re-hint or re-parent; needs `version`. |
+| `base.picklists.value.reorder` | `base.picklists.view`, then by reach | Name every code once, in the new order. |
+| `base.picklists.value.default` | `base.picklists.view`, then by reach | Set the default, or omit `code` to clear it. |
+| `base.picklists.value.retire` / `.restore` | `base.picklists.view`, then by reach | Retire or restore; needs `version`. |
 
-- The facade still checks the list's own `.requires(key)` capability and, for an installation-wide list, the platform operator.
+- The registry checks one fixed capability per operation, so the writes open at `base.picklists.view` and the facade decides by reach (the rule above). An operator who holds only `base.picklists.installation.manage` curates the installation-wide lists, through the page and the contracts alike.
 - Translations (`labels`) accept one property per language `base/locale` supports; any other field is refused.
 - The guide `base.picklists` explains codes, retirement, locked values and dependent lists to agents.
 
@@ -154,7 +155,8 @@ DATABASE_URL=… cargo run -p bilibi-web --example picklists-reference
 | Repeat | A second seed run is already applied, and a reconcile inserts nothing; the edits stay. |
 | Isolation | Tenant 2 keeps the starting values. |
 | Check | Retired, unknown and mismatched pairs are refused; a retired value still shows its label, marked retired; restore accepts it again. |
-| Provisioning | A new tenant has every reference value. |
+| Provisioning | A new tenant has every reference value; a tenant created through `Tenants::create_in` and `provision_new_tenant_in` has one `created` mutation per value, by the admin. |
+| Review cases | Two default changes at once: the second waits and saves, one default left. A tenant holding 500 values with four starting codes missing is refused with the list's name and keeps 500. Staff (only `installation.manage`) add to Region and are refused on a tenant list, by the facade and the contract. Codes `a.b`, `a_b`, `a-b` get distinct element ids; after editing `a_b` focus stays on it. |
 | Audit | One `picklist_value` row per change, attributed to the actor: `created` for a new value, `updated` otherwise. |
 | Agent reads | `base.picklists.lists` shows each list's locked codes; `base.picklists.values` lists the codes in order. |
 | Agent writes | A create's preview is valid and writes no row; its commit saves one; replaying the plan code is refused. |
