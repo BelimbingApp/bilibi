@@ -2,8 +2,10 @@
     figure holding a KPI number, or an SVG of bars, stacked bars, lines, a pie
     or a donut drawn from precomputed geometry with data colours (`cat-1..8`),
     its legend, and a "Data" fold with the exact values. A note replaces the
-    drawing when there is nothing to draw or too much to draw honestly. No
-    style attribute anywhere: the Content Security Policy forbids it. -#}
+    drawing when there is nothing to draw or too much to draw honestly. Below
+    26rem the drawing keeps that width and scrolls inside the figure (its
+    wrapper adds no width of its own), so labels stay readable on a phone. No style attribute anywhere: the Content
+    Security Policy forbids it. -#}
 {%- import "components.html" as ui -%}
 {%- let title_id = "{}-title"|format(id) -%}
 {%- let desc_id = "{}-desc"|format(id) -%}
@@ -15,14 +17,14 @@
 {%- elif !note.is_empty() %}
 <p id="{{ id }}-note" class="text-sm text-ink-muted">{{ note }}</p>
 {%- else %}
-<svg viewBox="0 0 640 240" class="h-auto w-full" role="img" aria-labelledby="{{ title_id }} {{ desc_id }}"><desc id="{{ desc_id }}">{{ summary }}</desc>
-{%- for tick in ticks %}<line x1="52" x2="628" y1="{{ tick.y }}" y2="{{ tick.y }}" class="stroke-low-contrast-line" stroke-width="1"></line><text x="46" y="{{ tick.y }}" dy="3" text-anchor="end" class="fill-ink-subtle text-[10px] tabular-nums">{{ tick.label }}</text>{% endfor %}
-{%- for label in labels %}<text x="{{ label.x }}" y="222" text-anchor="middle" class="fill-ink-subtle text-[10px]">{{ label.text }}</text>{% endfor %}
+<div class="w-0 min-w-full overflow-x-auto"><svg viewBox="0 0 640 {{ height }}" class="h-auto w-full min-w-[26rem]" role="img" aria-labelledby="{{ title_id }} {{ desc_id }}"><desc id="{{ desc_id }}">{{ summary }}</desc>
+{%- for tick in ticks %}<line x1="{{ left }}" x2="628" y1="{{ tick.y }}" y2="{{ tick.y }}" class="stroke-low-contrast-line" stroke-width="1"></line><text x="{{ tick_x }}" y="{{ tick.y }}" dy="4" text-anchor="end" class="fill-ink-subtle text-[12px] tabular-nums">{{ tick.label }}</text>{% endfor %}
+{%- for label in labels %}{% if turned %}<text x="{{ label.x }}" y="{{ label_y }}" dy="4" text-anchor="end" transform="{{ label.turn }}" class="fill-ink-subtle text-[12px]">{{ label.text }}</text>{% else %}<text x="{{ label.x }}" y="{{ label_y }}" text-anchor="middle" class="fill-ink-subtle text-[12px]">{{ label.text }}</text>{% endif %}{% endfor %}
 {%- for rect in rects %}<rect x="{{ rect.x }}" y="{{ rect.y }}" width="{{ rect.w }}" height="{{ rect.h }}" rx="1" class="{{ rect.class }}"><title>{{ rect.title }}</title></rect>{% endfor %}
 {%- for line in lines %}{% for run in line.runs %}<polyline points="{{ run }}" fill="none" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" class="{{ line.class }}"></polyline>{% endfor %}{% for dot in line.dots %}<circle cx="{{ dot.x }}" cy="{{ dot.y }}" r="3" class="{{ line.dot_class }}"><title>{{ dot.title }}</title></circle>{% endfor %}{% endfor %}
 {%- for slice in slices %}<path d="{{ slice.d }}" fill-rule="evenodd" class="{{ slice.class }} stroke-surface" stroke-width="1.5"><title>{{ slice.title }}</title></path>{% endfor %}
 {%- if !centre.is_empty() %}<text x="320" y="120" dy="6" text-anchor="middle" class="fill-ink-strong text-[18px] font-semibold tabular-nums">{{ centre }}</text>{% endif %}
-</svg>
+</svg></div>
 {%- if !legend.is_empty() %}
 <ul id="{{ id }}-legend" class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-muted">{% for item in legend %}<li class="inline-flex items-center gap-1.5"><span class="size-2.5 shrink-0 rounded-sm {{ item.class }}" aria-hidden="true"></span>{{ item.label }}</li>{% endfor %}</ul>
 {%- endif %}
