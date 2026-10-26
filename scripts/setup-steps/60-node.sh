@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Node.js, needed to rebuild the committed CSS (scripts/build-assets.sh).
+# Node.js, needed by Cargo to build embedded CSS (scripts/build-assets.sh).
 set -euo pipefail
 # shellcheck source=scripts/lib/install.sh
 source "$(dirname -- "${BASH_SOURCE[0]}")/../lib/install.sh"

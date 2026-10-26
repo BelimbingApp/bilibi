@@ -1,4 +1,4 @@
-//! Scheduled deliveries (ADR 05, decision 4). A subscription asks for one
+//! Scheduled deliveries (ADR 06, decision 4). A subscription asks for one
 //! report daily, weekly or monthly at a wall-clock time in its zone, for its
 //! subscriber and the holders of chosen roles. Schedule's contributed
 //! recurrence (`base/reports.deliveries`, run by the `scheduler` principal)

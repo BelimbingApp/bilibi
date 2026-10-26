@@ -110,7 +110,7 @@ jobs:
           cache-dependency-path: bilibi/apps/base/ui/assets/package-lock.json
       - run: npm ci --prefix apps/base/ui/assets --no-audit --no-fund
 
-      # Discovery, committed CSS, Cargo.lock pinning, fmt, clippy -D warnings,
+      # Discovery, CSS compilation and coverage, Cargo.lock pinning, fmt, clippy -D warnings,
       # a debug build on a pull request or the locked release build on main,
       # migrate, seed-production, and GET /.
       - name: Run the mounted gates

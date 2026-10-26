@@ -14,7 +14,7 @@ pub use encryption::Encryption;
 use bilibi_database::{Change, Error, MutationTransaction, Result};
 use bilibi_module_registry::{Catalog, Module, Service};
 use bilibi_party_ids::OrganisationId;
-use bilibi_tenancy::{PartyProofs, ReadClient, Scope};
+use bilibi_tenancy::{Authorization, PartyProofs, ReadClient, Scope};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tokio::sync::broadcast;
@@ -71,6 +71,10 @@ pub struct Settings {
     definitions: Definitions,
     encryption: Encryption,
     parties: Arc<PartyProofs>,
+    /// Tenancy's bound Authz decision, for the one enforcement Settings makes
+    /// itself: a system principal reading an encrypted value (SP1). Unbound
+    /// until `with_authorization`, and an unbound decision refuses.
+    authorization: Arc<Authorization>,
     changes: broadcast::Sender<Changed>,
 }
 impl Settings {
@@ -83,8 +87,13 @@ impl Settings {
             definitions,
             encryption,
             parties,
+            authorization: Arc::default(),
             changes: broadcast::channel(256).0,
         }
+    }
+    pub fn with_authorization(mut self, authorization: Arc<Authorization>) -> Self {
+        self.authorization = authorization;
+        self
     }
     pub fn definitions(&self) -> &Definitions {
         &self.definitions
@@ -127,6 +136,10 @@ impl Settings {
                 ])
             }
             Target::User { company } => {
+                // A system principal has no account and so no user scope.
+                if actor.principal().is_some() {
+                    return Err(Error::Forbidden);
+                }
                 let mut chain = vec![StorageScope {
                     kind: ScopeKind::User,
                     tenant: actor.tenant(),
@@ -166,6 +179,11 @@ impl Settings {
     }
     /// One uncached SQL snapshot for all requested keys and the inheritance
     /// chain. Callers must mask encrypted fields before putting them in HTML.
+    /// A named system principal (`Scope::principal`, SP1) receives a stored
+    /// encrypted value only when it is granted that definition's editor
+    /// capability in the tenant (the same grant screen an administrator uses
+    /// for its other capabilities); a definition without one, or a missing
+    /// grant, refuses the whole read with `Forbidden`.
     pub async fn resolve_many(
         &self,
         client: &dyn ReadClient,
@@ -266,6 +284,15 @@ impl Settings {
                     }
                 }
                 Some((scope, row)) => {
+                    if encrypted && actor.principal().is_some() {
+                        let capability = definition
+                            .and_then(|d| d.editor.as_ref())
+                            .and_then(|editor| editor.capability)
+                            .ok_or(Error::Forbidden)?;
+                        self.authorization
+                            .authorize_scope(client, actor, capability)
+                            .await?;
+                    }
                     let value = self.decode(key, scope, row, encrypted)?;
                     if let Some(d) = definition {
                         d.validate(&value).map_err(|_| Error::Invalid)?;
@@ -455,7 +482,8 @@ inventory::submit! {
             let catalog = Catalog::discover(&bilibi_module_registry::discover()?)?;
             Ok(Arc::new(Settings::new(Definitions::from_catalog(&catalog)?,
                 Encryption::from_hex(std::env::var("BILIBI_SETTINGS_KEY").ok().as_deref()),
-                services.get::<PartyProofs>("base/tenancy.parties")?)))
+                services.get::<PartyProofs>("base/tenancy.parties")?)
+                .with_authorization(services.get::<Authorization>("base/tenancy.authorization")?)))
         }}],
     }
 }

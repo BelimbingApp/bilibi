@@ -193,8 +193,9 @@ impl<O: QueuedPdfOwner> PdfRenderHandler<O> {
         let Some(job) = Job::parse(&args) else {
             return Outcome::Cancel("pdf_args_refused");
         };
-        // PDF work is enqueued by a user; a system-principal job has no owner
-        // scope to authorize against and is refused, never retried.
+        // The attempt's sealed scope: the enqueuing user, or (SP1) a system
+        // job's named principal, which the owner's authorize decides by name.
+        // A missing scope is refused, never retried.
         let Some(scope) = execution.scope() else {
             return Outcome::Cancel("pdf_forbidden");
         };
