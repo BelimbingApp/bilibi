@@ -165,7 +165,17 @@ pub async fn record_skipped(
     trigger: Trigger,
     triggered_by: Option<&TriggeredBy>,
 ) -> Result<bool> {
-    let expression = (trigger == Trigger::Scheduled).then_some(item.definition().expression);
+    let expression = if trigger == Trigger::Scheduled {
+        let row = client
+            .query_opt(
+                "SELECT * FROM base_schedule_timings WHERE key=$1",
+                &[&item.key()],
+            )
+            .await?;
+        Some(crate::timing::Timing::from_row(item, row.as_ref())?.expression)
+    } else {
+        None
+    };
     Ok(client.execute(
         "INSERT INTO base_schedule_runs(key,name,expression,trigger,triggered_by_user_id,triggered_by_name,status,started_at,finished_at,runtime_ms,output_excerpt) \
          SELECT $1::text,$2::text,$3::text,$4::text,$5::bigint,$6::text,'skipped',$7::timestamptz,clock_timestamp(),0,'overlap' \

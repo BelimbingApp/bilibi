@@ -1,17 +1,19 @@
-//! Immutable contributed recurrences, fingerprint review and suppression, and
+//! Contributed recurrence defaults, operator clock settings, review and suppression, and
 //! the durable occurrence claim that hands exactly one job per occurrence to
 //! the Queue, the operator board at `/system/schedule` and history retention.
 //! Work itself runs on the Queue.
-pub mod board;
+mod board;
 pub mod cron;
 pub mod definition;
-pub mod occurrence;
+mod occurrence;
 mod phrase;
 pub mod recurrence;
 mod retention;
 pub mod scheduler;
+mod timing;
 mod web;
 pub mod worker;
+pub use board::{Availability, Diagnostics, DueWork, Pruned, RunPage, RunQuery, RunSort};
 pub use definition::{Definition, Misfire, Overlap, DEFINITIONS, RESERVED_ARGUMENT};
 pub use occurrence::{Refusal, Run, Trigger, TriggeredBy};
 pub use scheduler::Scheduler;
@@ -111,6 +113,11 @@ pub struct Task {
     pub review: ReviewState,
     pub suppressed: bool,
     pub next_due_at: Option<Timestamp>,
+    /// The operator setting, or the contribution defaults when none applies.
+    pub clock_expression: String,
+    pub clock_timezone: String,
+    pub timing_version: String,
+    pub time_overridden: bool,
     /// The latest recorded run's status; `None` when it never ran.
     pub last_status: Option<String>,
     pub last_started_at: Option<Timestamp>,
@@ -263,28 +270,43 @@ impl Schedule {
                 )
             })
             .collect();
-        Ok(self
-            .definitions
+        let timings: BTreeMap<String, tokio_postgres::Row> = client
+            .query(
+                "SELECT * FROM base_schedule_timings WHERE key=ANY($1)",
+                &[&keys],
+            )
+            .await?
+            .into_iter()
+            .map(|row| (row.get("key"), row))
+            .collect();
+        self.definitions
             .values()
-            .map(|item| Task {
-                key: item.key,
-                name: item.definition.name,
-                owner: item.owner,
-                owner_route: item.definition.owner_route,
-                task_name: item.definition.task_name,
-                expression: item.definition.expression,
-                timezone: item.definition.timezone,
-                overlap: item.definition.overlap,
-                misfire: item.definition.misfire,
-                fingerprint: item.fingerprint.clone(),
-                review: review_state(item, reviews.get(item.key)),
-                suppressed: suppressed.iter().any(|key| key == item.key),
-                next_due_at: item.next(now).ok(),
-                last_status: latest.get(item.key).map(|run| run.0.clone()),
-                last_started_at: latest.get(item.key).map(|run| run.1),
-                last_runtime_ms: latest.get(item.key).and_then(|run| run.2),
+            .map(|item| {
+                let timing = timing::Timing::from_row(item, timings.get(item.key))?;
+                Ok(Task {
+                    key: item.key,
+                    name: item.definition.name,
+                    owner: item.owner,
+                    owner_route: item.definition.owner_route,
+                    task_name: item.definition.task_name,
+                    expression: item.definition.expression,
+                    timezone: item.definition.timezone,
+                    overlap: item.definition.overlap,
+                    misfire: item.definition.misfire,
+                    fingerprint: item.fingerprint.clone(),
+                    review: review_state(item, reviews.get(item.key)),
+                    suppressed: suppressed.iter().any(|key| key == item.key),
+                    next_due_at: timing.next(now),
+                    clock_expression: timing.expression,
+                    clock_timezone: timing.timezone,
+                    timing_version: timing.version,
+                    time_overridden: timing.overridden,
+                    last_status: latest.get(item.key).map(|run| run.0.clone()),
+                    last_started_at: latest.get(item.key).map(|run| run.1),
+                    last_runtime_ms: latest.get(item.key).and_then(|run| run.2),
+                })
             })
-            .collect())
+            .collect()
     }
 
     /// Trusted claim-time check for Q4 and queued-job start. Call it inside the
@@ -547,6 +569,13 @@ impl Schedule {
             tx.rollback().await?;
             return Ok(Err(refusal));
         }
+        let timing = self.timing(tx.sql(), key).await?;
+        if trigger == Trigger::Scheduled
+            && timing.previous(intended_at).map_err(|_| Error::Invalid)? != Some(intended_at)
+        {
+            tx.rollback().await?;
+            return Ok(Err(Refusal::Unreviewed));
+        }
         occurrence::reconcile(tx.sql(), Some(key)).await?;
         let at = occurrence::to_pg(intended_at);
         if tx
@@ -580,8 +609,8 @@ impl Schedule {
         let metadata = worker::Metadata {
             key: key.into(),
             name: item.definition.task_name.into(),
-            expression: (trigger == Trigger::Scheduled).then(|| item.definition.expression.into()),
-            fingerprint: item.fingerprint.clone(),
+            expression: (trigger == Trigger::Scheduled).then(|| timing.expression.clone()),
+            fingerprint: timing.version.clone(),
             intended_at,
             trigger,
             triggered_by_user_id: triggered_by.map(|t| t.user_id),
@@ -683,7 +712,7 @@ inventory::submit! { Contribution::new(VOCABULARY, "base/schedule", Provenance {
 inventory::submit! {
     Module { id: "base/schedule", layer: bilibi_module_registry::Layer::Base,
         dependencies: &["base/module_registry", "base/database", "base/audit", "base/tenancy", "base/authz", "base/queue", "base/settings", "base/locale", "base/datetime", "base/ui", "base/menu"],
-        migrations: &[("base-schedule-001", include_str!("../migrations/001-schedule.sql")), ("base-schedule-002", include_str!("../migrations/002-schedule-occurrences.sql"))],
+        migrations: &[("base-schedule-001", include_str!("../migrations/001-schedule.sql")), ("base-schedule-002", include_str!("../migrations/002-schedule-occurrences.sql")), ("base-schedule-003-schedule-timing", include_str!("../migrations/003-schedule-timing.sql"))],
         services: &[Service { id: "base/schedule.store", factory: |services| {
             let catalog = Catalog::discover(&bilibi_module_registry::discover()?)?;
             let queue = services.get::<Queue>("base/queue.store")?;

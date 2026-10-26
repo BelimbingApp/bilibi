@@ -1,7 +1,7 @@
 # ADR 03: Application workspaces: two front doors
 
 **Document Type:** Architecture Decision Record
-**Status:** Accepted; amended on 2026-10-22 from one front door to two. Implemented across the Platform and the application template.
+**Status:** Accepted; amended on 2026-10-22 from one front door to two. Implemented across the Platform and the app maker.
 **Agents:** codex/gpt-6 (author); claude/claude-opus-5-5 (2026-10-22 amendment)
 **Scope:** Trying Bilibi, creating an application repository, owning source changes and recording a reproducible composition
 **Last Updated:** 2026-10-22
@@ -20,23 +20,23 @@ The first version of this record sent everyone to `bilibi` and created the appli
 
 ### Two front doors
 
-**Product builders start in the application template; Platform and component contributors start in `bilibi`.** Both start the same way: clone, then `./bilibi start`, which installs anything missing, runs the app and opens the sign-in page in the browser.
+**Product builders start with the app maker; Platform and component contributors start in `bilibi`.** Both start the same way: clone, then `./bilibi start`, which installs anything missing, runs the app and opens the sign-in page in the browser.
 
 | You want to… | Start in | What you get |
 | --- | --- | --- |
-| Build your own product on Bilibi | `BelimbingApp/bilibi-app-template` | An application: the Platform only (Base and Core) at a tested commit, ready to add Domains and Extensions, release and install |
+| Build your own product on Bilibi | `BelimbingApp/bilibi-app-maker` | An application: the Platform only (Base and Core) at a tested commit, ready to add Domains and Extensions, release and install |
 | Change the Platform, or build a Domain or Extension for everyone | `BelimbingApp/bilibi` | The Platform's latest source, to change and contribute as pull requests |
 
-**The template's recipe is the Platform only.** Domains and Extensions are the product builder's choice, added with `./bilibi add` or the command the Software page shows. The template pins a tested Platform commit; moving that pin forward is the template maintainers' job.
+**The app maker's recipe is the Platform only.** Domains and Extensions are the product builder's choice, added with `./bilibi add` or the command the Software page shows. The maker pins a tested Platform commit; moving that pin forward is the maker maintainers' job.
 
-### Starting from the template
+### Starting with the app maker
 
-1. Clone `https://github.com/BelimbingApp/bilibi-app-template`, enter the clone and run `./bilibi start`. No GitHub account is needed to try it.
+1. Clone `https://github.com/BelimbingApp/bilibi-app-maker`, enter the clone and run `./bilibi start`. No GitHub account is needed to try it.
 2. Add Domains and Extensions with `./bilibi add <name>`, then `./bilibi start` again.
-3. To keep it, make it yours: rename the template remote to `upstream`, create your own repository, add it as `origin` and push. The clone is already the application; no `new` step is needed. Keeping the template's history lets later template updates merge.
-4. Save versions with `./bilibi pin`, check them with `./bilibi check`, and release as the template README describes.
+3. To keep it, make it yours: rename the maker remote to `upstream`, create your own repository, add it as `origin` and push. The clone is already the application; no `new` step is needed. Keeping the maker's history lets later maker updates merge.
+4. Save versions with `./bilibi pin`, check them with `./bilibi check`, and release as the maker README describes.
 
-**Clone the template; never use GitHub's "Use this template" button.** That button starts a repository without the template's history, so template updates can no longer merge. The template repository is therefore not marked as a GitHub template.
+**Clone the app maker.** A copy made without its history, such as through GitHub's "Use this template" button or a downloaded archive, can no longer merge maker updates. The maker repository is therefore not marked as a GitHub template.
 
 Contributions follow the remotes: application changes go to the application's `origin`. Platform, Domain and Extension changes are pull requests to their own repositories, from the checkouts under `sources/`, whose `origin` stays the URL in `setup.toml`.
 
@@ -46,7 +46,7 @@ Contributions follow the remotes: application changes go to the application's `o
 
 1. Clone `https://github.com/BelimbingApp/bilibi`, enter the clone and run `./bilibi start`. No GitHub account or template step is needed.
 2. To try an official Domain, run `./bilibi add <domain>` in that clone, then `./bilibi start` again. Extensions use the same `add` command and their existing mount location.
-3. To keep the trial's source composition, run `./bilibi new <name>` from the Platform root. It creates a separate sibling application repository by default and leaves the trial untouched. The application keeps the template's history, with the template as its `upstream` remote.
+3. To keep the trial's source composition, run `./bilibi new <name>` from the Platform root. It creates a separate sibling application repository by default and leaves the trial untouched. The application keeps the maker's history, with the maker as its `upstream` remote.
 4. In the application root, use the same `./bilibi` entry point. Commit the application recipe and composition there. Create a remote and push when ready; remote creation is not part of trying Bilibi.
 
 `new` records the current Platform, Domains **and Extensions**. Each exact commit must be fetchable from its declared source. Prove reconstruction independently of the trial's Git objects; object reuse is only an optimization.
@@ -102,14 +102,14 @@ Local startup permits branches and uncommitted edits. It must report those diffe
 
 ## Amendment of 2026-10-22
 
-**Two front doors replace one.** The owner decided that a product builder starts in the application template, which ships the Platform only, and that `./bilibi start` opens the browser at the sign-in page. Starting in `bilibi` and using `new` stays fully supported for contributors and for anyone who began there.
+**Two front doors replace one.** The owner decided that a product builder starts with the app maker, which ships the Platform only, and that `./bilibi start` opens the browser at the sign-in page. Starting in `bilibi` and using `new` stays fully supported for contributors and for anyone who began there.
 
 What changed with it:
 
-- The template repository was renamed `bilibi-app-template` and is no longer marked as a GitHub template, so its button cannot create unlinked copies.
+- The template repository was renamed, first `bilibi-app-template` and then `bilibi-app-maker`: the front door, which will grow guided commands for making an application. It is no longer marked as a GitHub template, so no button creates unlinked copies.
 - Its recipe dropped the sample Finance Domain and pins the Platform alone.
 - Both `./bilibi help` texts say which kind of repository they are in and group commands by when to use them.
-- `new` keeps the template's history as `upstream` (BelimbingApp/bilibi#152), so applications from either door take template updates with `git merge upstream/main`.
+- `new` keeps the maker's history as `upstream` (BelimbingApp/bilibi#152), so applications from either door take maker updates with `git merge upstream/main`.
 
 ## Consequences
 
@@ -121,6 +121,6 @@ What changed with it:
 
 ## Current implementation
 
-**The common entry point and application workspace are implemented.** Platform supplies `start`, `setup`, `add`, `status`, `update`, `help` and `new`; the [application template](https://github.com/BelimbingApp/bilibi-app-template) is the product builder's front door and supplies the application wrapper, independent editable sources, saved recipes, commit safeguards and strict release commands. `new` pins the template revision, independently fetches every selected source and validates the trial's resolved lock before saving it. `check`, `pin` and `build` in Platform explain how to create an application.
+**The common entry point and application workspace are implemented.** Platform supplies `start`, `setup`, `add`, `status`, `update`, `help` and `new`; the [app maker](https://github.com/BelimbingApp/bilibi-app-maker) is the product builder's front door and supplies the application wrapper, independent editable sources, saved recipes, commit safeguards and strict release commands. `new` pins the maker revision, independently fetches every selected source and validates the trial's resolved lock before saving it. `check`, `pin` and `build` in Platform explain how to create an application.
 
 [Application workspaces](../../application-workspaces.md) documents Git ownership, deliberate tooling updates, parallel migration, manual adoption of ordinary clones and rollback. Setup never adopts or relocates an existing checkout automatically. Runtime data retains its existing paths; output conflicts require a deliberate preserved move. Server delivery remains under ADR 02.

@@ -1,7 +1,7 @@
 # Unmounted Platform gates. A pull request that cannot affect this build
 # (docs, and the other paths scripts/compatibility.py treats as harmless)
-# passes without compiling, but still checks the committed CSS: Tailwind
-# scans the whole repository, so a docs change can make it stale.
+# passes without compiling, but still checks CSS compilation and
+# reproducibility from source.
 # Mounted Domain checks are domains.yml: those pull requests lint and boot a
 # debug build, so this release build is the one a pull request still does.
 # main keeps both.
@@ -30,7 +30,7 @@ jobs:
         run: python3 scripts/compatibility.py affected platform
       - name: This pull request does not affect the build
         if: steps.decide.outputs.affected != 'true'
-        run: echo 'No changed file can affect the unmounted build. Passing without compiling; the committed CSS is still checked.' | tee -a "$GITHUB_STEP_SUMMARY"
+        run: echo 'No changed file can affect the unmounted build. Passing without compiling; CSS compilation and reproducibility are still checked.' | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/setup-node@v6
         with:
           node-version: '24'

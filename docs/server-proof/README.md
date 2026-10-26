@@ -4,7 +4,7 @@ Build on your own machine, then prove installation, 2FA, Undo and automatic swit
 
 ## Prepare the lab
 
-Use a disposable Bilibi checkout on a Linux host with `sudo -n`, `systemd-nspawn`, `machinectl`, `debootstrap`, `iptables`, Rust, Python 3 and `chrome-devtools-axi`.
+Use a disposable Bilibi checkout on a Linux host with `sudo -n`, `systemd-nspawn`, `machinectl`, `debootstrap`, `iptables`, Rust, Node.js >=22, npm, Python 3 and `chrome-devtools-axi`.
 
 - The lab owns machine `fsproof`, network `10.77.61.0/24` and its tagged firewall rules. It refuses an existing machine or interface with that name.
 - Host IP forwarding must already be enabled. The script does not change it or any host service, Caddy configuration or database.
@@ -118,12 +118,12 @@ The driver works around an AXI limit: it fills the real file input through brows
 
 ## Install from GitHub
 
-Use a throwaway release in a repository you own, such as `BelimbingApp/bilibi-app-template`. Publish it as a pre-release with the archive attached, and delete it afterwards. GitHub allows only 60 unauthenticated calls an hour per address, and the lab shares the host's address, so refresh sparingly.
+Use a throwaway release in a repository you own, such as `BelimbingApp/bilibi-app-maker`. Publish it as a pre-release with the archive attached, and delete it afterwards. GitHub allows only 60 unauthenticated calls an hour per address, and the lab shares the host's address, so refresh sparingly.
 
 ```sh
 docs/server-proof/pack-setup.sh target/release/bilibi-web "$BILIBI_PROOF_DATA/assets/bilibi-setup-proof1-x86_64-unknown-linux-gnu.tar.gz"
-gh-axi release create proof-github-source-1 --draft --prerelease -R BelimbingApp/bilibi-app-template <archive>
-gh-axi release edit proof-github-source-1 --draft=false --prerelease=true -R BelimbingApp/bilibi-app-template
+gh-axi release create proof-github-source-1 --draft --prerelease -R BelimbingApp/bilibi-app-maker <archive>
+gh-axi release edit proof-github-source-1 --draft=false --prerelease=true -R BelimbingApp/bilibi-app-maker
 ```
 
 Name the repository and accept it on Software › Releases, choose **Show pre-releases**, then drive the same reviewed install the page offers:

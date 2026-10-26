@@ -45,7 +45,8 @@ impl Queue {
         worker_id: &str,
         args: Value,
     ) -> Result<JobRef> {
-        if tx.context().tenant != scope.tenant()
+        if scope.principal().is_some()
+            || tx.context().tenant != scope.tenant()
             || tx.context().actor.kind != "user"
             || tx.context().actor.id != scope.user().to_string()
             || tx.context().impersonator.is_some()

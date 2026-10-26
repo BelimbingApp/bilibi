@@ -361,11 +361,25 @@ pub(super) fn detail(state: &detail::Detail, editor: bool) -> Result<String> {
         Html::EMPTY
     };
     let sql = editor_field("sql_query", "query-sql-textarea", &state.draft.sql_query, "SELECT * FROM users WHERE id = :id LIMIT 25;", "block w-full rounded-md border border-line bg-surface-sunken font-mono text-xs text-ink px-3 py-1.5 placeholder:text-ink-faint focus:border-brand-strong focus:outline-none focus:ring-1 focus:ring-brand-strong/30").kind(InputKind::Textarea).attr("rows", "5").aria_label("SQL query");
-    let parameters = state.detected.iter().map(|key| fragment(&Field::in_form("parameters", key)
-        .id(format!("param-input-{key}")).label(format!(":{key}")).label_class("block text-xs font-mono text-ink mb-1")
-        .wrapper_class("mb-0").placeholder(format!("Value for :{key}"))
-        .value(state.parameters.get(key).and_then(|v| v.as_deref()).unwrap_or(""))
-        .class("block w-full rounded-md border border-line bg-surface px-2.5 py-1.5 text-xs text-ink placeholder:text-ink-faint focus:border-brand-strong focus:outline-none focus:ring-1 focus:ring-brand-strong/30")))
+    let parameters = state
+        .detected
+        .iter()
+        .map(|key| {
+            fragment(
+                &Field::in_form("parameters", key)
+                    .id(format!("param-input-{key}"))
+                    .label(format!(":{key}"))
+                    .wrapper_class("mb-0")
+                    .placeholder(format!("Value for :{key}"))
+                    .value(
+                        state
+                            .parameters
+                            .get(key)
+                            .and_then(|v| v.as_deref())
+                            .unwrap_or(""),
+                    ),
+            )
+        })
         .collect::<Result<Vec<_>>>()?;
     DetailView {
         flash: flash(&state.success, "")?,
