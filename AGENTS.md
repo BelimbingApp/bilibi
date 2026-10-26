@@ -20,6 +20,7 @@ Authoritative contracts (point to them, do not copy them): `apps/base/module_reg
 
 - **Production grade, no demo mode.** No demo seeds, fake data paths or feature flags for hypotheticals. Examples and walkthroughs install `fixtures/walkthrough` into a disposable database.
 - **Deep modules.** One small facade per module; the crate root exports the facade, its service ID and its public types, everything else is private (`mod`, not `pub mod`). Do not widen a surface to reach a helper. Narrow existing extra `pub mod`s when you touch them.
+- **Clean breaks, no shims.** When you rename, move or narrow something, move every caller in the same change (with companion PRs) instead of leaving aliases, re-exports, wrappers or deprecated copies of the old form. Record the old -> new mapping in the PR's upgrade notes for code outside the catalogue. This holds while breaking changes are cheap (Bilibi pre-1.0, few consumers); revisit when they become too costly.
 - **Configurable.** A value an operator could reasonably set is a setting with an operator UI (`base/settings`, `base/settings_editor`), not a constant or an environment-only value. Secrets are encrypted, never shown back, never logged.
 
 ## Modules and dependencies
