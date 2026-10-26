@@ -324,7 +324,7 @@ impl Panel {
                 Err(error) => return Err(error),
             },
             Host::Organisation(id) => {
-                bilibi_company::organisation::require_writable(&**client, scope, id.get(), false)
+                bilibi_company::require_writable(&**client, scope, id.get(), false)
                     .await
                     .is_ok()
             }
@@ -375,7 +375,7 @@ impl Panel {
                     if labels.contains_key(&id) {
                         continue;
                     }
-                    let label = bilibi_company::organisation::identity(&**client, scope, id)
+                    let label = bilibi_company::identity(&**client, scope, id)
                         .await?
                         .map(|identity| identity.display_name)
                         .unwrap_or_else(|| format!("Company #{id}"));
@@ -504,7 +504,7 @@ impl Panel {
         let (party, party_label) = self.host.party_column();
         let options: Vec<Choice> = match self.host {
             Host::Person(_) => {
-                match bilibi_company::organisation::search(
+                match bilibi_company::search(
                     &**client,
                     scope,
                     &bilibi_company::SearchQuery {
@@ -527,7 +527,7 @@ impl Panel {
                 }
             }
             Host::Organisation(_) => {
-                match bilibi_person::identity::search(
+                match bilibi_person::search_persons(
                     &**client,
                     scope,
                     &bilibi_person::Search {

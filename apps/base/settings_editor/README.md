@@ -14,7 +14,7 @@ Settings appear in the shared `FlexTable`, with Setting, Value and Area columns.
 
 ## Fields
 
-A field is every `base/settings.definitions` contribution with `editor` metadata, a concrete key (no wildcard) and the global scope, shown as rows in the table. Declaring such a setting is all a module does to appear here. A field whose `editor.capability` the actor does not hold right now is withheld: it is not rendered and a forged submission naming it is ignored. When every field is withheld the page names the missing capabilities instead of claiming nothing was contributed.
+A field is every `base/settings.definitions` contribution with `editor` metadata, a concrete key (no wildcard) and the selected scope (global, tenant or company), shown as rows in the table. Declaring such a setting is all a module does to appear here. A field whose `editor.capability` the actor does not hold right now is withheld: it is not rendered and a forged submission naming it is ignored. When every field is withheld the page names the missing capabilities instead of claiming nothing was contributed.
 
 Values are read with `Settings::resolve_masked`, so an encrypted value is never decrypted to draw the page; a stored secret shows the keep-current mask. Without a valid `BILIBI_SETTINGS_KEY` an encrypted field is read-only (it can still be cleared by Restore Defaults, which needs no key).
 
@@ -30,9 +30,17 @@ A setting that a Base Step-up operation guards (`Operation::guards_setting`, dec
 
 "Show stored value" appears only for an actor holding `base.settings.secret.view` by name (`authz::explicitly_granted`; `grant_all` does not count) when the key is configured. Showing it is the Base Step-up operation `base.settings_editor.secret.reveal` ("Show a stored secret setting"), on the installation floor; it replaced the password prompt. When the session owes a check, the Value cell asks for the code inline and the person submits again; the authenticator locks repeated failures. Every attempt, including a forged request, records a retained `settings.secret.reveal` audit action without the value, and a reveal whose audit row cannot be written shows nothing. The value reaches the browser only as a `LiveBody.events` push to the `SecretStored` hook (`bilibi:secret:reveal`), which re-masks it after the definition's `reveal_duration_ms`.
 
+## Tenant scope
+
+The scope picker offers **This tenant** after Global, for everyone on the page: the defaults the actor's own tenant gives its companies, over the global ones. It is not in Bilimbi's editor; issue 130 asks for tenant defaults (Search's `search.kinds` and `search.boost`).
+
+- It lists the definitions with the tenant scope (Search's settings, Datetime's `localization.timezone`), notes "Inherited from global" or "the default", and labels the restore button "Clear overrides".
+- Writes go under `Target::Tenant` as `settings.tenant.save`/`restore`, authorized by the route capability that every write already re-asks (`authorize_operator`); Settings binds the tenant from the scope, so no other tenant changes.
+- The page is the operator's, so this sets the operator tenant's defaults. Another tenant's administrators have no page for their own tenant's defaults yet.
+
 ## Company scope (K15)
 
-Accounts with `base.settings.company.manage` see the scope picker: Global plus the companies Tenancy's organisation directory (`PartyProofs::selectable_organisations`, bound by Core Company) says this actor may manage with that capability, their own company or every company of the tenant with `admin.company.tenant-wide.manage`. Others see Bilimbi's "You do not have permission to manage company settings."; an actor the directory names no company for is told no company is available.
+The scope picker always offers Global and This tenant. Accounts with `base.settings.company.manage` also see the companies Tenancy's organisation directory (`PartyProofs::selectable_organisations`, bound by Core Company) says this actor may manage with that capability, their own company or every company of the tenant with `admin.company.tenant-wide.manage`. Others see Bilimbi's "You do not have permission to manage company settings."; an actor the directory names no company for is told no company is available.
 
 A picked company is an id, never a proof: `switch_scope` reproves it (`organisation_target`) and every Save and Clear reproves it again plus the company's standing (`PartyProofs::organisation`). A denied, missing or cross-tenant company is refused with "You do not have permission to manage this company's settings."; an archived one with "This company is archived and read-only, so its settings were not changed." and is never offered by the picker, a deliberate narrowing of Bilimbi, which opens an archived company read-only. Under a company the page lists the definitions with the company scope (Datetime's `localization.timezone`, gated by `admin.company.update`), marks overrides "Set here", notes "Inherited from global/tenant/the default", writes under `Target::Company` as `settings.company.save`/`restore` and labels the restore button "Clear overrides". The K15 walkthrough (`apps/core/company/examples/k15-owner-binders.rs`) exercises the same seam.
 
@@ -45,5 +53,6 @@ On a disposable migrated database, install the walkthrough fixture (`cargo run -
 3. Save two rows, press Restore Defaults: the dialog counts two changed settings; Restore clears them.
 4. Grant the account `base.settings.secret.view` directly and store an encrypted editable setting (the walkthrough in `apps/web/examples` or any module's encrypted definition). "Show stored value" asks for 2FA; a refused check shows nothing, an accepted check shows the value briefly, and `base_audit_actions` holds one `settings.secret.reveal` row per attempt.
 5. Deny one field's capability (`principal_capabilities ... is_allowed=false`) and reload: that row is gone; deny all and the page names them.
+6. Pick **This tenant** and set Search's "Kinds of records" to `{"companies": false}`: the row says "Set here" and Global still inherits. The search box of a tenant 1 account finds no companies, while tenant 2's `manager@other.example.test`, granted `base.search.records.list`, still finds its own company. "Clear overrides" restores it.
 
 A setting protected by the current 2FA policy uses the shared `bilibi_ui::StepUp` form. Before setup its control stays disabled beside a setup link; other settings can still be saved. Restore is replaced by the setup link when it would clear a protected override. Every write keeps its existing authorization and 2FA checks.

@@ -12,10 +12,9 @@ use bilibi_agent_api::{
     Registry,
 };
 use bilibi_company::{
-    reference_types::Outcome,
-    relationship_roles::{self, RoleUpdate},
-    relationships::{self, RelationshipUpdate},
-    CompanyService, CreateOutcome, NewCompany, SERVICE,
+    assign_relationship, ensure_default_relationship_roles, CompanyService, CreateOutcome,
+    NewCompany, RelationshipEntry, RelationshipRoleUpdate, RelationshipUpdate, TypeOutcome,
+    SERVICE,
 };
 use bilibi_database::{pool, MutationBoundary};
 use bilibi_party::{
@@ -96,7 +95,7 @@ async fn company(
         CreateOutcome::Refused(errors) => Err(format!("create refused: {errors:?}").into()),
     }
 }
-fn summary(entries: &[relationships::Entry]) -> Vec<String> {
+fn summary(entries: &[RelationshipEntry]) -> Vec<String> {
     entries
         .iter()
         .map(|entry| {
@@ -187,7 +186,7 @@ async fn main() -> Result<(), Error> {
     );
     show(
         "second read inserts nothing",
-        relationship_roles::ensure_defaults_if_empty(client, 1).await?,
+        ensure_default_relationship_roles(client, 1).await?,
     );
     let role = |code: &str| {
         roles
@@ -241,8 +240,8 @@ async fn main() -> Result<(), Error> {
         )
         .await?
     {
-        Outcome::Saved(role) => role,
-        Outcome::Refused(errors) => return Err(format!("{errors:?}").into()),
+        TypeOutcome::Saved(role) => role,
+        TypeOutcome::Refused(errors) => return Err(format!("{errors:?}").into()),
     };
     show("created role (code normalized)", &reseller);
     show(
@@ -268,7 +267,7 @@ async fn main() -> Result<(), Error> {
             .update_relationship_role(
                 &manager,
                 reseller.id,
-                &RoleUpdate {
+                &RelationshipRoleUpdate {
                     name: "Channel partner".into(),
                     inverse_name: "Supplier".into(),
                     version: 99,
@@ -280,7 +279,7 @@ async fn main() -> Result<(), Error> {
         .update_relationship_role(
             &manager,
             reseller.id,
-            &RoleUpdate {
+            &RelationshipRoleUpdate {
                 name: "Channel partner".into(),
                 inverse_name: "Supplier".into(),
                 version: reseller.version,
@@ -288,8 +287,8 @@ async fn main() -> Result<(), Error> {
         )
         .await?
     {
-        Outcome::Saved(role) => role,
-        Outcome::Refused(errors) => return Err(format!("{errors:?}").into()),
+        TypeOutcome::Saved(role) => role,
+        TypeOutcome::Refused(errors) => return Err(format!("{errors:?}").into()),
     };
     show(
         "rename keeps id and code",
@@ -351,7 +350,7 @@ async fn main() -> Result<(), Error> {
         )
         .await?;
     show("vendor from 2026-01-01", &first);
-    let Outcome::Saved(first) = first else {
+    let TypeOutcome::Saved(first) = first else {
         return Err("first assignment refused".into());
     };
     show(
@@ -578,7 +577,7 @@ async fn main() -> Result<(), Error> {
         .await?;
     show(
         "assignment holding the role",
-        relationships::assign(
+        assign_relationship(
             &mut tx,
             &manager,
             &proofs,
@@ -697,7 +696,7 @@ async fn main() -> Result<(), Error> {
         .iter()
         .any(|line| line.starts_with(&format!("#{} ", ended.id))),
     );
-    let Outcome::Saved(person_link) = person_link else {
+    let TypeOutcome::Saved(person_link) = person_link else {
         return Err("person link refused".into());
     };
     let unlinked = companies

@@ -1,4 +1,4 @@
--- Scheduled deliveries (BelimbingApp/bilibi#128, phase 2, ADR 06 decision 4).
+-- Scheduled deliveries (BelimbingApp/bilibi#128, phase 2, ADR 07 decision 4).
 -- A subscription is a stored, audited request to deliver one report on a
 -- schedule to its subscriber and, optionally, to the holders of chosen
 -- roles. Each delivery runs as its recipient (a Queue job whose actor Queue

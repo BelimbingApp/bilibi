@@ -1,4 +1,4 @@
-# ADR 06: Report builder: reports read owners' Grid sources under bounds
+# ADR 07: Report builder: reports read owners' Grid sources under bounds
 
 **Document Type:** Architecture Decision Record
 **Status:** Proposed. The first slice is built: Grid's grouped read and filtered row page (`summarize`, `page_keys`). The rest is in "Slices".
