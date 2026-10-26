@@ -15,8 +15,9 @@ Operator-built reports: a saved question over one Grid table, run as each reader
 | Call | Needs | Does |
 |---|---|---|
 | `list`, `get` | `reports.view` | Reports the reader may run: their own, shared with everyone, or shared with one of their roles. |
+| `page` | `reports.view` | One page of those reports by name, searched by name and description in the same query, with the number that match. |
 | `run` | `reports.view` | One page of rows, or a grouped summary with subtotals and a total. Answers ask-when-run filters by position; drill filters narrow to a group. |
-| `csv` | `reports.export` | The whole result as CSV, up to the export cap. Audited as `base.reports.exported` with report id and row count, never the data. Leading `=`, `+`, `-`, `@` are neutralised. |
+| `csv` | `reports.export` | The whole result as CSV, up to the export cap, with the same answers and drill-downs as the page. Audited as `base.reports.exported` with report id and row count, never the data. Leading `=`, `+`, `-`, `@` are neutralised. |
 | `record_types`, `columns` | `reports.view` | What a builder may offer: readable record types, and a type's own fields plus fields one link away. |
 | `check` | — | Shape bounds, every column against the author's catalog, then a bounded dry run. A dry run refused only by size or cost still saves. |
 | `create`, `copy` | `reports.author` | Saves a report owned by the actor. A copy is unshared. |
@@ -38,7 +39,7 @@ Operator-built reports: a saved question over one Grid table, run as each reader
 
 | Key | Default | Range |
 |---|---|---|
-| `reports.page_size` | 50 | 10–200 |
+| `reports.page_size` | 50 | 10–100 (Grid's page bound) |
 | `reports.max_groups` | 500 | 10–Grid's `MAX_RESULT_GROUPS` |
 | `reports.export_rows` | 5,000 | 100–Grid's `MAX_OFFSET` |
 
@@ -50,9 +51,10 @@ Grid's cost bound and timeouts apply to every run on top of these.
 |---|---|
 | `/reports` | The reports the reader may run (`FlexTable`), with New report for authors: name, record type and kind create a starter report that opens on its Definition tab. |
 | `/reports/{id}` | Read first. **Result** runs it as the reader, with ask-when-run answers, drill-down on a group's own value (not on date buckets) and a left-out note. **Definition** is the editor, live for the author, read-only for others. **Sharing** is the author's. Copy and Delete confirm with `ConfirmDialog`. |
-| `/reports/{id}/export` | The CSV download (`reports.export`), with the answers in the address (`a<i>`, `a<i>_to`). |
+| `/reports/{id}/export` | The CSV download (`reports.export`), with the answers and drill-downs in the address (`a<i>`, `a<i>_to`, `d<n>`, `v<n>`). |
 
-- Answers, the tab and the page are in the address, so a link repeats the question.
+- Answers, drill-downs, the tab and the page are in the address, so a link repeats the question. An ask box shows its stored value until answered; an answer left blank is no filter (`a<i>=` stays in the address), never the stored value.
+- The editor is a draft of the version it opened at: a save after someone else's is refused as a conflict, and the draft stays in the form. Every measure and sort a definition holds opens in it.
 - Every write goes through the operation contracts below (`PAGE_WRITES`: `create`, `save_definition`, `copy`, `save_sharing`, `delete`).
 - The menu entry Reports needs `reports.view`.
 

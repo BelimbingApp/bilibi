@@ -1,6 +1,6 @@
 //! `/reports/{id}/export`: the report's whole result as CSV, run as the
-//! reader with the answers the address carries (`a<i>`, as the Result tab
-//! writes them). The facade checks `reports.export` and audits the export.
+//! reader with the answers and drill-downs the address carries (`a<i>`,
+//! `d<n>`/`v<n>`, as the Result tab writes them). The facade checks `reports.export` and audits the export.
 use super::{page_error, show};
 use crate::Reports;
 use bilibi_database::Error;
@@ -23,9 +23,10 @@ impl Download<Scope, Error> for Csv {
                 .await
                 .map_err(page_error)?;
             let answers = show::answers(&report, &show::answer_keys(request.query));
+            let drill = show::drill_keys(request.query);
             let csv = self
                 .reports
-                .csv(request.scope, id, &answers)
+                .csv(request.scope, id, &answers, &drill)
                 .await
                 .map_err(refused)?;
             Ok(FileBody::attachment(

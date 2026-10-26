@@ -9,7 +9,7 @@ use bilibi_database::{Error, Result};
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
     choices, error_sentence,
-    list_state::FILTERS_FORM,
+    list_state::{PageCounts, FILTERS_FORM},
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
     params, Alert, Badge, BadgeKind, BuiltinColumn, Button, ButtonVariant, Card, ColumnType,
     ColumnsOutcome, CreateButton, ErrorSummary, Field, FilterToolbar, FlashMap, FlexRow, FlexTable,
@@ -227,16 +227,25 @@ impl Index {
             .map_err(super::page_error)?
             .into_iter()
             .collect();
-        let mut all = pages.reports.list(scope).await.map_err(super::page_error)?;
-        let search = self.state.search.to_lowercase();
-        if !search.is_empty() {
-            all.retain(|r| {
-                r.name.to_lowercase().contains(&search)
-                    || r.description.to_lowercase().contains(&search)
-            });
+        // The search and the page are the facade's one query; a page past
+        // the last (after a search narrows it) is fetched again at the last.
+        let search = self.state.search.trim().to_owned();
+        let (mut entries, mut total) = pages
+            .reports
+            .page(scope, &search, self.state.offset(), self.state.page_size)
+            .await
+            .map_err(super::page_error)?;
+        if self
+            .state
+            .clamp_to_last_page(total.div_ceil(self.state.page_size.max(1)), true)
+        {
+            (entries, total) = pages
+                .reports
+                .page(scope, &search, self.state.offset(), self.state.page_size)
+                .await
+                .map_err(super::page_error)?;
         }
-        let page = self.state.paginate(&all);
-        let (entries, counts) = (page.entries.to_vec(), page.counts);
+        let counts = PageCounts::new(self.state.page, self.state.page_size, total);
         self.rows = entries;
         if self.rows_changed {
             self.columns.load(&self.rows, |r| r.id.to_string());
