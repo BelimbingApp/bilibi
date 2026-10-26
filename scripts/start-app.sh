@@ -10,7 +10,8 @@ cd "$root"
 # Settings come from the shell, then the gitignored .env beside the ./bilibi
 # you ran, then defaults; .env.example lists the lines .env accepts. This also
 # resolves BILIBI_DEV_HOST, the instance's own <name>.localhost (scripts/dev-env.py).
-eval "$(python3 scripts/dev-env.py)"
+dev_env_exports=$(python3 scripts/dev-env.py)
+eval "$dev_env_exports"
 # A full local copy needs these keys. When a variable is already set, leave it
 # and its file alone. Otherwise read the file, or create it once: 64 hex
 # characters from 32 random bytes, mode 0600, under gitignored .local/dev/.

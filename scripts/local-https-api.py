@@ -354,7 +354,7 @@ def main():
     # The owner claim lives inside the route; the pre-per-host form is accepted
     # for bilibi.localhost so the developer's existing route stays theirs.
     checkout = hashlib.sha256(str(ROOT).encode()).hexdigest()
-    OWNER_PREFIXES = tuple(f"{route_id}-owner-" for route_id in (ROUTE_ID, *LEGACY_IDS.get(ROUTE_ID, ())))
+    OWNER_PREFIXES = tuple(f"{route_id}-owner-" for route_id in (ROUTE_ID, *([LEGACY_IDS[ROUTE_ID]] if ROUTE_ID in LEGACY_IDS else [])))
     OWNER_IDS = {prefix + checkout for prefix in OWNER_PREFIXES}
     OWNER_ID = ROUTE_ID + "-owner-" + checkout
     requested_port = int(sys.argv[3] if planning else sys.argv[2])
