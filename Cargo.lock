@@ -523,6 +523,7 @@ dependencies = [
  "bilibi-queue",
  "bilibi-reports",
  "bilibi-schedule",
+ "bilibi-search",
  "bilibi-security",
  "bilibi-session",
  "bilibi-settings",
@@ -561,6 +562,7 @@ dependencies = [
  "bilibi-person",
  "bilibi-principal-directory",
  "bilibi-reports",
+ "bilibi-search",
  "bilibi-security",
  "bilibi-settings",
  "bilibi-tenancy",
@@ -933,6 +935,7 @@ dependencies = [
  "bilibi-party",
  "bilibi-party-ids",
  "bilibi-principal-directory",
+ "bilibi-search",
  "bilibi-step-up",
  "bilibi-tenancy",
  "bilibi-ui",
@@ -1053,6 +1056,29 @@ dependencies = [
  "tokio",
  "tokio-postgres",
  "uuid",
+]
+
+[[package]]
+name = "bilibi-search"
+version = "0.1.1"
+dependencies = [
+ "askama",
+ "bilibi-agent-api",
+ "bilibi-authz",
+ "bilibi-database",
+ "bilibi-datetime",
+ "bilibi-grid",
+ "bilibi-locale",
+ "bilibi-module-registry",
+ "bilibi-settings",
+ "bilibi-tenancy",
+ "bilibi-ui",
+ "inventory",
+ "jiff",
+ "serde",
+ "serde_json",
+ "tokio-postgres",
+ "url",
 ]
 
 [[package]]

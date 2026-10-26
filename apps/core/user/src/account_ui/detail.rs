@@ -14,7 +14,7 @@ use crate::{
 };
 use bilibi_agent_api::{page::Call, Error as ContractError};
 use bilibi_authz::{roles::RoleSummary, Effective};
-use bilibi_company::eligibility::{account_eligibility, AccountEligibility};
+use bilibi_company::{account_eligibility, AccountEligibility};
 use bilibi_database::Error;
 use bilibi_party_ids::{AffiliationId, PersonId};
 use bilibi_ui::{
@@ -332,10 +332,9 @@ impl Detail {
             Some(organisation) => {
                 let eligibility =
                     account_eligibility(&**client, scope.tenant(), organisation).await?;
-                let name =
-                    bilibi_company::organisation::identity(&**client, scope, organisation.get())
-                        .await?
-                        .map(|identity| identity.display_name);
+                let name = bilibi_company::identity(&**client, scope, organisation.get())
+                    .await?
+                    .map(|identity| identity.display_name);
                 (eligibility != AccountEligibility::Eligible, name)
             }
         };
@@ -365,13 +364,10 @@ impl Detail {
                         let mut choices = Vec::with_capacity(page.entries.len());
                         for affiliation in page.entries {
                             let organisation = affiliation.affiliation.organisation_id;
-                            let company = bilibi_company::organisation::identity(
-                                &**client,
-                                scope,
-                                organisation.get(),
-                            )
-                            .await?
-                            .map(|identity| identity.display_name);
+                            let company =
+                                bilibi_company::identity(&**client, scope, organisation.get())
+                                    .await?
+                                    .map(|identity| identity.display_name);
                             let title = affiliation.affiliation.title.clone().unwrap_or_default();
                             let label = match (company.as_deref(), title.as_str()) {
                                 (Some(company), "") => company.to_owned(),

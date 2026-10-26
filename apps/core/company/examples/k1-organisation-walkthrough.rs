@@ -12,10 +12,9 @@ use bilibi_agent_api::{
 };
 use bilibi_company as primary;
 use bilibi_company::{
-    departments,
-    organisation::{self, CreateOutcome},
-    reference_types::{self, Direction, NewType, Outcome, TypeSort, TypeUpdate},
-    CompanyService, NewCompany, SearchQuery, SERVICE,
+    available_department_types, list_departments, list_legal_entity_types, CompanyService,
+    CreateOutcome, DepartmentOutcome, DepartmentSort, NewCompany, NewType, SearchQuery,
+    SortDirection, TypeOutcome, TypeSort, TypeUpdate, SERVICE,
 };
 use bilibi_database::pool;
 use bilibi_party_ids::OrganisationId;
@@ -90,15 +89,15 @@ async fn main() -> Result<(), Error> {
     println!("== identity: existing ids and URLs are kept");
     show(
         "identity(tenant 1, company 1)",
-        organisation::identity(client, &manager, 1).await?,
+        bilibi_company::identity(client, &manager, 1).await?,
     );
     show(
         "identity(tenant 1, company 100)",
-        organisation::identity(client, &manager, 100).await?,
+        bilibi_company::identity(client, &manager, 100).await?,
     );
     show(
         "identity(tenant 2, company 100)",
-        organisation::identity(client, &other, 100).await?,
+        bilibi_company::identity(client, &other, 100).await?,
     );
     show(
         "primary_company(tenant 1)",
@@ -221,7 +220,7 @@ async fn main() -> Result<(), Error> {
         search: "walkthrough".into(),
         ..SearchQuery::default()
     };
-    let page = organisation::search(client, &manager, &query).await?;
+    let page = bilibi_company::search(client, &manager, &query).await?;
     for entry in &page.entries {
         println!(
             "  manager sees {} code={} parent={:?} primary={} email={}",
@@ -232,7 +231,7 @@ async fn main() -> Result<(), Error> {
             entry.company.email
         );
     }
-    let page = organisation::search(client, &viewer, &query).await?;
+    let page = bilibi_company::search(client, &viewer, &query).await?;
     for entry in &page.entries {
         println!(
             "  viewer sees {} email={} (restricted column skipped in search)",
@@ -254,7 +253,7 @@ async fn main() -> Result<(), Error> {
         )
         .await?;
     show("create WT_LLP", &llp);
-    let Outcome::Saved(llp) = llp else {
+    let TypeOutcome::Saved(llp) = llp else {
         return Err("WT_LLP refused".into());
     };
     show(
@@ -331,7 +330,7 @@ async fn main() -> Result<(), Error> {
     );
     show(
         "list by code desc",
-        reference_types::list_legal_entity_types(client, TypeSort::Code, Direction::Desc)
+        list_legal_entity_types(client, TypeSort::Code, SortDirection::Desc)
             .await?
             .iter()
             .map(|t| t.code.clone())
@@ -352,7 +351,7 @@ async fn main() -> Result<(), Error> {
         )
         .await?;
     show("create WT_RND", &rnd);
-    let Outcome::Saved(rnd) = rnd else {
+    let TypeOutcome::Saved(rnd) = rnd else {
         return Err("WT_RND refused".into());
     };
     show(
@@ -372,7 +371,7 @@ async fn main() -> Result<(), Error> {
     );
     show(
         "available types for company 1",
-        departments::available_types(client, &manager, 1)
+        available_department_types(client, &manager, 1)
             .await?
             .iter()
             .map(|t| t.code.clone())
@@ -383,7 +382,7 @@ async fn main() -> Result<(), Error> {
         .await
         .map_err(|e| e.to_string());
     show("create Research department", &department);
-    let Ok(departments::Outcome::Saved(department)) = department else {
+    let Ok(DepartmentOutcome::Saved(department)) = department else {
         return Err("department refused".into());
     };
     show(
@@ -423,12 +422,12 @@ async fn main() -> Result<(), Error> {
     );
     show(
         "list sorted by status",
-        departments::list(
+        list_departments(
             client,
             &manager,
             1,
-            departments::DepartmentSort::Status,
-            Direction::Asc,
+            DepartmentSort::Status,
+            SortDirection::Asc,
         )
         .await?
         .iter()
