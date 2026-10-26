@@ -38,6 +38,19 @@ static EXTRA: GridContribution = GridContribution {
         Source::global("SELECT id FROM (SELECT '{}'::text AS id, '{}'::jsonb AS doc) s"),
         "id",
         &[Field::new("id", "ID", FieldType::String)],
+    ),
+    // Floats that `numeric` would round, and a day column for calendar limits.
+    TableDecl::new(
+        "g5_floats",
+        "Floats and days",
+        "grid.reference.view",
+        Source::global("SELECT * FROM (VALUES (1, 1.234567890123456::float8, DATE '2026-10-23'), (2, 0.30000000000000004::float8, DATE '2026-10-24')) s(id, amount, day)"),
+        "id",
+        &[
+            Field::new("id", "ID", FieldType::Integer),
+            Field::new("amount", "Amount", FieldType::Float),
+            Field::new("day", "Day", FieldType::Date),
+        ],
     )],
     links: &[],
 };
@@ -680,6 +693,103 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             &format!("a timestamp written {spelled} finds the same instant"),
             page.total == same && page.keys.contains(&json!(id)),
             format!("{} row(s), {same} in SQL", page.total),
+        );
+    }
+
+    println!("== Float equality and calendar limits (re-review of #157)");
+    let page = |filters: Vec<Filter>| PageSpec {
+        filters,
+        sorts: vec![],
+        timezone: ZONE.into(),
+        offset: 0,
+        limit: 10,
+        bounds: grid::Bounds::default(),
+    };
+    let float_cases = [
+        (
+            "equals the stored 1.234567890123456",
+            Test::Equals(json!(1.234567890123456)),
+            vec![json!(1)],
+        ),
+        (
+            "one of the stored 1.234567890123456",
+            Test::OneOf(vec![json!(1.234567890123456)]),
+            vec![json!(1)],
+        ),
+        (
+            "equals the stored 0.30000000000000004",
+            Test::Equals(json!(0.30000000000000004)),
+            vec![json!(2)],
+        ),
+        ("equals 0.3 (not stored)", Test::Equals(json!(0.3)), vec![]),
+        (
+            "one of 0.3 (not stored)",
+            Test::OneOf(vec![json!(0.3)]),
+            vec![],
+        ),
+        (
+            "a range of exactly 1.234567890123456",
+            Test::Range {
+                min: Some(json!(1.234567890123456)),
+                max: Some(json!(1.234567890123456)),
+            },
+            vec![json!(1)],
+        ),
+    ];
+    for (label, test, want) in float_cases {
+        let filters = vec![filter("amount", test)];
+        let summary = summarize(
+            &db,
+            &manager,
+            "g5_floats",
+            &spec(filters.clone(), vec![], vec![]),
+        )
+        .await;
+        let keys = page_keys(&db, &manager, "g5_floats", &page(filters)).await;
+        let rows = summary.as_ref().map(|s| s.total.rows);
+        let found = keys.as_ref().map(|p| p.keys.clone());
+        report.check(
+            &format!("a float {label}: summary and page find exactly the stored rows"),
+            rows.as_ref().is_ok_and(|n| *n == want.len() as i64)
+                && found.as_ref().is_ok_and(|k| *k == want),
+            format!("{rows:?}, {found:?}"),
+        );
+    }
+    let calendar_cases = [
+        ("day", Test::Equals(json!("0000-01-01")), "a day in year 0"),
+        (
+            "day",
+            Test::OneOf(vec![json!("-000001-01-01")]),
+            "a negative year",
+        ),
+        (
+            "day",
+            Test::Range {
+                min: Some(json!("0000-01-01")),
+                max: None,
+            },
+            "a range from year 0",
+        ),
+        (
+            "recorded_at",
+            Test::Equals(json!("0000-01-01T00:00:00Z")),
+            "an instant in year 0",
+        ),
+    ];
+    for (column, test, label) in calendar_cases {
+        let root = if column == "day" {
+            "g5_floats"
+        } else {
+            "reference_movements"
+        };
+        let filters = vec![filter(column, test)];
+        let summary = summarize(&db, &manager, root, &spec(filters.clone(), vec![], vec![])).await;
+        let keys = page_keys(&db, &manager, root, &page(filters)).await;
+        report.check(
+            &format!("{label} is refused before SQL, in summary and page"),
+            matches!(summary, Err(grid::QueryError::Unsupported(..)))
+                && matches!(keys, Err(grid::QueryError::Unsupported(..))),
+            format!("{:?} / {:?}", summary.err(), keys.err()),
         );
     }
 
