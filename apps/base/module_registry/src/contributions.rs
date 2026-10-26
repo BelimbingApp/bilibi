@@ -296,6 +296,32 @@ impl Access {
             _ => None,
         }
     }
+    /// Whether `viewer` may open a page with this access, for showing it: a
+    /// page search row, a workspace tile, a record search hit. Step-up is
+    /// ignored, as [`Access::base`] says. Display only: the route decides
+    /// again, logged, when the page is opened.
+    pub fn admits(self, viewer: &Viewer<'_>) -> bool {
+        let held = |key: &str| viewer.capabilities.contains(key);
+        match self.base() {
+            Access::Public | Access::SignedIn => true,
+            Access::Capability(key) => held(key),
+            Access::AnyOf(keys) => keys.iter().any(|key| held(key)),
+            Access::Operator => viewer.operator,
+            Access::OperatorCapability(key) => viewer.operator && held(key),
+            Access::Owner => viewer.owner,
+            // Boot refuses a step-up wrapped in another.
+            Access::StepUp { .. } => false,
+        }
+    }
+}
+/// Who is looking, for [`Access::admits`]: the effective capabilities and
+/// whether the operator and owner proofs held. The caller proves them; this
+/// only reads the answers.
+#[derive(Clone, Copy, Debug)]
+pub struct Viewer<'a> {
+    pub capabilities: &'a BTreeSet<&'static str>,
+    pub operator: bool,
+    pub owner: bool,
 }
 /// Metadata consumed by the Web adapter; registration does not bypass guards.
 #[derive(Clone, Copy, Debug)]

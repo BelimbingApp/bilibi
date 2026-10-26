@@ -33,6 +33,7 @@ bilibi-principal-directory = { path = "principal_directory" }
 bilibi-queue = { path = "queue" }
 bilibi-reports = { path = "reports" }
 bilibi-schedule = { path = "schedule" }
+bilibi-search = { path = "search" }
 bilibi-security = { path = "security" }
 bilibi-session = { path = "session" }
 bilibi-settings = { path = "settings" }

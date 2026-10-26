@@ -1,4 +1,4 @@
--- Operator-built reports (BelimbingApp/bilibi#128, ADR 06). A report is a
+-- Operator-built reports (BelimbingApp/bilibi#128, ADR 07). A report is a
 -- saved question over one Grid table, never saved data: `definition` holds
 -- column paths, filters, groupings, measures, sort and chart, validated by the
 -- facade. `owner_id` is the account that wrote it; only it changes the report.
