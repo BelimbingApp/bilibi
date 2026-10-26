@@ -1088,6 +1088,45 @@ impl Values {
         Ok(html)
     }
 
+    /// What a new value may belong to: every active value of the parent
+    /// list. Not `choices`, which a record's form narrows by the parent's own
+    /// parent: curation has no chosen ancestor, so a list two levels down
+    /// would get no options. When the parent list is itself dependent, each
+    /// option names its own parents, so equal labels stay apart.
+    async fn parent_options(&self, scope: &Scope, parent: &str) -> Result<Vec<Choice>> {
+        let lists = &self.pages.lists;
+        let parent = lists.list(parent)?;
+        let client = self.pages.db.get().await?;
+        let language = lists.language(&**client, scope).await?;
+        let above: HashMap<String, String> = match parent.parent {
+            Some(grandparent) => lists
+                .rows(&**client, scope, lists.list(grandparent)?, "")
+                .await?
+                .into_iter()
+                .map(|value| (value.code.clone(), value.label_in(language).to_owned()))
+                .collect(),
+            None => HashMap::new(),
+        };
+        Ok(lists
+            .rows(&**client, scope, parent, "")
+            .await?
+            .into_iter()
+            .filter(|value| !value.retired())
+            .map(|value| {
+                let mut label = value.label_in(language).to_owned();
+                if !value.parents.is_empty() && parent.parent.is_some() {
+                    let under: Vec<&str> = value
+                        .parents
+                        .iter()
+                        .map(|code| above.get(code).map_or(code.as_str(), String::as_str))
+                        .collect();
+                    label = format!("{label} — under {}", under.join(", "));
+                }
+                Choice::new(label, value.code)
+            })
+            .collect())
+    }
+
     async fn new_dialog(&self, scope: &Scope, draft: &Draft) -> Result<Html> {
         let value = |key: &str| draft.values.get(key).cloned().unwrap_or_default();
         let errors = |key: &str| draft.errors.get(key).cloned().unwrap_or_default();
@@ -1112,12 +1151,7 @@ impl Values {
                 .required(),
         )?);
         if let Some(parent) = self.list.parent {
-            let client = self.pages.db.get().await?;
-            let options = self
-                .pages
-                .lists
-                .choices(&**client, scope, parent, None)
-                .await?;
+            let options = self.parent_options(scope, parent).await?;
             body.push(&render(
                 Field::in_form("value", "parent")
                     .id("picklist-new-parent")

@@ -221,6 +221,14 @@ impl PickLists {
     pub fn list(&self, key: &str) -> Result<&'static PickList> {
         self.lists.get(key).copied().ok_or(Error::NotFound)
     }
+    /// The reader's translation language, as `choices` and `label` use it.
+    pub(crate) async fn language(
+        &self,
+        client: &(impl GenericClient + Sync),
+        scope: &Scope,
+    ) -> Result<&'static str> {
+        Ok(self.locales.resolve(client, scope, None).await?.language)
+    }
 
     pub(crate) async fn rows(
         &self,

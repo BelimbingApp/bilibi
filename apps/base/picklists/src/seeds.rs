@@ -63,7 +63,7 @@ async fn reconcile_tenant(
             .collect();
         if present.len() + missing.len() > VALUES_MAX {
             return Err(Error::Registry(RegistryError::Contribution(format!(
-                "pick-list {} in tenant {tenant} holds {} values; adding the starting values {} would pass the {VALUES_MAX}-value limit. Remove custom values from that list (retired ones count), then run again.",
+                "pick-list {} in tenant {tenant} already holds {} values (retired values count, and values are never deleted), so its new starting values {} cannot fit within the {VALUES_MAX}-value limit. Nothing was changed. The release that declares them must not add starting values to a full list: drop these codes from the declaration or reuse existing codes, then run seed-production again.",
                 list.key,
                 present.len(),
                 missing.join(", ")

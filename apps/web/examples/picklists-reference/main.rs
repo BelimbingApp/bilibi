@@ -51,6 +51,7 @@ const MODULE: &str = "extensions/picklists_reference";
 const CATEGORY: &str = "extensions.picklists_reference.category";
 const SUBCATEGORY: &str = "extensions.picklists_reference.subcategory";
 const REGION: &str = "extensions.picklists_other.region";
+const DETAIL: &str = "extensions.picklists_reference.detail";
 
 inventory::submit! {
     Module { id: MODULE, layer: Layer::Extensions, dependencies: &["base/picklists", "base/authz", "base/database", "base/tenancy", "base/ui"], migrations: &[], services: &[
@@ -104,6 +105,19 @@ bilibi_base::picklists::declare!(
     )
     .under(CATEGORY)
     .requires("reference.cases.manage")
+);
+// A third level: a dependent list whose parent list is itself dependent.
+bilibi_base::picklists::declare!(
+    "extensions/picklists_reference",
+    PickList::new(
+        DETAIL,
+        "Case detail",
+        &[
+            Start::new("late-payment", "Late payment").under(&["invoice"]),
+            Start::new("partial-refund", "Partial refund").under(&["refund"]),
+        ]
+    )
+    .under(SUBCATEGORY)
 );
 bilibi_base::picklists::declare!(
     "extensions/picklists_other",

@@ -89,7 +89,7 @@ Starting values go in by code: a missing code is inserted, an existing one is le
 | A module adds values later | It contributes the next seed version. |
 
 - Each seed inserts the missing codes of every linked list, so running one module's seed never harms another's lists.
-- Each list is reconciled under its list lock and within the 500-value cap: a run that would pass the cap is refused whole, naming the tenant, the list and the codes it could not add.
+- Each list is reconciled under its list lock and within the 500-value cap: a run that would pass the cap is refused whole and changes nothing, naming the tenant, the list and the codes it could not add. Values are never deleted and retired ones count, so a full list cannot take new starting values: the release that declares them drops those codes or reuses existing ones, then `seed-production` runs again.
 - `base/picklists` contributes no seed of its own: it declares no list.
 
 ## Curating values
