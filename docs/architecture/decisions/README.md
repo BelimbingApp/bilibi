@@ -60,3 +60,9 @@ Every record carries these header lines: Document Type, Status, Agents, Scope, L
 | Record | Status |
 | --- | --- |
 | [05 Personal-data registry, data-subject requests and audit erasure](./05-personal-data-registry.md) | Proposed |
+
+### Search
+
+| Record | Status |
+| --- | --- |
+| [06 Record search at query time, in the owner's source](./06-query-time-record-search.md) | Proposed |

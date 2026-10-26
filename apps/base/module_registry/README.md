@@ -36,6 +36,8 @@ These are metadata contracts; Web's route/event adapter owns execution and must
 apply guards. Seed execution and ledger tracking belong to Database; a seed
 selects Production/Development and SQL or a named service operation.
 
+To decide whether to *show* a page or panel (page search, workspace tiles, record search hits, a record's contributed panels), use `Access::admits` with a `Viewer` of the proved capabilities, operator and owner standing, never a match of your own. It is display only: the route decides again when the page is opened.
+
 A new consumer (Menu, Settings, Grid, Queue, Agent API, etc.) registers
 `Consumer::new::<OwnerPayload>("base/owner.catalog", "base/owner", validator)`.
 The owning validator sees the complete sorted `&[Entry]`, including an empty

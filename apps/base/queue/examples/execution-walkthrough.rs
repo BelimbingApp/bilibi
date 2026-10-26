@@ -143,16 +143,11 @@ impl Specimen {
         // A granted principal reaches every live company of its tenant
         // (`authorize_target` asks it for no tenant-wide key); the archived
         // check is the same as for an account.
-        let target = bilibi_core::company::organisation::authorize_target(
-            &**client,
-            scope,
-            COMPANY,
-            "companies.update",
-        )
-        .await;
-        let writable =
-            bilibi_core::company::organisation::require_writable(&**client, scope, COMPANY, false)
+        let target =
+            bilibi_core::company::authorize_target(&**client, scope, COMPANY, "companies.update")
                 .await;
+        let writable =
+            bilibi_core::company::require_writable(&**client, scope, COMPANY, false).await;
         println!("company target: {target:?} writable: {writable:?}");
         match self
             .settings

@@ -362,7 +362,7 @@ impl Pages {
         let client = self.db.get().await?;
         let mut choices = Vec::with_capacity(page.entries.len());
         for affiliation in page.entries {
-            let company = bilibi_company::organisation::identity(
+            let company = bilibi_company::identity(
                 &**client,
                 scope,
                 affiliation.affiliation.organisation_id.get(),

@@ -135,9 +135,9 @@ any other.
 
 `standing(client, tenant, user)` is the authentication-edge read:
 the account row, then each stored link re-proved through its owner's public
-read (`bilibi_company::eligibility::account_eligibility`,
+read (`bilibi_company::account_eligibility`,
 `bilibi_affiliation::identity::account_standing`,
-`bilibi_person::identity::account_standing`). It answers `Live(AccountIdentity)`,
+`bilibi_person::account_standing`). It answers `Live(AccountIdentity)`,
 `Unknown` or `Frozen(CompanyArchived | Identity)`, is read afresh every time and
 is never written back as a derived status. `AccountVerifier`, bound into
 `base/tenancy.authentication` at boot, answers every session check, live

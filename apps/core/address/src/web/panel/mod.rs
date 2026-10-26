@@ -149,12 +149,11 @@ impl Panel {
         let client = self.pages.db.get().await?;
         Ok(match self.owner {
             PartyId::Organisation(id) => matches!(
-                bilibi_company::organisation::require_writable(&**client, scope, id.get(), false)
-                    .await,
+                bilibi_company::require_writable(&**client, scope, id.get(), false).await,
                 Err(bilibi_company::WriteError::Archived)
             ),
             PartyId::Person(id) => {
-                let person = bilibi_person::identity::read(&**client, scope, id).await?;
+                let person = bilibi_person::read_person(&**client, scope, id).await?;
                 person.retired_at.is_some() || person.system_key.is_some()
             }
         })
