@@ -8,6 +8,9 @@ navigation in a template.
 
 - `Menu::from_catalog(services.catalog()?)` is built once at boot (`App::menu`).
   Duplicate IDs, self-parents and parent cycles fail boot as contributor defects.
+  Icon names use the bare names documented in `../ui/README.md`. Web checks every
+  contribution at boot; an unknown name warns with its module and renders the
+  shared missing-icon glyph, without blocking boot.
   A missing parent drops that item and its descendants, listed by `dropped()` and
   logged once, so one bad contributor cannot remove everyone's navigation.
 - Render `visible_tree(&decide)`, never `tree()` (diagnostics). `decide` answers

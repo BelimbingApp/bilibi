@@ -187,7 +187,7 @@ impl Page<Scope, Error> for Exports {
                 actions.push(
                     &Html::render(&ActionLink {
                         id: &id_csv,
-                        icon: "hero-arrow-down-tray",
+                        icon: "arrow-down-tray",
                         title: "Download CSV",
                         href: &href_csv,
                         method: "",
@@ -198,7 +198,7 @@ impl Page<Scope, Error> for Exports {
                 actions.push(
                     &Html::render(&ActionLink {
                         id: &id_print,
-                        icon: "hero-printer",
+                        icon: "printer",
                         title: "Print",
                         href: &href_print,
                         method: "",

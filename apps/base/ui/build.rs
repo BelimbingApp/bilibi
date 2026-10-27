@@ -16,7 +16,9 @@ fn main() {
     );
     let script = root.join("scripts/build-assets.sh");
     println!("cargo:rerun-if-changed={}", script.display());
-    let output = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR")).join("app.css");
+    let output = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR"));
+    embed_icons(&assets, &output);
+    let output = output.join("app.css");
     let status = Command::new("bash")
         .arg(script)
         .arg("--output")
@@ -43,4 +45,86 @@ fn watch(path: &Path, module: &Path, assets: &Path) {
     } else {
         println!("cargo:rerun-if-changed={}", path.display());
     }
+}
+
+// Bilimbi's ui/icon_registry.ex action vocabulary, backed by its vendored SVGs.
+// Generate Rust data into OUT_DIR: deployed apps never read icon files or need
+// Tailwind to discover a class name. Preserve SVG children verbatim so solid
+// icons retain their fill-rule and clip-rule attributes.
+fn embed_icons(assets: &Path, output: &Path) {
+    let mut code = String::new();
+    for (constant, directories) in [
+        (
+            "HEROICONS",
+            vec![
+                ("heroicons/24/outline", "", 24),
+                ("heroicons/24/solid", "-solid", 24),
+                ("heroicons/20/solid", "-mini", 20),
+                ("heroicons/16/solid", "-micro", 16),
+            ],
+        ),
+        ("GLYPHS", vec![("product-icons", "", 24)]),
+    ] {
+        let mut icons = Vec::new();
+        for (directory, suffix, size) in directories {
+            for entry in
+                fs::read_dir(assets.join("vendor").join(directory)).expect("vendored SVG directory")
+            {
+                let path = entry.expect("vendored SVG entry").path();
+                if path.extension().is_none_or(|extension| extension != "svg") {
+                    continue;
+                }
+                let name = format!("{}{suffix}", path.file_stem().unwrap().to_str().unwrap());
+                let svg = fs::read_to_string(&path).expect("read vendored SVG");
+                let (head, body) = svg.split_once('>').expect("SVG opening element");
+                let body = body.trim().strip_suffix("</svg>").expect("SVG end");
+                let attribute = |key: &str| {
+                    head.split_once(&format!(" {key}=\""))
+                        .and_then(|(_, rest)| rest.split_once('"'))
+                        .map_or("", |(value, _)| value)
+                };
+                let view_box = attribute("viewBox");
+                let fill = attribute("fill");
+                let stroke_width = attribute("stroke-width");
+                assert!(
+                    !view_box.is_empty() && !fill.is_empty(),
+                    "{}",
+                    path.display()
+                );
+                icons.push((
+                    name,
+                    format!(
+                        "SvgIcon {{ name: {:?}, view_box: {view_box:?}, fill: {fill:?}, \
+                     stroke_width: {stroke_width:?}, size: {size}, body: {body:?} }}",
+                        format!("{}{suffix}", path.file_stem().unwrap().to_str().unwrap()),
+                    ),
+                ));
+            }
+        }
+        icons.sort_by(|a, b| a.0.cmp(&b.0));
+        assert!(icons.windows(2).all(|pair| pair[0].0 != pair[1].0));
+        code.push_str(&format!("const {constant}: &[SvgIcon] = &[\n"));
+        if constant == "GLYPHS" {
+            code.push_str("MISSING,\n");
+        }
+        for (_, icon) in icons {
+            code.push_str(&icon);
+            code.push_str(",\n");
+        }
+        code.push_str("];\n");
+    }
+    let catalog: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(assets.join("vendor/product-icons/catalog.json"))
+            .expect("icon action vocabulary"),
+    )
+    .expect("icon action JSON");
+    for (constant, key) in [("ACTIONS", "actions"), ("SHELL", "shell")] {
+        code.push_str(&format!("const {constant}: &[(&str, &str)] = &[\n"));
+        for (name, target) in catalog[key].as_object().expect("icon action mapping") {
+            let target = target.as_str().expect("icon action target");
+            code.push_str(&format!("({name:?}, {target:?}),\n"));
+        }
+        code.push_str("];\n");
+    }
+    fs::write(output.join("icons.rs"), code).expect("write embedded icon catalogue");
 }
