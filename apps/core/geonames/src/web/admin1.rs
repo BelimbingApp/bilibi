@@ -92,7 +92,7 @@ impl Admin1 {
             shown: None,
             update: Update::new(update::Spec {
                 dataset: Dataset::Admin1,
-                noun: "first-level divisions",
+                noun: "First-level divisions",
                 button_id: "admin1-update",
                 event: "update-admin1",
                 denied: DENIED,
@@ -160,7 +160,7 @@ impl Admin1 {
                 self.statuses.put(field, CommitStatus::Saved);
                 self.flash.put(
                     StatusKind::Success,
-                    format!("first-level division {} updated.", updated.code),
+                    format!("First-level division {} updated.", updated.code),
                 );
             }
             Err(NameWriteError::Access(Error::Unauthorized)) => return Err(Error::Unauthorized),
@@ -203,7 +203,7 @@ impl Admin1 {
                 context: IconContext::Inline,
                 id: "admin1-pin",
                 nav_pin: "nav-admin-geonames-admin1-division",
-                ..IconButton::new("bilimbi-pin", "Pin First-level divisions to sidebar")
+                ..IconButton::new("bilimbi-pin", "Pin first-level divisions to sidebar")
             })?,
             actions: if can_update {
                 self.update.button()?
@@ -281,7 +281,7 @@ impl Admin1 {
         table.suggestions = self.columns.flex_suggestions();
         table.add_query = &self.columns.add_query;
         table.framed = false;
-        table.caption = "first-level divisions";
+        table.caption = "First-level divisions";
         if shown.page.entries.is_empty() {
             table.empty = Some(TableEmpty::Content(Html::text(
                 "No first-level divisions found.",
