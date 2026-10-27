@@ -25,7 +25,8 @@ pub const MAX_SLICES: usize = 8;
 
 const WIDTH: f64 = 640.0;
 const HEIGHT: f64 = 240.0;
-const LEFT: f64 = 52.0;
+/// The narrowest value-axis margin; it widens to fit the longest tick label.
+const LEFT: f64 = 56.0;
 const RIGHT: f64 = 12.0;
 const TOP: f64 = 12.0;
 const BOTTOM: f64 = 36.0;
@@ -33,6 +34,14 @@ const BOTTOM: f64 = 36.0;
 /// title and the table.
 const AXIS_LABELS: usize = 12;
 const LABEL_CHARS: usize = 14;
+/// The width of one character of label text (12 units), near enough to lay
+/// out by.
+const CHAR_W: f64 = 7.2;
+/// Category labels that do not fit their spacing turn by this many degrees.
+const TURN: f64 = 40.0;
+/// Ticks on a value axis at most; a round step gives four to ten.
+const MAX_TICKS: f64 = 20.0;
+const TOO_LARGE: &str = "These values are beyond the scale a chart can draw. The data is below.";
 
 // Written out so the stylesheet build finds every class.
 const FILL: [&str; MAX_SERIES] = [
@@ -119,6 +128,14 @@ pub struct Chart {
     summary: String,
     kpi: String,
     kpi_label: String,
+    /// The SVG's height: taller when category labels turn.
+    height: String,
+    /// Where the plot starts, and where tick labels end, on the x axis.
+    left: String,
+    tick_x: String,
+    label_y: String,
+    /// Category labels turn to fit (`rotate(-40 x y)` on each).
+    turned: bool,
     ticks: Vec<Tick>,
     labels: Vec<AxisLabel>,
     rects: Vec<Mark>,
@@ -140,6 +157,8 @@ struct Tick {
 struct AxisLabel {
     x: String,
     text: String,
+    /// The label's `transform` when labels turn, else empty.
+    turn: String,
 }
 /// A bar (`x`, `y`, `w`, `h`) or a slice (`d`), with its colour and title.
 struct Mark {
@@ -204,6 +223,11 @@ impl Chart {
             summary: String::new(),
             kpi: String::new(),
             kpi_label: String::new(),
+            height: num(HEIGHT),
+            left: num(LEFT),
+            tick_x: num(LEFT - 6.0),
+            label_y: num(HEIGHT - 18.0),
+            turned: false,
             ticks: Vec::new(),
             labels: Vec::new(),
             rects: Vec::new(),
@@ -226,7 +250,7 @@ impl Chart {
                                 .get(i)
                                 .copied()
                                 .flatten()
-                                .map_or("—".into(), format_number)
+                                .map_or("—".into(), format_exact)
                         })
                         .collect();
                     (category.clone(), cells)
@@ -242,7 +266,7 @@ impl Chart {
             let first = series.first();
             chart.kpi = first
                 .and_then(|s| value(s, 0))
-                .map_or("—".into(), format_number);
+                .map_or("—".into(), format_exact);
             chart.kpi_label = first.map(|s| s.name.clone()).unwrap_or_default();
             chart.summary = format!("{}: {}", chart.kpi_label, chart.kpi);
             return chart;
@@ -318,42 +342,92 @@ impl Chart {
                 }
             }
         }
-        // About four ticks at a round step, the axis ending at the first
-        // step past the data and always including zero.
-        let step = nice((hi - lo).max(1.0) / 4.0);
-        let hi = (hi / step).ceil() * step;
-        let lo = (lo / step).floor() * step;
+        // About four ticks at a round step of the real span, the axis ending
+        // at the first step past the data and always including zero. A span
+        // or step a float cannot hold, or too many ticks, is refused in words:
+        // the table still has every value.
+        let span = hi - lo;
+        let step = if span == 0.0 { 1.0 } else { nice(span / 4.0) };
+        let (hi, lo) = ((hi / step).ceil() * step, (lo / step).floor() * step);
         let (hi, lo) = if hi == lo { (step, 0.0) } else { (hi, lo) };
-        let plot_w = WIDTH - LEFT - RIGHT;
-        let plot_h = HEIGHT - TOP - BOTTOM;
-        let y = |v: f64| TOP + (hi - v) / (hi - lo) * plot_h;
-        let steps = ((hi - lo) / step).round() as u32;
-        self.ticks = (0..=steps)
+        let steps = ((hi - lo) / step).round();
+        if !(span.is_finite() && step.is_finite() && step > 0.0 && (hi - lo).is_finite())
+            || steps > MAX_TICKS
+        {
+            self.note = TOO_LARGE.into();
+            return;
+        }
+        let scale = Scale::new(lo.abs().max(hi.abs()), step);
+        let ticks: Vec<(f64, String)> = (0..=steps as u32)
             .map(|k| {
                 let v = lo + step * f64::from(k);
-                Tick {
-                    y: num(y(v)),
-                    label: format_number(v),
-                }
+                (v, scale.label(v))
             })
             .collect();
-        let band = plot_w / n as f64;
+        let widest = ticks
+            .iter()
+            .map(|(_, l)| l.chars().count())
+            .max()
+            .unwrap_or(0);
         let every = n.div_ceil(AXIS_LABELS);
-        self.labels = categories
+        let shown: Vec<(usize, String)> = categories
             .iter()
             .enumerate()
             .filter(|(i, _)| i % every == 0)
-            .map(|(i, text)| AxisLabel {
-                x: num(LEFT + (i as f64 + 0.5) * band),
-                text: short(text),
+            .map(|(i, text)| (i, short(text)))
+            .collect();
+        // Labels lie flat while the longest fits the room between two of
+        // them; otherwise they all turn, the figure grows to hold them and
+        // the margin widens so the first does not run off the left edge.
+        let longest = shown
+            .iter()
+            .map(|(_, t)| t.chars().count())
+            .max()
+            .unwrap_or(0);
+        let mut left = LEFT.max(widest as f64 * CHAR_W + 12.0);
+        let band = (WIDTH - left - RIGHT) / n as f64;
+        self.turned = longest as f64 * CHAR_W > band * every as f64 - 4.0;
+        if self.turned {
+            let first = shown.first().map_or(0, |(_, t)| t.chars().count());
+            let reach = first as f64 * CHAR_W * TURN.to_radians().cos();
+            left = left.max(reach - band / 2.0 + 4.0);
+        }
+        let plot_w = WIDTH - left - RIGHT;
+        let plot_h = HEIGHT - TOP - BOTTOM;
+        let y = |v: f64| TOP + (hi - v) / (hi - lo) * plot_h;
+        self.left = num(left);
+        self.tick_x = num(left - 6.0);
+        self.ticks = ticks
+            .into_iter()
+            .map(|(v, label)| Tick {
+                y: num(y(v)),
+                label,
             })
             .collect();
-        let zero = y(0.0);
+        let band = plot_w / n as f64;
+        let plot_bottom = TOP + plot_h;
+        if self.turned {
+            let rise = longest as f64 * CHAR_W * TURN.to_radians().sin() + 12.0;
+            self.label_y = num(plot_bottom + 12.0);
+            self.height = num(HEIGHT.max(plot_bottom + 12.0 + rise + 6.0));
+        }
+        self.labels = shown
+            .into_iter()
+            .map(|(i, text)| {
+                let x = num(left + (i as f64 + 0.5) * band);
+                let turn = if self.turned {
+                    format!("rotate(-{TURN} {x} {})", self.label_y)
+                } else {
+                    String::new()
+                };
+                AxisLabel { x, text, turn }
+            })
+            .collect();
         let title = |category: &str, s: &Series, v: f64| {
             if series.len() == 1 {
-                format!("{category}: {}", format_number(v))
+                format!("{category}: {}", format_exact(v))
             } else {
-                format!("{category} · {}: {}", s.name, format_number(v))
+                format!("{category} · {}: {}", s.name, format_exact(v))
             }
         };
         match kind {
@@ -363,7 +437,7 @@ impl Chart {
                     let mut run = Vec::new();
                     let mut dots = Vec::new();
                     for (i, category) in categories.iter().enumerate() {
-                        let x = LEFT + (i as f64 + 0.5) * band;
+                        let x = left + (i as f64 + 0.5) * band;
                         match value(s, i) {
                             Some(v) => {
                                 run.push(format!("{},{}", num(x), num(y(v))));
@@ -408,7 +482,7 @@ impl Chart {
                             down += v
                         }
                         self.rects.push(bar(
-                            LEFT + i as f64 * band + (band - w) / 2.0,
+                            left + i as f64 * band + (band - w) / 2.0,
                             w,
                             y(to),
                             y(from),
@@ -426,7 +500,7 @@ impl Chart {
                 for (i, category) in categories.iter().enumerate() {
                     for (si, s) in series.iter().enumerate() {
                         let Some(v) = value(s, i) else { continue };
-                        let x = LEFT + i as f64 * band + (band - inner) / 2.0 + si as f64 * w;
+                        let x = left + i as f64 * band + (band - inner) / 2.0 + si as f64 * w;
                         self.rects.push(bar(
                             x,
                             w,
@@ -441,7 +515,6 @@ impl Chart {
                 self.summary = format!("Bar chart of {} across {n} values.", names(series));
             }
         }
-        let _ = zero;
     }
 
     /// Slices of the first series' positive values, clockwise from the top.
@@ -461,6 +534,10 @@ impl Chart {
         }
         let parts: Vec<(usize, f64)> = parts.into_iter().filter(|(_, v)| *v > 0.0).collect();
         let total: f64 = parts.iter().map(|(_, v)| v).sum();
+        if !total.is_finite() {
+            self.note = TOO_LARGE.into();
+            return;
+        }
         if parts.is_empty() || total <= 0.0 {
             self.note = "No data to chart.".into();
             return;
@@ -482,12 +559,7 @@ impl Chart {
                 h: String::new(),
                 d: arc(cx, cy, r, inner, start, start + sweep),
                 class: FILL[slot],
-                title: format!(
-                    "{}: {} ({:.1}%)",
-                    categories[*i],
-                    format_number(*v),
-                    percent
-                ),
+                title: format!("{}: {} ({:.1}%)", categories[*i], format_exact(*v), percent),
                 at: (0, *i),
                 drill: String::new(),
             });
@@ -618,8 +690,90 @@ fn num(value: f64) -> String {
     format!("{:.1}", (value * 10.0).round() / 10.0)
 }
 
-/// A number as a chart labels it: whole numbers without decimals, others with
-/// two, thousands grouped with commas. Not localised yet.
+/// How a value axis writes its ticks: in thousands, millions, billions or
+/// trillions when the axis reaches that far, with just the decimals its step
+/// needs, so `0.0001` steps and trillion-scale axes both read in a few
+/// characters. Past a quadrillion, or below a millionth, in scientific form.
+struct Scale {
+    unit: f64,
+    suffix: &'static str,
+    decimals: usize,
+    scientific: bool,
+    /// A tick this close to zero is zero (float error from adding steps).
+    zero: f64,
+}
+impl Scale {
+    fn new(reach: f64, step: f64) -> Self {
+        let (unit, suffix) = [(1e12, "T"), (1e9, "B"), (1e6, "M"), (1e4, "K")]
+            .into_iter()
+            .find(|(unit, _)| reach >= *unit)
+            .map_or((1.0, ""), |(unit, suffix)| (unit, suffix));
+        let unit = if suffix == "K" { 1e3 } else { unit };
+        let scaled = step / unit;
+        let decimals = (0..=6)
+            .find(|d| {
+                let s = scaled * 10f64.powi(*d as i32);
+                (s - s.round()).abs() < 1e-6 * s.abs().max(1.0)
+            })
+            .unwrap_or(6);
+        Scale {
+            unit,
+            suffix,
+            decimals,
+            scientific: reach >= 1e15 || step < 1e-6,
+            zero: step * 1e-9,
+        }
+    }
+    fn label(&self, value: f64) -> String {
+        if value.abs() <= self.zero {
+            return "0".into();
+        }
+        if self.scientific {
+            return format!("{value:.1e}");
+        }
+        let text = format!("{:.*}", self.decimals, (value / self.unit).abs());
+        format!("{}{}", grouped(value < 0.0, &text), self.suffix)
+    }
+}
+
+/// A value as the table, a mark's title and a KPI give it: exact (the
+/// shortest text that reads back as the same float), thousands grouped, so
+/// `0.004` and `1,234.567` keep every digit. Scientific past a quadrillion
+/// or below a millionth.
+fn format_exact(value: f64) -> String {
+    if !value.is_finite() {
+        return "—".into();
+    }
+    let abs = value.abs();
+    if abs != 0.0 && !(1e-6..1e15).contains(&abs) {
+        return format!("{value:e}");
+    }
+    grouped(value < 0.0, &abs.to_string())
+}
+
+/// Plain digits with thousands grouped by commas, and a minus only where a
+/// digit other than zero is shown (`-0.00` is `0.00`).
+fn grouped(negative: bool, text: &str) -> String {
+    let (int, frac) = text.split_once('.').unwrap_or((text, ""));
+    let mut out = String::new();
+    if negative && text.bytes().any(|b| b.is_ascii_digit() && b != b'0') {
+        out.push('-');
+    }
+    for (i, digit) in int.chars().enumerate() {
+        if i > 0 && (int.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(digit);
+    }
+    if !frac.is_empty() {
+        out.push('.');
+        out.push_str(frac);
+    }
+    out
+}
+
+/// A donut's centre and the summary sentence: whole numbers without
+/// decimals, others with two, thousands grouped. Not localised yet.
 fn format_number(value: f64) -> String {
     if !value.is_finite() {
         return "—".into();
@@ -630,27 +784,7 @@ fn format_number(value: f64) -> String {
     } else {
         format!("{:.2}", value.abs())
     };
-    let (int, frac) = text
-        .split_once('.')
-        .map_or((text.as_str(), ""), |(i, f)| (i, f));
-    let mut grouped = String::new();
-    for (i, digit) in int.chars().enumerate() {
-        if i > 0 && (int.len() - i) % 3 == 0 {
-            grouped.push(',');
-        }
-        grouped.push(digit);
-    }
-    // A minus only where a digit other than zero is shown: -0.004 is "0.00".
-    let sign = if value < 0.0 && text.bytes().any(|b| b.is_ascii_digit() && b != b'0') {
-        "-"
-    } else {
-        ""
-    };
-    if frac.is_empty() {
-        format!("{sign}{grouped}")
-    } else {
-        format!("{sign}{grouped}.{frac}")
-    }
+    grouped(value < 0.0, &text)
 }
 
 /// The points of a sparkline polyline for a series, in a 60 by 16 box, for

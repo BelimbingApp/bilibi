@@ -172,7 +172,7 @@ reference rows on success. No unit tests or test runner are involved.
 
 ## Grouped summaries and row pages (G5)
 
-The report builder's reads ([ADR 07](../../../docs/architecture/decisions/07-report-builder-reads-owner-sources.md)), in `src/summary.rs`, with `project`'s rules: a fresh scoped catalog, a read-only repeatable-read transaction, owner sources with tenant and user bindings, the `EXPLAIN` bound of 100,000 and the 2 s and 500 ms timeouts.
+The report builder's reads, in `src/summary.rs`, with `project`'s rules: a fresh scoped catalog, a read-only repeatable-read transaction, owner sources with tenant and user bindings, the `EXPLAIN` bound of 100,000 and the 2 s and 500 ms timeouts.
 
 | Call | Returns |
 | --- | --- |
@@ -195,7 +195,7 @@ BILIBI_GRID_DEMO=disposable cargo run -p bilibi-web --example g5-grid-summary
 
 Both specs carry `bounds` (`Bounds { statement_ms, max_cost }`): `Default` is the interactive bound every other Grid read uses (2 s, `MAX_ESTIMATED_COST`); a background caller may pass a larger pair, up to `MAX_STATEMENT_MS` and `MAX_COST_BOUND`. A statement stopped by its timeout is refused as `QueryError::Limit`, like the cost bound, not reported as a database fault.
 
-Equals and one-of compare typed values: each value is checked against the column's type (a number for a number column, yes/no, text, a `YYYY-MM-DD` date, or a date-time with its offset) and refused as `Unsupported` otherwise, so a wrong type is an answer in words rather than an empty result, and `…+00:00` and `…Z` name the same instant. A float compares as `float8`, never through `numeric`, so a stored value matches itself and not a near neighbour. Days and instants before year 1, which PostgreSQL cannot read, are refused the same way. The owner's source SQL is copied into each statement untouched.
+Equals and one-of compare typed values: each value is checked against the column's type (a number for a number column, yes/no, text, a `YYYY-MM-DD` date, or a date-time with its offset) and refused as `Unsupported` otherwise, so a wrong type is an answer in words rather than an empty result, and `…+00:00` and `…Z` name the same instant. A float compares in its column's own type (`real` or `double precision`; the value is bound as text with no cast, as a literal would be), never through `numeric` or a wider float, so a stored value matches itself and not a near neighbour. Days and instants before year 1, which PostgreSQL cannot read, are refused the same way. The owner's source SQL is copied into each statement untouched.
 
 ## Searching related text
 

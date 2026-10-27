@@ -696,7 +696,7 @@ fn specimen_charts() -> askama::Result<Vec<Html>> {
             "sample-chart-empty",
             "Orders by month (no orders yet)",
             ChartKind::Bar,
-            months,
+            months.clone(),
             vec![series("Orders", &[None, None, None, None, None, None])],
         ),
         Chart::new(
@@ -717,6 +717,80 @@ fn specimen_charts() -> askama::Result<Vec<Html>> {
                     Some(2.0),
                     Some(1.0),
                     Some(10.0),
+                ],
+            )],
+        ),
+        // Twelve longer names turn to fit; small values keep their own scale;
+        // trillion-scale ticks read in a few characters.
+        Chart::new(
+            "sample-chart-turned",
+            "Headcount by department",
+            ChartKind::Bar,
+            [
+                "Customer Support",
+                "Engineering",
+                "Finance",
+                "Human Resources",
+                "Legal",
+                "Marketing",
+                "Operations",
+                "Procurement",
+                "Product Management",
+                "Quality Assurance",
+                "Research",
+                "Sales",
+            ]
+            .map(String::from)
+            .to_vec(),
+            vec![series(
+                "People",
+                &[
+                    Some(42.0),
+                    Some(118.0),
+                    Some(17.0),
+                    Some(9.0),
+                    Some(6.0),
+                    Some(23.0),
+                    Some(35.0),
+                    Some(8.0),
+                    Some(14.0),
+                    Some(19.0),
+                    Some(11.0),
+                    Some(51.0),
+                ],
+            )],
+        ),
+        Chart::new(
+            "sample-chart-small",
+            "Defect rate by month",
+            ChartKind::Line,
+            months.clone(),
+            vec![series(
+                "Rate",
+                &[
+                    Some(0.0001),
+                    Some(0.00012),
+                    Some(0.00015),
+                    Some(0.00013),
+                    Some(0.00018),
+                    Some(0.0002),
+                ],
+            )],
+        ),
+        Chart::new(
+            "sample-chart-large",
+            "Turnover by region",
+            ChartKind::Bar,
+            ["North", "South", "East", "West"]
+                .map(String::from)
+                .to_vec(),
+            vec![series(
+                "Turnover",
+                &[
+                    Some(1.25e12),
+                    Some(3.4e12),
+                    Some(2.75e12),
+                    Some(987_654_321_012.5),
                 ],
             )],
         ),

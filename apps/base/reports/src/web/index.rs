@@ -9,7 +9,7 @@ use bilibi_database::{Error, Result};
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
     choices, error_sentence,
-    list_state::FILTERS_FORM,
+    list_state::{PageCounts, FILTERS_FORM},
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
     params, Alert, Badge, BadgeKind, BuiltinColumn, Button, ButtonVariant, Card, ColumnType,
     ColumnsOutcome, CreateButton, ErrorSummary, Field, FilterToolbar, FlashMap, FlexRow, FlexTable,
@@ -245,24 +245,35 @@ impl Index {
             .map_err(super::page_error)?
             .into_iter()
             .collect();
-        let mut all = pages.reports.list(scope).await.map_err(super::page_error)?;
-        // Built-ins follow the reader's own and shared reports.
-        all.extend(
-            pages
-                .reports
-                .builtins(scope)
-                .await
-                .map_err(super::page_error)?,
-        );
-        let search = self.state.search.to_lowercase();
-        if !search.is_empty() {
-            all.retain(|r| {
-                r.name.to_lowercase().contains(&search)
-                    || r.description.to_lowercase().contains(&search)
-            });
+        // Stored reports page in one query with their search; the built-ins
+        // that match follow them, so both count toward the pages.
+        let search = self.state.search.trim().to_owned();
+        let needle = search.to_lowercase();
+        let builtins: Vec<_> = pages
+            .reports
+            .builtins(scope)
+            .await
+            .map_err(super::page_error)?
+            .into_iter()
+            .filter(|r| {
+                needle.is_empty()
+                    || r.name.to_lowercase().contains(&needle)
+                    || r.description.to_lowercase().contains(&needle)
+            })
+            .collect();
+        let size = self.state.page_size.max(1);
+        let read = |offset: u64| pages.reports.page(scope, &search, offset, size);
+        let (mut entries, mut stored) =
+            read(self.state.offset()).await.map_err(super::page_error)?;
+        let mut total = stored + builtins.len() as u64;
+        if self.state.clamp_to_last_page(total.div_ceil(size), true) {
+            (entries, stored) = read(self.state.offset()).await.map_err(super::page_error)?;
+            total = stored + builtins.len() as u64;
         }
-        let page = self.state.paginate(&all);
-        let (entries, counts) = (page.entries.to_vec(), page.counts);
+        let skip = self.state.offset().saturating_sub(stored) as usize;
+        let room = (size as usize).saturating_sub(entries.len());
+        entries.extend(builtins.into_iter().skip(skip).take(room));
+        let counts = PageCounts::new(self.state.page, self.state.page_size, total);
         self.rows = entries;
         if self.rows_changed {
             self.columns.load(&self.rows, row_key);

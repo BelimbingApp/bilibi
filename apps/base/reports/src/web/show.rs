@@ -30,6 +30,7 @@ const TABS: [(&str, &str); 4] = [
 ];
 const DENIED_AUTHOR: &str = "You do not have permission to change this report.";
 const DENIED_SHARE: &str = "You do not have permission to share reports.";
+const STALE_DRAFT: &str = "Someone saved this report while you were editing it, so your changes were not saved. They are still in the form; Discard changes loads the saved report.";
 
 #[derive(Clone, Copy, PartialEq)]
 enum Confirm {
@@ -39,11 +40,56 @@ enum Confirm {
     Unsubscribe(i64, i64),
 }
 
-/// A drill-down: a group's own value, shown as `label: value`.
+/// A drill-down: a group's own value, shown as `label: value`. It travels
+/// in the address as `d<n>` (the column) and `v<n>` (its value as JSON, or
+/// a date bucket's `{"min","max"}` days; no `v<n>` is the empty group), with
+/// `rows=1` when the page shows the records behind it, so a link and the CSV
+/// repeat it.
 #[derive(Clone)]
 struct Drill {
     filter: FilterDef,
+    /// Filled from the reader's columns when the page draws.
     label: String,
+}
+
+/// Drill-downs one page holds at most (one per grouping).
+const MAX_DRILL: usize = 2;
+
+/// The drill-downs an address carries: a column and one scalar value, a
+/// bucket's day range, or none for the empty group. The run still resolves
+/// each column against the reader's own catalog and checks the value, so
+/// nothing here is trusted.
+pub(crate) fn drill_keys(query: &HashMap<String, String>) -> Vec<FilterDef> {
+    (0..MAX_DRILL)
+        .map_while(|n| {
+            let column = query
+                .get(&format!("d{n}"))
+                .filter(|c| !c.is_empty() && c.len() <= 256)?;
+            let day =
+                |v: Option<&Value>| v.is_some_and(|v| v.as_str().is_some_and(|s| s.len() <= 32));
+            let (test, value) = match query.get(&format!("v{n}")) {
+                None => ("empty", Value::Null),
+                Some(text) if text.len() <= 512 => match serde_json::from_str::<Value>(text) {
+                    Ok(value @ (Value::String(_) | Value::Number(_) | Value::Bool(_))) => {
+                        ("equals", value)
+                    }
+                    Ok(Value::Object(range))
+                        if range.len() == 2 && day(range.get("min")) && day(range.get("max")) =>
+                    {
+                        ("range", Value::Object(range))
+                    }
+                    _ => return None,
+                },
+                Some(_) => return None,
+            };
+            Some(FilterDef {
+                column: column.clone(),
+                test: test.into(),
+                value,
+                ask: false,
+            })
+        })
+        .collect()
 }
 
 pub(crate) struct Show {
@@ -85,6 +131,8 @@ struct ShowView<'a> {
 
 /// The run answers an address carries, typed by each ask filter's test:
 /// a list for one-of, a range from `a<i>` and `a<i>_to`, text otherwise.
+/// An answer left blank is `null`, so that filter is skipped rather than
+/// falling back to its stored value; an unanswered one keeps the stored value.
 pub(crate) fn answers(report: &Report, typed: &BTreeMap<String, String>) -> BTreeMap<usize, Value> {
     let mut out = BTreeMap::new();
     for (i, filter) in report
@@ -100,13 +148,18 @@ pub(crate) fn answers(report: &Report, typed: &BTreeMap<String, String>) -> BTre
                 .map(|v| v.trim().to_owned())
                 .filter(|v| !v.is_empty())
         };
+        let answered = |key: String| typed.contains_key(&key);
+        if !answered(format!("a{i}")) && !answered(format!("a{i}_to")) {
+            continue;
+        }
         let value = match filter.test.as_str() {
             "range" => {
                 let (min, max) = (text(format!("a{i}")), text(format!("a{i}_to")));
                 if min.is_none() && max.is_none() {
-                    continue;
+                    Value::Null
+                } else {
+                    json!({"min": min, "max": max})
                 }
-                json!({"min": min, "max": max})
             }
             "one_of" => match text(format!("a{i}")) {
                 Some(list) => Value::Array(
@@ -116,16 +169,29 @@ pub(crate) fn answers(report: &Report, typed: &BTreeMap<String, String>) -> BTre
                         .map(|v| json!(v))
                         .collect(),
                 ),
-                None => continue,
+                None => Value::Null,
             },
-            _ => match text(format!("a{i}")) {
-                Some(v) => json!(v),
-                None => continue,
-            },
+            _ => text(format!("a{i}")).map_or(Value::Null, |v| json!(v)),
         };
         out.insert(i, value);
     }
     out
+}
+
+/// An ask filter's stored value as its box shows it: a list joined with
+/// commas, a range's `min` (or `max` for the `to` box), text as is.
+fn stored_text(filter: &FilterDef, to: bool) -> String {
+    let text = |value: &Value| match value {
+        Value::Null => String::new(),
+        Value::String(s) => s.clone(),
+        other => other.to_string(),
+    };
+    match (filter.test.as_str(), &filter.value) {
+        ("range", range) => text(&range[if to { "max" } else { "min" }]),
+        (_, Value::Array(values)) => values.iter().map(text).collect::<Vec<_>>().join(", "),
+        (_, value) if !to => text(value),
+        _ => String::new(),
+    }
 }
 
 /// The `a<i>` keys of a query, bounded by the definition's filter limit.
@@ -179,22 +245,37 @@ impl Show {
     }
 
     fn params(&mut self, query: &HashMap<String, String>) {
-        self.tab = query
+        let tab = query
             .get("tab")
             .filter(|t| TABS.iter().any(|(key, _)| key == t))
             .cloned()
             .unwrap_or_else(|| "result".into());
+        // Opening the editor starts from the saved report unless a changed
+        // draft is waiting there.
+        if tab == "definition" && self.tab != tab && !self.builder.as_ref().is_some_and(|b| b.dirty)
+        {
+            self.builder = None;
+        }
+        self.tab = tab;
         self.page = params::positive_integer(query.get("page").map(String::as_str))
             .map_or(0, |p| {
                 p.saturating_sub(1).min(bilibi_grid::MAX_OFFSET as u64) as usize
             });
         self.answers = answer_keys(query);
+        self.as_rows = query.get("rows").is_some_and(|v| v == "1");
+        self.drill = drill_keys(query)
+            .into_iter()
+            .map(|filter| Drill {
+                filter,
+                label: String::new(),
+            })
+            .collect();
     }
     fn query(&self) -> HashMap<String, String> {
+        // A blank answer stays: it means "no filter", not "the stored value".
         let mut query: HashMap<String, String> = self
             .answers
             .iter()
-            .filter(|(_, v)| !v.is_empty())
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
         if self.tab != "result" {
@@ -203,11 +284,22 @@ impl Show {
         if self.page > 0 {
             query.insert("page".into(), (self.page + 1).to_string());
         }
+        if self.as_rows {
+            query.insert("rows".into(), "1".into());
+        }
+        for (n, drill) in self.drill.iter().enumerate() {
+            query.insert(format!("d{n}"), drill.filter.column.clone());
+            if !drill.filter.value.is_null() {
+                query.insert(format!("v{n}"), drill.filter.value.to_string());
+            }
+        }
         query
     }
 
     /// The report as the reader may see it now. Gone or unshared is the
-    /// page's 404.
+    /// page's 404. The editor on screen is a draft of the version it shows:
+    /// when someone saves a newer one, it keeps its base version (changed or
+    /// not), so its save is refused as a conflict, never applied over theirs.
     async fn load(&mut self, scope: &Scope) -> Result<Report> {
         let report = match &self.builtin {
             Some(key) => self.pages.reports.builtin(scope, key).await,
@@ -218,7 +310,8 @@ impl Show {
             .report
             .as_ref()
             .is_none_or(|r| r.version != report.version);
-        if fresh || self.builder.is_none() {
+        let drafting = self.tab == "definition" || self.builder.as_ref().is_some_and(|b| b.dirty);
+        if self.builder.is_none() || (fresh && !drafting) {
             self.builder = Some(Builder::from_report(&report));
         }
         self.report = Some(report.clone());
@@ -231,7 +324,7 @@ impl Show {
         scope: &Scope,
         credential: &str,
         value: &Value,
-    ) -> Result<Option<(String, String)>> {
+    ) -> Result<Option<(String, Option<String>)>> {
         let get = |key: &str| value.get(key).and_then(Value::as_str);
         let report = self.load(scope).await?;
         match get("type").ok_or(Error::Invalid)? {
@@ -247,8 +340,9 @@ impl Show {
             }
             // The pager's page-size form: a report's page size is a setting.
             "filters" => {}
+            // The table on screen: a summary's records once drilled into.
             "grid" => {
-                let tab = if report.kind == Kind::Rows {
+                let tab = if report.kind == Kind::Rows || self.as_rows {
                     "rows"
                 } else {
                     "summary"
@@ -388,6 +482,30 @@ impl Show {
                     }
                 }
             }
+            // Checked before the browser is sent to the file, so a PDF this
+            // result cannot make is refused here in words, not as a 403.
+            "download_pdf" if report.builtin.is_none() => {
+                let input = RunInput {
+                    answers: answers(&report, &self.answers),
+                    drill: self.drill.iter().map(|d| d.filter.clone()).collect(),
+                    page: 0,
+                    as_rows: self.as_rows,
+                    background: false,
+                };
+                match self
+                    .pages
+                    .reports
+                    .exportable(scope, report.id, &input, crate::Format::Pdf)
+                    .await
+                {
+                    Ok(()) => return Ok(Some((self.export_href(&report, true), None))),
+                    Err(ReportError::Database(error)) => return Err(error),
+                    Err(ReportError::Forbidden) => self.refused(Refusal::Message(
+                        "You do not have permission to export reports.".into(),
+                    )),
+                    Err(refused) => self.refused(Refusal::Message(refused.to_string())),
+                }
+            }
             "prepare_export" => {
                 let format = match get("format") {
                     Some("pdf") => "pdf",
@@ -443,7 +561,7 @@ impl Show {
                         let id = result["id"].as_i64().ok_or(Error::Internal)?;
                         return Ok(Some((
                             format!("{}?tab=definition", report_path(id)),
-                            "Your copy is saved. Change it as you like.".into(),
+                            Some("Your copy is saved. Change it as you like.".into()),
                         )));
                     }
                     Err(error) => self.refused(refusal(
@@ -468,7 +586,7 @@ impl Show {
                     Ok(_) => {
                         return Ok(Some((
                             super::INDEX.into(),
-                            format!("{} was deleted.", report.name),
+                            Some(format!("{} was deleted.", report.name)),
                         )))
                     }
                     Err(error) => self.refused(refusal(error, DENIED_AUTHOR)?),
@@ -545,7 +663,7 @@ impl Show {
             });
         }
         self.drill.extend(added);
-        self.drill.truncate(2);
+        self.drill.truncate(MAX_DRILL);
         self.as_rows = true;
         self.page = 0;
     }
@@ -581,6 +699,9 @@ impl Show {
             }
             Err(error) => match refusal(error, DENIED_AUTHOR)? {
                 Refusal::Fields(fields) => builder.errors = fields,
+                Refusal::Message(message) if message == ReportError::Conflict.to_string() => {
+                    self.flash = Some((StatusKind::Error, STALE_DRAFT.into()))
+                }
                 Refusal::Message(message) => self.flash = Some((StatusKind::Error, message)),
             },
         }
@@ -723,34 +844,35 @@ impl Show {
         .map_err(|_| Error::Internal)
     }
 
+    /// The file of the result shown: its answers, drill-downs and records
+    /// view in the address.
+    fn export_href(&self, report: &Report, pdf: bool) -> String {
+        let mut query = self.query();
+        query.retain(|k, _| k.starts_with(['a', 'd', 'v']) || k == "rows");
+        if pdf {
+            query.insert("format".into(), "pdf".into());
+        }
+        params::address(&format!("{}/export", report_path(report.id)), &query)
+    }
+
     fn header(&self, report: &Report, can: Can) -> Result<Html> {
         let mut actions = Html::EMPTY;
         if can.export && report.builtin.is_none() && !self.too_heavy {
-            let mut query = self
-                .answers
-                .clone()
-                .into_iter()
-                .filter(|(_, v)| !v.is_empty())
-                .collect::<HashMap<_, _>>();
-            query.retain(|k, _| k.starts_with('a'));
-            let href = params::address(&format!("{}/export", report_path(report.id)), &query);
             actions.push(&render(ActionLink {
                 id: "report-export",
                 icon: "export",
                 title: "Download the whole result as CSV",
-                href: &href,
+                href: &self.export_href(report, false),
                 body: Html::text("Download CSV"),
                 ..ActionLink::default()
             })?);
-            query.insert("format".into(), "pdf".into());
-            let href = params::address(&format!("{}/export", report_path(report.id)), &query);
-            actions.push(&render(ActionLink {
+            actions.push(&render(Button {
                 id: "report-export-pdf",
-                icon: "export",
-                title: "Download the whole result as a PDF",
-                href: &href,
+                button_type: "button",
+                event: "download_pdf",
+                working: "Checking…",
                 body: Html::text("Download PDF"),
-                ..ActionLink::default()
+                ..Button::default()
             })?);
         }
         if can.author {
@@ -775,7 +897,9 @@ impl Show {
         let actions = if actions.is_empty() {
             actions
         } else {
-            render(Row { body: actions })?
+            render(Row {
+                parts: vec![actions],
+            })?
         };
         render(Header {
             title: Html::text(&report.name),
@@ -847,6 +971,24 @@ impl Show {
             .collect();
         if !asks.is_empty() {
             out.push(&self.ask_form(&asks, &offered)?);
+        }
+        // A drill-down read from the address is named here, from the
+        // reader's own columns; one drilled on this page keeps its label.
+        for drill in self.drill.iter_mut().filter(|d| d.label.is_empty()) {
+            let column = offered
+                .iter()
+                .find(|c| c.spec == drill.filter.column)
+                .map_or(drill.filter.column.as_str(), |c| c.label.as_str());
+            let value = match &drill.filter.value {
+                Value::Null => "(none)".into(),
+                Value::Object(range) => format!(
+                    "{} to {}",
+                    range.get("min").map_or_else(String::new, result::cell),
+                    range.get("max").map_or_else(String::new, result::cell)
+                ),
+                value => result::cell(value),
+            };
+            drill.label = format!("{column}: {value}");
         }
         if self.as_rows && report.kind != Kind::Rows {
             out.push(&self.breadcrumb(report.kind)?);
@@ -1090,7 +1232,9 @@ impl Show {
             body: Html::text("Prepare PDF"),
             ..Button::default()
         })?);
-        let mut body = render(Row { body: actions })?;
+        let mut body = render(Row {
+            parts: vec![actions],
+        })?;
         body.push(&render(table)?);
         render(Card {
             id: "report-exports-card",
@@ -1136,7 +1280,17 @@ impl Show {
                 .find(|c| c.spec == filter.column)
                 .map_or(filter.column.as_str(), |c| c.label.as_str());
             let key = format!("a{i}");
-            let stored = |key: &str| self.answers.get(key).cloned().unwrap_or_default();
+            // Until the reader answers, the box shows the stored value the
+            // run applies, so what is shown is what runs.
+            let answered =
+                self.answers.contains_key(&key) || self.answers.contains_key(&format!("{key}_to"));
+            let stored = |key: &str| {
+                if answered {
+                    self.answers.get(key).cloned().unwrap_or_default()
+                } else {
+                    stored_text(filter, key.ends_with("_to"))
+                }
+            };
             let field = Field::in_form("ask", &key).id(format!("report-ask-{i}"));
             let html = match filter.test.as_str() {
                 "within" => render(
@@ -1240,7 +1394,7 @@ impl Show {
             }),
             ..Button::default()
         })?);
-        render(Breadcrumb { body: parts })
+        render(Breadcrumb { parts: vec![parts] })
     }
 
     async fn definition(&mut self, scope: &Scope, report: &Report, can: Can) -> Result<Html> {
@@ -1376,17 +1530,17 @@ fn alert(id: &str, kind: StatusKind, message: &str) -> Result<Html> {
 
 #[derive(Template)]
 #[template(
-    source = r#"<div class="flex flex-wrap items-center gap-2">{{ body|safe }}</div>"#,
+    source = r#"{% import "components.html" as ui %}{% call ui::cluster(parts=parts) %}{% endcall %}"#,
     ext = "html"
 )]
 struct Row {
-    body: Html,
+    parts: Vec<Html>,
 }
 
 /// One group a drill-down narrows to, with its remove button.
 #[derive(Template)]
 #[template(
-    source = r#"<span class="inline-flex items-center gap-1 text-sm font-medium text-ink">{{ label }}{{ button|safe }}</span>"#,
+    source = r#"{% import "components.html" as ui %}{% call ui::removable(label=label, button=button, strong=true) %}{% endcall %}"#,
     ext = "html"
 )]
 struct Narrowed<'a> {
@@ -1396,11 +1550,11 @@ struct Narrowed<'a> {
 
 #[derive(Template)]
 #[template(
-    source = r#"<nav id="report-drill" aria-label="Narrowed to" class="flex flex-wrap items-center gap-2"><span class="text-sm text-ink-muted">Records behind</span>{{ body|safe }}</nav>"#,
+    source = r#"{% import "components.html" as ui %}{% call ui::narrowing(id="report-drill", label="Narrowed to", lead="Records behind", parts=parts) %}{% endcall %}"#,
     ext = "html"
 )]
 struct Breadcrumb {
-    body: Html,
+    parts: Vec<Html>,
 }
 
 impl LiveState<Scope, Error> for Show {
@@ -1415,7 +1569,7 @@ impl LiveState<Scope, Error> for Show {
                     {
                         return Ok(LiveBody {
                             redirect: Some(path),
-                            flash: Some((StatusKind::Success, message)),
+                            flash: message.map(|message| (StatusKind::Success, message)),
                             ..LiveBody::default()
                         });
                     }

@@ -39,17 +39,19 @@ static EXTRA: GridContribution = GridContribution {
         "id",
         &[Field::new("id", "ID", FieldType::String)],
     ),
-    // Floats that `numeric` would round, and a day column for calendar limits.
+    // Doubles that `numeric` would round, reals that `float8` would widen,
+    // and a day column for calendar limits.
     TableDecl::new(
         "g5_floats",
         "Floats and days",
         "grid.reference.view",
-        Source::global("SELECT * FROM (VALUES (1, 1.234567890123456::float8, DATE '2026-10-23'), (2, 0.30000000000000004::float8, DATE '2026-10-24')) s(id, amount, day)"),
+        Source::global("SELECT * FROM (VALUES (1, 1.234567890123456::float8, DATE '2026-10-23', 0.1::real), (2, 0.30000000000000004::float8, DATE '2026-10-24', 2.5::real)) s(id, amount, day, small)"),
         "id",
         &[
             Field::new("id", "ID", FieldType::Integer),
             Field::new("amount", "Amount", FieldType::Float),
             Field::new("day", "Day", FieldType::Date),
+            Field::new("small", "Small", FieldType::Float),
         ],
     )],
     links: &[],
@@ -707,27 +709,65 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let float_cases = [
         (
+            "amount",
             "equals the stored 1.234567890123456",
             Test::Equals(json!(1.234567890123456)),
             vec![json!(1)],
         ),
         (
+            "amount",
             "one of the stored 1.234567890123456",
             Test::OneOf(vec![json!(1.234567890123456)]),
             vec![json!(1)],
         ),
         (
+            "amount",
             "equals the stored 0.30000000000000004",
             Test::Equals(json!(0.30000000000000004)),
             vec![json!(2)],
         ),
-        ("equals 0.3 (not stored)", Test::Equals(json!(0.3)), vec![]),
         (
+            "amount",
+            "equals 0.3 (not stored)",
+            Test::Equals(json!(0.3)),
+            vec![],
+        ),
+        // A `real` source compares as `real` (re-review of #157, round 3).
+        (
+            "small",
+            "of type real equals 0.1",
+            Test::Equals(json!(0.1)),
+            vec![json!(1)],
+        ),
+        (
+            "small",
+            "of type real is one of 0.1",
+            Test::OneOf(vec![json!(0.1)]),
+            vec![json!(1)],
+        ),
+        (
+            "small",
+            "of type real in a range of exactly 0.1",
+            Test::Range {
+                min: Some(json!(0.1)),
+                max: Some(json!(0.1)),
+            },
+            vec![json!(1)],
+        ),
+        (
+            "small",
+            "of type real equals 0.2 (not stored)",
+            Test::Equals(json!(0.2)),
+            vec![],
+        ),
+        (
+            "amount",
             "one of 0.3 (not stored)",
             Test::OneOf(vec![json!(0.3)]),
             vec![],
         ),
         (
+            "amount",
             "a range of exactly 1.234567890123456",
             Test::Range {
                 min: Some(json!(1.234567890123456)),
@@ -736,8 +776,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             vec![json!(1)],
         ),
     ];
-    for (label, test, want) in float_cases {
-        let filters = vec![filter("amount", test)];
+    for (column, label, test, want) in float_cases {
+        let filters = vec![filter(column, test)];
         let summary = summarize(
             &db,
             &manager,

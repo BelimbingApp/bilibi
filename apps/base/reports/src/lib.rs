@@ -1,4 +1,4 @@
-//! Operator-built reports (BelimbingApp/bilibi#128, ADR 07): saved questions
+//! Operator-built reports (BelimbingApp/bilibi#128): saved questions
 //! over Grid tables, shared by definition and run as each reader. No Bilimbi
 //! counterpart. The facade is [`Reports`] (service [`SERVICE`]); pages and
 //! agents both reach it through the operation contracts in
@@ -45,7 +45,7 @@ const EXPORTED: &str = "base/reports.exported";
 const PREPARER: &str = "base/reports.preparer";
 const SWEEPER: &str = "base/reports.sweeper";
 const DELIVERER: &str = "base/reports.deliverer";
-const MIGRATIONS: [(&str, &str); 4] = [
+const MIGRATIONS: [(&str, &str); 5] = [
     (
         "base-reports-001-reports",
         include_str!("../migrations/001-reports.sql"),
@@ -61,6 +61,10 @@ const MIGRATIONS: [(&str, &str); 4] = [
     (
         "base-reports-004-subscriptions",
         include_str!("../migrations/004-subscriptions.sql"),
+    ),
+    (
+        "base-reports-005-export-access",
+        include_str!("../migrations/005-export-access.sql"),
     ),
 ];
 const KIND: &str = "base_report";
@@ -335,6 +339,30 @@ impl Reports {
         Ok(store::list(&**client, scope.tenant(), scope.user()).await?)
     }
 
+    /// One page of the reports the reader may run, searched by name and
+    /// description, with the number that match. Needs `reports.view`.
+    pub async fn page(
+        &self,
+        scope: &Scope,
+        search: &str,
+        offset: u64,
+        limit: u64,
+    ) -> Outcome<(Vec<Report>, u64)> {
+        let client = self.db.get().await.map_err(Error::from)?;
+        authorize(&**client, scope, VIEW).await?;
+        let clamp = |n: u64| i64::try_from(n).unwrap_or(i64::MAX);
+        let (reports, total) = store::page(
+            &**client,
+            scope.tenant(),
+            scope.user(),
+            search,
+            clamp(offset),
+            clamp(limit),
+        )
+        .await?;
+        Ok((reports, total.max(0) as u64))
+    }
+
     /// One report the reader may run, with its definition.
     pub async fn get(&self, scope: &Scope, id: i64) -> Outcome<Report> {
         let client = self.db.get().await.map_err(Error::from)?;
@@ -539,6 +567,43 @@ impl Reports {
         Ok(store::roles(&**client, scope.tenant()).await?)
     }
 
+    /// What this reader may see of a report now, as a key that changes when
+    /// it does: its version and which of its columns their catalog resolves.
+    /// A cached drawing is reused only while this key holds, so a field
+    /// restriction or a lost share shows at the next refresh, not the next
+    /// run. Cheaper than a run: no Grid read. Needs `reports.view`.
+    pub async fn access(&self, scope: &Scope, id: i64) -> Outcome<String> {
+        let client = self.db.get().await.map_err(Error::from)?;
+        authorize(&**client, scope, VIEW).await?;
+        let report = match store::read(&**client, scope.tenant(), scope.user(), id, false).await {
+            Err(Error::NotFound) => return Err(ReportError::NotFound),
+            other => other?,
+        };
+        let catalog = Catalog::for_scope(&**client, scope)
+            .await
+            .map_err(|e| ReportError::Database(e.into()))?;
+        let Some(root) = catalog.table(&report.record_type) else {
+            return Ok(format!("{}:unreadable", report.version));
+        };
+        let d = &report.definition;
+        let seen: String = d
+            .columns
+            .iter()
+            .chain(d.groupings.iter().map(|g| &g.column))
+            .chain(d.measures.iter().map(|m| &m.column))
+            .chain(d.sort.iter().map(|s| &s.column))
+            .chain(d.filters.iter().map(|f| &f.column))
+            .map(|spec| {
+                if catalog.resolve(root, spec).is_ok() {
+                    '1'
+                } else {
+                    '0'
+                }
+            })
+            .collect();
+        Ok(format!("{}:{seen}", report.version))
+    }
+
     /// Runs a report as the reader: their catalog, grants and time zone.
     /// Columns, groupings, measures and sorts the reader cannot see are left
     /// out and listed; a filter on one refuses the run, so it cannot be used
@@ -644,7 +709,15 @@ impl Reports {
                 } else {
                     behind(root, definition)
                 };
-                let columns: Vec<Column> = specs.iter().filter_map(|s| keep(s)).collect();
+                // Each column once, as the projection draws it, so a totals
+                // cell always sits under its own column (a definition saved
+                // before duplicates were refused may still hold one).
+                let mut once = std::collections::HashSet::new();
+                let columns: Vec<Column> = specs
+                    .iter()
+                    .filter(|s| once.insert(s.as_str()))
+                    .filter_map(|s| keep(s))
+                    .collect();
                 let sorts = if report.kind == Kind::Rows {
                     definition
                         .sorts()
@@ -670,9 +743,11 @@ impl Reports {
                     Vec::new()
                 };
                 let totals_filters = filters.clone();
+                // A value saved before the setting's bound was 100 still runs.
                 let page_size = self
                     .setting(&**client, scope, contributions::PAGE_SIZE_KEY)
-                    .await?;
+                    .await?
+                    .clamp(1, 100);
                 drop(client);
                 let page: KeyPage = bilibi_grid::page_keys(
                     &self.db,
@@ -708,23 +783,29 @@ impl Reports {
                     .collect();
                 let pages = rows.iter().map(|(key, _)| root.page_for(key)).collect();
                 let totals = if totals_of.iter().any(Option::is_some) {
+                    // Grid totals up to 8 measures a read; a wider list
+                    // (up to 32 columns) takes one read per eight.
                     let measures: Vec<_> = totals_of.iter().flatten().cloned().collect();
-                    let summary = bilibi_grid::summarize(
-                        &self.db,
-                        scope,
-                        &report.record_type,
-                        &SummarySpec {
-                            bounds,
-                            filters: totals_filters,
-                            groupings: Vec::new(),
-                            measures,
-                            timezone: timezone.clone(),
-                            max_groups: 1,
-                        },
-                    )
-                    .await
-                    .map_err(grid)?;
-                    let mut sums = summary.total.values.into_iter();
+                    let mut values = Vec::with_capacity(measures.len());
+                    for chunk in measures.chunks(bilibi_grid::MAX_MEASURES) {
+                        let summary = bilibi_grid::summarize(
+                            &self.db,
+                            scope,
+                            &report.record_type,
+                            &SummarySpec {
+                                bounds,
+                                filters: totals_filters.clone(),
+                                groupings: Vec::new(),
+                                measures: chunk.to_vec(),
+                                timezone: timezone.clone(),
+                                max_groups: 1,
+                            },
+                        )
+                        .await
+                        .map_err(grid)?;
+                        values.extend(summary.total.values);
+                    }
+                    let mut sums = values.into_iter();
                     Some(
                         totals_of
                             .iter()
@@ -1205,7 +1286,7 @@ inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_schedule::
     overlap: bilibi_schedule::Overlap::Forbid, misfire: bilibi_schedule::Misfire::Coalesce, owner_route: Some(web::INDEX),
 }) }
 inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_queue::WORKERS, schedules::DELIVER, bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_queue::Worker { max_attempts: 5, validate: schedules::validate_delivery }) }
-inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_queue::execution::HANDLERS, schedules::DELIVER, bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_queue::execution::HandlerBinding { service: DELIVERER, capability: VIEW }) }
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_queue::execution::HANDLERS, schedules::DELIVER, bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_queue::execution::HandlerBinding { service: DELIVERER, capability: EXPORT }) }
 inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::ROUTES, "base/reports.builtin", bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_module_registry::contributions::Route {
     method: bilibi_module_registry::contributions::Method::Get, path: web::BUILTIN, service: web::SERVICE, operation: "builtin",
     access: bilibi_module_registry::contributions::Access::Capability(VIEW), framed: true,

@@ -67,6 +67,39 @@ pub async fn list(sql: &impl GenericClient, tenant: i64, reader: i64) -> Result<
     rows.iter().map(|row| report(row, reader)).collect()
 }
 
+/// One page of the reports the reader may run, by name, whose name or
+/// description holds `search` (any case; empty matches all), and how many
+/// match in all: the search and the page are one query, so no report is
+/// out of reach behind a cutoff.
+pub async fn page(
+    sql: &impl GenericClient,
+    tenant: i64,
+    reader: i64,
+    search: &str,
+    offset: i64,
+    limit: i64,
+) -> Result<(Vec<Report>, i64)> {
+    const MATCH: &str = "($3 = '' OR position(lower($3) in lower(r.name)) > 0 OR position(lower($3) in lower(r.description)) > 0)";
+    let total: i64 = sql
+        .query_one(
+            &format!("SELECT count(*) FROM base_reports r WHERE {VISIBLE} AND {MATCH}"),
+            &[&tenant, &reader, &search],
+        )
+        .await?
+        .get(0);
+    let rows = sql
+        .query(
+            &format!("SELECT {COLUMNS} FROM base_reports r WHERE {VISIBLE} AND {MATCH} ORDER BY lower(r.name), r.id OFFSET $4 LIMIT $5"),
+            &[&tenant, &reader, &search, &offset, &limit],
+        )
+        .await?;
+    let reports = rows
+        .iter()
+        .map(|row| report(row, reader))
+        .collect::<Result<_>>()?;
+    Ok((reports, total))
+}
+
 /// One report the reader may run; `lock` holds it for a write.
 pub async fn read(
     sql: &impl GenericClient,
