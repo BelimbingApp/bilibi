@@ -105,7 +105,7 @@ pub async fn standing(client: &dyn ProofClient, tenant: i64, user: i64) -> Resul
     }
     let Some(row) = client
         .query_opt(
-            "SELECT name,email,person_id,affiliation_id,organisation_id,EXISTS(SELECT 1 FROM user_bootstrap b WHERE b.tenant_id=users.tenant_id AND b.user_id=users.id) FROM users WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL AND status='active'",
+            "SELECT name,email,person_id,affiliation_id,organisation_id,EXISTS(SELECT 1 FROM user_bootstrap b WHERE b.tenant_id=users.tenant_id AND b.user_id=users.id) FROM users WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL AND status='active' AND NOT EXISTS(SELECT 1 FROM user_scim_users s WHERE s.tenant_id=users.tenant_id AND s.user_id=users.id AND NOT s.active)",
             &[&tenant, &user],
         )
         .await?
@@ -177,7 +177,7 @@ impl ActorVerifier for AccountVerifier {
             if password.len() > password::MAX_LENGTH {
                 return Ok(false);
             }
-            let stored: Option<String> = client.query_opt("SELECT password_hash FROM users WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL AND status='active'", &[&tenant,&user]).await?.map(|row| row.get(0));
+            let stored: Option<String> = client.query_opt("SELECT password_hash FROM users WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL AND status='active' AND NOT EXISTS(SELECT 1 FROM user_scim_users s WHERE s.tenant_id=users.tenant_id AND s.user_id=users.id AND NOT s.active)", &[&tenant,&user]).await?.map(|row| row.get(0));
             password::verify(password, stored.as_deref()).await
         })
     }

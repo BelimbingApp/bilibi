@@ -1,6 +1,6 @@
 //! SMTP relay with verified TLS, mirroring Bilimbi's `MAIL_*` contract.
 //! The configuration has no Debug implementation: the password must not log.
-use crate::{Error, SendFuture, Transport};
+use crate::{Envelope, Error, SendFuture, Transport};
 use lettre::{
     transport::smtp::authentication::Credentials, AsyncSmtpTransport, AsyncTransport,
     Tokio1Executor,
@@ -45,10 +45,13 @@ impl Smtp {
     }
 }
 impl Transport for Smtp {
-    fn send<'a>(&'a self, message: &'a lettre::Message) -> SendFuture<'a> {
+    fn send_raw<'a>(&'a self, envelope: &'a Envelope, bytes: &'a [u8]) -> SendFuture<'a> {
         Box::pin(async move {
+            // lettre 0.11 appends CRLF before the DATA terminator. Supply all
+            // but the final CRLF so the received message equals our wire bytes.
+            let data = bytes.strip_suffix(b"\r\n").ok_or(Error::Invalid)?;
             self.transport
-                .send(message.clone())
+                .send_raw(&envelope.smtp()?, data)
                 .await
                 .map(|_| ())
                 .map_err(|error| Error::Delivery(error.to_string()))

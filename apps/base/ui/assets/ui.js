@@ -173,6 +173,12 @@
       // be promoted in place, so it is reopened as modal before anything paints.
       if (this.el.open) this.el.close();
       this.el.showModal();
+      // A confirmation starts on Cancel even when its body contains a reason field.
+      if (this.el.getAttribute('role') === 'alertdialog') {
+        const cancel = Array.from(this.el.querySelectorAll('button[data-event]'))
+          .find(button => button.dataset.event === this.el.dataset.cancel);
+        if (cancel) cancel.focus();
+      }
 
       // Escape asks to close. The dialog stays open until the server removes
       // it, so there is one source of truth for whether the workflow is live.
@@ -185,6 +191,17 @@
       this.el.addEventListener('close', () => {
         if (!this.el.open) this.requestClose();
       });
+    },
+
+    updated() {
+      // Moving a retained dialog during a patch drops it out of the top layer.
+      // Restore modality without losing the reason field's focus or draft.
+      if (this.el.open && !this.el.matches(':modal')) {
+        const focused = this.el.contains(document.activeElement) ? document.activeElement : null;
+        this.el.close();
+        this.el.showModal();
+        if (focused) focused.focus();
+      }
     },
 
     destroyed() {

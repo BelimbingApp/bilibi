@@ -20,7 +20,7 @@ Use HTTPS in service. A company administrator names the issuer, so by default ev
 
 Use Keycloak as the central broker when an organisation has several identity systems.
 
-Bilibi speaks OIDC only to Keycloak. Keycloak connects Entra ID over OIDC or SAML, LDAP/Active Directory and legacy SAML applications, and applies its authentication policy. A new upstream provider changes Keycloak configuration. It does not change Bilibi authentication code. SAML, LDAP, SCIM and provider-specific group lookup belong in the broker or an adopter-owned Extension.
+Bilibi speaks OIDC only to Keycloak. Keycloak connects Entra ID over OIDC or SAML, LDAP/Active Directory and legacy SAML applications, and applies its authentication policy. A new upstream provider changes Keycloak configuration. It does not change Bilibi authentication code. SAML, LDAP and provider-specific group lookup belong in the broker or an adopter-owned Extension. The platform can send [SCIM provisioning](scim.md) to Core User, using a SCIM client extension when the broker needs one.
 
 ## Require company sign-in
 
@@ -48,7 +48,7 @@ Read nested objects with dotted paths, exact claim keys, or JSON Pointers.
 
 For example, `realm_access.roles` reads Keycloak realm roles, and `resource_access.bilibi.roles` reads roles for the `bilibi` client. An exact namespaced claim such as `https://example.com/groups` is read as one key. JSON Pointer `/resource_access/client.with.dots/roles` handles a dotted client ID. A mapping claim may be one string or an array of strings; malformed data refuses sign-in. An absent claim contributes no mapped roles, removing prior grants from that source on the next sign-in.
 
-Authz owns the approved role bound (`authz_identity_policies`) and its separate automatic grants (`authz_identity_roles`). The effective role view combines those grants with `principal_roles`. Changing a policy removes grants that it no longer permits immediately. Changing group membership takes effect at the next sign-in. A default role belongs to accounts provisioned through that connection, rather than pre-existing accounts. Unlinking removes the source's role grants and revokes that person's sessions.
+Authz owns the approved role bound (`authz_identity_policies`) and its separate automatic grants (`authz_identity_roles`). The effective role view combines those grants with `principal_roles`. Changing a policy removes grants that it no longer permits immediately. Changing claim-based group membership takes effect at the next sign-in. Accounts managed by [SCIM](scim.md) instead take their mapped roles from provisioned groups immediately; SSO claims cannot restore a role removed through provisioning. A default role belongs to accounts provisioned through that connection, rather than pre-existing accounts. Unlinking removes the source's role grants and revokes that person's sessions.
 
 ## Provider presets
 

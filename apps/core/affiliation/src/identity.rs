@@ -472,3 +472,39 @@ pub async fn preview_write(
     }
     Ok(current.redact(&fields(client, scope).await?))
 }
+
+impl crate::AffiliationService {
+    /// Update a provisioned affiliation in its owner's system transaction.
+    /// The caller proves provisioning authority; both endpoints are rechecked.
+    pub async fn update_provisioned_email_in(
+        &self,
+        tx: &mut MutationTransaction<'_>,
+        id: AffiliationId,
+        person: PersonId,
+        company: OrganisationId,
+        email: &str,
+    ) -> Result<()> {
+        if tx.context().actor.kind != "system" {
+            return Err(Error::Forbidden);
+        }
+        let tenant = tx.context().tenant;
+        let old = tx.sql().query_opt(&format!("SELECT {COLUMNS} FROM person_affiliations WHERE tenant_id=$1 AND id=$2 AND person_id=$3 AND organisation_id=$4 AND unlinked_at IS NULL FOR UPDATE"), &[&tenant,&id.get(),&person.get(),&company.get()]).await?.ok_or(Error::Forbidden)?;
+        let old = Affiliation::from_row(&old)?;
+        let facts = ContactFacts {
+            organisation_id: company,
+            title: old.affiliation.title.clone(),
+            work_email: Some(email.into()),
+            work_phone: old.affiliation.work_phone.clone(),
+            dates: old.affiliation.dates.clone(),
+        }
+        .validate()?;
+        let email = facts.work_email.ok_or(Error::Invalid)?;
+        let affiliation = tx.mutate(move |sql| Box::pin(async move {
+            let row = sql.query_one(&format!("UPDATE person_affiliations SET work_email=$3,version=version+1,updated_at=now() WHERE tenant_id=$1 AND id=$2 RETURNING {COLUMNS}"), &[&tenant,&id.get(),&email]).await?;
+            let value = Affiliation::from_row(&row)?;
+            Ok((value.clone(),vec![Change{kind:"affiliation".into(),id:id.get(),old:old.audit_values(),new:value.audit_values()}]))
+        })).await?;
+        publish(tx, tenant, &affiliation);
+        Ok(())
+    }
+}
