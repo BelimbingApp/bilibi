@@ -439,12 +439,8 @@ fn active_item(tree: &[menu::Node], path: &str) -> Option<&'static str> {
 
 fn nav_node(node: &menu::Node, active: Option<&str>) -> NavNode {
     let item = node.item.item;
-    // Bilimbi ShellComponents: keep renderable names as supplied; prefix bare Heroicons.
-    let icon = match item.icon {
-        None => "hero-square-3-stack-3d".to_owned(),
-        Some(name) if bilibi_ui::icons::renderable(name) => name.to_owned(),
-        Some(name) => format!("hero-{name}"),
-    };
+    // Bilimbi ShellComponents uses the contributed icon name unchanged.
+    let icon = item.icon.unwrap_or("square-3-stack-3d").to_owned();
     NavNode {
         id: item.id.to_owned(),
         label: item.label.to_owned(),

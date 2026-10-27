@@ -972,6 +972,54 @@ async fn main() -> Result<()> {
             .await
             .map(found),
     );
+    println!("== Grid summaries refuse a masked field except its count");
+    use bilibi_base::grid::{Agg, Filter, Grouping, Measure, QueryError, Summary, SummarySpec};
+    let spec = |groupings: &[&str], filters: Vec<Filter>, agg: Agg| SummarySpec {
+        filters,
+        groupings: groupings
+            .iter()
+            .map(|column| Grouping {
+                column: (*column).into(),
+                bucket: None,
+            })
+            .collect(),
+        measures: vec![Measure {
+            column: "email".into(),
+            agg,
+        }],
+        timezone: "UTC".into(),
+        max_groups: 100,
+    };
+    let outcome = |result: std::result::Result<Summary, QueryError>| match result {
+        Ok(summary) => format!(
+            "ok, {} groups, full email in the result: {}",
+            summary.lines.len(),
+            format!("{:?}", summary.lines).contains("probe-unique@")
+        ),
+        Err(error) => format!("refused — {error:?}"),
+    };
+    let cases = [
+        ("group by email", spec(&["email"], vec![], Agg::Count)),
+        (
+            "filter email = probe-unique@example.test",
+            spec(
+                &["kind"],
+                vec![Filter {
+                    column: "email".into(),
+                    test: bilibi_base::grid::Test::Equals(json!("probe-unique@example.test")),
+                }],
+                Agg::Count,
+            ),
+        ),
+        ("max(email) by kind", spec(&["kind"], vec![], Agg::Max)),
+        ("count(email) by kind", spec(&["kind"], vec![], Agg::Count)),
+    ];
+    for (label, spec) in cases {
+        println!(
+            "{label}: {}",
+            outcome(bilibi_base::grid::summarize(&db, &admin.scope, "persons", &spec).await)
+        );
+    }
     client
         .batch_execute("DELETE FROM field_restrictions WHERE tenant_id=1 AND role_id=4 AND table_id='persons' AND field_id='email'")
         .await?;

@@ -183,6 +183,15 @@ impl Pages {
             .map_err(|_| Error::Internal)?,
             form: HashMap::from([("status".into(), "active".into())]),
             errors: Vec::new(),
+            duplicate_candidates: Vec::new(),
+            duplicate_columns: ListColumns::mount(
+                "company-duplicates",
+                views::duplicate_builtins(),
+            )
+            .map_err(|_| Error::Internal)?,
+            duplicate_reason: String::new(),
+            confirming_duplicate: false,
+            duplicate_likely: false,
             pending: None,
             pending_activity: None,
             history: false,
@@ -330,6 +339,11 @@ struct CompanyPage {
     children_columns: ListColumns,
     form: HashMap<String, String>,
     errors: Vec<FieldError>,
+    duplicate_candidates: Vec<crate::DuplicateCandidate>,
+    duplicate_columns: ListColumns,
+    duplicate_reason: String,
+    confirming_duplicate: bool,
+    duplicate_likely: bool,
     pending: Option<Pending>,
     pending_activity: Option<(String, i64)>,
     history: bool,
@@ -468,7 +482,22 @@ impl CompanyPage {
                 )
                 .await?
             }
-            "create" => views::create(&**client, scope, &self.form, &self.errors).await?,
+            "create" => {
+                views::create(
+                    &**client,
+                    scope,
+                    views::CreateState {
+                        values: &self.form,
+                        errors: &self.errors,
+                        candidates: &self.duplicate_candidates,
+                        columns: &self.duplicate_columns,
+                        confirming: self.confirming_duplicate,
+                        likely: self.duplicate_likely,
+                        reason: &self.duplicate_reason,
+                    },
+                )
+                .await?
+            }
             _ => return Err(Error::NotFound),
         };
         Ok(LiveBody {
@@ -557,16 +586,25 @@ impl CompanyPage {
                 let result = self.company.save_fact(scope, credential, &edit).await;
                 let status = match result {
                     Ok(()) => CommitStatus::Saved,
-                    Err(Error::Unauthorized) => return Err(Error::Unauthorized),
-                    Err(Error::Forbidden) => {
+                    Err(crate::WriteError::Access(Error::Unauthorized)) => {
+                        return Err(Error::Unauthorized)
+                    }
+                    Err(crate::WriteError::Access(Error::Forbidden)) => {
                         self.notice="You no longer have permission to change this company, or the company is archived.".into();
                         CommitStatus::Error(self.notice.clone())
                     }
-                    Err(Error::Conflict) => CommitStatus::Error(
+                    Err(crate::WriteError::Access(Error::Conflict)) => CommitStatus::Error(
                         "The record changed. Your draft is kept; reload before saving.".into(),
                     ),
-                    Err(Error::Invalid) => CommitStatus::Error(
+                    Err(crate::WriteError::Access(Error::Invalid)) => CommitStatus::Error(
                         "The value was not saved. Check its format, length and references.".into(),
+                    ),
+                    Err(crate::WriteError::Invalid(errors)) => CommitStatus::Error(
+                        errors
+                            .into_iter()
+                            .map(|e| e.message)
+                            .collect::<Vec<_>>()
+                            .join(" "),
                     ),
                     Err(_) => CommitStatus::failure(),
                 };
@@ -623,11 +661,13 @@ impl CompanyPage {
                     };
                     let status = match self.company.save_fact(scope, credential, &edit).await {
                         Ok(()) => CommitStatus::Saved,
-                        Err(Error::Unauthorized) => return Err(Error::Unauthorized),
-                        Err(Error::Conflict) => CommitStatus::Error(
+                        Err(crate::WriteError::Access(Error::Unauthorized)) => {
+                            return Err(Error::Unauthorized)
+                        }
+                        Err(crate::WriteError::Access(Error::Conflict)) => CommitStatus::Error(
                             "The record changed. Reload before changing its activities.".into(),
                         ),
-                        Err(Error::Forbidden) => CommitStatus::Error(
+                        Err(crate::WriteError::Access(Error::Forbidden)) => CommitStatus::Error(
                             "The activity was not saved: this company is read-only.".into(),
                         ),
                         Err(_) => CommitStatus::failure(),
@@ -678,28 +718,65 @@ impl CompanyPage {
                     Err(error) => pending.error = error.to_string(),
                 }
             }
-            "create_company" if self.operation == "create" => {
-                self.form = value
-                    .as_object()
-                    .ok_or(Error::Invalid)?
-                    .iter()
-                    .filter_map(|(k, v)| v.as_str().map(|v| (k.clone(), v.into())))
-                    .filter(|(k, _)| k != "type")
-                    .collect();
-                let (new, activities, metadata, errors) = views::new_company(&self.form);
+            "duplicate_grid" if self.operation == "create" => {
+                self.duplicate_columns
+                    .handle(&bilibi_ui::params::string_values(value));
+            }
+            "cancel_duplicate_create" => self.confirming_duplicate = false,
+            "duplicate_reason" if self.operation == "create" => {
+                self.duplicate_reason = get("reason").to_owned();
+            }
+            "create_company" | "confirm_create_anyway" if self.operation == "create" => {
+                let client = self.db.get().await?;
+                bilibi_authz::authorize_key(&**client, scope, crate::CREATE).await?;
+                let anyway = get("type") == "confirm_create_anyway";
+                if !anyway {
+                    self.form = value
+                        .as_object()
+                        .ok_or(Error::Invalid)?
+                        .iter()
+                        .filter_map(|(k, v)| v.as_str().map(|v| (k.clone(), v.into())))
+                        .filter(|(k, _)| k != "type" && k != "intent")
+                        .collect();
+                    self.duplicate_reason.clear();
+                    self.confirming_duplicate = false;
+                    self.duplicate_candidates.clear();
+                    self.duplicate_likely = false;
+                }
+                let (mut new, activities, metadata, errors) = views::new_company(&self.form);
                 self.errors = errors;
                 if self.errors.is_empty() {
-                    match self
-                        .company
-                        .create_with_context(scope, &new, activities, metadata)
-                        .await?
+                    if let Err(errors) =
+                        crate::organisation::preview(&**client, scope, &new).await?
                     {
-                        CreateOutcome::Created(_) => {
-                            self.landing
-                                .put(StatusKind::Success, "Company created successfully.");
-                            return Ok(Some("/companies".into()));
+                        self.errors = errors;
+                    }
+                }
+                if self.errors.is_empty() {
+                    let matches = self.company.create_matches(scope, &new).await?;
+                    self.duplicate_likely = matches.likely;
+                    self.duplicate_candidates = matches.candidates.unwrap_or_default();
+                    if anyway {
+                        new.create_anyway = Some(crate::CreateAnyway {
+                            candidate_ids: self.duplicate_candidates.iter().map(|c| c.id).collect(),
+                            reason: self.duplicate_reason.clone(),
+                        });
+                    }
+                    if anyway || !matches.likely {
+                        match self
+                            .company
+                            .create_with_context(scope, &new, activities, metadata)
+                            .await?
+                        {
+                            CreateOutcome::Created(company) => {
+                                self.landing
+                                    .put(StatusKind::Success, "Company created successfully.");
+                                return Ok(Some(format!("/companies/{}", company.id)));
+                            }
+                            CreateOutcome::Refused(errors) => self.errors = errors,
                         }
-                        CreateOutcome::Refused(errors) => self.errors = errors,
+                    } else if get("intent") == "anyway" {
+                        self.confirming_duplicate = true;
                     }
                 }
             }

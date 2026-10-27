@@ -435,6 +435,7 @@ fn strip_accent(ch: char) -> char {
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct NewCompany {
+    pub create_anyway: Option<crate::CreateAnyway>,
     pub name: String,
     pub code: Option<String>,
     pub status: Option<String>,
@@ -466,7 +467,7 @@ pub struct ValidCompany {
     pub phone: String,
     pub website: Option<String>,
 }
-fn trimmed(value: &Option<String>) -> Option<String> {
+pub(crate) fn trimmed(value: &Option<String>) -> Option<String> {
     value
         .as_deref()
         .map(str::trim)
@@ -719,20 +720,42 @@ pub async fn create(
         Err(errors) => return Ok(CreateOutcome::Refused(errors)),
     };
     let tenant = scope.tenant();
+    crate::hierarchy::lock(tx.sql(), scope).await?;
+    if let Some(parent) = company.parent_id {
+        authorize_target(tx.sql(), scope, parent, CREATE).await?;
+        require_writable(tx.sql(), scope, parent, true)
+            .await
+            .map_err(|e| match e {
+                crate::WriteError::Access(e) => e,
+                _ => Error::Forbidden,
+            })?;
+    }
+    tx.sql().execute("SELECT pg_advisory_xact_lock(hashtextextended('company-name-' || $1::text || ':' || lower(btrim($2)), 0))", &[&tenant.to_string(), &company.name]).await?;
     lock_code(tx.sql(), tenant, &company.code).await?;
-    let errors = check_references(tx.sql(), tenant, &company, None).await?;
+    let mut errors = check_references(tx.sql(), tenant, &company, None).await?;
+    errors.extend(crate::hierarchy::check_parent(tx.sql(), scope, None, company.parent_id).await?);
+    errors.extend(crate::duplicates::check_create(tx.sql(), scope, new).await?);
     if !errors.is_empty() {
         return Ok(CreateOutcome::Refused(errors));
     }
+    let anyway = new.create_anyway.clone().map(|mut a| {
+        a.reason = a.reason.trim().to_owned();
+        a
+    });
     let created = tx
         .mutate(move |sql| {
             Box::pin(async move {
                 let created = insert(sql, tenant, &company).await?;
+                let mut value = created.to_json();
+                if let Some(anyway) = anyway {
+                    value["create_anyway"] =
+                        serde_json::to_value(anyway).map_err(|_| Error::Internal)?;
+                }
                 let change = Change {
                     kind: "company".into(),
                     id: created.id,
                     old: serde_json::Value::Null,
-                    new: created.to_json(),
+                    new: value,
                 };
                 Ok((created, vec![change]))
             })
@@ -745,7 +768,7 @@ pub async fn create(
 /// access and current code uniqueness, without writing or reserving the code
 /// (Bilimbi `preview_create_company/2`).
 pub async fn preview(
-    client: &impl GenericClient,
+    client: &(impl GenericClient + Sync),
     scope: &Scope,
     new: &NewCompany,
 ) -> Result<std::result::Result<ValidCompany, Vec<FieldError>>> {
@@ -755,7 +778,8 @@ pub async fn preview(
         Ok(company) => company,
         Err(errors) => return Ok(Err(errors)),
     };
-    let errors = check_references(client, scope.tenant(), &company, None).await?;
+    let mut errors = check_references(client, scope.tenant(), &company, None).await?;
+    errors.extend(crate::hierarchy::check_parent(client, scope, None, company.parent_id).await?);
     Ok(if errors.is_empty() {
         Ok(company)
     } else {

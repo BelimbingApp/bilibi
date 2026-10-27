@@ -1,4 +1,5 @@
-//! Grid table/field/link catalog, scoped paths, bounded page projections, the
+//! Grid table/field/link catalog, scoped paths, bounded page projections,
+//! grouped summaries and filtered row pages (the report builder's reads), the
 //! lenses that turn them into FlexTable cells, and what each account arranged
 //! on each list page. There is no Grid page: a list hosts the walked columns
 //! through `PageColumns`; see `README.md`.
@@ -10,6 +11,7 @@ pub mod page_columns;
 pub mod page_views;
 pub mod query;
 pub mod reference;
+mod summary;
 pub mod view;
 pub use lens::{Lens, Range};
 pub use page_columns::{Outcome, PageColumns};
@@ -17,6 +19,11 @@ pub use page_views::{PageViews, PAGE_VIEWS};
 pub use query::{
     project, project_lenses, stats, Lenses, Projection, QueryError, Row, Stats, BOUNDS,
     MAX_ESTIMATED_COST,
+};
+pub use summary::{
+    page_keys, summarize, Bucket, Filter, Grouping, KeyPage, Line, Measure, PageSpec, Period, Sort,
+    Summary, SummarySpec, Test, MAX_CHOICES, MAX_FILTERS, MAX_GROUPINGS, MAX_MEASURES, MAX_OFFSET,
+    MAX_RESULT_GROUPS, MAX_SORTS, MAX_TEXT,
 };
 pub use view::View;
 

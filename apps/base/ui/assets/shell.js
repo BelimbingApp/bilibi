@@ -1036,10 +1036,8 @@
         tile.title = `Open ${pinLabel} in a tile`;
         tile.setAttribute('aria-label', `Open ${pinLabel} in a tile`);
         tile.className = unpin.className.replace('app-pinned-unpin', 'app-pinned-tile');
-        const tileIcon = document.createElement('span');
-        tileIcon.className = 'hero-squares-plus size-3.5';
-        tileIcon.setAttribute('aria-hidden', 'true');
-        tile.append(tileIcon);
+        const tileIcon = document.getElementById('app-pinned-tile-icon')?.content.firstElementChild;
+        if (tileIcon) tile.append(tileIcon.cloneNode(true));
 
         row.append(link, tile, unpin);
         this.pinnedItems.append(row);

@@ -205,3 +205,5 @@ Companies and contacts have linked postal addresses, owned by [Core Address](../
 `AffiliationService::create_in` composes the same authorized creation inside a caller-owned `MutationTransaction`, so atomic account provisioning never opens an inner transaction. It retains owner locks, validation and after-commit notifications.
 
 `AffiliationService::provision_in` is the same creation for a system principal (`Context::system`) that has authorized it itself and just created the Person in that transaction. It checks no capability, locks only the company and refuses a user context.
+
+`AffiliationService::update_provisioned_email_in` updates a provisioned work mailbox in its caller-owned system transaction. The caller proves provisioning authority; the owner rechecks both endpoints and live linkage, and preserves audit capture and notifications.

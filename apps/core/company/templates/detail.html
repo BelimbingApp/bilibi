@@ -1,3 +1,3 @@
 {%- import "workspace.html" as workspace -%}
 {% call workspace::announce(kind="core/company", record_id=id) %}{% endcall %}
-{{ header }}{{ notice }}<div class="mt-6 space-y-6">{{ card }}{% for panel in panels %}<div id="{{ panel }}-slot" data-live-ignore><div id="{{ panel }}"></div></div>{% endfor %}</div>{{ modal }}
+{{ header }}{{ chain }}{{ notice }}<div class="mt-6 space-y-6">{{ card }}{% for panel in panels %}<div id="{{ panel }}-slot" data-live-ignore><div id="{{ panel }}"></div></div>{% endfor %}</div>{{ modal }}

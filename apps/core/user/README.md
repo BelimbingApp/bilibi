@@ -40,6 +40,10 @@ check, so timing does not reveal which emails exist.
 
 Optional company OIDC, linking, provisioning, role mapping and provider re-authentication are documented in [Company sign-in](sso.md). With no enabled connection, password sign-in and existing factor settings keep their behavior.
 
+## Automatic provisioning
+
+Companies can create a SCIM token to provision people and groups, update mapped roles and end access immediately. See [Automatic provisioning (SCIM)](scim.md). With no token, SCIM requests return 401 and existing sign-in behaviour stays unchanged.
+
 ## Sign-in admission
 
 Enable **Sign in** on the tenant's 2FA requirements page to ask for a second factor before admitting a session.
@@ -494,3 +498,5 @@ The editor keeps SQL, name, description and named parameter values in its mounte
 The query editor uses the shared page header for its title, description and Back link. Query name and description use shared form fields; Discard, Save and saved-query actions sit in the form action row. Migration `core-user-014-drop-query-prompt` removes the unused prompt column while preserving saved queries and their SQL.
 
 The [Base Step-up provider contract](../../base/step_up/README.md#provider) owns method registration, challenge starts and lifecycle hooks. Core User registers TOTP beside Extensions. With one method the existing routes retain their original flow. Reset (including the server command) reads enrollment across all methods in the owner's transaction, removes all factor state, revokes challenges and signs out the target. Account deletion also calls every method's deletion hook. Password changes/resets and account reassignment use `Sessions::revoke`; they retain enrollment. Every provider change shares the owner's mutation transaction and audit trace. Sign-in admission is described under [Sign-in admission](#sign-in-admission).
+
+Saved notification, pin and database-query icons use the bare names in the [UI icon contract](../../base/ui/README.md#icons). Migration `core-user-019-bare-icon-names` removes the former CSS prefix from existing values and maps the duplicate impersonation name to `bilimbi-impersonate`. Unknown stored names render the shared neutral placeholder and warn once.

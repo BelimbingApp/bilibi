@@ -742,6 +742,7 @@ dependencies = [
  "bilibi-settings",
  "bilibi-tenancy",
  "bilibi-ui",
+ "bytes",
  "inventory",
  "jiff",
  "serde_json",
@@ -817,9 +818,12 @@ dependencies = [
 name = "bilibi-mail"
 version = "0.1.1"
 dependencies = [
+ "bilibi-database",
  "bilibi-module-registry",
+ "bilibi-settings",
  "inventory",
  "lettre",
+ "serde_json",
  "thiserror",
  "tokio",
  "uuid",

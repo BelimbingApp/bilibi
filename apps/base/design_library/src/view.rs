@@ -508,22 +508,17 @@ impl View<'_> {
             children: Vec::new(),
         };
         let rows = bilibi_ui::navigation_unpinned(&[
-            leaf(
-                "example.companies",
-                "Companies",
-                "hero-building-office-2",
-                false,
-            ),
+            leaf("example.companies", "Companies", "building-office-2", false),
             bilibi_ui::NavNode {
                 id: "example.system".into(),
                 label: "System".into(),
-                icon: "hero-cog-6-tooth".into(),
+                icon: "cog-6-tooth".into(),
                 route: None,
                 active: false,
                 children: vec![leaf(
                     "example.system.design-library",
                     "Design Library",
-                    "hero-paint-brush",
+                    "paint-brush",
                     true,
                 )],
             },
@@ -594,10 +589,7 @@ impl View<'_> {
 }
 
 pub fn icon_names() -> impl Iterator<Item = &'static str> {
-    bilibi_ui::icons::GLYPHS
-        .iter()
-        .map(|g| g.name)
-        .chain(bilibi_ui::icons::ACTIONS.iter().map(|(name, _)| *name))
+    bilibi_ui::Icons::names()
 }
 impl View<'_> {
     fn catalog(&self) -> askama::Result<Html> {
@@ -616,7 +608,7 @@ impl View<'_> {
         );
         toolbar.event = "icon-filter";
         let mut html = Html::raw(
-            r#"<div><h2 class="text-base font-semibold text-ink-strong">Icon catalogue</h2><p class="text-sm text-ink-muted">Every name the icon registry resolves. Select a tile to copy the name a screen passes to the icon component. Any other Heroicon is reached by its own <code>hero-</code> name.</p></div><div class="space-y-3 rounded-xl border border-line bg-surface p-4 shadow-xs">"#,
+            r#"<div><h2 class="text-base font-semibold text-ink-strong">Icon catalogue</h2><p class="text-sm text-ink-muted">Every name the icon registry resolves. Select a tile to copy the name a screen passes to the icon component. Heroicons use bare names, with solid, mini or micro suffixes for their variants.</p></div><div class="space-y-3 rounded-xl border border-line bg-surface p-4 shadow-xs">"#,
         );
         html.push(&render(toolbar)?);
         html.push(&Html::raw(format!(r#"<div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 text-xs"><p id="icon-catalog-count" class="text-ink-muted">{}</p><p id="icon-catalog-status" role="status" class="text-success-ink">{}</p></div>"#,
@@ -630,7 +622,7 @@ impl View<'_> {
             (
                 "glyphs",
                 "Custom glyphs",
-                bilibi_ui::icons::GLYPHS
+                bilibi_ui::Icons::glyphs()
                     .iter()
                     .map(|g| g.name)
                     .collect::<Vec<_>>(),
@@ -638,9 +630,18 @@ impl View<'_> {
             (
                 "actions",
                 "Actions",
-                bilibi_ui::icons::ACTIONS
+                bilibi_ui::Icons::actions()
                     .iter()
                     .map(|(name, _)| *name)
+                    .collect(),
+            ),
+            (
+                "heroicons",
+                "Heroicons",
+                bilibi_ui::Icons::heroicons()
+                    .iter()
+                    .map(|icon| icon.name)
+                    .filter(|name| bilibi_ui::Icons::action(name).is_none())
                     .collect(),
             ),
         ] {
@@ -663,7 +664,7 @@ impl View<'_> {
                     .icon_copy
                     .as_ref()
                     .is_some_and(|(n, c)| n == name && *c);
-                let hero=bilibi_ui::icons::action(name).map(|hero|format!(r#"<span class="w-full truncate text-[0.6875rem] text-ink-muted">{hero}</span>"#)).unwrap_or_default();
+                let hero=bilibi_ui::Icons::action(name).map(|hero|format!(r#"<span class="w-full truncate text-[0.6875rem] text-ink-muted">{hero}</span>"#)).unwrap_or_default();
                 let status = if copied {
                     format!(
                         r#"<span id="icon-tile-{name}-copied" class="absolute right-1.5 top-1 text-[0.6875rem] font-medium text-success-ink">Copied</span>"#

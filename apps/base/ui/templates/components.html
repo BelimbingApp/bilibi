@@ -8,14 +8,10 @@
     Secondary slots (actions, title_actions) take a rendered Html fragment.
     Only these shared fragments use the safe filter. -#}
 
-{#- A named action icon or Heroicon. Unknown non-hero names panic (see icons.rs). -#}
+{#- Only embedded, trusted SVG bodies pass safe; caller names/classes stay escaped. -#}
 {% macro icon(name, class="size-4") %}
-{%- let resolved = bilibi_ui::icons::resolve(name) -%}
-{%- if let Some(glyph) = resolved.glyph -%}
-<svg class="{{ class }}" xmlns="http://www.w3.org/2000/svg" viewBox="{{ glyph.view_box }}" fill="{{ glyph.fill }}"{% if glyph.outlined() %} stroke="currentColor" stroke-width="1.5"{% endif %} aria-hidden="true">{% for path in glyph.paths %}<path stroke-linecap="round" stroke-linejoin="round" d="{{ path }}"></path>{% endfor %}</svg>
-{%- else -%}
-<span class="{{ resolved.hero }} {{ class }}"></span>
-{%- endif -%}
+{%- let glyph = bilibi_ui::Icons::resolve(name) -%}
+<svg class="ui-icon {{ class }}" xmlns="http://www.w3.org/2000/svg" viewBox="{{ glyph.view_box }}" width="{{ glyph.size }}" height="{{ glyph.size }}" fill="{{ glyph.fill }}"{% if !glyph.stroke_width.is_empty() %} stroke="currentColor" stroke-width="{{ glyph.stroke_width }}"{% endif %} aria-hidden="true" focusable="false">{{ glyph.body()|safe }}</svg>
 {% endmacro %}
 
 {#- Compact status badge with a state dot; dot=false for a type or role. -#}
@@ -34,7 +30,7 @@
 {%- if !href.is_empty() -%}
 <a href="{{ href }}"{% if !id.is_empty() %} id="{{ id }}"{% endif %}{% if !download.is_empty() %} download="{{ download }}"{% endif %} class="ui-button inline-flex items-center justify-center gap-1.5 rounded-md border px-2 py-0.5 text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas disabled:cursor-not-allowed disabled:opacity-50 {{ variant.class() }}{% if !sized.is_empty() %} {{ sized }}{% endif %}">{{ caller() }}</a>
 {%- else -%}
-<button{% if !id.is_empty() %} id="{{ id }}"{% endif %} class="ui-button inline-flex items-center justify-center gap-1.5 rounded-md border px-2 py-0.5 text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas {% if busy %}cursor-progress{% else %}disabled:cursor-not-allowed disabled:opacity-50{% endif %} {{ variant.class() }}{% if !sized.is_empty() %} {{ sized }}{% endif %}"{% if busy || aria_busy %} aria-busy="true"{% endif %}{% if busy || disabled %} disabled{% endif %}{% if !button_type.is_empty() %} type="{{ button_type }}"{% endif %}{% if !name.is_empty() %} name="{{ name }}"{% endif %}{% if !value.is_empty() %} value="{{ value }}"{% endif %}{% if !event.is_empty() %} data-event="{{ event }}"{% endif %}{% if !working.is_empty() %} data-working="{{ working }}"{% endif %}{% if !aria_label.is_empty() %} aria-label="{{ aria_label }}"{% endif %}>{% if busy %}{% call icon(name="hero-arrow-path", class="size-4 motion-safe:animate-spin") %}{% endcall %}{% endif %}{{ caller() }}</button>
+<button{% if !id.is_empty() %} id="{{ id }}"{% endif %} class="ui-button inline-flex items-center justify-center gap-1.5 rounded-md border px-2 py-0.5 text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas {% if busy %}cursor-progress{% else %}disabled:cursor-not-allowed disabled:opacity-50{% endif %} {{ variant.class() }}{% if !sized.is_empty() %} {{ sized }}{% endif %}"{% if busy || aria_busy %} aria-busy="true"{% endif %}{% if busy || disabled %} disabled{% endif %}{% if !button_type.is_empty() %} type="{{ button_type }}"{% endif %}{% if !name.is_empty() %} name="{{ name }}"{% endif %}{% if !value.is_empty() %} value="{{ value }}"{% endif %}{% if !event.is_empty() %} data-event="{{ event }}"{% endif %}{% if !working.is_empty() %} data-working="{{ working }}"{% endif %}{% if !aria_label.is_empty() %} aria-label="{{ aria_label }}"{% endif %}>{% if busy %}{% call icon(name="arrow-path", class="size-4 motion-safe:animate-spin") %}{% endcall %}{% endif %}{{ caller() }}</button>
 {%- endif -%}
 {% endmacro %}
 
@@ -53,7 +49,7 @@ ui-icon-button grid shrink-0 place-items-center transition focus-visible:outline
 {%- if !href.is_empty() -%}
 <a href="{{ href }}"{% if !method.is_empty() %} data-method="{{ method }}" data-to="{{ href }}"{% endif %}{% if !id.is_empty() %} id="{{ id }}"{% endif %} aria-label="{{ label }}" title="{% if title.is_empty() %}{{ label }}{% else %}{{ title }}{% endif %}" class="{% call icon_button_class(context=context, kind=kind, chrome=chrome, busy=false, class=class) %}{% endcall %}">{% call icon(name=icon, class=context.icon_class()) %}{% endcall %}</a>
 {%- else -%}
-<button type="{% if button_type.is_empty() %}button{% else %}{{ button_type }}{% endif %}"{% if !id.is_empty() %} id="{{ id }}"{% endif %} aria-label="{{ label }}"{% if busy %} aria-busy="true"{% endif %} title="{% if title.is_empty() %}{{ label }}{% else %}{{ title }}{% endif %}" class="{% call icon_button_class(context=context, kind=kind, chrome=chrome, busy=busy, class=class) %}{% endcall %}"{% if busy || disabled %} disabled{% endif %}{% if !name.is_empty() %} name="{{ name }}"{% endif %}{% if !value.is_empty() %} value="{{ value }}"{% endif %}{% if draggable %} draggable="true"{% endif %}{% if !data_role.is_empty() %} data-role="{{ data_role }}"{% endif %}{% if !nav_pin.is_empty() %} data-nav-pin="{{ nav_pin }}" aria-pressed="false"{% endif %}{% if !record_url.is_empty() %} data-nav-pin-record="true" data-nav-pin-label="{{ record_label }}" data-nav-pin-url="{{ record_url }}"{% endif %}{% if !event.is_empty() %} data-event="{{ event }}"{% endif %}>{% if busy %}{% call icon(name="hero-arrow-path", class=context.spinner_class()) %}{% endcall %}{% else %}{% call icon(name=icon, class=context.icon_class()) %}{% endcall %}{% endif %}</button>
+<button type="{% if button_type.is_empty() %}button{% else %}{{ button_type }}{% endif %}"{% if !id.is_empty() %} id="{{ id }}"{% endif %} aria-label="{{ label }}"{% if busy %} aria-busy="true"{% endif %} title="{% if title.is_empty() %}{{ label }}{% else %}{{ title }}{% endif %}" class="{% call icon_button_class(context=context, kind=kind, chrome=chrome, busy=busy, class=class) %}{% endcall %}"{% if busy || disabled %} disabled{% endif %}{% if !name.is_empty() %} name="{{ name }}"{% endif %}{% if !value.is_empty() %} value="{{ value }}"{% endif %}{% if draggable %} draggable="true"{% endif %}{% if !data_role.is_empty() %} data-role="{{ data_role }}"{% endif %}{% if !nav_pin.is_empty() %} data-nav-pin="{{ nav_pin }}" aria-pressed="false"{% endif %}{% if !record_url.is_empty() %} data-nav-pin-record="true" data-nav-pin-label="{{ record_label }}" data-nav-pin-url="{{ record_url }}"{% endif %}{% if !event.is_empty() %} data-event="{{ event }}"{% endif %}>{% if busy %}{% call icon(name="arrow-path", class=context.spinner_class()) %}{% endcall %}{% else %}{% call icon(name=icon, class=context.icon_class()) %}{% endcall %}{% endif %}</button>
 {%- endif -%}
 {% endmacro %}
 

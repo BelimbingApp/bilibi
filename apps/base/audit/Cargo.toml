@@ -16,4 +16,4 @@ serde_json = { workspace = true, features = ["arbitrary_precision"] }
 tokio.workspace = true
 tokio-postgres.workspace = true
 uuid.workspace = true
-bytes = "1.12.1"
+bytes.workspace = true
