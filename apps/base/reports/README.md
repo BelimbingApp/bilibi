@@ -17,8 +17,9 @@ Operator-built reports: a saved question over one Grid table, run as each reader
 | `list`, `get` | `reports.view` | Reports the reader may run: their own, shared with everyone, or shared with one of their roles. |
 | `page` | `reports.view` | One page of those reports by name, searched by name and description in the same query, with the number that match. |
 | `run` | `reports.view` | One page of rows (each with its record's own page where the owner declares one, and the totals line), or a grouped summary or matrix with subtotals and a total. Answers ask-when-run filters by position; `as_rows` with drill filters lists the records behind a group; agents drill as the page does (`equals`, `empty`, or a date bucket's `range` of days). |
-| `export` | `reports.export` | The whole result as CSV or a text PDF, up to the download bound, for the same `RunInput` as the page (answers, drill-downs, records view). Audited as `base.reports.exported` with report, format and row count, never the data. CSV neutralises a leading `=`, `+`, `-`, `@`; a PDF holds 20 columns and Latin-1 text and refuses anything else in words. |
-| `prepare_export`, `exports`, `exported` | `reports.export` | A larger result prepared on the Queue as the reader, stored as a private artifact of their company that expires after `reports.export_days`; the bell says when it is ready. Only the requester reads it, at `/report-exports/{id}`. |
+| `export` | `reports.export` | The whole result as CSV or a text PDF, up to the download bound, for the same `RunInput` as the page (answers, drill-downs, records view). Audited as `base.reports.exported` with report, format and row count, never the data. CSV neutralises a leading `=`, `+`, `-`, `@`; a PDF holds 20 columns and Latin-1 text and refuses anything else in words. A matrix file has the page's layout, column totals included. |
+| `exportable` | `reports.export` | Whether that file can be made now, without making or auditing it: the page asks before sending the browser to a PDF, so a refusal is shown in words with CSV beside it. |
+| `prepare_export`, `exports`, `exported` | `reports.export` | A larger result prepared on the Queue as the reader, stored as a private artifact of their company that expires after `reports.export_days`; the bell says when it is ready. Only the requester reads it, at `/report-exports/{id}`, and only while what they may see of the report (`access`: its version and which columns resolve) is what it was when the file was made; otherwise it is refused and prepared again. A request whose Queue job ended before it ran (the requester was refused) lists as failed. |
 | `subscribe`, `subscriptions`, `pause`, `unsubscribe` | `reports.schedule` (roles: `reports.share` too) | Scheduled deliveries; see Schedules. |
 | `builtins`, `builtin`, `run_builtin`, `copy_builtin` | `reports.view` / `reports.author` | Built-in reports modules contribute; see Built-in reports. |
 | `record_types`, `columns` | `reports.view` | What a builder may offer: readable record types, and a type's own fields plus fields one link away. |
@@ -78,8 +79,8 @@ Reads: `base.reports.list` (with `built_in`), `get` and `run` (by `id`, or `buil
 
 - A subscription delivers one report daily, weekly (a weekday) or monthly (day 1–28) at a wall-clock time in the subscriber's display zone, as CSV or PDF, to the subscriber and, with `reports.share`, to the holders of chosen roles.
 - Schedule's recurrence `base/reports.deliveries` (every 15 minutes, the `scheduler` principal) sweeps due subscriptions: one delivery per recipient (unique per due time), audited in each tenant as `scheduler`. Like every contributed recurrence it runs nothing until an operator enables it on `/system/schedule`.
-- Each delivery is queued as its recipient (`base/reports-deliver`, re-proved by Queue on every attempt) after their account and `reports.view` prove. It runs the report under their own access, keeps the file as their prepared export, rings their bell and mails a link that needs sign-in (`APP_ORIGIN`). The mail carries no data.
-- Nothing is sent, and the delivery records why, when the recipient's account no longer proves, they lost `reports.view`, the report is no longer shared with them, a filter hides a field from them, or the result is empty and the subscription skips empty results. Pausing cancels deliveries not yet started.
+- Each delivery is queued as its recipient (`base/reports-deliver`, re-proved by Queue on every attempt) after their account, `reports.view` and `reports.export` prove (a delivered file is an export, downloaded like one). It runs the report under their own access, keeps the file as their prepared export, rings their bell and mails a link that needs sign-in (`APP_ORIGIN`). The mail carries no data.
+- Nothing is sent, and the delivery records why, when the recipient's account no longer proves, they lost `reports.view` or `reports.export`, the report is no longer shared with them, a filter hides a field from them, or no record matched and the subscription skips empty results (decided before the file is stored or the bell rings; an ungrouped summary is one line however many records it counts). Pausing cancels deliveries not yet started. A delivery whose job Queue ended without running it is closed as skipped by the next sweep. Every delivery's creation, export, cancellation and removal is audited.
 
 ## Built-in reports
 
@@ -89,8 +90,8 @@ A module contributes one in code with `bilibi_reports::builtin!` (key, name, des
 
 - `base_reports`: tenant, owner, name, description, record type, kind, definition (JSON, at most 32 KB), `shared_with_everyone`, `version`.
 - `base_report_shares`: one row per role; it goes with its report or role.
-- `base_report_exports`: a prepared export's request and outcome (its artifact, file name, row count or why it failed), read only by its requester.
-- `base_report_subscriptions`, `base_report_subscription_roles`, `base_report_deliveries`: schedules, their extra recipients, and each delivery's state and reason.
+- `base_report_exports`: a prepared export's request and outcome (its artifact, file name, row count or why it failed, its Queue job, and what the requester could see when it was made), read only by its requester.
+- `base_report_subscriptions`, `base_report_subscription_roles`, `base_report_deliveries`: schedules, their extra recipients, and each delivery's state, reason and Queue job.
 - Audited as kind `base_report`.
 
 ## Proof
