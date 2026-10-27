@@ -52,6 +52,8 @@ pub fn reserved(path: &str) -> bool {
     path == "/api/v1"
         || path.starts_with("/api/v1/")
         || path.starts_with("/.well-known/")
+        || path == "/scim"
+        || path.starts_with("/scim/")
         || path == "/webhooks"
         || path.starts_with("/webhooks/")
         || [

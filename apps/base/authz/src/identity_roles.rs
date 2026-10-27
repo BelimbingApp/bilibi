@@ -144,3 +144,39 @@ impl Grants {
         })).await
     }
 }
+
+impl Grants {
+    /// Revoke only an authenticated identity source's automatic grants, including
+    /// for a frozen account that cannot supply a live Scope. The identity owner
+    /// authenticates its credential before calling; Context is attribution, not
+    /// that authentication. Matching the source prevents a confused lifecycle
+    /// caller from clearing another source, and this method can never add grants.
+    pub async fn revoke_identity_source_roles_in(
+        &self,
+        tx: &mut MutationTransaction<'_>,
+        source: &str,
+        user: i64,
+    ) -> Result<()> {
+        if tx.context().actor.kind != "system" || tx.context().actor.id != source {
+            return Err(Error::Forbidden);
+        }
+        let tenant = tx.context().tenant;
+        tx.sql()
+            .query_opt(
+                "SELECT 1 FROM authz_identity_policies WHERE tenant_id=$1 AND source=$2 FOR SHARE",
+                &[&tenant, &source],
+            )
+            .await?
+            .ok_or(Error::Forbidden)?;
+        // MutationBoundary deliberately refuses a write with no Changes. A
+        // revoked/frozen account may already have no grants; that is a no-op.
+        if tx.sql().query_opt("SELECT 1 FROM authz_identity_roles WHERE tenant_id=$1 AND source=$2 AND user_id=$3 LIMIT 1 FOR UPDATE", &[&tenant,&source,&user]).await?.is_none() {
+            return Ok(());
+        }
+        let source = source.to_owned();
+        tx.mutate(move |sql| Box::pin(async move {
+            let rows = sql.query("DELETE FROM authz_identity_roles WHERE tenant_id=$1 AND source=$2 AND user_id=$3 RETURNING role_id", &[&tenant,&source,&user]).await?;
+            Ok(((), rows.iter().map(|row| Change { kind:"authz.identity_role".into(), id:row.get(0), old:json!({"user":user,"source":source,"assigned":true}), new:json!(null) }).collect()))
+        })).await
+    }
+}

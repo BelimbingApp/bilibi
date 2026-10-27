@@ -13,6 +13,7 @@ mod media;
 mod pdf;
 mod perf;
 mod routes;
+mod scim;
 mod shell;
 mod two_factor_reset;
 mod webhooks;
@@ -316,6 +317,7 @@ pub fn router(app: App) -> Router {
     routes::install_moved(pages, &app.moved)
         .merge(api::router(app.clone()))
         .merge(webhooks::router())
+        .merge(scim::router())
         .route("/", get(auth::home).post(auth::login))
         .route("/login", get(auth::home).post(auth::login))
         .route(

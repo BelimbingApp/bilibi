@@ -106,15 +106,19 @@ impl UserService {
             self.origin,
             self.signer.sign(tenant, user, &email, issued)?
         );
-        let message = Message {
-            to: Address::new(Some(&name), &email).map_err(|_| Error::Invalid)?,
-            subject: "Verify your Bilibi email address".into(),
-            text: format!("Verify your email address by opening this link:\n\n{link}\n\nThe link expires in one hour. If you did not request this, you can ignore this email.\n"),
-        };
-        self.mailer.deliver(&message).await.map_err(|error| {
-            eprintln!("mail: verification for user {user} was not delivered: {error}");
-            CredentialError::Delivery
-        })
+        let message = Message::text(
+            Address::new(Some(&name), &email).map_err(|_| Error::Invalid)?,
+            "Verify your Bilibi email address",
+            format!("Verify your email address by opening this link:\n\n{link}\n\nThe link expires in one hour. If you did not request this, you can ignore this email.\n"),
+        );
+        self.mailer
+            .deliver(&message)
+            .await
+            .map(|_| ())
+            .map_err(|error| {
+                eprintln!("mail: verification for user {user} was not delivered: {error}");
+                CredentialError::Delivery
+            })
     }
 
     /// The link proves control of the mailbox, so no sign-in is required.

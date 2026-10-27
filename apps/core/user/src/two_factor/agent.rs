@@ -116,11 +116,11 @@ fn reset_notice(body: &str) -> Result<Notice, Error> {
 }
 
 fn reset_mail(origin: &str, name: &str, email: &str, body: &str) -> Option<Message> {
-    Some(Message {
-        to: Address::new(Some(name), email).ok()?,
-        subject: "Your 2FA was reset".into(),
-        text: format!("{body}\n\n{origin}{SETTINGS_PATH}\n"),
-    })
+    Some(Message::text(
+        Address::new(Some(name), email).ok()?,
+        "Your 2FA was reset",
+        format!("{body}\n\n{origin}{SETTINGS_PATH}\n"),
+    ))
 }
 
 const ADMIN_BODY: &str =
