@@ -450,7 +450,7 @@ pub struct ValidCompany {
     pub phone: String,
     pub website: Option<String>,
 }
-fn trimmed(value: &Option<String>) -> Option<String> {
+pub(crate) fn trimmed(value: &Option<String>) -> Option<String> {
     value
         .as_deref()
         .map(str::trim)

@@ -477,6 +477,14 @@ pub(super) async fn detail(
     let editable = editable && can_target;
     let hierarchy = crate::hierarchy::hierarchy(client, scope, id).await?;
     let mut chain = Html::EMPTY;
+    if let Some(higher) = hierarchy.ancestors.first().map(|node| node.level - 1) {
+        if higher > 0 {
+            chain.push(&Html::text(&format!(
+                "… {higher} higher level{} / ",
+                if higher == 1 { "" } else { "s" }
+            )));
+        }
+    }
     for (index, node) in hierarchy.ancestors.iter().enumerate() {
         if index > 0 {
             chain.push(&Html::text(" / "));

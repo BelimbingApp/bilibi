@@ -1,4 +1,5 @@
 //! Company duplicate candidates, following Bilimbi Core.Person's read-only identity lookup.
+use crate::organisation::trimmed;
 use crate::{policy, CompanyService, FieldError, NewCompany};
 use bilibi_database::{Error, Result};
 use bilibi_tenancy::Scope;
@@ -33,11 +34,11 @@ impl Default for DuplicateQuery {
 impl From<&NewCompany> for DuplicateQuery {
     fn from(new: &NewCompany) -> Self {
         Self {
-            name: Some(new.name.clone()),
-            website: new.website.clone(),
-            email: new.email.clone(),
-            phone: new.phone.clone(),
-            registration_number: new.registration_number.clone(),
+            name: Some(new.name.trim().to_owned()),
+            website: trimmed(&new.website),
+            email: trimmed(&new.email),
+            phone: trimmed(&new.phone),
+            registration_number: trimmed(&new.registration_number),
             limit: 100,
             ..Self::default()
         }
