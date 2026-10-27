@@ -56,7 +56,12 @@ impl PasswordView {
             Html::render(
                 &SecretInput::in_form("password_change", key, "password")
                     .label(label)
-                    .errors(errors.to_vec())
+                    .errors(
+                        errors
+                            .iter()
+                            .map(|message| bilibi_ui::error_sentence(label, message))
+                            .collect(),
+                    )
                     .attrs(Attrs {
                         autocomplete: Some(autocomplete.into()),
                         ..Attrs::default()
