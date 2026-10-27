@@ -9,7 +9,7 @@
 {%- import "dialog.html" as dialog -%}
 {% call feedback::flash_group(messages=flash) %}{% endcall %}
 {% call ui::page(id="tenants-index") %}
-{% call ui::header(subtitle="Each tenant is a separate customer with its own data.", title_actions=title_actions, actions=actions) %}Tenants{% endcall %}
+{% call ui::header(subtitle="Manage tenants.", title_actions=title_actions, actions=actions) %}Tenants{% endcall %}
 {% call ui::card(id="tenants-card", inner_class="p-0") %}{{ table }}{% endcall %}
 {% endcall %}
 {% if let Some(create) = create %}
