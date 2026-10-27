@@ -553,7 +553,7 @@ impl StepUpPolicy {
         let mut html = self.section(
             "step-up-window",
             "After someone enters a 2FA code",
-            "A new code is required when either limit is reached.",
+            "After either limit is reached, the next protected action requires a new code.",
             self.facts(
                 "step-up-window-facts",
                 &[Setting::Minutes, Setting::Hours],
