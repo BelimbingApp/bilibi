@@ -262,7 +262,7 @@ async fn main() -> Result<()> {
     show(
         "mask a field not marked personal (companies.email)",
         restrictions
-            .put(&admin, "companies", "email", &[2, 3], Mode::Mask)
+            .put_mode(&admin, "companies", "email", &[2, 3], Mode::Mask)
             .await
             .map(|s| s.mode),
     );
@@ -274,7 +274,7 @@ async fn main() -> Result<()> {
         show(
             &format!("{table}.{field} {}", mode.as_str()),
             restrictions
-                .put(&admin, table, field, &[2, 3], mode)
+                .put_mode(&admin, table, field, &[2, 3], mode)
                 .await
                 .map(|s| (s.mode, s.role_names)),
         );

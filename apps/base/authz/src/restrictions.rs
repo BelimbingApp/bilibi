@@ -141,11 +141,23 @@ impl FieldRestrictions {
         list_in(&**client, actor.tenant(), self.catalog()?).await
     }
 
-    /// Restrict `field` of `table` for exactly `roles` in `mode`, creating the
-    /// restriction or replacing its role set and mode. No roles is
-    /// `Error::Invalid`: a restriction for nobody restricts nothing (remove it
-    /// instead). Masking a field the catalog does not mark personal is `Invalid`.
+    /// Restrict `field` of `table` for exactly `roles`, withheld, creating the
+    /// restriction or replacing its role set (and a mask with withholding). No
+    /// roles is `Error::Invalid`: a restriction for nobody restricts nothing
+    /// (remove it instead).
     pub async fn put(
+        &self,
+        actor: &Scope,
+        table: &str,
+        field: &str,
+        roles: &[i64],
+    ) -> Result<RestrictionSummary> {
+        self.put_mode(actor, table, field, roles, Mode::Withhold)
+            .await
+    }
+    /// [`put`](Self::put) in `mode`. Masking a field the catalog does not mark
+    /// personal is `Invalid`.
+    pub async fn put_mode(
         &self,
         actor: &Scope,
         table: &str,
@@ -154,16 +166,26 @@ impl FieldRestrictions {
         mode: Mode,
     ) -> Result<RestrictionSummary> {
         let mut written = self
-            .put_many(actor, &[(table.to_owned(), field.to_owned())], roles, mode)
+            .put_many_mode(actor, &[(table.to_owned(), field.to_owned())], roles, mode)
             .await?;
         written.pop().ok_or(Error::Internal)
     }
 
-    /// Restrict several fields for the same `roles` in one transaction: every
-    /// field is restricted or none is. Every field and role is validated before
-    /// anything is written; duplicates collapse. Each field gets exactly `roles`
-    /// and `mode`.
+    /// Restrict several fields for the same `roles` in one transaction, withheld:
+    /// every field is restricted or none is. Every field and role is validated
+    /// before anything is written; duplicates collapse. Each field gets exactly
+    /// `roles`.
     pub async fn put_many(
+        &self,
+        actor: &Scope,
+        fields: &[(String, String)],
+        roles: &[i64],
+    ) -> Result<Vec<RestrictionSummary>> {
+        self.put_many_mode(actor, fields, roles, Mode::Withhold)
+            .await
+    }
+    /// [`put_many`](Self::put_many) in `mode`, the same for every field.
+    pub async fn put_many_mode(
         &self,
         actor: &Scope,
         fields: &[(String, String)],

@@ -429,7 +429,7 @@ impl Screen {
         match self
             .pages
             .restrictions
-            .put_many(scope, &fields, &roles, mode)
+            .put_many_mode(scope, &fields, &roles, mode)
             .await
         {
             Ok(saved) => {
@@ -458,7 +458,7 @@ impl Screen {
         match self
             .pages
             .restrictions
-            .put(scope, &table, &field, &roles, mode)
+            .put_mode(scope, &table, &field, &roles, mode)
             .await
         {
             Ok(saved) => {
