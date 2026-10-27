@@ -1,3 +1,7 @@
+Agents:
+
+<!-- Identify agents using the self-reporting format in docs/architecture/decisions/README.md#header-rule. -->
+
 ## Upgrade notes for agents
 
 <!--

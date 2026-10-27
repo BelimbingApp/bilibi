@@ -282,7 +282,7 @@ pub fn stat_strip_columns(count: usize) -> &'static str {
     }
 }
 
-/// A named action icon or Heroicon; see `icons`.
+/// A named action icon or SVG from the embedded `crate::Icons` catalogue.
 #[derive(Template, Debug, Default)]
 #[template(
     source = r#"{% import "components.html" as ui %}{% call ui::icon(name=name, class=class) %}{% endcall %}"#,

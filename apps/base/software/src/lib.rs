@@ -825,7 +825,7 @@ bilibi_menu::contribute!(
     "base/software",
     bilibi_menu::MenuItem::page("admin.system.software", "Software", web::PATH)
         .under("admin.system")
-        .icon("hero-cube")
+        .icon("cube")
         .requires(bilibi_menu::Requirement::Capability(VIEW))
         .order(40)
 );
