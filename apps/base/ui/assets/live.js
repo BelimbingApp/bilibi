@@ -23,7 +23,7 @@
 //     URL into the existing DOM and then sends the intents raised meanwhile.
 //     Intents that were in flight when the socket dropped cannot be confirmed;
 //     the status region says how many, so nothing is discarded silently. In
-//     development the reconnect reloads the page to pick up rebuilt assets.
+//     development the reconnect reloads fresh assets only when no draft is held.
 //
 // Back within a page marked `data-history="params"` is a params update in
 // place; inside a workspace tile no address change adds a history entry.
@@ -34,6 +34,9 @@
 (() => {
   'use strict';
   const devReload = __BILIBI_DEV_RELOAD__;
+  const eventLimit = __BILIBI_EVENT_LIMIT__;
+  const eventTooLarge = __BILIBI_EVENT_TOO_LARGE__;
+  const encoder = new TextEncoder();
   const feedback = document.createElement('div');
   feedback.id = 'feedback';
   feedback.setAttribute('role', 'status');
@@ -44,7 +47,11 @@
   let sequence = 0;
   const queued = []; // intents not yet sent: {intent, source, form, loading}
   const inflight = new Map(); // request_id -> entry awaiting the server's echo
+  // Change forms normally follow server values outside the focused field.
+  // A transport refusal/disconnect must keep their entire draft until retry.
+  const preservedForms = new WeakMap(); // form -> latest refused request ID
   let reconnecting = false;
+  let reloadOnReconnect = false;
   let stopped = false; // the server cleared the page: no reconnect
   let unconfirmed = 0; // in-flight intents lost to a dropped socket
   let retryDelay = 500;
@@ -76,7 +83,7 @@
   function opened() {
     retryDelay = 500;
     window.dispatchEvent(new CustomEvent('bilibi:connected'));
-    if (reconnecting && devReload) { location.reload(); return; }
+    if (reconnecting && reloadOnReconnect) { location.reload(); return; }
     const resumed = reconnecting;
     reconnecting = false;
     feedback.classList.remove('rebuilding');
@@ -97,6 +104,13 @@
   function closed() {
     socket = null;
     if (stopped || !document.getElementById('app')) return;
+    // A development rebuild may reload fresh assets only when there is no
+    // draft to lose. This also protects forms if an old client hits a new
+    // server's hard socket cap instead of receiving a normal refusal.
+    const drafts = [...document.forms].filter((form) => [...form.elements].some(dirty));
+    for (const form of drafts) preserve(form, sequence);
+    const hasDraft = drafts.length || [...inflight.values()].some((entry) => entry.form);
+    reloadOnReconnect = devReload && !hasDraft;
     for (const entry of inflight.values()) {
       settle(entry);
       entry.onReply?.({type: 'error', message: 'The connection dropped before this change was confirmed. The draft is kept; check the stored value before retrying.'});
@@ -105,10 +119,10 @@
     inflight.clear();
     loading();
     // The shared connection banners reveal themselves from this event.
-    window.dispatchEvent(new CustomEvent('bilibi:disconnected', {detail: {kind: devReload ? 'server' : 'client'}}));
+    window.dispatchEvent(new CustomEvent('bilibi:disconnected', {detail: {kind: reloadOnReconnect ? 'server' : 'client'}}));
     reconnecting = true;
-    feedback.textContent = devReload ? 'Rebuilding…' : 'Live connection lost. Reconnecting…';
-    feedback.classList.toggle('rebuilding', devReload);
+    feedback.textContent = reloadOnReconnect ? 'Rebuilding…' : 'Live connection lost. Reconnecting… Your draft is kept.';
+    feedback.classList.toggle('rebuilding', reloadOnReconnect);
     retry();
   }
 
@@ -129,6 +143,19 @@
     const entry = {intent, source: meta.source || null, form: meta.form || null,
       loading: !!meta.loading, navigation: !!meta.navigation, onReply: meta.onReply,
       history: meta.history === 'replace' ? 'replace' : null};
+    entry.ownerForm = entry.form || (entry.source?.tagName === 'FORM' ? entry.source : entry.source?.closest('form'));
+    entry.id = ++sequence;
+    entry.wire = JSON.stringify({...intent, request_id: entry.id});
+    // Count the actual UTF-8 wire bytes, including escaping and metadata, for
+    // every intent (forms, filters, panels and hooks), even while disconnected.
+    if (encoder.encode(entry.wire).byteLength > eventLimit) {
+      if (entry.ownerForm) preserve(entry.ownerForm, entry.id);
+      settle(entry);
+      showError(eventTooLarge);
+      entry.onReply?.({type: 'error', target: intent.target || 'page',
+        message: eventTooLarge, clear: false, request_id: entry.id});
+      return;
+    }
     if (entry.source) busy(entry.source);
     queued.push(entry);
     flush();
@@ -138,9 +165,8 @@
     if (!socket || socket.readyState !== WebSocket.OPEN) return;
     while (queued.length) {
       const entry = queued.shift();
-      const id = ++sequence;
-      inflight.set(id, entry);
-      socket.send(JSON.stringify({...entry.intent, request_id: id}));
+      inflight.set(entry.id, entry);
+      socket.send(entry.wire);
     }
     loading();
   }
@@ -189,6 +215,26 @@
   }
 
   // ---- Replies -------------------------------------------------------------
+  function preserve(form, id) {
+    preservedForms.set(form, Math.max(preservedForms.get(form) || 0, id));
+  }
+
+  function showError(message) {
+    // Render through the shared flash template. The outlet is outside #app,
+    // so a background refresh cannot remove a refusal before it is dismissed.
+    const region = document.getElementById('live-feedback');
+    const template = region?.querySelector('[data-local-flash-template="error"]');
+    const outlet = region?.querySelector('[data-local-flash-outlet]');
+    if (!template || !outlet) {
+      feedback.setAttribute('role', 'alert');
+      feedback.textContent = message;
+      return;
+    }
+    const flash = template.content.cloneNode(true);
+    flash.querySelector('[data-flash-message]').textContent = message;
+    outlet.replaceChildren(flash);
+  }
+
   function receive(message) {
     const entry = message.request_id == null ? null : inflight.get(message.request_id);
     // Acknowledge before patching: the busy mirror lifts and the control shows
@@ -196,13 +242,30 @@
     if (entry) {
       inflight.delete(message.request_id);
       settle(entry);
+      if (entry.ownerForm) {
+        if (message.type === 'error') preserve(entry.ownerForm, entry.id);
+        // Only a later complete form snapshot releases a refused draft. An
+        // older validation reply, upload or button action must not release it.
+        else if ((entry.form || entry.source === entry.ownerForm)
+          && entry.id > (preservedForms.get(entry.ownerForm) || 0)) preservedForms.delete(entry.ownerForm);
+      }
     }
     // A form whose submission the server accepted gives up its draft and shows
     // the stored value; a rejected submission keeps the person's input.
     const options = {
-      submitted: entry && entry.form && message.type !== 'error' ? entry.form : null,
+      submitted: entry && entry.form && message.type !== 'error'
+        && !preservedForms.has(entry.form) ? entry.form : null,
       navigation: !!(entry && entry.navigation),
     };
+    if (message.redirect && entry?.ownerForm && preservedForms.has(entry.ownerForm)) {
+      // A previously sent save may redirect after a newer local refusal.
+      // Its answer must not navigate away from that newer, unsent draft.
+      const refusal = 'An earlier request was answered while this form changed. Your newer draft is kept. Check the stored value before trying again.';
+      showError(refusal);
+      entry.onReply?.({type: 'error', message: refusal});
+      loading();
+      return;
+    }
     if (message.type === 'page') {
       // Consent replies can hand the browser back to an OAuth client.
       if (message.redirect) { location.assign(message.redirect); return; }
@@ -222,7 +285,7 @@
       // The upload hook that streams this entry reads its progress or error.
       window.dispatchEvent(new CustomEvent('bilibi:upload', {detail: message}));
     } else if (message.type === 'error') {
-      feedback.textContent = message.message;
+      showError(message.message);
       if (message.clear) {
         if (message.target && !['app', 'page', 'shell'].includes(message.target)) {
           // A refused panel keeps an empty anchor so the parent stays usable.
@@ -324,7 +387,8 @@
   // Back and a corrected value reach every filter the person is not typing in.
   function following(el) {
     return ['INPUT', 'SELECT', 'TEXTAREA'].includes(el.tagName) && !!el.form
-      && el.form.hasAttribute('data-change') && el !== document.activeElement;
+      && el.form.hasAttribute('data-change') && !preservedForms.has(el.form)
+      && el !== document.activeElement;
   }
 
   function follow(el) {

@@ -13,15 +13,17 @@ use bilibi_ui::page::{
 };
 use bilibi_ui::params;
 use bilibi_ui::upload::{ClientEntry, CHUNK_SIZE, MAX_ENTRIES};
+use bilibi_ui::{LIVE_EVENT_LIMIT, LIVE_EVENT_TOO_LARGE};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::{sync::mpsc, task::JoinSet};
 
 type State = Box<dyn LiveState<Scope, Error>>;
-/// The largest socket message: one upload chunk frame (`u32 id, u32 offset,
-/// bytes`) with room to spare; every JSON intent is far smaller.
-pub const FRAME_LIMIT: usize = CHUNK_SIZE + 1024;
+/// A hard allocation cap above the accepted JSON-event budget. The headroom
+/// lets stale clients receive an acknowledged refusal without disconnecting.
+/// Upload chunks retain their separate CHUNK_SIZE check in `Session::chunk`.
+pub const FRAME_LIMIT: usize = LIVE_EVENT_LIMIT * 2;
 /// The header of a binary upload frame: the entry id and the offset the bytes
 /// start at, both big-endian `u32`.
 const CHUNK_HEADER: usize = 8;
@@ -934,6 +936,19 @@ pub async fn run(app: App, token: String, identity: Identity, mut socket: WebSoc
         let result = tokio::select! {
             message = socket.recv() => match message {
                 Some(Ok(Message::Text(text))) => {
+                    if text.len() > LIVE_EVENT_LIMIT {
+                        // Deserialize metadata only: ignored payloads are skipped,
+                        // not allocated as a Value or delivered to a page handler.
+                        #[derive(Default, Deserialize)]
+                        struct Metadata {
+                            request_id: Option<u64>,
+                            target: Option<String>,
+                        }
+                        let metadata = serde_json::from_str::<Metadata>(&text).unwrap_or_default();
+                        let message = json!({"type":"error", "target":metadata.target.as_deref().unwrap_or("page"), "message":LIVE_EVENT_TOO_LARGE, "clear":false, "request_id":metadata.request_id});
+                        if socket.send(Message::Text(message.to_string().into())).await.is_err() {break;}
+                        continue;
+                    }
                     let (id, event) = decode(&text);
                     request_id = id;
                     match event {
@@ -955,6 +970,14 @@ pub async fn run(app: App, token: String, identity: Identity, mut socket: WebSoc
                 Some(Ok(Message::Binary(frame))) => session.chunk(&app, &token, &frame).await,
                 Some(Ok(Message::Ping(data))) => { if socket.send(Message::Pong(data)).await.is_err() {break;} continue; },
                 Some(Ok(Message::Pong(_))) => continue,
+                Some(Err(_)) => {
+                    // A malformed peer can exceed even the hard allocation cap.
+                    // Try to report the refusal before closing; the browser also
+                    // keeps drafts on an unconfirmed disconnect if sending fails.
+                    let message = json!({"type":"error", "target":"page", "message":"This request could not be received. Your draft is kept. Shorten the text or reconnect and try again.", "clear":false, "request_id":Value::Null});
+                    let _ = socket.send(Message::Text(message.to_string().into())).await;
+                    break;
+                },
                 _ => break,
             },
             wake = wakes.recv() => {
