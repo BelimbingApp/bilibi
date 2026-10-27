@@ -574,7 +574,8 @@ impl TenantsPage {
                     self.flash(StatusKind::Error, DENIED);
                     return Ok(false);
                 };
-                let posted = params::form_values(value, "tenant").map_err(Error::refused)?;
+                let posted = params::form_values_checked(value, "tenant", params::FIELD_LIMIT)
+                    .map_err(Error::refused)?;
                 let field = |key: &str| posted.get(key).cloned().unwrap_or_default();
                 // The source's changeset trims the name before validation, so
                 // the draft echoed back with an error is the trimmed one.

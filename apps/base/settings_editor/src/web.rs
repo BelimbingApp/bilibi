@@ -321,16 +321,24 @@ impl Editor {
             "clear-flash" => self.flash = None,
             "filters" => {
                 self.list.apply_filters(
-                    &bilibi_ui::params::form_values(payload, "filters").map_err(Error::refused)?,
+                    &bilibi_ui::params::form_values_checked(
+                        payload,
+                        "filters",
+                        bilibi_ui::params::FIELD_LIMIT,
+                    )
+                    .map_err(Error::refused)?,
                 );
                 self.apply_scope(scope).await?;
             }
             "page" => self.list.put_page(get("page")),
             "grid" => {
-                if let ColumnsOutcome::Sort(key) = self
-                    .columns
-                    .handle(&bilibi_ui::params::string_values(payload).map_err(Error::refused)?)
-                {
+                if let ColumnsOutcome::Sort(key) = self.columns.handle(
+                    &bilibi_ui::params::string_values_checked(
+                        payload,
+                        bilibi_ui::params::FIELD_LIMIT,
+                    )
+                    .map_err(Error::refused)?,
+                ) {
                     self.list.next_sort(&key);
                 }
             }

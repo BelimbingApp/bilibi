@@ -210,7 +210,8 @@ impl LiveState<Scope, Error> for CompanyUsers {
                 }
                 LiveInput::Event(value) => match event(value)? {
                     "users_filters" => self.list.apply_filters(
-                        &params::form_values(value, FILTERS_FORM).map_err(Error::refused)?,
+                        &params::form_values_checked(value, FILTERS_FORM, params::FIELD_LIMIT)
+                            .map_err(Error::refused)?,
                     ),
                     "users_page" => self
                         .list
@@ -223,10 +224,10 @@ impl LiveState<Scope, Error> for CompanyUsers {
                                 .unwrap_or(""),
                         );
                     }
-                    "users_grid" => match self
-                        .columns
-                        .handle(&params::string_values(value).map_err(Error::refused)?)
-                    {
+                    "users_grid" => match self.columns.handle(
+                        &params::string_values_checked(value, params::FIELD_LIMIT)
+                            .map_err(Error::refused)?,
+                    ) {
                         ColumnsOutcome::Sort(column) => {
                             self.list.next_sort(&column);
                         }

@@ -255,14 +255,15 @@ impl Index {
     fn event(&mut self, value: &Value) -> Result<()> {
         let get = |key: &str| value.get(key).and_then(Value::as_str);
         match get("type").ok_or(Error::Invalid)? {
-            "filters" => self
-                .state
-                .apply_filters(&params::form_values(value, FILTERS_FORM).map_err(Error::refused)?),
+            "filters" => self.state.apply_filters(
+                &params::form_values_checked(value, FILTERS_FORM, params::FIELD_LIMIT)
+                    .map_err(Error::refused)?,
+            ),
             "page" => self.state.put_page(get("page")),
-            "grid" => match self
-                .columns
-                .handle(&params::string_values(value).map_err(Error::refused)?)
-            {
+            "grid" => match self.columns.handle(
+                &params::string_values_checked(value, params::FIELD_LIMIT)
+                    .map_err(Error::refused)?,
+            ) {
                 ColumnsOutcome::Sort(_) => return Err(Error::Invalid),
                 ColumnsOutcome::Update | ColumnsOutcome::Noop => self.rows_changed = false,
             },
@@ -543,14 +544,15 @@ impl Values {
         let key = self.list.key;
         self.notice.clear();
         match get("type").ok_or(Error::Invalid)? {
-            "filters" => self
-                .state
-                .apply_filters(&params::form_values(value, FILTERS_FORM).map_err(Error::refused)?),
+            "filters" => self.state.apply_filters(
+                &params::form_values_checked(value, FILTERS_FORM, params::FIELD_LIMIT)
+                    .map_err(Error::refused)?,
+            ),
             "page" => self.state.put_page(get("page")),
-            "grid" => match self
-                .columns
-                .handle(&params::string_values(value).map_err(Error::refused)?)
-            {
+            "grid" => match self.columns.handle(
+                &params::string_values_checked(value, params::FIELD_LIMIT)
+                    .map_err(Error::refused)?,
+            ) {
                 ColumnsOutcome::Sort(_) => return Err(Error::Invalid),
                 ColumnsOutcome::Update | ColumnsOutcome::Noop => self.rows_changed = false,
             },
@@ -558,7 +560,8 @@ impl Values {
             "new" => self.draft = Some(Draft::default()),
             "close_new" => self.draft = None,
             "create" => {
-                let posted = params::form_values(value, "value").map_err(Error::refused)?;
+                let posted = params::form_values_checked(value, "value", params::FIELD_LIMIT)
+                    .map_err(Error::refused)?;
                 let mut input = json!({
                     "list": key,
                     "code": posted.get("code").cloned().unwrap_or_default(),

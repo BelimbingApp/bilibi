@@ -242,8 +242,12 @@ impl LiveState<Scope, Error> for Profile {
                         if !self.loaded {
                             self.load(request.scope).await?;
                         }
-                        let fields = bilibi_ui::params::form_values(value, "profile")
-                            .map_err(bilibi_database::Error::refused)?;
+                        let fields = bilibi_ui::params::form_values_checked(
+                            value,
+                            "profile",
+                            bilibi_ui::params::FIELD_LIMIT,
+                        )
+                        .map_err(bilibi_database::Error::refused)?;
                         self.name = fields.get("name").cloned().unwrap_or_default();
                         self.email = fields.get("email").cloned().unwrap_or_default();
                         self.landing = fields.get("landing_menu_id").cloned().unwrap_or_default();

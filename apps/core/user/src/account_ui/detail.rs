@@ -1825,7 +1825,9 @@ impl Detail {
                 }
             }
             "grid" => {
-                let params = bilibi_ui::params::string_values(value).map_err(Error::refused)?;
+                let params =
+                    bilibi_ui::params::string_values_checked(value, bilibi_ui::params::FIELD_LIMIT)
+                        .map_err(Error::refused)?;
                 match self.columns.handle(&params) {
                     bilibi_ui::ColumnsOutcome::Sort(key) => {
                         self.sort = if self.sort.0 == key && self.sort.1 == SortDir::Asc {

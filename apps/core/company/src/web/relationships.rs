@@ -433,7 +433,9 @@ fn access(error: Error, flash: &mut Flash) -> Result<()> {
 }
 /// A form's or button's values, without the event name.
 fn values_of(value: &Value) -> Result<HashMap<String, String>> {
-    let mut values = bilibi_ui::params::string_values(value).map_err(Error::refused)?;
+    let mut values =
+        bilibi_ui::params::string_values_checked(value, bilibi_ui::params::FIELD_LIMIT)
+            .map_err(Error::refused)?;
     values.remove("type");
     Ok(values)
 }

@@ -113,7 +113,8 @@ impl PeriodFilter {
         }
         Ok(match name {
             SELECT => {
-                let posted = params::form_values(payload, SELECTION_FORM)?;
+                let posted =
+                    params::form_values_checked(payload, SELECTION_FORM, params::FIELD_LIMIT)?;
                 let period = posted.get("period").map(String::as_str).unwrap_or("");
                 if period == Preset::Custom.as_str() || period == CHANGE_CUSTOM {
                     self.open();
@@ -130,7 +131,7 @@ impl PeriodFilter {
                 Some(Outcome::Update)
             }
             APPLY => {
-                let posted = params::form_values(payload, RANGE_FORM)?;
+                let posted = params::form_values_checked(payload, RANGE_FORM, params::FIELD_LIMIT)?;
                 let from = posted.get("from").cloned().unwrap_or_default();
                 let to = posted.get("to").cloned().unwrap_or_default();
                 match Period::custom(&from, &to) {

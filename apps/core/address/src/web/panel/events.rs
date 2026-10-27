@@ -192,7 +192,7 @@ impl Panel {
                 }
             }
             "grid" => match self.columns.handle(
-                &bilibi_ui::params::string_values(value)
+                &bilibi_ui::params::string_values_checked(value, bilibi_ui::params::FIELD_LIMIT)
                     .map_err(bilibi_database::Error::refused)?,
             ) {
                 bilibi_ui::ColumnsOutcome::Sort(key) => {

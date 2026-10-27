@@ -196,16 +196,31 @@ impl State {
         let ty = get("type").unwrap_or_default();
         match ty.as_str() {
             "sample-columns" => {
-                self.sample_columns
-                    .handle(&bilibi_ui::params::string_values(event).map_err(Error::refused)?);
+                self.sample_columns.handle(
+                    &bilibi_ui::params::string_values_checked(
+                        event,
+                        bilibi_ui::params::FIELD_LIMIT,
+                    )
+                    .map_err(Error::refused)?,
+                );
             }
             "pattern-columns" => {
-                self.pattern_columns
-                    .handle(&bilibi_ui::params::string_values(event).map_err(Error::refused)?);
+                self.pattern_columns.handle(
+                    &bilibi_ui::params::string_values_checked(
+                        event,
+                        bilibi_ui::params::FIELD_LIMIT,
+                    )
+                    .map_err(Error::refused)?,
+                );
             }
             "confirm-columns" => {
-                self.confirm_columns
-                    .handle(&bilibi_ui::params::string_values(event).map_err(Error::refused)?);
+                self.confirm_columns.handle(
+                    &bilibi_ui::params::string_values_checked(
+                        event,
+                        bilibi_ui::params::FIELD_LIMIT,
+                    )
+                    .map_err(Error::refused)?,
+                );
             }
             "sample-flex" => self.flex.apply(&get),
             "sample-flex-plain" => self.plain.apply(&get),
@@ -251,8 +266,12 @@ impl State {
                 }
             }
             "sample-search" => {
-                let mut values =
-                    bilibi_ui::params::form_values(event, "filters").map_err(Error::refused)?;
+                let mut values = bilibi_ui::params::form_values_checked(
+                    event,
+                    "filters",
+                    bilibi_ui::params::FIELD_LIMIT,
+                )
+                .map_err(Error::refused)?;
                 if let Some(search) = get("sample_filters[search]") {
                     values.insert("search".into(), search);
                 }
@@ -263,14 +282,29 @@ impl State {
                 .apply_filters(&HashMap::from([("search".into(), String::new())])),
             "sample-page" => self.list.put_page(get("page").as_deref()),
             "sample-page-size" => self.list.apply_filters(
-                &bilibi_ui::params::form_values(event, "filters").map_err(Error::refused)?,
+                &bilibi_ui::params::form_values_checked(
+                    event,
+                    "filters",
+                    bilibi_ui::params::FIELD_LIMIT,
+                )
+                .map_err(Error::refused)?,
             ),
             "pattern-search" => self.pattern.apply_filters(
-                &bilibi_ui::params::form_values(event, "pattern").map_err(Error::refused)?,
+                &bilibi_ui::params::form_values_checked(
+                    event,
+                    "pattern",
+                    bilibi_ui::params::FIELD_LIMIT,
+                )
+                .map_err(Error::refused)?,
             ),
             "pattern-page" => self.pattern.put_page(get("page").as_deref()),
             "pattern-page-size" => self.pattern.apply_filters(
-                &bilibi_ui::params::form_values(event, "filters").map_err(Error::refused)?,
+                &bilibi_ui::params::form_values_checked(
+                    event,
+                    "filters",
+                    bilibi_ui::params::FIELD_LIMIT,
+                )
+                .map_err(Error::refused)?,
             ),
             "sample_change" => {
                 if let Some(object) = event.as_object() {
@@ -365,8 +399,12 @@ impl State {
                 self.browser_zone = get("timezone").filter(|v| bilibi_datetime::valid_timezone(v));
             }
             "filter-toolbar-preview" | "filter-toolbar-search-preview" => {
-                self.toolbar =
-                    bilibi_ui::params::form_values(event, "filters").map_err(Error::refused)?
+                self.toolbar = bilibi_ui::params::form_values_checked(
+                    event,
+                    "filters",
+                    bilibi_ui::params::FIELD_LIMIT,
+                )
+                .map_err(Error::refused)?
             }
             // Bilimbi's `consume_uploaded_entries` in the submit handler: the
             // completed files are taken once, here, and only their facts stay.

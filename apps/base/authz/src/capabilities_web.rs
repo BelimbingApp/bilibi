@@ -215,8 +215,12 @@ impl LiveState<Scope, Error> for Capabilities {
                             // The page-size form posts alone; re-check the current
                             // domain anyway, so a hand-edited unregistered domain
                             // is dropped by the next toolbar submission.
-                            let mut posted =
-                                params::form_values(value, FILTERS_FORM).map_err(Error::refused)?;
+                            let mut posted = params::form_values_checked(
+                                value,
+                                FILTERS_FORM,
+                                params::FIELD_LIMIT,
+                            )
+                            .map_err(Error::refused)?;
                             let domain = posted
                                 .get("domain")
                                 .unwrap_or(&self.state.filters["domain"])

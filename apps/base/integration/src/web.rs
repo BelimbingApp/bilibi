@@ -503,7 +503,8 @@ impl Index {
         match kind {
             "filters" => {
                 self.list.apply_filters(
-                    &params::form_values(value, FILTERS_FORM).map_err(Error::refused)?,
+                    &params::form_values_checked(value, FILTERS_FORM, params::FIELD_LIMIT)
+                        .map_err(Error::refused)?,
                 );
                 self.reload = true;
             }
@@ -519,7 +520,8 @@ impl Index {
                     .columns
                     .handle(
                         scope,
-                        &params::string_values(value).map_err(Error::refused)?,
+                        &params::string_values_checked(value, params::FIELD_LIMIT)
+                            .map_err(Error::refused)?,
                     )
                     .await?
                 {

@@ -258,7 +258,7 @@ fn event(value: &Value) -> Result<&str> {
 /// input may hold up to 10 000 characters, so every field reads to that limit;
 /// the model then refuses each field at its own, shorter one.
 fn form(value: &Value, namespace: &str) -> Result<HashMap<String, String>> {
-    bilibi_ui::params::form_values_within(value, namespace, 10_000).map_err(Error::refused)
+    bilibi_ui::params::form_values_checked(value, namespace, 10_000).map_err(Error::refused)
 }
 /// `Some(label)` in quotes, or "This address" (Bilimbi `address_name/1`).
 fn address_name(label: Option<&str>) -> String {

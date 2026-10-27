@@ -339,10 +339,10 @@ impl PersonAccounts {
                     .and_then(serde_json::Value::as_str)
                     .unwrap_or(""),
             ),
-            "accounts_grid" => match self
-                .columns
-                .handle(&params::string_values(value).map_err(Error::refused)?)
-            {
+            "accounts_grid" => match self.columns.handle(
+                &params::string_values_checked(value, params::FIELD_LIMIT)
+                    .map_err(Error::refused)?,
+            ) {
                 ColumnsOutcome::Sort(column) => self.next_sort(&column),
                 ColumnsOutcome::Update | ColumnsOutcome::Noop => self.rows_changed = false,
             },

@@ -290,8 +290,12 @@ impl LiveState<Scope, Error> for Countries {
                         Some("filters") => {
                             apply_filters(
                                 &mut self.list,
-                                &params::form_values(event, FILTERS_FORM)
-                                    .map_err(bilibi_database::Error::refused)?,
+                                &params::form_values_checked(
+                                    event,
+                                    FILTERS_FORM,
+                                    params::FIELD_LIMIT,
+                                )
+                                .map_err(bilibi_database::Error::refused)?,
                             );
                             requery = true;
                         }

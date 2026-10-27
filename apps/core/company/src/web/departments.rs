@@ -792,8 +792,10 @@ impl LiveState<Scope, Error> for Departments {
                     }
                     match kind {
                         "grid" => {
-                            self.columns
-                                .handle(&params::string_values(event).map_err(Error::refused)?);
+                            self.columns.handle(
+                                &params::string_values_checked(event, params::FIELD_LIMIT)
+                                    .map_err(Error::refused)?,
+                            );
                             requery = false;
                         }
                         "new" => {
@@ -802,14 +804,16 @@ impl LiveState<Scope, Error> for Departments {
                         }
                         "validate" => {
                             self.validate(
-                                params::form_values(event, FORM).map_err(Error::refused)?,
+                                params::form_values_checked(event, FORM, params::FIELD_LIMIT)
+                                    .map_err(Error::refused)?,
                             );
                             requery = false;
                         }
                         "save" => {
                             self.save(
                                 request.scope,
-                                params::form_values(event, FORM).map_err(Error::refused)?,
+                                params::form_values_checked(event, FORM, params::FIELD_LIMIT)
+                                    .map_err(Error::refused)?,
                             )
                             .await?
                         }
@@ -841,7 +845,8 @@ impl LiveState<Scope, Error> for Departments {
                         "save_head" => {
                             self.save_head(
                                 request.scope,
-                                params::form_values(event, HEAD_FORM).map_err(Error::refused)?,
+                                params::form_values_checked(event, HEAD_FORM, params::FIELD_LIMIT)
+                                    .map_err(Error::refused)?,
                             )
                             .await?
                         }

@@ -249,7 +249,8 @@ impl LiveState<Scope, Error> for Inspector {
                 }
                 LiveInput::Event(value) => match value.get("type").and_then(Value::as_str) {
                     Some("filter") => self.list.apply_filters(
-                        &params::form_values(value, "filters").map_err(Error::refused)?,
+                        &params::form_values_checked(value, "filters", params::FIELD_LIMIT)
+                            .map_err(Error::refused)?,
                     ),
                     Some("page") => self
                         .list

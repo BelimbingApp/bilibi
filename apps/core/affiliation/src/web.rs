@@ -936,19 +936,20 @@ impl Panel {
             contract,
         };
         match event(value)? {
-            "filters" => self
-                .list
-                .apply_filters(&params::form_values(value, FILTERS_FORM).map_err(Error::refused)?),
+            "filters" => self.list.apply_filters(
+                &params::form_values_checked(value, FILTERS_FORM, params::FIELD_LIMIT)
+                    .map_err(Error::refused)?,
+            ),
             "page" => self
                 .list
                 .put_page(value.get("page").and_then(Value::as_str)),
             "sort" => {
                 self.list.next_sort(get("sort"));
             }
-            "grid" => match self
-                .columns
-                .handle(&params::string_values(value).map_err(Error::refused)?)
-            {
+            "grid" => match self.columns.handle(
+                &params::string_values_checked(value, params::FIELD_LIMIT)
+                    .map_err(Error::refused)?,
+            ) {
                 ColumnsOutcome::Sort(column) => {
                     self.list.next_sort(&column);
                 }
@@ -970,7 +971,8 @@ impl Panel {
                 if !self.adding {
                     return Err(Error::Invalid);
                 }
-                let posted = params::form_values(value, "affiliation").map_err(Error::refused)?;
+                let posted = params::form_values_checked(value, "affiliation", params::FIELD_LIMIT)
+                    .map_err(Error::refused)?;
                 if let Some(input) = self.add_input(&posted) {
                     let mut facts = facts_json(&input);
                     facts.insert("person_id".into(), json!(input.person_id.get()));
@@ -1136,7 +1138,8 @@ impl Panel {
                 let Some(pending) = self.pending_end.as_mut() else {
                     return Err(Error::Invalid);
                 };
-                let posted = params::form_values(value, "end").map_err(Error::refused)?;
+                let posted = params::form_values_checked(value, "end", params::FIELD_LIMIT)
+                    .map_err(Error::refused)?;
                 pending.date = posted.get("effective_to").cloned().unwrap_or_default();
                 let Some(on) = parse_date(Some(&pending.date)).ok().flatten() else {
                     pending.error = "must be a YYYY-MM-DD date".into();

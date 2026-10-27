@@ -451,8 +451,12 @@ impl LiveState<Scope, Error> for Index {
                 }
                 LiveInput::Event(value) => match event(value)? {
                     "filters" => self.list.apply_filters(
-                        &bilibi_ui::params::form_values(value, FILTERS_FORM)
-                            .map_err(bilibi_database::Error::refused)?,
+                        &bilibi_ui::params::form_values_checked(
+                            value,
+                            FILTERS_FORM,
+                            bilibi_ui::params::FIELD_LIMIT,
+                        )
+                        .map_err(bilibi_database::Error::refused)?,
                     ),
                     "sort" => {
                         if !self.list.next_sort(value["sort"].as_str().unwrap_or("")) {
@@ -460,8 +464,11 @@ impl LiveState<Scope, Error> for Index {
                         }
                     }
                     "grid" => match self.columns.handle(
-                        &bilibi_ui::params::string_values(value)
-                            .map_err(bilibi_database::Error::refused)?,
+                        &bilibi_ui::params::string_values_checked(
+                            value,
+                            bilibi_ui::params::FIELD_LIMIT,
+                        )
+                        .map_err(bilibi_database::Error::refused)?,
                     ) {
                         ColumnsOutcome::Sort(key) => {
                             if !self.list.next_sort(&key) {

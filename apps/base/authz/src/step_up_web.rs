@@ -793,8 +793,12 @@ impl LiveState<Scope, Error> for StepUpPolicy {
                         Some("save_field") => self.save_setting(scope, value).await?,
                         Some("filters") => {
                             self.state.apply_filters(
-                                &params::form_values(value, FILTERS_FORM)
-                                    .map_err(Error::refused)?,
+                                &params::form_values_checked(
+                                    value,
+                                    FILTERS_FORM,
+                                    params::FIELD_LIMIT,
+                                )
+                                .map_err(Error::refused)?,
                             );
                         }
                         Some("sort") => {
@@ -803,10 +807,10 @@ impl LiveState<Scope, Error> for StepUpPolicy {
                             }
                         }
                         Some("grid") => {
-                            if let ColumnsOutcome::Sort(key) = self
-                                .columns
-                                .handle(&params::string_values(value).map_err(Error::refused)?)
-                            {
+                            if let ColumnsOutcome::Sort(key) = self.columns.handle(
+                                &params::string_values_checked(value, params::FIELD_LIMIT)
+                                    .map_err(Error::refused)?,
+                            ) {
                                 if !self.state.next_sort(&key) {
                                     return Err(Error::Invalid);
                                 }

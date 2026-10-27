@@ -324,7 +324,7 @@ impl LiveState<Scope, Error> for Admin1 {
                     match get("type") {
                         Some("filters") => apply_filters(
                             &mut self.list,
-                            &params::form_values(event, FILTERS_FORM)
+                            &params::form_values_checked(event, FILTERS_FORM, params::FIELD_LIMIT)
                                 .map_err(bilibi_database::Error::refused)?,
                         ),
                         Some("sort") => {

@@ -19,8 +19,9 @@ pub fn trimmed(value: Option<&str>) -> Option<&str> {
     value.map(str::trim)
 }
 
-/// The most characters one posted text value may hold unless its owner names a
-/// larger limit with [`form_values_within`].
+/// The default most characters one posted text value may hold: the bound
+/// [`form_values`] and [`string_values`] apply, and the usual `limit` for
+/// [`form_values_checked`] and [`string_values_checked`].
 pub const FIELD_LIMIT: usize = 1024;
 
 /// A posted text value over its limit. Refuse the whole event with it, so the
@@ -42,19 +43,37 @@ impl std::fmt::Display for TooLong {
 impl std::error::Error for TooLong {}
 
 /// The string fields of a posted form namespace (`filters[search]` → `search`)
-/// from a live event payload, each at most [`FIELD_LIMIT`] characters. Other
-/// keys and non-string values are ignored, and at most 64 fields are read. A
-/// longer value is refused with [`TooLong`], never dropped. A text field whose
-/// owner allows more reads through [`form_values_within`].
+/// from a live event payload. Other keys and non-string values are ignored, and
+/// at most 64 fields of at most 1 KiB each are kept.
+///
+/// Deprecated: a longer value is silently dropped, so the form acts as if the
+/// field were blank. Use [`form_values_checked`], which refuses it.
 pub fn form_values(
     payload: &serde_json::Value,
     form: &str,
-) -> Result<std::collections::HashMap<String, String>, TooLong> {
-    form_values_within(payload, form, FIELD_LIMIT)
+) -> std::collections::HashMap<String, String> {
+    let Some(object) = payload.as_object() else {
+        return Default::default();
+    };
+    object
+        .iter()
+        .filter_map(|(key, value)| {
+            let key = key
+                .strip_prefix(form)?
+                .strip_prefix('[')?
+                .strip_suffix(']')?;
+            let value = value.as_str().filter(|value| value.len() <= 1024)?;
+            Some((key.to_owned(), value.to_owned()))
+        })
+        .take(64)
+        .collect()
 }
 
-/// [`form_values`] with the owner's own limit, in characters, for every field.
-pub fn form_values_within(
+/// [`form_values`] with the owner's own `limit`, in characters, for every
+/// field (pass [`FIELD_LIMIT`] when the owner has no larger one). A longer
+/// value is refused with [`TooLong`], never dropped: return it with
+/// `.map_err(Error::refused)?` and the browser keeps the draft.
+pub fn form_values_checked(
     payload: &serde_json::Value,
     form: &str,
     limit: usize,
@@ -79,11 +98,35 @@ pub fn form_values_within(
 /// The scalar fields of a live event payload as the column hosts take them
 /// (`ListColumns::handle`, `PageColumns::handle`): strings as they are, numbers
 /// and booleans as their text; other values and keys past the first 64 are
-/// ignored, and a string over [`FIELD_LIMIT`] characters is refused with
-/// [`TooLong`]. Use this for a flex table's `grid` event rather than walking
-/// the object in each page.
-pub fn string_values(
+/// ignored, and a string longer than 1 KiB is dropped. Use this for a flex table's `grid`
+/// event rather than walking the object in each page.
+///
+/// Deprecated: the dropped string is silent. Use [`string_values_checked`].
+pub fn string_values(payload: &serde_json::Value) -> std::collections::HashMap<String, String> {
+    let Some(object) = payload.as_object() else {
+        return Default::default();
+    };
+    object
+        .iter()
+        .filter_map(|(key, value)| {
+            let text = match value {
+                serde_json::Value::String(text) if text.len() <= 1024 => text.clone(),
+                serde_json::Value::Number(number) => number.to_string(),
+                serde_json::Value::Bool(flag) => flag.to_string(),
+                _ => return None,
+            };
+            Some((key.clone(), text))
+        })
+        .take(64)
+        .collect()
+}
+
+/// [`string_values`] with the owner's own `limit`, in characters (pass
+/// [`FIELD_LIMIT`] when the owner has no larger one). A string over it is
+/// refused with [`TooLong`], never dropped.
+pub fn string_values_checked(
     payload: &serde_json::Value,
+    limit: usize,
 ) -> Result<std::collections::HashMap<String, String>, TooLong> {
     let Some(object) = payload.as_object() else {
         return Ok(Default::default());
@@ -92,7 +135,7 @@ pub fn string_values(
         .iter()
         .filter_map(|(key, value)| {
             let text = match value {
-                serde_json::Value::String(text) => bounded(key, text, FIELD_LIMIT),
+                serde_json::Value::String(text) => bounded(key, text, limit),
                 serde_json::Value::Number(number) => Ok(number.to_string()),
                 serde_json::Value::Bool(flag) => Ok(flag.to_string()),
                 _ => return None,

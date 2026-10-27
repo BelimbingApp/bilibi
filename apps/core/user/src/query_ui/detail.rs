@@ -212,7 +212,7 @@ impl Detail {
         match kind {
             "change_field" => self.change(value)?,
             "change_param" => {
-                for (key, value) in params::form_values_within(value, "parameters", 100_000)
+                for (key, value) in params::form_values_checked(value, "parameters", 100_000)
                     .map_err(bilibi_database::Error::refused)?
                 {
                     if self.detected.contains(&key) {
@@ -234,7 +234,7 @@ impl Detail {
             }
             "result_page_size" => {
                 self.list.apply_filters(
-                    &params::form_values(value, "filters")
+                    &params::form_values_checked(value, "filters", params::FIELD_LIMIT)
                         .map_err(bilibi_database::Error::refused)?,
                 );
                 self.run(scope).await?;

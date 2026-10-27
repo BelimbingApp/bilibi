@@ -1211,7 +1211,7 @@ impl LiveState<Scope, Error> for Postcodes {
                     match get("type") {
                         Some("filters") => apply_filters(
                             &mut self.list,
-                            &params::form_values(event, FILTERS_FORM)
+                            &params::form_values_checked(event, FILTERS_FORM, params::FIELD_LIMIT)
                                 .map_err(bilibi_database::Error::refused)?,
                         ),
                         Some("sort") => {
@@ -1277,7 +1277,7 @@ impl LiveState<Scope, Error> for Postcodes {
                         }
                         Some("validate-postcode") => {
                             self.validate(
-                                params::form_values(event, FORM)
+                                params::form_values_checked(event, FORM, params::FIELD_LIMIT)
                                     .map_err(bilibi_database::Error::refused)?,
                             )
                             .await?;
@@ -1287,7 +1287,7 @@ impl LiveState<Scope, Error> for Postcodes {
                             requery = self
                                 .save(
                                     request.scope,
-                                    params::form_values(event, FORM)
+                                    params::form_values_checked(event, FORM, params::FIELD_LIMIT)
                                         .map_err(bilibi_database::Error::refused)?,
                                 )
                                 .await?;
