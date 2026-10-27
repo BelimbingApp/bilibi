@@ -87,7 +87,7 @@ bilibi_ui::record_fields! { mod fields {
     COUNTRY: bilibi_ui::RecordField::new("country_iso", "Country").slot("country_name"),
     POSTCODE: bilibi_ui::RecordField::new("postcode", "Postcode"),
     PLACE_NAME: bilibi_ui::RecordField::new("place_name", "Place Name"),
-    ADMIN1: bilibi_ui::RecordField::new("admin1_division", "Admin1 Division"),
+    ADMIN1: bilibi_ui::RecordField::new("admin1_division", "First-level division"),
     LATITUDE: bilibi_ui::RecordField::new("latitude", "Latitude"),
     LONGITUDE: bilibi_ui::RecordField::new("longitude", "Longitude"),
     ACCURACY: bilibi_ui::RecordField::new("accuracy", "Accuracy"),
