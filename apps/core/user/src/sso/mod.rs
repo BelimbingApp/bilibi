@@ -535,6 +535,14 @@ impl UserService {
             tx.commit().await?;
             return Ok(IdentityOutcome::Linked(f.back.clone()));
         }
+        if tx
+            .sql()
+            .query_opt(
+                "SELECT 1 FROM user_scim_users WHERE tenant_id=$1 AND user_id=$2",
+                &[&tenant, &user],
+            )
+            .await?
+            .is_none()
         {
             let mut roles = std::collections::BTreeSet::new();
             if provisioned {
@@ -627,7 +635,7 @@ impl UserService {
         let (tenant, id) = (flow.connection.tenant, flow.id);
         tx.mutate(move|sql|Box::pin(async move{sql.execute("UPDATE user_identity_flows SET state='completed',sealed_request='{}' WHERE tenant_id=$1 AND id=$2",&[&tenant,&id]).await?;Ok(((),vec![change("user.identity_flow",id,json!({"state":"processing"}),json!({"state":"completed"}))]))})).await
     }
-    async fn insert_external_link(
+    pub(crate) async fn insert_external_link(
         &self,
         tx: &mut MutationTransaction<'_>,
         c: &Connection,

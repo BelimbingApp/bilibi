@@ -10,6 +10,10 @@ Multi-selects show the inset label and selected count above removable chips insi
 
 List toolbars put search first and filter boxes to its right, wrapping below search on narrow screens. `FilterToolbar::new` preserves the order of filters while placing search first.
 
+## Charts
+
+Use `Chart::new_with_display_values` when values have a stored decimal scale: pass owner-formatted strings indexed by series and category alongside the numeric values used for geometry. The Data table, mark titles and KPI use those strings; absent strings fall back to the numeric value. Missing numeric values remain gaps. `Chart::new` is suitable when the float itself is the intended display value. Pie and donut totals are calculated from numeric values and displayed to 15 significant digits.
+
 ## Icons
 
 **Use one bare icon name in menus, templates and Rust callers**, such as `building-office-2`, `edit` or `bookmark-solid`.

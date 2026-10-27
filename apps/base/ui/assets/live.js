@@ -511,10 +511,11 @@
   // suffix (a multi-select's checkboxes, Bilimbi's list parameter spelling)
   // posts every checked value as one array; any other name keeps its last
   // value, as Object.fromEntries would. A file input's File travels through
-  // the upload stream (upload.js), never inside an intent.
-  function formValues(form) {
+  // the upload stream (upload.js), never inside an intent. A named submit
+  // button adds its value, as a native submission does.
+  function formValues(form, submitter) {
     const values = {};
-    for (const [key, value] of new FormData(form)) {
+    for (const [key, value] of new FormData(form, submitter)) {
       if (value instanceof File) continue;
       if (key.endsWith('[]')) (values[key] ||= []).push(value);
       else values[key] = value;
@@ -534,7 +535,7 @@
     if (!form.dataset.event) return;
     event.preventDefault();
     if (form.hasAttribute('data-change') && !form.dataset.submitEvent) return sendChange(form);
-    const values = formValues(form);
+    const values = formValues(form, event.submitter);
     const target = ownerTarget(form);
     const source = event.submitter || form;
     const type = form.dataset.submitEvent || form.dataset.event;

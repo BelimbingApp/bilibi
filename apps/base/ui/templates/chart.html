@@ -3,7 +3,7 @@
     or a donut drawn from precomputed geometry with data colours (`cat-1..8`),
     its legend, and a "Data" fold with the exact values. A note replaces the
     drawing when there is nothing to draw or too much to draw honestly. Below
-    26rem the drawing keeps that width and scrolls inside the figure (its
+    40rem the drawing keeps that width and scrolls inside the figure (its
     wrapper adds no width of its own), so labels stay readable on a phone. No style attribute anywhere: the Content
     Security Policy forbids it. -#}
 {%- import "components.html" as ui -%}
@@ -17,7 +17,7 @@
 {%- elif !note.is_empty() %}
 <p id="{{ id }}-note" class="text-sm text-ink-muted">{{ note }}</p>
 {%- else %}
-<div class="w-0 min-w-full overflow-x-auto"><svg viewBox="0 0 640 {{ height }}" class="h-auto w-full min-w-[26rem]" role="img" aria-labelledby="{{ title_id }} {{ desc_id }}"><desc id="{{ desc_id }}">{{ summary }}</desc>
+<div class="w-0 min-w-full overflow-x-auto"><svg viewBox="0 0 640 {{ height }}" class="h-auto w-full min-w-[40rem]" role="img" aria-labelledby="{{ title_id }} {{ desc_id }}"><desc id="{{ desc_id }}">{{ summary }}</desc>
 {%- for tick in ticks %}<line x1="{{ left }}" x2="628" y1="{{ tick.y }}" y2="{{ tick.y }}" class="stroke-low-contrast-line" stroke-width="1"></line><text x="{{ tick_x }}" y="{{ tick.y }}" dy="4" text-anchor="end" class="fill-ink-subtle text-[12px] tabular-nums">{{ tick.label }}</text>{% endfor %}
 {%- for label in labels %}{% if turned %}<text x="{{ label.x }}" y="{{ label_y }}" dy="4" text-anchor="end" transform="{{ label.turn }}" class="fill-ink-subtle text-[12px]">{{ label.text }}</text>{% else %}<text x="{{ label.x }}" y="{{ label_y }}" text-anchor="middle" class="fill-ink-subtle text-[12px]">{{ label.text }}</text>{% endif %}{% endfor %}
 {%- for rect in rects %}<rect x="{{ rect.x }}" y="{{ rect.y }}" width="{{ rect.w }}" height="{{ rect.h }}" rx="1" class="{{ rect.class }}{% if !rect.drill.is_empty() %} cursor-pointer{% endif %}"{% if !rect.drill.is_empty() %} data-event="{{ drill_event }}" data-line="{{ rect.drill }}"{% endif %}><title>{{ rect.title }}</title></rect>{% endfor %}

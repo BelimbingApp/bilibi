@@ -12,6 +12,7 @@ use askama::Template;
 #[derive(Template)]
 #[template(path = "ui_feedback_specimen.html")]
 pub struct FeedbackSpecimen {
+    confirmation_reason: crate::Html,
     tabs_links: Vec<Tab<'static>>,
     tabs_narrow: Vec<Tab<'static>>,
     tabs_buttons: Vec<Tab<'static>>,
@@ -42,6 +43,7 @@ impl FeedbackSpecimen {
     pub fn new() -> Self {
         let link = |label| Tab::link("#component-tabs", label, label == "Overview");
         Self {
+            confirmation_reason: crate::Html::render(&crate::Field::named("reason").id("design-library-confirm-reason").label("Reason (optional)").kind(crate::InputKind::Textarea)).expect("confirmation reason specimen"),
             tabs_links: [
                 "Overview",
                 "History",

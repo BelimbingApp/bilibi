@@ -147,6 +147,9 @@ impl Provider for Factor {
             for row in sql.query("DELETE FROM user_identity_proofs WHERE tenant_id=$1 AND user_id=$2 RETURNING id",&[&tenant,&user]).await?{changes.push(change("user.identity_proof",row.get(0),json!({"available":true}),json!(null)));}
             for row in sql.query("DELETE FROM user_identity_challenges WHERE tenant_id=$1 AND user_id=$2 RETURNING id",&[&tenant,&user]).await?{changes.push(change("user.identity_challenge",row.get(0),json!({"pending":true}),json!(null)));}
             if matches!(event, Lifecycle::Delete) {
+                for row in sql.query("UPDATE user_scim_users SET active=false,document=jsonb_set(document,'{active}','false') WHERE tenant_id=$1 AND user_id=$2 AND active RETURNING id,document", &[&tenant,&user]).await? {
+                    changes.push(change("user.scim_user",row.get(0),json!({"active":true}),row.get(1)));
+                }
                 for row in sql.query("DELETE FROM user_external_sessions WHERE tenant_id=$1 AND user_id=$2 RETURNING id",&[&tenant,&user]).await?{changes.push(change("user.external_session",row.get(0),json!({"active":true}),json!(null)));}
                 changes.extend(
                     self.0

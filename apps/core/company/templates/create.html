@@ -1,5 +1,2 @@
-{{ header }}
-<form id="company-form" data-event="create_company" class="space-y-5">
-<section class="rounded-xl border border-line bg-surface px-6 py-5"><div class="grid gap-x-4 sm:grid-cols-2">{% for field in fields %}{{ field }}{% endfor %}</div><div class="grid gap-x-4 sm:grid-cols-3">{% for field in contacts %}{{ field }}{% endfor %}</div><div class="grid gap-x-4 sm:grid-cols-2">{% for field in context %}{{ field }}{% endfor %}</div></section>
-<div class="flex items-center gap-4">{{ submit }}<a id="company-cancel" href="/companies" class="text-sm font-medium text-ink-muted hover:text-ink">Cancel</a></div>
-</form>
+{# Mirrors Bilimbi Core.Company.CreateLive using shared form and duplicate review components. #}
+{{ header }}{{ summary }}{{ form }}{{ candidates }}{{ confirmation }}
