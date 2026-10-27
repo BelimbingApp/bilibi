@@ -117,9 +117,19 @@ impl Create {
     async fn take(&mut self, value: &Value) -> Result<()> {
         let fields = form(value, "address");
         let get = |key: &str| fields.get(key).cloned();
-        self.location
-            .change(&self.pages.addresses, &LocationDraft::posted(&fields))
-            .await?;
+        let posted = LocationDraft::posted(&fields);
+        let limits = overlong(
+            &fields,
+            &FIELDS.iter().map(|(key, _, _)| *key).collect::<Vec<_>>(),
+        );
+        if limits
+            .iter()
+            .any(|e| ["country_iso", "admin1_code", "postcode", "locality"].contains(&e.field))
+        {
+            self.location.location = posted;
+        } else {
+            self.location.change(&self.pages.addresses, &posted).await?;
+        }
         self.input = AddressInput {
             label: get("label"),
             phone: get("phone"),
@@ -137,6 +147,10 @@ impl Create {
         self.location.location.apply_to(&mut self.input);
         // The pure shape checks; Geonames membership is checked on save.
         self.errors = model::normalize(&self.input).err().unwrap_or_default();
+        for error in limits {
+            self.errors.retain(|existing| existing.field != error.field);
+            self.errors.push(error);
+        }
         Ok(())
     }
     /// The street lines on screen: the ones asked for, and any holding a value.

@@ -318,10 +318,33 @@ impl Panel {
             return Ok(());
         };
         let get = |key: &str| fields.get(key).cloned();
-        draft
-            .location
-            .change(&self.pages.addresses, &LocationDraft::posted(fields))
-            .await?;
+        let limits = overlong(
+            fields,
+            &[
+                "label",
+                "phone",
+                "line1",
+                "line2",
+                "line3",
+                "country_iso",
+                "admin1_code",
+                "postcode",
+                "locality",
+                "priority",
+            ],
+        );
+        let posted = LocationDraft::posted(fields);
+        if limits
+            .iter()
+            .any(|e| ["country_iso", "admin1_code", "postcode", "locality"].contains(&e.field))
+        {
+            draft.location.location = posted;
+        } else {
+            draft
+                .location
+                .change(&self.pages.addresses, &posted)
+                .await?;
+        }
         draft.input = AddressInput {
             label: get("label"),
             phone: get("phone"),
@@ -337,7 +360,15 @@ impl Panel {
         draft.errors = crate::model::normalize(&draft.input)
             .err()
             .unwrap_or_default();
-        if priority(&draft.priority).is_none() {
+        for error in limits {
+            draft
+                .errors
+                .retain(|existing| existing.field != error.field);
+            draft.errors.push(error);
+        }
+        if priority(&draft.priority).is_none()
+            && !draft.errors.iter().any(|e| e.field == "priority")
+        {
             draft.errors.push(FieldError::new(
                 "priority",
                 "must be a whole number of 0 or more",

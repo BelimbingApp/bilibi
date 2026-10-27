@@ -255,8 +255,7 @@ fn event(value: &Value) -> Result<&str> {
         .ok_or(Error::Invalid)
 }
 /// The posted fields of one form namespace (`address[label]` → `label`).
-/// Raw input may be long, so values are bounded at the model's 10 000
-/// characters rather than the shared 1 KiB.
+/// Keep submitted values intact so the owning form can report validation errors.
 fn form(value: &Value, namespace: &str) -> HashMap<String, String> {
     value
         .as_object()
@@ -267,10 +266,21 @@ fn form(value: &Value, namespace: &str) -> HashMap<String, String> {
                 .strip_prefix(namespace)?
                 .strip_prefix('[')?
                 .strip_suffix(']')?;
-            let value = value.as_str().filter(|v| v.chars().count() <= 10_000)?;
+            let value = value.as_str()?;
             Some((key.to_owned(), value.to_owned()))
         })
-        .take(64)
+        .collect()
+}
+/// Refuse overlong posted fields before normalization can trim or replace them.
+fn overlong(fields: &HashMap<String, String>, names: &[&'static str]) -> Vec<crate::FieldError> {
+    names
+        .iter()
+        .filter_map(|&name| {
+            fields
+                .get(name)
+                .filter(|value| value.chars().count() > 10_000)
+                .map(|_| crate::FieldError::new(name, "must be at most 10000 characters"))
+        })
         .collect()
 }
 /// `Some(label)` in quotes, or "This address" (Bilimbi `address_name/1`).
