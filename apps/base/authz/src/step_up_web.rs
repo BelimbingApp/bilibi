@@ -665,8 +665,7 @@ impl StepUpPolicy {
         })?;
         html.push(&render(Header {
             title: Html::text("Step-up 2FA"),
-            subtitle:
-                "Ask for a fresh 2FA code before sensitive actions, such as giving someone a role.",
+            subtitle: "Choose which actions require 2FA, such as assigning a role.",
             ..Header::default()
         })?);
         // Each tab is this address with its own `tab`, so a refresh or Back
