@@ -876,14 +876,14 @@ impl LiveState<Scope, Error> for Show {
                         ListState::parse(query, self.spec.clone()).map_err(|_| Error::Internal)?;
                 }
                 LiveInput::Event(value) => match value.get("type").and_then(Value::as_str) {
-                    Some("filter") => self
-                        .list
-                        .apply_filters(&params::form_values(value, "filters")),
+                    Some("filter") => self.list.apply_filters(
+                        &params::form_values(value, "filters").map_err(Error::refused)?,
+                    ),
                     Some("page") => self
                         .list
                         .put_page(value.get("page").and_then(Value::as_str)),
                     Some(event) => {
-                        let values = params::string_values(value);
+                        let values = params::string_values(value).map_err(Error::refused)?;
                         let outcome = self
                             .columns_for(event)
                             .ok_or(Error::Invalid)?

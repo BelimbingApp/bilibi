@@ -85,9 +85,9 @@ impl Index {
             return Ok(None);
         }
         match kind {
-            "filters" => self
-                .list
-                .apply_filters(&params::form_values(value, "filters")),
+            "filters" => self.list.apply_filters(
+                &params::form_values(value, "filters").map_err(bilibi_database::Error::refused)?,
+            ),
             "page" => self.list.put_page(get("page")),
             "sort" => {
                 self.list.next_sort(get("sort").unwrap_or(""));

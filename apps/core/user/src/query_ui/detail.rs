@@ -212,7 +212,9 @@ impl Detail {
         match kind {
             "change_field" => self.change(value)?,
             "change_param" => {
-                for (key, value) in params::form_values(value, "parameters") {
+                for (key, value) in params::form_values(value, "parameters")
+                    .map_err(bilibi_database::Error::refused)?
+                {
                     if self.detected.contains(&key) {
                         if value.len() > 100_000 {
                             return Err(Error::Invalid);
@@ -231,8 +233,10 @@ impl Detail {
                 self.run(scope).await?;
             }
             "result_page_size" => {
-                self.list
-                    .apply_filters(&params::form_values(value, "filters"));
+                self.list.apply_filters(
+                    &params::form_values(value, "filters")
+                        .map_err(bilibi_database::Error::refused)?,
+                );
                 self.run(scope).await?;
             }
             "results_grid" => {

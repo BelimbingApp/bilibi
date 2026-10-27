@@ -450,18 +450,19 @@ impl LiveState<Scope, Error> for Index {
                         ListState::parse(values, SPEC.clone()).map_err(|_| Error::Internal)?;
                 }
                 LiveInput::Event(value) => match event(value)? {
-                    "filters" => self
-                        .list
-                        .apply_filters(&bilibi_ui::params::form_values(value, FILTERS_FORM)),
+                    "filters" => self.list.apply_filters(
+                        &bilibi_ui::params::form_values(value, FILTERS_FORM)
+                            .map_err(bilibi_database::Error::refused)?,
+                    ),
                     "sort" => {
                         if !self.list.next_sort(value["sort"].as_str().unwrap_or("")) {
                             return Err(Error::Invalid);
                         }
                     }
-                    "grid" => match self
-                        .columns
-                        .handle(&bilibi_ui::params::string_values(value))
-                    {
+                    "grid" => match self.columns.handle(
+                        &bilibi_ui::params::string_values(value)
+                            .map_err(bilibi_database::Error::refused)?,
+                    ) {
                         ColumnsOutcome::Sort(key) => {
                             if !self.list.next_sort(&key) {
                                 return Err(Error::Invalid);

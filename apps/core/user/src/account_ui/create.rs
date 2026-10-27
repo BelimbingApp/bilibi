@@ -248,7 +248,8 @@ impl LiveState<Scope, Error> for Create {
                 if self.created.is_some() {
                     return self.view(request.scope).await;
                 }
-                let fields = bilibi_ui::params::form_values(value, "user");
+                let fields = bilibi_ui::params::form_values(value, "user")
+                    .map_err(bilibi_database::Error::refused)?;
                 let person = optional_id(fields.get("person_id"), |id| PersonId::new(id).ok())?;
                 let affiliation = if person == self.input.person {
                     optional_id(fields.get("affiliation_id"), |id| {

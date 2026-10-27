@@ -115,7 +115,7 @@ impl Create {
         })
     }
     async fn take(&mut self, value: &Value) -> Result<()> {
-        let fields = bilibi_ui::params::form_values(value, "address");
+        let fields = form(value, "address")?;
         let get = |key: &str| fields.get(key).cloned();
         self.location
             .change(&self.pages.addresses, &LocationDraft::posted(&fields))

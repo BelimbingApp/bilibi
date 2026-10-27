@@ -249,15 +249,16 @@ impl LiveState<Scope, Error> for Index {
                         ListState::parse(query, SPEC.clone()).map_err(|_| Error::Internal)?
                 }
                 LiveInput::Event(value) => match value.get("type").and_then(Value::as_str) {
-                    Some("filter") => self
-                        .list
-                        .apply_filters(&params::form_values(value, "filters")),
+                    Some("filter") => self.list.apply_filters(
+                        &params::form_values(value, "filters").map_err(Error::refused)?,
+                    ),
                     Some("page") => self
                         .list
                         .put_page(value.get("page").and_then(Value::as_str)),
                     Some("grid") => {
-                        if let bilibi_ui::list_columns::ColumnsOutcome::Sort(key) =
-                            self.columns.handle(&params::string_values(value))
+                        if let bilibi_ui::list_columns::ColumnsOutcome::Sort(key) = self
+                            .columns
+                            .handle(&params::string_values(value).map_err(Error::refused)?)
                         {
                             self.list.next_sort(&key);
                         }

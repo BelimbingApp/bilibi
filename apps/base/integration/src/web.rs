@@ -502,8 +502,9 @@ impl Index {
         let kind = get("type").ok_or(Error::Invalid)?;
         match kind {
             "filters" => {
-                self.list
-                    .apply_filters(&params::form_values(value, FILTERS_FORM));
+                self.list.apply_filters(
+                    &params::form_values(value, FILTERS_FORM).map_err(Error::refused)?,
+                );
                 self.reload = true;
             }
             "page" => {
@@ -516,7 +517,10 @@ impl Index {
                 // under it.
                 match self
                     .columns
-                    .handle(scope, &params::string_values(value))
+                    .handle(
+                        scope,
+                        &params::string_values(value).map_err(Error::refused)?,
+                    )
                     .await?
                 {
                     GridOutcome::Patch => self.reload = true,
@@ -531,7 +535,11 @@ impl Index {
             }
             _ => {
                 let clock = self.clock(scope).await?;
-                match self.filter.event(kind, value, &clock) {
+                match self
+                    .filter
+                    .event(kind, value, &clock)
+                    .map_err(Error::refused)?
+                {
                     Some(period::Outcome::Applied(period)) => {
                         self.period_params = period
                             .params()

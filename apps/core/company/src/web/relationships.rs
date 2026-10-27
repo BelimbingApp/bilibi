@@ -432,10 +432,10 @@ fn access(error: Error, flash: &mut Flash) -> Result<()> {
     }
 }
 /// A form's or button's values, without the event name.
-fn values_of(value: &Value) -> HashMap<String, String> {
-    let mut values = bilibi_ui::params::string_values(value);
+fn values_of(value: &Value) -> Result<HashMap<String, String>> {
+    let mut values = bilibi_ui::params::string_values(value).map_err(Error::refused)?;
     values.remove("type");
-    values
+    Ok(values)
 }
 fn get<'a>(value: &'a Value, key: &str) -> &'a str {
     value.get(key).and_then(Value::as_str).unwrap_or("")
@@ -819,7 +819,7 @@ impl RolesPage {
         }
         match kind {
             "grid" => {
-                self.columns.handle(&values_of(value));
+                self.columns.handle(&values_of(value)?);
             }
             "toggle_retired" => self.include_retired = !self.include_retired,
             "new" => {
@@ -858,7 +858,7 @@ impl RolesPage {
                 let Some(modal) = self.modal.as_mut() else {
                     return Ok(());
                 };
-                modal.values = values_of(value);
+                modal.values = values_of(value)?;
                 let text = |key: &str| modal.values.get(key).cloned().unwrap_or_default();
                 match &modal.editing {
                     Some(role) => {
@@ -1551,7 +1551,7 @@ impl LinksPage {
         }
         match kind {
             "grid" => {
-                self.columns.handle(&values_of(value));
+                self.columns.handle(&values_of(value)?);
             }
             "toggle_history" => self.history = !self.history,
             "new" => {
@@ -1622,7 +1622,7 @@ impl LinksPage {
                 if let Some(modal) = self.modal.as_mut() {
                     let was_person =
                         modal.values.get("target_kind").map(String::as_str) == Some("person");
-                    modal.values = values_of(value);
+                    modal.values = values_of(value)?;
                     // The picker the radio hid keeps nothing it never showed.
                     if was_person
                         != (modal.values.get("target_kind").map(String::as_str) == Some("person"))
@@ -1638,7 +1638,7 @@ impl LinksPage {
                 let Some(modal) = self.modal.as_mut() else {
                     return Ok(());
                 };
-                modal.values = values_of(value);
+                modal.values = values_of(value)?;
                 if modal.ending {
                     let Some(entry) = modal.editing.as_ref() else {
                         return Err(Error::Internal);
@@ -1962,7 +1962,7 @@ impl LiveState<Scope, Error> for Panel {
                 if get(value, "type") != "grid" {
                     return Err(Error::Invalid);
                 }
-                self.columns.handle(&values_of(value));
+                self.columns.handle(&values_of(value)?);
             }
             self.draw(request.scope).await
         })

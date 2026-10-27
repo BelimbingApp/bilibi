@@ -329,7 +329,7 @@ impl View {
         value: &Value,
         status: &Value,
     ) -> Result<()> {
-        let values = params::string_values(value);
+        let values = params::string_values(value).map_err(Error::refused)?;
         let get = |key: &str| value.get(key).and_then(Value::as_str);
         match get("type").ok_or(Error::Invalid)? {
             "request_install" => {

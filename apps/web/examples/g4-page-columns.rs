@@ -437,9 +437,9 @@ impl LiveState<Scope, Error> for State {
                             Outcome::Update => reload = false,
                             Outcome::Patch | Outcome::Noop => {}
                         },
-                        Some("filters") => self
-                            .list
-                            .apply_filters(&params::form_values(event, FILTERS_FORM)),
+                        Some("filters") => self.list.apply_filters(
+                            &params::form_values(event, FILTERS_FORM).map_err(Error::refused)?,
+                        ),
                         Some("page") => self.list.put_page(get("page")),
                         Some("clear") => self.list.apply_filters(&HashMap::from([
                             ("search".into(), String::new()),

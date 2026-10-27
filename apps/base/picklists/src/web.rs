@@ -257,9 +257,12 @@ impl Index {
         match get("type").ok_or(Error::Invalid)? {
             "filters" => self
                 .state
-                .apply_filters(&params::form_values(value, FILTERS_FORM)),
+                .apply_filters(&params::form_values(value, FILTERS_FORM).map_err(Error::refused)?),
             "page" => self.state.put_page(get("page")),
-            "grid" => match self.columns.handle(&params::string_values(value)) {
+            "grid" => match self
+                .columns
+                .handle(&params::string_values(value).map_err(Error::refused)?)
+            {
                 ColumnsOutcome::Sort(_) => return Err(Error::Invalid),
                 ColumnsOutcome::Update | ColumnsOutcome::Noop => self.rows_changed = false,
             },
@@ -542,9 +545,12 @@ impl Values {
         match get("type").ok_or(Error::Invalid)? {
             "filters" => self
                 .state
-                .apply_filters(&params::form_values(value, FILTERS_FORM)),
+                .apply_filters(&params::form_values(value, FILTERS_FORM).map_err(Error::refused)?),
             "page" => self.state.put_page(get("page")),
-            "grid" => match self.columns.handle(&params::string_values(value)) {
+            "grid" => match self
+                .columns
+                .handle(&params::string_values(value).map_err(Error::refused)?)
+            {
                 ColumnsOutcome::Sort(_) => return Err(Error::Invalid),
                 ColumnsOutcome::Update | ColumnsOutcome::Noop => self.rows_changed = false,
             },
@@ -552,7 +558,7 @@ impl Values {
             "new" => self.draft = Some(Draft::default()),
             "close_new" => self.draft = None,
             "create" => {
-                let posted = params::form_values(value, "value");
+                let posted = params::form_values(value, "value").map_err(Error::refused)?;
                 let mut input = json!({
                     "list": key,
                     "code": posted.get("code").cloned().unwrap_or_default(),

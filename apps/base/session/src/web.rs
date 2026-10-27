@@ -232,14 +232,17 @@ impl Index {
         match get("type").ok_or(Error::Invalid)? {
             "filters" => self
                 .state
-                .apply_filters(&params::form_values(value, FILTERS_FORM)),
+                .apply_filters(&params::form_values(value, FILTERS_FORM).map_err(Error::refused)?),
             "sort" => {
                 if !self.state.next_sort(get("sort").unwrap_or_default()) {
                     return Err(Error::Invalid);
                 }
             }
             "page" => self.state.put_page(get("page")),
-            "grid" => match self.columns.handle(&params::string_values(value)) {
+            "grid" => match self
+                .columns
+                .handle(&params::string_values(value).map_err(Error::refused)?)
+            {
                 ColumnsOutcome::Sort(column) => {
                     if !self.state.next_sort(&column) {
                         return Err(Error::Invalid);

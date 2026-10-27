@@ -632,9 +632,9 @@ impl LiveState<Scope, Error> for Roles {
                 LiveInput::Event(value) => {
                     let get = |key: &str| value.get(key).and_then(|v| v.as_str());
                     match get("type") {
-                        Some("search") => self
-                            .state
-                            .apply_filters(&params::form_values(value, FILTERS_FORM)),
+                        Some("search") => self.state.apply_filters(
+                            &params::form_values(value, FILTERS_FORM).map_err(Error::refused)?,
+                        ),
                         Some("sort") => {
                             if !self.state.next_sort(get("sort").unwrap_or_default()) {
                                 return Err(Error::Invalid);

@@ -412,10 +412,11 @@ impl Inbox {
             }
             "filters" => self
                 .list
-                .apply_filters(&params::form_values(value, FILTERS_FORM)),
+                .apply_filters(&params::form_values(value, FILTERS_FORM).map_err(Error::refused)?),
             "page" => self.list.put_page(get("page")),
             "grid" => {
-                self.columns.handle(&params::string_values(value));
+                self.columns
+                    .handle(&params::string_values(value).map_err(Error::refused)?);
             }
             "clear-flash" => self.all_read = false,
             _ => return Err(Error::Invalid),

@@ -145,7 +145,8 @@ impl Cases {
         let get = |key: &str| value.get(key).and_then(Value::as_str);
         match get("type").ok_or(Error::Invalid)? {
             "grid" => {
-                self.columns.handle(&params::string_values(value));
+                self.columns
+                    .handle(&params::string_values(value).map_err(Error::refused)?);
             }
             "clear-flash" => {
                 if self
@@ -179,7 +180,7 @@ impl Cases {
             // Every change of the form: the draft follows it, and a new
             // category clears a sub-category chosen under the old one.
             "case_change" => {
-                let form = params::form_values(value, "case");
+                let form = params::form_values(value, "case").map_err(Error::refused)?;
                 let category = form.get("category").cloned().unwrap_or_default();
                 if category != self.draft.category {
                     self.draft.subcategory.clear();

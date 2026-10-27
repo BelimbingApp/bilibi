@@ -847,7 +847,8 @@ impl LiveState<Scope, Error> for ReferenceTypes {
                     let get = |key: &str| event.get(key).and_then(Value::as_str);
                     match get("type") {
                         Some("grid") => {
-                            self.columns.handle(&params::string_values(event));
+                            self.columns
+                                .handle(&params::string_values(event).map_err(Error::refused)?);
                             requery = false;
                         }
                         Some("filter_category") if self.spec.category() => {
@@ -869,12 +870,19 @@ impl LiveState<Scope, Error> for ReferenceTypes {
                             requery = false;
                         }
                         Some("validate") => {
-                            self.validate(params::form_values(event, self.spec.form_as));
+                            self.validate(
+                                params::form_values(event, self.spec.form_as)
+                                    .map_err(Error::refused)?,
+                            );
                             requery = false;
                         }
                         Some("save") => {
                             requery = self
-                                .save(request.scope, params::form_values(event, self.spec.form_as))
+                                .save(
+                                    request.scope,
+                                    params::form_values(event, self.spec.form_as)
+                                        .map_err(Error::refused)?,
+                                )
                                 .await?;
                         }
                         Some("toggle_active") => self.toggle(request.scope, get("id")).await?,

@@ -343,11 +343,12 @@ impl LiveState<Scope, Error> for ReferenceState {
                     let get = |key: &str| value.get(key).and_then(|v| v.as_str());
                     match get("type") {
                         Some("vendor-columns") => {
-                            self.columns.handle(&params::string_values(value));
+                            self.columns
+                                .handle(&params::string_values(value).map_err(Error::refused)?);
                         }
-                        Some("filters") => self
-                            .state
-                            .apply_filters(&params::form_values(value, FILTERS_FORM)),
+                        Some("filters") => self.state.apply_filters(
+                            &params::form_values(value, FILTERS_FORM).map_err(Error::refused)?,
+                        ),
                         Some("sort") => {
                             if !self.state.next_sort(get("sort").unwrap_or_default()) {
                                 return Err(Error::Invalid);

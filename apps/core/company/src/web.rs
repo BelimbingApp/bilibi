@@ -541,11 +541,11 @@ impl CompanyPage {
             }
             "departments_grid" if self.operation == "detail" => {
                 self.departments_columns
-                    .handle(&bilibi_ui::params::string_values(value));
+                    .handle(&bilibi_ui::params::string_values(value).map_err(Error::refused)?);
             }
             "children_grid" if self.operation == "detail" => {
                 self.children_columns
-                    .handle(&bilibi_ui::params::string_values(value));
+                    .handle(&bilibi_ui::params::string_values(value).map_err(Error::refused)?);
             }
             "sort" => self.sort(if get("sort").is_empty() {
                 get("field")
@@ -720,7 +720,7 @@ impl CompanyPage {
             }
             "duplicate_grid" if self.operation == "create" => {
                 self.duplicate_columns
-                    .handle(&bilibi_ui::params::string_values(value));
+                    .handle(&bilibi_ui::params::string_values(value).map_err(Error::refused)?);
             }
             "cancel_duplicate_create" => self.confirming_duplicate = false,
             "duplicate_reason" if self.operation == "create" => {

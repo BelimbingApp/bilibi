@@ -396,7 +396,7 @@ impl Board {
                 );
             }
             "filter_tasks" => {
-                let posted = params::form_values(value, "task");
+                let posted = params::form_values(value, "task").map_err(Error::refused)?;
                 let mut mapped = HashMap::new();
                 if let Some(search) = posted.get("search") {
                     mapped.insert("search".to_owned(), search.clone());
@@ -409,21 +409,28 @@ impl Board {
             "sort_tasks" => {
                 self.tasks.next_sort(get("sort").unwrap_or_default());
             }
-            "grid_tasks" => match self.task_columns.handle(&params::string_values(value)) {
+            "grid_tasks" => match self
+                .task_columns
+                .handle(&params::string_values(value).map_err(Error::refused)?)
+            {
                 ColumnsOutcome::Sort(column) => {
                     self.tasks.next_sort(&column);
                 }
                 ColumnsOutcome::Update | ColumnsOutcome::Noop => self.rows_changed = false,
             },
             "filter_runs" => {
-                self.runs
-                    .apply_filters(&params::form_values(value, FILTERS_FORM));
+                self.runs.apply_filters(
+                    &params::form_values(value, FILTERS_FORM).map_err(Error::refused)?,
+                );
                 normalize_dates(&mut self.runs);
             }
             "sort_runs" => {
                 self.runs.next_sort(get("sort").unwrap_or_default());
             }
-            "grid_runs" => match self.run_columns.handle(&params::string_values(value)) {
+            "grid_runs" => match self
+                .run_columns
+                .handle(&params::string_values(value).map_err(Error::refused)?)
+            {
                 ColumnsOutcome::Sort(column) => {
                     self.runs.next_sort(&column);
                 }
@@ -485,6 +492,7 @@ impl Board {
                     return Ok(());
                 };
                 editor.value = params::form_values(value, "timing")
+                    .map_err(Error::refused)?
                     .get("time")
                     .cloned()
                     .unwrap_or_default();
@@ -619,6 +627,7 @@ impl Board {
                     return Ok(());
                 }
                 let days = params::form_values(value, "retention")
+                    .map_err(Error::refused)?
                     .get("days")
                     .and_then(|days| days.trim().parse::<i64>().ok())
                     .filter(|days| (board::KEEP_DAYS_MIN..=board::KEEP_DAYS_MAX).contains(days));

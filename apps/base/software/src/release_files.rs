@@ -729,7 +729,7 @@ impl ReleaseFiles {
             authorize_operator(&**client, request.scope, VIEW).await?;
         }
         if let LiveInput::Event(value) = request.input {
-            let values = bilibi_ui::params::string_values(value);
+            let values = bilibi_ui::params::string_values(value).map_err(Error::refused)?;
             let get = |key: &str| values.get(key).map(String::as_str).unwrap_or("");
             match value["type"].as_str().unwrap_or("") {
                 "github_source" => {

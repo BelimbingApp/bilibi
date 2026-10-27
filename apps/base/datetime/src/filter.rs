@@ -98,18 +98,26 @@ impl PeriodFilter {
     }
 
     /// Handles one of this component's events; `None` is someone else's event.
-    pub fn event(&mut self, kind: &str, payload: &Value, clock: &Clock) -> Option<Outcome> {
-        let (name, id) = kind.split_once(':')?;
+    /// A posted value over the form limit is refused, not read as blank.
+    pub fn event(
+        &mut self,
+        kind: &str,
+        payload: &Value,
+        clock: &Clock,
+    ) -> Result<Option<Outcome>, params::TooLong> {
+        let Some((name, id)) = kind.split_once(':') else {
+            return Ok(None);
+        };
         if id != self.id {
-            return None;
+            return Ok(None);
         }
-        match name {
+        Ok(match name {
             SELECT => {
-                let posted = params::form_values(payload, SELECTION_FORM);
+                let posted = params::form_values(payload, SELECTION_FORM)?;
                 let period = posted.get("period").map(String::as_str).unwrap_or("");
                 if period == Preset::Custom.as_str() || period == CHANGE_CUSTOM {
                     self.open();
-                    return Some(Outcome::Update);
+                    return Ok(Some(Outcome::Update));
                 }
                 let period = period.to_owned();
                 let applied =
@@ -122,7 +130,7 @@ impl PeriodFilter {
                 Some(Outcome::Update)
             }
             APPLY => {
-                let posted = params::form_values(payload, RANGE_FORM);
+                let posted = params::form_values(payload, RANGE_FORM)?;
                 let from = posted.get("from").cloned().unwrap_or_default();
                 let to = posted.get("to").cloned().unwrap_or_default();
                 match Period::custom(&from, &to) {
@@ -140,7 +148,7 @@ impl PeriodFilter {
                 }
             }
             _ => None,
-        }
+        })
     }
 
     fn open(&mut self) {

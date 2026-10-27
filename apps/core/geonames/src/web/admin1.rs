@@ -322,9 +322,11 @@ impl LiveState<Scope, Error> for Admin1 {
                 LiveInput::Event(event) => {
                     let get = |key: &str| event.get(key).and_then(Value::as_str);
                     match get("type") {
-                        Some("filters") => {
-                            apply_filters(&mut self.list, &params::form_values(event, FILTERS_FORM))
-                        }
+                        Some("filters") => apply_filters(
+                            &mut self.list,
+                            &params::form_values(event, FILTERS_FORM)
+                                .map_err(bilibi_database::Error::refused)?,
+                        ),
                         Some("sort") => {
                             if !self.list.next_sort(get("sort").unwrap_or_default()) {
                                 return Err(Error::Invalid);

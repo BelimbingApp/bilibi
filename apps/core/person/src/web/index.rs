@@ -310,7 +310,8 @@ impl LiveState<Scope, Error> for Index {
                         let filters = bilibi_ui::params::form_values(
                             value,
                             bilibi_ui::list_state::FILTERS_FORM,
-                        );
+                        )
+                        .map_err(bilibi_database::Error::refused)?;
                         self.list.apply_filters(&filters);
                     }
                     "page" => {

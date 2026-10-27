@@ -279,7 +279,8 @@ impl LiveState<Scope, Error> for Index {
                 }
                 LiveInput::Event(value) => match value.get("type").and_then(|v| v.as_str()) {
                     Some("filters") => {
-                        let mut posted = params::form_values(value, FILTERS_FORM);
+                        let mut posted =
+                            params::form_values(value, FILTERS_FORM).map_err(Error::refused)?;
                         if let Some(identity) = posted.remove("identity") {
                             posted.insert("search".into(), identity);
                         }

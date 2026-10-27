@@ -953,7 +953,8 @@ impl LiveState<Scope, Error> for ConnectionsPage {
                     {
                         ConnectionsEvent::Grid { fields } => {
                             let value = serde_json::to_value(fields).map_err(|_| Error::Invalid)?;
-                            self.columns.handle(&params::string_values(&value));
+                            self.columns
+                                .handle(&params::string_values(&value).map_err(Error::refused)?);
                         }
                         ConnectionsEvent::Revoke { id } => {
                             self.pending = Some(

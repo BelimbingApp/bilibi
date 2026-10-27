@@ -265,7 +265,7 @@ impl Detail {
             .draft
             .change(
                 &self.pages.addresses,
-                &LocationDraft::posted(&bilibi_ui::params::form_values(value, "location")),
+                &LocationDraft::posted(&form(value, "location")?),
             )
             .await?;
         let current = self.pages.addresses.read(scope, self.id).await?;
@@ -361,9 +361,7 @@ impl Detail {
                         .draft
                         .change(
                             &self.pages.addresses,
-                            &LocationDraft::posted(&bilibi_ui::params::form_values(
-                                value, "location",
-                            )),
+                            &LocationDraft::posted(&form(value, "location")?),
                         )
                         .await?;
                 }
@@ -377,10 +375,10 @@ impl Detail {
                         .put("location", CommitStatus::Error(FORBIDDEN.into()));
                 }
             }
-            "grid" => match self
-                .columns
-                .handle(&bilibi_ui::params::string_values(value))
-            {
+            "grid" => match self.columns.handle(
+                &bilibi_ui::params::string_values(value)
+                    .map_err(bilibi_database::Error::refused)?,
+            ) {
                 ColumnsOutcome::Sort(key) => {
                     self.sort_dir = if key == self.sort_by && self.sort_dir == SortDir::Asc {
                         SortDir::Desc

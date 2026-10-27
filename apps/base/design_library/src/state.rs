@@ -197,15 +197,15 @@ impl State {
         match ty.as_str() {
             "sample-columns" => {
                 self.sample_columns
-                    .handle(&bilibi_ui::params::string_values(event));
+                    .handle(&bilibi_ui::params::string_values(event).map_err(Error::refused)?);
             }
             "pattern-columns" => {
                 self.pattern_columns
-                    .handle(&bilibi_ui::params::string_values(event));
+                    .handle(&bilibi_ui::params::string_values(event).map_err(Error::refused)?);
             }
             "confirm-columns" => {
                 self.confirm_columns
-                    .handle(&bilibi_ui::params::string_values(event));
+                    .handle(&bilibi_ui::params::string_values(event).map_err(Error::refused)?);
             }
             "sample-flex" => self.flex.apply(&get),
             "sample-flex-plain" => self.plain.apply(&get),
@@ -251,7 +251,8 @@ impl State {
                 }
             }
             "sample-search" => {
-                let mut values = bilibi_ui::params::form_values(event, "filters");
+                let mut values =
+                    bilibi_ui::params::form_values(event, "filters").map_err(Error::refused)?;
                 if let Some(search) = get("sample_filters[search]") {
                     values.insert("search".into(), search);
                 }
@@ -261,16 +262,16 @@ impl State {
                 .list
                 .apply_filters(&HashMap::from([("search".into(), String::new())])),
             "sample-page" => self.list.put_page(get("page").as_deref()),
-            "sample-page-size" => self
-                .list
-                .apply_filters(&bilibi_ui::params::form_values(event, "filters")),
-            "pattern-search" => self
-                .pattern
-                .apply_filters(&bilibi_ui::params::form_values(event, "pattern")),
+            "sample-page-size" => self.list.apply_filters(
+                &bilibi_ui::params::form_values(event, "filters").map_err(Error::refused)?,
+            ),
+            "pattern-search" => self.pattern.apply_filters(
+                &bilibi_ui::params::form_values(event, "pattern").map_err(Error::refused)?,
+            ),
             "pattern-page" => self.pattern.put_page(get("page").as_deref()),
-            "pattern-page-size" => self
-                .pattern
-                .apply_filters(&bilibi_ui::params::form_values(event, "filters")),
+            "pattern-page-size" => self.pattern.apply_filters(
+                &bilibi_ui::params::form_values(event, "filters").map_err(Error::refused)?,
+            ),
             "sample_change" => {
                 if let Some(object) = event.as_object() {
                     // Bound values only from the copied sample form; secrets never enter notices.
@@ -364,7 +365,8 @@ impl State {
                 self.browser_zone = get("timezone").filter(|v| bilibi_datetime::valid_timezone(v));
             }
             "filter-toolbar-preview" | "filter-toolbar-search-preview" => {
-                self.toolbar = bilibi_ui::params::form_values(event, "filters")
+                self.toolbar =
+                    bilibi_ui::params::form_values(event, "filters").map_err(Error::refused)?
             }
             // Bilimbi's `consume_uploaded_entries` in the submit handler: the
             // completed files are taken once, here, and only their facts stay.
@@ -413,10 +415,14 @@ impl State {
                     .display
                     .clock(self.browser_zone.as_deref(), jiff::Timestamp::now());
                 let period = Period::parse(|key| self.period.get(key).cloned(), clock.today);
-                let outcome = self.period_filters.iter_mut().find_map(|filter| {
+                let mut outcome = None;
+                for filter in &mut self.period_filters {
                     filter.set(period, &clock);
-                    filter.event(&ty, event, &clock)
-                });
+                    outcome = filter.event(&ty, event, &clock).map_err(Error::refused)?;
+                    if outcome.is_some() {
+                        break;
+                    }
+                }
                 if let Some(filter::Outcome::Applied(period)) = outcome {
                     self.period = period
                         .params()

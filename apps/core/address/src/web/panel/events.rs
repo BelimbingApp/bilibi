@@ -11,7 +11,7 @@ impl Panel {
         credential: &str,
         value: &Value,
     ) -> Result<()> {
-        let fields = |ns: &str| bilibi_ui::params::form_values(value, ns);
+        let fields = |ns: &str| form(value, ns);
         let event = event(value)?;
         match event {
             "clear_notice" => self.notice = None,
@@ -25,7 +25,7 @@ impl Panel {
                 self.attach = Some(AttachDraft::default());
             }
             "close_attach_modal" => self.attach = None,
-            "attach_address" => self.attach(scope, credential, &fields("address")).await?,
+            "attach_address" => self.attach(scope, credential, &fields("address")?).await?,
             "open_create_modal" if self.can_manage => {
                 self.notice = None;
                 if self.countries.is_empty() {
@@ -48,10 +48,10 @@ impl Panel {
             "open_attach_modal" | "open_create_modal" => self.forbidden(),
             "close_create_modal" => self.create = None,
             "validate_create_address" => {
-                self.take_create(&fields("address")).await?;
+                self.take_create(&fields("address")?).await?;
             }
             "save_create_address" => {
-                self.take_create(&fields("address")).await?;
+                self.take_create(&fields("address")?).await?;
                 self.save_create(scope, credential).await?;
             }
             "edit_address_kinds" => {
@@ -61,7 +61,7 @@ impl Panel {
             }
             "cancel_address_kinds" => self.editing_kinds = None,
             "save_address_kinds" => {
-                let posted = fields("kinds");
+                let posted = fields("kinds")?;
                 let id = value.get("address_id").and_then(Value::as_str);
                 if let Some(listed) = self.listed(id).cloned() {
                     let mut attachment = listed.attachment.attachment.clone();
@@ -191,10 +191,10 @@ impl Panel {
                     }
                 }
             }
-            "grid" => match self
-                .columns
-                .handle(&bilibi_ui::params::string_values(value))
-            {
+            "grid" => match self.columns.handle(
+                &bilibi_ui::params::string_values(value)
+                    .map_err(bilibi_database::Error::refused)?,
+            ) {
                 bilibi_ui::ColumnsOutcome::Sort(key) => {
                     self.sort_dir = if key == self.sort_by && self.sort_dir == SortDir::Asc {
                         SortDir::Desc
