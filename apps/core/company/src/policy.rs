@@ -116,14 +116,3 @@ setting!(
     "Maximum company tree depth (levels)",
     "Limit new parent links to this many levels, from 2 to 20."
 );
-
-/// The shared instance announcement belongs in every new create confirmation.
-pub async fn banner(
-    client: &(impl tokio_postgres::GenericClient + Sync),
-) -> Result<bilibi_ui::Html> {
-    let settings = SETTINGS.get().ok_or(Error::Internal)?;
-    bilibi_system::Instance::resolve(settings, client)
-        .await?
-        .banner("company-duplicate-instance", "")
-        .map_err(|_| Error::Internal)
-}

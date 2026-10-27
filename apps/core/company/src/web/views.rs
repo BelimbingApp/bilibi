@@ -985,6 +985,7 @@ pub(super) struct CreateState<'a> {
     pub candidates: &'a [crate::DuplicateCandidate],
     pub columns: &'a ListColumns,
     pub confirming: bool,
+    pub likely: bool,
     pub reason: &'a str,
 }
 pub(super) fn duplicate_builtins() -> Vec<BuiltinColumn> {
@@ -1009,6 +1010,7 @@ pub(super) async fn create(
         candidates,
         columns,
         confirming,
+        likely,
         reason,
     } = state;
     bilibi_authz::authorize_key(client, scope, crate::CREATE).await?;
@@ -1133,6 +1135,16 @@ pub(super) async fn create(
         body.push(&field);
     }
     let mut actions = submit;
+    if likely {
+        actions.push(&render(&Button {
+            id: "company-create-anyway",
+            button_type: "submit",
+            name: "intent",
+            value: "anyway",
+            body: Html::text("Create anyway"),
+            ..Button::default()
+        })?);
+    }
     actions.push(&render(&BackLink {
         id: "company-cancel",
         href: "/companies",
@@ -1159,12 +1171,18 @@ pub(super) async fn create(
         );
     }
     let mut candidate_body = Html::EMPTY;
-    if !candidates.is_empty() {
+    if likely {
         candidate_body.push(&render(&SectionHeading {
             title: "Possible duplicates",
-            description: "Use an existing company, or give a reason to create another one.",
+            description: if candidates.is_empty() {
+                "Likely duplicate companies exist that you cannot see. Give a reason to create another one."
+            } else {
+                "Use an existing company, or give a reason to create another one."
+            },
             ..SectionHeading::default()
         })?);
+    }
+    if !candidates.is_empty() {
         let state = ListState::parse(
             &HashMap::new(),
             Arc::new(ListSpec {
@@ -1216,12 +1234,6 @@ pub(super) async fn create(
         table.actions = true;
         table.caption = "Possible duplicate companies";
         candidate_body.push(&render(&table)?);
-        candidate_body.push(&render(&Button {
-            id: "company-create-anyway",
-            event: "request_create_anyway",
-            body: Html::text("Create anyway"),
-            ..Button::default()
-        })?);
     }
     let confirmation = if confirming {
         let field = render(
@@ -1240,15 +1252,14 @@ pub(super) async fn create(
                         .collect(),
                 ),
         )?;
-        let mut body = crate::policy::banner(client).await?;
-        body.push(&render(&Form {
+        let body = render(&Form {
             id: "company-duplicate-reason-form",
             event: "duplicate_reason",
             change: true,
             class: "",
             body: field,
             actions: Html::EMPTY,
-        })?);
+        })?;
         render(&DuplicateConfirm { body })?
     } else {
         Html::EMPTY

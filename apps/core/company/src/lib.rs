@@ -23,7 +23,7 @@ mod relationships;
 mod web;
 
 pub use contributions::{CAPABILITIES, CREATE, DELETE, LIST, TENANT_WIDE, UPDATE, VIEW};
-pub use duplicates::{CreateAnyway, DuplicateCandidate, DuplicateQuery};
+pub use duplicates::{CreateAnyway, CreateMatches, DuplicateCandidate, DuplicateQuery};
 pub use hierarchy::{Hierarchy, HierarchyNode};
 // Departments, and the head directory another owner binds (K3).
 pub use departments::{

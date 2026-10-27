@@ -220,10 +220,8 @@ impl WriteHandler for Create {
                 .filter(|(_, to)| !to.is_null() && to.as_str() != Some(""))
                 .map(|(field, to)| json!({"field":field,"from":null,"to":to}))
                 .collect();
-            let candidates =
-                crate::duplicates::duplicates(&**client, scope, &crate::DuplicateQuery::from(&new))
-                    .await?;
-            Ok(json!({"summary":"Create company","changes":changes,"duplicate_candidates":candidates,"create_anyway":new.create_anyway}).into())
+            let matches = crate::duplicates::create_matches(&**client, scope, &new).await?;
+            Ok(json!({"summary":"Create company","changes":changes,"duplicate_candidates":matches.candidates,"duplicates_likely":matches.likely,"create_anyway":new.create_anyway}).into())
         })
     }
     fn commit<'a>(

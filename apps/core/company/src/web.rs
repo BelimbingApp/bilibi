@@ -191,6 +191,7 @@ impl Pages {
             .map_err(|_| Error::Internal)?,
             duplicate_reason: String::new(),
             confirming_duplicate: false,
+            duplicate_likely: false,
             pending: None,
             pending_activity: None,
             history: false,
@@ -342,6 +343,7 @@ struct CompanyPage {
     duplicate_columns: ListColumns,
     duplicate_reason: String,
     confirming_duplicate: bool,
+    duplicate_likely: bool,
     pending: Option<Pending>,
     pending_activity: Option<(String, i64)>,
     history: bool,
@@ -490,6 +492,7 @@ impl CompanyPage {
                         candidates: &self.duplicate_candidates,
                         columns: &self.duplicate_columns,
                         confirming: self.confirming_duplicate,
+                        likely: self.duplicate_likely,
                         reason: &self.duplicate_reason,
                     },
                 )
@@ -719,13 +722,6 @@ impl CompanyPage {
                 self.duplicate_columns
                     .handle(&bilibi_ui::params::string_values(value));
             }
-            "request_create_anyway" if self.operation == "create" => {
-                let client = self.db.get().await?;
-                bilibi_authz::authorize_key(&**client, scope, crate::CREATE).await?;
-                if !self.duplicate_candidates.is_empty() {
-                    self.confirming_duplicate = true;
-                }
-            }
             "cancel_duplicate_create" => self.confirming_duplicate = false,
             "duplicate_reason" if self.operation == "create" => {
                 self.duplicate_reason = get("reason").to_owned();
@@ -740,10 +736,12 @@ impl CompanyPage {
                         .ok_or(Error::Invalid)?
                         .iter()
                         .filter_map(|(k, v)| v.as_str().map(|v| (k.clone(), v.into())))
-                        .filter(|(k, _)| k != "type")
+                        .filter(|(k, _)| k != "type" && k != "intent")
                         .collect();
                     self.duplicate_reason.clear();
                     self.confirming_duplicate = false;
+                    self.duplicate_candidates.clear();
+                    self.duplicate_likely = false;
                 }
                 let (mut new, activities, metadata, errors) = views::new_company(&self.form);
                 self.errors = errors;
@@ -755,18 +753,16 @@ impl CompanyPage {
                     }
                 }
                 if self.errors.is_empty() {
-                    let candidates = self
-                        .company
-                        .duplicates(scope, &crate::DuplicateQuery::from(&new))
-                        .await?;
+                    let matches = self.company.create_matches(scope, &new).await?;
+                    self.duplicate_likely = matches.likely;
+                    self.duplicate_candidates = matches.candidates.unwrap_or_default();
                     if anyway {
                         new.create_anyway = Some(crate::CreateAnyway {
                             candidate_ids: self.duplicate_candidates.iter().map(|c| c.id).collect(),
                             reason: self.duplicate_reason.clone(),
                         });
                     }
-                    self.duplicate_candidates = candidates;
-                    if anyway || self.duplicate_candidates.is_empty() {
+                    if anyway || !matches.likely {
                         match self
                             .company
                             .create_with_context(scope, &new, activities, metadata)
@@ -779,6 +775,8 @@ impl CompanyPage {
                             }
                             CreateOutcome::Refused(errors) => self.errors = errors,
                         }
+                    } else if get("intent") == "anyway" {
+                        self.confirming_duplicate = true;
                     }
                 }
             }
