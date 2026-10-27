@@ -29,14 +29,12 @@ impl Mailbox {
         Error::Delivery(format!("dev mailbox: {error}"))
     }
     fn store(&self, rendered: &[u8]) -> crate::Result<()> {
-        use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
+        use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
         fs::DirBuilder::new()
             .recursive(true)
             .mode(0o700)
             .create(&self.dir)
             .map_err(Self::io)?;
-        // A development inbound tool may have created the parent first.
-        fs::set_permissions(&self.dir, fs::Permissions::from_mode(0o700)).map_err(Self::io)?;
         let stamp = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .map_or(0, |elapsed| elapsed.as_millis());

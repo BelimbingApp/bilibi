@@ -86,7 +86,7 @@ SMTP also requires `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_TLS_MODE
 
 Open the newest `.eml` file in a mail client to see its plain and HTML parts and attachments. Simple plain-text messages retain their decoded (`8bit`) readable copy so reset links can be copied directly. Multipart messages keep their MIME encoding intact. Returned `Sent.bytes` always remain the wire form.
 
-The directory is `0700`, files are `0600`, and only the newest 100 messages are kept. `Mailbox::entries` lists messages newest first; `Mailbox::read` reads one accepted filename. The `inbound/` subfolder is excluded from listing and pruning. A module that offers inbound development tools owns reading that folder.
+Mail creates the directory as `0700` and does not change an existing one; files are `0600`, and only the newest 100 messages are kept. `Mailbox::entries` lists messages newest first; `Mailbox::read` reads one accepted filename. The `inbound/` subfolder is excluded from listing and pruning. A module that offers inbound development tools owns reading that folder.
 
 ## Walkthrough
 
