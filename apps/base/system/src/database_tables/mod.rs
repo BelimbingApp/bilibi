@@ -206,3 +206,12 @@ bilibi_ui::record_fields! { pub(super) mod fields {
     MIGRATION: bilibi_ui::RecordField::new("migration", "Migration"),
     COLUMNS: bilibi_ui::RecordField::new("column_count", "Columns"),
 } }
+
+fn title(text: &str) -> Result<Html> {
+    let mut title = render(bilibi_ui::Icon {
+        name: "database",
+        class: "inline size-4 mr-1 align-text-bottom",
+    })?;
+    title.push(&Html::text(text));
+    Ok(title)
+}

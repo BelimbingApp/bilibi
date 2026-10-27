@@ -297,7 +297,7 @@ impl Show {
         layout(
             "database-table-show",
             Header {
-                title: Html::text(&table.name),
+                title: super::title(&table.name)?,
                 subtitle: &subtitle,
                 title_actions: render(TablePin {
                     pin_label: &table.name,
