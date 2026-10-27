@@ -83,9 +83,11 @@ document.dispatchEvent(new CustomEvent('bilibi:navigate', {
 }));
 ```
 
-The socket processes events sequentially. Messages are limited to one upload
-chunk frame (`bilibi_web::live::FRAME_LIMIT`, 64 KiB plus a header); every
-JSON intent is far smaller.
+The socket processes events sequentially. **A complete encoded JSON intent may contain at most 1 MiB of UTF-8 bytes**, including its request ID (`bilibi_ui::LIVE_EVENT_LIMIT`). This budget is independent of upload chunks and carries multiple long-text fields. The browser serializes and checks every intent before queueing it, including while disconnected. An oversized intent is never sent: its source settles, its callback receives an error, and a persistent shared error flash explains that the draft is kept and asks the person to shorten the text or use a file upload.
+
+Web rechecks the encoded length before decoding a module event. A stale or custom client above the event budget receives an `error` with its valid request ID, target and `clear: false`; no module handler runs and the socket remains usable. A separate 2 MiB frame/message cap (`bilibi_web::live::FRAME_LIMIT`) bounds socket allocations while allowing these refusals. A peer exceeding that hard cap may be disconnected; Web attempts an error reply, and the browser keeps drafts on an unconfirmed disconnect. Binary uploads still carry at most `CHUNK_SIZE` (64 KiB) plus their eight-byte header, checked independently.
+
+Form authors follow [Shared UI's form-size rule](../apps/base/ui/README.md#form-size): field limits must match owner validation, and their combined encoded content must fit the event budget. A per-field character maximum alone cannot bound a repeating form's event.
 
 ## Browser adapter
 
@@ -103,8 +105,7 @@ JSON intent is far smaller.
   unkeyed siblings pair by position, and only attributes and text that differ
   are written. The browser's own dirty flags keep typed values, so an unfinished
   draft survives any patch, and the hidden inputs of a form holding a draft keep
-  their values (a record version still conflicts on save). The form whose
-  submission was accepted is reset to the stored values. On an existing element
+  their values (a record version still conflicts on save). The form whose submission was accepted is reset to the stored values unless it holds a newer refused draft. A refused draft stays protected from older replies, uploads and button actions until a later complete form snapshot is accepted; an older reply's redirect also stays on the draft. On an existing element
   the patcher leaves an iframe's `src`, a `<details>`/`<dialog>` `open` and a
   `data-live-ignore` subtree (except its `data-*` attributes) alone, keeps the
   `aria-expanded` a person gave the trigger of a `data-live-expanded`
@@ -128,8 +129,7 @@ JSON intent is far smaller.
   backoff (500ms doubling to 5s; `online` and window focus retry at once), then
   remounts the current URL into the existing DOM and sends the intents raised
   meanwhile. Intents that were in flight when the socket dropped cannot be
-  confirmed; the status region reports their count. Development reloads instead
-  so a rebuilt server serves fresh assets. A `clear` error on the page removes
+  confirmed; the status region reports their count. Development reloads fresh assets only when no form has a draft or unconfirmed submission. Otherwise it remounts into the existing DOM and keeps the draft. A `clear` error on the page removes
   `#app`, offers sign-in and stops reconnecting.
 
 Forms raise intent with `data-event`: `params` sends the form values as a

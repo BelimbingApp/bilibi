@@ -322,7 +322,9 @@ impl Create {
             provenance,
             provenance_summary,
             provenance_open,
-            raw_input: field("raw_input", "Raw input", &i.raw_input).kind(InputKind::Textarea),
+            raw_input: field("raw_input", "Raw input", &i.raw_input)
+                .kind(InputKind::Textarea)
+                .attr("maxlength", "10000"),
             submit: render(Button {
                 id: "address-save",
                 button_type: "submit",
