@@ -1167,7 +1167,7 @@ impl Detail {
         let enrolled = self.pages.users.step_up.enrolled(scope).await?;
         let card = render(&TwoFactorCard {
             description: format!(
-                "{} set up 2FA. If they lost access, reset it: they are signed out and set it up again.",
+                "{} has set up 2FA. If they lost access, reset it so they can set it up again.",
                 loaded.account.name
             ),
             button: render(&Button {
@@ -1510,7 +1510,7 @@ impl Detail {
             Err(AccountError::Access(Error::Conflict)) => CommitStatus::refusal(
                 label,
                 submitted,
-                &["changed while this edit was in flight; reload before trying again"],
+                &["changed while you were editing; reload before trying again"],
             ),
             Err(AccountError::OwnAccount) | Err(AccountError::Access(_)) => CommitStatus::failure(),
         };

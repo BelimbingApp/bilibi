@@ -193,13 +193,14 @@ impl Profile {
             Ok(saved) => {
                 self.load(request.scope).await?;
                 match self.pages.users.save_landing(request.scope, &landing).await {
-                    Ok(()) => self.flash.success(
-                        if saved.email_changed && self.email != previous {
-                            "Profile saved. Your new address is unverified until you confirm it."
-                        } else {
-                            "Profile saved."
-                        },
-                    ),
+                    Ok(()) => {
+                        self.flash
+                            .success(if saved.email_changed && self.email != previous {
+                                "Profile saved. Confirm your new email address to verify it."
+                            } else {
+                                "Profile saved."
+                            })
+                    }
                     Err(AccountError::Validation(errors)) => {
                         let message = errors
                             .first()

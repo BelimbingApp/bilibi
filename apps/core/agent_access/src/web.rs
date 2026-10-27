@@ -251,7 +251,7 @@ struct DeviceView<'a> {
 fn device_message(error: &OAuthError) -> &'static str {
     match error {
         OAuthError::PersonRequired => {
-            "Connect from your own signed-in account. Impersonation cannot approve connections."
+            "Connect from your own account. You cannot approve connections while viewing as someone else."
         }
         OAuthError::InvalidExpiry => {
             "The connection end time cannot be changed here. Check the code again."
@@ -451,7 +451,7 @@ struct AuthorizeView<'a> {
 fn authorize_message(error: &OAuthError) -> &'static str {
     match error {
         OAuthError::PersonRequired => {
-            "Connect from your own account. Impersonation and agents cannot approve connections."
+            "Connect from your own account. Agents and people viewing as someone else cannot approve connections."
         }
         OAuthError::InvalidExpiry => {
             "The connection end time cannot be changed here. Start a new connection."
