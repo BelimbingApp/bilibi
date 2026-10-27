@@ -721,7 +721,7 @@ impl RolesPage {
             html.push(&render(&ConfirmDialog {
                 id: "retire-relationship-role-confirm",
                 consequence: &format!("Relationship role “{}” will be retired.", role.name),
-                detail: "No new relationship can use it. Every existing relationship keeps it and stays visible as history.",
+                detail: "New relationships cannot use this role. Existing relationships keep it in their history.",
                 confirm: "Retire",
                 working: "Retiring…",
                 confirm_event: "retire",
@@ -1432,7 +1432,7 @@ impl LinksPage {
                     .errors(target_errors)
                     .required();
                 if !modal.options.persons_readable {
-                    field = field.hint("You do not have permission to list persons.");
+                    field = field.hint("You do not have permission to list people.");
                 } else if modal.options.persons.is_empty() {
                     field = field.hint("No people have been added yet.");
                 }
