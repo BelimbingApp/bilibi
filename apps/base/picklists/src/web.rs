@@ -991,11 +991,15 @@ impl Values {
         table.framed = false;
         table.actions = edits;
         if counts.total_entries == 0 {
-            table.empty = Some(TableEmpty::Content(Html::text(if search.is_empty() {
-                "No active values. Include retired values to see them."
-            } else {
-                "No value matches this search."
-            })));
+            table.empty = Some(TableEmpty::Content(Html::text(
+                if search.is_empty() && all_status {
+                    "This list has no values."
+                } else if search.is_empty() {
+                    "No active values. Include retired values to see them."
+                } else {
+                    "No value matches this search."
+                },
+            )));
         }
         let mut body = render(table)?;
         body.push(&render(Pagination::new(
