@@ -592,6 +592,7 @@ dependencies = [
  "bilibi-tenant-administration",
  "bilibi-user",
  "bilibi-user-administration",
+ "bilibi-work-calendar",
 ]
 
 [[package]]
@@ -1405,6 +1406,32 @@ dependencies = [
  "tokio-postgres",
  "tower-http",
  "uuid",
+]
+
+[[package]]
+name = "bilibi-work-calendar"
+version = "0.1.1"
+dependencies = [
+ "bilibi-agent-api",
+ "bilibi-authz",
+ "bilibi-base",
+ "bilibi-core",
+ "bilibi-database",
+ "bilibi-datetime",
+ "bilibi-events",
+ "bilibi-geonames",
+ "bilibi-module-registry",
+ "bilibi-party-ids",
+ "bilibi-settings",
+ "bilibi-tenancy",
+ "bilibi-walkthrough-fixture",
+ "bilibi-web",
+ "inventory",
+ "jiff",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tokio-postgres",
 ]
 
 [[package]]

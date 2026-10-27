@@ -1,0 +1,30 @@
+[package]
+name = "bilibi-work-calendar"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+bilibi-agent-api.workspace = true
+bilibi-authz.workspace = true
+bilibi-database.workspace = true
+bilibi-datetime.workspace = true
+bilibi-events.workspace = true
+bilibi-geonames.workspace = true
+bilibi-module-registry.workspace = true
+bilibi-party-ids.workspace = true
+bilibi-settings.workspace = true
+bilibi-tenancy.workspace = true
+inventory.workspace = true
+jiff.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio-postgres.workspace = true
+
+[dev-dependencies]
+bilibi-walkthrough-fixture = { path = "../../../fixtures/walkthrough" }
+bilibi-web = { path = "../../web" }
+bilibi-base = { path = "../../base" }
+bilibi-core = { path = ".." }
+tokio.workspace = true

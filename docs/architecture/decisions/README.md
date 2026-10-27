@@ -79,3 +79,9 @@ Every record carries these header lines: Document Type, Status, Agents, Scope, L
 | Record | Status |
 | --- | --- |
 | [07 Hard-coded values and operator pick-lists](./07-hard-coded-values-and-operator-pick-lists.md) | Proposed |
+
+### Business time
+
+| Record | Status |
+| --- | --- |
+| [09 Work calendars are Core master data with four fixed day types](./09-work-calendars-in-core.md) | Proposed |

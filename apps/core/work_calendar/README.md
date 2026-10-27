@@ -1,0 +1,100 @@
+# Work calendars
+
+`core/work_calendar` answers, for every module, "is this business time?" and "when is N business hours from now?", from calendars a tenant's administrators keep. It is Core master data beside Company and Address, so Domains share one calendar ([ADR 09](../../../docs/architecture/decisions/09-work-calendars-in-core.md)). Calendars decide business time, never who works: shifts and rosters stay in Domains.
+
+No Bilimbi counterpart. The four day types are Belimbing's attendance calendar (Normal, Rest, Off, Holiday).
+
+## Using it from a module
+
+Declare a dependency on `core/work_calendar` and resolve `WorkCalendars` from service `core/work_calendar.calendars` (`bilibi_work_calendar::SERVICE`). Every call takes the sealed `Scope`; day and arithmetic reads need nothing more, since the caller authorizes its own operation.
+
+| Call | Answers |
+| --- | --- |
+| `choices(scope)` | Active calendars for a picker, by name |
+| `check(client, scope, code)` | Whether a record may be assigned `code` now: an active calendar, locked `FOR SHARE` in the caller's transaction. Retired or unknown is `Invalid` |
+| `default_for(scope, company)` | The company's default code (`work_calendar.default`, company over tenant), or `None` when unset, retired or missing |
+| `day(scope, code, date)`, `days(scope, code, from, to)` | Resolved dates |
+| `timetable(scope, code, from, to)` or `Timetable::load(client, scope, code, from, to)` | Business-time arithmetic for a window of at most 731 days |
+
+- Store the calendar **code**, never an id. Codes are stable: a calendar is retired, never deleted.
+- `None` from `default_for` is the caller's choice: the facade never substitutes clock time. `Timetable::clock()` is always open, so a caller that falls back to clock time keeps one code path.
+- A `Timetable` is the per-request cache: one load serves a list of 50 cases. There is no process-wide cache, so the next request sees a saved change.
+
+## Day types and resolution
+
+Every date resolves to exactly one type, fixed in code (`DayType`): `working` (with opening periods), `rest` (the weekly rest day), `off` (another non-working day, such as Saturday in a five-day week) or `holiday`. A Domain cannot add one. A specific closure is a named exception of one of the four; a half day is a short `working` exception.
+
+1. The calendar's **exception** covering the date wins.
+2. Then a **holiday** from an included holiday set, or a **substitute** for one.
+3. Then the **week** of the rule version in force.
+
+A `Day` gives the date, its type, `weekly` (the week's type underneath, such as a holiday on a rest day), its periods, the `Reason` (week, holiday, substitute, exception) and the zone.
+
+- **Rule versions.** A version holds the zone and the full week from its `effective_from` until the next version; a changed weekend or new hours adds a version and earlier dates keep their rules. The first version also governs any earlier date. Setting a version on an existing date replaces it.
+- **Substitutes** (`substitute` per calendar): `none` (default), `rest` (a holiday on a rest day moves) or `rest_and_off` (also on an off day). It moves to the next day the calendar's own week makes working that is not a holiday or another holiday's substitute, at most 14 days on. A gazetted replacement date is entered as an ordinary holiday instead.
+- **Exceptions**: a date or range (at most 366 days) with its own type and, for `working`, periods. Ranges of one calendar never overlap.
+
+## Periods and zones
+
+- Up to four periods a day, `HH:MM-HH:MM` in the version's zone, half-open (`09:00-18:00` closes at 18:00), sorted and not overlapping. An end at or before the start is the next day (`22:00-02:00`); a period belongs to the day it starts on. A day's late hours may not run into the next day's.
+- Wall-clock times become UTC instants by `Period::bounds`' rules: a time in a daylight-saving gap starts at the first valid instant, a time in a fold uses the earlier one. Business time is real elapsed time, so a period across a clock change is shorter or longer.
+- Dates are stored zone-free; nothing stores a computed instant.
+
+## Arithmetic (`Timetable`)
+
+All instants are `jiff::Timestamp` (UTC) and durations non-negative `jiff::SignedDuration`.
+
+| Call | Result |
+| --- | --- |
+| `is_open(t)` | Whether `t` lies in an opening period |
+| `next_open(t)` | `t` if open, else the next period's start |
+| `add(t, d)` | `d` of business time counted from `t`, or from the next opening if closed. A result exactly at a closing time stays there ("due 18:00 today", not "09:00 tomorrow"); `add(t, 0)` is `t` |
+| `elapsed(a, b)` | Business time in `[a, b)`; `a` after `b` is `Backwards` |
+| `add_working_days(date, n)` | The `n`th working day after `date`; `n = 0` is `date` or the next working day. Take the time from `day` |
+
+A search looks at most 366 days ahead (`SEARCH_DAYS`) and never past the loaded window, then returns `TimeError::Beyond` rather than looping, as it does for a calendar with no working days. An instant outside the window is `Beyond` too: load the window you need.
+
+## Holiday sets
+
+- Whole-day holidays a tenant keeps, optionally for a country and division (`country_iso`, `admin1_code` such as `MY.14`), checked against `core/geonames`: a set with a country can be saved only after countries are imported.
+- A calendar includes several sets (national plus one state). No holiday data ships and nothing seeds: governments announce holidays late, some by moon sighting.
+- Installation-wide sets kept by the platform operator are not built yet: a change to one cannot record `changed` in other tenants from the operator's transaction (follow-up issue).
+
+## Administration
+
+Tenant capabilities `admin.work-calendar.view`, `.list` and `.manage`. Writes recheck `.manage` inside their transaction, are audited (`core/work_calendar.calendar`, `.rule`, `.exception`, `.holiday_set`, `.holiday`, `.include`) and carry a version fence on the calendar or set. Every statement carries the tenant predicate.
+
+Agents, and later the pages, use these contracts (ADR 01); writes are reviewed (plan, then commit):
+
+| Operation | Kind | Does |
+| --- | --- | --- |
+| `core.work_calendar.list` | read (list) | Calendars and holiday sets |
+| `core.work_calendar.get` | read | One calendar: versions, sets, exceptions, version |
+| `core.work_calendar.holiday_set.get` | read | One set with its holidays and the calendars including it |
+| `core.work_calendar.days` | read | Resolved dates of a range |
+| `core.work_calendar.business_time` | read | `is_open`, `next_open`, `add`, `elapsed`, `add_working_days`; `beyond: true` is an answer |
+| `core.work_calendar.create` | write | A calendar with its zone (default the tenant's `localization.timezone`), first week and substitute rule |
+| `core.work_calendar.update` | write | Rename, substitute rule, retire or reactivate |
+| `core.work_calendar.rule.set` | write | A week from a date |
+| `core.work_calendar.exception.add` / `.remove` | write | Dated exceptions |
+| `core.work_calendar.holiday_set.create` / `.update` | write | Sets, with country and division |
+| `core.work_calendar.holiday_set.holidays` | write | Add (or rename) and remove up to 400 holidays: a year at a time |
+| `core.work_calendar.include` | write | Include a set in a calendar, or leave it out |
+
+Setting `work_calendar.default` (tenant and company scopes, null by default) names a calendar code.
+
+### Retirement
+
+A retired calendar leaves `choices`, fails `check` for a new assignment, and still computes for records holding it.
+
+## Events
+
+Each write that moves dates records `core/work_calendar.changed` in its own transaction, once per affected calendar, with subject the calendar code and payload `{"calendar": code, "from": date | null, "to": date | null}` (null is open-ended; a holiday change extends `to` by 14 days for substitutes). No stored result elsewhere changes: a module with open items, such as SLA due times, subscribes and recomputes them itself.
+
+## Not here
+
+Shifts, rosters and attendance; pay rates by day type and leave-day counting; SLA, voice-menu and routing logic; holiday feeds, file import and iCalendar; per-person calendars; meeting and booking calendars. Calendar pages, the month view and the day-type tile come in a later change.
+
+## Walkthrough
+
+On a disposable database, set `DATABASE_URL`, `BILIBI_WORK_CALENDAR_DEMO=disposable`, `BILIBI_SETTINGS_KEY` and `BILIBI_USER_SIGNING_KEY`, then run `cargo run -p bilibi-work-calendar --example work-calendar-walkthrough`. It migrates, installs the walkthrough fixture and, through the reviewed contracts, builds a Monday–Friday calendar with a lunch break, national and state holiday sets, a shutdown, a special working Saturday and a half day; prints the resolved days with their reasons, substitutes under a Friday–Saturday weekend and a new rule version; answers each `business_time` operation across breaks, weekends, holidays, a close boundary, a closed start, a daylight-saving gap and fold and a period past midnight; and shows the company default, retirement, `changed` events, tenant isolation, refused writes and the audit trail.
