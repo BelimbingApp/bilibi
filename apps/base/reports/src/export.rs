@@ -11,7 +11,6 @@ use bilibi_audit::{record_action, Attribution};
 use bilibi_database::Error;
 use bilibi_tenancy::Scope;
 use serde_json::{json, Value};
-use std::collections::BTreeMap;
 
 type Outcome<T> = Result<T, ReportError>;
 
@@ -73,11 +72,11 @@ impl Reports {
         &self,
         scope: &Scope,
         id: i64,
-        answers: &BTreeMap<usize, Value>,
+        input: &RunInput,
         format: Format,
     ) -> Outcome<File> {
         let cap = self.export_rows(scope).await?;
-        self.export_within(scope, id, answers, format, cap, true)
+        self.export_within(scope, id, input, format, cap, true)
             .await
     }
 
@@ -88,7 +87,7 @@ impl Reports {
         &self,
         scope: &Scope,
         id: i64,
-        answers: &BTreeMap<usize, Value>,
+        input: &RunInput,
         format: Format,
         cap: usize,
         require_export: bool,
@@ -97,7 +96,7 @@ impl Reports {
             let client = self.db.get().await.map_err(Error::from)?;
             crate::authorize(&**client, scope, EXPORT).await?;
         }
-        let table = self.tabulate(scope, id, answers, cap).await?;
+        let table = self.tabulate(scope, id, input, cap).await?;
         let bytes = render(&table, format)?;
         let client = self.db.get().await.map_err(Error::from)?;
         record_action(
@@ -122,12 +121,13 @@ impl Reports {
         &self,
         scope: &Scope,
         id: i64,
-        answers: &BTreeMap<usize, Value>,
+        input: &RunInput,
         cap: usize,
     ) -> Outcome<Tabled> {
+        // The page's answers, drill-downs and records view; every page.
         let mut input = RunInput {
-            answers: answers.clone(),
-            ..RunInput::default()
+            page: 0,
+            ..input.clone()
         };
         let first = self.run(scope, id, &input).await?;
         let (name, description, kind) = (

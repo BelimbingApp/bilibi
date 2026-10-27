@@ -43,11 +43,12 @@ macro_rules! bound {
         })) }
     };
 }
+// Grid's `page_keys` reads 1 to 100 rows a page.
 bound!(
     PAGE_SIZE_KEY,
     50,
     10,
-    200,
+    100,
     "Rows per page",
     "How many rows a list report shows at a time."
 );

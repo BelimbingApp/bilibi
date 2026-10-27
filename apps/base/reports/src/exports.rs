@@ -271,7 +271,17 @@ impl Reports {
             }
         };
         let file = match self
-            .export_within(scope, report, &answers, format, cap, !quiet)
+            .export_within(
+                scope,
+                report,
+                &crate::RunInput {
+                    answers,
+                    ..crate::RunInput::default()
+                },
+                format,
+                cap,
+                !quiet,
+            )
             .await
         {
             Ok(file) => file,

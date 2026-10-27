@@ -99,9 +99,30 @@ fn run_input(input: &Value) -> Result<RunInput, AgentError> {
         };
         answers.insert(position, value);
     }
-    let drill = match input.get("drill") {
-        Some(drill) => serde_json::from_value::<Vec<FilterDef>>(drill.clone())
-            .map_err(|_| invalid("drill", "must be filters of column, test and value"))?,
+    // The browser's drill filters: a group's value, an empty group, or a
+    // date bucket's first and last day (`min`/`max`, as answers write them).
+    let drill = match input.get("drill").and_then(Value::as_array) {
+        Some(items) => items
+            .iter()
+            .map(|item| {
+                let column = item["column"].as_str().unwrap_or_default().to_owned();
+                let value = match item["test"].as_str() {
+                    Some("equals") => item["value"].clone(),
+                    Some("empty") => Value::Null,
+                    Some("range") => json!({"min": item["min"], "max": item["max"]}),
+                    _ => return Err(invalid("drill", "test must be equals, empty or range")),
+                };
+                Ok(FilterDef {
+                    column,
+                    test: item["test"].as_str().unwrap_or_default().to_owned(),
+                    value,
+                    ask: false,
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+        None if input.get("drill").is_some() => {
+            return Err(invalid("drill", "must be a list of filters"))
+        }
         None => Vec::new(),
     };
     if drill.len() > 2 {
@@ -406,8 +427,9 @@ fn run_schema() -> Value {
             "min":{"type":"string","maxLength":32},
             "max":{"type":"string","maxLength":32}
         }}},
-        "drill":{"type":"array","description":"Extra equals filters to narrow to one group of a summary, as {column, test: equals, value}.","items":{"type":"object","required":["column","test"],"properties":{
-            "column":{"type":"string","maxLength":160},"test":{"type":"string","enum":["equals","empty"]},"value":{"type":"string","maxLength":256}
+        "drill":{"type":"array","description":"Up to two filters that narrow to one group of a summary, as the page drills: {column, test: equals, value} for a group's value, {column, test: empty} for the empty group, or {column, test: range, min, max} with YYYY-MM-DD days for a date bucket (a month is its first and last day).","items":{"type":"object","required":["column","test"],"properties":{
+            "column":{"type":"string","maxLength":160},"test":{"type":"string","enum":["equals","empty","range"]},"value":{"type":"string","maxLength":256},
+            "min":{"type":"string","maxLength":32},"max":{"type":"string","maxLength":32}
         }}},
         "page":{"type":"integer","minimum":0,"maximum":1000,"description":"A list report's page, from 0."},
         "as_rows":{"type":"boolean","description":"For a summary or matrix: list the records behind it (with drill, the records of one group) page by page instead."}

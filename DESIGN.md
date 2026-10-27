@@ -52,8 +52,9 @@ Reuse the shared macros and typed models. Do not hand-write markup or copy class
 
 | Need | Use | Source |
 | --- | --- | --- |
-| Page, card, section, button, badge, icon | `templates/components.html` and `src/components.rs` | `apps/base/ui` |
+| Page, card, section, stack, cluster, narrowing, removable, button, badge, icon | `templates/components.html` and `src/components.rs` | `apps/base/ui` |
 | Form control | `templates/forms.html` and `src/forms.rs` | `apps/base/ui` |
+| Form layout (`form`, `section`, `fields`, `field_row`, `control_group`) | `templates/forms.html` | `apps/base/ui` |
 | Flash, alert, panel notice | `templates/feedback.html` and `src/feedback.rs` | `apps/base/ui` |
 | Which Bilibi this is (badge, banner) | `templates/feedback.html` and `src/instance.rs`, through `bilibi_system::Instance` | `apps/base/ui`, `apps/base/system` |
 | Modal, confirmation | `templates/dialog.html` | `apps/base/ui` |
