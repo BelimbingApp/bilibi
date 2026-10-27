@@ -66,9 +66,3 @@ Every record carries these header lines: Document Type, Status, Agents, Scope, L
 | Record | Status |
 | --- | --- |
 | [06 Record search at query time, in the owner's source](./06-query-time-record-search.md) | Proposed |
-
-### Data and reporting
-
-| Record | Status |
-| --- | --- |
-| [07 Report builder: reports read owners' Grid sources under bounds](./07-report-builder-reads-owner-sources.md) | Proposed |

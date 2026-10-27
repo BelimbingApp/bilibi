@@ -19,9 +19,10 @@ use crate::query::{
 use crate::{Agg, Catalog, Column, FieldType, Table};
 use bilibi_database::{Db, Error};
 use bilibi_tenancy::Scope;
+use bytes::BytesMut;
 use jiff::{civil::Date, tz::TimeZone, Timestamp, ToSpan};
 use serde_json::Value;
-use tokio_postgres::types::ToSql;
+use tokio_postgres::types::{Format, IsNull, ToSql, Type};
 
 pub const MAX_FILTERS: usize = 16;
 pub const MAX_GROUPINGS: usize = 2;
@@ -589,7 +590,7 @@ fn operand(column: &Column, value: &Value) -> Result<(&'static str, String), Que
     let refused = |why: &'static str| Err(unsupported(column, why));
     match (column.ty, value) {
         (FieldType::Integer | FieldType::Float | FieldType::Decimal, Value::Number(n)) => {
-            Ok((number_cast(column.ty), n.to_string()))
+            Ok(("numeric", n.to_string()))
         }
         (FieldType::Integer | FieldType::Float | FieldType::Decimal, _) => {
             refused("this column takes numbers")
@@ -617,14 +618,30 @@ fn operand(column: &Column, value: &Value) -> Result<(&'static str, String), Que
     }
 }
 
-/// The SQL type a number column compares as. A float stays `float8`:
-/// through `numeric` PostgreSQL rounds it to 15 digits, so a stored value
-/// would miss itself and a near neighbour would match.
-fn number_cast(ty: FieldType) -> &'static str {
-    match ty {
-        FieldType::Float => "float8",
-        _ => "numeric",
+/// A float operand, bound in PostgreSQL's text format with no cast, so the
+/// server types it from the column it is compared with, as it would a
+/// literal: a `real` column compares in `real` and a `double precision` one
+/// in `float8`. Through `numeric` a double rounds to 15 digits (a stored
+/// value misses itself, a near neighbour matches); through `float8` a
+/// `real` widens (`0.1` misses itself).
+#[derive(Debug)]
+struct Untyped(String);
+impl ToSql for Untyped {
+    fn to_sql(
+        &self,
+        _: &Type,
+        out: &mut BytesMut,
+    ) -> Result<IsNull, Box<dyn std::error::Error + Send + Sync>> {
+        out.extend_from_slice(self.0.as_bytes());
+        Ok(IsNull::No)
     }
+    fn accepts(_: &Type) -> bool {
+        true
+    }
+    fn encode_format(&self, _: &Type) -> Format {
+        Format::Text
+    }
+    tokio_postgres::types::to_sql_checked!();
 }
 
 /// A `YYYY-MM-DD` day PostgreSQL can take. It has no year 0 and reads no
@@ -653,7 +670,11 @@ fn test(
     Ok(match test {
         Test::Equals(wanted) => {
             let (cast, text) = operand(column, wanted)?;
-            format!("({value})::{cast} = {}::text::{cast}", binds.push(text))
+            if ty == FieldType::Float {
+                format!("({value}) = {}", binds.push(Untyped(text)))
+            } else {
+                format!("({value})::{cast} = {}::text::{cast}", binds.push(text))
+            }
         }
         Test::OneOf(choices) => {
             if choices.is_empty() || choices.len() > MAX_CHOICES {
@@ -666,10 +687,16 @@ fn test(
                 cast = typed;
                 texts.push(text);
             }
-            format!(
-                "({value})::{cast} = ANY({}::text[]::{cast}[])",
-                binds.push(texts)
-            )
+            if ty == FieldType::Float {
+                // An array literal of plain numbers, in the column's type.
+                let list = format!("{{{}}}", texts.join(","));
+                format!("({value}) = ANY({})", binds.push(Untyped(list)))
+            } else {
+                format!(
+                    "({value})::{cast} = ANY({}::text[]::{cast}[])",
+                    binds.push(texts)
+                )
+            }
         }
         Test::Contains(text) => {
             if !matches!(ty, FieldType::String | FieldType::Enum) {
@@ -693,11 +720,13 @@ fn test(
                 let Value::Number(number) = bound else {
                     return Err(unsupported(column, "a number range takes numbers"));
                 };
-                let placeholder = binds.push(number.to_string());
-                let cast = number_cast(ty);
-                parts.push(format!(
-                    "({value})::{cast} {op} {placeholder}::text::{cast}"
-                ));
+                parts.push(if ty == FieldType::Float {
+                    let placeholder = binds.push(Untyped(number.to_string()));
+                    format!("({value}) {op} {placeholder}")
+                } else {
+                    let placeholder = binds.push(number.to_string());
+                    format!("({value})::numeric {op} {placeholder}::text::numeric")
+                });
             }
             parts.join(" AND ")
         }
