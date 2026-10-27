@@ -116,4 +116,4 @@ Actions, Data Mutations and record history show "Client identity" separately fro
 
 ## Verify audit log
 
-**`/audit/integrity` (platform operators with `admin.audit.log.list`) seals rows written since the last seal, recomputes both evidence chains and says where one breaks** (ADR 05; `base/audit` README, Hash chain). Each check is recorded as `audit.chain.verified`. The contributed schedule `base/audit.chain-seal` seals every 15 minutes once an operator enables it.
+**`/audit/integrity` (platform operators with `admin.audit.log.list`) recomputes both evidence chains and says where one breaks, including a committed row with no link** (ADR 05; `base/audit` README, Hash chain). Rows are linked as they commit, so there is nothing to seal first. Each check is recorded as `audit.chain.verified`.

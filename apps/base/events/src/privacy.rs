@@ -182,7 +182,7 @@ impl Handler for Payloads {
         grant: &'a Disclosure,
     ) -> HandlerFuture<'a, Exported> {
         Box::pin(async move {
-            grant.check(scope)?;
+            grant.check_subject(scope, subject)?;
             let mut ids = subject.confirmed_ids(KIND);
             let mut after = 0;
             loop {
@@ -227,7 +227,7 @@ impl Handler for Payloads {
         holds: &'a Holds,
     ) -> HandlerFuture<'a, Erased> {
         Box::pin(async move {
-            grant.check(scope)?;
+            grant.check_subject(scope, subject)?;
             let mut ids = subject.confirmed_ids(KIND);
             let mut after = 0;
             loop {

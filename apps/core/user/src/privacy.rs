@@ -91,7 +91,7 @@ impl Handler for Accounts {
         grant: &'a Disclosure,
     ) -> HandlerFuture<'a, Exported> {
         Box::pin(async move {
-            grant.check(scope)?;
+            grant.check_subject(scope, subject)?;
             let accounts = client
                 .query(
                     "SELECT u.id,u.name,u.email,u.status,u.email_verified_at::text,u.deleted_at::text,\
@@ -126,14 +126,14 @@ impl Handler for Accounts {
         holds: &'a Holds,
     ) -> HandlerFuture<'a, Erased> {
         Box::pin(async move {
-            grant.check(scope)?;
+            grant.check_subject(scope, subject)?;
             let bound = BOUND.get().ok_or(Error::Internal)?;
             let tenant = scope.tenant();
             let users = tx
                 .sql()
                 .query(
-                    "SELECT id,name,email,status,anonymised_at IS NOT NULL FROM users WHERE tenant_id=$1 AND person_id=$2 ORDER BY id FOR UPDATE",
-                    &[&tenant, &subject.person.get()],
+                    "SELECT id,name,email,status,(name=$3 AND email LIKE 'erased-%@erased.invalid' AND status='deleted') FROM users WHERE tenant_id=$1 AND person_id=$2 ORDER BY id FOR UPDATE",
+                    &[&tenant, &subject.person.get(), &ERASED],
                 )
                 .await?;
             let ids: Vec<i64> = users.iter().map(|row| row.get(0)).collect();
@@ -235,12 +235,14 @@ impl Handler for Accounts {
                 erased.records.push(ErasedRecord {
                     kind: USER_KIND.into(),
                     id: user,
+                    person: None,
                 });
                 erased
                     .records
                     .extend(removed.into_iter().map(|id| ErasedRecord {
                         kind: NOTIFICATION_KIND.into(),
                         id,
+                        person: None,
                     }));
             }
             Ok(erased)

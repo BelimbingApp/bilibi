@@ -755,7 +755,9 @@ impl Media {
             {
                 old_asset["original_filename"] = json!(bilibi_personal_data::ERASED);
             }
-            let (tenant, id, asset_id, user) = (scope.tenant(), row.id, row.asset_id, scope.user());
+            // A system principal (owed cleanup after a hold) is recorded as no user.
+            let user = scope.principal().is_none().then(|| scope.user());
+            let (tenant, id, asset_id) = (scope.tenant(), row.id, row.asset_id);
             let changes = vec![
                 Change {
                     kind: ATTACHMENT_KIND.into(),

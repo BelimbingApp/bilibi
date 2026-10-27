@@ -255,6 +255,12 @@ impl<'a> MutationTransaction<'a> {
     }
     /// In-process, infallible fan-out only. Durable work belongs in a
     /// transactionally inserted queue/outbox, not in these callbacks.
+    /// A refusal an owner decides after its write (a rule over values the
+    /// write just changed): the transaction can no longer commit, even if a
+    /// caller catches the error.
+    pub fn poison(&mut self) {
+        self.poisoned = true;
+    }
     pub fn after_commit(&mut self, callback: impl FnOnce() + Send + 'static) {
         self.callbacks
             .get_mut()

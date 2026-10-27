@@ -3,6 +3,7 @@
 //! Audit accept a grant as the authority for their erasure and export paths,
 //! so no capability, session flag or request number can stand in for an
 //! approved request.
+use crate::Subject;
 use bilibi_database::{Error, Result};
 use bilibi_party_ids::PersonId;
 use bilibi_tenancy::Scope;
@@ -44,6 +45,17 @@ impl Erasure {
             Err(Error::Forbidden)
         }
     }
+    /// `Forbidden` unless `scope` is in the grant's tenant and `subject` is
+    /// the person the request was approved for. A sweep grant names no person
+    /// and answers for no subject.
+    pub fn check_subject(&self, scope: &Scope, subject: &Subject) -> Result<()> {
+        self.check(scope)?;
+        if self.person == Some(subject.person) {
+            Ok(())
+        } else {
+            Err(Error::Forbidden)
+        }
+    }
 }
 
 /// The authority to read a person's records and files for an approved access
@@ -67,6 +79,16 @@ impl Disclosure {
     /// `Forbidden` unless `scope` is in the grant's tenant.
     pub fn check(&self, scope: &Scope) -> Result<()> {
         if scope.tenant() == self.tenant {
+            Ok(())
+        } else {
+            Err(Error::Forbidden)
+        }
+    }
+    /// `Forbidden` unless `scope` is in the grant's tenant and `subject` is
+    /// the person the request was approved for.
+    pub fn check_subject(&self, scope: &Scope, subject: &Subject) -> Result<()> {
+        self.check(scope)?;
+        if self.person == subject.person {
             Ok(())
         } else {
             Err(Error::Forbidden)

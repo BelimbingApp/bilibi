@@ -195,6 +195,11 @@ pub struct ErasedRecord {
     /// The audit record kind (`Change::kind`), declared by a [`RecordKind`].
     pub kind: String,
     pub id: i64,
+    /// The person the record belongs to, when the store knows it and the
+    /// grant names none (a sweep): evidence kept for its legal minimum then
+    /// still honours a hold on that person.
+    #[serde(default)]
+    pub person: Option<i64>,
 }
 impl Erased {
     /// Adds another step's answer.

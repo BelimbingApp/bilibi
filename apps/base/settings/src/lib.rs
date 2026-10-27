@@ -346,6 +346,32 @@ impl Settings {
         }
         Ok(value)
     }
+    /// Every company's own stored value of one non-secret, company-scope key
+    /// in the actor's tenant, by company ID: for rules that must honour each
+    /// company's value at once, such as a legal minimum. A company with no
+    /// value of its own is absent. A stored value its definition refuses is
+    /// `Invalid`, never skipped.
+    pub async fn company_values(
+        &self,
+        client: &dyn ReadClient,
+        actor: &Scope,
+        key: &str,
+    ) -> Result<Vec<(i64, Value)>> {
+        let definition = match self.definitions.lookup(key)?.setting {
+            Setting::Definition(d) if !d.encrypted && d.scopes.contains(&ScopeKind::Company) => d,
+            _ => return Err(Error::Invalid),
+        };
+        let rows = client.query("SELECT scope_id,value,is_encrypted FROM base_settings WHERE key=$1 AND tenant_id=$2 AND scope_type='company' ORDER BY scope_id", &[&key, &actor.tenant()]).await?;
+        rows.iter()
+            .map(|row| {
+                let value: Value = row.get(1);
+                if row.get::<_, bool>(2) || definition.validate(&value).is_err() {
+                    return Err(Error::Invalid);
+                }
+                Ok((row.get(0), value))
+            })
+            .collect()
+    }
     /// The messages of the rules over related settings that `key` is part of.
     pub fn constraint_messages(&self, key: &str) -> Vec<&'static str> {
         self.definitions
@@ -497,6 +523,8 @@ impl Settings {
                 })
                 .collect();
             if !(constraint.accepts)(&values) {
+                // Already written: the transaction must not commit it.
+                tx.poison();
                 return Err(Error::Invalid);
             }
         }

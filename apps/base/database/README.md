@@ -6,7 +6,8 @@ mutable `MutationTransaction` to every nested owner. Use `mutate` for writes and
 return all affected records as `Change` values, including bulk writes. Owner SQL,
 record capture, action capture and nested notifications commit together. A write,
 capture or cancelled future poisons the transaction, so catching its error cannot
-permit commit. Dropping the transaction rolls back. `sql()` exposes locking and
+permit commit. An owner that refuses after its own write (a rule checked against
+what it just wrote) calls `poison()`, so its refusal rolls back the whole save. Dropping the transaction rolls back. `sql()` exposes locking and
 query operations; it is an explicit escape hatch, not automatic SQL interception.
 Every business write using it must still call `record`. Sessions and migration or
 seed ledgers are lifecycle writes, rather than business mutations.

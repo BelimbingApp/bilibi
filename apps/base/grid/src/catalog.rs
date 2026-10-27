@@ -240,6 +240,10 @@ impl Catalog {
         let field = column.field.as_ref()?;
         self.masks.get(column.table)?.get(field.id).copied()
     }
+    /// The personal kind `field` of `table` is masked by for this account.
+    pub fn field_mask(&self, table: &str, field: &str) -> Option<&'static str> {
+        self.masks.get(table)?.get(field).copied()
+    }
     /// Whether this account sees `field` of `table` masked.
     pub fn masked(&self, table: &str, field: &str) -> bool {
         self.masks.get(table).is_some_and(|m| m.contains_key(field))

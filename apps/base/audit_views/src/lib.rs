@@ -144,7 +144,7 @@ bilibi_dashboard::contribute!(
 
 inventory::submit! {
     Module { id: MODULE, layer: bilibi_module_registry::Layer::Base,
-        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/audit", "base/authz", "base/ui", "base/dashboard", "base/menu", "base/datetime", "base/locale", "base/queue", "base/schedule"],
+        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/audit", "base/authz", "base/ui", "base/dashboard", "base/menu", "base/datetime", "base/locale"],
         migrations: &[],
         services: &[
             Service { id: "base/audit_views.pages", factory: |services| {
@@ -158,12 +158,6 @@ inventory::submit! {
             Service { id: "base/audit_views.integrity", factory: |services| {
                 Ok(Arc::new(PageService::<Scope, Error>(Arc::new(integrity::Pages {
                     db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
-                }))))
-            } },
-            Service { id: "base/audit_views.seal_job", factory: |services| {
-                Ok(Arc::new(bilibi_queue::execution::HandlerService(Arc::new(integrity::SealJob {
-                    db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
-                    schedule: services.get("base/schedule.store")?,
                 }))))
             } },
             Service { id: "base/audit_views.mutations", factory: |services| {

@@ -63,7 +63,7 @@ impl Handler for Addresses {
         grant: &'a Disclosure,
     ) -> HandlerFuture<'a, Exported> {
         Box::pin(async move {
-            grant.check(scope)?;
+            grant.check_subject(scope, subject)?;
             let rows = client
                 .query(
                     "SELECT a.id,a.label,a.phone,a.line1,a.line2,a.line3,a.locality,a.postcode,a.country_iso,t.kinds,t.is_primary \
@@ -98,7 +98,7 @@ impl Handler for Addresses {
         holds: &'a Holds,
     ) -> HandlerFuture<'a, Erased> {
         Box::pin(async move {
-            grant.check(scope)?;
+            grant.check_subject(scope, subject)?;
             let tenant = scope.tenant();
             // Shared: another party (a company or another person) also uses it.
             let rows = tx
@@ -161,6 +161,7 @@ impl Handler for Addresses {
                 erased.records.push(ErasedRecord {
                     kind: KIND.into(),
                     id,
+                    person: None,
                 });
             }
             erased.count(KIND, Action::Anonymised, count);

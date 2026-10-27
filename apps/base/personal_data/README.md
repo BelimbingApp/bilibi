@@ -19,6 +19,7 @@ inventory::submit! { Contribution::new(PERSONAL_DATA, "core/person.people", prov
 | A store's `kinds` must be declared `RecordKind`s | Holds and audit erasure name only real kinds |
 | `RecordKind.fields` are the top-level keys of the kind's `Change` values that are personal | Audit erasure clears exactly these, never a business field |
 | A kind is declared once, by its owner | One answer per kind |
+| A kind with personal fields also gets a `base_personal_data_kinds` row from its owner's migration (same fields and `subject_identifier`) | The database refuses audit erasure of anything else; a mismatch is `Internal` |
 
 ## Handler
 
@@ -32,11 +33,12 @@ inventory::submit! { Contribution::new(PERSONAL_DATA, "core/person.people", prov
 
 - Act on records linked to the person and on `Subject.confirmed`; never on another identifier match.
 - Changes record `[erased]` (`ERASED`) where a value was, so erasure reads apart from absence.
-- Every call is idempotent.
+- Every call is idempotent, and decides by current values (not an earlier erasure's marker): a record changed after an erasure is erased again.
+- `ErasedRecord.person` names the record's person when the grant names none (a sweep), so kept evidence still honours a hold on that person.
 
 ## Grants
 
-**`Erasure`, `Disclosure` and `Reveal` are sealed: only the `Issuer`, claimed once at boot by `base/privacy`, makes them.** Media, Artifacts, Audit and Grid accept a grant as the authority for their erasure, disclosure and reveal paths; `grant.check(scope)` refuses another tenant.
+**`Erasure`, `Disclosure` and `Reveal` are sealed: only the `Issuer`, claimed once at boot by `base/privacy`, makes them.** Media, Artifacts, Audit and Grid accept a grant as the authority for their erasure, disclosure and reveal paths; `grant.check(scope)` refuses another tenant; a handler given a `Subject` calls `grant.check_subject(scope, subject)`, which also refuses a subject other than the person the request was approved for (a sweep grant answers for no subject).
 
 ## Holds
 

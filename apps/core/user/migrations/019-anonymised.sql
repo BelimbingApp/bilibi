@@ -4,3 +4,6 @@
 ALTER TABLE users ADD COLUMN anonymised_at timestamptz;
 CREATE INDEX users_closed_unanonymised ON users(tenant_id, id)
     WHERE status = 'deleted' AND anonymised_at IS NULL;
+INSERT INTO base_personal_data_kinds(kind, module, fields, subject_identifier, person)
+    VALUES ('user', 'core/user', ARRAY['name', 'email'], false, false),
+           ('notification', 'core/user', ARRAY['title', 'body'], false, false);

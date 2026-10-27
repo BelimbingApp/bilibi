@@ -76,6 +76,9 @@ CREATE TABLE base_privacy_request_exports (
     store text NOT NULL CHECK (length(store) BETWEEN 1 AND 255),
     records jsonb NOT NULL,
     files jsonb NOT NULL DEFAULT '[]' CHECK (jsonb_typeof(files) = 'array'),
+    -- How many erasures of the person had started running when the store read
+    -- these records. An export publishes only if none has been since.
+    generation bigint NOT NULL CHECK (generation >= 0),
     UNIQUE (request_id, store)
 );
 

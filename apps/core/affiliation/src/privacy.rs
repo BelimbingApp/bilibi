@@ -64,7 +64,7 @@ impl Handler for Affiliations {
         grant: &'a Disclosure,
     ) -> HandlerFuture<'a, Exported> {
         Box::pin(async move {
-            grant.check(scope)?;
+            grant.check_subject(scope, subject)?;
             let rows = client
                 .query(
                     "SELECT id,organisation_id,title,work_email,work_phone,effective_from::text,effective_to::text,unlinked_at::text \
@@ -98,7 +98,7 @@ impl Handler for Affiliations {
         holds: &'a Holds,
     ) -> HandlerFuture<'a, Erased> {
         Box::pin(async move {
-            grant.check(scope)?;
+            grant.check_subject(scope, subject)?;
             let tenant = scope.tenant();
             let rows = tx
                 .sql()
@@ -140,6 +140,7 @@ impl Handler for Affiliations {
                 erased.records.push(ErasedRecord {
                     kind: KIND.into(),
                     id,
+                    person: None,
                 });
             }
             erased.count(KIND, Action::Anonymised, count);

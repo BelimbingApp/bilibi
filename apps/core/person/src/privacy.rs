@@ -164,7 +164,7 @@ impl Handler for People {
         grant: &'a Disclosure,
     ) -> HandlerFuture<'a, Exported> {
         Box::pin(async move {
-            grant.check(scope)?;
+            grant.check_subject(scope, subject)?;
             let Some(person) = person(client, scope, subject, false).await? else {
                 return Ok(Exported::default());
             };
@@ -285,7 +285,7 @@ impl Handler for People {
         holds: &'a Holds,
     ) -> HandlerFuture<'a, Erased> {
         Box::pin(async move {
-            grant.check(scope)?;
+            grant.check_subject(scope, subject)?;
             let Some(old) = person(tx.sql(), scope, subject, true).await? else {
                 return Ok(Erased::default());
             };
@@ -297,7 +297,9 @@ impl Handler for People {
             match holds.record(PERSON_KIND, id).await? {
                 Some(hold) => erased.kept.push(Kept::held(PERSON_KIND, id, hold)),
                 None => {
-                    if old.erased_at.is_none() {
+                    // Current values decide, not an earlier erasure's mark: the
+                    // stub may have been edited since.
+                    if old.name != ERASED || old.email.is_some() || old.phone.is_some() {
                         let tenant = scope.tenant();
                         let before = old.json();
                         tx.mutate(move |sql| {
@@ -324,6 +326,7 @@ impl Handler for People {
                     erased.records.push(ErasedRecord {
                         kind: PERSON_KIND.into(),
                         id,
+                        person: None,
                     });
                 }
             }
@@ -351,10 +354,12 @@ impl Handler for People {
                 erased.records.push(ErasedRecord {
                     kind: ATTACHMENT_KIND.into(),
                     id: file.id,
+                    person: None,
                 });
                 erased.records.push(ErasedRecord {
                     kind: ASSET_KIND.into(),
                     id: file.asset_id,
+                    person: None,
                 });
             }
             Ok(erased)
@@ -370,7 +375,7 @@ impl Handler for People {
         progress: &'a dyn Progress,
     ) -> HandlerFuture<'a, ()> {
         Box::pin(async move {
-            grant.check(scope)?;
+            grant.check_subject(scope, subject)?;
             let files = services()?;
             let id = files_of(subject);
             loop {

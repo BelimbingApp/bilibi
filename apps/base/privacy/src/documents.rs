@@ -441,6 +441,26 @@ pub(crate) async fn certificate(
     Ok(rendered.document.id)
 }
 
+/// Deletes an export built for `request` that was never published, because
+/// an erasure of the person overtook it.
+pub(crate) async fn discard_export(
+    privacy: &Privacy,
+    client: &mut Client,
+    scope: &Scope,
+    request: &RequestView,
+    artifact: &str,
+) -> Result<()> {
+    match privacy
+        .artifacts
+        .for_owner(scope, request.company, &DOCUMENTS)
+        .delete(client, artifact)
+        .await
+    {
+        Ok(()) | Err(bilibi_artifacts::Error::NotFound) => Ok(()),
+        Err(error) => Err(artifact_error(error)),
+    }
+}
+
 /// Deletes the export of every request about `person`, under the erasure's
 /// grant (an earlier access request may be filed under another company).
 /// Deleting one already deleted is a no-op.

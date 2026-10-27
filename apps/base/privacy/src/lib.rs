@@ -403,6 +403,7 @@ inventory::submit! {
             ("base-privacy-002-requests", include_str!("../migrations/002-requests.sql")),
             ("base-privacy-003-due-notices", include_str!("../migrations/003-due-notices.sql")),
             ("base-privacy-004-retention", include_str!("../migrations/004-retention.sql")),
+            ("base-privacy-005-erasure-authority", include_str!("../migrations/005-erasure-authority.sql")),
         ],
         services: &[
             Service { id: SERVICE, factory: |services| Ok(Arc::new(build(services)?)) },

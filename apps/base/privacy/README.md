@@ -9,7 +9,7 @@ Stores, record kinds, grants and the hold guard are contracts in [`base/personal
 | Part | Status |
 | --- | --- |
 | Registry contract (`base/personal_data`), Grid personal field marks, boot check | Built |
-| Legal holds, guarded against running erasures and sweeps | Built |
+| Legal holds, guarded against running erasures, sweeps and owed cleanup | Built |
 | Access and erasure requests, confirmed identifier-only candidates, export ZIP, A4 certificate | Built |
 | Audit erasure with legal minimum and deferral, hash chain and "Verify audit log" | Built (`base/audit`, `base/audit_views`) |
 | Media and Artifacts erasure and disclosure under a sealed grant | Built |
@@ -48,12 +48,17 @@ Stores, record kinds, grants and the hold guard are contracts in [`base/personal
 | Receive | `privacy.request.receive` | Kind, Person, identifiers, filing company. Due after `privacy.request.due_days` |
 | Locate | `privacy.request.view` | Counts per store and kind; records found only by an email or phone (phones by their digits) are listed as candidates |
 | Verify | `privacy.request.receive` | How the identity was checked, and which candidates are the person's. A confirmation that is not a current candidate is `Invalid` |
-| Approve | `privacy.request.approve` | A person, never an agent or principal, who can file under the request's company (their own, or reachable when unaffiliated). An erasure also needs someone other than its receiver and Step-up `base.privacy.erasure.approve` (`.floor()`). Checked before any store runs |
-| Refuse | `privacy.request.receive` | From `received` or `verified`, with a reason |
+| Approve | `privacy.request.approve` | A person, never an agent or principal, who can file under the request's company (their own, or reachable when unaffiliated). An erasure also needs someone other than its receiver, who is not its subject, and Step-up `base.privacy.erasure.approve` (`.floor()`). Checked before any store runs; approved, store rows and running commit together |
+| Refuse | `privacy.request.receive` | From `received` or `verified`, with a reason. The reason stays on the request row, never in Workflow history |
+
+- **The owner enforces the flow, whoever drives the Workflow engine:** `running` needs one store row per mounted store; `completed` needs every store answered and finished and the export or certificate filed. Workflow comments on a request are refused (history is permanent; personal text must stay erasable).
 
 - One Queue job per store (`base/privacy-request-store`), as the approver, retried 25 times. A failing store keeps the request `running` and late.
 - Each store gets a sealed grant for this request: `Disclosure` to export, `Erasure` to erase.
-- Erasure: the store's `erase` runs in its own transaction under the hold guard; every record it returns has its kind's declared audit fields cleared (`bilibi_audit::erase_record`), honouring the filing company's `privacy.audit.legal_minimum_days`; evidence kept for it is listed with its end date. `after_erase` saves each step as it goes, so a retry still counts earlier steps.
+- Erasure: the store's `erase` runs in its own transaction under the hold guard; every record it returns has its kind's declared audit fields cleared (`bilibi_audit::erase_record`). Each evidence row keeps its own company's `privacy.audit.legal_minimum_days`, whatever company filed the request; rows of no company keep the strictest. Evidence kept is listed with its end date. `after_erase` saves each step as it goes, so a retry still counts earlier steps.
+- Stores decide by current values: a person or account changed after an earlier erasure is erased again.
+- **Erasure and access take turns per person** (a per-person advisory lock): an access store does not read while an erasure of the person runs (it retries), and an export is published only if every store's staged read is from the person's current erasure generation; otherwise the artifact is discarded and every store reads again.
+- **Owed cleanup:** an erasure that completes while a legal hold kept records writes a `base_privacy_resumptions` row. The daily retention run erases the person again under that request's grant (whatever the class settings), keeping what is still held, until nothing is held; then the row is done.
 - Finish (`base/privacy-request-finish`): one at a time per request; writes the export or certificate and completes. A failure is recorded on the request (`finish_attempts`, `finish_error`) and shown on its page.
 - On erasure completion every request about the person forgets its personal text (identifiers, identity note, refusal reason), staged exports are dropped and earlier exports deleted.
 - Lists page, count and search in SQL. Agents: `base.privacy.request.*` (approve needs a person).
@@ -95,7 +100,7 @@ bilibi_privacy::record_class! {
 - `Purge` is refused at boot for a class with business value.
 - `Sweeper::sweep(tx, scope, grant, cutoff, holds, after, limit)` examines records above `after` in ID order, skips held ones (counted as kept once), and returns `next` until done.
 - Records of no one company follow the tenant's primary company.
-- Definition `base/privacy.retention-sweep` (02:00 UTC), as the `scheduler` principal per tenant. Each class run writes one `base_privacy_sweeps` summary: company, period, cutoff, acted, kept, batches. The same run erases audit evidence whose legal minimum has passed (class `base/privacy.audit_evidence`).
+- Definition `base/privacy.retention-sweep` (02:00 UTC), as the `scheduler` principal per tenant. Each class run writes one `base_privacy_sweeps` summary: company, period, cutoff, acted, kept, batches. The same run resumes owed erasure cleanup, then erases audit evidence whose legal minimum has passed (class `base/privacy.audit_evidence`), skipping deferrals whose record or person is held (counted as kept). Each part runs even if another failed; the run then retries.
 - `/privacy/retention` reads one company's settings and the last sweeps, and links to System Settings.
 
 ## Masking and reveal
@@ -105,6 +110,28 @@ bilibi_privacy::record_class! {
 - Mode per restricted field on `/authz/field-restrictions`; only Grid-marked personal fields can be masked.
 - Reveal: `Privacy::reveal_field`, the contact page's Reveal (through the page contract `base.privacy.field.reveal`), or the agent operation. Capability, reason and Step-up `base.privacy.field.reveal` (off until the tenant turns it on) come first; Grid reads only with the sealed `Reveal` grant; `privacy.field.revealed` is recorded without the value before it is returned.
 - A revealed value stays only in that page view, only while the reader may still reveal and the record is unchanged. Embedded contact panels show no Reveal.
+
+## Failure handling
+
+**Security, authorisation, tenant, hold and integrity failures fail closed: nothing is written and nothing is reported as done.** Every job step is idempotent, so a retry repeats no effect.
+
+| Case | Outcome | Recovery |
+| --- | --- | --- |
+| Missing capability, wrong tenant, unknown key, failed Step-up, receiver or subject approving an erasure | Refused before any write | Manual: the right person acts |
+| A store fails (database error, failing owner) | Its transaction rolls back; the request stays `running` and late, `last_error` shows a code | Retry: the job retries 25 times; then manual (fix the store, the job is retried) |
+| Erasure of the person running while an access store reads | `Conflict`, nothing staged | Retry, automatically, after the erasure |
+| Export staged before an erasure, or a staged store missing | Built artifact discarded, staged rows dropped, every store reads again | Retry, automatically |
+| Finish fails (artifact, PDF, size) | Request stays `running`; `finish_attempts`, `finish_error` on its page | Retry; `export_too_large` stops: manual |
+| Workflow engine moves a request without the owner's work | `running` or `completed` refused | None needed |
+| Legal hold on a record or person | Record kept and listed with its hold; owed cleanup persisted | Retry: the daily run after release |
+| Evidence inside a company's legal minimum | Kept with a deferral naming the person | Retry: the daily run once due, unless held |
+| Audit erasure with an undeclared kind or field, or a cause that is not a running/completed erasure or an open sweep in the tenant | Refused by the database | Stop: a code or data defect, fix it |
+| Code and `base_personal_data_kinds` disagree on a kind | `Internal`, the erasure step rolls back | Stop: ship the migration that matches the code |
+| A refused setting in a save | The whole save rolls back (the transaction is poisoned) | Manual: correct the values |
+| A committed evidence row without a chain link, or a removed or changed row | Verify audit log reports `unsealed`, `missing`, `changed` or `tail` | Manual: investigate; evidence is never repaired in place |
+| One tenant's or one owed cleanup's failure | Recorded; the others still run; the run reports failure | Retry |
+
+Diagnostics hold codes, counts, IDs and kinds only: never a personal value, secret or token.
 
 ## Settings
 
@@ -127,3 +154,4 @@ No unit tests. Each walkthrough runs on a fresh disposable database ([runtime pa
 | `requests-walkthrough` (`seed` first; needs `BILIBI_PRIVACY_DEMO_ROOT`, the three dev keys, and `BILIBI_PRIVACY_DEMO_CHROMIUM` for the A4 certificate) | ZIP export with files; masked reader needs a reason; candidates confirmed one by one, unconfirmed untouched; failing store retried; certificate with kept records and their holds only; every request of the person forgets its personal text; another company's employee cannot approve; 508 requests searched in SQL; due notices past 500 un-notifiable requests |
 | `retention-walkthrough` (`seed` first) | Constraint refusals; concurrent period and minimum saves; nothing swept until turned on; 205 records in one summary; a name already `[erased]` still anonymised; evidence inside the legal minimum kept with a deferral; audit ledger and evidence refuse direct writes |
 | `masking-walkthrough` | Partial values on every read path, reveal rules and records |
+| `failures-walkthrough` (`seed` first; same variables as `requests-walkthrough`) | The database refuses an erasure with a made-up request, sweep, kind or field, and changes to its cause checkers and kinds; rows linked at commit, a bypassed row reported; a refused setting rolls back its save; no request text in Workflow history; the engine alone cannot run or complete; access waits for a running erasure and a staged export is rebuilt after one; a repeat erasure acts on current values; per-company legal minimums; the due sweep honours a person hold; held data erased after release; Search neither matches nor shows a masked email |

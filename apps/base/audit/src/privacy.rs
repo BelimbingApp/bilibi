@@ -61,7 +61,7 @@ impl Handler for History {
         grant: &'a Disclosure,
     ) -> HandlerFuture<'a, Exported> {
         Box::pin(async move {
-            grant.check(scope)?;
+            grant.check_subject(scope, subject)?;
             let kinds = person_kinds()?;
             let id = subject.person.get().to_string();
             let (mut rows, mut after) = (Vec::new(), 0_i64);

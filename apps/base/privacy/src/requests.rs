@@ -245,6 +245,14 @@ pub(crate) async fn eligible(
     scope: &Scope,
     company: OrganisationId,
 ) -> Result<()> {
+    eligible_with(&privacy.parties, client, scope, company).await
+}
+async fn eligible_with(
+    parties: &bilibi_tenancy::PartyProofs,
+    client: &(impl GenericClient + Sync),
+    scope: &Scope,
+    company: OrganisationId,
+) -> Result<()> {
     if scope
         .actor()
         .organisation()
@@ -252,8 +260,7 @@ pub(crate) async fn eligible(
     {
         return Err(Error::Forbidden);
     }
-    privacy
-        .parties
+    parties
         .organisation_target(client, scope, company, REQUEST_APPROVE)
         .await
         .map(|_| ())
@@ -347,9 +354,12 @@ impl SubjectAdapter for Requests {
     ) -> OwnerFuture<'a, ()> {
         Box::pin(async move {
             match operation {
-                Operation::Read | Operation::Transition | Operation::RecordComment => {
+                Operation::Read | Operation::Transition => {
                     bilibi_authz::authorize_key(tx, scope, REQUEST_VIEW).await
                 }
+                // Workflow history is permanent; a comment could hold what an
+                // erasure must later remove.
+                Operation::RecordComment => Err(Error::Forbidden),
                 _ => Err(Error::Forbidden),
             }
         })
@@ -380,18 +390,76 @@ impl SubjectAdapter for Requests {
                     tx.execute("UPDATE base_privacy_requests SET status='verified',version=version+1,verification=$3,verified_by=$4,verified_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2", &[&tenant, &id, &note, &user]).await?;
                 }
                 "approved" => {
+                    // The owner's rules, whoever drives the Workflow engine.
+                    if scope.agent().is_some() || scope.principal().is_some() {
+                        return Err(Error::Forbidden);
+                    }
+                    let bound = BOUND.get().ok_or(Error::Internal)?;
+                    eligible_with(&bound.parties, tx, scope, before.company).await?;
+                    if before.kind == RequestKind::Erasure {
+                        if before.received_by == user
+                            || scope.actor().person() == Some(before.person)
+                        {
+                            return Err(Error::Forbidden);
+                        }
+                        bound
+                            .step_up
+                            .require(scope, STEP_UP_ERASURE, &format!("privacy.request:{id}"))
+                            .await?;
+                    }
                     tx.execute("UPDATE base_privacy_requests SET status='approved',version=version+1,approved_by=$3,approved_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2", &[&tenant, &id, &user]).await?;
                 }
                 "running" => {
+                    // Only once every mounted store has its row and job.
+                    let mounted = bilibi_personal_data::Stores::installed()
+                        .map_err(|_| Error::Internal)?
+                        .iter()
+                        .count() as i64;
+                    let started: i64 = tx
+                        .query_one(
+                            "SELECT count(*) FROM base_privacy_request_stores WHERE tenant_id=$1 AND request_id=$2",
+                            &[&tenant, &id],
+                        )
+                        .await?
+                        .get(0);
+                    if started != mounted {
+                        return Err(Error::Invalid);
+                    }
                     tx.execute("UPDATE base_privacy_requests SET status='running',version=version+1 WHERE tenant_id=$1 AND id=$2", &[&tenant, &id]).await?;
                 }
                 "completed" => {
+                    // Only when every store has answered and finished and the
+                    // request's document is filed.
+                    let mounted = bilibi_personal_data::Stores::installed()
+                        .map_err(|_| Error::Internal)?
+                        .iter()
+                        .count() as i64;
+                    let row = tx
+                        .query_one(
+                            "SELECT count(*),count(*) FILTER (WHERE state='pending' OR NOT finished) FROM base_privacy_request_stores WHERE tenant_id=$1 AND request_id=$2",
+                            &[&tenant, &id],
+                        )
+                        .await?;
+                    let (stores, open): (i64, i64) = (row.get(0), row.get(1));
+                    let filed = match before.kind {
+                        RequestKind::Erasure => before.certificate_artifact.is_some(),
+                        _ => before.export_artifact.is_some(),
+                    };
+                    if stores != mounted || open > 0 || !filed {
+                        return Err(Error::Invalid);
+                    }
                     tx.execute("UPDATE base_privacy_requests SET status='completed',version=version+1,completed_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2", &[&tenant, &id]).await?;
                 }
                 "refused" => {
+                    // From the input, never a Workflow comment: history is
+                    // permanent, and the reason may quote personal data.
+                    if request.comment.is_some() {
+                        return Err(Error::Invalid);
+                    }
                     let reason = request
-                        .comment
-                        .as_deref()
+                        .input
+                        .get("reason")
+                        .and_then(Value::as_str)
                         .ok_or(Error::Invalid)
                         .and_then(text)?;
                     tx.execute("UPDATE base_privacy_requests SET status='refused',version=version+1,refused_by=$3,refused_reason=$4,refused_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2", &[&tenant, &id, &user, &reason]).await?;
@@ -760,6 +828,9 @@ impl Privacy {
         // Before any write and before any store runs.
         eligible(self, tx.sql(), scope, subject.company).await?;
         if subject.kind == RequestKind::Erasure {
+            // Waits for an access export of the person being published, and
+            // makes any later one start again.
+            person_guard(tx.sql(), scope.tenant(), subject.person, true).await?;
             if scope.actor().person() == Some(subject.person) {
                 return Err(Error::Forbidden);
             }
@@ -775,10 +846,12 @@ impl Privacy {
         self.engine
             .transition_in(tx, scope, SUBJECT, id, "approved", approve)
             .await?;
+        // Rows and jobs first: the owner refuses `running` without them. The
+        // jobs start after this transaction commits.
+        self.start_stores(tx, scope, id).await?;
         self.engine
             .transition_in(tx, scope, SUBJECT, id, "running", Move::default())
             .await?;
-        self.start_stores(tx, scope, id).await?;
         load(tx.sql(), scope.tenant(), id, false).await
     }
 
@@ -863,7 +936,7 @@ impl Privacy {
         let reason = text(reason)?;
         let refuse = Move {
             expected_version: Some(expected_version),
-            comment: Some(reason),
+            input: json!({"reason": reason}),
             ..Move::default()
         };
         self.engine
@@ -946,6 +1019,41 @@ impl Privacy {
             .await?;
         Ok((rows.iter().map(view).collect::<Result<_>>()?, total))
     }
+}
+
+/// The person's erasure guard: approving an erasure takes it exclusively;
+/// access staging and publication take it shared, so they take turns.
+pub(crate) async fn person_guard(
+    sql: &(impl GenericClient + Sync),
+    tenant: i64,
+    person: PersonId,
+    exclusive: bool,
+) -> Result<()> {
+    let lock = if exclusive {
+        "SELECT pg_advisory_xact_lock(hashtextextended('privacy-person-' || $1::bigint::text || '-' || $2::bigint::text, 0))"
+    } else {
+        "SELECT pg_advisory_xact_lock_shared(hashtextextended('privacy-person-' || $1::bigint::text || '-' || $2::bigint::text, 0))"
+    };
+    sql.execute(lock, &[&tenant, &person.get()]).await?;
+    Ok(())
+}
+/// The person's erasure generation (erasures that have started running)
+/// and whether one is running now. The owner path moves approved to running
+/// in one transaction, so a committed `approved` erasure never ran a store.
+pub(crate) async fn erasure_generation(
+    sql: &(impl GenericClient + Sync),
+    tenant: i64,
+    person: PersonId,
+) -> Result<(i64, bool)> {
+    let row = sql
+        .query_one(
+            "SELECT count(*) FILTER (WHERE status IN ('running','completed')), \
+             count(*) FILTER (WHERE status = 'running') > 0 \
+             FROM base_privacy_requests WHERE tenant_id=$1 AND person_id=$2 AND kind='erasure'",
+            &[&tenant, &person.get()],
+        )
+        .await?;
+    Ok((row.get(0), row.get(1)))
 }
 
 /// Clears the personal text of every request about `person` in the tenant

@@ -89,7 +89,7 @@ impl Handler for Previews {
         grant: &'a Disclosure,
     ) -> HandlerFuture<'a, Exported> {
         Box::pin(async move {
-            grant.check(scope)?;
+            grant.check_subject(scope, subject)?;
             let ids = subject.confirmed_ids(KIND);
             if ids.is_empty() {
                 return Ok(Exported::default());
@@ -125,7 +125,7 @@ impl Handler for Previews {
         holds: &'a Holds,
     ) -> HandlerFuture<'a, Erased> {
         Box::pin(async move {
-            grant.check(scope)?;
+            grant.check_subject(scope, subject)?;
             let mut erased = Erased::default();
             let ids = subject.confirmed_ids(KIND);
             if ids.is_empty() {

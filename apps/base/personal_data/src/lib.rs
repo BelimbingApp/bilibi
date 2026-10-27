@@ -25,6 +25,7 @@ inventory::submit! {
     Module {
         id: "base/personal_data", layer: Layer::Base,
         dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/party_ids"],
-        migrations: &[], services: &[],
+        migrations: &[("base-personal_data-001-kinds", include_str!("../migrations/001-kinds.sql"))],
+        services: &[],
     }
 }

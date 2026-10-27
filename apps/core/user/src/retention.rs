@@ -67,9 +67,9 @@ impl Sweeper for ClosedAccounts {
             let rows = tx
                 .sql()
                 .query(
-                    "SELECT id,person_id,name,email FROM users WHERE tenant_id=$1 AND status='deleted' AND anonymised_at IS NULL \
+                    "SELECT id,person_id,name,email FROM users WHERE tenant_id=$1 AND status='deleted' AND (anonymised_at IS NULL OR name<>$5 OR email NOT LIKE 'erased-%@erased.invalid') \
                      AND deleted_at < $2::text::timestamptz AND id>$3 ORDER BY id LIMIT $4 FOR UPDATE",
-                    &[&tenant, &cutoff, &after, &limit],
+                    &[&tenant, &cutoff, &after, &limit, &ERASED],
                 )
                 .await?;
             let keys: Vec<(i64, Option<i64>)> =
@@ -80,6 +80,8 @@ impl Sweeper for ClosedAccounts {
                 .filter(|row| !kept.contains(&row.get::<_, i64>(0)))
                 .map(|row| (row.get(0), row.get(2), row.get(3)))
                 .collect();
+            let persons: std::collections::BTreeMap<i64, Option<i64>> =
+                keys.iter().copied().collect();
             let mut swept = Swept {
                 kept: kept.len() as i64,
                 next: next(&keys, limit),
@@ -125,6 +127,7 @@ impl Sweeper for ClosedAccounts {
                 .map(|id| ErasedRecord {
                     kind: USER_KIND.into(),
                     id,
+                    person: persons.get(&id).copied().flatten(),
                 })
                 .collect();
             Ok(swept)
@@ -201,6 +204,7 @@ impl Sweeper for Notifications {
                 .map(|id| ErasedRecord {
                     kind: NOTIFICATION_KIND.into(),
                     id,
+                    person: None,
                 })
                 .collect();
             Ok(swept)

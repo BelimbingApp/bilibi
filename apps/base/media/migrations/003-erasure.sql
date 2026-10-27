@@ -12,6 +12,7 @@ ALTER TABLE base_media_attachments
     DROP CONSTRAINT base_media_attachments_check,
     ALTER COLUMN media_asset_id DROP NOT NULL,
     ADD COLUMN erased_at timestamptz,
+    -- The user who erased; NULL when a system principal did (owed cleanup).
     ADD COLUMN erased_by bigint CHECK (erased_by > 0),
     ADD COLUMN erased_disk text CHECK (length(erased_disk) BETWEEN 1 AND 255),
     ADD COLUMN erased_key text CHECK (length(erased_key) BETWEEN 1 AND 1024),
@@ -23,7 +24,7 @@ ALTER TABLE base_media_attachments
     ADD CONSTRAINT base_media_attachments_erased_shape CHECK (
         (state = 'erased') = (erased_at IS NOT NULL)
         AND (state = 'erased') = (media_asset_id IS NULL)
-        AND (state <> 'erased' OR (erased_by IS NOT NULL AND erased_disk IS NOT NULL AND erased_key IS NOT NULL))
+        AND (state <> 'erased' OR (erased_disk IS NOT NULL AND erased_key IS NOT NULL))
         AND (bytes_removed_at IS NULL OR state = 'erased'));
 -- The erased-bytes sweep finds pending files per tenant.
 CREATE INDEX base_media_attachments_erased_pending ON base_media_attachments (tenant_id, id)
@@ -100,7 +101,7 @@ BEGIN
   SELECT a.media_asset_id, s.disk, s.storage_key INTO asset, asset_disk, asset_key
     FROM base_media_attachments a JOIN base_media_assets s ON s.id = a.media_asset_id AND s.tenant_id = a.tenant_id
    WHERE a.tenant_id = p_tenant AND a.id = p_id AND a.state <> 'erased' FOR UPDATE OF a;
-  IF asset IS NULL OR p_by IS NULL OR p_by <= 0 THEN
+  IF asset IS NULL OR p_by <= 0 THEN
     RAISE EXCEPTION 'no live attachment % to erase', p_id USING ERRCODE = 'no_data_found';
   END IF;
   UPDATE base_media_attachments SET state = 'erased', media_asset_id = NULL, erased_at = now(), erased_by = p_by,
@@ -111,3 +112,6 @@ BEGIN
 END;
 $$;
 REVOKE EXECUTE ON FUNCTION base_media_erase_attachment(bigint, bigint, bigint) FROM PUBLIC;
+-- The asset kind's personal field (base_personal_data_kinds, ADR 05).
+INSERT INTO base_personal_data_kinds(kind, module, fields, subject_identifier, person)
+    VALUES ('base/media/asset', 'base/media', ARRAY['original_filename'], false, false);

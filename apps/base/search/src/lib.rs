@@ -439,6 +439,13 @@ impl Search {
                     kind,
                     table: catalog.table(kind.id)?,
                     boost: tuning.boost(kind),
+                    masked: kind
+                        .decl
+                        .subtitle
+                        .iter()
+                        .chain(kind.decl.prefix)
+                        .filter_map(|field| Some((*field, catalog.field_mask(kind.id, field)?)))
+                        .collect(),
                 })
             })
             .collect();
@@ -519,9 +526,15 @@ impl Search {
                 continue;
             };
             let id: String = row.try_get(2)?;
+            let plan = planned.iter().find(|p| p.kind.id == kind.id);
             let mut detail = Vec::new();
-            for at in [4, 5] {
+            for (index, at) in [4, 5].into_iter().enumerate() {
                 if let Some(value) = row.try_get::<_, Option<String>>(at)? {
+                    // A masked subtitle leaves only as its partial form.
+                    let value = match plan.and_then(|p| p.subtitle_mask(index)) {
+                        Some(mask) => bilibi_authz::fields::partial(mask, &value),
+                        None => value,
+                    };
                     if !value.trim().is_empty() {
                         detail.push(value);
                     }

@@ -97,8 +97,10 @@ the checks and which fields are withheld.
 
 **One narrow exception to append-only evidence, opened only by a sealed `base/personal_data` grant** ([ADR 05](../../../docs/architecture/decisions/05-personal-data-registry.md), migration `base-audit-009-erasure`).
 
-- `erase_record(tx, &Erasure, kind, id, keep_days)` clears the personal fields that the kind's owner declared (`RECORD_KINDS`) in every mutation row of that record, and the subject identifier only when declared. An undeclared kind is `Invalid`; the caller never names fields.
-- `keep_days` is a legal minimum: rows newer than it stay and an open `base_audit_erasure_deferrals` row says when; the erasure's own rows (its trace) are always cleared. `erase_due(tx, &Erasure, limit)` finishes due deferrals for a sweep; `evidence_due` says whether any are due.
+- `erase_record(tx, &Erasure, kind, id, person, &Minimums)` clears the personal fields that the kind's owner declared (`RECORD_KINDS`) in every mutation row of that record, and the subject identifier only when declared. An undeclared kind is `Invalid`; the caller never names fields.
+- **The database holds the same authority:** the fields must be declared in `base_personal_data_kinds` (written by the kind's owning module's migration; `Internal` when code and row disagree), and the cause must be confirmed by the checker its owner registered once in `base_audit_erasure_causes` (`base/privacy`: a running or completed erasure request, or a sweep still running, in the tenant). Anything else is refused, even when called directly as the owner role.
+- `Minimums` are legal minimums per company: a row of a listed company stays while newer than that company's days; a row of no company follows the strictest. Kept rows get one open `base_audit_erasure_deferrals` row naming the person; the erasure's own rows (its trace) are always cleared.
+- `due_evidence(client, tenant, after, limit)` lists due deferrals; the caller leaves out held records and persons under the hold guard and passes the rest to `erase_deferred(tx, &Erasure, ids, &Minimums)` (sweep grants only), which erases them with today's minimums.
 - Each call writes one append-only `base_audit_erasures` row in the same statement: request or sweep, kind, ID, fields, rows erased and kept, actor.
 - No session setting opens the path: the guard admits a change only while `base_audit_erase_values` runs as the evidence's owner (call stack and `current_user`), and `EXECUTE` is revoked from `PUBLIC`. Every other update, delete and truncate is refused.
 - Audit's own store, `base/audit.history`, exports the evidence history of the subject's person record.
@@ -107,8 +109,9 @@ the checks and which fields are withheld.
 
 **Every mutation and action row is linked to the one before it over its ID, tenant, time, actor, event, record and field names; values are excluded, so approved erasure keeps the chain whole.**
 
-- `seal(client, limit)` links committed, unsealed rows (one sealer at a time); `verify(client)` recomputes both chains and names the first `missing`, `changed` or `tail` break.
-- `base/audit_views` seals on a schedule (`base/audit.chain-seal`, every 15 minutes once enabled) and offers **Verify audit log** at `/audit/integrity` to platform operators; every check is recorded as `audit.chain.verified`.
+- A deferred constraint trigger links each row as its transaction commits, in commit order (advisory lock 841332), so no committed row is ever unlinked; rows from before migration 009 are linked by it.
+- `verify(client)` recomputes both chains and names the first `missing`, `changed` or `tail` break, or `unsealed` when a committed row has no link (its trigger was bypassed).
+- `base/audit_views` offers **Verify audit log** at `/audit/integrity` to platform operators; every check is recorded as `audit.chain.verified`.
 
 ## Runtime evidence
 

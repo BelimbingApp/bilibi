@@ -37,7 +37,9 @@ for consumers with no session (signed links, workers). Encrypted definitions,
 runtime claims and keys without a global scope refuse; a secret needs an
 explicit, authorized `get`.
 
-**A constraint (`CONSTRAINTS`) is a rule over 2–8 defined, unencrypted settings at one scope.** Writing any of them locks all of them in key order, then refuses the write (`Invalid`) unless the rule holds for the values that scope resolves; `constraint_messages(key)` gives the rule's sentence, which System Settings shows beside the refused value. `base/privacy` uses it so a retention period is never below its legal minimum.
+**A constraint (`CONSTRAINTS`) is a rule over 2–8 defined, unencrypted settings at one scope.** Writing any of them locks all of them in key order, then refuses the write (`Invalid`) unless the rule holds for the values that scope resolves; a refusal poisons the transaction, so no other value of that save commits; `constraint_messages(key)` gives the rule's sentence, which System Settings shows beside the refused value. `base/privacy` uses it so a retention period is never below its legal minimum.
+
+`company_values(client, actor, key)` returns every company's own stored value of one non-secret, company-scope key in the actor's tenant (absent when a company set none): for rules that must honour each company at once, such as `base/privacy`'s audit legal minimums.
 
 `Target` is a request, not permission. The actor is a sealed Tenancy `Scope`.
 User means the actor's own account; tenant means their tenant. A named system

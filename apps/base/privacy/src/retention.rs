@@ -9,6 +9,7 @@
 //! per class. Bilimbi's per-store retention workers (`base/integration`,
 //! `base/perf`, `base/schedule`) are prior art for the sweep only.
 use crate::{runner, Privacy, RETENTION_VIEW};
+use bilibi_audit::Minimums;
 use bilibi_authz::{SystemAuthentication, SystemScope};
 use bilibi_database::{Change, Error, MutationTransaction, Result};
 use bilibi_module_registry::{Catalog, Entry, Module, RegistryError, Result as RegistryResult};
@@ -470,7 +471,7 @@ impl Privacy {
         class: &'static RecordClass,
         company: OrganisationId,
         period_days: i64,
-        keep_days: Option<i32>,
+        minimums: &Minimums,
     ) -> Result<()> {
         let (sweep, cutoff) = self
             .open_sweep(client, scope, key, Some(company), Some(period_days))
@@ -494,7 +495,7 @@ impl Privacy {
                 records: swept.records,
                 ..Default::default()
             };
-            runner::clear_evidence(&tx, &grant, &mut step, keep_days).await?;
+            runner::clear_evidence(&tx, &grant, &mut step, minimums).await?;
             tx.commit().await?;
             holds.release().await?;
             acted += swept.acted;
@@ -510,9 +511,18 @@ impl Privacy {
     }
 
     /// The deferred audit erasure: evidence kept for its legal minimum whose
-    /// minimum has now passed.
-    async fn sweep_evidence(&self, client: &mut Client, scope: &Scope) -> Result<()> {
-        if !bilibi_audit::evidence_due(&*client, scope.tenant()).await? {
+    /// minimum has now passed, in batches under the hold guard. A deferral
+    /// whose record or person is held stays open and counts as kept.
+    async fn sweep_evidence(
+        &self,
+        client: &mut Client,
+        scope: &Scope,
+        minimums: &Minimums,
+    ) -> Result<()> {
+        if bilibi_audit::due_evidence(&*client, scope.tenant(), 0, 1)
+            .await?
+            .is_empty()
+        {
             return Ok(());
         }
         let (sweep, _) = self
@@ -521,29 +531,61 @@ impl Privacy {
         let grant = self
             .issuer
             .erasure(scope.tenant(), Cause::Sweep(sweep), None);
-        let (mut acted, mut batches) = (0, 0);
+        let (mut acted, mut kept, mut batches, mut after) = (0, 0, 0, 0);
         loop {
-            let tx = self
-                .boundary
-                .begin(
-                    client,
-                    scope.mutation_context("privacy.retention.audit_evidence"),
-                )
-                .await?;
-            let done = bilibi_audit::erase_due(&tx, &grant, BATCH as i32).await?;
-            tx.commit().await?;
-            acted += i64::from(done);
+            let holds = Holds::acquire(scope.tenant(), None).await?;
+            let due = bilibi_audit::due_evidence(&*client, scope.tenant(), after, BATCH).await?;
+            let Some(last) = due.last().map(|d| d.deferral) else {
+                holds.release().await?;
+                break;
+            };
+            let persons: Vec<i64> = due.iter().filter_map(|d| d.person).collect();
+            let held_persons = holds.persons(&persons).await?;
+            let mut by_kind: BTreeMap<&str, Vec<i64>> = BTreeMap::new();
+            for d in &due {
+                by_kind.entry(d.kind.as_str()).or_default().push(d.id);
+            }
+            let mut held_records = std::collections::BTreeSet::new();
+            for (kind, ids) in &by_kind {
+                for id in holds.records(kind, ids).await?.into_keys() {
+                    held_records.insert((*kind, id));
+                }
+            }
+            let free: Vec<i64> = due
+                .iter()
+                .filter(|d| {
+                    !d.person.is_some_and(|p| held_persons.contains_key(&p))
+                        && !held_records.contains(&(d.kind.as_str(), d.id))
+                })
+                .map(|d| d.deferral)
+                .collect();
+            kept += (due.len() - free.len()) as i64;
+            if !free.is_empty() {
+                let tx = self
+                    .boundary
+                    .begin(
+                        client,
+                        scope.mutation_context("privacy.retention.audit_evidence"),
+                    )
+                    .await?;
+                let done = bilibi_audit::erase_deferred(&tx, &grant, &free, minimums).await?;
+                tx.commit().await?;
+                acted += i64::from(done);
+            }
+            holds.release().await?;
             batches += 1;
-            if i64::from(done) < BATCH {
+            after = last;
+            if (due.len() as i64) < BATCH {
                 break;
             }
         }
-        self.close_sweep(client, scope, sweep, (acted, 0, batches))
+        self.close_sweep(client, scope, sweep, (acted, kept, batches))
             .await
     }
 
     /// Sweeps one tenant as the scheduler: every class its primary company
-    /// turned on with a period, then due audit evidence.
+    /// turned on with a period, then cleanup that completed erasures still
+    /// owe, then due audit evidence.
     async fn sweep_tenant(
         &self,
         client: &mut Client,
@@ -553,8 +595,9 @@ impl Privacy {
         let system =
             SystemScope::rehydrate(&*client, tenant, Some(bilibi_schedule::PRINCIPAL)).await?;
         let scope = authentication.for_system(&*client, &system).await?;
+        let minimums = self.evidence_minimums(client, &scope).await?;
+        let mut failed = false;
         if let Some(company) = self.parties.primary_organisation(&*client, &scope).await? {
-            let keep_days = self.evidence_minimum(client, &scope, company).await?;
             for (key, (_, class)) in &self.classes.by_key {
                 let policy = self.policy(client, &scope, company, key).await?;
                 let Some(days) = policy.period_days.filter(|_| policy.enabled) else {
@@ -567,11 +610,26 @@ impl Privacy {
                 ) {
                     continue;
                 }
-                self.sweep_class(client, &scope, key, class, company, days, keep_days)
-                    .await?;
+                failed |= self
+                    .sweep_class(client, &scope, key, class, company, days, &minimums)
+                    .await
+                    .is_err();
             }
         }
-        self.sweep_evidence(client, &scope).await
+        // Each part runs although another failed; the run still fails, and retries.
+        failed |= self
+            .resume_erasures(client, &scope, &minimums)
+            .await
+            .is_err();
+        failed |= self
+            .sweep_evidence(client, &scope, &minimums)
+            .await
+            .is_err();
+        if failed {
+            Err(Error::Internal)
+        } else {
+            Ok(())
+        }
     }
 }
 
