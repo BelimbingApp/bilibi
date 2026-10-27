@@ -261,20 +261,12 @@ impl Detail {
         let Some(editing) = &mut self.editing else {
             return Ok(());
         };
-        let fields = form(value, "location");
-        let errors = overlong(
-            &fields,
-            &["country_iso", "admin1_code", "postcode", "locality"],
-        );
-        if !errors.is_empty() {
-            editing.draft.location = LocationDraft::posted(&fields);
-            editing.errors = errors;
-            self.statuses.put("location", CommitStatus::None);
-            return Ok(());
-        }
         editing
             .draft
-            .change(&self.pages.addresses, &LocationDraft::posted(&fields))
+            .change(
+                &self.pages.addresses,
+                &LocationDraft::posted(&bilibi_ui::params::form_values(value, "location")),
+            )
             .await?;
         let current = self.pages.addresses.read(scope, self.id).await?;
         let mut address = current.address;
@@ -365,19 +357,15 @@ impl Detail {
             "cancel_edit_location" => self.editing = None,
             "validate_location" => {
                 if let Some(editing) = &mut self.editing {
-                    let fields = form(value, "location");
-                    editing.errors = overlong(
-                        &fields,
-                        &["country_iso", "admin1_code", "postcode", "locality"],
-                    );
-                    if editing.errors.is_empty() {
-                        editing
-                            .draft
-                            .change(&self.pages.addresses, &LocationDraft::posted(&fields))
-                            .await?;
-                    } else {
-                        editing.draft.location = LocationDraft::posted(&fields);
-                    }
+                    editing
+                        .draft
+                        .change(
+                            &self.pages.addresses,
+                            &LocationDraft::posted(&bilibi_ui::params::form_values(
+                                value, "location",
+                            )),
+                        )
+                        .await?;
                 }
             }
             "save_location" => {

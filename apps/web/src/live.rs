@@ -13,7 +13,7 @@ use bilibi_ui::page::{
 };
 use bilibi_ui::params;
 use bilibi_ui::upload::{ClientEntry, CHUNK_SIZE, MAX_ENTRIES};
-use bilibi_ui::{LIVE_EVENT_LIMIT, LIVE_EVENT_TOO_LARGE};
+use bilibi_ui::{field_too_long, overlong_field, LIVE_EVENT_LIMIT, LIVE_EVENT_TOO_LARGE};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc, time::Duration};
@@ -956,6 +956,15 @@ pub async fn run(app: App, token: String, identity: Identity, mut socket: WebSoc
                             match &event {
                                 Event::Action {target: id, ..} | Event::Upload {target: id, ..} | Event::UploadCancel {target: id, ..} => target = id.clone(),
                                 _ => {}
+                            }
+                            if let Event::Action {payload, ..} = &event {
+                                // No page sees a text value past the field limit, so
+                                // no form extractor drops one and blanks the field.
+                                if let Some(field) = overlong_field(payload) {
+                                    let message = json!({"type":"error", "target":target, "message":field_too_long(field), "clear":false, "request_id":request_id});
+                                    if socket.send(Message::Text(message.to_string().into())).await.is_err() {break;}
+                                    continue;
+                                }
                             }
                             if matches!(event, Event::Navigate {..} | Event::Params {path: None, ..} | Event::Action {..}) {history = "push";}
                             let identity = session.identity(&app, &event);

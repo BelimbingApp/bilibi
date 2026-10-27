@@ -21,7 +21,9 @@ pub fn trimmed(value: Option<&str>) -> Option<&str> {
 
 /// The string fields of a posted form namespace (`filters[search]` → `search`)
 /// from a live event payload. Other keys and non-string values are ignored, and
-/// at most 64 fields of at most 1 KiB each are kept.
+/// at most 64 fields are kept. A string over `LIVE_FIELD_LIMIT` characters never
+/// reaches here: the live host refuses that event first, so the field's owner
+/// validates its own, shorter limit and reports it on the field.
 pub fn form_values(
     payload: &serde_json::Value,
     form: &str,
@@ -36,7 +38,7 @@ pub fn form_values(
                 .strip_prefix(form)?
                 .strip_prefix('[')?
                 .strip_suffix(']')?;
-            let value = value.as_str().filter(|value| value.len() <= 1024)?;
+            let value = value.as_str()?;
             Some((key.to_owned(), value.to_owned()))
         })
         .take(64)
@@ -46,8 +48,8 @@ pub fn form_values(
 /// The scalar fields of a live event payload as the column hosts take them
 /// (`ListColumns::handle`, `PageColumns::handle`): strings as they are, numbers
 /// and booleans as their text; other values and keys past the first 64 are
-/// ignored, and a string longer than 1 KiB is dropped. Use this for a flex table's `grid`
-/// event rather than walking the object in each page.
+/// ignored. Use this for a flex table's `grid` event rather than walking the
+/// object in each page. Field length is bounded as for `form_values`.
 pub fn string_values(payload: &serde_json::Value) -> std::collections::HashMap<String, String> {
     let Some(object) = payload.as_object() else {
         return Default::default();
@@ -56,7 +58,7 @@ pub fn string_values(payload: &serde_json::Value) -> std::collections::HashMap<S
         .iter()
         .filter_map(|(key, value)| {
             let text = match value {
-                serde_json::Value::String(text) if text.len() <= 1024 => text.clone(),
+                serde_json::Value::String(text) => text.clone(),
                 serde_json::Value::Number(number) => number.to_string(),
                 serde_json::Value::Bool(flag) => flag.to_string(),
                 _ => return None,

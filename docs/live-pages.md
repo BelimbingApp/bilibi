@@ -87,6 +87,8 @@ The socket processes events sequentially. **A complete encoded JSON intent may c
 
 Web rechecks the encoded length before decoding a module event. A stale or custom client above the event budget receives an `error` with its valid request ID, target and `clear: false`; no module handler runs and the socket remains usable. A separate 2 MiB frame/message cap (`bilibi_web::live::FRAME_LIMIT`) bounds socket allocations while allowing these refusals. A peer exceeding that hard cap may be disconnected; Web attempts an error reply, and the browser keeps drafts on an unconfirmed disconnect. Binary uploads still carry at most `CHUNK_SIZE` (64 KiB) plus their eight-byte header, checked independently.
 
+A text value longer than `bilibi_ui::LIVE_FIELD_LIMIT` (10,000 characters) anywhere in an `event` payload is refused the same way, with `clear: false` and a message naming the field, before the page or panel is called. Extractors such as `params::form_values` therefore never drop a long string.
+
 Form authors follow [Shared UI's form-size rule](../apps/base/ui/README.md#form-size): field limits must match owner validation, and their combined encoded content must fit the event budget. A per-field character maximum alone cannot bound a repeating form's event.
 
 ## Browser adapter

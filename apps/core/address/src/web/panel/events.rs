@@ -11,7 +11,7 @@ impl Panel {
         credential: &str,
         value: &Value,
     ) -> Result<()> {
-        let fields = |ns: &str| form(value, ns);
+        let fields = |ns: &str| bilibi_ui::params::form_values(value, ns);
         let event = event(value)?;
         match event {
             "clear_notice" => self.notice = None,
@@ -318,33 +318,10 @@ impl Panel {
             return Ok(());
         };
         let get = |key: &str| fields.get(key).cloned();
-        let limits = overlong(
-            fields,
-            &[
-                "label",
-                "phone",
-                "line1",
-                "line2",
-                "line3",
-                "country_iso",
-                "admin1_code",
-                "postcode",
-                "locality",
-                "priority",
-            ],
-        );
-        let posted = LocationDraft::posted(fields);
-        if limits
-            .iter()
-            .any(|e| ["country_iso", "admin1_code", "postcode", "locality"].contains(&e.field))
-        {
-            draft.location.location = posted;
-        } else {
-            draft
-                .location
-                .change(&self.pages.addresses, &posted)
-                .await?;
-        }
+        draft
+            .location
+            .change(&self.pages.addresses, &LocationDraft::posted(fields))
+            .await?;
         draft.input = AddressInput {
             label: get("label"),
             phone: get("phone"),
@@ -360,15 +337,7 @@ impl Panel {
         draft.errors = crate::model::normalize(&draft.input)
             .err()
             .unwrap_or_default();
-        for error in limits {
-            draft
-                .errors
-                .retain(|existing| existing.field != error.field);
-            draft.errors.push(error);
-        }
-        if priority(&draft.priority).is_none()
-            && !draft.errors.iter().any(|e| e.field == "priority")
-        {
+        if priority(&draft.priority).is_none() {
             draft.errors.push(FieldError::new(
                 "priority",
                 "must be a whole number of 0 or more",
