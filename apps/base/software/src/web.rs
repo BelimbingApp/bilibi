@@ -614,7 +614,7 @@ impl View {
             }
             Err(ContractError::Backend(Error::Conflict)) => {
                 review.error = Some(if kind == Kind::Go {
-                    "The job was stopped or already approved. Close the dialog and review its status.".into()
+                    "The job changed; it may have been stopped or already approved. Close the dialog and review its status.".into()
                 } else {
                     "Another job was queued. Close the dialog and review its status.".into()
                 });
