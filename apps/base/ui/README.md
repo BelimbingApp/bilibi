@@ -10,6 +10,10 @@ Multi-selects show the inset label and selected count above removable chips insi
 
 List toolbars put search first and filter boxes to its right, wrapping below search on narrow screens. `FilterToolbar::new` preserves the order of filters while placing search first.
 
+## Charts
+
+Use `Chart::new_with_display_values` when values have a stored decimal scale: pass owner-formatted strings indexed by series and category alongside the numeric values used for geometry. The Data table, mark titles and KPI use those strings; absent strings fall back to the numeric value. Missing numeric values remain gaps. `Chart::new` is suitable when the float itself is the intended display value. Pie and donut totals are calculated from numeric values and displayed to 15 significant digits.
+
 ## Colour input
 
 Use **`ColourInput` for a choice of named colours**. Each choice is a chip in that colour's banner surface, border and text colour, with the name inside.
