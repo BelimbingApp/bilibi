@@ -467,3 +467,36 @@ impl PersonProvider for Provider {
         })
     }
 }
+
+impl crate::PersonService {
+    /// Update a provisioned person's contact in the provisioning owner's system
+    /// transaction. Like provision_in, the caller proves ownership and authority.
+    pub async fn update_provisioned_contact_in(
+        &self,
+        tx: &mut MutationTransaction<'_>,
+        id: PersonId,
+        name: &str,
+        email: &str,
+    ) -> Result<()> {
+        if tx.context().actor.kind != "system" {
+            return Err(Error::Forbidden);
+        }
+        let tenant = tx.context().tenant;
+        let row = tx.sql().query_opt(&format!("SELECT {COLUMNS} FROM persons WHERE tenant_id=$1 AND id=$2 AND retired_at IS NULL AND system_key IS NULL FOR UPDATE"), &[&tenant, &id.get()]).await?.ok_or(Error::Forbidden)?;
+        let old = Person::from_row(&row)?;
+        let input = validate(&PersonInput {
+            name: name.into(),
+            kind: old.kind,
+            email: Some(email.into()),
+            phone: old.phone.clone(),
+        })
+        .map_err(|_| Error::Invalid)?;
+        tx.mutate(move |sql| Box::pin(async move {
+            let row = sql.query_one(&format!("UPDATE persons SET name=$3,email=$4,version=version+1,updated_at=now() WHERE tenant_id=$1 AND id=$2 RETURNING {COLUMNS}"), &[&tenant, &id.get(), &input.name, &input.email]).await?;
+            let person = Person::from_row(&row)?;
+            Ok(((), vec![Change { kind: "person".into(), id:id.get(), old:old.json(), new:person.json() }]))
+        })).await?;
+        crate::publish(tx, tenant, id);
+        Ok(())
+    }
+}

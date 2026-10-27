@@ -97,7 +97,7 @@ impl Default for IdentityConfiguration {
         }
     }
 }
-pub(super) struct Connection {
+pub(crate) struct Connection {
     pub id: i64,
     pub tenant: i64,
     pub company: i64,
@@ -164,7 +164,7 @@ impl UserService {
         self.settings
             .open_owned(SEALED, tenant, id, &sealed.ok_or(Error::Invalid)?)
     }
-    pub(super) async fn sso_company(
+    pub(crate) async fn sso_company(
         &self,
         sql: &(impl tokio_postgres::GenericClient + Sync),
         scope: &Scope,
@@ -377,6 +377,18 @@ impl UserService {
                     "The mapped roles are outside this company or your role-management permission.",
                 )
             })?;
+        let scim = tx.sql().query_opt("SELECT 1 FROM user_identity_providers WHERE tenant_id=$1 AND id=$2 AND sealed_scim_token IS NOT NULL UNION ALL SELECT 1 FROM user_scim_users WHERE tenant_id=$1 AND provider_id=$2 LIMIT 1", &[&tenant, &id]).await?.is_some();
+        if scim {
+            self.sso_grants
+                .configure_identity_roles_in(
+                    tx,
+                    &scope,
+                    bilibi_party_ids::OrganisationId::new(company).map_err(|_| Error::Invalid)?,
+                    &format!("core.user.scim.{id}"),
+                    &roles,
+                )
+                .await?;
+        }
         let sealed = self
             .settings
             .seal_owned(
@@ -395,6 +407,11 @@ impl UserService {
         let enabled = config.enabled;
         let (enforce, break_glass) = (config.enforce_sso, config.break_glass_user);
         tx.mutate(move|sql|Box::pin(async move{sql.execute("UPDATE user_identity_providers SET configured_by=$3,method=$4,enabled=$5,sealed_runtime=$6,enforce_sso=$7,break_glass_user=$8,version=version+1 WHERE tenant_id=$1 AND id=$2",&[&tenant,&id,&owner,&method,&enabled,&sealed,&enforce,&break_glass]).await?;Ok(((),vec![change("user.identity_provider",id,json!({"configuration":"previous"}),json!({"configuration":config,"enabled":enabled}))]))})).await?;
+        if scim {
+            let connection = self.sso_connection_in(tx.sql(), &public_id, false).await?;
+            self.scim_refresh_roles(tx, &connection, Some(&scope), None)
+                .await?;
+        }
         Ok((id, public_id))
     }
     pub(super) async fn sso_connection(&self, public: &str, enabled: bool) -> Result<Connection> {
@@ -403,7 +420,7 @@ impl UserService {
     }
     /// Reads on the caller's connection, so a caller holding a transaction never
     /// waits for a second pooled connection.
-    pub(super) async fn sso_connection_in(
+    pub(crate) async fn sso_connection_in(
         &self,
         client: &dyn bilibi_tenancy::ProofClient,
         public: &str,
