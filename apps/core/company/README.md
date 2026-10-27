@@ -121,8 +121,11 @@ edits are rejected in the domain too.
 
 ## Agent operations
 
-`agent_operations.rs` registers `core.company.list` and `core.company.get`
-(reads) and `core.company.create` (a reviewed safe write: preview shares
+`agent_operations.rs` registers `core.company.list`, `core.company.get`,
+`core.company.duplicates` and `core.company.hierarchy` (reads; see
+[Duplicate candidates](#duplicate-candidates) and
+[Company hierarchies](#company-hierarchies)) and `core.company.create`
+(a reviewed safe write: preview shares
 create's validation and code check without reserving it, commit writes
 through the plan's transaction) plus the `core.company` guide. A restricted
 field arrives as `{"restricted": true}`. The handlers read through a pool
