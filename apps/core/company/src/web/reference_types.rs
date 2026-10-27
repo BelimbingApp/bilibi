@@ -44,7 +44,6 @@ pub(super) struct Spec {
     edit_title: &'static str,
     code_placeholder: &'static str,
     name_placeholder: &'static str,
-    description_placeholder: &'static str,
     not_found: &'static str,
     created: &'static str,
     updated: &'static str,
@@ -82,7 +81,6 @@ pub(super) static DEPARTMENT_TYPES: Spec = Spec {
     edit_title: "Edit Department Type",
     code_placeholder: "e.g. ENG, HR, FIN",
     name_placeholder: "e.g. Engineering",
-    description_placeholder: "",
     not_found: "Department type not found.",
     created: "Department type created.",
     updated: "Department type updated.",
@@ -115,7 +113,6 @@ pub(super) static LEGAL_ENTITY_TYPES: Spec = Spec {
     edit_title: "Edit Legal Entity Type",
     code_placeholder: "e.g. LLC, CORP, PT",
     name_placeholder: "e.g. Limited Liability Company",
-    description_placeholder: "",
     not_found: "Legal entity type not found.",
     created: "Legal entity type created.",
     updated: "Legal entity type updated.",
@@ -614,8 +611,7 @@ impl ReferenceTypes {
         });
         let description = field("description")
             .kind(InputKind::Textarea)
-            .label("Description")
-            .placeholder(spec.description_placeholder);
+            .label("Description");
         let active = (!editing).then(|| {
             Field::in_form(spec.form_as, "is_active")
                 .id(format!("{}-active", spec.dom_field))

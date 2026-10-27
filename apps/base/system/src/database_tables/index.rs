@@ -84,7 +84,7 @@ impl Index {
     pub(super) async fn body(&mut self, scope: &Scope) -> Result<Html> {
         let header = Header {
             title: Html::text("Database Tables"),
-            subtitle: "Browse database tables.",
+            subtitle: "Read-only view of the database tables.",
             title_actions: render(IconButton {
                 id: "database-tables-pin",
                 context: IconContext::Inline,

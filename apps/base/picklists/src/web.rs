@@ -307,7 +307,7 @@ impl Index {
         }
         let header = render(Header {
             title: Html::text("Pick-lists"),
-            subtitle: "Manage the choices available in forms.",
+            subtitle: "Choices offered in forms. Organisations keep their own values.",
             ..Header::default()
         })?;
         let form = self.state.filters_form();
