@@ -2,7 +2,9 @@
 //! Module-owned operation contracts (ADR 01): discovery, read dispatch and
 //! reviewed writes for every caller. `/api/v1` and `/mcp` call them for
 //! agents, pages call them through [`page`]. Callers authenticate a fresh
-//! sealed Scope at every request.
+//! sealed Scope at every request. Queued jobs call writes through [`job`]
+//! (ADR 10).
+pub mod job;
 pub mod json;
 pub mod mcp;
 pub mod page;
@@ -648,8 +650,9 @@ inventory::submit! { Consumer::new::<Definitions>(DEFINITIONS,"base/agent_api",|
 inventory::submit! { Consumer::new::<App>(APPS,"base/agent_api",Registry::validate_apps) }
 inventory::submit! { bilibi_module_registry::Module {
     id:"base/agent_api",layer:bilibi_module_registry::Layer::Base,
-    dependencies:&["base/module_registry","base/authz","base/database","base/settings","base/tenancy","base/step_up","base/session","base/system"], migrations:&[("agent-api-plans-v1",include_str!("../migrations/001-plans.sql"))],
+    dependencies:&["base/module_registry","base/authz","base/database","base/settings","base/tenancy","base/step_up","base/session","base/system","base/queue"], migrations:&[("agent-api-plans-v1",include_str!("../migrations/001-plans.sql"))],
     services:&[bilibi_module_registry::Service {id:"base/agent_api.registry",factory:|_|Ok(Arc::new(Registry::from_inventory()?))},
     bilibi_module_registry::Service {id:"base/agent_api.plans",factory:|services|Ok(Arc::new(plans::Plans::new(services.get::<bilibi_database::Db>("base/database.pool")?.as_ref().clone(),services.get("base/database.mutations")?,services.get("base/agent_api.registry")?,services.get("base/settings.store")?)))},
+    bilibi_module_registry::Service {id:job::SERVICE,factory:|services|Ok(Arc::new(job::JobContracts::new(services.get("base/agent_api.registry")?)))},
     bilibi_module_registry::Service {id:page::SERVICE,factory:|services|Ok(Arc::new(page::PageContracts::new(services.get::<bilibi_database::Db>("base/database.pool")?.as_ref().clone(),services.get("base/agent_api.registry")?,services.get("base/agent_api.plans")?,services.get("base/session.sessions")?,&Catalog::discover(&bilibi_module_registry::discover()?)?)?))}],
 } }

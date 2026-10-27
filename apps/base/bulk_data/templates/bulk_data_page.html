@@ -1,0 +1,11 @@
+{#- One Imports page: the flash, then the header, cards, tables and dialog
+    src/web renders through the shared models, in order. -#}
+{%- import "components.html" as ui -%}
+{%- import "feedback.html" as feedback -%}
+<div data-shared-ui>
+{% call feedback::flash_group(messages=flash) %}{% endcall %}
+{% call ui::page(id=id) %}
+{% for part in parts %}{{ part|safe }}
+{% endfor %}
+{% endcall %}
+</div>

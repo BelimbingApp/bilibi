@@ -14,6 +14,7 @@ bilibi-settings = { path = "../settings" }
 bilibi-session.workspace = true
 bilibi-step-up.workspace = true
 bilibi-system.workspace = true
+bilibi-queue.workspace = true
 inventory.workspace = true
 serde.workspace = true
 serde_json.workspace = true

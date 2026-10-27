@@ -209,6 +209,22 @@ A page's write event calls the contract the agent doors call, through `base/agen
 - Owner refusals come back typed: `InvalidInput(fields)`, `Forbidden`, `NotFound`, `Backend(Conflict)`, … Return `Backend(Unauthorized)` and `Backend(StepUpRequired { .. })` from the page unchanged: the host signs the browser in again or sends it to confirm and back.
 - Core Person, Core Affiliation, Core Company's relationship screens, Core Tenant Administration and Base Events' replay page are the running examples.
 
+## Queued jobs as callers
+
+A job a person started calls a write contract as that person through `base/agent_api.jobs` ([src/job.rs](src/job.rs), `JobContracts`, ADR 10): the fifth door, under the same rules.
+
+| Call | Does |
+|---|---|
+| `writable(key)`, `readable(key)` | Whether a job may call the contract: a registered reviewed write (or a read), open to `Channel::Job`, with no step-up. Owners check theirs at boot |
+| `preview(client, execution, key, input)` | Schema, live capability, the owner's preview; writes nothing (a dry run) |
+| `commit(tx, execution, key, input)` | The owner's preview, then its commit on `tx`, which must come from `Execution::begin`: the lease, the person and the enqueue's trace ID hold. Record your own result in the same `tx`, then commit it |
+| `read(client, execution, key, input)` | A read contract, as `Registry::call` |
+
+- The scope is the job's person, re-sealed by Queue and marked `Scope::in_job` (`Channel::Job`). A system principal's job is refused, as system scopes are at the other doors.
+- No plan code: the person reviewed the job when they started it. A contract that declares step-up is refused, since no one is present to give a code.
+- Owner refusals come back typed as at the other doors; a database failure comes back as `Backend` so the job retries.
+- `base/bulk_data` (CSV import) is the first caller.
+
 ## Page writes declaration and check
 
 Each page or panel service declares its write events once, with Module Registry's `PageWrites` contribution (`PAGE_WRITES`, keyed by the service id):
@@ -234,6 +250,7 @@ Each gap is a `Pending` declaration in the owning module, with its reason. Remov
 | Service | Why it is pending |
 |---|---|
 | `base/audit_views.pages` | Action-log export writes through the Audit Views facade |
+| `base/bulk_data.pages` (`receive` only) | Receiving a CSV stores it as a private artifact and opens its run; Artifacts takes bytes outside a contract, whose input is bounded at 1 MiB |
 | `base/authz.pages` | Roles, field restrictions and two-factor policy; `base/authz_agent`'s grant contracts serve agents only |
 | `base/integration.pages` | Exchange actions |
 | `base/schedule.pages` | The schedule board |
