@@ -169,6 +169,7 @@ Width is a shared decision. Every page uses `PageVariant`. All three share one c
 | Modal | Native `<dialog>`. Focus enters, stays, and returns. Escape and Cancel are one action. A click on the backdrop does nothing |
 | Confirmation | `ConfirmDialog` for irreversible actions: consequence first, Cancel beside the destructive verb. Never `window.confirm` |
 | Flash | Stacks at the right above the page, most severe first, reserving space so messages never cover page actions. A message that arrives with a redirect floats top right instead. Info, warning and error stay until dismissed. Success clears after 8 s |
+| Shell preferences | Theme and time-display saves use the shared floating flash, with the same success timeout and persistent errors |
 | Success | Only for a completed write |
 | Info | Informs without confirming a write |
 | Panel notice | Where a panel cannot reach the page flash |

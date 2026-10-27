@@ -439,10 +439,19 @@ fn active_item(tree: &[menu::Node], path: &str) -> Option<&'static str> {
 
 fn nav_node(node: &menu::Node, active: Option<&str>) -> NavNode {
     let item = node.item.item;
-    // Contributions carry bare Heroicon names; the host adds the set prefix.
+    // Bilimbi ShellComponents uses menu icon names as supplied. Here, prefix
+    // bare Heroicons for the span utility, but keep registered UI glyphs bare
+    // so the shared `icon` macro can render their SVGs.
     let icon = match item.icon {
         None => "hero-square-3-stack-3d".to_owned(),
         Some(name) if name.starts_with("hero-") => name.to_owned(),
+        Some(name)
+            if bilibi_ui::icons::GLYPHS
+                .iter()
+                .any(|glyph| glyph.name == name) =>
+        {
+            name.to_owned()
+        }
         Some(name) => format!("hero-{name}"),
     };
     NavNode {

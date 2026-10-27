@@ -1,4 +1,5 @@
 {% import "components.html" as ui %}
+{% import "feedback.html" as feedback %}
 <div id="app"{% if live %} data-live{% endif %}>
 <div id="app-shell" data-hook="AppShell" data-tenant-id="{{ context.tenant_id }}" data-user-id="{{ context.user_id }}" data-theme-choice="{{ context.preferences.theme }}" data-display-mode="{{ context.preferences.mode }}" data-impersonating="{{ context.impersonator.is_some() }}" data-served-routes="{{ context.served_routes }}" data-pins="{{ context.pins }}" data-sidebar-mode="desktop" data-sidebar-hidden="false" data-sidebar-open="false" class="flex h-screen flex-col overflow-hidden bg-canvas">
 <header id="app-topbar" class="flex h-7 shrink-0 items-center justify-between gap-3 border-b border-line bg-surface px-3">
@@ -33,7 +34,7 @@
     exit, stays above the workspace. The link posts through ui.js with the
     session's CSRF secret; its title names the operator it returns to. -#}
 {% if let Some(operator) = context.impersonator %}<div id="app-scope-warning" role="note" aria-label="Access warning" class="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-warning-line bg-warning-surface px-3 py-1 text-xs text-warning-ink" data-csrf="{{ context.csrf }}"><a href="/admin/impersonate/leave" data-method="post" data-to="/admin/impersonate/leave" id="app-impersonation-stop" title="Stop viewing as {{ context.user }} and return to {{ operator }}" class="inline-flex items-center gap-1.5 underline underline-offset-2">{% call ui::icon(name="bilimbi-impersonate", class="size-4") %}{% endcall %} Viewing as {{ context.user }} · Stop</a></div>{% endif %}
-<div id="app-preference-feedback" data-live-ignore hidden role="status" aria-live="polite" class="shrink-0 border-b border-line bg-surface px-3 py-1 text-xs"></div>
+{% call feedback::local_flash_group(id="app-preference-feedback") %}{% endcall %}
 <div id="app-workspace" class="relative flex min-h-0 flex-1 overflow-hidden">
 <div id="app-sidebar-backdrop" class="app-sidebar-backdrop absolute inset-0 z-30 bg-ink/35 opacity-0 lg:hidden" aria-hidden="true"></div>
 <aside id="app-sidebar" class="app-sidebar app-nav-menu absolute inset-y-0 left-0 z-40 flex w-56 shrink-0 flex-col border-r border-line bg-surface-sidebar lg:static lg:inset-auto lg:top-auto lg:bottom-auto lg:z-auto lg:w-60" tabindex="-1" role="navigation" aria-label="Main navigation">
