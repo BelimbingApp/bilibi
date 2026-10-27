@@ -1,0 +1,45 @@
+name: Claim an issue
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  issues: write
+
+jobs:
+  self-assign:
+    if: >-
+      !github.event.issue.pull_request &&
+      (github.event.comment.body == '/take' || github.event.comment.body == '/untake')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          script: |
+            // Repository automation; no corresponding Bilimbi application module.
+            const { issue, comment } = context.payload;
+            if (issue.pull_request || !['/take', '/untake'].includes(comment.body)) return;
+            const params = { ...context.repo, issue_number: issue.number };
+            const login = comment.user.login;
+            if (comment.body === '/take') {
+              const { data } = await github.rest.issues.addAssignees({
+                ...params, assignees: [login],
+              });
+              if (!data.assignees.some(user => user.login === login)) {
+                throw new Error('GitHub did not add the requested assignee.');
+              }
+              const others = data.assignees.filter(user => user.login !== login);
+              if (others.length) {
+                await github.rest.issues.createComment({
+                  ...params,
+                  body: `@${login}, you are assigned. Also assigned: ${others.map(user => `@${user.login}`).join(', ')}.`,
+                });
+              }
+            } else {
+              await github.rest.issues.removeAssignees({ ...params, assignees: [login] });
+            }
+            await github.rest.reactions.createForIssueComment({
+              ...context.repo, comment_id: comment.id, content: '+1',
+            });
