@@ -65,7 +65,7 @@ pushed detail (Bilimbi's `push_event`); the stored-secret reveal uses
 
 A reply that sets `LiveBody.redirect` to a local path may also set `LiveBody.flash`
 (kind plus the source's copy: Bilimbi's `put_flash` + `push_navigate`, e.g.
-`Success`, "Company created successfully."). The host holds it for that session
+`Success`, "Company created."). The host holds it for that session
 (`apps/web/src/landing.rs`, 60 seconds, text never leaves the server) and the
 session's next navigation to that path renders it once in the flash group. A
 flash without a redirect is dropped; an OAuth callback never carries one.
