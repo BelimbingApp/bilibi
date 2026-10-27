@@ -45,7 +45,7 @@ static EXTRA: GridContribution = GridContribution {
         "g5_floats",
         "Floats and days",
         "grid.reference.view",
-        Source::global("SELECT * FROM (VALUES (1, 1.234567890123456::float8, DATE '2026-10-23', 0.1::real), (2, 0.30000000000000004::float8, DATE '2026-10-24', 2.5::real)) s(id, amount, day, small)"),
+        Source::global("SELECT * FROM (VALUES (1, 1.234567890123456::float8, DATE '2026-10-23', 0.1::real), (2, 0.30000000000000004::float8, DATE '2026-10-24', 2.5::real), (3, 1e100::float8, DATE '2026-10-24', NULL::real), (4, 1e-100::float8, DATE '2026-10-24', NULL::real), (5, -1e100::float8, DATE '2026-10-24', NULL::real), (6, -1e-100::float8, DATE '2026-10-24', NULL::real)) s(id, amount, day, small)"),
         "id",
         &[
             Field::new("id", "ID", FieldType::Integer),
@@ -800,9 +800,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ),
         (
             "amount",
-            "of type double equals 1e100 (not stored)",
+            "of type double equals the stored 1e100",
             Test::Equals(json!(1e100)),
-            vec![],
+            vec![json!(3)],
         ),
         (
             "amount",
@@ -838,6 +838,54 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 && found.as_ref().is_ok_and(|k| *k == want),
             format!("{rows:?}, {found:?}"),
         );
+    }
+    println!("== Float operands outside real's range");
+    for (operand, key) in [(1e100, 3), (1e-100, 4), (-1e100, 5), (-1e-100, 6)] {
+        for (label, test) in [
+            ("equals", Test::Equals(json!(operand))),
+            ("one of", Test::OneOf(vec![json!(0.1), json!(operand)])),
+            (
+                "exact range",
+                Test::Range {
+                    min: Some(json!(operand)),
+                    max: Some(json!(operand)),
+                },
+            ),
+        ] {
+            for column in ["small", "amount"] {
+                let filters = vec![filter(column, test.clone())];
+                let summary = summarize(
+                    &db,
+                    &manager,
+                    "g5_floats",
+                    &spec(filters.clone(), vec![], vec![]),
+                )
+                .await;
+                let keys = page_keys(&db, &manager, "g5_floats", &page(filters)).await;
+                let want = if column == "amount" {
+                    vec![json!(key)]
+                } else if matches!(test, Test::OneOf(_)) {
+                    vec![json!(1)]
+                } else {
+                    vec![]
+                };
+                let ok = summary
+                    .as_ref()
+                    .is_ok_and(|s| s.total.rows == want.len() as i64)
+                    && keys
+                        .as_ref()
+                        .is_ok_and(|p| p.total == want.len() as i64 && p.keys == want);
+                report.check(
+                    &format!("{column} {label} {operand:e}: summary and page find exactly the stored rows"),
+                    ok,
+                    format!(
+                        "{:?} / {:?}",
+                        summary.as_ref().map(|s| s.total.rows),
+                        keys.as_ref().map(|p| &p.keys)
+                    ),
+                );
+            }
+        }
     }
     let calendar_cases = [
         ("day", Test::Equals(json!("0000-01-01")), "a day in year 0"),

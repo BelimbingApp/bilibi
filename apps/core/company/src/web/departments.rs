@@ -612,7 +612,7 @@ impl Departments {
                     (
                         true,
                         "edit-dept-head",
-                        "hero-user-plus",
+                        "user-plus",
                         format!("Set head for {name}"),
                         "edit_head",
                         IconKind::Neutral,
@@ -636,7 +636,7 @@ impl Departments {
                     (
                         department.status != "inactive",
                         "deactivate-dept",
-                        "hero-x-circle",
+                        "x-circle",
                         format!("Deactivate {name}"),
                         "deactivate",
                         IconKind::Neutral,

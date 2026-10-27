@@ -24,10 +24,10 @@
 {% for widget in widgets %}
 <div id="widget-{{ widget.id }}" data-widget-id="{{ widget.id }}" class="relative">
 {% if editing %}<div id="controls-{{ widget.id }}" class="absolute right-1 top-1 z-10 flex gap-0.5">
-{% call ui::icon_button(icon="hero-bars-3", label="Drag to reorder {}"|format(widget.label), context=bilibi_ui::IconContext::Inline, id="drag-{}"|format(widget.id), draggable=true, data_role="drag-handle", title="Drag to reorder. Changes save when dropped.", class="cursor-grab touch-none active:cursor-grabbing") %}{% endcall %}
+{% call ui::icon_button(icon="bars-3", label="Drag to reorder {}"|format(widget.label), context=bilibi_ui::IconContext::Inline, id="drag-{}"|format(widget.id), draggable=true, data_role="drag-handle", title="Drag to reorder. Changes save when dropped.", class="cursor-grab touch-none active:cursor-grabbing") %}{% endcall %}
 <div class="flex gap-0.5">
-{% call ui::icon_button(icon="hero-chevron-up", label="Move {} up"|format(widget.label), context=bilibi_ui::IconContext::Inline, id="move-up-{}"|format(widget.id), event="move_up", name="id", value=widget.id, title="Move up") %}{% endcall %}
-{% call ui::icon_button(icon="hero-chevron-down", label="Move {} down"|format(widget.label), context=bilibi_ui::IconContext::Inline, id="move-down-{}"|format(widget.id), event="move_down", name="id", value=widget.id, title="Move down") %}{% endcall %}
+{% call ui::icon_button(icon="chevron-up", label="Move {} up"|format(widget.label), context=bilibi_ui::IconContext::Inline, id="move-up-{}"|format(widget.id), event="move_up", name="id", value=widget.id, title="Move up") %}{% endcall %}
+{% call ui::icon_button(icon="chevron-down", label="Move {} down"|format(widget.label), context=bilibi_ui::IconContext::Inline, id="move-down-{}"|format(widget.id), event="move_down", name="id", value=widget.id, title="Move down") %}{% endcall %}
 {% call ui::icon_button(icon="close", label="Remove {}"|format(widget.label), context=bilibi_ui::IconContext::Inline, kind=bilibi_ui::IconKind::Danger, id="remove-{}"|format(widget.id), event="remove_widget", name="id", value=widget.id, title="Remove widget", class="ml-1") %}{% endcall %}
 </div>
 </div>{% endif %}
@@ -54,8 +54,8 @@
 {% for section in sections %}
 <div id="section-{{ section.id }}" data-section-id="{{ section.id }}" class="relative mt-6">
 {% if editing %}<div id="controls-{{ section.id }}" class="absolute right-1 top-1 z-10 flex gap-0.5">
-{% call ui::icon_button(icon="hero-chevron-up", label="Move {} up"|format(section.label), context=bilibi_ui::IconContext::Inline, id="move-section-up-{}"|format(section.id), event="move_section_up", name="id", value=section.id, title="Move up") %}{% endcall %}
-{% call ui::icon_button(icon="hero-chevron-down", label="Move {} down"|format(section.label), context=bilibi_ui::IconContext::Inline, id="move-section-down-{}"|format(section.id), event="move_section_down", name="id", value=section.id, title="Move down") %}{% endcall %}
+{% call ui::icon_button(icon="chevron-up", label="Move {} up"|format(section.label), context=bilibi_ui::IconContext::Inline, id="move-section-up-{}"|format(section.id), event="move_section_up", name="id", value=section.id, title="Move up") %}{% endcall %}
+{% call ui::icon_button(icon="chevron-down", label="Move {} down"|format(section.label), context=bilibi_ui::IconContext::Inline, id="move-section-down-{}"|format(section.id), event="move_section_down", name="id", value=section.id, title="Move down") %}{% endcall %}
 {% call ui::icon_button(icon="close", label="Remove {}"|format(section.label), context=bilibi_ui::IconContext::Inline, kind=bilibi_ui::IconKind::Danger, id="remove-section-{}"|format(section.id), event="remove_section", name="id", value=section.id, title="Remove section") %}{% endcall %}
 </div>{% endif %}
 <div id="slot-{{ section.id }}" data-live-ignore><div id="{{ section.panel }}"></div></div>
