@@ -52,7 +52,7 @@ pub(crate) fn columns() -> ListColumns {
             column("operation", "Operation", true),
             column("default", "Default", false),
             column("tenant", "This tenant", false),
-            column("floor", "Installation floor", false),
+            column("floor", "Required for all organisations", false),
         ],
     )
     .expect("step-up columns")
@@ -295,7 +295,7 @@ impl StepUpPolicy {
             Err(Error::Conflict) => {
                 self.flash = Some((
                     StatusKind::Error,
-                    "The installation floor keeps this operation on; it cannot be turned off here."
+                    "This action requires 2FA for all organisations and cannot be turned off here."
                         .into(),
                 ));
             }
@@ -435,9 +435,9 @@ impl StepUpPolicy {
         }
         if owner {
             let (event, label) = if rule.floor {
-                ("request_unlock", "Remove from floor")
+                ("request_unlock", "Allow organisation choice")
             } else {
-                ("request_lock", "Add to floor")
+                ("request_lock", "Require for all organisations")
             };
             html.push(&render(Button {
                 id: &format!("{id}-floor"),
@@ -616,7 +616,7 @@ impl StepUpPolicy {
             table.empty = Some(TableEmpty::Content(Html::text(if search.is_empty() {
                 "No actions can require 2FA yet."
             } else {
-                "No operation matches this search."
+                "No actions match this search."
             })));
         }
         let form = self.state.filters_form();
@@ -625,9 +625,9 @@ impl StepUpPolicy {
             vec![ToolbarControl::search(
                 "step-up-search",
                 "search",
-                "Search operations",
+                "Search actions",
                 &form["search"],
-                "Search by operation or module...",
+                "Search by action or module...",
             )],
         ))?;
         let mut card = render(table)?;
@@ -722,12 +722,12 @@ impl StepUpPolicy {
                     format!(
                         "{key} will {} for every organisation.",
                         if *floor == Some(true) {
-                            "stay on whatever an organisation chooses"
+                            "require 2FA for every organisation"
                         } else {
                             "follow each organisation's choice"
                         }
                     ),
-                    "Save floor",
+                    "Save requirement",
                 ),
             };
             html.push(&render(ConfirmDialog {
