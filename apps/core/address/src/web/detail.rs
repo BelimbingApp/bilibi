@@ -835,7 +835,7 @@ impl LiveState<Scope, Error> for Detail {
 fn failure(error: &WriteError) -> CommitStatus {
     match error {
         WriteError::NotFound => CommitStatus::Error(
-            "This address no longer exists. Return to the list to find its replacement.".into(),
+            "This address no longer exists. Return to the address list.".into(),
         ),
         WriteError::Archived => CommitStatus::Error(
             "An archived company uses this address, so it is read-only and the change was not saved."

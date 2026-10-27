@@ -795,7 +795,7 @@ impl Panel {
             render(ConfirmDialog {
                 id: &self.dom("unlink-confirm"),
                 consequence: &format!("The affiliation with {} will be unlinked.", pending.label),
-                detail: "The record and its history are kept, but it can no longer be edited and no longer counts as a current link.",
+                detail: "The record and its history are kept, but it cannot be edited or used as a current link.",
                 confirm: "Unlink",
                 working: "Unlinking…",
                 confirm_event: "unlink",

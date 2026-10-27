@@ -854,7 +854,7 @@ pub(super) async fn detail(
         let detail = match pending.operation {
             crate::lifecycle::Operation::Archive => "Its records are kept. Archiving is final: an archived company cannot be reactivated.",
             crate::lifecycle::Operation::Suspend => "Its records are kept. Reactivating the company lifts the suspension.",
-            crate::lifecycle::Operation::Activate => "It becomes a working company of this workspace. It can be suspended later.",
+            crate::lifecycle::Operation::Activate => "The company becomes active. It can be suspended later.",
             crate::lifecycle::Operation::Reactivate => "The suspension is lifted and the company is active again.",
         };
         let mut reason = Field::named("reason")

@@ -247,7 +247,7 @@ impl Detail {
         let dialog = if let Some((name, _, _)) = &self.pending_retire {
             render(ConfirmDialog {
             id: "person-retire-confirm", consequence: &format!("{name} will be retired."),
-            detail: "Their details and history are kept, but the contact can no longer be edited or newly linked. Their affiliations are not changed.",
+            detail: "Their details, history and affiliations are kept. The contact cannot be edited or linked again.",
             confirm: "Retire", working: "Retiring…", confirm_event: "retire", cancel_event: "cancel_retire",
         })?
         } else {
