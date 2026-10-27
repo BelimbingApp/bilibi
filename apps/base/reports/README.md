@@ -55,7 +55,7 @@ Operator-built reports: a saved question over one Grid table, run as each reader
 | `reports.statement_ms`, `reports.max_cost` | 2,000 ms, 100,000 (Grid's own bound) | 500–30,000 ms; 1,000–Grid's `MAX_COST_BOUND` |
 | `reports.queued_statement_ms`, `reports.queued_max_cost` | 60,000 ms, 10,000,000 | 1,000 ms–Grid's `MAX_STATEMENT_MS`; 1,000–`MAX_COST_BOUND` |
 
-A page, a dashboard panel, a download and an agent run read under the interactive pair; a prepared export and a scheduled delivery under the background pair (`RunInput::background`). A report over its cost or time bound is refused as `TooHeavy`, which says to prepare it as an export instead, and the Result tab offers Prepare CSV/PDF right there instead of the downloads, which read under the same interactive bounds. Too many groups is refused with "add a filter", since the background has the same group limit.
+A page, a dashboard panel, a download and an agent run read under the interactive pair; a prepared export and a scheduled delivery under the background pair (`RunInput::background`). Every read of a run takes the pair: a list's keys, the cells that fill them (`grid::project_within`) and its totals. A report over its cost or time bound is refused as `TooHeavy`, which says to prepare it as an export instead, and the Result tab offers Prepare CSV/PDF right there instead of the downloads, which read under the same interactive bounds. Too many groups is refused with "add a filter", since the background has the same group limit.
 
 ## Pages
 

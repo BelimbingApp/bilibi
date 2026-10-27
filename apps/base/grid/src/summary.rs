@@ -202,7 +202,7 @@ pub const MAX_STATEMENT_MS: u32 = 300_000;
 /// The largest planner cost a caller may admit.
 pub const MAX_COST_BOUND: f64 = 100_000_000.0;
 impl Bounds {
-    fn check(&self) -> Result<(), QueryError> {
+    pub(crate) fn check(&self) -> Result<(), QueryError> {
         if !(100..=MAX_STATEMENT_MS).contains(&self.statement_ms)
             || !self.max_cost.is_finite()
             || !(1.0..=MAX_COST_BOUND).contains(&self.max_cost)
@@ -212,7 +212,7 @@ impl Bounds {
         Ok(())
     }
     /// The transaction settings: the timeout is a validated number.
-    fn sql(&self) -> String {
+    pub(crate) fn sql(&self) -> String {
         format!(
             "SET LOCAL statement_timeout = '{}ms'; SET LOCAL lock_timeout = '500ms'; SET LOCAL TimeZone = 'UTC'",
             self.statement_ms

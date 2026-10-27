@@ -33,16 +33,31 @@ bilibi_walkthrough_fixture::inventory::submit! { bilibi_walkthrough_fixture::reg
 
 // A source the planner thinks is heavy (20 million rows) that returns one
 // row at once: over the interactive cost bound, within the background one.
+// And a value that takes 2.5 s to draw: past the interactive time bound
+// (2 s), within the background one (60 s).
 static HEAVY: grid::GridContribution = grid::GridContribution {
     record_fields: &[],
-    tables: &[grid::TableDecl::new(
-        "r1_heavy",
-        "Heavy estimate",
-        "grid.reference.view",
-        grid::Source::global("SELECT n AS id FROM r1_heavy() n"),
-        "id",
-        &[grid::Field::new("id", "ID", grid::FieldType::Integer)],
-    )],
+    tables: &[
+        grid::TableDecl::new(
+            "r1_heavy",
+            "Heavy estimate",
+            "grid.reference.view",
+            grid::Source::global("SELECT n AS id FROM r1_heavy() n"),
+            "id",
+            &[grid::Field::new("id", "ID", grid::FieldType::Integer)],
+        ),
+        grid::TableDecl::new(
+            "r1_slow",
+            "Slow value",
+            "grid.reference.view",
+            grid::Source::global("SELECT 1 AS id, r1_slow() AS slow"),
+            "id",
+            &[
+                grid::Field::new("id", "ID", grid::FieldType::Integer),
+                grid::Field::new("slow", "Slow", grid::FieldType::Integer),
+            ],
+        ),
+    ],
     links: &[],
 };
 grid::contribute!("base/grid", "r1.walkthrough", &HEAVY);
@@ -147,7 +162,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let db = pool(&std::env::var("DATABASE_URL")?)?;
     bilibi_walkthrough_fixture::install(&db).await?;
     // Before the first catalog read, which describes each source once.
-    db.get().await?.batch_execute("CREATE OR REPLACE FUNCTION r1_heavy() RETURNS SETOF int LANGUAGE plpgsql STABLE ROWS 20000000 AS 'BEGIN RETURN NEXT 1; END'").await?;
+    db.get().await?.batch_execute("CREATE OR REPLACE FUNCTION r1_heavy() RETURNS SETOF int LANGUAGE plpgsql STABLE ROWS 20000000 AS 'BEGIN RETURN NEXT 1; END'; CREATE OR REPLACE FUNCTION r1_slow() RETURNS int LANGUAGE plpgsql STABLE AS 'BEGIN PERFORM pg_sleep(2.5); RETURN 1; END'").await?;
     let app = bilibi_web::App::new(db.clone(), "http://localhost:35567")?;
     let auth = app
         .services
@@ -1012,6 +1027,44 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         run.is_ok(),
         format!("{:?}", run.as_ref().err()),
     );
+    // The Rows projection reads under the same bounds as its keys (review
+    // of #175).
+    let rows_of = |record_type: &str, column: &str| Draft {
+        name: format!("Rows of {record_type}"),
+        description: String::new(),
+        record_type: record_type.into(),
+        kind: Kind::Rows,
+        definition: Definition {
+            columns: vec![column.into()],
+            ..Definition::default()
+        },
+    };
+    for (record_type, column, what) in [
+        ("r1_heavy", "id", "a heavy-estimate list"),
+        ("r1_slow", "slow", "a list with a 2.5 s value"),
+    ] {
+        let draft = rows_of(record_type, column);
+        let id = write(&boundary, &db, &manager, "reports.create", async |tx| {
+            reports.create(tx, &manager, &draft).await
+        })
+        .await?;
+        let refused = reports.run(&manager, id, &RunInput::default()).await;
+        checks.check(
+            &format!("{what} is refused under the interactive bounds"),
+            matches!(&refused, Err(ReportError::TooHeavy(_))),
+            format!("{:?}", refused.as_ref().err())
+                .chars()
+                .take(120)
+                .collect::<String>(),
+        );
+        let started = std::time::Instant::now();
+        let run = reports.run(&manager, id, &background).await;
+        checks.check(
+            &format!("{what} is read whole under the background bounds"),
+            matches!(&run, Ok(r) if matches!(&r.result, RunResult::Rows { rows, .. } if rows.len() == 1)),
+            format!("{:?} in {:?}", run.as_ref().err(), started.elapsed()),
+        );
+    }
 
     println!("== Deleting");
     let refused = write(&boundary, &db, &viewer, "reports.delete", async |tx| {

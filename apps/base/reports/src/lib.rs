@@ -461,12 +461,13 @@ impl Reports {
     ) -> Result<(), QueryError> {
         match draft.kind {
             Kind::Rows => {
-                bilibi_grid::project(
+                bilibi_grid::project_within(
                     &self.db,
                     scope,
                     &draft.record_type,
                     &[],
                     &draft.definition.columns,
+                    bounds,
                 )
                 .await?;
                 bilibi_grid::page_keys(
@@ -765,10 +766,17 @@ impl Reports {
                 .await
                 .map_err(grid)?;
                 let specs: Vec<&str> = columns.iter().map(|c| c.spec.as_str()).collect();
-                let projection =
-                    bilibi_grid::project(&self.db, scope, &report.record_type, &page.keys, &specs)
-                        .await
-                        .map_err(grid)?;
+                // Filled under the same bounds the keys were read under.
+                let projection = bilibi_grid::project_within(
+                    &self.db,
+                    scope,
+                    &report.record_type,
+                    &page.keys,
+                    &specs,
+                    bounds,
+                )
+                .await
+                .map_err(grid)?;
                 let rows: Vec<(Value, Vec<Value>)> = projection
                     .rows
                     .into_iter()

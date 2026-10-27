@@ -1,7 +1,7 @@
 //! Page-only projections. Every table and edge comes from its owner's scoped
 //! source. The caller supplies specs, never trusted resolved columns or SQL.
 use crate::lens::{self, Range, TREND_MONTHS};
-use crate::{Agg, Catalog, Column, ColumnError, Join, Link, LinkKind, Table, MAX_COLUMNS};
+use crate::{Agg, Bounds, Catalog, Column, ColumnError, Join, Link, LinkKind, Table, MAX_COLUMNS};
 use bilibi_database::{Db, Error};
 use bilibi_tenancy::Scope;
 use jiff::{civil, ToSpan};
@@ -157,6 +157,20 @@ pub async fn project<S: AsRef<str>>(
     project_lenses(db, scope, root, ids, specs, &Lenses::default()).await
 }
 
+/// [`project`] under the caller's [`Bounds`] (its statement timeout and cost
+/// bound) instead of the interactive ones: the report builder fills a page
+/// of keys it read under the same bounds, interactive or background.
+pub async fn project_within<S: AsRef<str>>(
+    db: &Db,
+    scope: &Scope,
+    root: &str,
+    ids: &[Value],
+    specs: &[S],
+    bounds: Bounds,
+) -> Result<Projection, QueryError> {
+    read(db, scope, root, ids, specs, &Lenses::default(), bounds).await
+}
+
 /// [`project`] plus each trend column's monthly series and each delta column's
 /// aggregate before the date, from the same statement under the same bounds.
 /// Months and dates are UTC calendar days (`TimeZone` is UTC for the read).
@@ -168,6 +182,19 @@ pub async fn project_lenses<S: AsRef<str>>(
     specs: &[S],
     lenses: &Lenses,
 ) -> Result<Projection, QueryError> {
+    read(db, scope, root, ids, specs, lenses, Bounds::default()).await
+}
+
+async fn read<S: AsRef<str>>(
+    db: &Db,
+    scope: &Scope,
+    root: &str,
+    ids: &[Value],
+    specs: &[S],
+    lenses: &Lenses,
+    bounds: Bounds,
+) -> Result<Projection, QueryError> {
+    bounds.check()?;
     if ids.len() > MAX_ROWS {
         return Err(QueryError::Limit("page exceeds 100 IDs"));
     }
@@ -189,7 +216,7 @@ pub async fn project_lenses<S: AsRef<str>>(
         .isolation_level(tokio_postgres::IsolationLevel::RepeatableRead)
         .start()
         .await?;
-    tx.batch_execute(BOUNDS).await?;
+    tx.batch_execute(&bounds.sql()).await?;
     let catalog = Catalog::for_scope(&*tx, scope).await?;
     let root = catalog.table(root).ok_or(QueryError::ForbiddenRoot)?;
     let columns = catalog
@@ -244,8 +271,8 @@ pub async fn project_lenses<S: AsRef<str>>(
     let cost = explain[0]["Plan"]["Total Cost"]
         .as_f64()
         .ok_or(Error::Internal)?;
-    if !cost.is_finite() || cost > MAX_ESTIMATED_COST {
-        return Err(QueryError::Limit("estimated query cost exceeds 100000"));
+    if !cost.is_finite() || cost > bounds.max_cost {
+        return Err(QueryError::Limit("estimated query cost exceeds the bound"));
     }
     let selected = tx.query(&sql, params).await?;
     if selected.len() > MAX_ROWS {
