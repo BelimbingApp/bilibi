@@ -104,6 +104,15 @@ impl App {
             services.get(bilibi_base::step_up::SERVICE)?;
         let settings = services.get("base/settings.store")?;
         let renderer = services.get("base/ui.renderer")?;
+        for entry in services
+            .catalog()?
+            .entries::<bilibi_base::menu::MenuItem>(bilibi_base::menu::ITEMS)?
+        {
+            let item = entry.get::<bilibi_base::menu::MenuItem>()?;
+            if let Some(icon) = item.icon {
+                bilibi_ui::Icons::check_menu(icon, entry.provenance.module);
+            }
+        }
         let menu = bilibi_base::menu::Menu::from_catalog(services.catalog()?)?;
         let display = services.get("base/datetime.display")?;
         let mutations = services.get("base/database.mutations")?;

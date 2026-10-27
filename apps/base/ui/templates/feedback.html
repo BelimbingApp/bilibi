@@ -10,9 +10,9 @@
 {#- One page-level message; nothing renders while message is empty. Clicking it
     dismisses it and raises clear-flash with data-value-key. spinner adds the
     reconnecting arrow; connection ("client" | "server") binds it to the drop. -#}
-{% macro flash(kind, id="", title="", message="", spinner=false, hidden=false, auto_dismiss=false, connection="") %}
+{% macro flash(kind, id="", title="", message="", spinner=false, hidden=false, auto_dismiss=false, connection="", local=false) %}
 {%- if !message.is_empty() -%}
-<div id="{% if id.is_empty() %}flash-{{ kind.name() }}{% else %}{{ id }}{% endif %}" data-flash data-event="clear-flash" data-value-key="{{ kind.name() }}" role="{{ kind.role() }}" aria-live="{{ kind.live() }}" class="w-full"{% if hidden %} hidden{% endif %}{% if !connection.is_empty() %} data-connection="{{ connection }}"{% endif %}{% if auto_dismiss %} data-hook="FlashAutoDismiss" data-auto-dismiss-ms="{{ bilibi_ui::AUTO_DISMISS_MS }}"{% endif %}><div class="flex items-start gap-2 rounded-xl border px-panel py-feedback text-sm shadow-xl shadow-ink/[0.08] backdrop-blur {{ kind.flash_class() }}">{% call c::icon(name=kind.icon(), class="mt-1 size-4 shrink-0") %}{% endcall %}<div class="min-w-0 flex-1">{% if !title.is_empty() %}<p class="font-semibold">{{ title }}</p>{% endif %}<p>{{ message }}{% if spinner %} {% call c::icon(name="hero-arrow-path", class="ml-1 size-3 animate-spin") %}{% endcall %}{% endif %}</p></div><button type="button" class="ui-icon-button group grid size-6 shrink-0 place-items-center self-start rounded-sm cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-strong/40" aria-label="close">{% call c::icon(name="close", class="size-4 opacity-40 group-hover:opacity-70") %}{% endcall %}</button></div></div>
+<div id="{% if id.is_empty() %}flash-{{ kind.name() }}{% else %}{{ id }}{% endif %}" data-flash{% if local %} data-local-flash{% endif %} {% if !local %}data-event="clear-flash" data-value-key="{{ kind.name() }}"{% endif %} role="{{ kind.role() }}" aria-live="{{ kind.live() }}" class="w-full"{% if hidden %} hidden{% endif %}{% if !connection.is_empty() %} data-connection="{{ connection }}"{% endif %}{% if auto_dismiss %} data-hook="FlashAutoDismiss" data-auto-dismiss-ms="{{ bilibi_ui::AUTO_DISMISS_MS }}"{% endif %}><div class="flex items-start gap-2 rounded-xl border px-panel py-feedback text-sm shadow-xl shadow-ink/[0.08] backdrop-blur {{ kind.flash_class() }}">{% call c::icon(name=kind.icon(), class="mt-1 size-4 shrink-0") %}{% endcall %}<div class="min-w-0 flex-1">{% if !title.is_empty() %}<p class="font-semibold">{{ title }}</p>{% endif %}<p data-flash-message>{{ message }}{% if spinner %} {% call c::icon(name="arrow-path", class="ml-1 size-3 animate-spin") %}{% endcall %}{% endif %}</p></div><button type="button" class="ui-icon-button group grid size-6 shrink-0 place-items-center self-start rounded-sm cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-strong/40" aria-label="close">{% call c::icon(name="close", class="size-4 opacity-40 group-hover:opacity-70") %}{% endcall %}</button></div></div>
 {%- endif -%}
 {% endmacro %}
 
@@ -84,4 +84,15 @@
 {# The stored server role, never the compiler's build mode. #}
 {% macro instance_status(status) %}
 {% if status.editable %}<a{% if !status.id.is_empty() %} id="{{ status.id }}"{% endif %} href="/system/instance" title="Instance settings · {{ status.title }}" data-instance="{{ status.role }}" class="inline-flex shrink-0 items-center gap-1 rounded-sm border px-1.5 font-semibold {{ status.tone.surface_class() }}">{% else %}<span{% if !status.id.is_empty() %} id="{{ status.id }}"{% endif %} title="{{ status.title }}" data-instance="{{ status.role }}" class="inline-flex shrink-0 items-center gap-1 rounded-sm border px-1.5 font-semibold {{ status.tone.surface_class() }}">{% endif %}{{ status.role_label }}{% if status.label != status.role_label %} · {{ status.label }}{% endif %}{% if status.editable %}</a>{% else %}</span>{% endif %}
+{% endmacro %}
+
+{# ShellControls uses the shared flash DOM for browser-owned preference outcomes.
+   Like a redirect outlet, this sits outside the page body and floats. #}
+{% macro local_flash_group(id) %}
+<div id="{{ id }}" data-live-ignore aria-live="polite" class="fixed right-4 top-4 z-50 flex w-[min(24rem,calc(100vw-2rem))] flex-col gap-2">
+<div data-local-flash-outlet></div>
+{% for kind in [bilibi_ui::StatusKind::Info, bilibi_ui::StatusKind::Success, bilibi_ui::StatusKind::Error] %}
+<template data-local-flash-template="{{ kind.name() }}">{% call flash(kind=kind, id="{}-message"|format(id), message=" ", auto_dismiss=kind.auto_dismisses(), local=true) %}{% endcall %}</template>
+{% endfor %}
+</div>
 {% endmacro %}

@@ -59,8 +59,6 @@
       this.root = shell.el;
       this.pending = false;
       this.openPanelId = null;
-      this.message = null;
-      this.messageError = false;
       this.onClick = (event) => this.click(event);
       this.onKey = (event) => this.key(event);
       document.addEventListener('click', this.onClick);
@@ -132,10 +130,14 @@
         }, 0);
       }
     }
-    feedback(message, error = false) {
-      this.message = message;
-      this.messageError = error;
-      this.apply();
+    feedback(message, kind = 'success') {
+      const region = this.root.querySelector('#app-preference-feedback');
+      const template = region?.querySelector(`[data-local-flash-template="${kind}"]`);
+      const outlet = region?.querySelector('[data-local-flash-outlet]');
+      if (!template || !outlet) return;
+      const flash = template.content.cloneNode(true);
+      flash.querySelector('[data-flash-message]').textContent = message;
+      outlet.replaceChildren(flash);
     }
     finish(restore) {
       clearTimeout(this.timer);
@@ -149,11 +151,11 @@
       const restore = (open && open.contains(origin) && this.trigger(open)) || origin;
       if (kind === 'theme' && !THEMES.includes(value)) return;
       this.pending = true;
-      this.feedback(kind === 'theme' ? 'Saving theme…' : 'Saving display preference…');
+      this.feedback(kind === 'theme' ? 'Saving theme…' : 'Saving display preference…', 'info');
       this.abort = new AbortController();
       this.timer = setTimeout(() => {
         this.abort.abort();
-        this.feedback('Save could not be confirmed. Reload to check your saved preference.', true);
+        this.feedback('Save could not be confirmed. Reload to check your saved preference.', 'error');
       }, 12000);
       accountRequest('/preferences', {method: 'POST', signal: this.abort.signal, body: JSON.stringify({kind, value})})
         .then((response) => (response.ok ? response.json() : Promise.reject(response.status)))
@@ -166,7 +168,7 @@
         })
         .catch(() => {
           if (!this.abort.signal.aborted) {
-            this.feedback(`Could not save ${kind === 'theme' ? 'theme' : 'display preference'}. Your previous choice is still selected. Try again.`, true);
+            this.feedback(`Could not save ${kind === 'theme' ? 'theme' : 'display preference'}. Your previous choice is still selected. Try again.`, 'error');
           }
         })
         .finally(() => this.finish(restore));
@@ -193,12 +195,6 @@
         const open = panel.id === this.openPanelId;
         panel.hidden = !open;
         this.trigger(panel)?.setAttribute('aria-expanded', String(open));
-      }
-      const region = this.root.querySelector('#app-preference-feedback');
-      if (region) {
-        region.hidden = this.message === null;
-        if (region.textContent !== (this.message ?? '')) region.textContent = this.message ?? '';
-        region.classList.toggle('text-danger', this.messageError);
       }
     }
   }
@@ -985,7 +981,9 @@
       const items = this.pinnedEntries.map((pin) => this.resolvePinnedItem(pin)).filter(Boolean);
       // Rebuilding is a child-list mutation that ui.js reports as `updated`,
       // which calls back here: rebuild only when the drawn pins change.
-      const drawn = JSON.stringify([this.impersonating, items.map(({key, label, url}) => [key, label, url])]);
+      const drawn = JSON.stringify([this.impersonating, items.map(({key, label, url, item}) => [
+        key, label, url, item?.querySelector('.app-nav-icon')?.outerHTML ?? null,
+      ])]);
       if (drawn !== this.drawnPins || this.pinnedItems.childElementCount !== items.length) {
         this.drawnPins = drawn;
         this.rebuildPinnedItems(items);
@@ -1038,10 +1036,8 @@
         tile.title = `Open ${pinLabel} in a tile`;
         tile.setAttribute('aria-label', `Open ${pinLabel} in a tile`);
         tile.className = unpin.className.replace('app-pinned-unpin', 'app-pinned-tile');
-        const tileIcon = document.createElement('span');
-        tileIcon.className = 'hero-squares-plus size-3.5';
-        tileIcon.setAttribute('aria-hidden', 'true');
-        tile.append(tileIcon);
+        const tileIcon = document.getElementById('app-pinned-tile-icon')?.content.firstElementChild;
+        if (tileIcon) tile.append(tileIcon.cloneNode(true));
 
         row.append(link, tile, unpin);
         this.pinnedItems.append(row);

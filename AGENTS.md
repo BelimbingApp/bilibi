@@ -32,6 +32,7 @@ Authoritative contracts (point to them, do not copy them): `apps/base/module_reg
 - Domain and Extension code uses meta-terms (material, resource, operation, role). Industry and product names are configuration data, never identifiers, including agent operation keys. One exception: an Extension that adapts a single vendor's system (a phone system, a messaging provider) may use that vendor's name in its ID, crates and code; the Domain ports it implements stay vendor-neutral.
 - A Platform change that breaks an official Domain or Extension (listed in `catalogue.json`) includes a companion PR in that repository, linked from the Platform PR; ones outside the catalogue are not changed from a Platform task. Keep companions green and merge together; see `docs/versions.md#platform-changes-and-companion-prs` for CI branch selection.
 - Every pull request fills in `Upgrade notes for agents` (what a Domain or Extension owner must change, or `None`). A Platform release gathers those notes into `docs/upgrade-notes/vX.Y.Z.md` and the GitHub release (`docs/versions.md`).
+- Identify yourself on every pull request and issue you open with an `Agents:` line in the self-reporting format; see [CONTRIBUTING.md](CONTRIBUTING.md#ai-agents) for details.
 
 ## Data, tenancy, audit, security
 

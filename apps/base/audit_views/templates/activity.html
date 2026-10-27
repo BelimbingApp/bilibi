@@ -10,7 +10,7 @@
 {% when Feed::Pending %}<div id="stat-recent-audit-pending" class="text-sm text-ink-subtle">—</div>
 {% when Feed::Empty %}{% call lists::empty_state(e=empty) %}{% endcall %}
 {% when Feed::Entries(entries) %}<div class="divide-y divide-line">
-{% for entry in entries %}<div class="flex items-start gap-3 py-2.5 text-sm">{% call ui::icon(name="hero-document-text", class="size-4 shrink-0 text-ink-faint") %}{% endcall %}<div class="min-w-0 flex-1"><span class="font-medium text-ink">{{ entry.event }}</span><span class="ml-2 text-ink-subtle">{{ entry.kind }}</span></div>{{ entry.when|safe }}</div>
+{% for entry in entries %}<div class="flex items-start gap-3 py-2.5 text-sm">{% call ui::icon(name="document-text", class="size-4 shrink-0 text-ink-faint") %}{% endcall %}<div class="min-w-0 flex-1"><span class="font-medium text-ink">{{ entry.event }}</span><span class="ml-2 text-ink-subtle">{{ entry.kind }}</span></div>{{ entry.when|safe }}</div>
 {% endfor %}</div>
 {% endmatch %}
 {% endcall %}

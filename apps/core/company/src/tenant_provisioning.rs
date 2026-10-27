@@ -72,7 +72,8 @@ impl CompanyService {
 
     /// Provisions companies only in the tenant this transaction just created.
     /// The first becomes primary; all rows and the assignment are audited
-    /// under the original person's identity and agent connection.
+    /// under the original person's identity and agent connection. The tenant
+    /// also receives every linked pick-list's starting values.
     pub async fn provision_new_tenant_in(
         &self,
         tx: &mut MutationTransaction<'_>,
@@ -87,6 +88,11 @@ impl CompanyService {
             .map_err(|_| Error::Invalid)?;
         if primary::primary_company(tx.sql(), tenant).await?.is_some() {
             return Err(Error::Conflict);
+        }
+        // The starting pick-list values, attributed to this transaction's
+        // person or agent like the companies below.
+        for change in bilibi_picklists::provision(tx.sql(), tenant).await? {
+            tx.record(change).await?;
         }
         let created = tx
             .mutate(move |sql| {

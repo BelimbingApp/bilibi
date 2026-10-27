@@ -72,10 +72,10 @@
   });
 
   // Dismissing a flash hides it and tells the server to forget it. A connection
-  // banner reports the socket and is never a server flash, so it only hides.
+  // banner or browser-owned preference flash only hides; neither is server state.
   function dismissFlash(el) {
     if (el.hidden) return;
-    if (!el.hasAttribute('data-connection')) emit(el, el.dataset.event || 'clear-flash', {key: el.dataset.valueKey});
+    if (!el.hasAttribute('data-connection') && !el.hasAttribute('data-local-flash')) emit(el, el.dataset.event || 'clear-flash', {key: el.dataset.valueKey});
     conceal(el);
   }
 
