@@ -1,6 +1,6 @@
 {%- import "feedback.html" as fb -%}
 {%- import "dialog.html" as d -%}
-<template id="tpl-confirm-1">{% call d::confirm_dialog(id="design-library-confirm", consequence="Legal entity type “LLC” will be deleted.", detail="It can no longer be chosen for a company. This cannot be undone.", confirm="Delete", working="Deleting…", confirm_event="confirm-run", cancel_event="confirm-cancel") %}{% endcall %}</template>
+<template id="tpl-confirm-1">{% call d::confirm_dialog(id="design-library-confirm", consequence="Legal entity type “LLC” will be deleted.", detail="It can no longer be chosen for a company. This cannot be undone.", confirm="Delete", working="Deleting…", confirm_event="confirm-run", cancel_event="confirm-cancel", body=confirmation_reason) %}{% endcall %}</template>
 <template id="tpl-confirm-2">{% call d::confirm_dialog(id="design-library-confirm", consequence="Legal entity type “Partnership” will be deleted.", detail="It can no longer be chosen for a company. This cannot be undone.", confirm="Delete", working="Deleting…", confirm_event="confirm-run", cancel_event="confirm-cancel") %}{% endcall %}</template>
 <template id="tpl-alert-success">{% call fb::alert(kind=bilibi_ui::StatusKind::Success, id="design-library-confirm-outcome") %}Legal entity type “LLC” was deleted.{% endcall %}</template>
 <template id="tpl-alert-error">{% call fb::alert(kind=bilibi_ui::StatusKind::Error, id="design-library-confirm-outcome") %}Legal entity type “Partnership” was not deleted: 3 companies still use it. Reassign them first.{% endcall %}</template>

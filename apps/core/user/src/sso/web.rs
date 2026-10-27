@@ -65,6 +65,9 @@ struct State {
     raw_mapping: Option<String>,
     confirm: bool,
     unlink: Option<i64>,
+    scim_token: Option<String>,
+    revoke_scim: bool,
+    rotate_scim: bool,
     back: String,
 }
 impl Pages {
@@ -112,6 +115,9 @@ impl Pages {
             raw_mapping: None,
             confirm: r.operation == "confirm",
             unlink: None,
+            scim_token: None,
+            revoke_scim: false,
+            rotate_scim: false,
             back: r
                 .query
                 .get("return")
@@ -228,6 +234,60 @@ impl State {
                     ],
                 })?);
                 parts.push(button("Change connection", "edit")?);
+                let active = self
+                    .users
+                    .scim_token_present(scope, company, self.id.ok_or(Error::Invalid)?)
+                    .await?;
+                parts.push(render(&bilibi_ui::SectionHeading {
+                    title: "Automatic provisioning (SCIM)",
+                    ..Default::default()
+                })?);
+                parts.push(render(&bilibi_ui::Facts {
+                    id: "scim-details",
+                    items: vec![
+                        bilibi_ui::Fact {
+                            title: "Status",
+                            id: "scim-status",
+                            value: Html::text(if active { "Active" } else { "Off — no token" }),
+                        },
+                        bilibi_ui::Fact {
+                            title: "SCIM address",
+                            id: "scim-address",
+                            value: Html::text(&format!(
+                                "{}/scim/v2/{}",
+                                self.users.origin, self.public
+                            )),
+                        },
+                    ],
+                })?);
+                if let Some(token) = &self.scim_token {
+                    parts.push(render(&SecretInput::new("scim-new-token", "scim_new_token", "SCIM token").label("New SCIM token").value(token).readonly().hint("Copy and store this token now. It will not be shown again after leaving this page."))?);
+                }
+                parts.push(button(
+                    if active {
+                        "Rotate SCIM token"
+                    } else {
+                        "Create SCIM token"
+                    },
+                    if active {
+                        "scim-ask-rotate"
+                    } else {
+                        "scim-rotate"
+                    },
+                )?);
+                if active {
+                    parts.push(button("Revoke SCIM token", "scim-ask-revoke")?);
+                }
+                if self.rotate_scim {
+                    parts.push(render(&bilibi_ui::ConfirmDialog {
+                        id: "scim-rotate", consequence: "Replace the SCIM token?", detail: "The old token will stop working immediately. Update your identity provider with the new token.", confirm: "Rotate token", confirm_event: "scim-rotate", cancel_event: "scim-cancel-rotate", ..Default::default()
+                    })?);
+                }
+                if self.revoke_scim {
+                    parts.push(render(&bilibi_ui::ConfirmDialog {
+                        id: "scim-revoke", consequence: "Revoke SCIM token?", detail: "Automatic provisioning will stop immediately. Existing people and their access will be kept.", confirm: "Revoke token", confirm_event: "scim-revoke", cancel_event: "scim-cancel-revoke", ..Default::default()
+                    })?);
+                }
             } else {
                 let presets: Vec<Value> =
                     serde_json::from_str(PRESETS).map_err(|_| Error::Internal)?;
@@ -548,7 +608,38 @@ impl State {
         self.users.sso_company(&**client, r.scope, company).await?;
         drop(client);
         let get = |key: &str| event[key].as_str().unwrap_or("");
+        self.scim_token = None;
         match get("type") {
+            "scim-ask-rotate" => self.rotate_scim = true,
+            "scim-cancel-rotate" => self.rotate_scim = false,
+            "scim-rotate" => {
+                if !self.rotate_scim
+                    && self
+                        .users
+                        .scim_token_present(r.scope, company, self.id.ok_or(Error::Invalid)?)
+                        .await?
+                {
+                    return Err(Error::Invalid);
+                }
+                self.scim_token = self
+                    .users
+                    .rotate_scim_token(r.scope, company, self.id.ok_or(Error::Invalid)?, false)
+                    .await?;
+                self.rotate_scim = false;
+                self.notice = "SCIM token created. Copy and store it now.".into();
+            }
+            "scim-ask-revoke" => self.revoke_scim = true,
+            "scim-cancel-revoke" => self.revoke_scim = false,
+            "scim-revoke" => {
+                if !self.revoke_scim {
+                    return Err(Error::Invalid);
+                }
+                self.users
+                    .rotate_scim_token(r.scope, company, self.id.ok_or(Error::Invalid)?, true)
+                    .await?;
+                self.revoke_scim = false;
+                self.notice = "SCIM token revoked. Automatic provisioning is off.".into();
+            }
             "edit" => self.editing = true,
             "select" => {
                 let id = get("connection");
@@ -770,7 +861,7 @@ route!(
     "confirm",
     Access::SignedIn
 );
-inventory::submit! {Contribution::new(PAGE_WRITES,SERVICE,Provenance{module:"core/user",source:file!(),line:line!()},&PageWrites{service:SERVICE,contracts:&[("configure",config::CONFIGURE),("link",agent::LINK),("unlink",agent::UNLINK)],pending:Pending::None})}
+inventory::submit! {Contribution::new(PAGE_WRITES,SERVICE,Provenance{module:"core/user",source:file!(),line:line!()},&PageWrites{service:SERVICE,contracts:&[("configure",config::CONFIGURE),("link",agent::LINK),("unlink",agent::UNLINK)],pending:Pending::Events { events: &["scim-rotate", "scim-revoke"], reason: "SCIM credentials are browser-only identity infrastructure; token lifecycle calls the User facade without exposing credentials to agent contracts." }})}
 
 fn agent_error(error: bilibi_agent_api::Error) -> Error {
     match error {

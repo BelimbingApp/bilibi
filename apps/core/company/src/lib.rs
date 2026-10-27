@@ -5,11 +5,14 @@
 mod agent_operations;
 mod contributions;
 mod departments;
+mod duplicates;
 mod eligibility;
 mod files;
+mod hierarchy;
 mod lifecycle;
 mod organisation;
 mod page_data;
+mod policy;
 mod tenant_provisioning;
 pub use tenant_provisioning::TenantCompanyErrors;
 mod primary;
@@ -20,6 +23,8 @@ mod relationships;
 mod web;
 
 pub use contributions::{CAPABILITIES, CREATE, DELETE, LIST, TENANT_WIDE, UPDATE, VIEW};
+pub use duplicates::{CreateAnyway, CreateMatches, DuplicateCandidate, DuplicateQuery};
+pub use hierarchy::{Hierarchy, HierarchyNode};
 // Departments, and the head directory another owner binds (K3).
 pub use departments::{
     available_types as available_department_types, bind_head_directory,
@@ -124,6 +129,12 @@ pub enum WriteError {
     Invalid(Vec<FieldError>),
     #[error(transparent)]
     Access(#[from] Error),
+}
+
+impl From<tokio_postgres::Error> for WriteError {
+    fn from(error: tokio_postgres::Error) -> Self {
+        Self::Access(error.into())
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -715,8 +726,8 @@ async fn finish(tx: bilibi_database::MutationTransaction<'_>, saved: bool) -> Re
 inventory::submit! {
     bilibi_module_registry::Module {
         id:"core/company",layer:bilibi_module_registry::Layer::Core,
-        dependencies:&["base/database","base/security","base/ui","base/notifications","base/party_ids","base/session","base/menu","base/grid","base/search","base/dashboard","base/reports","base/authz","base/tenancy","base/audit","base/agent_api","base/datetime","base/locale","base/principal_directory","base/media","base/artifacts","base/picklists","core/party","core/geonames","core/person"],
-        migrations:&[MIGRATION, MIGRATION_ORGANISATION, MIGRATION_RELATIONSHIPS, MIGRATION_ROLE_OWNER, MIGRATION_SEARCH],
+        dependencies:&["base/database","base/security","base/ui","base/notifications","base/party_ids","base/session","base/menu","base/grid","base/search","base/dashboard","base/reports","base/authz","base/tenancy","base/audit","base/agent_api","base/datetime","base/locale","base/principal_directory","base/media","base/artifacts","base/picklists","base/settings","core/party","core/geonames","core/person"],
+        migrations:&[MIGRATION, MIGRATION_ORGANISATION, MIGRATION_RELATIONSHIPS, MIGRATION_ROLE_OWNER, MIGRATION_SEARCH, ("core-company-008-match-keys", include_str!("../migrations/008-match-keys.sql"))],
         services: &[
             bilibi_module_registry::Service { id: SERVICE, factory: |services| {
                 let db = services.get::<Db>("base/database.pool")?.as_ref().clone();
@@ -726,6 +737,7 @@ inventory::submit! {
                 proofs.bind_organisations(Arc::new(organisation::Provider))?;
                 proofs.bind_directory(Arc::new(organisation::Directory))?;
                 let directory = services.get::<bilibi_principal_directory::PrincipalDirectory>("base/principal_directory.directory")?;
+                policy::bind(services.get("base/settings.store")?)?;
                 agent_operations::bind(db.clone())?;
                 relationship_operations::bind(db.clone(), proofs.clone(), directory.clone())?;
                 Ok(Arc::new(CompanyService {

@@ -40,6 +40,10 @@ check, so timing does not reveal which emails exist.
 
 Optional company OIDC, linking, provisioning, role mapping and provider re-authentication are documented in [Company sign-in](sso.md). With no enabled connection, password sign-in and existing factor settings keep their behavior.
 
+## Automatic provisioning
+
+Companies can create a SCIM token to provision people and groups, update mapped roles and end access immediately. See [Automatic provisioning (SCIM)](scim.md). With no token, SCIM requests return 401 and existing sign-in behaviour stays unchanged.
+
 ## Sign-in admission
 
 Enable **Sign in** on the tenant's 2FA requirements page to ask for a second factor before admitting a session.
