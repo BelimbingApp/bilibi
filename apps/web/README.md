@@ -6,6 +6,10 @@ The pending credential uses a separate HttpOnly, SameSite=Lax cookie scoped to `
 
 The optional external credential adapter uses `GET /login/sso/{provider}/start`, `GET /login/sso/callback`, and signed `POST /login/sso/backchannel/{provider}`. These are identity lifecycle routes, not per-provider endpoints. Core User owns the provider-neutral registry and every decision; the host owns session checks, a separate browser-binding cookie, the protocol callback response and normal admission cookies. Back-channel delivery uses signed protocol proof instead of browser Origin/CSRF. See [company sign-in](../core/user/sso.md). Start links use top-level navigation so CSP stays unchanged. State and nonce bind the callback to its initiating browser; starts, callbacks and back-channel deliveries each share the existing per-sender OAuth throttle. Expired flow records and their encrypted material are removed in bounded batches on the next start for that connection, and ended external-session records, expired proofs, challenges and logout replays on the next write of their kind. Callback responses are not cached and send no referrer.
 
+# SCIM provisioning
+
+The host exposes the provider-neutral identity lifecycle adapter at `/scim/v2/{provider}/{resource}[/{id}]`, delegating bearer proof, company isolation and all provisioning decisions to Core User. Responses use SCIM JSON, bounded request bodies and the existing per-sender OAuth throttle. Credentials and bodies are never logged. See [Core User SCIM](../core/user/scim.md). These routes are independent of browser cookies and agent tokens; discovered pages cannot shadow `/scim`.
+
 # Discovered pages
 
 Register HTTP pages with `Contribution::new(ROUTES, ...)` from

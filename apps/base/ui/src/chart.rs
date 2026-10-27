@@ -194,6 +194,28 @@ impl Chart {
         categories: Vec<String>,
         series: Vec<Series>,
     ) -> Self {
+        Self::new_with_display_values(id, title, kind, categories, series, Vec::new())
+    }
+
+    /// Builds a chart with owner-formatted values, indexed by series then category.
+    /// Missing display values fall back to the geometry value; missing numeric
+    /// values remain gaps. Supply the stored decimal scale in each display value.
+    pub fn new_with_display_values(
+        id: impl Into<String>,
+        title: impl Into<String>,
+        kind: ChartKind,
+        categories: Vec<String>,
+        series: Vec<Series>,
+        display_values: Vec<Vec<Option<String>>>,
+    ) -> Self {
+        let display = |si: usize, i: usize, v: f64| {
+            display_values
+                .get(si)
+                .and_then(|s| s.get(i))
+                .and_then(Option::as_ref)
+                .cloned()
+                .unwrap_or_else(|| format_exact(v))
+        };
         let mut chart = Chart {
             id: id.into(),
             title: title.into(),
@@ -223,12 +245,14 @@ impl Chart {
                 .map(|(i, category)| {
                     let cells = series
                         .iter()
-                        .map(|s| {
+                        .enumerate()
+                        .map(|(si, s)| {
                             s.values
                                 .get(i)
                                 .copied()
                                 .flatten()
-                                .map_or("—".into(), format_exact)
+                                .filter(|v| v.is_finite())
+                                .map_or("—".into(), |v| display(si, i, v))
                         })
                         .collect();
                     (category.clone(), cells)
@@ -244,7 +268,7 @@ impl Chart {
             let first = series.first();
             chart.kpi = first
                 .and_then(|s| value(s, 0))
-                .map_or("—".into(), format_exact);
+                .map_or("—".into(), |v| display(0, 0, v));
             chart.kpi_label = first.map(|s| s.name.clone()).unwrap_or_default();
             chart.summary = format!("{}: {}", chart.kpi_label, chart.kpi);
             return chart;
@@ -262,7 +286,13 @@ impl Chart {
         }
         match kind {
             ChartKind::Pie | ChartKind::Donut => {
-                chart.pie(&categories, &series[0], kind == ChartKind::Donut, value);
+                chart.pie(
+                    &categories,
+                    &series[0],
+                    kind == ChartKind::Donut,
+                    value,
+                    &display,
+                );
             }
             _ => {
                 if categories.len() > MAX_CATEGORIES {
@@ -277,7 +307,7 @@ impl Chart {
                         label: s.name.clone(),
                     })
                     .collect();
-                chart.axes(kind, &categories, &series, value);
+                chart.axes(kind, &categories, &series, value, &display);
             }
         }
         chart
@@ -290,6 +320,7 @@ impl Chart {
         categories: &[String],
         series: &[Series],
         value: impl Fn(&Series, usize) -> Option<f64>,
+        display: &impl Fn(usize, usize, f64) -> String,
     ) {
         let n = categories.len();
         let (mut lo, mut hi) = (0.0_f64, 0.0_f64);
@@ -401,11 +432,11 @@ impl Chart {
                 AxisLabel { x, text, turn }
             })
             .collect();
-        let title = |category: &str, s: &Series, v: f64| {
+        let title = |category: &str, s: &Series, si: usize, i: usize, v: f64| {
             if series.len() == 1 {
-                format!("{category}: {}", format_exact(v))
+                format!("{category}: {}", display(si, i, v))
             } else {
-                format!("{category} · {}: {}", s.name, format_exact(v))
+                format!("{category} · {}: {}", s.name, display(si, i, v))
             }
         };
         match kind {
@@ -422,7 +453,7 @@ impl Chart {
                                 dots.push(Dot {
                                     x: num(x),
                                     y: num(y(v)),
-                                    title: title(category, s, v),
+                                    title: title(category, s, si, i, v),
                                 });
                             }
                             None if !run.is_empty() => {
@@ -465,7 +496,7 @@ impl Chart {
                             y(to),
                             y(from),
                             FILL[si],
-                            title(category, s, v),
+                            title(category, s, si, i, v),
                         ));
                     }
                 }
@@ -484,7 +515,7 @@ impl Chart {
                             y(v.max(0.0)),
                             y(v.min(0.0)),
                             FILL[si],
-                            title(category, s, v),
+                            title(category, s, si, i, v),
                         ));
                     }
                 }
@@ -500,6 +531,7 @@ impl Chart {
         series: &Series,
         donut: bool,
         value: impl Fn(&Series, usize) -> Option<f64>,
+        display: &impl Fn(usize, usize, f64) -> String,
     ) {
         let parts: Vec<(usize, f64)> = (0..categories.len())
             .filter_map(|i| value(series, i).map(|v| (i, v)))
@@ -535,7 +567,12 @@ impl Chart {
                 h: String::new(),
                 d: arc(cx, cy, r, inner, start, start + sweep),
                 class: FILL[slot],
-                title: format!("{}: {} ({:.1}%)", categories[*i], format_exact(*v), percent),
+                title: format!(
+                    "{}: {} ({:.1}%)",
+                    categories[*i],
+                    display(0, *i, *v),
+                    percent
+                ),
             });
             self.legend.push(Legend {
                 class: SWATCH[slot],
@@ -736,19 +773,10 @@ fn grouped(negative: bool, text: &str) -> String {
     out
 }
 
-/// A donut's centre and the summary sentence: whole numbers without
-/// decimals, others with two, thousands grouped. Not localised yet.
+/// Round away floating-point summation noise while retaining small totals.
 fn format_number(value: f64) -> String {
-    if !value.is_finite() {
-        return "—".into();
-    }
-    let whole = (value - value.round()).abs() < 1e-9;
-    let text = if whole {
-        format!("{:.0}", value.abs())
-    } else {
-        format!("{:.2}", value.abs())
-    };
-    grouped(value < 0.0, &text)
+    let rounded = format!("{value:.14e}").parse::<f64>().unwrap_or(value);
+    format_exact(rounded)
 }
 
 /// The points of a sparkline polyline for a series, in a 60 by 16 box, for

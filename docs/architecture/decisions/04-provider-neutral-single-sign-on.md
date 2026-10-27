@@ -17,6 +17,8 @@
 
 The decision's first phase shipped in [the SSO implementation](https://github.com/BelimbingApp/bilibi/pull/144), closing [issue 109](https://github.com/BelimbingApp/bilibi/issues/109). Accepting provider access tokens on `/api/v1` and `/mcp` remains a separate second phase in [issue 190](https://github.com/BelimbingApp/bilibi/issues/190).
 
+SCIM provisioning and deprovisioning are separate from this sign-in decision. The follow-up [Core User SCIM service provider](../../../apps/core/user/scim.md) handles account provisioning and immediate deactivation. Without it, removing a person in the provider does not remove their Bilibi account until their session ends or an admin acts.
+
 See [Core User](../../../apps/core/user/README.md) and [company sign-in](../../../apps/core/user/sso.md) for the implementation contract, configuration, Extension registration and verification limits.
 
 ## Reasons

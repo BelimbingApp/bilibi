@@ -35,7 +35,7 @@ Bilibi is MIT-licensed, like the earlier iterations. The architecture is the sam
 
 ## What works today
 
-- **Sign-in:** server-held sessions, Argon2id passwords, password reset, limits on wrong passwords (per account and per sender, operator settings), and optional [company OIDC single sign-on](apps/core/user/sso.md) with provider 2FA and role mapping.
+- **Sign-in:** server-held sessions, Argon2id passwords, password reset, limits on wrong passwords (per account and per sender, operator settings), and optional [company OIDC single sign-on](apps/core/user/sso.md) with provider 2FA and role mapping, plus optional [SCIM provisioning](apps/core/user/scim.md) with immediate deactivation.
 - **Permissions:** roles, capabilities and direct grants; a deny always wins; sensitive fields can be masked.
 - **Companies, people and addresses:** lists, details and inline edits, scoped to the tenant.
 - **Audit:** every change records old and new values and who made it, in the same save; append-only.
