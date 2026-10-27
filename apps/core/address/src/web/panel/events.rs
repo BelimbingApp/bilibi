@@ -258,7 +258,7 @@ impl Panel {
             bilibi_ui::params::positive_id(fields.get("address_id").map(String::as_str))
                 .and_then(|id| AddressId::new(id).ok())
         else {
-            draft.error = "Please select an address.".into();
+            draft.error = "Select an address.".into();
             return Ok(());
         };
         let Some(address_version) = self

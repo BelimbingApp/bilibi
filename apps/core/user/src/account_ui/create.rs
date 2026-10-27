@@ -96,7 +96,7 @@ impl Create {
                                 .unwrap_or_default(),
                         )
                         .options(options)
-                        .hint("The person who uses this account; leave it empty if there is none."),
+                        .hint("Leave empty if this account is not linked to a person."),
                 )?
             }
             None => render(
@@ -104,7 +104,7 @@ impl Create {
                     .kind(InputKind::Select)
                     .prompt("No person")
                     .disabled()
-                    .hint("You cannot see the list of people; someone who can may link a person later."),
+                    .hint("You cannot view people. Someone with access can link a person later."),
             )?,
         };
         let affiliation = match (self.input.person, affiliations) {
@@ -114,7 +114,7 @@ impl Create {
                     .kind(InputKind::Select)
                     .prompt("No company")
                     .disabled()
-                    .hint("This person works for no company yet, so the account signs in without one."),
+                    .hint("This person has no company, so the account signs in without one."),
             )?,
             (Some(_), Some(choices)) => {
                 let mut options = Vec::with_capacity(choices.len());
@@ -132,7 +132,7 @@ impl Create {
                                 .unwrap_or_default(),
                         )
                         .options(options)
-                        .hint("Pick which of this person's companies the account signs in under."),
+                        .hint("Choose the company this account signs in under."),
                 )?
             }
             (Some(_), None) => render(
@@ -147,7 +147,7 @@ impl Create {
             &field("name", "Name")
                 .value(&self.input.name)
                 .autocomplete("name")
-                .placeholder("Enter user name")
+                .placeholder("e.g. Alex Lee")
                 .required(),
         )?;
         let email = render(
@@ -155,7 +155,7 @@ impl Create {
                 .kind(InputKind::Email)
                 .value(&self.input.email)
                 .autocomplete("email")
-                .placeholder("Enter email address")
+                .placeholder("e.g. alex@example.com")
                 .required(),
         )?;
         let mut password = SecretInput::in_form("user", "password", "password")

@@ -91,7 +91,7 @@ impl Profile {
                 .label("Email")
                 .value(&self.email)
                 .autocomplete("email")
-                .hint("If you change it, you will need to verify it again.")
+                .hint("Verify your new email address after changing it.")
                 .errors(self.errors_for("email"))
                 .attr("data-debounce", "300"),
         )?;
@@ -123,7 +123,7 @@ impl Profile {
             })?,
             current: bilibi_ui::SettingsTab::Profile,
             heading: "Profile Information",
-            subheading: "Update your account's profile information and email address.",
+            subheading: "",
             name,
             email,
             landing,

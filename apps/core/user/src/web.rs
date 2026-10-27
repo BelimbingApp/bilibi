@@ -78,7 +78,7 @@ impl PasswordView {
             }))?,
             current: bilibi_ui::SettingsTab::Password,
             heading: "Update Password",
-            subheading: "Ensure your account is using a long, random password to stay secure.",
+            subheading: "Use a long, random password.",
             current_password: secret(
                 "current_password",
                 "Current password",
