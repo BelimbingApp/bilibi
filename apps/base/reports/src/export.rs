@@ -52,6 +52,9 @@ pub struct File {
     pub bytes: Vec<u8>,
     /// Result lines in the file (rows, summary lines or matrix rows).
     pub rows: usize,
+    /// No record matched. Kept apart from `rows`: an ungrouped summary
+    /// is one line however many records it counts.
+    pub empty: bool,
 }
 
 /// The result laid out as one table, whatever the format.
@@ -62,6 +65,8 @@ pub(crate) struct Tabled {
     pub rows: Vec<Vec<String>>,
     /// Result lines, totals lines not counted.
     pub records: usize,
+    /// No record matched.
+    pub empty: bool,
 }
 
 impl Reports {
@@ -76,13 +81,32 @@ impl Reports {
         format: Format,
     ) -> Outcome<File> {
         let cap = self.export_rows(scope).await?;
-        self.export_within(scope, id, input, format, cap, true)
-            .await
+        self.export_within(scope, id, input, format, cap).await
     }
 
-    /// The same file within `cap` rows; the queued export passes its own. A
-    /// scheduled delivery does not `require_export`: its recipient asked for
-    /// nothing, and receives only what `reports.view` lets them run.
+    /// Whether the file can be made for this reader now, without making
+    /// or auditing it. The page asks before sending the browser to a PDF, so
+    /// a refusal (too many rows or columns, text a PDF cannot print) reaches
+    /// the reader in words, with the CSV beside it, not as a bare 403.
+    pub async fn exportable(
+        &self,
+        scope: &Scope,
+        id: i64,
+        input: &RunInput,
+        format: Format,
+    ) -> Outcome<()> {
+        {
+            let client = self.db.get().await.map_err(Error::from)?;
+            crate::authorize(&**client, scope, EXPORT).await?;
+        }
+        let cap = self.export_rows(scope).await?;
+        let table = self.tabulate(scope, id, input, cap).await?;
+        render(&table, format).map(|_| ())
+    }
+
+    /// The same file within `cap` rows; the queued export and a scheduled
+    /// delivery pass their own. A delivered file is an export too, so its
+    /// recipient needs `reports.export` like anyone downloading one.
     pub(crate) async fn export_within(
         &self,
         scope: &Scope,
@@ -90,9 +114,8 @@ impl Reports {
         input: &RunInput,
         format: Format,
         cap: usize,
-        require_export: bool,
     ) -> Outcome<File> {
-        if require_export {
+        {
             let client = self.db.get().await.map_err(Error::from)?;
             crate::authorize(&**client, scope, EXPORT).await?;
         }
@@ -113,6 +136,7 @@ impl Reports {
             content_type: format.content_type(),
             bytes,
             rows: table.records,
+            empty: table.empty,
         })
     }
 
@@ -141,6 +165,7 @@ impl Reports {
             headers: Vec::new(),
             rows: Vec::new(),
             records: 0,
+            empty: false,
         };
         match &first.result {
             RunResult::Rows {
@@ -153,6 +178,7 @@ impl Reports {
                 if *total as usize > cap {
                     return Err(too_many(*total, cap));
                 }
+                table.empty = *total == 0;
                 table.headers = columns.iter().map(|c| c.label.clone()).collect();
                 let totals = totals.clone();
                 let pages = (*total as usize).div_ceil((*page_size).max(1));
@@ -195,56 +221,30 @@ impl Reports {
                 total,
                 ..
             } if kind == Kind::Matrix && groupings.len() == 2 => {
-                let value = |count: i64, values: &[Value]| {
-                    if measures.is_empty() {
-                        count.to_string()
-                    } else {
-                        values.first().map(cell).unwrap_or_default()
-                    }
-                };
-                let (mut down, mut across): (Vec<&Value>, Vec<&Value>) = (Vec::new(), Vec::new());
-                for (keys, subtotal, _, _) in lines {
-                    if *subtotal || keys.len() != 2 {
-                        continue;
-                    }
-                    if !down.contains(&&keys[0]) {
-                        down.push(&keys[0]);
-                    }
-                    if !across.contains(&&keys[1]) {
-                        across.push(&keys[1]);
-                    }
-                }
+                // The page's own layout, column totals included.
+                let pivot = result::pivot(measures, lines, total);
                 table.headers = std::iter::once(groupings[0].0.label.clone())
-                    .chain(across.iter().map(|v| result::key_text(v, groupings[1].1)))
+                    .chain(
+                        pivot
+                            .across
+                            .iter()
+                            .map(|v| result::key_text(v, groupings[1].1)),
+                    )
                     .chain(std::iter::once("Total".to_owned()))
                     .collect();
-                for d in &down {
+                let text = |v: &Option<Value>| v.as_ref().map(cell).unwrap_or_default();
+                for (r, d) in pivot.down.iter().enumerate() {
                     let mut row = vec![result::key_text(d, groupings[0].1)];
-                    for a in &across {
-                        row.push(
-                            lines
-                                .iter()
-                                .find(|(k, sub, _, _)| {
-                                    !*sub && k.first() == Some(*d) && k.get(1) == Some(*a)
-                                })
-                                .map(|(_, _, count, values)| value(*count, values))
-                                .unwrap_or_default(),
-                        );
-                    }
-                    row.push(
-                        lines
-                            .iter()
-                            .find(|(k, sub, _, _)| *sub && k.first() == Some(*d))
-                            .map(|(_, _, count, values)| value(*count, values))
-                            .unwrap_or_default(),
-                    );
+                    row.extend(pivot.cells[r].iter().map(text));
+                    row.push(text(&pivot.row_totals[r]));
                     table.rows.push(row);
                     table.records += 1;
                 }
                 let mut last = vec!["Total".to_owned()];
-                last.extend(across.iter().map(|_| String::new()));
-                last.push(value(total.0, &total.1));
+                last.extend(pivot.column_totals);
+                last.push(cell(&pivot.grand));
                 table.rows.push(last);
+                table.empty = total.0 == 0;
             }
             RunResult::Summary {
                 groupings,
@@ -280,13 +280,17 @@ impl Reports {
                     table.records += 1;
                 }
                 let mut last: Vec<String> = Vec::new();
-                if !groupings.is_empty() {
+                if groupings.is_empty() {
+                    // Ungrouped, the total is the whole result.
+                    table.records += 1;
+                } else {
                     last.push("Total".into());
                     last.extend(std::iter::repeat_n(String::new(), groupings.len() - 1));
                 }
                 last.push(total.0.to_string());
                 last.extend(total.1.iter().map(cell));
                 table.rows.push(last);
+                table.empty = total.0 == 0;
             }
         }
         Ok(table)

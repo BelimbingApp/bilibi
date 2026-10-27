@@ -7,13 +7,20 @@
 //! Queue re-proves them on every attempt. The delivery runs the report under
 //! their own access, keeps the file as their prepared export, rings their
 //! bell and mails them a link that needs sign-in. A recipient who has lost
-//! access, or whose result is empty when the subscription skips empty
-//! results, gets nothing; the delivery records why. No Bilimbi counterpart.
+//! access (a file is an export, so that includes `reports.export`), or whose
+//! result is empty when the subscription skips empty results, gets nothing;
+//! the delivery records why. No Bilimbi counterpart.
 use crate::{
-    authorize, contributions, export::Format, exports, store, ReportError, Reports, SCHEDULE, VIEW,
+    authorize, contributions,
+    export::Format,
+    exports::{self, Purpose},
+    store, ReportError, Reports, EXPORT, SCHEDULE, VIEW,
 };
 use bilibi_database::{Change, Error, MutationTransaction};
-use bilibi_queue::execution::{Execution, Handler, HandlerFuture, Outcome as JobOutcome};
+use bilibi_queue::{
+    execution::{Execution, Handler, HandlerFuture, Outcome as JobOutcome},
+    store as jobs,
+};
 use bilibi_tenancy::Scope;
 use jiff::{civil::Date, tz::TimeZone, Timestamp};
 use serde::Serialize;
@@ -24,6 +31,7 @@ use std::sync::Arc;
 pub const SWEEP: &str = "base/reports-schedule";
 pub const DELIVER: &str = "base/reports-deliver";
 const KIND: &str = "base_report_subscription";
+const DELIVERY: &str = "base_report_delivery";
 /// Recipients one delivery round reaches at most.
 const MAX_RECIPIENTS: usize = 500;
 /// Due subscriptions and pending deliveries one sweep takes per tenant.
@@ -292,14 +300,22 @@ impl Reports {
                     &[&tenant, &id, &paused],
                 )
                 .await?;
+                let mut changes = vec![Change { kind: KIND.into(), id, old: json!({"paused": !paused}), new: json!({"paused": paused}) }];
                 if paused {
-                    sql.execute(
-                        "UPDATE base_report_deliveries SET state='cancelled', reason='The subscription was paused.', finished_at=now() WHERE tenant_id=$1 AND subscription_id=$2 AND state IN ('pending','queued')",
-                        &[&tenant, &id],
-                    )
-                    .await?;
+                    let cancelled = sql
+                        .query(
+                            "UPDATE base_report_deliveries d SET state='cancelled', reason='The subscription was paused.', finished_at=now() FROM base_report_deliveries o WHERE o.tenant_id=d.tenant_id AND o.id=d.id AND d.tenant_id=$1 AND d.subscription_id=$2 AND d.state IN ('pending','queued') RETURNING d.id, o.state",
+                            &[&tenant, &id],
+                        )
+                        .await?;
+                    changes.extend(cancelled.iter().map(|row| Change {
+                        kind: DELIVERY.into(),
+                        id: row.get(0),
+                        old: json!({"state": row.get::<_, String>(1)}),
+                        new: json!({"state": "cancelled", "reason": "The subscription was paused."}),
+                    }));
                 }
-                Ok(((), vec![Change { kind: KIND.into(), id, old: json!({"paused": !paused}), new: json!({"paused": paused}) }]))
+                Ok(((), changes))
             })
         })
         .await
@@ -319,20 +335,33 @@ impl Reports {
         let tenant = scope.tenant();
         tx.mutate(move |sql| {
             Box::pin(async move {
+                let deliveries = sql
+                    .query(
+                        "DELETE FROM base_report_deliveries WHERE tenant_id=$1 AND subscription_id=$2 RETURNING id, state",
+                        &[&tenant, &id],
+                    )
+                    .await?;
                 sql.execute(
                     "DELETE FROM base_report_subscriptions WHERE tenant_id=$1 AND id=$2",
                     &[&tenant, &id],
                 )
                 .await?;
-                Ok((
-                    (),
-                    vec![Change {
-                        kind: KIND.into(),
-                        id,
-                        old: json!({"id": id}),
+                let mut changes: Vec<Change> = deliveries
+                    .iter()
+                    .map(|row| Change {
+                        kind: DELIVERY.into(),
+                        id: row.get(0),
+                        old: json!({"state": row.get::<_, String>(1)}),
                         new: Value::Null,
-                    }],
-                ))
+                    })
+                    .collect();
+                changes.push(Change {
+                    kind: KIND.into(),
+                    id,
+                    old: json!({"id": id}),
+                    new: Value::Null,
+                });
+                Ok(((), changes))
             })
         })
         .await
@@ -368,7 +397,7 @@ impl Reports {
         let Ok(client) = self.db.get().await else {
             return JobOutcome::Retry("database_unavailable");
         };
-        let Ok(tenants) = client.query("SELECT DISTINCT tenant_id FROM base_report_subscriptions WHERE NOT paused AND next_run_at <= now()  UNION SELECT DISTINCT tenant_id FROM base_report_deliveries WHERE state='pending'", &[]).await else {
+        let Ok(tenants) = client.query("SELECT DISTINCT tenant_id FROM base_report_subscriptions WHERE NOT paused AND next_run_at <= now()  UNION SELECT DISTINCT tenant_id FROM base_report_deliveries WHERE state IN ('pending','queued')", &[]).await else {
             return JobOutcome::Retry("database_unavailable");
         };
         drop(client);
@@ -378,8 +407,67 @@ impl Reports {
                 return JobOutcome::Retry("sweep_failed");
             }
             self.queue_pending(tenant).await;
+            if let Err(error) = self.reconcile(tenant).await {
+                eprintln!("reports: delivery reconciliation of tenant {tenant} stopped: {error}");
+            }
         }
         JobOutcome::Completed
+    }
+
+    /// Closes each queued delivery whose job Queue has ended without the
+    /// delivery finishing it (the recipient was refused before it ran, or
+    /// every attempt failed), so none waits for ever.
+    async fn reconcile(&self, tenant: i64) -> Result<(), Error> {
+        let mut client = self.db.get().await?;
+        let queued = client
+            .query(
+                "SELECT id, job_id FROM base_report_deliveries WHERE tenant_id=$1 AND state='queued' AND job_id IS NOT NULL ORDER BY id LIMIT $2",
+                &[&tenant, &(BATCH * 5)],
+            )
+            .await?;
+        if queued.is_empty() {
+            return Ok(());
+        }
+        let ids: Vec<i64> = queued.iter().map(|row| row.get(1)).collect();
+        let ended: Vec<i64> = jobs::states(&**client, tenant, &ids)
+            .await?
+            .into_iter()
+            .filter(|job| job.state.terminal())
+            .map(|job| job.id)
+            .collect();
+        let stopped: Vec<i64> = queued
+            .iter()
+            .filter(|row| ended.contains(&row.get(1)))
+            .map(|row| row.get(0))
+            .collect();
+        if stopped.is_empty() {
+            return Ok(());
+        }
+        let mut tx = self
+            .mutations
+            .begin(
+                &mut client,
+                sweep_context(tenant, "reports.delivery.reconcile"),
+            )
+            .await?;
+        tx.mutate(move |sql| {
+            Box::pin(async move {
+                let reason = "The delivery stopped before it finished; the recipient may no longer be allowed to receive it.";
+                let closed = sql
+                    .query(
+                        "UPDATE base_report_deliveries SET state='skipped', reason=$3, finished_at=now() WHERE tenant_id=$1 AND id=ANY($2) AND state='queued' RETURNING id",
+                        &[&tenant, &stopped, &reason],
+                    )
+                    .await?;
+                let changes = closed
+                    .iter()
+                    .map(|row| Change { kind: DELIVERY.into(), id: row.get(0), old: json!({"state": "queued"}), new: json!({"state": "skipped", "reason": reason}) })
+                    .collect();
+                Ok(((), changes))
+            })
+        })
+        .await?;
+        tx.commit().await
     }
 
     /// Advances each due subscription to its next run and records one
@@ -435,18 +523,26 @@ impl Reports {
                         recipients.push(owner);
                     }
                     recipients.truncate(MAX_RECIPIENTS);
-                    sql.execute(
-                        "INSERT INTO base_report_deliveries(tenant_id,subscription_id,recipient_id,due_at) SELECT $1,$2,recipient,$3::text::timestamptz FROM unnest($4::bigint[]) recipient ON CONFLICT ON CONSTRAINT base_report_deliveries_once DO NOTHING",
-                        &[&tenant, &id, &due_at, &recipients],
-                    )
-                    .await?;
+                    let created = sql
+                        .query(
+                            "INSERT INTO base_report_deliveries(tenant_id,subscription_id,recipient_id,due_at) SELECT $1,$2,recipient,$3::text::timestamptz FROM unnest($4::bigint[]) recipient ON CONFLICT ON CONSTRAINT base_report_deliveries_once DO NOTHING RETURNING id, recipient_id",
+                            &[&tenant, &id, &due_at, &recipients],
+                        )
+                        .await?;
                     sql.execute(
                         "UPDATE base_report_subscriptions SET next_run_at=$3::text::timestamptz, last_run_at=now() WHERE tenant_id=$1 AND id=$2",
                         &[&tenant, &id, &next],
                     )
                     .await?;
                     let new = json!({"due_at": due_at, "recipients": recipients.len(), "next_run_at": next});
-                    Ok(((), vec![Change { kind: KIND.into(), id, old: Value::Null, new }]))
+                    let mut changes = vec![Change { kind: KIND.into(), id, old: Value::Null, new }];
+                    changes.extend(created.iter().map(|row| Change {
+                        kind: DELIVERY.into(),
+                        id: row.get(0),
+                        old: Value::Null,
+                        new: json!({"subscription_id": id, "recipient_id": row.get::<_, i64>(1), "due_at": due_at, "state": "pending"}),
+                    }));
+                    Ok(((), changes))
                 })
             })
             .await?;
@@ -498,14 +594,15 @@ impl Reports {
             }
             Err(error) => return Err(error),
         };
-        match bilibi_authz::authorize_key(&**client, &scope, VIEW).await {
-            Ok(()) => {}
-            Err(Error::Forbidden) => {
-                return self
-                    .skip_unqueued(tenant, delivery, "The recipient can no longer run reports.")
-                    .await;
+        for (capability, reason) in [
+            (VIEW, "The recipient can no longer run reports."),
+            (EXPORT, "The recipient may not export reports."),
+        ] {
+            match bilibi_authz::authorize_key(&**client, &scope, capability).await {
+                Ok(()) => {}
+                Err(Error::Forbidden) => return self.skip_unqueued(tenant, delivery, reason).await,
+                Err(error) => return Err(error),
             }
-            Err(error) => return Err(error),
         }
         let mut tx = self
             .mutations
@@ -526,7 +623,7 @@ impl Reports {
                     if moved != 1 {
                         return Err(Error::Conflict);
                     }
-                    Ok(((), vec![Change { kind: "base_report_delivery".into(), id: delivery, old: json!({"state": "pending"}), new: json!({"state": "queued"}) }]))
+                    Ok(((), vec![Change { kind: DELIVERY.into(), id: delivery, old: json!({"state": "pending"}), new: json!({"state": "queued"}) }]))
                 })
             })
             .await;
@@ -535,9 +632,30 @@ impl Reports {
             Err(Error::Conflict) => return Ok(()),
             Err(error) => return Err(error),
         }
-        self.queue
+        let job = self
+            .queue
             .enqueue_for(&mut tx, &scope, DELIVER, json!({"delivery": delivery}))
-            .await?;
+            .await?
+            .id();
+        tx.mutate(move |sql| {
+            Box::pin(async move {
+                sql.execute(
+                    "UPDATE base_report_deliveries SET job_id=$3 WHERE tenant_id=$1 AND id=$2",
+                    &[&tenant, &delivery, &job],
+                )
+                .await?;
+                Ok((
+                    (),
+                    vec![Change {
+                        kind: DELIVERY.into(),
+                        id: delivery,
+                        old: json!({"job_id": null}),
+                        new: json!({"job_id": job}),
+                    }],
+                ))
+            })
+        })
+        .await?;
         tx.commit().await
     }
 
@@ -557,7 +675,7 @@ impl Reports {
                     &[&tenant, &delivery, &reason],
                 )
                 .await?;
-                Ok(((), vec![Change { kind: "base_report_delivery".into(), id: delivery, old: json!({"state": "pending"}), new: json!({"state": "skipped", "reason": reason}) }]))
+                Ok(((), vec![Change { kind: DELIVERY.into(), id: delivery, old: json!({"state": "pending"}), new: json!({"state": "skipped", "reason": reason}) }]))
             })
         })
         .await?;
@@ -637,7 +755,10 @@ impl Reports {
                 }
             },
         };
-        match self.prepare(execution, export, true).await {
+        match self
+            .prepare(execution, export, Purpose::Delivery { skip_empty })
+            .await
+        {
             JobOutcome::Completed => {}
             other => return other,
         }
@@ -655,33 +776,23 @@ impl Reports {
         };
         let outcome = client
             .query_opt(
-                "SELECT state, rows, message, report_name FROM base_report_exports WHERE tenant_id=$1 AND id=$2 AND requester_id=$3",
+                "SELECT state, message, report_name FROM base_report_exports WHERE tenant_id=$1 AND id=$2 AND requester_id=$3",
                 &[&scope.tenant(), &export, &scope.user()],
             )
             .await;
         drop(client);
-        let (state, rows, message, name): (String, Option<i32>, Option<String>, String) =
-            match outcome {
-                Ok(Some(row)) => (row.get(0), row.get(1), row.get(2), row.get(3)),
-                Ok(None) => return JobOutcome::Retry("export_missing"),
-                Err(_) => return JobOutcome::Retry("database_unavailable"),
-            };
+        let (state, message, name): (String, Option<String>, String) = match outcome {
+            Ok(Some(row)) => (row.get(0), row.get(1), row.get(2)),
+            Ok(None) => return JobOutcome::Retry("export_missing"),
+            Err(_) => return JobOutcome::Retry("database_unavailable"),
+        };
+        // An empty result the subscription skips was refused before it was
+        // stored or announced, with exports::EMPTY as its message.
         if state == "failed" {
             let reason =
                 message.unwrap_or_else(|| "The report could not run for the recipient.".into());
             return self
                 .close(execution, scope, delivery, "skipped", Some(&reason))
-                .await;
-        }
-        if skip_empty && rows == Some(0) {
-            return self
-                .close(
-                    execution,
-                    scope,
-                    delivery,
-                    "skipped",
-                    Some("The result was empty."),
-                )
                 .await;
         }
         // The link needs sign-in; the mail carries no data. A refused or
@@ -748,15 +859,15 @@ impl Reports {
             Err(Error::NotFound) => return Ok(None),
             Err(error) => return Err(error),
         };
-        let (tenant, user) = (scope.tenant(), scope.user());
+        let (tenant, user, job) = (scope.tenant(), scope.user(), execution.job_id);
         let format = format.key();
         let export = tx
             .mutate(move |sql| {
                 Box::pin(async move {
                     let export: i64 = sql
                         .query_one(
-                            "INSERT INTO base_report_exports(tenant_id,requester_id,company_id,report_id,report_name,format) VALUES($1,$2,$3,$4,$5,$6) RETURNING id",
-                            &[&tenant, &user, &company.get(), &report, &name, &format],
+                            "INSERT INTO base_report_exports(tenant_id,requester_id,company_id,report_id,report_name,format,job_id) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id",
+                            &[&tenant, &user, &company.get(), &report, &name, &format, &job],
                         )
                         .await?
                         .get(0);
@@ -765,7 +876,10 @@ impl Reports {
                         &[&tenant, &delivery, &export],
                     )
                     .await?;
-                    Ok((export, vec![Change { kind: "base_report_export".into(), id: export, old: Value::Null, new: json!({"report_id": report, "format": format, "delivery": delivery}) }]))
+                    Ok((export, vec![
+                        Change { kind: "base_report_export".into(), id: export, old: Value::Null, new: json!({"report_id": report, "format": format, "delivery": delivery}) },
+                        Change { kind: DELIVERY.into(), id: delivery, old: json!({"export_id": null}), new: json!({"export_id": export}) },
+                    ]))
                 })
             })
             .await?;
@@ -811,7 +925,7 @@ impl Reports {
                         &[&tenant, &delivery, &state, &reason],
                     )
                     .await?;
-                    Ok(((), vec![Change { kind: "base_report_delivery".into(), id: delivery, old: json!({"state": "queued"}), new: json!({"state": state, "reason": reason}) }]))
+                    Ok(((), vec![Change { kind: DELIVERY.into(), id: delivery, old: json!({"state": "queued"}), new: json!({"state": state, "reason": reason}) }]))
                 })
             })
             .await?;

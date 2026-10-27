@@ -535,6 +535,53 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             format!("{detail} cells, {cells} in SQL"),
         );
     }
+    let file = reports
+        .export(&manager, matrix_id, &RunInput::default(), Format::Csv)
+        .await?;
+    let csv = String::from_utf8_lossy(&file.bytes).into_owned();
+    let last: Vec<f64> = csv
+        .lines()
+        .last()
+        .unwrap_or_default()
+        .split(',')
+        .skip(1)
+        .map(|v| v.parse().unwrap_or(f64::NAN))
+        .collect();
+    let (columns, grand) = last.split_at(last.len().saturating_sub(1));
+    checks.check(
+        "a matrix file carries the page's column totals, adding up to the grand total",
+        !columns.is_empty()
+            && columns.iter().all(|v| v.is_finite())
+            && grand
+                .first()
+                .is_some_and(|g| (columns.iter().sum::<f64>() - g).abs() < 1e-6),
+        csv.lines().last().unwrap_or_default().to_owned(),
+    );
+    let ungrouped = Draft {
+        name: "Stock in all".into(),
+        description: String::new(),
+        record_type: "reference_items".into(),
+        kind: Kind::Summary,
+        definition: Definition {
+            measures: vec![MeasureDef {
+                column: "quantity".into(),
+                agg: "sum".into(),
+            }],
+            ..Definition::default()
+        },
+    };
+    let ungrouped_id = write(&boundary, &db, &manager, "reports.create", async |tx| {
+        reports.create(tx, &manager, &ungrouped).await
+    })
+    .await?;
+    let file = reports
+        .export(&manager, ungrouped_id, &RunInput::default(), Format::Csv)
+        .await?;
+    checks.check(
+        "an ungrouped summary's file is one line and not empty",
+        file.rows == 1 && !file.empty,
+        format!("rows {}, empty {}", file.rows, file.empty),
+    );
     let mut lopsided = matrix.clone();
     lopsided.definition.groupings.pop();
     let refused = write(&boundary, &db, &manager, "reports.create", async |tx| {
@@ -611,6 +658,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "a prepared export commits its request with its queue job",
                 jobs == 1,
                 format!("export {export}, {jobs} job(s)"),
+            );
+            // Queue ends the job before it runs (as when it refuses the
+            // requester): the request shows as failed, not preparing.
+            client.execute("UPDATE base_queue_jobs SET state='cancelled', cancelled_at=now(), failure_code='actor_refused' WHERE id=(SELECT job_id FROM base_report_exports WHERE id=$1)", &[export]).await?;
+            let listed = reports.exports(&manager, Some(rows_id)).await?;
+            let shown = listed.iter().find(|e| e.id == *export);
+            checks.check(
+                "a request whose job ended unrun shows as failed with why",
+                shown.is_some_and(|e| e.state == "failed" && e.message.is_some()),
+                format!("{:?}", shown.map(|e| (e.state, e.message.clone()))),
+            );
+            // A file made under other access than the requester has now
+            // is refused before any byte is read.
+            client.execute("UPDATE base_report_exports SET state='ready', artifact_id='none', filename='stale.csv', access='0:stale' WHERE id=$1", &[export]).await?;
+            let stale = reports.exported(&manager, *export).await;
+            checks.check(
+                "a stored file is refused once what its requester may see has changed",
+                matches!(&stale, Err(ReportError::Refused(m)) if m.contains("changed")),
+                format!("{:?}", stale.map(|f| f.rows)),
             );
         }
         Err(ReportError::Refused(message)) => checks.check(

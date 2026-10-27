@@ -320,7 +320,7 @@ impl Show {
         scope: &Scope,
         credential: &str,
         value: &Value,
-    ) -> Result<Option<(String, String)>> {
+    ) -> Result<Option<(String, Option<String>)>> {
         let get = |key: &str| value.get(key).and_then(Value::as_str);
         let report = self.load(scope).await?;
         match get("type").ok_or(Error::Invalid)? {
@@ -478,6 +478,29 @@ impl Show {
                     }
                 }
             }
+            // Checked before the browser is sent to the file, so a PDF this
+            // result cannot make is refused here in words, not as a 403.
+            "download_pdf" if report.builtin.is_none() => {
+                let input = RunInput {
+                    answers: answers(&report, &self.answers),
+                    drill: self.drill.iter().map(|d| d.filter.clone()).collect(),
+                    page: 0,
+                    as_rows: self.as_rows,
+                };
+                match self
+                    .pages
+                    .reports
+                    .exportable(scope, report.id, &input, crate::Format::Pdf)
+                    .await
+                {
+                    Ok(()) => return Ok(Some((self.export_href(&report, true), None))),
+                    Err(ReportError::Database(error)) => return Err(error),
+                    Err(ReportError::Forbidden) => self.refused(Refusal::Message(
+                        "You do not have permission to export reports.".into(),
+                    )),
+                    Err(refused) => self.refused(Refusal::Message(refused.to_string())),
+                }
+            }
             "prepare_export" => {
                 let format = match get("format") {
                     Some("pdf") => "pdf",
@@ -533,7 +556,7 @@ impl Show {
                         let id = result["id"].as_i64().ok_or(Error::Internal)?;
                         return Ok(Some((
                             format!("{}?tab=definition", report_path(id)),
-                            "Your copy is saved. Change it as you like.".into(),
+                            Some("Your copy is saved. Change it as you like.".into()),
                         )));
                     }
                     Err(error) => self.refused(refusal(
@@ -558,7 +581,7 @@ impl Show {
                     Ok(_) => {
                         return Ok(Some((
                             super::INDEX.into(),
-                            format!("{} was deleted.", report.name),
+                            Some(format!("{} was deleted.", report.name)),
                         )))
                     }
                     Err(error) => self.refused(refusal(error, DENIED_AUTHOR)?),
@@ -815,30 +838,35 @@ impl Show {
         .map_err(|_| Error::Internal)
     }
 
+    /// The file of the result shown: its answers, drill-downs and records
+    /// view in the address.
+    fn export_href(&self, report: &Report, pdf: bool) -> String {
+        let mut query = self.query();
+        query.retain(|k, _| k.starts_with(['a', 'd', 'v']) || k == "rows");
+        if pdf {
+            query.insert("format".into(), "pdf".into());
+        }
+        params::address(&format!("{}/export", report_path(report.id)), &query)
+    }
+
     fn header(&self, report: &Report, can: Can) -> Result<Html> {
         let mut actions = Html::EMPTY;
         if can.export && report.builtin.is_none() {
-            // The answers and drill-downs, so the file is the result shown.
-            let mut query = self.query();
-            query.retain(|k, _| k.starts_with(['a', 'd', 'v']) || k == "rows");
-            let href = params::address(&format!("{}/export", report_path(report.id)), &query);
             actions.push(&render(ActionLink {
                 id: "report-export",
                 icon: "export",
                 title: "Download the whole result as CSV",
-                href: &href,
+                href: &self.export_href(report, false),
                 body: Html::text("Download CSV"),
                 ..ActionLink::default()
             })?);
-            query.insert("format".into(), "pdf".into());
-            let href = params::address(&format!("{}/export", report_path(report.id)), &query);
-            actions.push(&render(ActionLink {
+            actions.push(&render(Button {
                 id: "report-export-pdf",
-                icon: "export",
-                title: "Download the whole result as a PDF",
-                href: &href,
+                button_type: "button",
+                event: "download_pdf",
+                working: "Checking…",
                 body: Html::text("Download PDF"),
-                ..ActionLink::default()
+                ..Button::default()
             })?);
         }
         if can.author {
@@ -1516,7 +1544,7 @@ impl LiveState<Scope, Error> for Show {
                     {
                         return Ok(LiveBody {
                             redirect: Some(path),
-                            flash: Some((StatusKind::Success, message)),
+                            flash: message.map(|message| (StatusKind::Success, message)),
                             ..LiveBody::default()
                         });
                     }

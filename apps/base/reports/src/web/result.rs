@@ -369,10 +369,86 @@ pub(crate) fn matrix_columns(result: &RunResult) -> Option<Vec<BuiltinColumn>> {
     Some(columns)
 }
 
-/// A matrix: a row per value down, a column per value across, the measure
-/// (or the record count) in each cell, a row total, column totals where the
-/// measure adds up across rows (count, sum, lowest, highest) and the grand
-/// total. Each row's label drills into its records.
+/// A matrix laid out once, for the page and the file alike: a row per value
+/// down, a column per value across, the measure (or the record count) in
+/// each cell, a row total, column totals where the measure adds up across
+/// rows (count, sum, lowest, highest; blank otherwise) and the grand total.
+pub(crate) struct Pivot {
+    pub down: Vec<Value>,
+    pub across: Vec<Value>,
+    /// Per row down: one cell per value across.
+    pub cells: Vec<Vec<Option<Value>>>,
+    /// Per row down: its subtotal line (the row total), the drill target.
+    pub subtotals: Vec<Option<usize>>,
+    pub row_totals: Vec<Option<Value>>,
+    pub column_totals: Vec<String>,
+    pub grand: Value,
+}
+
+pub(crate) fn pivot(
+    measures: &[(ColumnInfo, &'static str)],
+    lines: &[SummaryLine],
+    total: &(i64, Vec<Value>),
+) -> Pivot {
+    let agg = measures.first().map(|(_, agg)| *agg);
+    let value = |count: i64, values: &[Value]| -> Value {
+        if measures.is_empty() {
+            Value::from(count)
+        } else {
+            values.first().cloned().unwrap_or(Value::Null)
+        }
+    };
+    let Axes { down, across } = axes(lines);
+    let mut sums: Vec<Option<f64>> = vec![None; across.len()];
+    let (mut cells, mut subtotals, mut row_totals) = (Vec::new(), Vec::new(), Vec::new());
+    for d in &down {
+        let mut row = Vec::with_capacity(across.len());
+        for (c, a) in across.iter().enumerate() {
+            let shown = lines
+                .iter()
+                .find(|(keys, sub, _, _)| {
+                    !*sub && keys.first() == Some(d) && keys.get(1) == Some(a)
+                })
+                .map(|(_, _, count, values)| value(*count, values));
+            if let Some(v) = shown.as_ref().and_then(number) {
+                let slot = &mut sums[c];
+                *slot = Some(match (agg, *slot) {
+                    (_, None) => v,
+                    (Some("min"), Some(t)) => t.min(v),
+                    (Some("max"), Some(t)) => t.max(v),
+                    (_, Some(t)) => t + v,
+                });
+            }
+            row.push(shown);
+        }
+        let subtotal = lines
+            .iter()
+            .position(|(keys, sub, _, _)| *sub && keys.first() == Some(d));
+        row_totals.push(subtotal.map(|line| value(lines[line].2, &lines[line].3)));
+        subtotals.push(subtotal);
+        cells.push(row);
+    }
+    let adds_up = matches!(agg, None | Some("count" | "sum" | "min" | "max"));
+    let column_totals = sums
+        .iter()
+        .map(|sum| match sum {
+            Some(v) if adds_up => format_total(*v),
+            _ => String::new(),
+        })
+        .collect();
+    Pivot {
+        down,
+        across,
+        cells,
+        subtotals,
+        row_totals,
+        column_totals,
+        grand: value(total.0, &total.1),
+    }
+}
+
+/// A matrix on the page ([`Pivot`]). Each row's label drills into its
+/// records.
 pub(crate) fn matrix(
     title: &str,
     host: &ListColumns,
@@ -388,15 +464,6 @@ pub(crate) fn matrix(
     else {
         return Err(Error::Internal);
     };
-    let agg = measures.first().map(|(_, agg)| *agg);
-    let value = |count: i64, values: &[Value]| -> Value {
-        if measures.is_empty() {
-            Value::from(count)
-        } else {
-            values.first().cloned().unwrap_or(Value::Null)
-        }
-    };
-    let axes = axes(lines);
     let mut out = Html::EMPTY;
     if let Some(kind) = chart.as_deref().and_then(ChartKind::from_key) {
         out.push(&render(figure(
@@ -410,13 +477,10 @@ pub(crate) fn matrix(
             true,
         ))?);
     }
+    let pivot = pivot(measures, lines, total);
     let mut flex = Vec::new();
-    let mut column_totals: Vec<Option<f64>> = vec![None; axes.across.len()];
-    for (r, down) in axes.down.iter().enumerate() {
+    for (r, down) in pivot.down.iter().enumerate() {
         let mut row = FlexRow::new(format!("down-{r}"));
-        let subtotal = lines
-            .iter()
-            .position(|(keys, sub, _, _)| *sub && keys.first() == Some(down));
         let label = key_text(down, groupings[0].1);
         let label = if label.is_empty() {
             "(none)".to_owned()
@@ -425,47 +489,28 @@ pub(crate) fn matrix(
         };
         row = row.slot(
             "down",
-            match subtotal {
+            match pivot.subtotals[r] {
                 Some(line) => drill_cell(&label, &line.to_string())?,
                 None => Html::text(&label),
             },
         );
-        for (c, across) in axes.across.iter().enumerate() {
-            let found = lines.iter().find(|(keys, sub, _, _)| {
-                !*sub && keys.first() == Some(down) && keys.get(1) == Some(across)
-            });
-            let shown = found.map(|(_, _, count, values)| value(*count, values));
-            if let Some(v) = shown.as_ref().and_then(number) {
-                let slot = &mut column_totals[c];
-                *slot = Some(match (agg, *slot) {
-                    (_, None) => v,
-                    (Some("min"), Some(t)) => t.min(v),
-                    (Some("max"), Some(t)) => t.max(v),
-                    (_, Some(t)) => t + v,
-                });
-            }
+        for (c, shown) in pivot.cells[r].iter().enumerate() {
             row = row.slot(
                 &format!("a{c}"),
                 Html::text(&shown.as_ref().map(cell).unwrap_or_default()),
             );
         }
-        if let Some(line) = subtotal {
-            let (_, _, count, values) = &lines[line];
-            row = row.slot("total", Html::text(&cell(&value(*count, values))));
+        if let Some(total) = &pivot.row_totals[r] {
+            row = row.slot("total", Html::text(&cell(total)));
         }
         row.dom_id = Some(format!("report-down-{r}"));
         flex.push(row);
     }
-    let adds_up = matches!(agg, None | Some("count" | "sum" | "min" | "max"));
     let mut last = FlexRow::new("total").slot("down", drill_cell("Total", "total")?);
-    for (c, sum) in column_totals.iter().enumerate() {
-        let text = match sum {
-            Some(v) if adds_up => format_total(*v),
-            _ => String::new(),
-        };
-        last = last.slot(&format!("a{c}"), Html::text(&text));
+    for (c, text) in pivot.column_totals.iter().enumerate() {
+        last = last.slot(&format!("a{c}"), Html::text(text));
     }
-    last = last.slot("total", Html::text(&cell(&value(total.0, &total.1))));
+    last = last.slot("total", Html::text(&cell(&pivot.grand)));
     last.dom_id = Some("report-line-total".into());
     flex.push(last);
     let mut table = FlexTable::new("report-matrix", host.flex_columns(), flex);

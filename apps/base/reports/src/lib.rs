@@ -45,7 +45,7 @@ const EXPORTED: &str = "base/reports.exported";
 const PREPARER: &str = "base/reports.preparer";
 const SWEEPER: &str = "base/reports.sweeper";
 const DELIVERER: &str = "base/reports.deliverer";
-const MIGRATIONS: [(&str, &str); 4] = [
+const MIGRATIONS: [(&str, &str); 5] = [
     (
         "base-reports-001-reports",
         include_str!("../migrations/001-reports.sql"),
@@ -61,6 +61,10 @@ const MIGRATIONS: [(&str, &str); 4] = [
     (
         "base-reports-004-subscriptions",
         include_str!("../migrations/004-subscriptions.sql"),
+    ),
+    (
+        "base-reports-005-export-access",
+        include_str!("../migrations/005-export-access.sql"),
     ),
 ];
 const KIND: &str = "base_report";
@@ -1244,7 +1248,7 @@ inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_schedule::
     overlap: bilibi_schedule::Overlap::Forbid, misfire: bilibi_schedule::Misfire::Coalesce, owner_route: Some(web::INDEX),
 }) }
 inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_queue::WORKERS, schedules::DELIVER, bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_queue::Worker { max_attempts: 5, validate: schedules::validate_delivery }) }
-inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_queue::execution::HANDLERS, schedules::DELIVER, bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_queue::execution::HandlerBinding { service: DELIVERER, capability: VIEW }) }
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_queue::execution::HANDLERS, schedules::DELIVER, bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_queue::execution::HandlerBinding { service: DELIVERER, capability: EXPORT }) }
 inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::ROUTES, "base/reports.builtin", bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_module_registry::contributions::Route {
     method: bilibi_module_registry::contributions::Method::Get, path: web::BUILTIN, service: web::SERVICE, operation: "builtin",
     access: bilibi_module_registry::contributions::Access::Capability(VIEW), framed: true,
