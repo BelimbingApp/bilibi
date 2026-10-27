@@ -732,6 +732,7 @@ dependencies = [
  "bilibi-settings",
  "bilibi-tenancy",
  "bilibi-ui",
+ "bytes",
  "inventory",
  "jiff",
  "serde_json",

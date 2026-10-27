@@ -1,6 +1,6 @@
 # Reports (`base/reports`)
 
-Operator-built reports: a saved question over one Grid table, run as each reader. Decision: `docs/architecture/decisions/07-report-builder-reads-owner-sources.md`. No Bilimbi counterpart.
+Operator-built reports: a saved question over one Grid table, run as each reader. No Bilimbi counterpart.
 
 ## The rule
 
