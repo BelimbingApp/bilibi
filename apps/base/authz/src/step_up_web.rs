@@ -719,7 +719,7 @@ impl StepUpPolicy {
                 ),
                 Pending::Floor { key, floor } => (
                     format!(
-                        "{key} will {} for every organisation.",
+                        "{key} will {}.",
                         if *floor == Some(true) {
                             "require 2FA for every organisation"
                         } else {
