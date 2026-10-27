@@ -1,4 +1,4 @@
-//! Operator-built reports (BelimbingApp/bilibi#128, ADR 07): saved questions
+//! Operator-built reports (BelimbingApp/bilibi#128): saved questions
 //! over Grid tables, shared by definition and run as each reader. No Bilimbi
 //! counterpart. The facade is [`Reports`] (service [`SERVICE`]); pages and
 //! agents both reach it through the operation contracts in
