@@ -181,7 +181,7 @@ inventory::submit! { Contribution::new(PAGE_WRITES, PAGES, provenance!(), &PageW
 bilibi_menu::contribute!(
     "base/picklists",
     bilibi_menu::MenuItem::page("admin.picklists", "Pick-lists", web::INDEX)
-        .icon("hero-queue-list")
+        .icon("queue-list")
         .under("admin")
         .requires(bilibi_menu::Requirement::Capability(VIEW))
         .order(60)

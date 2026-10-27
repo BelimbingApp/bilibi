@@ -12,17 +12,17 @@
 @source "../css";
 @source "../reference-candidates.txt";
 @source "../domain-candidates.txt";
-@source "../vendor/icon-candidates.txt";
 @source "../../../..";
 /* Mounted Domain and Extension checkouts are gitignored, which Tailwind
  * honours even under a listed directory; build.cjs adds an explicit @source for
  * each mounted container instead. */
-/* Menu contributions provide bare icon names at runtime. Keep the generated
- * Heroicon utilities available for their icon rendering. */
-@source inline("hero-{building-library,building-office-2,chart-bar,circle-stack,clipboard-document-list,cog-6-tooth,flag,globe-alt,information-circle,lock-closed,map,map-pin,magnifying-glass,paint-brush,puzzle-piece,shield-check,squares-2x2,user-group,users}");
-
-@plugin "../vendor/heroicons.cjs";
 @import "./legacy-compat.css";
+
+/* The icon's default display belongs below utilities: `hidden` and
+ * group visibility classes must win when two state glyphs share a control. */
+@layer components {
+  .ui-icon { display: inline-block; vertical-align: middle; }
+}
 
 /* Bilimbi Forms select and multi_select share the outline chevron. A single
  * select keeps its native keyboard and popup behaviour; only its arrow changes.

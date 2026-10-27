@@ -62,7 +62,7 @@ Reuse the shared macros and typed models. Do not hand-write markup or copy class
 | List and table | `templates/lists.html`, `flex_table.html` | `apps/base/ui` |
 
 - Name variants through the enums (`ButtonVariant`, `BadgeKind`, `PageVariant`), not class strings.
-- Icons come from `src/icons.rs` action names or `hero-*`. Use the Belimbing equivalent for a familiar action.
+- Icons use bare names from `base/ui` (`edit`, `pencil`, `bookmark-solid`), rendered as inline SVG. Use the Belimbing equivalent for a familiar action; see `apps/base/ui/README.md` for names and missing-icon behaviour.
 - Icon-only actions need an accessible label and a title. Inline controls are 24 px; table and toolbar controls are 28 px. Touch screens expand icon, tab, pager and choice targets to 40 px; the labelled button stays 24 px.
 - Links navigate; buttons act.
 - Destructive actions use calm danger text, never a solid red button.
