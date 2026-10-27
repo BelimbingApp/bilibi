@@ -16,4 +16,4 @@ const directories = [
 const scanner = new Scanner({ sources: directories.map(directory => ({
   base: path.resolve(source, directory), pattern: '**/*', negated: false,
 })) });
-fs.writeFileSync(path.join(__dirname, 'reference-candidates.txt'), scanner.scan().sort().join('\n') + '\n');
+fs.writeFileSync(path.join(__dirname, 'reference-candidates.txt'), scanner.scan().filter(candidate => !candidate.includes('hero-')).sort().join('\n') + '\n');

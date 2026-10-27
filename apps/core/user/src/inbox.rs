@@ -210,11 +210,7 @@ async fn render_inbox(
     let rows = found
         .into_iter()
         .map(|item| {
-            let icon = item
-                .icon
-                .clone()
-                .filter(|name| bilibi_ui::icons::renderable(name))
-                .unwrap_or_else(|| "notify".into());
+            let icon = item.icon.clone().unwrap_or_else(|| "notify".into());
             let id = item.id.to_string();
             let mut title = fragment(Html::render(&Icon {
                 name: &icon,

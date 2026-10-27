@@ -34,7 +34,7 @@ bilibi_menu::contribute!(
     "core/user",
     bilibi_menu::MenuItem::page("admin.system.database-query", "Database Queries", ROOT)
         .under("admin.system.database")
-        .icon("hero-circle-stack")
+        .icon("circle-stack")
         .requires(bilibi_menu::Requirement::Capability(queries::LIST))
         .order(20)
 );

@@ -390,7 +390,7 @@ impl Index {
                     event: "request_terminate",
                     name: "key",
                     value: &key,
-                    ..IconButton::new("hero-x-circle", "Terminate session")
+                    ..IconButton::new("x-circle", "Terminate session")
                 })?
             } else {
                 Html::EMPTY

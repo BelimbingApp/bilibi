@@ -33,5 +33,6 @@ the Browser location card (Use my location shows the position Chrome
 reports, and a refused permission, an unavailable position and a page served
 over http off localhost each show their sentence), inline facts, company
 search/paging, FlexTable notch and Graphic's icon filter/copy tiles.
+Graphic lists every embedded SVG variant and semantic action from `bilibi_ui::Icons`; copied names use the same bare format as menus and components.
 Theme and Design Spec preserve the source's foundations and accepted decisions.
 No unit tests or test-only infrastructure belong to this module.
