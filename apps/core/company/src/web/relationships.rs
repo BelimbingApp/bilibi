@@ -443,10 +443,20 @@ fn get<'a>(value: &'a Value, key: &str) -> &'a str {
     value.get(key).and_then(Value::as_str).unwrap_or("")
 }
 fn errors_for(errors: &[FieldError], field: &str) -> Vec<String> {
+    let label = match field {
+        "code" => "Code",
+        "name" => "Name",
+        "inverse_name" => "Inverse name",
+        "target" => "Related party",
+        "role_id" => "Relationship role",
+        "effective_from" => "Effective from",
+        "effective_to" => "Effective to",
+        _ => "",
+    };
     errors
         .iter()
         .filter(|e| e.field == field)
-        .map(|e| e.message.clone())
+        .map(|e| bilibi_ui::error_sentence(label, &e.message))
         .collect()
 }
 fn page(id: &str, variant: PageVariant, body: Html) -> Result<String> {
