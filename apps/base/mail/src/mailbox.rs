@@ -1,7 +1,7 @@
-//! Development transport: each message becomes one private `.eml` file in a
+//! Development transport for BilimbiWeb.Mailer: each message becomes one private `.eml` file in a
 //! bounded directory, so reset and verification links are readable without a
 //! mail server. It is for local use; the files hold live tokens.
-use crate::{Error, SendFuture, Transport};
+use crate::{Envelope, Error, SendFuture, Transport};
 use std::{
     fs,
     io::Write,
@@ -29,12 +29,14 @@ impl Mailbox {
         Error::Delivery(format!("dev mailbox: {error}"))
     }
     fn store(&self, rendered: &[u8]) -> crate::Result<()> {
-        use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+        use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
         fs::DirBuilder::new()
             .recursive(true)
             .mode(0o700)
             .create(&self.dir)
             .map_err(Self::io)?;
+        // A development inbound tool may have created the parent first.
+        fs::set_permissions(&self.dir, fs::Permissions::from_mode(0o700)).map_err(Self::io)?;
         let stamp = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .map_or(0, |elapsed| elapsed.as_millis());
@@ -98,8 +100,8 @@ fn valid_id(name: &str) -> bool {
         && !name.starts_with('.')
 }
 impl Transport for Mailbox {
-    fn send<'a>(&'a self, message: &'a lettre::Message) -> SendFuture<'a> {
-        let rendered = readable(&message.formatted());
+    fn send_raw<'a>(&'a self, _envelope: &'a Envelope, bytes: &'a [u8]) -> SendFuture<'a> {
+        let rendered = readable(bytes);
         Box::pin(async move {
             // Blocking file work stays off the async workers.
             let mailbox = Mailbox::new(self.dir.clone(), self.capacity);
@@ -107,6 +109,9 @@ impl Transport for Mailbox {
                 .await
                 .map_err(|_| Error::Delivery("dev mailbox task failed".into()))?
         })
+    }
+    fn dev_mailbox(&self) -> Option<&Mailbox> {
+        Some(self)
     }
     fn describe(&self) -> String {
         format!(
@@ -125,7 +130,7 @@ fn readable(raw: &[u8]) -> Vec<u8> {
         return raw.to_vec();
     };
     let (head, body) = (&raw[..split], &raw[split + 4..]);
-    let marker = b"Content-Transfer-Encoding: quoted-printable";
+    let marker = b"\r\nContent-Transfer-Encoding: quoted-printable";
     let Some(at) = head
         .windows(marker.len())
         .position(|window| window == marker)
@@ -133,7 +138,7 @@ fn readable(raw: &[u8]) -> Vec<u8> {
         return raw.to_vec();
     };
     let mut out = head[..at].to_vec();
-    out.extend_from_slice(b"Content-Transfer-Encoding: 8bit");
+    out.extend_from_slice(b"\r\nContent-Transfer-Encoding: 8bit");
     out.extend_from_slice(&head[at + marker.len()..]);
     out.extend_from_slice(b"\r\n\r\n");
     let mut index = 0;
