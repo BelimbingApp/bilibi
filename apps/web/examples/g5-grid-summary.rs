@@ -760,6 +760,50 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Test::Equals(json!(0.2)),
             vec![],
         ),
+        // Operands a `real` cannot hold compare in `float8`, never as a
+        // database error (re-review of #157, round 4).
+        (
+            "small",
+            "of type real equals 1e100",
+            Test::Equals(json!(1e100)),
+            vec![],
+        ),
+        (
+            "small",
+            "of type real equals 1e-100",
+            Test::Equals(json!(1e-100)),
+            vec![],
+        ),
+        (
+            "small",
+            "of type real is one of 0.1 and 1e100",
+            Test::OneOf(vec![json!(0.1), json!(1e100)]),
+            vec![json!(1)],
+        ),
+        (
+            "small",
+            "of type real in a range of exactly 1e100",
+            Test::Range {
+                min: Some(json!(1e100)),
+                max: Some(json!(1e100)),
+            },
+            vec![],
+        ),
+        (
+            "small",
+            "of type real from 1e-100 up to 1e100",
+            Test::Range {
+                min: Some(json!(1e-100)),
+                max: Some(json!(1e100)),
+            },
+            vec![json!(1), json!(2)],
+        ),
+        (
+            "amount",
+            "of type double equals 1e100 (not stored)",
+            Test::Equals(json!(1e100)),
+            vec![],
+        ),
         (
             "amount",
             "one of 0.3 (not stored)",
