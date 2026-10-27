@@ -417,6 +417,7 @@ struct DetailBody<'a> {
     id: i64,
     panels: &'a [String],
     header: Html,
+    chain: Html,
     notice: Html,
     card: Html,
     modal: Html,
@@ -474,6 +475,30 @@ pub(super) async fn detail(
             .organisation()
             .is_some_and(|own| own.get() == id);
     let editable = editable && can_target;
+    let hierarchy = crate::hierarchy::hierarchy(client, scope, id).await?;
+    let mut chain = Html::EMPTY;
+    for (index, node) in hierarchy.ancestors.iter().enumerate() {
+        if index > 0 {
+            chain.push(&Html::text(" / "));
+        }
+        chain.push(&render(&ActionLink {
+            id: &format!("company-ancestor-{}", node.id),
+            href: &format!("/companies/{}", node.id),
+            title: &node.name,
+            body: Html::text(&node.name),
+            ..ActionLink::default()
+        })?);
+    }
+    if !hierarchy.ancestors.is_empty() {
+        chain = render(&Facts {
+            id: "company-parent-chain",
+            items: vec![Fact {
+                title: "Parent chain",
+                id: "company-parent-chain-links",
+                value: chain,
+            }],
+        })?;
+    }
     let primary = crate::primary::is_primary(client, scope, id).await?;
     let opts = options(client, scope, Some(id), false).await?;
     let mut actions = badge(&company.status)?;
@@ -882,6 +907,7 @@ pub(super) async fn detail(
             id,
             panels,
             header,
+            chain,
             notice: notices,
             card: content,
             modal,
@@ -943,17 +969,48 @@ fn text_fact(
 #[template(path = "create.html")]
 struct CreateBody {
     header: Html,
-    fields: Vec<Html>,
-    contacts: Vec<Html>,
-    context: Vec<Html>,
-    submit: Html,
+    summary: Html,
+    form: Html,
+    candidates: Html,
+    confirmation: Html,
+}
+#[derive(Template)]
+#[template(path = "duplicate_confirm.html")]
+struct DuplicateConfirm {
+    body: Html,
+}
+pub(super) struct CreateState<'a> {
+    pub values: &'a HashMap<String, String>,
+    pub errors: &'a [FieldError],
+    pub candidates: &'a [crate::DuplicateCandidate],
+    pub columns: &'a ListColumns,
+    pub confirming: bool,
+    pub reason: &'a str,
+}
+pub(super) fn duplicate_builtins() -> Vec<BuiltinColumn> {
+    [
+        ("name", "Company"),
+        ("status", "Status"),
+        ("score", "Score"),
+        ("facts", "Matched facts"),
+    ]
+    .into_iter()
+    .map(|(id, label)| BuiltinColumn::new(id, label))
+    .collect()
 }
 pub(super) async fn create(
-    client: &impl GenericClient,
+    client: &(impl GenericClient + Sync),
     scope: &Scope,
-    values: &HashMap<String, String>,
-    errors: &[FieldError],
+    state: CreateState<'_>,
 ) -> Result<String> {
+    let CreateState {
+        values,
+        errors,
+        candidates,
+        columns,
+        confirming,
+        reason,
+    } = state;
     bilibi_authz::authorize_key(client, scope, crate::CREATE).await?;
     let masked = bilibi_authz::restrictions(client, scope).await?;
     let opts = options(client, scope, None, true).await?;
@@ -1029,7 +1086,7 @@ pub(super) async fn create(
             fields.push(render(&field)?);
         }
     }
-    let contacts = fields.split_off(8);
+
     let context = [
         ("scope_activities", "Business Activities (JSON)"),
         ("metadata", "Metadata (JSON)"),
@@ -1071,18 +1128,144 @@ pub(super) async fn create(
         body: Html::text("Create Company"),
         ..Button::default()
     })?;
+    let mut body = Html::EMPTY;
+    for field in fields.into_iter().chain(context) {
+        body.push(&field);
+    }
+    let mut actions = submit;
+    actions.push(&render(&BackLink {
+        id: "company-cancel",
+        href: "/companies",
+        title: "Cancel",
+        ..BackLink::default()
+    })?);
+    let form = render(&Form {
+        id: "company-form",
+        event: "create_company",
+        change: false,
+        class: "",
+        body: card("company-create-fields", body, false)?,
+        actions,
+    })?;
+    let mut summary = ErrorSummary::new("company-create-errors");
+    for error in errors {
+        summary.push(
+            if error.field == "create_anyway" {
+                "company-create-anyway".into()
+            } else {
+                format!("company-{}", error.field.replace('_', "-"))
+            },
+            &error.message,
+        );
+    }
+    let mut candidate_body = Html::EMPTY;
+    if !candidates.is_empty() {
+        candidate_body.push(&render(&SectionHeading {
+            title: "Possible duplicates",
+            description: "Use an existing company, or give a reason to create another one.",
+            ..SectionHeading::default()
+        })?);
+        let state = ListState::parse(
+            &HashMap::new(),
+            Arc::new(ListSpec {
+                page_sizes: vec![100],
+                default_page_size: 100,
+                ..ListSpec::default()
+            }),
+        )
+        .map_err(|_| Error::Internal)?;
+        let rows = candidates
+            .iter()
+            .take(state.page_size as usize)
+            .map(|c| {
+                let mut row = FlexRow::new(c.id.to_string())
+                    .slot("name", Html::text(&c.name))
+                    .slot("status", badge(&c.status)?)
+                    .slot("score", Html::text(&format!("{:.2}", c.score)))
+                    .slot(
+                        "facts",
+                        Html::text(
+                            &c.matched_facts
+                                .iter()
+                                .map(|s| match s.as_str() {
+                                    "registration_number" => "Registration number",
+                                    "website" => "Website host",
+                                    "email" => "Email domain",
+                                    "phone" => "Phone",
+                                    _ => "Name",
+                                })
+                                .collect::<Vec<_>>()
+                                .join(", "),
+                        ),
+                    );
+                row.actions = render(&ActionLink {
+                    id: &format!("company-use-{}", c.id),
+                    href: &format!("/companies/{}", c.id),
+                    title: "Use existing",
+                    body: Html::text("Use existing"),
+                    ..ActionLink::default()
+                })?;
+                Ok(row)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let mut table = FlexTable::new(&columns.id, columns.flex_columns(), rows);
+        table.event = "duplicate_grid";
+        table.zoom = columns.zoom;
+        table.suggestions = columns.flex_suggestions();
+        table.add_query = &columns.add_query;
+        table.actions = true;
+        table.caption = "Possible duplicate companies";
+        candidate_body.push(&render(&table)?);
+        candidate_body.push(&render(&Button {
+            id: "company-create-anyway",
+            event: "request_create_anyway",
+            body: Html::text("Create anyway"),
+            ..Button::default()
+        })?);
+    }
+    let confirmation = if confirming {
+        let field = render(
+            &Field::named("reason")
+                .id("company-duplicate-reason")
+                .label("Reason for creating another company")
+                .kind(InputKind::Textarea)
+                .value(reason)
+                .required()
+                .attr("maxlength", "500")
+                .errors(
+                    errors
+                        .iter()
+                        .filter(|e| e.field == "create_anyway")
+                        .map(|e| e.message.clone())
+                        .collect(),
+                ),
+        )?;
+        let mut body = crate::policy::banner(client).await?;
+        body.push(&render(&Form {
+            id: "company-duplicate-reason-form",
+            event: "duplicate_reason",
+            change: true,
+            class: "",
+            body: field,
+            actions: Html::EMPTY,
+        })?);
+        render(&DuplicateConfirm { body })?
+    } else {
+        Html::EMPTY
+    };
     page(
         "company-create-page",
         PageVariant::Form,
         render(&CreateBody {
             header,
-            fields,
-            contacts,
-            context,
-            submit,
+            summary: render(&summary)?,
+            form,
+            candidates: candidate_body,
+            confirmation,
         })?,
     )
 }
+
 pub(super) fn new_company(
     values: &HashMap<String, String>,
 ) -> (NewCompany, Option<Value>, Option<Value>, Vec<FieldError>) {

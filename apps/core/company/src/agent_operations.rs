@@ -130,6 +130,60 @@ impl ReadHandler for Get {
     }
 }
 
+enum Lookup {
+    Duplicates,
+    Hierarchy,
+}
+impl ReadHandler for Lookup {
+    fn owner(&self) -> &'static str {
+        "core/company"
+    }
+    fn call<'a>(
+        &'a self,
+        _client: &'a dyn OperationClient,
+        scope: &'a Scope,
+        input: &'a Value,
+    ) -> OperationFuture<'a> {
+        Box::pin(async move {
+            let client = db()?.get().await.map_err(bilibi_database::Error::from)?;
+            let value = match self {
+                Self::Duplicates => {
+                    let query = serde_json::from_value(input.clone())
+                        .map_err(|_| bilibi_database::Error::Invalid)?;
+                    serde_json::to_value(
+                        crate::duplicates::duplicates(&**client, scope, &query).await?,
+                    )
+                }
+                Self::Hierarchy => serde_json::to_value(
+                    crate::hierarchy::hierarchy(
+                        &**client,
+                        scope,
+                        input["company_id"]
+                            .as_i64()
+                            .ok_or(bilibi_database::Error::Invalid)?,
+                    )
+                    .await?,
+                ),
+            }
+            .map_err(|_| bilibi_database::Error::Internal)?;
+            Ok(value.into())
+        })
+    }
+}
+fn duplicates_schema() -> Value {
+    json!({"type":"object","properties":{
+        "name":{"type":"string","maxLength":160}, "website":text(), "email":{"type":"string","maxLength":254},
+        "phone":{"type":"string","maxLength":64},"registration_number":text(),
+        "except_id":{"type":"integer","minimum":1}, "limit":{"type":"integer","minimum":1,"maximum":100}
+    }})
+}
+fn duplicates_output() -> Value {
+    json!({"type":"array","description":"Candidate id, name, status, score and matched_facts. Archived companies are included. Never chooses or merges."})
+}
+fn hierarchy_output() -> Value {
+    json!({"type":"object","description":"Ancestors root first and descendants as id, name, status and level, with truncated when the tenant depth or 1000-node limit is reached."})
+}
+
 struct Create;
 impl WriteHandler for Create {
     fn owner(&self) -> &'static str {
@@ -166,7 +220,10 @@ impl WriteHandler for Create {
                 .filter(|(_, to)| !to.is_null() && to.as_str() != Some(""))
                 .map(|(field, to)| json!({"field":field,"from":null,"to":to}))
                 .collect();
-            Ok(json!({"summary":"Create company","changes":changes}).into())
+            let candidates =
+                crate::duplicates::duplicates(&**client, scope, &crate::DuplicateQuery::from(&new))
+                    .await?;
+            Ok(json!({"summary":"Create company","changes":changes,"duplicate_candidates":candidates,"create_anyway":new.create_anyway}).into())
         })
     }
     fn commit<'a>(
@@ -222,7 +279,11 @@ fn create_schema() -> Value {
         "website":text(),
         "status":{"type":"string","enum":INITIAL_STATUSES},
         "parent_id":{"type":"integer","minimum":1},
-        "legal_entity_type_id":{"type":"integer","minimum":1}
+        "legal_entity_type_id":{"type":"integer","minimum":1},
+        "create_anyway":{"type":"object","required":["candidate_ids","reason"],"properties":{
+            "candidate_ids":{"type":"array","items":{"type":"integer","minimum":1}},
+            "reason":{"type":"string","maxLength":500}
+        }}
     }})
 }
 fn list_output() -> Value {
@@ -237,9 +298,11 @@ fn create_output() -> Value {
 
 inventory::submit! { Contribution::new(DEFINITIONS, "core/company.agent", Provenance { module: "core/company", source: file!(), line: line!() }, &Definitions {
     operations: &[
+        Operation { key: "core.company.duplicates", title: "Find duplicate companies", summary: "Find scored candidates from company names, registration numbers, websites, email domains and phone numbers.", keywords: &["reuse", "match", "organisation"], capability: LIST, input: duplicates_schema, output: duplicates_output, handler: Handler::Read(&Lookup::Duplicates), channels: Channels::Every, step_up: &[] },
+        Operation { key: "core.company.hierarchy", title: "Read a company hierarchy", summary: "Read a bounded parent chain and subsidiary tree.", keywords: &["parent", "subsidiary", "tree"], capability: VIEW, input: get_schema, output: hierarchy_output, handler: Handler::Read(&Lookup::Hierarchy), channels: Channels::Every, step_up: &[] },
         Operation { key: "core.company.create", title: "Create a company", summary: "Create an organisation in your tenant after searching for an existing company.", keywords: &["add", "organisation", "business"], capability: CREATE, input: create_schema, output: create_output, handler: Handler::SafeWrite(&Create), channels: Channels::Every, step_up: &[] },
         Operation { key: "core.company.list", title: "List companies", summary: "Find companies of your tenant by name, code, legal name, email or jurisdiction, one page at a time, with the fields you may see.", keywords: &["find", "search", "browse", "organisation", "business", "firm"], capability: LIST, input: list_schema, output: list_output, handler: Handler::Read(&List), channels: Channels::Every, step_up: &[] },
         Operation { key: "core.company.get", title: "Read a company", summary: "One company of your tenant by id, with the fields you may see.", keywords: &["show", "detail", "organisation", "business", "firm"], capability: VIEW, input: get_schema, output: get_output, handler: Handler::Read(&Get), channels: Channels::Every, step_up: &[] },
     ],
-    guides: &[Guide { key: "core.company", title: "Companies", summary: "What a company is in this tenant, and how to find, read and create one.", keywords: &["organisation", "business", "firm", "status"], capability: LIST, body:"Postal addresses are saved and linked through core.address, not a scalar field here. Search address or read guide core.address. Use core.address.company.list or core.address.person.list to find existing addresses; create_and_attach or attach links an office, billing or other address to its company or contact. A namecard flow can create the contact first and then attach the office address in a separate reviewed write.\n\nA company is an organisation recorded in your tenant. A company may have a parent company, and one company is the tenant's primary company.\n\nBefore creating, search by company name, legal name and email with core.company.list. Reuse the existing company rather than making a duplicate. Company roles are relationships, never legal entity types or access grants: a related company assigned vendor supplies the source company, and a company may hold customer and vendor roles at once as separate links. Discover core.company.relationship.* and core.company.relationship_role.* for list, read and reviewed writes (guide core.company.relationship). Contacts use core.affiliation.contact.create, never an HR employee record. A person's employer must exist as a company first: reuse it, or create it before recording the person. Use core.company.create through a dry run, local review and plan-code commit. A missing code is generated from the name and shown in the preview. Do not invent legal identifiers or a jurisdiction from a phone number; ask when the source is unclear.\n\nA company's status is one of pending, active, suspended or archived. Status changes only through the lifecycle actions on the company's page, never through an edit of its fields.\n\nTo find companies, call core.company.list with search words. To read one, call core.company.get with its id. A field an administrator restricted reads as {\"restricted\": true}: the company has a value there, and you may not see it." }],
+    guides: &[Guide { key: "core.company", title: "Companies", summary: "What a company is in this tenant, and how to find, read and create one.", keywords: &["organisation", "business", "firm", "status"], capability: LIST, body:"Postal addresses are saved and linked through core.address, not a scalar field here. Search address or read guide core.address. Use core.address.company.list or core.address.person.list to find existing addresses; create_and_attach or attach links an office, billing or other address to its company or contact. A namecard flow can create the contact first and then attach the office address in a separate reviewed write.\n\nA company is an organisation recorded in your tenant. A company may have a parent company, and one company is the tenant's primary company.\n\nBefore creating, call core.company.duplicates with the known name, website, email, phone or registration_number. It returns scored candidates and matched facts, including archived companies. Use an existing company or supply create_anyway with candidate_ids and a reason of 1–500 characters. The create transaction rechecks these facts. core.company.hierarchy returns the parent chain and descendants up to the configured depth and 1,000 nodes; truncated means more relatives exist. Reuse the existing company rather than making a duplicate. Company roles are relationships, never legal entity types or access grants: a related company assigned vendor supplies the source company, and a company may hold customer and vendor roles at once as separate links. Discover core.company.relationship.* and core.company.relationship_role.* for list, read and reviewed writes (guide core.company.relationship). Contacts use core.affiliation.contact.create, never an HR employee record. A person's employer must exist as a company first: reuse it, or create it before recording the person. Use core.company.create through a dry run, local review and plan-code commit. A missing code is generated from the name and shown in the preview. Do not invent legal identifiers or a jurisdiction from a phone number; ask when the source is unclear.\n\nA company's status is one of pending, active, suspended or archived. Status changes only through the lifecycle actions on the company's page, never through an edit of its fields.\n\nTo find companies, call core.company.list with search words. To read one, call core.company.get with its id. A field an administrator restricted reads as {\"restricted\": true}: the company has a value there, and you may not see it." }],
 }) }

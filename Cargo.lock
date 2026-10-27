@@ -565,6 +565,7 @@ dependencies = [
  "bilibi-search",
  "bilibi-security",
  "bilibi-settings",
+ "bilibi-system",
  "bilibi-tenancy",
  "bilibi-ui",
  "bilibi-walkthrough-fixture",

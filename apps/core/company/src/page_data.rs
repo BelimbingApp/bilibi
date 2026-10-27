@@ -22,12 +22,6 @@ impl CompanyService {
             .mutations
             .begin(&mut client, scope.mutation_context("company.create"))
             .await?;
-        if let Some(parent) = new.parent_id {
-            organisation::authorize_target(tx.sql(), scope, parent, crate::CREATE).await?;
-            organisation::require_writable(tx.sql(), scope, parent, true)
-                .await
-                .map_err(write_error)?;
-        }
         let result = organisation::create(&mut tx, scope, new).await?;
         if let CreateOutcome::Created(company) = &result {
             let id = company.id;
@@ -43,7 +37,12 @@ impl CompanyService {
         Ok(result)
     }
 
-    pub async fn save_fact(&self, scope: &Scope, credential: &str, edit: &Edit) -> Result<()> {
+    pub async fn save_fact(
+        &self,
+        scope: &Scope,
+        credential: &str,
+        edit: &Edit,
+    ) -> std::result::Result<(), crate::WriteError> {
         if ![
             "parent_id",
             "legal_entity_type_id",
@@ -52,9 +51,9 @@ impl CompanyService {
         ]
         .contains(&edit.field.as_str())
         {
-            return self.save(credential, edit).await;
+            return self.save(credential, edit).await.map_err(Into::into);
         }
-        let mut client = self.db.get().await?;
+        let mut client = self.db.get().await.map_err(Error::from)?;
         let mut tx = self
             .mutations
             .begin(&mut client, scope.mutation_context("company.update"))
@@ -85,7 +84,7 @@ impl CompanyService {
             )
             .await?;
         if row.get::<_, i64>(0) != edit.version {
-            return Err(Error::Conflict);
+            return Err(Error::Conflict.into());
         }
         let value = if ["metadata", "scope_activities"].contains(&edit.field.as_str()) {
             if edit.value.trim().is_empty() {
@@ -98,7 +97,7 @@ impl CompanyService {
                             .as_array()
                             .is_some_and(|a| a.iter().all(Value::is_string))))
                 {
-                    return Err(Error::Invalid);
+                    return Err(Error::Invalid.into());
                 }
                 value
             }
@@ -110,16 +109,18 @@ impl CompanyService {
             };
             if let Some(id) = id {
                 if id <= 0 {
-                    return Err(Error::Invalid);
+                    return Err(Error::Invalid.into());
                 }
                 if edit.field == "parent_id" {
                     organisation::authorize_target(tx.sql(), scope, id, UPDATE).await?;
                     organisation::require_writable(tx.sql(), scope, id, true)
                         .await
                         .map_err(write_error)?;
-                    let cycle: bool = tx.sql().query_one("WITH RECURSIVE ancestors AS (SELECT id,parent_id FROM companies WHERE tenant_id=$1 AND id=$2 UNION SELECT c.id,c.parent_id FROM companies c JOIN ancestors a ON c.id=a.parent_id WHERE c.tenant_id=$1) SELECT EXISTS(SELECT 1 FROM ancestors WHERE id=$3)", &[&scope.tenant(),&id,&edit.id]).await?.get(0);
-                    if cycle {
-                        return Err(Error::Invalid);
+                    let errors =
+                        crate::hierarchy::check_parent(tx.sql(), scope, Some(edit.id), Some(id))
+                            .await?;
+                    if !errors.is_empty() {
+                        return Err(crate::WriteError::Invalid(errors));
                     }
                 } else if tx
                     .sql()
@@ -130,7 +131,7 @@ impl CompanyService {
                     .await?
                     .is_none()
                 {
-                    return Err(Error::Invalid);
+                    return Err(Error::Invalid.into());
                 }
             }
             json!(id)
@@ -147,7 +148,7 @@ impl CompanyService {
             }
             Ok(((),vec![Change {kind:"company".into(),id,old:json!({&field:old}),new:json!({&field:value})}]))
         })).await?;
-        tx.commit().await
+        tx.commit().await.map_err(Into::into)
     }
 }
 

@@ -35,10 +35,11 @@ bilibi-person = { path = "../person" }
 bilibi-media = { path = "../../base/media" }
 bilibi-artifacts = { path = "../../base/artifacts" }
 bilibi-picklists.workspace = true
+bilibi-settings.workspace = true
+bilibi-system.workspace = true
 
 [dev-dependencies]
 bilibi-walkthrough-fixture = { path = "../../../fixtures/walkthrough" }
 bilibi-web = { path = "../../web" }
 bilibi-address = { path = "../address" }
-bilibi-settings = { path = "../../base/settings" }
 tokio.workspace = true

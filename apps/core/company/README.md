@@ -459,3 +459,40 @@ The write requires Tenancy's sealed `CreatedTenant` receipt, bound to the curren
 ## Postal addresses
 
 Companies and contacts have linked postal addresses, owned by [Core Address](../address/README.md). The `core.address` guide explains saving an office or billing address and attaching it to a company or person. Use `core.address.company.list` or `core.address.person.list` to read those links. Address creation and attachment are reviewed writes; a namecard contact can be created first, then linked to its office address. An affiliation holds a position and work email/phone, not a postal address.
+
+## Duplicate candidates
+
+**Check `CompanyService::duplicates(scope, &DuplicateQuery)` before creating a company.** For example, a new “Acme Sdn. Bhd.” with the website of “ACME Berhad” returns that company at 0.90 with `website` in `matched_facts`. The read requires `admin.company.list`, includes archived companies with their status, excludes soft-deleted companies, and never chooses or merges records. It can exclude one company ID. Results contain only id, name, status, score and matched field names; a supplied criterion on a restricted field is refused before matching.
+
+Migration `core-company-008-match-keys` adds stored generated `name_tokens`, `website_host`, `email_domain`, `phone_digits` and `registration_key`. Names use lower-case alphanumeric words and a GIN index; the other indexes lead with tenant ID and omit empty keys. Website hosts drop the scheme, `www.`, port and path. Registration keys keep only letters and digits, upper case. No PostgreSQL extension is required.
+
+A candidate's score is its best matching fact:
+
+| Fact | Score |
+| --- | --- |
+| Registration key | 1.00 |
+| Website host or non-public email domain | 0.90 |
+| Phone digits, at least seven | 0.85 |
+| Name after removing configured words | Trigram intersection divided by union |
+
+Name comparison runs in Rust over at most 200 rows preselected by overlapping indexed name tokens. Exact-key candidates are selected separately, so the name bound cannot hide a registration match. Results sort by descending score, then ID, at or above the threshold; `limit` is 1–100, default 10. Public email domains such as Gmail never count as an email match.
+
+Create Company shows candidates below the form. **Use existing** opens the record; **Create anyway** opens a confirmation for the reason. `NewCompany::create_anyway` carries `CreateAnyway { candidate_ids, reason }` for pages, agent writes and other module callers. The reason is trimmed and must contain 1–500 characters. Candidate IDs are checked again on the create transaction. The create's audit `Change` records the reason and IDs under `create_anyway`; this read-only context does not become a company scalar field.
+
+In `suggest` mode, a create without an override proceeds. In `require_reason` mode, the transaction reruns matching and requires an override naming every returned candidate. Creates serialize on the tenant before company locks and take an advisory lock on the lower-case trimmed name. A missing reason or changed candidate list returns a `create_anyway` field error. `core.company.create` previews candidates; `core.company.duplicates` exposes the same read for agents.
+
+## Company hierarchies
+
+**Use `CompanyService::hierarchy(scope, id)` or `core.company.hierarchy` to read relatives.** Both require `admin.company.view`, use current Company's tenant-wide read visibility, and return id, name, status and level. Ancestors are root first; descendant levels count the requested company as level 1. The read caps traversal at the tenant's depth limit and the returned relatives at 1,000 nodes, with `truncated` when more exist. The requested company is not repeated in either list. The record page links its parent chain.
+
+Every ordinary create with a parent and every parent edit shares the tenant lock and the same hierarchy checks. A loop returns `Parent company cannot be one of its own subsidiaries.` The new parent's chain depth plus the moving company's subtree height must fit the limit. The default refusal is `Parent company would make the company tree deeper than 10 levels.` Existing deep trees can remain or become shallower; a move is refused only if it increases depth beyond the limit. `save_fact` returns `WriteError::Invalid` with these field messages, preserving the inline draft.
+
+The operator can edit these tenant settings under Companies in the shared Settings editor:
+
+| Key | Default | Allowed values |
+| --- | --- | --- |
+| `company.duplicates.threshold` | 0.80 | 0.50–1.00 |
+| `company.duplicates.on_create` | `suggest` | `suggest`, `require_reason` |
+| `company.duplicates.ignored_words` | `sdn`, `bhd`, `ltd`, `inc`, `llc`, `gmbh` | Up to 200 words |
+| `company.duplicates.public_mail_domains` | Common public mail providers | Up to 200 domains |
+| `company.hierarchy.max_depth` | 10 | 2–20 levels |
