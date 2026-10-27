@@ -796,7 +796,7 @@ impl Index {
                 };
                 if entry.company_archived {
                     self.flash.error(format!(
-                        "{} was not deleted: their company is archived, and archiving is final.",
+                        "{} was not deleted because their company is archived.",
                         entry.name
                     ));
                     return Ok(());
@@ -812,7 +812,7 @@ impl Index {
                         self.flash.error("You cannot delete your own account.")
                     }
                     Err(AccountError::Archived) => self.flash.error(format!(
-                        "{} was not deleted: their company is archived, and archiving is final.",
+                        "{} was not deleted because their company is archived.",
                         entry.name
                     )),
                     Err(AccountError::NotFound) => self.flash.error("That user no longer exists."),
