@@ -772,7 +772,7 @@ inventory::submit! { Contribution::new(DEFINITIONS, CATALOGUE_URL_KEY, provenanc
     value_type: ValueType::String, scopes: &[ScopeKind::Global], default: || json!(DEFAULT_CATALOGUE_URL), nullable: false, encrypted: false,
     minimum: None, maximum: None,
     validator: Some(Validator { accepts: |value: &Value| value.as_str().is_some_and(|url| { let url = url.trim(); url.starts_with("https://") && url.len() <= 2048 && !url.chars().any(char::is_whitespace) }), message: "The catalogue address must start with https://, like https://raw.githubusercontent.com/BelimbingApp/bilibi/catalogue/catalogue.json." }),
-    editor: Some(Editor { group: "Software", label: "Catalogue address: where the list of Domains and releases is read from",
+    editor: Some(Editor { group: "Software", label: "Release catalogue address",
         help: "The published catalogue.json that lists the Platform and Domain releases and which were tested together. Change it only to read a catalogue you publish yourself (server owner only).",
         capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
 })) }
@@ -780,7 +780,7 @@ inventory::submit! { Contribution::new(DEFINITIONS, github::REPOSITORY, provenan
     value_type: ValueType::String, scopes: &[ScopeKind::Global], default: || json!(null), nullable: true, encrypted: false,
     minimum: None, maximum: None,
     validator: Some(Validator { accepts: github::accepts_repository, message: "Enter the repository as owner/name, like your-company/my-bilibi." }),
-    editor: Some(Editor { group: "Software", label: "GitHub repository: owner and name of your application repository",
+    editor: Some(Editor { group: "Software", label: "Application repository on GitHub",
         help: "Your application repository, like your-company/my-bilibi. Software reads its releases from here. Server owner only.",
         capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
 })) }
@@ -808,7 +808,7 @@ inventory::submit! { Contribution::new(DEFINITIONS, github::REFRESH_MINUTES, pro
     value_type: ValueType::Integer, scopes: &[ScopeKind::Global], default: || json!(github::DEFAULT_REFRESH_MINUTES), nullable: false, encrypted: false,
     minimum: Some(1.0), maximum: Some(1440.0),
     validator: None,
-    editor: Some(Editor { group: "Software", label: "Check GitHub for new releases every this many minutes",
+    editor: Some(Editor { group: "Software", label: "Release check interval (minutes)",
         help: "15 means the release list is refreshed at most every 15 minutes, and again when you choose Refresh. Server owner only.",
         capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
 })) }

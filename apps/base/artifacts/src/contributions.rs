@@ -44,7 +44,7 @@ setting!(
     true,
     Some(1.0),
     Some(36500.0),
-    "Document retention days",
+    "Document retention (days)",
     "Defaults to 2557 days (7 years); changes apply only to new documents (server owner only)."
 );
 inventory::submit! { Contribution::new(bilibi_module_registry::contributions::SEEDS, "base/artifacts.storage-policy", provenance!(), &bilibi_module_registry::contributions::Seed {
@@ -58,7 +58,7 @@ setting!(
     false,
     Some(1.0),
     Some(536_870_912.0),
-    "Maximum document bytes",
+    "Maximum document size (bytes)",
     "Maximum size of an uploaded or generated document."
 );
 setting!(
