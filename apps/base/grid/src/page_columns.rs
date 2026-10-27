@@ -426,7 +426,7 @@ impl PageColumns {
         catalog.table(&self.table).is_none_or(|root| {
             field
                 .column
-                .is_some_and(|path| path.contains('.') || catalog.resolve(root, path).is_ok())
+                .is_some_and(|path| catalog.resolve(root, path).is_ok())
         })
     }
 
