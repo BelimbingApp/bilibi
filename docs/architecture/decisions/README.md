@@ -80,3 +80,4 @@ Every record carries these header lines: Document Type, Status, Agents, Scope, L
 | --- | --- |
 | [07 Hard-coded values and operator pick-lists](./07-hard-coded-values-and-operator-pick-lists.md) | Proposed |
 | [08 Currencies as Core master data, and conversion always names its rate](./08-currencies-as-core-master-data.md) | Accepted; implemented |
+| [08 Record references across modules](./08-record-references.md) | Proposed |

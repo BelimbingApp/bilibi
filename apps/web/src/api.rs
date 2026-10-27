@@ -262,6 +262,33 @@ pub(crate) fn label(headers: &HeaderMap, name: &str) -> Option<String> {
         .then(|| value.to_owned())
 }
 
+/// Absolute links belong to the host; operations return paths. Every record
+/// reference in an answer (an object with `kind`, `id` and a page `path`,
+/// as `base/records` returns them) gains its `url`.
+pub(crate) fn record_urls(origin: &str, value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            let url = (map.contains_key("kind") && map.contains_key("id"))
+                .then(|| map.get("path").and_then(Value::as_str))
+                .flatten()
+                .filter(|path| path.starts_with('/'))
+                .map(|path| format!("{origin}{path}"));
+            if let Some(url) = url {
+                map.insert("url".into(), json!(url));
+            }
+            for value in map.values_mut() {
+                record_urls(origin, value);
+            }
+        }
+        Value::Array(items) => {
+            for value in items {
+                record_urls(origin, value);
+            }
+        }
+        _ => {}
+    }
+}
+
 pub(crate) fn reply(status: StatusCode, body: Value) -> Response {
     (status, Json(body)).into_response()
 }
@@ -892,7 +919,11 @@ async fn call(State(app): State<App>, Path(key): Path<String>, request: Request)
             .await
             .map_err(api_error)
     }
-    .await;
+    .await
+    .map(|mut answer| {
+        record_urls(origin(&app), &mut answer);
+        answer
+    });
     agent.answer(Some(key), result)
 }
 

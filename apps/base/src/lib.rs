@@ -24,6 +24,7 @@ pub use bilibi_picklists as picklists;
 pub use bilibi_ports as ports;
 pub use bilibi_principal_directory as principal_directory;
 pub use bilibi_queue as queue;
+pub use bilibi_records as records;
 pub use bilibi_schedule as schedule;
 pub use bilibi_search as search;
 pub use bilibi_security as security;
