@@ -212,7 +212,7 @@ impl Detail {
         match kind {
             "change_field" => self.change(value)?,
             "change_param" => {
-                for (key, value) in params::form_values(value, "parameters")
+                for (key, value) in params::form_values_within(value, "parameters", 100_000)
                     .map_err(bilibi_database::Error::refused)?
                 {
                     if self.detected.contains(&key) {
