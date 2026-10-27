@@ -14,7 +14,10 @@ pub mod view;
 pub use lens::{Lens, Range};
 pub use page_columns::{Outcome, PageColumns};
 pub use page_views::{PageViews, PAGE_VIEWS};
-pub use query::{project, project_lenses, stats, Lenses, Projection, QueryError, Row, Stats};
+pub use query::{
+    project, project_lenses, stats, Lenses, Projection, QueryError, Row, Stats, BOUNDS,
+    MAX_ESTIMATED_COST,
+};
 pub use view::View;
 
 use bilibi_module_registry::{Consumer, Layer, Module, RegistryError, Result, Service};

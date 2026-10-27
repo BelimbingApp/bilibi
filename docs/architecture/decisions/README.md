@@ -3,18 +3,25 @@
 **Document Type:** Index of architecture decision records
 **Status:** Active
 **Scope:** Decisions that shape Bilibi's architecture
-**Last Updated:** 2026-10-22
+**Last Updated:** 2026-10-27
 
 Each record states one decision, its context and its consequences. The format follows [Bilimbi's records](https://github.com/BelimbingApp/bilimbi/tree/main/docs/architecture/decisions). The architecture overview is [`../README.md`](../README.md).
+
+## When to write a record
+
+Write one only when a change departs from Bilibi's existing conventions, or picks between real options whose effect lasts beyond the change, so that a later contributor would otherwise ask "why is it like this?" or undo it. Do not write one when the implementation is straightforward and follows the norm: the code, the module's contract and the PR description are enough.
 
 ## Statuses
 
 - **Proposed**: written down, not yet agreed by the owner.
 - **Accepted**: the owner agreed the direction. The record says what is built and what is not.
+- **Accepted; implemented**: the decision is built. Keep the record: code shows what, not why or which options were rejected. Shrink it to the decision, its reasons and rejected alternatives; drop how-it-works detail that duplicates the code.
 - **Superseded by ADR NNNN**: a later record replaced it.
 - **Withdrawn**: what it describes no longer exists. The line says why.
 
-The owner decides a status.
+The owner decides a status. Once the decision is built, use **Accepted; implemented**. When a record is no longer true, mark it **Withdrawn**, or **Superseded by ADR NNNN** if a later record replaced it.
+
+Delete a record only when it never warranted one under the [when-to-write rule](#when-to-write-a-record).
 
 ## Header rule
 
@@ -53,10 +60,22 @@ Every record carries these header lines: Document Type, Status, Agents, Scope, L
 
 | Record | Status |
 | --- | --- |
-| [04 Provider-neutral single sign-on](./04-provider-neutral-single-sign-on.md) | Accepted |
+| [04 Provider-neutral single sign-on](./04-provider-neutral-single-sign-on.md) | Accepted; implemented |
 
 ### Personal data
 
 | Record | Status |
 | --- | --- |
 | [05 Personal-data registry, data-subject requests and audit erasure](./05-personal-data-registry.md) | Proposed |
+
+### Search
+
+| Record | Status |
+| --- | --- |
+| [06 Record search at query time, in the owner's source](./06-query-time-record-search.md) | Proposed |
+
+### Data
+
+| Record | Status |
+| --- | --- |
+| [07 Hard-coded values and operator pick-lists](./07-hard-coded-values-and-operator-pick-lists.md) | Proposed |

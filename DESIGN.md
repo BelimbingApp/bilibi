@@ -169,6 +169,7 @@ Width is a shared decision. Every page uses `PageVariant`. All three share one c
 | Modal | Native `<dialog>`. Focus enters, stays, and returns. Escape and Cancel are one action. A click on the backdrop does nothing |
 | Confirmation | `ConfirmDialog` for irreversible actions: consequence first, Cancel beside the destructive verb. Never `window.confirm` |
 | Flash | Stacks at the right above the page, most severe first, reserving space so messages never cover page actions. A message that arrives with a redirect floats top right instead. Info, warning and error stay until dismissed. Success clears after 8 s |
+| Shell preferences | Theme and time-display saves use the shared floating flash, with the same success timeout and persistent errors |
 | Success | Only for a completed write |
 | Info | Informs without confirming a write |
 | Panel notice | Where a panel cannot reach the page flash |
@@ -192,6 +193,7 @@ Width is a shared decision. Every page uses `PageVariant`. All three share one c
 - Pages never render chrome. The host wraps them (`apps/web/src/shell.rs`).
 - The bell shows the unread count and follows new notifications live. It opens recent items.
 - Search is the button before the bell, or `/` when not typing in a field. It opens a dialog that finds every page the person may open that has a name (its page title or menu row): menu pages, account pages and pages with no menu row. A query matches a page's name or any place it lives under, ignoring case, and each result shows where it lives (`Administration › Authorization › Roles`, `Account › My Settings › Password`). ↑/↓ and Enter open one; Esc or a click outside closes it. On a phone it fills the screen.
+- For a person who may search records, the same dialog lists records between Pages and Account once the query is two characters long: a group per kind (Contacts, Companies, a Domain's kinds), each row the record's name with its facts underneath, a record that is no longer current marked with its state, and "All results" for the `/search` page. Records come from the server (`apps/base/search/README.md`); "Nothing found" waits for them.
 - Theme, clock mode and pins belong to the account. They are not `localStorage`.
 - "Viewing as … · Stop" appears only while impersonating.
 - A platform-operator row appears in the account menu. Operator-only screens carry their own caution where reach is unfiltered.

@@ -14,7 +14,9 @@
     "apps/web/priv/static/images/logo.svg": "d18bdf44fd897f7883b350826b4620653d7795f07e35c9e0b1accca45c7d1b03",
     "apps/web/assets/js/date_time.js": "0a5d376009abda3226d84ba003ae56d42c43aa37a7dcc87fdeebf524a24be09a",
     "apps/web/assets/js/browser_time_zone.js": "dcb73224ba5dabd9b1dba9ddb7540c8fb8c74de7474d463c691e3e531d0ea7af",
-    "apps/web/assets/js/clipboard_copy.js": "50ce380c08b3cac0bb823b6de3b0688d2b9e5b070a51d70c563924ce3d7ff944"
+    "apps/web/assets/js/clipboard_copy.js": "50ce380c08b3cac0bb823b6de3b0688d2b9e5b070a51d70c563924ce3d7ff944",
+    "vendor/product-icons/iconoir-design-nib.svg": "c49ce3db06244aad2686c959de12481c1aefc03dfdd20961ce90717717011d3f",
+    "vendor/product-icons/ICONOIR-LICENSE": "869b60da1ada5b896d1f285c3c24ca193d612e308d1710a77a58f2f572eb4fa2"
   },
   "vendored_sha256": {
     "static/favicon.ico": "01723aeae3ce3b5195a8f42e3eb6e9018a8c08b7acda4ed382b31341811f0a8a",
@@ -1335,5 +1337,6 @@
     "factory": "f39ed3dcf2ce2694d30c2b88e82212780f4f3b98",
     "people": "771cd360c94cd1893b1e066bb087b2aaa0a49d4d",
     "people_connector": "dc6e1cbeca39be8eb9211a333088fa726c09b603"
-  }
+  },
+  "iconoir_sha": "285be69c1972e7df06e5342a616ac72241a56e71"
 }

@@ -1,4 +1,6 @@
 //! Module-owned live state. Web only owns routing, guards, targeting and transport.
+//! Session rechecks mirror Bilimbi `BilimbiWeb.RouteAccess`: an expired scope
+//! returns through the page's HTTP guard so it can redirect to sign-in with a flash.
 use crate::{routes, App};
 use axum::extract::ws::{Message, WebSocket};
 use bilibi_base::agent_api::page::PageContracts;
@@ -261,9 +263,19 @@ impl Session {
         token: &str,
         path: String,
     ) -> Result<Scope> {
-        match routes::admit(app, access, Some(token), None).await? {
-            routes::Admission::Admitted(scope) => scope.ok_or(Error::Forbidden),
-            routes::Admission::StepUp(_) => {
+        let admission = routes::admit(app, access, Some(token), None).await;
+        match admission {
+            Err(Error::Unauthorized) => {
+                // Unlike a page-owned refusal, an ended session must leave the
+                // live error view. Reload through HTTP, whose route guard sends
+                // the browser to sign-in and preserves the expiry feedback.
+                self.path = path;
+                self.stale = true;
+                Err(Error::Unauthorized)
+            }
+            Err(error) => Err(error),
+            Ok(routes::Admission::Admitted(scope)) => scope.ok_or(Error::Forbidden),
+            Ok(routes::Admission::StepUp(_)) => {
                 self.path = path;
                 self.stale = true;
                 Err(Error::Unauthorized)
@@ -974,9 +986,11 @@ pub async fn run(app: App, token: String, identity: Identity, mut socket: WebSoc
             },
         };
         // A stale socket's request is refused before it acted; the page is
-        // reloaded rather than told of an error it did not cause. A step-up
-        // the session owes reloads the same way, through the page's address.
-        if session.stale {
+        // reloaded rather than told of an error it did not cause. Any lost
+        // authorization also returns through the HTTP guard, which sends an
+        // ended session to sign-in with its expiry feedback. A step-up the
+        // session owes reloads the same way, through the page's address.
+        if session.stale || matches!(&result, Err(Error::Unauthorized)) {
             reload(&mut socket, &session.path).await;
             break;
         }

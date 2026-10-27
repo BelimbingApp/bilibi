@@ -1,18 +1,27 @@
 //! Core identities and personal contacts. No HR or implicit account creation.
 mod agent_operations;
-pub mod contributions;
+mod contributions;
 mod directory;
-pub mod files;
-pub mod identity;
-pub mod model;
+mod files;
+mod identity;
+mod model;
 mod privacy;
 mod step_up;
 mod web;
 
 use bilibi_database::{Db, Error, MutationBoundary, MutationTransaction, Result};
 use bilibi_tenancy::{Authentication, Scope};
+pub use contributions::{CAPS, CREATE, LIST, RETIRE, SYSTEM_MANAGE, UPDATE, VIEW};
+pub use files::{PersonFiles, ARTIFACT_OWNER, ATTACHMENT_SUBJECT, FILES};
+// Other owners' transactions: a person read, searched, previewed or created
+// on the caller's connection, and the account binder's locks and standing.
+pub use identity::{
+    account_standing, create as create_person, lock_for_account_binding, preview as preview_person,
+    read as read_person, search as search_persons, BindingIdentity,
+};
 pub use model::{
-    DuplicateQuery, FieldError, Page, Person, PersonId, PersonInput, PersonKind, Search, Update,
+    validate as validate_person, DuplicateQuery, FieldError, Page, Person, PersonId, PersonInput,
+    PersonKind, Search, Update,
 };
 use std::sync::{Arc, OnceLock};
 use tokio::sync::broadcast;
@@ -175,9 +184,12 @@ impl PersonService {
 inventory::submit! {
     bilibi_module_registry::Module {
         id: "core/person", layer: bilibi_module_registry::Layer::Core,
-        dependencies: &["base/database", "base/tenancy", "base/authz", "base/grid", "base/agent_api", "base/principal_directory", "base/ui", "base/menu", "base/datetime", "base/locale", "base/media", "base/artifacts", "base/step_up", "base/personal_data", "base/privacy", "core/party"],
-        migrations: &[("001-core-person", include_str!("../migrations/001-person.sql")),
-            ("core-person-002-erasure", include_str!("../migrations/002-erasure.sql"))],
+        dependencies: &["base/database", "base/tenancy", "base/authz", "base/grid", "base/search", "base/agent_api", "base/principal_directory", "base/ui", "base/menu", "base/datetime", "base/locale", "base/media", "base/artifacts", "base/step_up", "base/personal_data", "base/privacy", "core/party"],
+        migrations: &[
+            ("001-core-person", include_str!("../migrations/001-person.sql")),
+            ("core-person-002-search", include_str!("../migrations/002-search.sql")),
+            ("core-person-003-erasure", include_str!("../migrations/003-erasure.sql")),
+        ],
         services: &[bilibi_module_registry::Service { id: SERVICE, factory: |services| {
             let parties = services.get::<bilibi_tenancy::PartyProofs>("base/tenancy.parties")?;
             parties.bind_persons(Arc::new(identity::Provider))?;

@@ -1,8 +1,8 @@
 //! The field plan and save semantics behind the editor (Bilimbi
 //! `Settings.Form`). The screen names no fields: every contributed definition
-//! with editor metadata and the selected target's scope (global, or company
-//! once a company is picked) is one, so a module that declares a setting gets
-//! it on screen with no UI change.
+//! with editor metadata and the selected target's scope (global, the tenant,
+//! or company once a company is picked) is one, so a module that declares a
+//! setting gets it on screen with no UI change.
 //!
 //! Three rules are easy to get wrong. Clearing is not writing an empty value:
 //! a blank submission deletes this scope's override so the value inherits
@@ -67,9 +67,11 @@ pub async fn plan(
     target: Target,
 ) -> Result<Plan> {
     // The company target shows company-scoped definitions only (Bilimbi
-    // `company_groups/0`); the global page shows global ones.
+    // `company_groups/0`), the tenant target tenant-scoped ones, and the
+    // global page global ones.
     let wanted = match target {
         Target::Company(_) => ScopeKind::Company,
+        Target::Tenant => ScopeKind::Tenant,
         _ => ScopeKind::Global,
     };
     let capabilities = effective_capabilities(client, scope).await?;

@@ -59,7 +59,13 @@ fn pattern(q: &Option<String>) -> Option<String> {
     q.as_deref()
         .map(str::trim)
         .filter(|q| !q.is_empty())
-        .map(|q| format!("%{}%", bilibi_company::organisation::escape_like(q)))
+        .map(|q| format!("%{}%", escape_like(q)))
+}
+/// LIKE metacharacters are literal: search is a case-insensitive substring.
+fn escape_like(text: &str) -> String {
+    text.replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
 }
 const MATCHES: &str = "(label ILIKE $2 OR line1 ILIKE $2 OR locality ILIKE $2 OR postcode ILIKE $2 OR country_iso ILIKE $2)";
 
@@ -130,14 +136,12 @@ pub async fn owners(
     for attachment in attachments_of(client, scope, address).await? {
         let owner = match attachment.owner {
             PartyId::Organisation(id) => {
-                let Some(identity) =
-                    bilibi_company::organisation::identity(client, scope, id.get()).await?
+                let Some(identity) = bilibi_company::identity(client, scope, id.get()).await?
                 else {
                     continue;
                 };
                 let archived = matches!(
-                    bilibi_company::organisation::require_writable(client, scope, id.get(), false)
-                        .await,
+                    bilibi_company::require_writable(client, scope, id.get(), false).await,
                     Err(bilibi_company::WriteError::Archived)
                 );
                 LinkedOwner {
@@ -146,7 +150,7 @@ pub async fn owners(
                     read_only: archived,
                 }
             }
-            PartyId::Person(id) => match bilibi_person::identity::read(client, scope, id).await {
+            PartyId::Person(id) => match bilibi_person::read_person(client, scope, id).await {
                 Ok(person) => LinkedOwner {
                     attachment,
                     read_only: person.retired_at.is_some() || person.system_key.is_some(),
@@ -179,10 +183,10 @@ async fn require_readable_owner(
 ) -> Result<()> {
     match owner {
         PartyId::Organisation(id) => {
-            bilibi_company::organisation::require_live(client, scope, id.get()).await?;
+            bilibi_company::require_live(client, scope, id.get()).await?;
         }
         PartyId::Person(id) => {
-            bilibi_person::identity::read(client, scope, id).await?;
+            bilibi_person::read_person(client, scope, id).await?;
         }
     }
     Ok(())
@@ -320,13 +324,13 @@ async fn lock_owner(
     match owner {
         PartyId::Organisation(id) => {
             authorize_key(tx.sql(), scope, bilibi_company::UPDATE).await?;
-            bilibi_company::eligibility::lock_account_company(tx.sql(), scope, id)
+            bilibi_company::lock_account_company(tx.sql(), scope, id)
                 .await
                 .map_err(company_error)?;
         }
         PartyId::Person(id) => {
-            authorize_key(tx.sql(), scope, bilibi_person::contributions::UPDATE).await?;
-            match bilibi_person::identity::lock_for_account_binding(tx, scope, id).await {
+            authorize_key(tx.sql(), scope, bilibi_person::UPDATE).await?;
+            match bilibi_person::lock_for_account_binding(tx, scope, id).await {
                 Ok(_) => {}
                 Err(Error::NotFound) => return Err(WriteError::NotFound),
                 Err(Error::Forbidden) => return Err(WriteError::OwnerReadOnly),
@@ -408,7 +412,7 @@ pub async fn update(
     restricted_input(&input, &masked)?;
     // Unlocked read only picks the companies to lock before the address.
     let companies = owner_companies(tx.sql(), scope, id).await?;
-    bilibi_company::eligibility::lock_writable_companies(tx.sql(), scope, &companies)
+    bilibi_company::lock_writable_companies(tx.sql(), scope, &companies)
         .await
         .map_err(company_error)?;
     let old = raw(tx.sql(), scope, id, true).await.map_err(not_found)?;
@@ -679,7 +683,7 @@ pub(crate) async fn preview_address(
         }
     } else {
         for company in owner_companies(client, scope, id).await? {
-            bilibi_company::organisation::require_writable(client, scope, company.get(), false)
+            bilibi_company::require_writable(client, scope, company.get(), false)
                 .await
                 .map_err(company_error)?;
         }
@@ -704,17 +708,17 @@ pub(crate) async fn preview_owner(
     match owner {
         PartyId::Organisation(id) => {
             authorize_key(client, scope, bilibi_company::UPDATE).await?;
-            bilibi_company::organisation::require_writable(client, scope, id.get(), false)
+            bilibi_company::require_writable(client, scope, id.get(), false)
                 .await
                 .map_err(company_error)?;
-            let company = bilibi_company::organisation::identity(client, scope, id.get())
+            let company = bilibi_company::identity(client, scope, id.get())
                 .await?
                 .ok_or(WriteError::NotFound)?;
             Ok(serde_json::json!({"company_id":id,"name":company.display_name,"code":company.code}))
         }
         PartyId::Person(id) => {
-            authorize_key(client, scope, bilibi_person::contributions::UPDATE).await?;
-            let person = bilibi_person::identity::read(client, scope, id).await?;
+            authorize_key(client, scope, bilibi_person::UPDATE).await?;
+            let person = bilibi_person::read_person(client, scope, id).await?;
             if person.retired_at.is_some() || person.system_key.is_some() {
                 return Err(WriteError::OwnerReadOnly);
             }

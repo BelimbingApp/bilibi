@@ -10,6 +10,10 @@ Multi-selects show the inset label and selected count above removable chips insi
 
 List toolbars put search first and filter boxes to its right, wrapping below search on narrow screens. `FilterToolbar::new` preserves the order of filters while placing search first.
 
+## Shell feedback
+
+Theme and time-display saves use the shared flash UI through `feedback::local_flash_group`. Success dismisses after eight seconds; saving information and errors remain until replaced or dismissed. Browser-owned flashes dismiss locally without clearing the page’s server-owned flash. Stat-strip value labels use `ink-muted` so they remain readable in both themes.
+
 ## Colour input
 
 Use **`ColourInput` for a choice of named colours**. Each choice is a chip in that colour's banner surface, border and text colour, with the name inside.

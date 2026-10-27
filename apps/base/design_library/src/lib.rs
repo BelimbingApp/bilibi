@@ -160,7 +160,7 @@ macro_rules! item {
         inventory::submit! { Contribution::new(bilibi_menu::ITEMS,concat!("design_library.menu.",$id),Provenance {
             module:"base/design_library",source:file!(),line:line!()
         }, &bilibi_menu::MenuItem::page(concat!("admin.system.design-library.",$id),$label,$path)
-            .under("admin.system.design-library").requires(bilibi_menu::Requirement::Capability(VIEW)).order($order)) }
+            .under("admin.system.design-library").icon("iconoir-design-nib").requires(bilibi_menu::Requirement::Capability(VIEW)).order($order)) }
     }
 }
 inventory::submit! { Contribution::new(bilibi_menu::ITEMS,"design_library.menu",Provenance {

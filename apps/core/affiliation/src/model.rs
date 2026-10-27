@@ -211,14 +211,19 @@ impl ContactFacts {
     }
     pub(crate) fn validate(&self) -> Result<Self> {
         // Reuse the Person owner's contact rules; work contacts remain separate.
-        let contact = bilibi_person::model::validate(&bilibi_person::PersonInput {
+        let contact = bilibi_person::validate_person(&bilibi_person::PersonInput {
             name: "Affiliation".into(),
             kind: bilibi_person::PersonKind::Human,
             email: self.work_email.clone(),
             phone: self.work_phone.clone(),
         })
         .map_err(|_| Error::Invalid)?;
-        let title = bilibi_person::model::optional(&self.title);
+        let title = self
+            .title
+            .as_deref()
+            .map(str::trim)
+            .filter(|title| !title.is_empty())
+            .map(str::to_owned);
         if title
             .as_ref()
             .is_some_and(|t| t.chars().count() > 160 || t.contains('\0'))

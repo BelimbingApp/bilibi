@@ -235,7 +235,7 @@ impl WriteHandler for Write {
                 }
                 Self::Contact => {
                     let (person, facts) = contact_input(input)?;
-                    let person = bilibi_person::identity::preview(client, scope, &person)
+                    let person = bilibi_person::preview_person(client, scope, &person)
                         .await
                         .map_err(person_error)?;
                     let facts = identity::preview_contact(client, scope, &facts)
@@ -297,7 +297,7 @@ impl WriteHandler for Write {
                 Self::Create => identity::create(tx, scope, &create_input(input)?).await,
                 Self::Contact => {
                     let (person, facts) = contact_input(input)?;
-                    let person = bilibi_person::identity::create(tx, scope, &person)
+                    let person = bilibi_person::create_person(tx, scope, &person)
                         .await
                         .map_err(person_error)?;
                     let affiliation = identity::create(tx, scope, &facts.for_person(person.id))

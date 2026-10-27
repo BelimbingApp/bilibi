@@ -59,8 +59,6 @@
       this.root = shell.el;
       this.pending = false;
       this.openPanelId = null;
-      this.message = null;
-      this.messageError = false;
       this.onClick = (event) => this.click(event);
       this.onKey = (event) => this.key(event);
       document.addEventListener('click', this.onClick);
@@ -132,10 +130,14 @@
         }, 0);
       }
     }
-    feedback(message, error = false) {
-      this.message = message;
-      this.messageError = error;
-      this.apply();
+    feedback(message, kind = 'success') {
+      const region = this.root.querySelector('#app-preference-feedback');
+      const template = region?.querySelector(`[data-local-flash-template="${kind}"]`);
+      const outlet = region?.querySelector('[data-local-flash-outlet]');
+      if (!template || !outlet) return;
+      const flash = template.content.cloneNode(true);
+      flash.querySelector('[data-flash-message]').textContent = message;
+      outlet.replaceChildren(flash);
     }
     finish(restore) {
       clearTimeout(this.timer);
@@ -149,11 +151,11 @@
       const restore = (open && open.contains(origin) && this.trigger(open)) || origin;
       if (kind === 'theme' && !THEMES.includes(value)) return;
       this.pending = true;
-      this.feedback(kind === 'theme' ? 'Saving theme…' : 'Saving display preference…');
+      this.feedback(kind === 'theme' ? 'Saving theme…' : 'Saving display preference…', 'info');
       this.abort = new AbortController();
       this.timer = setTimeout(() => {
         this.abort.abort();
-        this.feedback('Save could not be confirmed. Reload to check your saved preference.', true);
+        this.feedback('Save could not be confirmed. Reload to check your saved preference.', 'error');
       }, 12000);
       accountRequest('/preferences', {method: 'POST', signal: this.abort.signal, body: JSON.stringify({kind, value})})
         .then((response) => (response.ok ? response.json() : Promise.reject(response.status)))
@@ -166,7 +168,7 @@
         })
         .catch(() => {
           if (!this.abort.signal.aborted) {
-            this.feedback(`Could not save ${kind === 'theme' ? 'theme' : 'display preference'}. Your previous choice is still selected. Try again.`, true);
+            this.feedback(`Could not save ${kind === 'theme' ? 'theme' : 'display preference'}. Your previous choice is still selected. Try again.`, 'error');
           }
         })
         .finally(() => this.finish(restore));
@@ -194,12 +196,6 @@
         panel.hidden = !open;
         this.trigger(panel)?.setAttribute('aria-expanded', String(open));
       }
-      const region = this.root.querySelector('#app-preference-feedback');
-      if (region) {
-        region.hidden = this.message === null;
-        if (region.textContent !== (this.message ?? '')) region.textContent = this.message ?? '';
-        region.classList.toggle('text-danger', this.messageError);
-      }
     }
   }
 
@@ -211,28 +207,48 @@
   // highlighted for the arrow keys and Enter. Escape, a click outside, Close or
   // a chosen page closes it and returns focus to the button. A live patch
   // renders the rows hidden again, so updated() calls apply().
+  //
+  // Records (page_search_records.html, the `shell.search.records` panel) are
+  // the server's: once the query is as long as the panel asks, it goes to the
+  // panel after a pause in typing, and the rows the panel sends back are never
+  // filtered here, only shown and highlighted with the pages around them.
+  // While the answer for the query is on its way, rows answering an earlier
+  // one stay hidden and "Nothing found" waits.
   const TYPING = 'input, textarea, select, [contenteditable]:not([contenteditable="false"])';
+  const RECORDS_PAUSE = 150;
+  const RECORDS_TEXT = 200;
 
   class PageSearch {
     constructor(shell) {
       this.shell = shell;
       this.root = shell.el;
       this.active = null;
+      this.asked = null;
+      this.timer = null;
       this.onClick = (event) => this.click(event);
-      this.onInput = (event) => { if (event.target === this.input()) this.apply(); };
+      this.onInput = (event) => {
+        if (event.target !== this.input()) return;
+        this.apply();
+        // An input method's keystrokes wait for the text it settles on.
+        if (!event.isComposing) this.schedule();
+      };
+      this.onComposed = (event) => { if (event.target === this.input()) this.schedule(); };
       this.onKey = (event) => this.key(event);
       this.onClose = () => this.toggle()?.focus();
       this.dialogEl = this.dialog();
       this.root.addEventListener('click', this.onClick);
       this.root.addEventListener('input', this.onInput);
+      this.root.addEventListener('compositionend', this.onComposed);
       document.addEventListener('keydown', this.onKey);
       this.dialogEl?.addEventListener('close', this.onClose);
       this.apply();
     }
 
     destroy() {
+      clearTimeout(this.timer);
       this.root.removeEventListener('click', this.onClick);
       this.root.removeEventListener('input', this.onInput);
+      this.root.removeEventListener('compositionend', this.onComposed);
       document.removeEventListener('keydown', this.onKey);
       this.dialogEl?.removeEventListener('close', this.onClose);
     }
@@ -241,7 +257,45 @@
     input() { return this.root.querySelector('#app-search-input'); }
     toggle() { return this.root.querySelector('#app-search-toggle'); }
     options() { return [...this.root.querySelectorAll('[data-page-search-option]')]; }
+    records() { return this.root.querySelector('#app-search-records'); }
     isOpen() { return !!this.dialog()?.open; }
+    // The panel is on only for a person who may search records.
+    searchesRecords() { return this.records()?.dataset.searchRecords === 'on'; }
+
+    // What the records panel is asked for: the trimmed query, at most 200
+    // characters as the server counts them, or nothing while it is shorter
+    // than the panel's minimum.
+    recordQuery() {
+      if (!this.searchesRecords()) return '';
+      const query = Array.from((this.input()?.value ?? '').trim()).slice(0, RECORDS_TEXT);
+      const minimum = Number(this.records().dataset.minChars) || 1;
+      return query.length >= minimum ? query.join('') : '';
+    }
+
+    schedule() {
+      clearTimeout(this.timer);
+      this.timer = setTimeout(() => this.ask(), RECORDS_PAUSE);
+    }
+
+    // Raises the panel's `query` event for the field's query once; `again`
+    // asks once more (opening the dialog), so a grant revoked meanwhile takes
+    // its rows away. Asking for nothing clears the rows of an earlier query.
+    ask(again = false) {
+      clearTimeout(this.timer);
+      const records = this.records();
+      if (!records || !this.searchesRecords()) return;
+      const query = this.recordQuery();
+      // Nothing shown and nothing to ask for, or this query asked already.
+      if (query === '' && (records.dataset.query ?? '') === '') {
+        this.asked = query;
+        return;
+      }
+      if (query === this.asked && !again) return;
+      this.asked = query;
+      document.dispatchEvent(new CustomEvent('bilibi:event', {
+        detail: {target: records.id, payload: {type: 'query', q: query}},
+      }));
+    }
 
     open() {
       const dialog = this.dialog();
@@ -253,6 +307,7 @@
       this.input()?.focus();
       this.input()?.select();
       this.apply();
+      this.ask(true);
     }
 
     close() {
@@ -263,10 +318,22 @@
     // found"; writes only what changed.
     apply() {
       const query = (this.input()?.value ?? '').trim().toLowerCase();
+      const searching = this.searchesRecords();
+      const asked = this.recordQuery();
+      const answered = this.records()?.dataset.query ?? '';
+      // Record rows show only while they answer the field's query. Rows of an
+      // earlier query go at once, with their groups, "All results" and the
+      // notice, so neither Enter nor a click opens one; the reply shows them.
+      const records = asked !== '' && answered === asked;
       const shown = [];
       for (const option of this.options()) {
-        const labels = (option.dataset.pageSearchLabels ?? '').toLowerCase().split('\n');
-        const hit = query !== '' && labels.some((label) => label.includes(query));
+        let hit;
+        if ('pageSearchRemote' in option.dataset) {
+          hit = records;
+        } else {
+          const labels = (option.dataset.pageSearchLabels ?? '').toLowerCase().split('\n');
+          hit = query !== '' && labels.some((label) => label.includes(query));
+        }
         if (option.hidden === hit) option.hidden = !hit;
         if (hit) shown.push(option);
       }
@@ -274,12 +341,25 @@
         const empty = !group.querySelector('[data-page-search-option]:not([hidden])');
         if (group.hidden !== empty) group.hidden = empty;
       }
+      const notice = this.root.querySelector('#app-search-records-notice');
+      if (notice && notice.hidden !== !records) notice.hidden = !records;
       const hint = this.root.querySelector('#app-search-hint');
+      this.word(hint, searching);
       if (hint && hint.hidden !== (query !== '')) hint.hidden = query !== '';
       const none = this.root.querySelector('#app-search-empty');
-      const nothing = query === '' || shown.length > 0;
+      this.word(none, searching);
+      const waiting = asked !== '' && answered !== asked;
+      const nothing = query === '' || shown.length > 0 || waiting;
       if (none && none.hidden !== nothing) none.hidden = nothing;
       this.highlight(shown.find((option) => option.id === this.active) ?? shown[0] ?? null, false);
+    }
+
+    // The hint and "nothing found" lines name records too while the panel
+    // searches them; the server renders both wordings on the line.
+    word(line, records) {
+      if (!line?.dataset.recordsText) return;
+      const text = records ? line.dataset.recordsText : line.dataset.pagesText;
+      if (text !== undefined && line.textContent !== text) line.textContent = text;
     }
 
     highlight(option, scroll = true) {
@@ -344,7 +424,7 @@
       }
       const dialog = this.dialog();
       if (!dialog?.open) return;
-      // A chosen page closes the search and the browser follows the link.
+      // A chosen page or record closes the search and the browser follows the link.
       if (target.closest('[data-page-search-close], [data-page-search-option]')) {
         this.close();
         return;
@@ -901,7 +981,9 @@
       const items = this.pinnedEntries.map((pin) => this.resolvePinnedItem(pin)).filter(Boolean);
       // Rebuilding is a child-list mutation that ui.js reports as `updated`,
       // which calls back here: rebuild only when the drawn pins change.
-      const drawn = JSON.stringify([this.impersonating, items.map(({key, label, url}) => [key, label, url])]);
+      const drawn = JSON.stringify([this.impersonating, items.map(({key, label, url, item}) => [
+        key, label, url, item?.querySelector('.app-nav-icon')?.outerHTML ?? null,
+      ])]);
       if (drawn !== this.drawnPins || this.pinnedItems.childElementCount !== items.length) {
         this.drawnPins = drawn;
         this.rebuildPinnedItems(items);

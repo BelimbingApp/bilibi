@@ -10,12 +10,14 @@
 //! the page. Restore confirms through the shared dialog and acts only on the
 //! overrides the dialog counted.
 //!
-//! The company picker (K15) offers Global and the companies Tenancy's
-//! organisation directory says this actor may manage
-//! (`base.settings.company.manage`, own company or tenant-wide reach). A
-//! picked company is reproved on every switch and write: a denied, missing,
+//! The scope picker offers Global, this tenant (its defaults under every
+//! company, written as `Target::Tenant` on the route capability alone) and
+//! (K15) the companies Tenancy's organisation directory says this actor may
+//! manage (`base.settings.company.manage`, own company or tenant-wide reach).
+//! A picked company is reproved on every switch and write: a denied, missing,
 //! cross-tenant or archived target is refused with Bilimbi's wording, and an
 //! archived company is never offered, since a write into it would be refused.
+//! Bilimbi's editor offers no tenant scope; issue 130 asks for one.
 use crate::{
     form::{self, Field, Plan, Step},
     reveal::{self, Refusal, Reveal},
@@ -56,7 +58,7 @@ static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
             .collect(),
         default_sort: Some("setting".into()),
         filters: [
-            ("company".into(), Filter::string("global")),
+            ("company".into(), Filter::string(GLOBAL)),
             ("area".into(), Filter::string("")),
             ("module".into(), Filter::string("")),
         ]
@@ -96,6 +98,41 @@ const COMPANY_ARCHIVED: &str =
     "This company is archived and read-only, so its settings were not changed.";
 const COMPANY_GONE: &str = "That company is no longer available; choose another settings scope.";
 const UNAVAILABLE: &str = "Settings are unavailable; nothing was changed.";
+/// The scope picker's values besides a company id.
+const GLOBAL: &str = "global";
+const TENANT: &str = "tenant";
+
+/// The picked settings scope. A company is an id, never a proof.
+enum Picked {
+    Global,
+    /// The actor's own tenant: the defaults its companies inherit.
+    Tenant,
+    Company(NamedOrganisation),
+}
+impl Picked {
+    /// The picker's value: `global`, `tenant` or the company id.
+    fn value(&self) -> String {
+        match self {
+            Picked::Global => GLOBAL.into(),
+            Picked::Tenant => TENANT.into(),
+            Picked::Company(company) => company.id.get().to_string(),
+        }
+    }
+    fn company(&self) -> Option<&NamedOrganisation> {
+        match self {
+            Picked::Company(company) => Some(company),
+            _ => None,
+        }
+    }
+    /// The scope's name in audit actions: `settings.<name>.save`, `.restore`.
+    fn audit_name(&self) -> &'static str {
+        match self {
+            Picked::Global => "global",
+            Picked::Tenant => "tenant",
+            Picked::Company(_) => "company",
+        }
+    }
+}
 
 pub struct Core {
     pub db: Db,
@@ -117,8 +154,7 @@ struct Editor {
     /// The overrides the restore dialog counted; restore acts on these only.
     pending_restore: Option<Vec<String>>,
     events: Vec<(&'static str, Value)>,
-    /// The picked company scope; `None` is Global. An id, never a proof.
-    company: Option<NamedOrganisation>,
+    picked: Picked,
     list: ListState,
     columns: ListColumns,
     editing: Option<String>,
@@ -134,7 +170,7 @@ impl Editor {
             flash: None,
             pending_restore: None,
             events: Vec::new(),
-            company: None,
+            picked: Picked::Global,
             list: list(values)?,
             columns: ListColumns::mount(
                 "settings-table",
@@ -154,10 +190,19 @@ impl Editor {
         self.flash = Some((kind, message.into()));
     }
     fn target(&self) -> Target {
-        match &self.company {
-            Some(company) => Target::Company(company.id),
-            None => Target::Global,
+        match &self.picked {
+            Picked::Global => Target::Global,
+            Picked::Tenant => Target::Tenant,
+            Picked::Company(company) => Target::Company(company.id),
         }
+    }
+    /// Moves to `picked`, leaving any editor, message or restore of the last.
+    fn pick(&mut self, picked: Picked) {
+        self.list.filters.insert("company".into(), picked.value());
+        self.picked = picked;
+        self.editing = None;
+        self.flash = None;
+        self.pending_restore = None;
     }
     async fn plan(&self, scope: &Scope) -> Result<Plan> {
         let client = self.core.db.get().await?;
@@ -178,7 +223,8 @@ impl Editor {
             }
             Err(error) => return Err(error),
         }
-        let Some(company) = &self.company else {
+        // The tenant's own scope needs only the route capability, asked above.
+        let Picked::Company(company) = &self.picked else {
             return Ok(true);
         };
         match self
@@ -193,7 +239,7 @@ impl Editor {
                 return Ok(false);
             }
             Err(Error::NotFound) => {
-                self.company = None;
+                self.pick(Picked::Global);
                 self.flash(StatusKind::Error, COMPANY_GONE);
                 return Ok(false);
             }
@@ -211,7 +257,7 @@ impl Editor {
                 Ok(false)
             }
             Err(Error::NotFound) => {
-                self.company = None;
+                self.pick(Picked::Global);
                 self.flash(StatusKind::Error, COMPANY_GONE);
                 Ok(false)
             }
@@ -244,13 +290,7 @@ impl Editor {
             self.flash(StatusKind::Error, COMPANY_ARCHIVED);
             return Ok(());
         }
-        self.list
-            .filters
-            .insert("company".into(), company.id.get().to_string());
-        self.company = Some(company);
-        self.editing = None;
-        self.flash = None;
-        self.pending_restore = None;
+        self.pick(Picked::Company(company));
         Ok(())
     }
 
@@ -260,26 +300,18 @@ impl Editor {
             .filters
             .get("company")
             .cloned()
-            .unwrap_or_else(|| "global".into());
-        if wanted == "global" {
-            if self.company.is_some() {
-                self.editing = None;
-                self.flash = None;
-                self.pending_restore = None;
-            }
-            self.company = None;
-        } else if self
-            .company
-            .as_ref()
-            .map(|c| c.id.get().to_string())
-            .as_deref()
-            != Some(&wanted)
-        {
-            self.switch(scope, &wanted).await?;
-            if self.company.is_none() {
-                self.list.filters.insert("company".into(), "global".into());
+            .unwrap_or_else(|| GLOBAL.into());
+        if wanted != self.picked.value() {
+            match wanted.as_str() {
+                GLOBAL => self.pick(Picked::Global),
+                TENANT => self.pick(Picked::Tenant),
+                // A refused company keeps the scope already shown.
+                id => self.switch(scope, id).await?,
             }
         }
+        self.list
+            .filters
+            .insert("company".into(), self.picked.value());
         Ok(())
     }
 
@@ -291,12 +323,6 @@ impl Editor {
                 self.list
                     .apply_filters(&bilibi_ui::params::form_values(payload, "filters"));
                 self.apply_scope(scope).await?;
-                self.list.filters.insert(
-                    "company".into(),
-                    self.company
-                        .as_ref()
-                        .map_or("global".into(), |company| company.id.get().to_string()),
-                );
             }
             "page" => self.list.put_page(get("page")),
             "grid" => {
@@ -355,13 +381,8 @@ impl Editor {
             "cancel_restore" => self.pending_restore = None,
             "restore_defaults" => self.restore(scope).await?,
             "switch_scope" => match get("scope[company_id]") {
-                Some("global") => {
-                    self.company = None;
-                    self.list.filters.insert("company".into(), "global".into());
-                    self.editing = None;
-                    self.flash = None;
-                    self.pending_restore = None;
-                }
+                Some(GLOBAL) => self.pick(Picked::Global),
+                Some(TENANT) => self.pick(Picked::Tenant),
                 Some(id) => self.switch(scope, id).await?,
                 None => self.flash(StatusKind::Error, "Choose an available settings scope."),
             },
@@ -443,11 +464,7 @@ impl Editor {
         let (mut written, mut cleared) = (0, 0);
         if !steps.is_empty() {
             let target = self.target();
-            let action = if self.company.is_some() {
-                "settings.company.save"
-            } else {
-                "settings.global.save"
-            };
+            let action = format!("settings.{}.save", self.picked.audit_name());
             let mut client = self.core.db.get().await?;
             let mut tx = self
                 .core
@@ -515,11 +532,7 @@ impl Editor {
         }
         if !fields.is_empty() {
             let target = self.target();
-            let action = if self.company.is_some() {
-                "settings.company.restore"
-            } else {
-                "settings.global.restore"
-            };
+            let action = format!("settings.{}.restore", self.picked.audit_name());
             let mut client = self.core.db.get().await?;
             let mut tx = self
                 .core
@@ -588,10 +601,10 @@ impl Editor {
         let label = field.map(|field| field.editor.label);
         let message = match error {
             Error::Unauthorized => return Err(Error::Unauthorized),
-            Error::Forbidden if self.company.is_some() => COMPANY_ARCHIVED.to_owned(),
+            Error::Forbidden if self.picked.company().is_some() => COMPANY_ARCHIVED.to_owned(),
             Error::Forbidden => PLATFORM_DENIED.to_owned(),
-            Error::NotFound if self.company.is_some() => {
-                self.company = None;
+            Error::NotFound if self.picked.company().is_some() => {
+                self.pick(Picked::Global);
                 COMPANY_GONE.to_owned()
             }
             // A value its own definition accepts is refused by a rule over
@@ -654,17 +667,15 @@ impl Editor {
     }
 
     async fn render(&mut self, scope: &Scope) -> Result<String> {
-        self.list.filters.insert(
-            "company".into(),
-            self.company
-                .as_ref()
-                .map_or("global".into(), |company| company.id.get().to_string()),
-        );
+        self.list
+            .filters
+            .insert("company".into(), self.picked.value());
         let plan = self.plan(scope).await?;
         let client = self.core.db.get().await?;
         let can_reveal = reveal::available(&**client, &plan, &self.core.settings, scope).await?;
         let keyed = self.core.settings.encryption_available();
-        let company = self.company.is_some();
+        // Below Global, restoring clears overrides so the values inherit.
+        let inherits = !matches!(self.picked, Picked::Global);
         let methods = self
             .core
             .step_up
@@ -918,32 +929,38 @@ impl Editor {
             })?,
             ..Header::default()
         })?;
-        let scopes = if plan.capabilities.contains(COMPANY_MANAGE) {
-            let companies = self
-                .core
-                .parties
-                .selectable_organisations(&**client, scope, COMPANY_MANAGE)
-                .await?;
-            let mut options = vec![("Global".to_owned(), "global".to_owned())];
-            options.extend(
-                companies
-                    .iter()
-                    .map(|company| (company.name.clone(), company.id.get().to_string())),
-            );
-            let options: Vec<(&str, &str)> = options
+        let mut options = vec![
+            ("Global".to_owned(), GLOBAL.to_owned()),
+            ("This tenant".to_owned(), TENANT.to_owned()),
+        ];
+        let companies = if plan.capabilities.contains(COMPANY_MANAGE) {
+            Some(
+                self.core
+                    .parties
+                    .selectable_organisations(&**client, scope, COMPANY_MANAGE)
+                    .await?,
+            )
+        } else {
+            None
+        };
+        options.extend(
+            companies
                 .iter()
-                .map(|(label, value)| (label.as_str(), value.as_str()))
-                .collect();
-            controls.push(ToolbarControl::select(
-                "settings-company",
-                "company",
-                "Settings scope",
-                &self
-                    .company
-                    .as_ref()
-                    .map_or("global".to_owned(), |company| company.id.get().to_string()),
-                choices(&options),
-            ));
+                .flatten()
+                .map(|company| (company.name.clone(), company.id.get().to_string())),
+        );
+        let options: Vec<(&str, &str)> = options
+            .iter()
+            .map(|(label, value)| (label.as_str(), value.as_str()))
+            .collect();
+        controls.push(ToolbarControl::select(
+            "settings-company",
+            "company",
+            "Settings scope",
+            &self.picked.value(),
+            choices(&options),
+        ));
+        let scopes = if let Some(companies) = companies {
             if companies.is_empty() {
                 render(Withheld {
                     state: EmptyState::missing(
@@ -964,9 +981,10 @@ impl Editor {
         let toolbar = render(FilterToolbar::new("settings-search-form", controls))?;
         let dialog = match &self.pending_restore {
             Some(held) => {
-                let scope_name = match &self.company {
-                    Some(company) => format!("{} settings", company.name),
-                    None => "Server settings".to_owned(),
+                let scope_name = match &self.picked {
+                    Picked::Global => "Server settings".to_owned(),
+                    Picked::Tenant => "this tenant's settings".to_owned(),
+                    Picked::Company(company) => format!("{} settings", company.name),
                 };
                 let consequence = format!(
                     "This resets {} in {scope_name} to their defaults, including any hidden by your search or filters.",
@@ -1007,7 +1025,7 @@ impl Editor {
                     id: "settings-restore",
                     button_type: "button",
                     event: "request_restore",
-                    body: Html::text(if company {
+                    body: Html::text(if inherits {
                         "Clear overrides"
                     } else {
                         "Restore Defaults"

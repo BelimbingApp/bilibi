@@ -526,11 +526,13 @@ dependencies = [
  "bilibi-party-ids",
  "bilibi-perf",
  "bilibi-personal-data",
+ "bilibi-picklists",
  "bilibi-ports",
  "bilibi-principal-directory",
  "bilibi-privacy",
  "bilibi-queue",
  "bilibi-schedule",
+ "bilibi-search",
  "bilibi-security",
  "bilibi-session",
  "bilibi-settings",
@@ -567,7 +569,9 @@ dependencies = [
  "bilibi-party",
  "bilibi-party-ids",
  "bilibi-person",
+ "bilibi-picklists",
  "bilibi-principal-directory",
+ "bilibi-search",
  "bilibi-security",
  "bilibi-settings",
  "bilibi-tenancy",
@@ -946,6 +950,7 @@ dependencies = [
  "bilibi-personal-data",
  "bilibi-principal-directory",
  "bilibi-privacy",
+ "bilibi-search",
  "bilibi-step-up",
  "bilibi-tenancy",
  "bilibi-ui",
@@ -968,6 +973,26 @@ dependencies = [
  "bilibi-module-registry",
  "bilibi-party-ids",
  "bilibi-tenancy",
+ "inventory",
+ "serde",
+ "serde_json",
+ "tokio-postgres",
+]
+
+[[package]]
+name = "bilibi-picklists"
+version = "0.1.1"
+dependencies = [
+ "askama",
+ "bilibi-agent-api",
+ "bilibi-audit",
+ "bilibi-authz",
+ "bilibi-database",
+ "bilibi-locale",
+ "bilibi-menu",
+ "bilibi-module-registry",
+ "bilibi-tenancy",
+ "bilibi-ui",
  "inventory",
  "serde",
  "serde_json",
@@ -1089,6 +1114,29 @@ dependencies = [
  "tokio",
  "tokio-postgres",
  "uuid",
+]
+
+[[package]]
+name = "bilibi-search"
+version = "0.1.1"
+dependencies = [
+ "askama",
+ "bilibi-agent-api",
+ "bilibi-authz",
+ "bilibi-database",
+ "bilibi-datetime",
+ "bilibi-grid",
+ "bilibi-locale",
+ "bilibi-module-registry",
+ "bilibi-settings",
+ "bilibi-tenancy",
+ "bilibi-ui",
+ "inventory",
+ "jiff",
+ "serde",
+ "serde_json",
+ "tokio-postgres",
+ "url",
 ]
 
 [[package]]

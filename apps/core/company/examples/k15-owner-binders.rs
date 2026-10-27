@@ -15,12 +15,14 @@ use bilibi_authz::{
     grants::Grants,
     roles::{self, NewRole, Query, Sort},
 };
-use bilibi_company::{files as company_files, CompanyService, SERVICE};
+use bilibi_company::{
+    CompanyService, ATTACHMENT_SUBJECT as COMPANY_SUBJECT, FILES as COMPANY_FILES, SERVICE,
+};
 use bilibi_database::{pool, MutationBoundary};
 use bilibi_locale::Locales;
 use bilibi_media::{AttachmentSubject, Media, Rules, Upload};
 use bilibi_party_ids::OrganisationId;
-use bilibi_person::files as person_files;
+use bilibi_person::{ATTACHMENT_SUBJECT as PERSON_SUBJECT, FILES as PERSON_FILES};
 use bilibi_settings::{Settings, Target};
 use bilibi_tenancy::{PartyProofs, Scope};
 use serde_json::json;
@@ -385,11 +387,11 @@ async fn main() -> Result<(), Error> {
         bytes: b"K15 private file\n".to_vec(),
     };
     let company_subject = |id: &'static str| AttachmentSubject {
-        kind: company_files::ATTACHMENT_SUBJECT,
+        kind: COMPANY_SUBJECT,
         id,
     };
     let person_subject = |id: &'static str| AttachmentSubject {
-        kind: person_files::ATTACHMENT_SUBJECT,
+        kind: PERSON_SUBJECT,
         id,
     };
     let uploaded = media
@@ -532,7 +534,7 @@ async fn main() -> Result<(), Error> {
         subject: subject.into(),
         kind: "evidence".into(),
     };
-    let documents = artifacts.for_owner(&manager, one, &company_files::FILES);
+    let documents = artifacts.for_owner(&manager, one, &COMPANY_FILES);
     show(
         "company document under company 1 (manager's own)",
         documents
@@ -552,7 +554,7 @@ async fn main() -> Result<(), Error> {
     show(
         "company document (viewer)",
         artifacts
-            .for_owner(&viewer, one, &company_files::FILES)
+            .for_owner(&viewer, one, &COMPANY_FILES)
             .put(&mut client, reference("1"), b"K15 document", "text/plain")
             .await
             .map(|m| m.id)
@@ -561,13 +563,13 @@ async fn main() -> Result<(), Error> {
     show(
         "company document under archived company 4 (admin)",
         artifacts
-            .for_owner(&admin, four, &company_files::FILES)
+            .for_owner(&admin, four, &COMPANY_FILES)
             .put(&mut client, reference("4"), b"K15 document", "text/plain")
             .await
             .map(|m| m.id)
             .map_err(|e| e.to_string()),
     );
-    let person_documents = artifacts.for_owner(&manager, one, &person_files::FILES);
+    let person_documents = artifacts.for_owner(&manager, one, &PERSON_FILES);
     show(
         "person 1 document filed under company 1 (manager)",
         person_documents
@@ -597,7 +599,7 @@ async fn main() -> Result<(), Error> {
     show(
         "person document (viewer)",
         artifacts
-            .for_owner(&viewer, one, &person_files::FILES)
+            .for_owner(&viewer, one, &PERSON_FILES)
             .put(
                 &mut client,
                 reference("1"),
@@ -611,7 +613,7 @@ async fn main() -> Result<(), Error> {
     show(
         "person document filed under archived company 4 (admin)",
         artifacts
-            .for_owner(&admin, four, &person_files::FILES)
+            .for_owner(&admin, four, &PERSON_FILES)
             .put(
                 &mut client,
                 reference("1"),

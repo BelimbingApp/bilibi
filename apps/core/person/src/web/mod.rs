@@ -65,43 +65,33 @@ impl Pages {
             .await?
             .contains(capability))
     }
+    /// Whether a contributed panel shows for this reader, by the shared
+    /// display check (`Access::admits`); only the proofs its access names run.
     async fn embed_allowed(
         &self,
         scope: &Scope,
         access: bilibi_module_registry::contributions::Access,
     ) -> Result<bool> {
-        use bilibi_module_registry::contributions::Access;
-        let capability = match access {
-            Access::Capability(key) | Access::OperatorCapability(key) => {
-                self.allowed(scope, key).await?
-            }
-            Access::AnyOf(keys) => {
-                let client = self.db.get().await?;
-                let held = effective_capabilities(&**client, scope).await?;
-                keys.iter().any(|key| held.contains(key))
-            }
-            _ => true,
-        };
-        if !capability {
-            return Ok(false);
-        }
-        if matches!(access, Access::Owner) {
-            let client = self.db.get().await?;
-            return match bilibi_tenancy::prove_owner(&**client, scope).await {
+        use bilibi_module_registry::contributions::{Access, Viewer};
+        fn proven<T>(proof: Result<T>) -> Result<bool> {
+            match proof {
                 Ok(_) => Ok(true),
                 Err(Error::Forbidden) => Ok(false),
                 Err(error) => Err(error),
-            };
+            }
         }
-        if matches!(access, Access::Operator | Access::OperatorCapability(_)) {
-            let client = self.db.get().await?;
-            return match bilibi_tenancy::prove_operator(&**client, scope).await {
-                Ok(_) => Ok(true),
-                Err(Error::Forbidden) => Ok(false),
-                Err(error) => Err(error),
-            };
-        }
-        Ok(true)
+        let client = self.db.get().await?;
+        let operator = matches!(
+            access.base(),
+            Access::Operator | Access::OperatorCapability(_)
+        ) && proven(bilibi_tenancy::prove_operator(&**client, scope).await)?;
+        let owner = matches!(access.base(), Access::Owner)
+            && proven(bilibi_tenancy::prove_owner(&**client, scope).await)?;
+        Ok(access.admits(&Viewer {
+            capabilities: &effective_capabilities(&**client, scope).await?,
+            operator,
+            owner,
+        }))
     }
     async fn display(&self, scope: &Scope) -> Result<DisplayContext> {
         let client = self.db.get().await?;

@@ -79,7 +79,7 @@ company, unlinked affiliation or cross-tenant identity refuses the proof.
 Employment at any company of the tenant takes
 `AffiliationService::lock_for_employment_at(tx, scope, affiliation, company)`
 (PP2). People names the company its employment record will carry; the proof
-authorizes it as a company write would (`organisation::authorize_target` with
+authorizes it as a company write would (`bilibi_company::authorize_target` with
 `admin.affiliation.prove`: the actor's own company, or any live company of
 the tenant with `admin.company.tenant-wide.manage`), locks it writable, and
 then issues the same `OwnCompanyAffiliation` only if the affiliation is linked

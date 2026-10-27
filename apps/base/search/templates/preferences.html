@@ -1,0 +1,12 @@
+{#- The person's Search tab of My Settings (src/web.rs, `/settings/search`):
+    a tick for each kind of record they may search, inside the shared
+    settings layout. The form is `data-change`, so each tick raises `keep`
+    with every tick's value. No Bilimbi counterpart. -#}
+{% import "settings.html" as settings %}
+{% import "components.html" as ui %}
+{{ flash }}
+{% call ui::page(variant=bilibi_ui::PageVariant::Form) %}
+{% call settings::layout(header=header, current=current, heading=heading, subheading=subheading) %}
+{{ body }}
+{% endcall %}
+{% endcall %}

@@ -5,7 +5,7 @@
 use bilibi_artifacts::{Artifacts, Reference};
 use bilibi_authz::grants::Grants;
 use bilibi_base::media::{AttachmentSubject, Media, Rules, Upload};
-use bilibi_core::person::files as person_files;
+use bilibi_core::person as person_files;
 use bilibi_database::{pool, MutationBoundary};
 use bilibi_party_ids::{OrganisationId, PersonId};
 use bilibi_personal_data::Identifier;
