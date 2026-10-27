@@ -1194,7 +1194,7 @@ impl Values {
             ..Form::default()
         })?;
         render(Modal {
-            id: "picklist-new",
+            id: "picklist-new-dialog",
             title: "New value",
             description: "People can choose it in new records straight away.",
             cancel_event: "close_new",
