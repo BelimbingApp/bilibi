@@ -811,15 +811,15 @@ impl Reports {
                     .await
             }
         };
-        let message = bilibi_mail::Message {
-            to: address,
-            subject: format!("Scheduled report: {}", name.chars().take(150).collect::<String>()),
-            text: format!(
+        let message = bilibi_mail::Message::text(
+            address,
+            format!("Scheduled report: {}", name.chars().take(150).collect::<String>()),
+            format!(
                 "Your scheduled report {name} is ready.\n\nDownload it, signed in, before it expires:\n{}{}\n",
                 self.origin,
                 exports::path(export)
             ),
-        };
+        );
         if self.mailer.deliver(&message).await.is_err() {
             return self
                 .retry_or_close(
