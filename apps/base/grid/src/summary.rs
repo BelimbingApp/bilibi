@@ -618,6 +618,29 @@ fn operand(column: &Column, value: &Value) -> Result<(&'static str, String), Que
     }
 }
 
+/// `value op operand` for a float column. An operand a `real` can hold is
+/// bound [`Untyped`], so it compares in the column's own type. Any other
+/// (`1e100`, `1e-100`) compares as `float8`: a `double precision` column
+/// reads it natively, and a `real` column, which can never equal it, widens
+/// exactly, so equality finds nothing and a range bound orders correctly,
+/// instead of PostgreSQL refusing the operand as out of range.
+fn float_test(value: &str, op: &str, text: String, binds: &mut Binds) -> String {
+    if fits_real(&text) {
+        format!("({value}) {op} {}", binds.push(Untyped(text)))
+    } else {
+        format!("({value})::float8 {op} {}::text::float8", binds.push(text))
+    }
+}
+
+/// Whether PostgreSQL reads this number as a `real`: zero, or a value that
+/// neither overflows nor underflows to zero in single precision.
+fn fits_real(text: &str) -> bool {
+    text.parse::<f64>().is_ok_and(|v| {
+        let single = v as f32;
+        v == 0.0 || (single.is_finite() && single != 0.0)
+    })
+}
+
 /// A float operand, bound in PostgreSQL's text format with no cast, so the
 /// server types it from the column it is compared with, as it would a
 /// literal: a `real` column compares in `real` and a `double precision` one
@@ -671,7 +694,7 @@ fn test(
         Test::Equals(wanted) => {
             let (cast, text) = operand(column, wanted)?;
             if ty == FieldType::Float {
-                format!("({value}) = {}", binds.push(Untyped(text)))
+                float_test(value, "=", text, binds)
             } else {
                 format!("({value})::{cast} = {}::text::{cast}", binds.push(text))
             }
@@ -688,9 +711,22 @@ fn test(
                 texts.push(text);
             }
             if ty == FieldType::Float {
-                // An array literal of plain numbers, in the column's type.
-                let list = format!("{{{}}}", texts.join(","));
-                format!("({value}) = ANY({})", binds.push(Untyped(list)))
+                // Values a `real` can hold, as an array literal in the
+                // column's own type; any other as `float8` (see `float_test`).
+                let (native, wide): (Vec<String>, Vec<String>) =
+                    texts.into_iter().partition(|text| fits_real(text));
+                let mut parts = Vec::new();
+                if !native.is_empty() {
+                    let list = format!("{{{}}}", native.join(","));
+                    parts.push(format!("({value}) = ANY({})", binds.push(Untyped(list))));
+                }
+                if !wide.is_empty() {
+                    parts.push(format!(
+                        "({value})::float8 = ANY({}::text[]::float8[])",
+                        binds.push(wide)
+                    ));
+                }
+                format!("({})", parts.join(" OR "))
             } else {
                 format!(
                     "({value})::{cast} = ANY({}::text[]::{cast}[])",
@@ -721,8 +757,7 @@ fn test(
                     return Err(unsupported(column, "a number range takes numbers"));
                 };
                 parts.push(if ty == FieldType::Float {
-                    let placeholder = binds.push(Untyped(number.to_string()));
-                    format!("({value}) {op} {placeholder}")
+                    float_test(value, op, number.to_string(), binds)
                 } else {
                     let placeholder = binds.push(number.to_string());
                     format!("({value})::numeric {op} {placeholder}::text::numeric")
