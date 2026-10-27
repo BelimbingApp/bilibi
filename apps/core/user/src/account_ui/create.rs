@@ -212,7 +212,7 @@ impl Create {
             redirect: self.created.map(|id| format!("/users/{id}")),
             flash: self
                 .created
-                .map(|_| (StatusKind::Success, "User created successfully.".into())),
+                .map(|_| (StatusKind::Success, "User created.".into())),
             ..LiveBody::default()
         })
     }

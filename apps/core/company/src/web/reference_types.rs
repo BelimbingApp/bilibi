@@ -84,8 +84,8 @@ pub(super) static DEPARTMENT_TYPES: Spec = Spec {
     name_placeholder: "e.g. Engineering",
     description_placeholder: "Optional description of this department type",
     not_found: "Department type not found.",
-    created: "Department type created successfully.",
-    updated: "Department type updated successfully.",
+    created: "Department type created.",
+    updated: "Department type updated.",
     deleted: "Department type deleted.",
     confirm_noun: "Department type",
     confirm_detail: "It can no longer be chosen for a department. This cannot be undone.",
@@ -117,8 +117,8 @@ pub(super) static LEGAL_ENTITY_TYPES: Spec = Spec {
     name_placeholder: "e.g. Limited Liability Company",
     description_placeholder: "Optional description of this legal entity type",
     not_found: "Legal entity type not found.",
-    created: "Legal entity type created successfully.",
-    updated: "Legal entity type updated successfully.",
+    created: "Legal entity type created.",
+    updated: "Legal entity type updated.",
     deleted: "Legal entity type deleted.",
     confirm_noun: "Legal entity type",
     confirm_detail: "It can no longer be chosen for a company. This cannot be undone.",
@@ -525,9 +525,7 @@ impl ReferenceTypes {
                 .map(|_| ()),
         };
         match result {
-            Ok(()) => self
-                .flash
-                .put(StatusKind::Success, "Status updated successfully."),
+            Ok(()) => self.flash.put(StatusKind::Success, "Status updated."),
             Err(WriteError::Access(Error::Unauthorized)) => return Err(Error::Unauthorized),
             Err(WriteError::Access(Error::Forbidden)) => self.write_forbidden(),
             Err(WriteError::Access(error)) => return Err(error),

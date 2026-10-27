@@ -256,8 +256,7 @@ impl Departments {
         {
             Ok(Outcome::Saved(_)) => {
                 self.dialog = None;
-                self.flash
-                    .put(StatusKind::Success, "Department added successfully.");
+                self.flash.put(StatusKind::Success, "Department added.");
             }
             Ok(Outcome::Refused(refused)) => *errors = refused,
             Err(WriteError::Archived) => {

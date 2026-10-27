@@ -872,7 +872,7 @@ impl RolesPage {
                         {
                             Ok(()) => {
                                 self.modal = None;
-                                self.flash.success("Relationship role updated successfully.");
+                                self.flash.success("Relationship role updated.");
                             }
                             Err(WriteError::Stale) => self.flash.error(
                                 "The role changed since it was opened. Close the dialog and try again.",
@@ -901,8 +901,7 @@ impl RolesPage {
                         {
                             Ok(()) => {
                                 self.modal = None;
-                                self.flash
-                                    .success("Relationship role created successfully.");
+                                self.flash.success("Relationship role created.");
                             }
                             Err(WriteError::Invalid(errors)) => modal.errors = errors,
                             Err(WriteError::Access(e)) => return access(e, &mut self.flash),
@@ -1699,7 +1698,7 @@ impl LinksPage {
                         {
                             Ok(()) => {
                                 self.modal = None;
-                                self.flash.success("Relationship updated successfully.");
+                                self.flash.success("Relationship updated.");
                             }
                             Err(error) => self.write_error(error, true),
                         }
@@ -1753,7 +1752,7 @@ impl LinksPage {
                         {
                             Ok(()) => {
                                 self.modal = None;
-                                self.flash.success("Relationship established successfully.");
+                                self.flash.success("Relationship established.");
                             }
                             Err(error) => self.write_error(error, false),
                         }

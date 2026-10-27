@@ -784,8 +784,7 @@ impl CompanyPage {
                             .await?
                         {
                             CreateOutcome::Created(company) => {
-                                self.landing
-                                    .put(StatusKind::Success, "Company created successfully.");
+                                self.landing.put(StatusKind::Success, "Company created.");
                                 return Ok(Some(format!("/companies/{}", company.id)));
                             }
                             CreateOutcome::Refused(errors) => self.errors = errors,

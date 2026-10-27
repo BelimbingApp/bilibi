@@ -1639,7 +1639,7 @@ impl Detail {
             .await
         {
             Ok(()) => {
-                self.flash.success("Password updated successfully.");
+                self.flash.success("Password updated.");
                 self.password_errors = (Vec::new(), Vec::new());
                 self.show_password = false;
             }
