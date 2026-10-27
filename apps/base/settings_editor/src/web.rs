@@ -96,7 +96,8 @@ const PLATFORM_DENIED: &str = "You do not have permission to manage platform set
 const COMPANY_DENIED: &str = "You do not have permission to manage this company's settings.";
 const COMPANY_ARCHIVED: &str =
     "This company is archived and read-only, so its settings were not changed.";
-const COMPANY_GONE: &str = "That company is no longer available; choose another settings scope.";
+const COMPANY_GONE: &str =
+    "That company is no longer available. Choose another company or settings scope.";
 const UNAVAILABLE: &str = "Settings are unavailable; nothing was changed.";
 /// The scope picker's values besides a company id.
 const GLOBAL: &str = "global";

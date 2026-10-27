@@ -553,7 +553,7 @@ impl StepUpPolicy {
         let mut html = self.section(
             "step-up-window",
             "After someone enters a 2FA code",
-            "We do not ask them again until one of these runs out.",
+            "A new code is required when either limit is reached.",
             self.facts(
                 "step-up-window-facts",
                 &[Setting::Minutes, Setting::Hours],
@@ -564,7 +564,7 @@ impl StepUpPolicy {
             html.push(&self.section(
                 "step-up-limits",
                 "Longest time any organisation may choose (server owner only)",
-                "No organisation on this server can choose more than these.",
+                "Organisations cannot exceed these limits.",
                 self.facts(
                     "step-up-limits-facts",
                     &[Setting::MinutesLimit, Setting::HoursLimit],
