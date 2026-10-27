@@ -649,7 +649,11 @@ impl UserService {
         let scope = self
             .authentication
             .authenticate(tx.sql(), c.tenant, user, String::new())
-            .await?;
+            .await
+            .map_err(|e| match e {
+                Error::Unauthorized => Error::Forbidden,
+                e => e,
+            })?;
         if scope.actor().organisation().map(|id| id.get()) != Some(c.company) {
             return Err(Error::Forbidden.into());
         }
