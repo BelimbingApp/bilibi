@@ -456,7 +456,9 @@ impl State {
                 let mut outcome = None;
                 for filter in &mut self.period_filters {
                     filter.set(period, &clock);
-                    outcome = filter.event(&ty, event, &clock).map_err(Error::refused)?;
+                    outcome = filter
+                        .event_checked(&ty, event, &clock)
+                        .map_err(Error::refused)?;
                     if outcome.is_some() {
                         break;
                     }

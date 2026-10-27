@@ -539,7 +539,7 @@ impl Index {
                 let clock = self.clock(scope).await?;
                 match self
                     .filter
-                    .event(kind, value, &clock)
+                    .event_checked(kind, value, &clock)
                     .map_err(Error::refused)?
                 {
                     Some(period::Outcome::Applied(period)) => {
