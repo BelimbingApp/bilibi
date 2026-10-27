@@ -432,7 +432,7 @@ impl Index {
                     request.subscriber, request.from
                 );
                 let detail = format!(
-                    "{} missed events will be sent and {} waiting deliveries retried. Events it already has are skipped, so this is safe to repeat. It will act on each event as if it just happened.",
+                    "{} missed events will be sent and {} waiting deliveries retried. Previously delivered events are skipped. The subscriber will act on each replayed event as if it just happened.",
                     request.missed, request.pending
                 );
                 render(ConfirmDialog {

@@ -924,7 +924,7 @@ impl Board {
                 kind: StatusKind::Error,
                 id: "schedule-tasks-unavailable",
                 class: "mt-4",
-                body: Html::text("Task definitions or their database state are unavailable. No status has been inferred."),
+                body: Html::text("Scheduled tasks are unavailable."),
             })?
         } else {
             Html::default()
@@ -1195,9 +1195,7 @@ impl Board {
                 kind: StatusKind::Error,
                 id: "schedule-history-unavailable",
                 class: "mt-4",
-                body: Html::text(
-                    "Run history is unavailable. No empty-history conclusion has been inferred.",
-                ),
+                body: Html::text("Run history is unavailable."),
             })?,
         };
         let card = render(Card {
