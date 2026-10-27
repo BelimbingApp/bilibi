@@ -55,10 +55,19 @@ impl Create {
         }
     }
     fn errors_for(&self, field: &str) -> Vec<String> {
+        let label = match field {
+            "name" => "Name",
+            "email" => "Email",
+            "password" => "Password",
+            "person_id" => "Person",
+            "affiliation_id" => "Company",
+            "landing_menu_id" => "Landing page",
+            _ => "",
+        };
         self.errors
             .iter()
             .filter(|e| e.field == field)
-            .map(|e| e.message.clone())
+            .map(|e| bilibi_ui::error_sentence(label, &e.message))
             .collect()
     }
     async fn view(&mut self, scope: &Scope) -> Result<LiveBody> {
