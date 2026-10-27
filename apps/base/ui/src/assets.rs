@@ -1,6 +1,7 @@
 //! Embedded public assets, mirroring Bilimbi's apps/web/priv/static and
 //! Phoenix digest URLs. Hash the final served bytes, including local references
 //! and the build-specific live reload switch; never hash request input.
+use askama::Template;
 use sha2::{Digest, Sha256};
 use std::{borrow::Cow, sync::OnceLock};
 
@@ -136,7 +137,10 @@ fn catalogue() -> &'static [StaticAsset] {
             "text/css; charset=utf-8",
             css,
         );
-        let specimen = references(include_str!("../assets/static/ui-specimen.html"), &assets);
+        let specimen = references(
+            &AssetSpecimen.render().expect("embedded UI asset specimen"),
+            &assets,
+        );
         add(
             &mut assets,
             "/assets/ui-specimen.html",
@@ -170,3 +174,8 @@ const HOOKS_JS: &str = concat!(
 );
 /// Bilimbi's vendored page-loading bar (MIT), shown by live.js for page-level round trips.
 const TOPBAR_JS: &str = include_str!("../assets/vendor/topbar.js");
+
+// The static asset specimen shares Bilimbi UI.Components' icon macro too.
+#[derive(Template)]
+#[template(path = "ui_asset_specimen.html")]
+struct AssetSpecimen;

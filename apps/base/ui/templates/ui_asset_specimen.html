@@ -1,3 +1,4 @@
+{% import "components.html" as ui %}
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Bilibi asset specimen</title><link rel="icon" href="/favicon.svg"><link rel="stylesheet" href="/assets/app.css"></head>
 <body class="bg-canvas text-ink"><main class="mx-auto max-w-3xl space-y-6 p-8">
@@ -5,7 +6,7 @@
 <section class="space-y-4 rounded-lg border border-line bg-surface p-6">
 <h2 class="text-sm font-semibold">Source component styling</h2>
 <div class="flex flex-wrap gap-2">
-<button class="inline-flex items-center justify-center gap-2 rounded-md border px-3 py-1.5 text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas disabled:cursor-not-allowed disabled:opacity-50 border-transparent bg-action text-action-ink hover:bg-action-hover shadow-xs focus-visible:ring-brand-strong/30"><span class="hero-plus size-4" aria-hidden="true"></span>Create</button>
+<button class="inline-flex items-center justify-center gap-2 rounded-md border px-3 py-1.5 text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas disabled:cursor-not-allowed disabled:opacity-50 border-transparent bg-action text-action-ink hover:bg-action-hover shadow-xs focus-visible:ring-brand-strong/30">{% call ui::icon(name="plus", class="size-4") %}{% endcall %}Create</button>
 <button class="inline-flex items-center justify-center gap-2 rounded-md border px-3 py-1.5 text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas disabled:cursor-not-allowed disabled:opacity-50 border-high-contrast-line bg-surface text-ink hover:bg-surface-sunken shadow-xs focus-visible:ring-brand-strong/30">Secondary</button>
 <button disabled class="inline-flex items-center justify-center gap-2 rounded-md border px-3 py-1.5 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50 border-high-contrast-line bg-surface text-ink shadow-xs">Disabled</button>
 </div>
@@ -14,7 +15,7 @@
 <span data-badge class="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium capitalize bg-warning-surface text-warning-ink">Warning</span>
 <span data-badge class="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium capitalize bg-danger-surface text-danger-ink">Danger</span>
 </div>
-<div class="flex items-center gap-4 text-ink-muted" aria-label="Outline, solid, mini and micro icons"><span class="hero-building-library" aria-hidden="true"></span><span class="hero-bell-solid" aria-hidden="true"></span><span class="hero-chevron-down-mini" aria-hidden="true"></span><span class="hero-chevron-double-up-micro" aria-hidden="true"></span></div>
+<div class="flex items-center gap-4 text-ink-muted" aria-label="Outline, solid, mini and micro icons">{% call ui::icon(name="building-library", class="") %}{% endcall %}{% call ui::icon(name="bell-solid", class="") %}{% endcall %}{% call ui::icon(name="chevron-down-mini", class="") %}{% endcall %}{% call ui::icon(name="chevron-double-up-micro", class="") %}{% endcall %}</div>
 </section>
 <section class="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4" aria-label="Theme role swatches"><div class="rounded-md border border-line bg-surface p-4">Surface</div><div class="rounded-md border border-line bg-surface-muted p-4">Muted</div><div class="rounded-md border border-line bg-surface-sunken p-4">Sunken</div><div class="rounded-md border border-brand-line bg-brand-surface p-4 text-brand-ink">Brand</div></section>
 </main></body></html>

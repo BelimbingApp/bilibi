@@ -784,7 +784,7 @@ impl Postcodes {
         html.push(&self.run.button(
             "postcodes-import",
             event,
-            "hero-arrow-down-tray",
+            "arrow-down-tray",
             ButtonVariant::Primary,
             &label,
             if importing { "Importing…" } else { &label },

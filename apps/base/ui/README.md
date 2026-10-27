@@ -14,6 +14,33 @@ List toolbars put search first and filter boxes to its right, wrapping below sea
 
 Use `Chart::new_with_display_values` when values have a stored decimal scale: pass owner-formatted strings indexed by series and category alongside the numeric values used for geometry. The Data table, mark titles and KPI use those strings; absent strings fall back to the numeric value. Missing numeric values remain gaps. `Chart::new` is suitable when the float itself is the intended display value. Pie and donut totals are calculated from numeric values and displayed to 15 significant digits.
 
+## Icons
+
+**Use one bare icon name in menus, templates and Rust callers**, such as `building-office-2`, `edit` or `bookmark-solid`.
+
+```rust
+let edit = bilibi_ui::Icon { name: "edit", class: "size-4" };
+```
+
+Templates call the shared `ui::icon` macro with the same name. Prefer a semantic action such as `edit` or `manage` for a familiar action. The Design Library’s Graphic page lists every accepted name and copies it to the clipboard.
+
+| Name | SVG variant | Natural size |
+| --- | --- | --- |
+| `check-circle` | Outline | 24 px |
+| `check-circle-solid` | Solid | 24 px |
+| `check-circle-mini` | Solid mini | 20 px |
+| `check-circle-micro` | Solid micro | 16 px |
+
+The macro defaults to `size-4` (16 px); pass a size class to change it. If you supply classes without a size, the SVG keeps its natural size. Icons inherit `currentColor`; outline strokes stay at 1.5 units. Busy buttons use the same `arrow-path` SVG with their existing motion class.
+
+`Icons` is the public catalogue facade. Cargo embeds the vendored Heroicons and product SVGs at build time, preserving path fill and clip rules. Semantic action and shell mappings live in `assets/vendor/product-icons/catalog.json`. There are no runtime file reads, CSS masks, icon plugins or icon safelists.
+
+**An unknown name renders `missing-icon`**, a neutral dashed box in the caller’s size and colour, and logs one warning per name. At boot the host checks every menu contribution and includes its module in the warning; later rendering does not repeat that warning. Multiple contributing modules each get their own diagnostic. Missing icons never stop boot or panic during rendering. Names are exact: a prefixed or misspelled name gets the placeholder.
+
+## Shell feedback
+
+Theme and time-display saves use the shared flash UI through `feedback::local_flash_group`. Success dismisses after eight seconds; saving information and errors remain until replaced or dismissed. Browser-owned flashes dismiss locally without clearing the page’s server-owned flash. Stat-strip value labels use `ink-muted` so they remain readable in both themes.
+
 ## Colour input
 
 Use **`ColourInput` for a choice of named colours**. Each choice is a chip in that colour's banner surface, border and text colour, with the name inside.

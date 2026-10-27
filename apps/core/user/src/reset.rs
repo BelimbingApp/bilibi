@@ -186,14 +186,14 @@ impl UserService {
         let Some(token) = issue_reset_token(&**client, tenant, user).await? else {
             return finish_reset_request().await;
         };
-        let message = Message {
-            to: Address::new(Some(&name), &address).map_err(|_| Error::Invalid)?,
-            subject: "Reset your Bilibi password".into(),
-            text: format!(
+        let message = Message::text(
+            Address::new(Some(&name), &address).map_err(|_| Error::Invalid)?,
+            "Reset your Bilibi password",
+            format!(
                 "Reset your Bilibi password by opening this link:\n\n{}\n\nIf you did not request this, you can ignore this email.\n",
                 self.reset_link(&address, &token)
             ),
-        };
+        );
         let (mailer, db, hash) = (self.mailer.clone(), self.db.clone(), digest(&token));
         tokio::spawn(async move {
             if let Err(error) = mailer.deliver(&message).await {
@@ -244,11 +244,11 @@ impl UserService {
                 "Reset your password with \"Forgot your password?\" on the sign-in page.\n".into()
             }
         };
-        let message = Message {
-            to: Address::new(Some(&name), &address).map_err(|_| Error::Invalid)?,
-            subject: subject.into(),
-            text: format!("{text}\n\n{link}"),
-        };
+        let message = Message::text(
+            Address::new(Some(&name), &address).map_err(|_| Error::Invalid)?,
+            subject,
+            format!("{text}\n\n{link}"),
+        );
         let (mailer, db, hash) = (
             self.mailer.clone(),
             self.db.clone(),

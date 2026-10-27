@@ -439,12 +439,8 @@ fn active_item(tree: &[menu::Node], path: &str) -> Option<&'static str> {
 
 fn nav_node(node: &menu::Node, active: Option<&str>) -> NavNode {
     let item = node.item.item;
-    // Contributions carry bare Heroicon names; the host adds the set prefix.
-    let icon = match item.icon {
-        None => "hero-square-3-stack-3d".to_owned(),
-        Some(name) if name.starts_with("hero-") => name.to_owned(),
-        Some(name) => format!("hero-{name}"),
-    };
+    // Bilimbi ShellComponents uses the contributed icon name unchanged.
+    let icon = item.icon.unwrap_or("square-3-stack-3d").to_owned();
     NavNode {
         id: item.id.to_owned(),
         label: item.label.to_owned(),

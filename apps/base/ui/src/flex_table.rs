@@ -209,11 +209,11 @@ impl Lens {
 
     pub fn icon(self) -> &'static str {
         match self {
-            Self::Value => "hero-bars-3-bottom-left",
-            Self::Bar => "hero-chart-bar",
-            Self::Band => "hero-paint-brush",
-            Self::Trend => "hero-arrow-trending-up",
-            Self::Delta => "hero-calendar-days",
+            Self::Value => "bars-3-bottom-left",
+            Self::Bar => "chart-bar",
+            Self::Band => "paint-brush",
+            Self::Trend => "arrow-trending-up",
+            Self::Delta => "calendar-days",
         }
     }
 

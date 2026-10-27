@@ -13,6 +13,7 @@ bilibi-authz = { path = "../authz" }
 bilibi-datetime = { path = "../datetime" }
 bilibi-settings = { path = "../settings" }
 bilibi-ui.workspace = true
+bytes.workspace = true
 jiff = "0.2.38"
 tokio-postgres.workspace = true
 inventory.workspace = true

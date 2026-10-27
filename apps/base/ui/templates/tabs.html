@@ -20,7 +20,7 @@
 {%- endif -%}
 {%- endfor -%}
 </div>
-<button type="button" id="{{ id }}-scroll-start" data-tab-scroll="start" tabindex="-1" hidden aria-label="Show earlier tabs" class="absolute top-1/2 left-0 z-10 grid size-6 -translate-y-1/2 place-items-center text-ink-muted">{% call c::icon(name="hero-chevron-left", class="size-4") %}{% endcall %}</button>
-<button type="button" id="{{ id }}-scroll-end" data-tab-scroll="end" tabindex="-1" hidden aria-label="Show later tabs" class="absolute top-1/2 right-0 z-10 grid size-6 -translate-y-1/2 place-items-center text-ink-muted">{% call c::icon(name="hero-chevron-right", class="size-4") %}{% endcall %}</button>
+<button type="button" id="{{ id }}-scroll-start" data-tab-scroll="start" tabindex="-1" hidden aria-label="Show earlier tabs" class="absolute top-1/2 left-0 z-10 grid size-6 -translate-y-1/2 place-items-center text-ink-muted">{% call c::icon(name="chevron-left", class="size-4") %}{% endcall %}</button>
+<button type="button" id="{{ id }}-scroll-end" data-tab-scroll="end" tabindex="-1" hidden aria-label="Show later tabs" class="absolute top-1/2 right-0 z-10 grid size-6 -translate-y-1/2 place-items-center text-ink-muted">{% call c::icon(name="chevron-right", class="size-4") %}{% endcall %}</button>
 </nav>
 {% endmacro %}

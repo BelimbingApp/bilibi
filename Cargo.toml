@@ -18,6 +18,7 @@ jiff = "0.2.38"
 deadpool-postgres = "0.14"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+bytes = "1.12.1"
 uuid = { version = "1", features = ["v4"] }
 libc = "0.2.190"
 thiserror = "2"
@@ -80,6 +81,7 @@ bilibi-search = { path = "apps/base/search" }
 bilibi-session = { path = "apps/base/session" }
 bilibi-settings = { path = "apps/base/settings" }
 bilibi-settings-editor = { path = "apps/base/settings_editor" }
+bilibi-picklists = { path = "apps/base/picklists" }
 bilibi-step-up = { path = "apps/base/step_up" }
 bilibi-software = { path = "apps/base/software" }
 bilibi-authz-agent = { path = "apps/base/authz_agent" }

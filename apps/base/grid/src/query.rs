@@ -21,6 +21,8 @@ pub enum QueryError {
     Limit(&'static str),
     ForbiddenRoot,
     Column(String, ColumnError),
+    /// A filter, grouping, measure or sort the column's type does not take.
+    Unsupported(String, &'static str),
     Catalog(crate::CatalogError),
     Database(Error),
 }
@@ -30,6 +32,7 @@ impl fmt::Display for QueryError {
             Self::Limit(why) => write!(f, "grid projection limit: {why}"),
             Self::ForbiddenRoot => write!(f, "grid table unavailable"),
             Self::Column(spec, why) => write!(f, "grid column {spec}: {why}"),
+            Self::Unsupported(spec, why) => write!(f, "grid column {spec}: {why}"),
             Self::Catalog(error) => error.fmt(f),
             Self::Database(error) => error.fmt(f),
         }
@@ -55,7 +58,9 @@ impl From<crate::CatalogError> for QueryError {
 impl From<QueryError> for Error {
     fn from(error: QueryError) -> Self {
         match error {
-            QueryError::Limit(_) | QueryError::Column(_, _) => Self::Invalid,
+            QueryError::Limit(_) | QueryError::Column(_, _) | QueryError::Unsupported(_, _) => {
+                Self::Invalid
+            }
             QueryError::ForbiddenRoot => Self::Forbidden,
             QueryError::Catalog(error) => error.into(),
             QueryError::Database(error) => error,
@@ -432,13 +437,13 @@ pub const BOUNDS: &str = "SET LOCAL statement_timeout = '2000ms'; SET LOCAL lock
 fn ident(name: &str) -> String {
     format!("\"{}\"", name.replace('"', "\"\""))
 }
-fn field(alias: &str, table: &Table, id: &str) -> String {
+pub(crate) fn field(alias: &str, table: &Table, id: &str) -> String {
     format!(
         "{alias}.{}",
         ident(table.field(id).expect("resolved field").source_key())
     )
 }
-fn source(table: &Table) -> String {
+pub(crate) fn source(table: &Table) -> String {
     format!("({})", table.source().sql)
 }
 fn condition(link: &Link, parent: &Table, target: &Table, p: &str, t: &str) -> String {
@@ -464,7 +469,7 @@ fn condition(link: &Link, parent: &Table, target: &Table, p: &str, t: &str) -> S
 // multiply each other or the page. One-hops select a scalar key first: a broken
 // owner declaration returning two targets fails instead of silently inflating
 // aggregates. Edge duplicates are set membership, not duplicate business rows.
-fn cell(catalog: &Catalog, root: &Table, column: &Column) -> String {
+pub(crate) fn cell(catalog: &Catalog, root: &Table, column: &Column) -> String {
     let Some(Walked {
         suffix,
         alias: p,

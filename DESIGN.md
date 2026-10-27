@@ -63,7 +63,7 @@ Reuse the shared macros and typed models. Do not hand-write markup or copy class
 | Chart (KPI, bar, stacked bar, line, pie, donut) | `templates/chart.html` and `src/chart.rs` (`Chart`, `ChartKind`, `Series`) | `apps/base/ui` |
 
 - Name variants through the enums (`ButtonVariant`, `BadgeKind`, `PageVariant`), not class strings.
-- Icons come from `src/icons.rs` action names or `hero-*`. Use the Belimbing equivalent for a familiar action.
+- Icons use bare names from `base/ui` (`edit`, `pencil`, `bookmark-solid`), rendered as inline SVG. Use the Belimbing equivalent for a familiar action; see `apps/base/ui/README.md` for names and missing-icon behaviour.
 - Icon-only actions need an accessible label and a title. Inline controls are 24 px; table and toolbar controls are 28 px. Touch screens expand icon, tab, pager and choice targets to 40 px; the labelled button stays 24 px.
 - Links navigate; buttons act.
 - Destructive actions use calm danger text, never a solid red button.
@@ -170,6 +170,7 @@ Width is a shared decision. Every page uses `PageVariant`. All three share one c
 | Modal | Native `<dialog>`. Focus enters, stays, and returns. Escape and Cancel are one action. A click on the backdrop does nothing |
 | Confirmation | `ConfirmDialog` for irreversible actions: consequence first, Cancel beside the destructive verb. Never `window.confirm` |
 | Flash | Stacks at the right above the page, most severe first, reserving space so messages never cover page actions. A message that arrives with a redirect floats top right instead. Info, warning and error stay until dismissed. Success clears after 8 s |
+| Shell preferences | Theme and time-display saves use the shared floating flash, with the same success timeout and persistent errors |
 | Success | Only for a completed write |
 | Info | Informs without confirming a write |
 | Panel notice | Where a panel cannot reach the page flash |

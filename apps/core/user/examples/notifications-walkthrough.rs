@@ -61,7 +61,7 @@ async fn main() -> Result<()> {
         .kind("finance.close")
         .body("Books lock on 31 October; post outstanding entries before then.")
         .url("/dashboard")
-        .icon("hero-calendar");
+        .icon("calendar");
 
     let mut tx = users
         .mutations
