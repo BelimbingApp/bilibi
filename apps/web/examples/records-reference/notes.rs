@@ -329,7 +329,10 @@ impl Notes {
         let get = |key: &str| value.get(key).and_then(Value::as_str);
         match get("type").ok_or(Error::Invalid)? {
             "grid" => {
-                self.columns.handle(&params::string_values(value));
+                self.columns.handle(
+                    &params::string_values_checked(value, params::FIELD_LIMIT)
+                        .map_err(Error::refused)?,
+                );
             }
             "clear-flash" => {
                 if self
@@ -341,7 +344,8 @@ impl Notes {
                 }
             }
             "note_change" => {
-                let form = params::form_values(value, "note");
+                let form = params::form_values_checked(value, "note", params::FIELD_LIMIT)
+                    .map_err(Error::refused)?;
                 self.body = form.get("body").cloned().unwrap_or_default();
                 let query = form.get("record_search").cloned().unwrap_or_default();
                 if query != self.query {

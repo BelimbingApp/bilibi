@@ -13,7 +13,7 @@ use bilibi_tenancy::Scope;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     sync::Arc,
 };
 use tokio_postgres::GenericClient;
@@ -45,7 +45,8 @@ impl Reference {
 pub struct Resolved {
     /// The reference as the holder stored it.
     pub reference: Reference,
-    /// The record it points at now: the stored id, or the survivor of a merge.
+    /// The record it points at now when it is named: the id's one spelling,
+    /// or the survivor of a merge. Otherwise the stored id.
     pub id: String,
     /// The record's name, `None` when the reader cannot see it, it was
     /// removed, or its kind is not mounted. Show those as unavailable.
@@ -152,18 +153,25 @@ impl Records {
         self.kinds.get(key).map(|(_, module)| *module)
     }
 
-    /// Whether `id` can be a key of `kind`'s Grid table: one path segment of
-    /// at most 64 bytes, and a number when the table's key is a number, so a
-    /// malformed id never reaches the owner's source as a cast error.
-    fn id_fits(kind: &RecordKind, id: &str) -> bool {
+    /// The one spelling of `id` as a key of `kind`'s Grid table, or `None`
+    /// when it cannot be one: one path segment of at most 64 bytes, and for a
+    /// number key the number in plain decimal (`01` and `+1` are `1`). A
+    /// stored reference, a redirect and a referrer count then name the row
+    /// Grid returns, and a malformed id never reaches the owner's source as a
+    /// cast error.
+    fn canonical(kind: &RecordKind, id: &str) -> Option<String> {
         if !bilibi_ui::workspace::record_id(id) {
-            return false;
+            return None;
         }
         let integer = bilibi_grid::installed()
             .ok()
             .and_then(|installed| installed.table(kind.table))
             .is_some_and(|table| table.key_field().ty == FieldType::Integer);
-        !integer || id.parse::<i64>().is_ok()
+        if integer {
+            id.parse::<i64>().ok().map(|id| id.to_string())
+        } else {
+            Some(id.to_owned())
+        }
     }
 
     /// The survivors of merged records, by stored id.
@@ -190,9 +198,10 @@ impl Records {
     /// Whether a holder may store a reference to `(kind, id)`: the kind must
     /// be mounted, the id well formed, and the owner must answer `Readable`
     /// for this reader. When writing, pass the holder's own transaction
-    /// (`tx.sql()`); a preview may pass any client. A merged record is checked
-    /// as its survivor, and the survivor is what the holder should store. The
-    /// owner is not written to and is not told.
+    /// (`tx.sql()`); a preview may pass any client. The returned reference is
+    /// what the holder stores: the id's one spelling (`01` is `1`), and for a
+    /// merged record its survivor, which is what is checked. The owner is not
+    /// written to and is not told.
     pub async fn check(
         &self,
         client: &(impl GenericClient + Sync),
@@ -203,13 +212,13 @@ impl Records {
         let Some(record) = self.kind(kind) else {
             return Ok(Err(Refusal::UnknownKind));
         };
-        if !Self::id_fits(record, id) {
+        let Some(id) = Self::canonical(record, id) else {
             return Ok(Err(Refusal::MalformedId));
-        }
-        let id = Self::redirected(client, scope.tenant(), kind, &[id.to_owned()])
+        };
+        let id = Self::redirected(client, scope.tenant(), kind, std::slice::from_ref(&id))
             .await?
-            .remove(id)
-            .unwrap_or_else(|| id.to_owned());
+            .remove(&id)
+            .unwrap_or(id);
         Ok(match record.owner.authorize(client, scope, &id).await? {
             Access::Readable => Ok(Reference::new(kind, id)),
             Access::NotFound => Err(Refusal::NotFound),
@@ -223,24 +232,45 @@ impl Records {
     /// cannot see, a removed record, an unknown or unmounted kind and a
     /// malformed id all come back unnamed, never as an error.
     pub async fn resolve(&self, scope: &Scope, references: &[Reference]) -> Result<Vec<Resolved>> {
-        let mut by_kind: BTreeMap<&str, Vec<String>> = BTreeMap::new();
+        let mut by_kind: BTreeMap<&str, Vec<&Reference>> = BTreeMap::new();
         for reference in references {
             by_kind
                 .entry(reference.kind.as_str())
                 .or_default()
-                .push(reference.id.clone());
+                .push(reference);
         }
-        let client = self.db.get().await?;
-        let mut names: HashMap<(String, String), (String, String)> = HashMap::new();
-        for (key, ids) in by_kind {
+        // The record each reference points at now, and the reader's name for it.
+        let mut targets: HashMap<&Reference, String> = HashMap::new();
+        let mut names: HashMap<(&str, String), String> = HashMap::new();
+        for (key, stored) in by_kind {
             let Some(kind) = self.kind(key) else {
                 continue;
             };
-            let ids: Vec<String> = ids
+            let ids: Vec<(&Reference, String)> = stored
                 .into_iter()
-                .filter(|id| Self::id_fits(kind, id))
+                .filter_map(|reference| {
+                    Self::canonical(kind, &reference.id).map(|id| (reference, id))
+                })
                 .collect();
-            let moved = Self::redirected(&**client, scope.tenant(), key, &ids).await?;
+            let wanted: Vec<String> = ids
+                .iter()
+                .map(|(_, id)| id.clone())
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect();
+            // A connection for this read only: Grid's projection takes its
+            // own, and holding one across it lets concurrent resolves take
+            // the whole pool and wait on each other.
+            let moved = {
+                let client = self.db.get().await?;
+                Self::redirected(&**client, scope.tenant(), key, &wanted).await?
+            };
+            let mut projected = BTreeSet::new();
+            for (reference, id) in ids {
+                let target = moved.get(&id).cloned().unwrap_or(id);
+                projected.insert(target.clone());
+                targets.insert(reference, target);
+            }
             let Some(label_field) = bilibi_grid::installed()
                 .ok()
                 .and_then(|installed| installed.table(kind.table))
@@ -248,14 +278,10 @@ impl Records {
             else {
                 continue;
             };
-            let targets: Vec<String> = ids
-                .iter()
-                .map(|id| moved.get(id).unwrap_or(id).clone())
-                .collect();
-            for chunk in targets.chunks(MAX_PER_KIND) {
-                let keys: Vec<Value> = chunk.iter().map(|id| json!(id)).collect();
+            let projected: Vec<Value> = projected.into_iter().map(Value::String).collect();
+            for chunk in projected.chunks(MAX_PER_KIND) {
                 let projection =
-                    match bilibi_grid::project(&self.db, scope, kind.table, &keys, &[label_field])
+                    match bilibi_grid::project(&self.db, scope, kind.table, chunk, &[label_field])
                         .await
                     {
                         Ok(projection) => projection,
@@ -269,26 +295,26 @@ impl Records {
                         other => other.to_string(),
                     };
                     if let Some(label) = row.cells.get(label_field).and_then(Value::as_str) {
-                        names.insert((key.to_owned(), id.clone()), (id, label.to_owned()));
+                        names.insert((key, id), label.to_owned());
                     }
-                }
-            }
-            for (from, to) in moved {
-                if let Some(named) = names.get(&(key.to_owned(), to)).cloned() {
-                    names.insert((key.to_owned(), from), named);
                 }
             }
         }
         Ok(references
             .iter()
             .map(|reference| {
-                let kind = self.kind(&reference.kind);
-                let named = names.get(&(reference.kind.clone(), reference.id.clone()));
+                let target = targets.get(reference);
+                let label = target
+                    .and_then(|id| names.get(&(reference.kind.as_str(), id.clone())))
+                    .cloned();
+                let named = target.filter(|_| label.is_some());
                 Resolved {
                     reference: reference.clone(),
-                    id: named.map_or_else(|| reference.id.clone(), |(id, _)| id.clone()),
-                    label: named.map(|(_, label)| label.clone()),
-                    path: named.and_then(|(id, _)| kind.and_then(|kind| kind.path_of(id))),
+                    id: named.map_or_else(|| reference.id.clone(), Clone::clone),
+                    path: named.and_then(|id| {
+                        self.kind(&reference.kind).and_then(|kind| kind.path_of(id))
+                    }),
+                    label,
                     module: self.module(&reference.kind),
                 }
             })
@@ -299,7 +325,8 @@ impl Records {
     /// `label_field` is matched inside the owner's own source (Grid's
     /// `text_search_sql`), so the tenant predicate, soft delete and the
     /// reader's permissions apply, and each kind returns at most the
-    /// tenant's `records.picker_hits`. A hit is still `check`ed on save.
+    /// tenant's `records.picker_hits`. A merged record is found as its
+    /// survivor, once. A hit is still `check`ed on save.
     pub async fn search(&self, scope: &Scope, kinds: &[&str], text: &str) -> Result<Vec<Hit>> {
         let needle: String = text
             .trim()
@@ -371,15 +398,19 @@ impl Records {
             })
             .collect();
         hits.sort_by(|a, b| {
-            (a.label.to_lowercase(), &a.kind).cmp(&(b.label.to_lowercase(), &b.kind))
+            (a.label.to_lowercase(), &a.kind, &a.id).cmp(&(b.label.to_lowercase(), &b.kind, &b.id))
         });
+        // Records merged into one survivor are one hit.
+        hits.dedup_by(|a, b| a.kind == b.kind && a.id == b.id);
         Ok(hits)
     }
 
     /// Points `(kind, from)` at `(kind, to)` after the owner merged the two
     /// records, inside the owner's own merge transaction. Chains collapse on
     /// write: anything that pointed at `from` now points at `to`, and `to`
-    /// itself is never redirected. Holders repoint on read; no holder row is
+    /// itself is never redirected. Ids are taken in their one spelling.
+    /// Merges of one kind in one tenant run one at a time, so overlapping
+    /// merges commit no chain. Holders repoint on read; no holder row is
     /// rewritten. One audited `Change` on `record_redirect` per row.
     pub async fn redirect(
         &self,
@@ -392,18 +423,31 @@ impl Records {
         let Some(record) = self.kind(kind) else {
             return Err(Error::Invalid);
         };
-        if from == to || !Self::id_fits(record, from) || !Self::id_fits(record, to) {
+        let (Some(from), Some(to)) = (Self::canonical(record, from), Self::canonical(record, to))
+        else {
+            return Err(Error::Invalid);
+        };
+        if from == to {
             return Err(Error::Invalid);
         }
         let tenant = scope.tenant();
-        let to = Self::redirected(tx.sql(), tenant, kind, &[to.to_owned()])
+        // One merge of this kind at a time: a second waits here until the
+        // first commits. The mutation transaction reads at READ COMMITTED, so
+        // what follows then sees the first merge's redirects and repoints them.
+        tx.sql()
+            .execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended('base-records-redirect-' || $1::text || ':' || $2, 0))",
+                &[&tenant.to_string(), &kind],
+            )
+            .await?;
+        let to = Self::redirected(tx.sql(), tenant, kind, std::slice::from_ref(&to))
             .await?
-            .remove(to)
-            .unwrap_or_else(|| to.to_owned());
+            .remove(&to)
+            .unwrap_or(to);
         if to == from {
             return Err(Error::Invalid);
         }
-        let (kind, from) = (kind.to_owned(), from.to_owned());
+        let kind = kind.to_owned();
         tx.mutate(move |sql| {
             Box::pin(async move {
                 let mut changes = Vec::new();
@@ -450,8 +494,14 @@ impl Records {
     /// How many references each holder table has to `(kind, id)`, for this
     /// reader: only tables the reader may read, counted through the holder's
     /// own Grid source under Grid's bounds. References to records merged into
-    /// `id` count too. The owner never learns its holders.
+    /// `id` count too. A mounted kind's id is read in its one spelling and a
+    /// malformed one is refused; an unmounted kind's is taken as given. The
+    /// owner never learns its holders.
     pub async fn referrers(&self, scope: &Scope, kind: &str, id: &str) -> Result<Vec<Referrers>> {
+        let id = match self.kind(kind) {
+            Some(record) => Self::canonical(record, id).ok_or(Error::Invalid)?,
+            None => id.to_owned(),
+        };
         let mut client = self.db.get().await?;
         let tx = client
             .build_transaction()
@@ -469,7 +519,7 @@ impl Records {
             .iter()
             .map(|row| row.get(0))
             .collect();
-        ids.push(id.to_owned());
+        ids.push(id);
         let catalog = Catalog::for_scope(&*tx, scope).await?;
         let mut counts = Vec::new();
         for holder in &self.holders {

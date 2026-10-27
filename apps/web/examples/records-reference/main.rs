@@ -18,7 +18,10 @@
 //! merged company reads as its survivor); `referrers` for a reader of the
 //! notes table and for one who cannot read it; picker search; and the agent
 //! edge answering `label`, `path` and `url` over real HTTP with a real agent
-//! connection (its token is never printed).
+//! connection (its token is never printed). Then the cases of the #200
+//! review: an id with a leading zero is one record everywhere, overlapping
+//! merges commit no chain, and many concurrent resolves never exhaust the
+//! connection pool.
 //!
 //! Fixture setup that has no page of its own is plain SQL on the disposable
 //! database, and says so: a retired person, a soft-deleted company, the
@@ -32,13 +35,14 @@ mod notes;
 use bilibi_agent_api::plans::{PlanAuthority, PlanIdentity, PlannedOperation, Plans};
 use bilibi_base::authz::grants::Grants;
 use bilibi_core::agent_access::{AgentAccess, Decision, CLIENT_ID};
-use bilibi_database::{pool, Error, MutationBoundary};
+use bilibi_database::{pool, Db, Error, MutationBoundary};
 use bilibi_module_registry::{Catalog, Consumer, Contribution, Layer, Module, Provenance};
 use bilibi_records::{
     validate_installed, Access, RecordKind, RecordOwner, Records, Reference, KINDS,
 };
 use bilibi_tenancy::{Authentication, ProofClient, ProofFuture, Scope};
 use serde_json::{json, Value};
+use std::{sync::Arc, time::Duration};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_postgres::Transaction;
 bilibi_walkthrough_fixture::walkthrough_vocabulary!();
@@ -244,6 +248,13 @@ async fn checks(
             "61",
             "a company merged into company 1",
         ),
+        (
+            "admin",
+            admin,
+            "company",
+            "01",
+            "a company id with a leading zero",
+        ),
     ] {
         let answer = records.check(&**client, scope, kind, id).await?;
         println!(
@@ -289,10 +300,14 @@ async fn reads(
             );
         }
     }
-    for (who, scope) in [("admin", admin), ("staff (no notes table)", staff)] {
-        let counts = records.referrers(scope, "company", "1").await?;
+    for (who, scope, id) in [
+        ("admin", admin, "1"),
+        ("admin", admin, "01"),
+        ("staff (no notes table)", staff, "1"),
+    ] {
+        let counts = records.referrers(scope, "company", id).await?;
         println!(
-            "referrers of company 1 as {who}: {:?}",
+            "referrers of company {id} as {who}: {:?}",
             counts
                 .iter()
                 .map(|c| (c.table, c.count))
@@ -315,6 +330,125 @@ async fn reads(
 
 /// A real agent connection for `scope`'s account, as the device flow grants
 /// it; the token stays in memory and is never printed.
+/// The owner merges company `from` into `to`, in its own transaction.
+async fn merge(
+    records: &Records,
+    boundary: &MutationBoundary,
+    db: &Db,
+    admin: &Scope,
+    from: &str,
+    to: &str,
+) -> bilibi_database::Result<()> {
+    let mut client = db.get().await?;
+    let mut tx = boundary
+        .begin(
+            &mut client,
+            admin.mutation_context("records.reference.merge"),
+        )
+        .await?;
+    records
+        .redirect(&mut tx, admin, "company", from, to)
+        .await?;
+    tx.commit().await
+}
+
+/// The cases of the #200 review.
+async fn review(
+    records: &Arc<Records>,
+    boundary: &Arc<MutationBoundary>,
+    db: &Db,
+    admin: &Scope,
+) -> Outcome {
+    println!("-- an id with a leading zero");
+    for resolved in records
+        .resolve(admin, &[Reference::new("company", "01")])
+        .await?
+    {
+        println!(
+            "   resolve company 01 -> {} {} (id {})",
+            show(resolved.label.as_deref()),
+            resolved.path.unwrap_or_default(),
+            resolved.id
+        );
+    }
+
+    println!("-- overlapping merges (51 into 52 while 52 goes into 53)");
+    let mut client = db.get().await?;
+    let mut first = boundary
+        .begin(
+            &mut client,
+            admin.mutation_context("records.reference.merge"),
+        )
+        .await?;
+    records
+        .redirect(&mut first, admin, "company", "051", "52")
+        .await?;
+    let second = {
+        let (records, boundary, db, admin) =
+            (records.clone(), boundary.clone(), db.clone(), admin.clone());
+        tokio::spawn(async move { merge(&records, &boundary, &db, &admin, "52", "53").await })
+    };
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    println!(
+        "   the second merge, before the first commits: {}",
+        if second.is_finished() {
+            "did not wait"
+        } else {
+            "waits"
+        }
+    );
+    first.commit().await?;
+    drop(client);
+    second.await??;
+    for row in db
+        .get()
+        .await?
+        .query(
+            "SELECT from_id, to_id FROM base_records_redirects WHERE tenant_id=1 AND kind='company' AND from_id IN ('51','52') ORDER BY from_id",
+            &[],
+        )
+        .await?
+    {
+        println!(
+            "   redirect {} -> {}",
+            row.get::<_, String>(0),
+            row.get::<_, String>(1)
+        );
+    }
+
+    println!("-- 64 concurrent resolves on a pool of 16 connections");
+    let mut running = tokio::task::JoinSet::new();
+    for _ in 0..64 {
+        let (records, admin) = (records.clone(), admin.clone());
+        running.spawn(async move {
+            records
+                .resolve(&admin, &[Reference::new("company", "1")])
+                .await
+        });
+    }
+    let mut named = 0;
+    let finished = tokio::time::timeout(Duration::from_secs(30), async {
+        while let Some(done) = running.join_next().await {
+            if done??.iter().all(|resolved| resolved.label.is_some()) {
+                named += 1;
+            }
+        }
+        Ok::<_, Box<dyn std::error::Error>>(())
+    })
+    .await;
+    match finished {
+        Ok(result) => {
+            result?;
+            println!("   all 64 finished, {named} named");
+        }
+        Err(_) => {
+            println!("   stalled: {named} of 64 finished after 30 s");
+            return Err("concurrent resolves stalled".into());
+        }
+    }
+    Ok(())
+}
+
 async fn agent_token(
     app: &bilibi_web::App,
     db: &bilibi_database::Db,
@@ -435,18 +569,7 @@ async fn main() -> Outcome {
     let boundary = app
         .services
         .get::<MutationBoundary>("base/database.mutations")?;
-    let mut client = db.get().await?;
-    let mut tx = boundary
-        .begin(
-            &mut client,
-            admin.mutation_context("records.reference.merge"),
-        )
-        .await?;
-    records
-        .redirect(&mut tx, &admin, "company", "61", "1")
-        .await?;
-    tx.commit().await?;
-    drop(client);
+    merge(&records, &boundary, &db, &admin, "61", "1").await?;
 
     checks(&records, &db, &admin, &viewer).await?;
 
@@ -507,7 +630,7 @@ async fn main() -> Outcome {
         listener,
         bilibi_web::router(app.clone()),
     )));
-    let resolved = call(addr, &host, &token, "base.records.resolve", json!({"references": [{"kind": "company", "id": "61"}, {"kind": "person", "id": "1"}, {"kind": "finance.receivables.document", "id": "7"}]})).await?;
+    let resolved = call(addr, &host, &token, "base.records.resolve", json!({"references": [{"kind": "company", "id": "61"}, {"kind": "company", "id": "01"}, {"kind": "person", "id": "1"}, {"kind": "finance.receivables.document", "id": "7"}]})).await?;
     for r in resolved["result"]["references"]
         .as_array()
         .into_iter()
@@ -551,6 +674,8 @@ async fn main() -> Outcome {
         listed["result"]["notes"][0]["record"]["url"]
     );
     served.abort();
+
+    review(&records, &boundary, &db, &admin).await?;
 
     println!("-- audit");
     for row in db.get().await?.query("SELECT auditable_type, event, actor_type||' '||actor_id, new_values::text FROM base_audit_mutations WHERE auditable_type IN ('record_redirect','records_reference.note') ORDER BY id", &[]).await? {

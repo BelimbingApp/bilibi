@@ -51,7 +51,7 @@ Each refusal names the kind and its source line.
 | Accept a new reference | `check(client, scope, kind, id)`: with your write's `tx.sql()`; a preview may pass any client. Store the `Reference` it returns. |
 | Show references | `resolve(scope, &references)` → `Resolved { label, path, … }`, in the order given; `resolved.pill(id, framed)` gives the `RelatedRecord`. |
 | Pick a record | `search(scope, &kinds, text)` → hits; `records.picker_hits(&hits)` feeds `RecordPicker`. |
-| Who points here | `referrers(scope, kind, id)` → a count per holder table the reader may read. |
+| Who points here | `referrers(scope, kind, id)` → a count per holder table the reader may read; a malformed id of a mounted kind is refused. |
 | Merge two records (owner) | `redirect(tx, scope, kind, from, to)` in the owner's merge transaction. |
 
 - A refusal from `check` (`UnknownKind`, `MalformedId`, `NotFound`, `Forbidden`) is your field error: `refusal.message()`.
@@ -60,11 +60,12 @@ Each refusal names the kind and its source line.
 ## Behaviour
 
 - **Ids are text,** at most 64 bytes in one path segment (`workspace::record_id`). A kind whose Grid key is a number only accepts numeric ids, so a forged id never reaches the owner's source as an error.
+- **One spelling per id:** a number key is read as plain decimal everywhere. `check` returns `01` as `1` for the holder to store, and `resolve`, `redirect` and `referrers` read `01` as `1` too.
 - **Unknown kinds fail closed:** `check` refuses them; `resolve` shows them as unavailable, never as an error, so unmounting a Domain leaves holders working.
-- **Names with the reader's permissions:** `resolve` projects each kind's `label_field` through `bilibi_grid::project` with the reader's scope, at most 100 ids per kind per call. A row Grid drops (no read capability on the table, a restricted label, a removed or soft-deleted record) shows as unavailable. A name follows the Grid table's read capability; the record's page still enforces its own access.
+- **Names with the reader's permissions:** `resolve` projects each kind's `label_field` through `bilibi_grid::project` with the reader's scope, at most 100 ids per kind per call. It never holds a pooled connection while Grid takes its own, so concurrent resolves cannot exhaust the pool. A row Grid drops (no read capability on the table, a restricted label, a removed or soft-deleted record) shows as unavailable. A name follows the Grid table's read capability; the record's page still enforces its own access.
 - **Removed records** are never cascaded and holders' rows are never deleted.
-- **Merges:** a redirect `(tenant, kind, from) → to` is followed by `check`, `resolve` and the pill, so every holder repoints on read. Chains collapse on write, and each redirect row is an audited `Change` on `record_redirect`.
-- **Picker:** `search` matches each allowed kind's `label_field` inside the owner's own source (`text_search_sql`), so tenant, soft delete and permissions apply. Each kind returns at most the tenant setting `records.picker_hits` (default 8, Settings › Records). A choice is still `check`ed on save; a forged id is refused.
+- **Merges:** a redirect `(tenant, kind, from) → to` is followed by `check`, `resolve` and the pill, so every holder repoints on read. Chains collapse on write, and each redirect row is an audited `Change` on `record_redirect`. `redirect` takes a transaction lock per tenant and kind, so overlapping merges run one after the other and never commit a chain (`a → b` beside `b → c`).
+- **Picker:** `search` matches each allowed kind's `label_field` inside the owner's own source (`text_search_sql`), so tenant, soft delete and permissions apply. Each kind returns at most the tenant setting `records.picker_hits` (default 8, Settings › Records). Records merged into one survivor are one hit. A choice is still `check`ed on save; a forged id is refused.
 - **Workspace:** the pill renders through `RecordLink` with the registering module as its workspace kind, so on a framed page it selects the record in a following tile.
 - **Isolation:** every read runs through the owner's tenant-scoped source or check; redirect and holder statements carry the tenant predicate.
 
@@ -104,3 +105,6 @@ Add `APP_ORIGIN` and `BIND_ADDR` to serve the app afterwards, with the notes pag
 | Agent edge | `base.records.resolve`, `base.records.search` and the holder's list answer over HTTP with a real agent connection: `label`, `path` and an absolute `url`; an unmounted kind has a null label and no url. |
 | Browser | Pick a record by name, save, the pill opens the record's page; in a workspace the pill selects the record in a following tile; the viewer sees company pills unavailable and a forged pick is refused under the picker; no horizontal scroll at 390 px. |
 | Audit | `record_redirect` and the holder's note are each one `created` mutation by the actor. |
+| One spelling | `01` is accepted as company `1`, resolves to its name (also over HTTP) and counts the same referrers as `1`. |
+| Overlapping merges | Merging 52 into 53 waits while merging 51 into 52 is uncommitted; both then point at 53. |
+| Connection pool | 64 concurrent resolves on the pool of 16 connections all finish. |
