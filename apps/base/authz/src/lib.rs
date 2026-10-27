@@ -17,7 +17,7 @@ mod web;
 use bilibi_database::{Error, Result};
 use bilibi_tenancy::{Authentication, ProofClient, ProofFuture, Scope};
 pub use effective::{
-    effective_capabilities, effective_capabilities_of, effective_system, Effective,
+    effective_capabilities, effective_capabilities_of, effective_system, holders, Effective,
 };
 use std::{
     collections::HashSet,
@@ -25,8 +25,8 @@ use std::{
 };
 use tokio_postgres::{types::ToSql, GenericClient, Row};
 pub use vocabulary::{
-    CapabilityDefinition, RoleDefinition, SystemPrincipalDefinition, Vocabulary,
-    VocabularyContribution, VOCABULARY,
+    CapabilityDefinition, RoleDefinition, StandingGrant, SystemPrincipalDefinition, Vocabulary,
+    VocabularyContribution, STANDING_GRANTS, VOCABULARY,
 };
 
 /// Immutable deployment snapshot. Database grants/restrictions are never cached.
@@ -347,6 +347,9 @@ async fn system_decision(
                 {
                     Some(true) => Decision::allow("system_principal_grant"),
                     Some(false) => Decision::deny("denied_explicitly"),
+                    None if vocab.standing(name, key) => {
+                        Decision::allow("system_principal_standing")
+                    }
                     None => Decision::deny("denied_missing_capability"),
                 }
             }

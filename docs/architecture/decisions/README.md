@@ -79,3 +79,9 @@ Every record carries these header lines: Document Type, Status, Agents, Scope, L
 | Record | Status |
 | --- | --- |
 | [07 Hard-coded values and operator pick-lists](./07-hard-coded-values-and-operator-pick-lists.md) | Proposed |
+
+### Files
+
+| Record | Status |
+| --- | --- |
+| [08 Malware scanning fails closed, through one Extension seam](./08-malware-scanning-fails-closed.md) | Proposed |

@@ -1,14 +1,14 @@
 # Media storage contract
 
 `base/media` owns private asset storage: operator-mapped disks, asset metadata
-(`base_media_assets`), content-checked uploads, signed single-asset streams, the
-trusted subject-owner seam and private subject attachments
-(`base_media_attachments`: draft/submitted state, ULID public ids, owner-checked
-downloads and draft cleanup).
+(`base_media_assets`), content-checked uploads, malware scanning with
+quarantine, signed single-asset streams, the trusted subject-owner seam and
+private subject attachments (`base_media_attachments`: draft/submitted state,
+ULID public ids, owner-checked downloads and draft cleanup).
 
 Owners call `base/media.store` (`Media`) **after** authorizing their own
 workflow. Nothing here is a browser endpoint except the signed stream route the
-Web host mounts at `/media/assets/{id}/stream`.
+Web host mounts at `/media/assets/{id}/stream`, and the Quarantined Files page.
 
 ## Operator setup
 
@@ -17,7 +17,8 @@ Settings (global scope, editor group Media, platform capability
 absolute directories with mode `0700`, not under a `static`, `public` or
 `assets` path and with no symlink anywhere in the path. `media.max_bytes`
 (default 10 MiB, at most 512 MiB), `media.attachment_allowed_types`,
-`media.attachment_disk` and `media.stream_ttl_seconds` (default 300).
+`media.attachment_disk`, `media.stream_ttl_seconds` (default 300),
+`media.scan.policy` and `media.scan.timeout_seconds` (see Malware scanning).
 Keep disk roots stable while assets reference them; `external` is a reserved
 sentinel for linked (not stored) assets and cannot be a disk name.
 
@@ -49,6 +50,61 @@ refuse with `MimeDetectionUnavailable` instead of trusting the client.
   operator reconciles the disk.
 - Every row is tenant-scoped through the sealed `Scope`; another tenant's id is
   `NotFound`. Audit records name the asset but never its storage key or metadata.
+
+## Malware scanning and quarantine
+
+Every stored file carries a scan state; only a readable one is ever served. Decision and rejected alternatives: [ADR 08](../../../docs/architecture/decisions/08-malware-scanning-fails-closed.md).
+
+| State | Meaning | Served |
+| --- | --- | --- |
+| `unscanned` | No scanner was bound when it was stored, it predates scanning, or it was larger than the scanner accepts | Only under `when_available` |
+| `pending` | Waiting for the scanner | Never |
+| `clean` | The scanner found nothing | Yes |
+| `infected` | Quarantined: the scanner named a signature | Never |
+| `failed` | No verdict after the last attempt (`scanner_unavailable`, `file_unavailable`), or too large under `required` | Never |
+
+### The scanner seam
+
+- An Extension implements `Scanner` (`name`, `version`, optional `max_bytes`, `scan(bytes, ScanFacts) -> Verdict`) and calls `Media::bind_scanner` once from its service factory, declaring a dependency on `base/media`. A second scanner refuses boot.
+- `Verdict` is `Clean`, `Infected { signature }` or `Unavailable`. The scanner gets the bytes, the detected type and the size: never the tenant, record, filename or uploader.
+- `scan` runs outside every transaction and is cut off after `media.scan.timeout_seconds` (60, 5–600). Do network IO through `base/integration` or a local socket; connection settings and secrets are the Extension's own.
+
+### What happens to a new file
+
+- While a scanner is bound, every file Media stores (`put_upload`, `put_derivative_bytes`, `upload_attachment`, `register_*`) starts `pending`, and the `base/media-scan` job is queued in the registering transaction.
+- The job runs as system principal `media-scanner`, which holds `media.file.scan` in every tenant through a standing grant (`apps/base/authz/README.md`). A tenant that denies it keeps its files `pending`.
+- `Unavailable`, a timeout or an unreadable file retries with Queue's backoff; after 8 attempts (about eight minutes) the file is `failed`.
+- A file larger than the scanner's `max_bytes` is never sent: `failed` under `required`, `unscanned` under `when_available`, with reason `too_large`.
+- Each verdict is an audited `Change` on the asset by `media-scanner`: state, scanner, version, signature and reason, never filename, key or bytes.
+- An infected file notifies its uploader and the tenant's accounts holding `admin.media.quarantine.manage` (live accounts only, at most 500).
+- An impersonated session cannot store files while a scanner is bound: Queue refuses to enqueue for an impersonator.
+
+### Policy (`media.scan.policy`, global)
+
+| Value | No scanner bound | Unscanned files |
+| --- | --- | --- |
+| `when_available` (default) | Files are stored `unscanned` | Served as before |
+| `required` | Uploads refuse with `ScanningRequired` before any bytes are written | Refused (`NotScanned`), including every file stored before; rescan them first |
+
+### Reads and owners
+
+- `stream_url`, `display_url`, `read_signed_asset`, `put_derivative_bytes`, `register_derivative` and `download_attachment` refuse a file that is not readable: `ScanPending`, `Quarantined`, `ScanFailed` or `NotScanned`. `download_attachment` asks the owner first, so a refused reader learns nothing more.
+- The Web host answers those with `423 Locked` ("File not available").
+- `Asset.scan_state` and `Attachment.scan_state` say where a file is; show "Checking file…" while `Pending`. `Media::scanning()` says whether a scanner is bound.
+- A `pending` draft may be submitted and stays unreadable until clean; an `infected` draft cannot be submitted (`Quarantined`). Discard and draft cleanup work as before.
+- Linked (`external`) assets are never stored here, so they are never scanned.
+
+### Quarantine
+
+Tenant capabilities `admin.media.quarantine.view` and `admin.media.quarantine.manage`.
+
+| Call | Agent operation | What it does |
+| --- | --- | --- |
+| `quarantine(client, scope, states, limit)` | `base.media.quarantine.list` | This tenant's files in the given states, newest first, at most 1,000 |
+| `rescan(tx, scope, id)` | `base.media.quarantine.rescan` | A file that is not clean and not purged goes back to `pending` with a new job; needs a bound scanner |
+| `purge(tx, scope, id)` | `base.media.quarantine.purge` | Removes an `infected` or `failed` file's bytes; the row, verdict, attachment binding and audit stay. A repeat is a no-op |
+
+The Quarantined Files page (`/system/media/quarantine`, Administration › System) lists them by status (Needs attention, Quarantined, Scan failed, Being checked, Not scanned), with Scan again and Purge contents for managers. Purge confirms first. A database trigger keeps a purged file's verdict fixed.
 
 ## Signed streams
 
@@ -121,6 +177,10 @@ Photo cleanup (background removal and the like) is not part of this module.
 Per-owner adapters for Company and Person records follow K15.
 
 ## Manual walkthroughs
+
+### Scanning
+
+`scan-walkthrough` binds a fixture scanner that lives only in that executable: a file holding the EICAR test string is infected, everything else is clean, and it answers `Unavailable` while `<BILIBI_MEDIA_DEMO_ROOT>-scanner-down` exists. Run it like `media-walkthrough` below. `prepare` (default) runs Queue's executor in process and prints pending then clean or infected files, refused downloads and submissions, notices, the quarantine list per tenant, a stopped scanner ending `failed`, rescan, purge, a tenant that denies the standing grant, and the verdicts in the audit trail. `no-scanner` shows both policies without a scanner. `-- serve` (with `APP_ORIGIN`, `BIND_ADDR`, the signing keys, and `BILIBI_SCAN_FIXTURE=none` for no scanner) runs the real host with the fixture scanner, the fixture ticket owner and the executor, for the Quarantined Files page and `/media/attachments/{id}`.
 
 ### Attachments
 
