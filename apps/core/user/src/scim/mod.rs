@@ -236,8 +236,9 @@ impl UserService {
             return Err(ScimError::unauthorized());
         }
         let mut client = self.db.get().await.map_err(Error::from)?;
-        let located=client.query_opt("SELECT p.tenant_id,p.id FROM user_identity_providers p JOIN tenants t ON t.id=p.tenant_id AND t.status='active' AND t.deleted_at IS NULL WHERE p.public_id=$1 AND p.sealed_scim_token IS NOT NULL", &[&public]).await?.ok_or_else(ScimError::unauthorized)?;
+        let located=client.query_opt("SELECT p.tenant_id,p.id,p.sealed_scim_token FROM user_identity_providers p JOIN tenants t ON t.id=p.tenant_id AND t.status='active' AND t.deleted_at IS NULL WHERE p.public_id=$1 AND p.sealed_scim_token IS NOT NULL", &[&public]).await?.ok_or_else(ScimError::unauthorized)?;
         let (tenant, provider): (i64, i64) = (located.get(0), located.get(1));
+        self.scim_verify_bearer(tenant, provider, located.get(2), bearer)?;
         let mut tx = self
             .mutations
             .begin(
@@ -254,9 +255,20 @@ impl UserService {
             .map_err(|_| ScimError::unauthorized())?;
         let row=tx.sql().query_opt("SELECT id,sealed_scim_token FROM user_identity_providers WHERE tenant_id=$1 AND public_id=$2 FOR UPDATE",&[&tenant,&public]).await?.ok_or_else(ScimError::unauthorized)?;
         let provider: i64 = row.get(0);
-        let sealed: Value = row
-            .get::<_, Option<Value>>(1)
-            .ok_or_else(ScimError::unauthorized)?;
+        self.scim_verify_bearer(tenant, provider, row.get(1), bearer)?;
+        let c = self.sso_connection_in(tx.sql(), public, false).await?;
+        let response = self.scim_dispatch(&mut tx, &c, &request).await?;
+        tx.commit().await?;
+        Ok(response)
+    }
+    fn scim_verify_bearer(
+        &self,
+        tenant: i64,
+        provider: i64,
+        sealed: Option<Value>,
+        bearer: &str,
+    ) -> ScimResult<()> {
+        let sealed = sealed.ok_or_else(ScimError::unauthorized)?;
         let secret = self
             .settings
             .open_owned(SEALED, tenant, provider, &sealed)
@@ -264,13 +276,11 @@ impl UserService {
         let expected = secret["token"]
             .as_str()
             .ok_or_else(ScimError::unauthorized)?;
-        if !bool::from(expected.as_bytes().ct_eq(bearer.as_bytes())) {
-            return Err(ScimError::unauthorized());
+        if bool::from(expected.as_bytes().ct_eq(bearer.as_bytes())) {
+            Ok(())
+        } else {
+            Err(ScimError::unauthorized())
         }
-        let c = self.sso_connection_in(tx.sql(), public, false).await?;
-        let response = self.scim_dispatch(&mut tx, &c, &request).await?;
-        tx.commit().await?;
-        Ok(response)
     }
     async fn scim_dispatch(
         &self,
@@ -365,6 +375,9 @@ impl UserService {
             if let Some(external) = old.get("externalId") {
                 doc["externalId"] = external.clone();
             }
+        }
+        if method == "PUT" && !group && attr(body, "active").is_none() {
+            doc["active"] = old["active"].clone();
         }
         if attr(body, "id").is_some_and(|v| v != &json!(id)) {
             return Err(ScimError::bad(
@@ -645,7 +658,7 @@ impl UserService {
         c: &Connection,
         user: i64,
         roles: &[i64],
-    ) -> ScimResult<()> {
+    ) -> Result<()> {
         let scope = self
             .authentication
             .authenticate(tx.sql(), c.tenant, user, String::new())
@@ -655,7 +668,7 @@ impl UserService {
                 e => e,
             })?;
         if scope.actor().organisation().map(|id| id.get()) != Some(c.company) {
-            return Err(Error::Forbidden.into());
+            return Err(Error::Forbidden);
         }
         self.sso_grants
             .apply_identity_roles_in(tx, &scope, &source(c.id), roles)
@@ -667,7 +680,7 @@ impl UserService {
         tx: &mut MutationTransaction<'_>,
         c: &Connection,
         user: i64,
-    ) -> ScimResult<()> {
+    ) -> Result<()> {
         let mut roles = c.config.default_role.into_iter().collect::<BTreeSet<_>>();
         for row in tx.sql().query("SELECT g.document->>'displayName' FROM user_scim_groups g JOIN user_scim_members m ON m.tenant_id=g.tenant_id AND m.provider_id=g.provider_id AND m.group_id=g.resource_id JOIN user_scim_users u ON u.tenant_id=m.tenant_id AND u.provider_id=m.provider_id AND u.resource_id=m.member_id WHERE u.tenant_id=$1 AND u.provider_id=$2 AND u.user_id=$3",&[&c.tenant,&c.id,&user]).await?{
             if let Some(mapped)=c.config.role_mapping.get(&row.get::<_,String>(0)){roles.extend(mapped);}
@@ -697,10 +710,7 @@ impl UserService {
                     .authenticate(tx.sql(), c.tenant, id, String::new())
                     .await;
                 match standing {
-                    Ok(_) if eligible => self
-                        .scim_apply_roles(tx, c, id)
-                        .await
-                        .map_err(|_| Error::Invalid)?,
+                    Ok(_) if eligible => self.scim_apply_roles(tx, c, id).await?,
                     Ok(_) | Err(Error::Unauthorized) => {
                         if let Some(scope) = administrator {
                             self.sso_grants

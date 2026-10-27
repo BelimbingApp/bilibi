@@ -128,6 +128,11 @@ def main():
         patch(group_path, [{'op': 'remove', 'path': f'members[value eq "{uid}"]'}])
         patch(group_path, [{'op': 'add', 'path': 'members', 'value': [{'value': uid}]}])
         require(inspect(email)['roles'] == [], 'inactive membership changes succeed without restoring grants')
+        profile = {key: value for key, value in doc.items() if key != 'active'}
+        profile['displayName'] = 'Provisioned Person Renamed'
+        kept = call('PUT', '/Users/' + uid, profile)
+        require(kept['active'] is False and session_status() in (302, 303), 'PUT without active keeps the person deactivated')
+        require(query('Users', f'userName eq "{email}"')['Resources'][0]['active'] is False, 'profile sync cannot reactivate a deactivated person')
         active = patch('/Users/' + uid, [{'op': 'replace', 'value': {'active': True}}])
         require(active['id'] == uid and active['active'] and session_status() in (302, 303), 'reactivation keeps identifiers and never restores an old session')
     call('DELETE', group_path, expected=204)
