@@ -108,7 +108,10 @@
     // draft to lose. This also protects forms if an old client hits a new
     // server's hard socket cap instead of receiving a normal refusal.
     const drafts = [...document.forms].filter((form) => [...form.elements].some(dirty));
-    for (const form of drafts) preserve(form, sequence);
+    for (const form of drafts) {
+      const sent = [...inflight.values()].filter((entry) => entry.ownerForm === form).map((entry) => entry.id);
+      preserve(form, Math.max(0, ...sent));
+    }
     const hasDraft = drafts.length || [...inflight.values()].some((entry) => entry.form);
     reloadOnReconnect = devReload && !hasDraft;
     for (const entry of inflight.values()) {
@@ -121,7 +124,7 @@
     // The shared connection banners reveal themselves from this event.
     window.dispatchEvent(new CustomEvent('bilibi:disconnected', {detail: {kind: reloadOnReconnect ? 'server' : 'client'}}));
     reconnecting = true;
-    feedback.textContent = reloadOnReconnect ? 'Rebuilding…' : 'Live connection lost. Reconnecting… Your draft is kept.';
+    feedback.textContent = reloadOnReconnect ? 'Rebuilding…' : `Live connection lost. Reconnecting…${hasDraft ? ' Your draft is kept.' : ''}`;
     feedback.classList.toggle('rebuilding', reloadOnReconnect);
     retry();
   }
@@ -219,7 +222,7 @@
     preservedForms.set(form, Math.max(preservedForms.get(form) || 0, id));
   }
 
-  function showError(message) {
+  function showError(message, link = null) {
     // Render through the shared flash template. The outlet is outside #app,
     // so a background refresh cannot remove a refusal before it is dismissed.
     const region = document.getElementById('live-feedback');
@@ -228,10 +231,13 @@
     if (!template || !outlet) {
       feedback.setAttribute('role', 'alert');
       feedback.textContent = message;
+      if (link) feedback.append(' ', link);
       return;
     }
     const flash = template.content.cloneNode(true);
-    flash.querySelector('[data-flash-message]').textContent = message;
+    const text = flash.querySelector('[data-flash-message]');
+    text.textContent = message;
+    if (link) text.append(' ', link);
     outlet.replaceChildren(flash);
   }
 
@@ -285,7 +291,15 @@
       // The upload hook that streams this entry reads its progress or error.
       window.dispatchEvent(new CustomEvent('bilibi:upload', {detail: message}));
     } else if (message.type === 'error') {
-      showError(message.message);
+      const clearsPage = message.clear
+        && !(message.target && !['app', 'page', 'shell'].includes(message.target));
+      let signIn = null;
+      if (clearsPage) {
+        signIn = document.createElement('a');
+        signIn.href = '/login';
+        signIn.textContent = 'Sign in again';
+      }
+      showError(message.message, signIn);
       if (message.clear) {
         if (message.target && !['app', 'page', 'shell'].includes(message.target)) {
           // A refused panel keeps an empty anchor so the parent stays usable.
@@ -297,10 +311,6 @@
           stopped = true;
           const app = document.getElementById('app');
           if (app) app.remove();
-          const link = document.createElement('a');
-          link.href = '/login';
-          link.textContent = 'Sign in again';
-          feedback.append(' ', link);
           if (socket) socket.close();
         }
       }
