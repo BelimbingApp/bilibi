@@ -989,13 +989,13 @@ impl Editor {
                     Picked::Company(company) => format!("{} settings", company.name),
                 };
                 let consequence = format!(
-                    "This resets {} in {scope_name} to their defaults, including any hidden by your search or filters.",
+                    "This clears {} in {scope_name}, including any hidden by your search or filters.",
                     form::count(held.len(), "changed setting").unwrap_or_default()
                 );
                 render(ConfirmDialog {
                     id: "restore-defaults-confirm",
                     consequence: &consequence,
-                    detail: "Each of those settings returns to the value it inherits. This cannot be undone.",
+                    detail: "Each setting returns to its inherited value or default. This cannot be undone.",
                     confirm: "Restore",
                     working: "Restoring…",
                     confirm_event: "restore_defaults",
