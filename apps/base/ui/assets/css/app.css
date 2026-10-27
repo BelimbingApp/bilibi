@@ -938,12 +938,6 @@ body:has(dialog:modal) #flash-group > #connection-server-error {
   display: none;
 }
 
-.app-nav-menu #nav-admin-system-settings .app-nav-icon,
-.app-nav-menu #nav-admin-system-database-table .app-nav-icon {
-  display: block;
-  margin-right: 0.25rem;
-}
-
 .app-nav-menu .app-nav-caret-open {
   display: none;
 }
