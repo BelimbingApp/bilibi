@@ -248,9 +248,10 @@ impl LiveState<Scope, Error> for Inspector {
                         ListState::parse(query, SPEC.clone()).map_err(|_| Error::Internal)?
                 }
                 LiveInput::Event(value) => match value.get("type").and_then(Value::as_str) {
-                    Some("filter") => self
-                        .list
-                        .apply_filters(&params::form_values(value, "filters")),
+                    Some("filter") => self.list.apply_filters(
+                        &params::form_values_checked(value, "filters", params::FIELD_LIMIT)
+                            .map_err(Error::refused)?,
+                    ),
                     Some("page") => self
                         .list
                         .put_page(value.get("page").and_then(Value::as_str)),

@@ -70,7 +70,7 @@ setting!(
     json!(100),
     0.0,
     60_000.0,
-    "Minimum duration",
+    "Minimum recorded duration (milliseconds)",
     "Do not record anything faster than this, in milliseconds."
 );
 setting!(
@@ -88,7 +88,7 @@ setting!(
     json!(1000),
     1.0,
     3_600_000.0,
-    "Slow threshold",
+    "Slow threshold (milliseconds)",
     "Anything slower than this, in milliseconds, counts as slow."
 );
 setting!(
@@ -97,7 +97,7 @@ setting!(
     json!(30),
     1.0,
     3650.0,
-    "History retention",
+    "History retention (days)",
     "Days to keep history."
 );
 setting!(

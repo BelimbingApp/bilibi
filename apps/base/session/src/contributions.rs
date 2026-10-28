@@ -50,14 +50,14 @@ const GLOBAL: &[ScopeKind] = &[ScopeKind::Global];
 inventory::submit! { Contribution::new(DEFINITIONS, TOUCH_KEY, provenance!(), &Setting::Definition(Definition {
     value_type: ValueType::Integer, scopes: GLOBAL, default: || json!(5), nullable: false, encrypted: false,
     minimum: Some(1.0), maximum: Some(60.0), validator: None,
-    editor: Some(Editor { group: "Session", label: "Session activity update interval",
+    editor: Some(Editor { group: "Session", label: "Session activity update interval (minutes)",
         help: "How often, in minutes, a signed-in user's last activity is saved.",
         capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
 })) }
 inventory::submit! { Contribution::new(DEFINITIONS, LIFETIME_KEY, provenance!(), &Setting::Definition(Definition {
     value_type: ValueType::Integer, scopes: GLOBAL, default: || json!(120), nullable: false, encrypted: false,
     minimum: Some(1.0), maximum: Some(525_600.0), validator: None,
-    editor: Some(Editor { group: "Session", label: "Session lifetime",
+    editor: Some(Editor { group: "Session", label: "Session inactivity limit (minutes)",
         help: "Minutes of inactivity before a sign-in expires.",
         capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
 })) }

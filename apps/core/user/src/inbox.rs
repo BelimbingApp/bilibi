@@ -410,12 +410,16 @@ impl Inbox {
                 self.users.mark_all_read(credential).await?;
                 self.all_read = true;
             }
-            "filters" => self
-                .list
-                .apply_filters(&params::form_values(value, FILTERS_FORM)),
+            "filters" => self.list.apply_filters(
+                &params::form_values_checked(value, FILTERS_FORM, params::FIELD_LIMIT)
+                    .map_err(Error::refused)?,
+            ),
             "page" => self.list.put_page(get("page")),
             "grid" => {
-                self.columns.handle(&params::string_values(value));
+                self.columns.handle(
+                    &params::string_values_checked(value, params::FIELD_LIMIT)
+                        .map_err(Error::refused)?,
+                );
             }
             "clear-flash" => self.all_read = false,
             _ => return Err(Error::Invalid),

@@ -258,7 +258,7 @@ impl Page<Scope, Error> for Pages {
     fn title(&self, operation: &str) -> Option<&'static str> {
         Some(match operation {
             "countries" => "Countries",
-            "admin1" => "Admin1 Divisions",
+            "admin1" => "First-level divisions",
             "postcodes" => "Geonames Postcodes",
             _ => return None,
         })

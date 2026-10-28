@@ -255,11 +255,15 @@ impl Index {
     fn event(&mut self, value: &Value) -> Result<()> {
         let get = |key: &str| value.get(key).and_then(Value::as_str);
         match get("type").ok_or(Error::Invalid)? {
-            "filters" => self
-                .state
-                .apply_filters(&params::form_values(value, FILTERS_FORM)),
+            "filters" => self.state.apply_filters(
+                &params::form_values_checked(value, FILTERS_FORM, params::FIELD_LIMIT)
+                    .map_err(Error::refused)?,
+            ),
             "page" => self.state.put_page(get("page")),
-            "grid" => match self.columns.handle(&params::string_values(value)) {
+            "grid" => match self.columns.handle(
+                &params::string_values_checked(value, params::FIELD_LIMIT)
+                    .map_err(Error::refused)?,
+            ) {
                 ColumnsOutcome::Sort(_) => return Err(Error::Invalid),
                 ColumnsOutcome::Update | ColumnsOutcome::Noop => self.rows_changed = false,
             },
@@ -303,8 +307,7 @@ impl Index {
         }
         let header = render(Header {
             title: Html::text("Pick-lists"),
-            subtitle:
-                "The choices people pick from in forms. Each organisation keeps its own values.",
+            subtitle: "Choices offered in forms. Organisations keep their own values.",
             ..Header::default()
         })?;
         let form = self.state.filters_form();
@@ -540,11 +543,15 @@ impl Values {
         let key = self.list.key;
         self.notice.clear();
         match get("type").ok_or(Error::Invalid)? {
-            "filters" => self
-                .state
-                .apply_filters(&params::form_values(value, FILTERS_FORM)),
+            "filters" => self.state.apply_filters(
+                &params::form_values_checked(value, FILTERS_FORM, params::FIELD_LIMIT)
+                    .map_err(Error::refused)?,
+            ),
             "page" => self.state.put_page(get("page")),
-            "grid" => match self.columns.handle(&params::string_values(value)) {
+            "grid" => match self.columns.handle(
+                &params::string_values_checked(value, params::FIELD_LIMIT)
+                    .map_err(Error::refused)?,
+            ) {
                 ColumnsOutcome::Sort(_) => return Err(Error::Invalid),
                 ColumnsOutcome::Update | ColumnsOutcome::Noop => self.rows_changed = false,
             },
@@ -552,7 +559,8 @@ impl Values {
             "new" => self.draft = Some(Draft::default()),
             "close_new" => self.draft = None,
             "create" => {
-                let posted = params::form_values(value, "value");
+                let posted = params::form_values_checked(value, "value", params::FIELD_LIMIT)
+                    .map_err(Error::refused)?;
                 let mut input = json!({
                     "list": key,
                     "code": posted.get("code").cloned().unwrap_or_default(),
@@ -851,11 +859,9 @@ impl Values {
             })?);
         }
         let subtitle = match list.reach {
-            Reach::Tenant => {
-                "Codes never change: rename a value instead, and retire one instead of deleting it."
-            }
+            Reach::Tenant => "Codes cannot be changed. Rename or retire values as needed.",
             Reach::Installation => {
-                "One list for every organisation, kept by the platform operator."
+                "This list is shared across organisations and managed by the platform operator."
             }
         };
         let header = render(Header {
@@ -985,11 +991,15 @@ impl Values {
         table.framed = false;
         table.actions = edits;
         if counts.total_entries == 0 {
-            table.empty = Some(TableEmpty::Content(Html::text(if search.is_empty() {
-                "This list has no active values. Add one, or include retired values."
-            } else {
-                "No value matches this search."
-            })));
+            table.empty = Some(TableEmpty::Content(Html::text(
+                if search.is_empty() && all_status {
+                    "This list has no values."
+                } else if search.is_empty() {
+                    "No active values. Include retired values to see them."
+                } else {
+                    "No value matches this search."
+                },
+            )));
         }
         let mut body = render(table)?;
         body.push(&render(Pagination::new(
@@ -1007,7 +1017,7 @@ impl Values {
             (Some((Confirm::Retire, value)), _) => render(ConfirmDialog {
                 id: "picklist-retire-confirm",
                 consequence: &format!("Retire “{}”?", value.label),
-                detail: "New records can no longer choose it. Records that already hold it keep it and still show it, marked retired. You can restore it later.",
+                detail: "New records cannot use this value. Existing records keep it, marked as retired. You can restore it later.",
                 confirm: "Retire",
                 working: "Retiring…",
                 confirm_event: "retire",

@@ -22,7 +22,7 @@
 {{ password }}
 <div class="flex justify-end">{% call ui::action_link(id="login-forgot-password", icon="", href="/forgot-password", title="Forgot your password?") %}Forgot your password?{% endcall %}</div>
 </div>
-{% call ui::button(variant=bilibi_ui::ButtonVariant::Primary, id="login-submit", class="w-full", button_type="submit", working="Signing in…") %}Log in{% endcall %}
+{% call ui::button(variant=bilibi_ui::ButtonVariant::Primary, id="login-submit", class="w-full", button_type="submit", working="Signing in…") %}Sign in{% endcall %}
 </form>
 <div id="login-workspace" data-state="{{ workspace.state() }}" class="flex items-center justify-center gap-2 border-t border-low-contrast-line pt-4 text-xs text-ink-subtle">{% if let bilibi_ui::LoginWorkspace::Ready(company) = workspace %}<span class="size-1.5 rounded-full bg-success"></span><span class="truncate font-medium text-ink-muted">{{ company }}</span>{% else %}<span class="size-1.5 rounded-full bg-warning"></span><span>Platform workspace not provisioned</span>{% endif %}</div>
 </div>

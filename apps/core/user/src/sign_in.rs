@@ -29,7 +29,7 @@ bilibi_step_up::declare!(
 inventory::submit! { Contribution::new(DEFINITIONS, LIFETIME, Provenance { module: "core/user", source: file!(), line: line!() }, &Setting::Definition(Definition {
     value_type: ValueType::Integer, scopes: &[ScopeKind::Global], default: || json!(5),
     nullable: false, encrypted: false, minimum: Some(1.0), maximum: Some(30.0), validator: None,
-    editor: Some(Editor { group: "Session", label: "Sign-in challenge lifetime",
+    editor: Some(Editor { group: "Session", label: "Sign-in challenge lifetime (minutes)",
         help: "Minutes to finish the second factor after entering a password.",
         capability: Some(crate::contributions::UPDATE), reveal_duration_ms: 5_000 }),
 })) }

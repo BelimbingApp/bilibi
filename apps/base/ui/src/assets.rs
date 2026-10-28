@@ -114,14 +114,23 @@ fn catalogue() -> &'static [StaticAsset] {
                 script.as_bytes(),
             );
         }
-        let live = JS.replace(
-            "__BILIBI_DEV_RELOAD__",
-            if cfg!(debug_assertions) {
-                "true"
-            } else {
-                "false"
-            },
-        );
+        let live = JS
+            .replace(
+                "__BILIBI_DEV_RELOAD__",
+                if cfg!(debug_assertions) {
+                    "true"
+                } else {
+                    "false"
+                },
+            )
+            .replace(
+                "__BILIBI_EVENT_LIMIT__",
+                &crate::LIVE_EVENT_LIMIT.to_string(),
+            )
+            .replace(
+                "__BILIBI_EVENT_TOO_LARGE__",
+                &serde_json::to_string(crate::LIVE_EVENT_TOO_LARGE).expect("static refusal"),
+            );
         add(
             &mut assets,
             "/assets/live.js",

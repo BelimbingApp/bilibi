@@ -139,7 +139,7 @@ impl Panel {
             .kind(InputKind::Number)
             .label("Priority")
             .value("0")
-            .hint("Lower numbers come first; 0 is the top.");
+            .hint("Lower numbers appear first; 0 appears at the top.");
         priority.attrs.min = Some("0".into());
         let body = render(AttachForm {
             notice: self.notice_html()?,

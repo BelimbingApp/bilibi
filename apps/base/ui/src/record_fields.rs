@@ -44,6 +44,24 @@ impl RecordField {
             ..self
         }
     }
+    /// The page-owned slot for this fact. A walked path is projected into a
+    /// DOM id by replacing path separators and aggregate punctuation with `-`.
+    pub fn slot_id(self) -> Option<String> {
+        self.column.map(|column| {
+            self.slot.map_or_else(
+                || {
+                    column
+                        .chars()
+                        .map(|character| match character {
+                            '.' | ':' => '-',
+                            other => other,
+                        })
+                        .collect()
+                },
+                str::to_owned,
+            )
+        })
+    }
     pub fn fact(self, value: Html) -> Fact<'static> {
         Fact {
             title: self.label,
@@ -52,8 +70,7 @@ impl RecordField {
         }
     }
     pub fn builtin(self) -> Option<BuiltinColumn> {
-        self.column
-            .map(|id| BuiltinColumn::new(self.slot.unwrap_or(id), self.label))
+        self.slot_id().map(|id| BuiltinColumn::new(&id, self.label))
     }
 }
 

@@ -105,7 +105,7 @@ bilibi_menu::contribute!(
     "core/geonames",
     MenuItem::page(
         "admin.geonames.admin1-division",
-        "Admin1 Divisions",
+        "First-level divisions",
         ADMIN1_PATH
     )
     .under("admin.geonames")
