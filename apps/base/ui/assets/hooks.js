@@ -300,6 +300,7 @@
       this.noMatches = this.el.querySelector('[id$="-no-matches"]')
       this.clearButton = this.el.querySelector('[id$="-clear"]')
       this.open = false
+      this.editing = false
       this.activeIndex = -1
       this.selectedValue = this.valueInput?.value || ""
       this.selectedLabel = this.input?.value || ""
@@ -367,9 +368,17 @@
       }
 
       // The box shows the name with its code muted and italic through a
-      // display layer over the plain input, which stays the accessible value.
-      // Write only on change: a hook child-list write reports `updated`.
+      // display layer over the plain input, which stays the accessible value,
+      // until the person edits (`data-editing`). Write only on change: a hook child-list write reports `updated`.
+      this.setEditing = editing => {
+        this.editing = editing
+        if (this.el.hasAttribute("data-editing") !== editing) {
+          this.el.toggleAttribute("data-editing", editing)
+        }
+      }
+
       this.renderDisplay = option => {
+        this.setEditing(false)
         const display = this.el.querySelector("[data-combobox-display]")
         if (!display) return
         const [name, detail] = display.children
@@ -419,6 +428,7 @@
 
       this.onInput = event => {
         event.stopPropagation()
+        this.setEditing(true)
         if (!this.open) this.setOpen(true)
         this.activeIndex = 0
         this.applyFilter()
@@ -513,6 +523,7 @@
       this.bindOptions()
       this.bindClear()
       if (!this.open) this.restore()
+      else this.setEditing(this.editing)
       this.setOpen(this.open)
       this.applyFilter()
     },

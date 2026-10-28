@@ -886,46 +886,46 @@ body:has(dialog:modal) #flash-group > #connection-server-error {
 }
 
 /* A combobox choice with a code (`Choice::detail`) draws name and code over the
- * plain input, whose text goes transparent while the field is not being edited.
- * The input keeps the accessible value; the layer is `aria-hidden`. */
+ * plain input, whose text goes transparent until the person edits it. The
+ * Combobox hook sets `data-editing` on the wrapper from the first input until
+ * the choice is committed, restored or cancelled. The input keeps the
+ * accessible value; the layer is `aria-hidden`. The layer sits where the
+ * input draws its text, inside the input's 1px border. */
 .ui-combobox-display {
   display: none;
   pointer-events: none;
   position: absolute;
-  inset: 0 2.25rem 0 0.75rem;
+  inset: 1px 2.25rem 1px calc(0.75rem + 1px);
   align-items: center;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
   font-size: 1rem;
   line-height: 1.25rem;
   color: var(--color-ink);
 }
 
 .ui-combobox-display.ui-combobox-display-inset {
+  top: 0;
   align-items: flex-start;
-  padding-top: 0.875rem;
+  padding-top: calc(0.875rem + 1px);
+}
+
+.ui-combobox-display > span {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .ui-combobox-display > span + span {
   margin-left: 0.35em;
 }
 
-[data-hook="Combobox"][data-detailed] [data-combobox-display] {
-  display: block;
-}
-
-[data-hook="Combobox"][data-detailed] [data-combobox-display]:not(.ui-combobox-display-inset) {
+[data-hook="Combobox"][data-detailed]:not([data-editing]) [data-combobox-display] {
   display: flex;
 }
 
-[data-hook="Combobox"][data-detailed] input[role="combobox"]:not(:focus) {
+[data-hook="Combobox"][data-detailed]:not([data-editing]) input[role="combobox"] {
   color: transparent;
-}
-
-[data-hook="Combobox"][data-detailed] input[role="combobox"]:focus ~ [data-combobox-display],
-[data-hook="Combobox"][data-detailed] [data-combobox-display][hidden] {
-  display: none;
+  caret-color: var(--color-ink);
 }
 
 /* Menu typography & font colors matching Belimbing */
