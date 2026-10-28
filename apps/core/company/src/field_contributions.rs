@@ -473,7 +473,7 @@ pub(crate) async fn validate_choices(
 }
 
 pub(crate) async fn validate_choice_snapshot(
-    client: &(impl tokio_postgres::GenericClient + Sync),
+    client: &dyn bilibi_tenancy::ReadClient,
     scope: &Scope,
     values: &CompanyFieldValues,
 ) -> Vec<crate::FieldError> {
@@ -491,8 +491,11 @@ pub(crate) async fn validate_choice_snapshot(
         let Some(code) = values.get(field.id).and_then(Value::as_str) else {
             continue;
         };
-        match lists.choices(client, scope, picklist, None).await {
-            Ok(options) if options.iter().any(|option| option.value == code) => {}
+        match lists
+            .contains_choice(client, scope, picklist, code, None)
+            .await
+        {
+            Ok(true) => {}
             Ok(_) => errors.push(crate::FieldError::new(field.id, "is not an active choice")),
             Err(_) => errors.push(crate::FieldError::new(
                 field.id,

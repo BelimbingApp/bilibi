@@ -257,16 +257,16 @@ impl WriteHandler for Create {
     }
     fn preview<'a>(
         &'a self,
-        _client: &'a dyn OperationClient,
+        client: &'a dyn OperationClient,
         scope: &'a Scope,
         input: &'a Value,
     ) -> OperationFuture<'a> {
         Box::pin(async move {
             let (new, custom_values) = parse(input)?;
-            let client = db()?.get().await.map_err(bilibi_database::Error::from)?;
-            let company = organisation::preview_with_fields(&**client, scope, &new, &custom_values)
+            let preview = crate::preview_create_with_fields(client, scope, &new, &custom_values)
                 .await?
                 .map_err(invalid)?;
+            let company = preview.company;
             let fields = [
                 ("name", json!(company.name)),
                 ("code", json!(company.code)),
@@ -286,7 +286,7 @@ impl WriteHandler for Create {
                 .filter(|(_, to)| !to.is_null() && to.as_str() != Some(""))
                 .map(|(field, to)| json!({"field":field,"from":null,"to":to}))
                 .collect();
-            let matches = crate::duplicates::create_matches(&**client, scope, &new).await?;
+            let matches = preview.matches;
             let mut changes = changes;
             changes.extend(
                 custom_values

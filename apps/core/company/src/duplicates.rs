@@ -2,10 +2,9 @@
 use crate::organisation::trimmed;
 use crate::{policy, CompanyService, FieldError, NewCompany};
 use bilibi_database::{Error, Result};
-use bilibi_tenancy::Scope;
+use bilibi_tenancy::{ReadClient, Scope};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
-use tokio_postgres::GenericClient;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
@@ -60,6 +59,8 @@ pub struct CreateAnyway {
     pub reason: String,
 }
 impl CompanyService {
+    /// Finds scored candidates under list access on the caller's connection.
+    /// Restricted query fields are refused; matching never exposes their values.
     pub async fn duplicates(
         &self,
         scope: &Scope,
@@ -94,16 +95,16 @@ fn strings(value: &serde_json::Value) -> BTreeSet<String> {
         .collect()
 }
 pub async fn duplicates(
-    client: &(impl GenericClient + Sync),
+    client: &dyn ReadClient,
     scope: &Scope,
     query: &DuplicateQuery,
 ) -> Result<Vec<DuplicateCandidate>> {
-    bilibi_authz::authorize_key(client, scope, crate::LIST).await?;
+    bilibi_authz::authorize_proof(client, scope, crate::LIST).await?;
     find(client, scope, query).await
 }
 
-async fn can_list(client: &(impl GenericClient + Sync), scope: &Scope) -> Result<bool> {
-    match bilibi_authz::authorize_key(client, scope, crate::LIST).await {
+async fn can_list(client: &dyn ReadClient, scope: &Scope) -> Result<bool> {
+    match bilibi_authz::authorize_proof(client, scope, crate::LIST).await {
         Ok(()) => Ok(true),
         Err(Error::Forbidden) => Ok(false),
         Err(error) => Err(error),
@@ -117,12 +118,14 @@ pub struct CreateMatches {
     pub candidates: Option<Vec<DuplicateCandidate>>,
     pub likely: bool,
 }
+/// Duplicate suggestions for a create on the caller's connection. Create
+/// access is required; candidate identities also require list access.
 pub async fn create_matches(
-    client: &(impl GenericClient + Sync),
+    client: &dyn ReadClient,
     scope: &Scope,
     new: &NewCompany,
 ) -> Result<CreateMatches> {
-    bilibi_authz::authorize_key(client, scope, crate::CREATE).await?;
+    bilibi_authz::authorize_proof(client, scope, crate::CREATE).await?;
     let found = find(client, scope, &DuplicateQuery::from(new)).await?;
     Ok(CreateMatches {
         likely: !found.is_empty(),
@@ -135,14 +138,14 @@ pub async fn create_matches(
 }
 
 async fn find(
-    client: &(impl GenericClient + Sync),
+    client: &dyn ReadClient,
     scope: &Scope,
     query: &DuplicateQuery,
 ) -> Result<Vec<DuplicateCandidate>> {
     if !(1..=100).contains(&query.limit) || query.except_id.is_some_and(|id| id <= 0) {
         return Err(Error::Invalid);
     }
-    let restricted = bilibi_authz::restrictions(client, scope).await?;
+    let restricted = crate::field_contributions::effective_restrictions_read(client, scope).await?;
     for (field, value, max) in [
         ("name", &query.name, 160),
         ("website", &query.website, 255),
@@ -168,7 +171,7 @@ async fn find(
         strings(&policy::get(client, scope, "company.duplicates.public_mail_domains").await?);
     let name_tokens = tokens(query.name.as_deref().unwrap_or_default(), &ignored);
     // Use the same PostgreSQL expressions as the stored generated columns.
-    let keys = client.query_one("SELECT regexp_replace(regexp_replace(lower(btrim(COALESCE($1::text,''))), '^([a-z][a-z0-9+.-]*://)?(www\\.)?', ''), '[/:?#].*$', ''), lower(split_part(btrim(COALESCE($2::text,'')), '@', 2)), regexp_replace(COALESCE($3::text,''), '[^0-9]', '', 'g'), upper(regexp_replace(COALESCE($4::text,''), '[^[:alnum:]]', '', 'g'))", &[&query.website, &query.email, &query.phone, &query.registration_number]).await?;
+    let keys = client.query_opt("SELECT regexp_replace(regexp_replace(lower(btrim(COALESCE($1::text,''))), '^([a-z][a-z0-9+.-]*://)?(www\\.)?', ''), '[/:?#].*$', ''), lower(split_part(btrim(COALESCE($2::text,'')), '@', 2)), regexp_replace(COALESCE($3::text,''), '[^0-9]', '', 'g'), upper(regexp_replace(COALESCE($4::text,''), '[^[:alnum:]]', '', 'g'))", &[&query.website, &query.email, &query.phone, &query.registration_number]).await?.ok_or(Error::Internal)?;
     let host: String = keys.get(0);
     let domain: String = keys.get(1);
     let domain = if public.contains(&domain) {
@@ -233,7 +236,7 @@ async fn find(
 
 /// Called after the normalised-name advisory lock, on the create transaction.
 pub async fn check_create(
-    client: &(impl GenericClient + Sync),
+    client: &dyn ReadClient,
     scope: &Scope,
     new: &NewCompany,
 ) -> Result<Vec<FieldError>> {

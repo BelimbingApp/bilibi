@@ -791,20 +791,23 @@ impl CompanyPage {
                 let (mut new, company_fields, activities, metadata, errors) =
                     views::new_company(&self.form);
                 self.errors = errors;
-                if self.errors.is_empty() {
-                    if let Err(errors) = crate::organisation::preview_with_fields(
-                        &**client,
-                        scope,
-                        &new,
-                        &company_fields,
-                    )
-                    .await?
+                let preview = if self.errors.is_empty() {
+                    match crate::preview_create_with_fields(&**client, scope, &new, &company_fields)
+                        .await?
                     {
-                        self.errors = errors;
+                        Ok(preview) => Some(preview),
+                        Err(errors) => {
+                            self.errors = errors;
+                            None
+                        }
                     }
-                }
-                if self.errors.is_empty() {
-                    let matches = self.company.create_matches(scope, &new).await?;
+                } else {
+                    None
+                };
+                // Release the preview checkout before the write facade opens its transaction.
+                drop(client);
+                if let Some(preview) = preview {
+                    let matches = preview.matches;
                     self.duplicate_likely = matches.likely;
                     self.duplicate_candidates = matches.candidates.unwrap_or_default();
                     if anyway {

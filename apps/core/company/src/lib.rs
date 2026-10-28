@@ -26,7 +26,9 @@ mod relationships;
 mod web;
 
 pub use contributions::{CAPABILITIES, CREATE, DELETE, LIST, TENANT_WIDE, UPDATE, VIEW};
-pub use duplicates::{CreateAnyway, CreateMatches, DuplicateCandidate, DuplicateQuery};
+pub use duplicates::{
+    create_matches, duplicates, CreateAnyway, CreateMatches, DuplicateCandidate, DuplicateQuery,
+};
 pub use hierarchy::{Hierarchy, HierarchyNode};
 // Departments, and the head directory another owner binds (K3).
 pub use departments::{
@@ -51,9 +53,10 @@ pub use lifecycle::{
 };
 // A company as another owner reads, authorizes or writes into it.
 pub use organisation::{
-    authorize_target, create, identity, list_tenant_company_ids, reachable, require_live,
-    require_writable, require_writable_in, search, CreateOutcome, Directory, Entry as SearchEntry,
-    Identity, NewCompany, SearchPage, SearchQuery, ValidCompany, RESTRICTABLE,
+    authorize_target, create, identity, list_tenant_company_ids, preview_create,
+    preview_create_with_fields, reachable, require_live, require_writable, require_writable_in,
+    search, CreateOutcome, CreatePreview, Directory, Entry as SearchEntry, Identity, NewCompany,
+    SearchPage, SearchQuery, ValidCompany, RESTRICTABLE,
 };
 pub use primary::{
     assign, is_primary, platform_operator_company, primary_company, provision_platform_operator,

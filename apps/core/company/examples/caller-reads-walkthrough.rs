@@ -3,8 +3,9 @@
 //! No mocks or unit-test runner; failures stop the walkthrough with an error.
 use bilibi_address::{billing_address, AddressInput, AddressKind, AddressService, AttachmentInput};
 use bilibi_company::{
-    assign_relationship, create, current_relationship, detail, relationship_role_by_code,
-    CompanyService, CreateOutcome, NewCompany, TypeOutcome,
+    assign_relationship, create, create_matches, current_relationship, detail, duplicates,
+    preview_create, relationship_role_by_code, CompanyService, CreateOutcome, DuplicateQuery,
+    NewCompany, TypeOutcome,
 };
 use bilibi_database::{pool, Error, MutationBoundary};
 use bilibi_party::{CalendarDate, EffectiveDates, PartyId, RelationshipInput};
@@ -103,12 +104,170 @@ async fn main() -> Result<(), Failure> {
         email: Some("caller@example.test".into()),
         ..NewCompany::default()
     };
+    let preview = preview_create(&**client, &manager, &new)
+        .await?
+        .map_err(|errors| format!("preview refused: {errors:?}"))?;
+    prove(
+        "preview defaults and trims the same company fields as create",
+        preview.company.name == new.name
+            && preview.company.code == new.code.clone().unwrap()
+            && preview.company.status == "active",
+    )?;
+    for (label, input, field, message) in [
+        (
+            "blank name",
+            NewCompany::default(),
+            "name",
+            "can't be blank",
+        ),
+        (
+            "unknown parent",
+            NewCompany {
+                parent_id: Some(i64::MAX),
+                ..new.clone()
+            },
+            "parent_id",
+            "does not exist",
+        ),
+        (
+            "cross-tenant parent",
+            NewCompany {
+                // The walkthrough fixture owns company 100 in tenant 2.
+                parent_id: Some(100),
+                ..new.clone()
+            },
+            "parent_id",
+            "does not exist",
+        ),
+        (
+            "unknown legal type",
+            NewCompany {
+                legal_entity_type_id: Some(i64::MAX),
+                ..new.clone()
+            },
+            "legal_entity_type_id",
+            "does not exist",
+        ),
+        (
+            "unknown jurisdiction",
+            NewCompany {
+                jurisdiction: Some("ZZ".into()),
+                ..new.clone()
+            },
+            "jurisdiction",
+            "must be a valid country ISO code",
+        ),
+    ] {
+        let errors = preview_create(&**client, &manager, &input)
+            .await?
+            .unwrap_err();
+        prove(
+            label,
+            errors
+                .iter()
+                .any(|e| e.field == field && e.message == message),
+        )?;
+    }
+    let generated = preview_create(
+        &**client,
+        &manager,
+        &NewCompany {
+            name: "  Preview Normalization  ".into(),
+            ..NewCompany::default()
+        },
+    )
+    .await?
+    .map_err(|errors| format!("generated preview: {errors:?}"))?;
+    prove(
+        "preview generates the code without reserving it",
+        generated.company.name == "Preview Normalization"
+            && generated.company.code == "preview_normalization",
+    )?;
     let mut tx = mutations
         .begin(&mut client, manager.mutation_context("company.create"))
         .await?;
     let CreateOutcome::Created(created) = create(&mut tx, &manager, &new).await? else {
         return Err("company create refused".into());
     };
+    let matching = NewCompany {
+        code: Some(format!("match-{stamp}")),
+        ..new.clone()
+    };
+    let preview = preview_create(tx.sql(), &manager, &matching)
+        .await?
+        .map_err(|errors| format!("matching preview: {errors:?}"))?;
+    prove(
+        "preview matches uncommitted company on caller transaction",
+        preview.matches.candidates.as_ref().is_some_and(|rows| {
+            rows.iter().any(|c| {
+                c.id == created.id
+                    && c.score == 1.0
+                    && c.matched_facts.contains(&"registration_number".into())
+            })
+        }),
+    )?;
+    let taken = preview_create(tx.sql(), &manager, &new).await?.unwrap_err();
+    prove(
+        "preview sees uncommitted code collision",
+        taken
+            .iter()
+            .any(|e| e.field == "code" && e.message == "has already been taken"),
+    )?;
+    let observer = db.get().await?;
+    let outside = preview_create(&**observer, &manager, &matching)
+        .await?
+        .map_err(|errors| format!("outside preview: {errors:?}"))?;
+    prove(
+        "other connection cannot match uncommitted company",
+        outside
+            .matches
+            .candidates
+            .as_ref()
+            .is_some_and(|rows| rows.iter().all(|c| c.id != created.id)),
+    )?;
+    drop(observer);
+    let settings = app
+        .services
+        .get::<bilibi_settings::Settings>("base/settings.store")?;
+    settings
+        .put(
+            &mut tx,
+            &manager,
+            bilibi_settings::Target::Tenant,
+            "company.duplicates.on_create",
+            serde_json::json!("require_reason"),
+        )
+        .await?;
+    prove(
+        "preview stays advisory under an uncommitted require-reason policy",
+        preview_create(tx.sql(), &manager, &matching).await?.is_ok(),
+    )?;
+    prove(
+        "create rechecks uncommitted duplicate policy on the same transaction",
+        matches!(create(&mut tx, &manager, &matching).await?, CreateOutcome::Refused(errors)
+            if errors.iter().any(|e| e.field == "create_anyway")),
+    )?;
+    let reviewed = NewCompany {
+        create_anyway: Some(bilibi_company::CreateAnyway {
+            candidate_ids: preview
+                .matches
+                .candidates
+                .as_ref()
+                .unwrap()
+                .iter()
+                .map(|c| c.id)
+                .collect(),
+            reason: "Reviewed independent company".into(),
+        }),
+        ..matching.clone()
+    };
+    prove(
+        "reviewed candidate ids and reason allow the composed create",
+        matches!(
+            create(&mut tx, &manager, &reviewed).await?,
+            CreateOutcome::Created(_)
+        ),
+    )?;
     let target = PartyId::Organisation(created.organisation_id()?);
     prove(
         "detail sees company facts before commit",
@@ -350,6 +509,89 @@ async fn main() -> Result<(), Failure> {
     )?;
     drop(client);
 
+    let matching = NewCompany {
+        code: Some(format!("match-{stamp}")),
+        ..new.clone()
+    };
+    let client = db.get().await?;
+    let preview = preview_create(&**client, &manager, &matching)
+        .await?
+        .map_err(|errors| format!("persistent preview: {errors:?}"))?;
+    let service = companies.create_matches(&manager, &matching).await?;
+    let found = duplicates(&**client, &manager, &DuplicateQuery::from(&matching)).await?;
+    prove(
+        "public preview, standalone lookup and page service return identical candidates",
+        serde_json::to_value(&preview.matches.candidates)?
+            == serde_json::to_value(&service.candidates)?
+            && serde_json::to_value(&found)?
+                == serde_json::to_value(service.candidates.as_ref().unwrap())?,
+    )?;
+    drop(client);
+    grants
+        .set_direct(&admin, manager.user(), bilibi_company::LIST, Some(false))
+        .await?;
+    let client = db.get().await?;
+    let hidden = preview_create(&**client, &manager, &matching)
+        .await?
+        .map_err(|errors| format!("hidden preview: {errors:?}"))?;
+    prove(
+        "create-only caller learns likely duplicates without candidate details",
+        hidden.matches.likely && hidden.matches.candidates.is_none(),
+    )?;
+    prove(
+        "standalone duplicate lookup requires list capability",
+        matches!(
+            duplicates(&**client, &manager, &DuplicateQuery::from(&matching)).await,
+            Err(Error::Forbidden)
+        ),
+    )?;
+    drop(client);
+    grants
+        .set_direct(&admin, manager.user(), bilibi_company::LIST, None)
+        .await?;
+    grants
+        .set_direct(&admin, manager.user(), bilibi_company::CREATE, Some(false))
+        .await?;
+    let client = db.get().await?;
+    prove(
+        "direct create deny refuses preview and create matching",
+        matches!(
+            preview_create(&**client, &manager, &matching).await,
+            Err(Error::Forbidden)
+        ) && matches!(
+            create_matches(&**client, &manager, &matching).await,
+            Err(Error::Forbidden)
+        ),
+    )?;
+    drop(client);
+    grants
+        .set_direct(&admin, manager.user(), bilibi_company::CREATE, None)
+        .await?;
+    restrictions
+        .put(&admin, "companies", "registration_number", &[1])
+        .await?;
+    let client = db.get().await?;
+    let restricted = preview_create(&**client, &manager, &matching)
+        .await?
+        .unwrap_err();
+    prove(
+        "restricted create field remains a page-compatible field refusal",
+        restricted.iter().any(|e| e.field == "registration_number"),
+    )?;
+    drop(client);
+    restrictions
+        .remove(&admin, "companies", "registration_number")
+        .await?;
+    let registry = app
+        .services
+        .get::<bilibi_agent_api::Registry>("base/agent_api.registry")?;
+    let bilibi_agent_api::Handler::SafeWrite(handler) = registry.operations["core.company.create"]
+        .definition
+        .handler
+    else {
+        return Err("company create operation is not a write".into());
+    };
+
     // Every task holds a connection before any read begins. A nested pool
     // acquisition would exhaust the pool and the deadline would fail this run.
     let count = db.status().max_size;
@@ -358,11 +600,25 @@ async fn main() -> Result<(), Failure> {
     for _ in 0..count {
         let (db, barrier, scope) = (db.clone(), barrier.clone(), manager.clone());
         let role = role.id;
+        let matching = matching.clone();
         tasks.spawn(async move {
             let mut client = db.get().await?;
             let tx = client.transaction().await?;
             barrier.wait().await;
             let read: &dyn bilibi_tenancy::ReadClient = &*tx;
+            let preview = preview_create(read, &scope, &matching).await?.map_err(|_| Error::Invalid)?;
+            let candidates = create_matches(read, &scope, &matching).await?;
+            let found = duplicates(read, &scope, &DuplicateQuery::from(&matching)).await?;
+            if !preview.matches.likely || !candidates.likely || found.is_empty() {
+                return Err(Error::Invalid);
+            }
+            let input = serde_json::json!({"name":matching.name,"code":matching.code,
+                "registration_number":matching.registration_number,"email":matching.email,"tax_id":matching.tax_id});
+            let output = handler.preview(&*tx, &scope, &input).await.map_err(|_| Error::Invalid)?
+                .envelope("core.company.create");
+            if output["result"]["duplicate_candidates"] != serde_json::to_value(preview.matches.candidates).map_err(|_| Error::Invalid)? {
+                return Err(Error::Invalid);
+            }
             detail(read, &scope, company.get()).await?;
             relationship_role_by_code(read, &scope, "customer")
                 .await?
@@ -386,7 +642,7 @@ async fn main() -> Result<(), Failure> {
         Ok::<_, Failure>(())
     })
     .await??;
-    println!("PASS: {count} concurrent transactions at pool size {count}, all reads completed");
+    println!("PASS: {count} concurrent transactions at pool size {count}, all reads and public/agent create previews completed");
 
     companies
         .retire_relationship_role(&manager, role.id, role.version, None)

@@ -293,6 +293,43 @@ impl PickLists {
             .map(|value| Choice::new(value.label_in(language).to_owned(), value.code))
             .collect())
     }
+    /// Whether `choices` would offer this code, without resolving labels or
+    /// locking. Uses the caller's read connection, including its uncommitted
+    /// curation. The owner's write must still call `check` to lock the choice.
+    pub async fn contains_choice(
+        &self,
+        client: &dyn bilibi_tenancy::ReadClient,
+        scope: &Scope,
+        list: &str,
+        code: &str,
+        parent: Option<&str>,
+    ) -> Result<bool> {
+        let list = self.list(list)?;
+        if list.parent.is_some() && parent.is_none() {
+            return Ok(false);
+        }
+        let tenant = match list.reach {
+            Reach::Tenant => Some(scope.tenant()),
+            Reach::Installation => client
+                .query_opt(
+                    "SELECT tenant_id FROM platform_operator WHERE singleton",
+                    &[],
+                )
+                .await?
+                .map(|row| row.get::<_, i64>(0)),
+        };
+        let Some(tenant) = tenant else {
+            return Ok(false);
+        };
+        Ok(client
+            .query_opt(
+                "SELECT 1 FROM base_picklist_values WHERE tenant_id=$1 AND list=$2 AND code=$3 AND retired_on IS NULL AND ($4::text IS NULL OR $4=ANY(parent_codes))",
+                &[&tenant, &list.key, &code, &parent],
+            )
+            .await?
+            .is_some())
+    }
+
     /// The code that pre-fills a new record, if the operator kept one.
     pub async fn default(
         &self,

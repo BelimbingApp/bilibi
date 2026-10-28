@@ -44,6 +44,7 @@ Three steps in the owning module, nothing anywhere else.
    | Need | Call |
    | --- | --- |
    | A form's options, in the reader's language | `choices(client, scope, list, parent)` → `Vec<bilibi_ui::Choice>` |
+   | Whether a preview may offer a code on its existing `ReadClient` | `contains_choice(client, scope, list, code, parent)`; no labels or locks, with the same active and parent filters as `choices` |
    | The value that pre-fills a new record | `default(client, scope, list)` |
    | How a record shows its stored code | `label(client, scope, list, code)` → `Label { text, retired }` |
    | Accept a newly chosen code | `check(&tx, scope, list, code, parent)` on the owner's `MutationTransaction`; `check_in(sql, …)` is available inside a scoped SQL mutation closure when the old value is read there |
