@@ -602,7 +602,7 @@ impl Sessions {
         let chosen: Option<i64> = row.get(4);
         let scope = self
             .authentication
-            .authenticate_session_in(
+            .authenticate_session(
                 client,
                 row.get(0),
                 row.get(1),

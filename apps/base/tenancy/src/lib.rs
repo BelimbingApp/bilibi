@@ -502,32 +502,18 @@ impl Authentication {
         user: i64,
         csrf: String,
     ) -> Result<Scope> {
-        self.authenticate_session(client, tenant, user, None, csrf)
+        self.authenticate_session(client, tenant, user, None, None, csrf)
             .await
     }
     /// The durable session edge: `impersonator` is the operator the session
     /// row names, never a value from the browser. Both accounts are re-proved
     /// live in the same tenant, so a removed or frozen operator ends the
-    /// impersonated session as surely as a removed target does. The scope
-    /// has no company choice, so it works in the affiliation's company
-    /// (`Scope::current_company`).
+    /// impersonated session as surely as a removed target does. `company` is
+    /// the company the session row says the person chose to work in; it is
+    /// kept on the scope only when the verifier confirms the account reaches
+    /// it now (`ActorVerifier::reaches_company`), and otherwise dropped, so
+    /// the scope falls back to the affiliation (`Scope::current_company`).
     pub async fn authenticate_session(
-        &self,
-        client: &(impl GenericClient + Sync),
-        tenant: i64,
-        user: i64,
-        impersonator: Option<i64>,
-        csrf: String,
-    ) -> Result<Scope> {
-        self.authenticate_session_in(client, tenant, user, impersonator, None, csrf)
-            .await
-    }
-    /// `authenticate_session` for a browser session that may hold a company
-    /// choice: `company` is what the session row says the person chose to
-    /// work in. It is kept on the scope only when the verifier confirms the
-    /// account reaches it now (`ActorVerifier::reaches_company`), and
-    /// otherwise dropped, so the scope falls back to the affiliation.
-    pub async fn authenticate_session_in(
         &self,
         client: &(impl GenericClient + Sync),
         tenant: i64,
@@ -647,7 +633,7 @@ impl Authentication {
             return self.for_principal(client, scope.tenant(), principal).await;
         }
         let mut fresh = self
-            .authenticate_session_in(
+            .authenticate_session(
                 client,
                 scope.tenant(),
                 scope.user(),
