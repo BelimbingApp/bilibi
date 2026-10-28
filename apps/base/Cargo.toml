@@ -34,6 +34,8 @@ bilibi-ports = { path = "ports" }
 bilibi-principal-directory = { path = "principal_directory" }
 bilibi-privacy = { path = "privacy" }
 bilibi-queue = { path = "queue" }
+bilibi-records = { path = "records" }
+bilibi-reports = { path = "reports" }
 bilibi-schedule = { path = "schedule" }
 bilibi-search = { path = "search" }
 bilibi-security = { path = "security" }

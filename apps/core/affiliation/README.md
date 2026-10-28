@@ -36,6 +36,7 @@ Unlinked records remain readable but refuse edits and new binding proofs.
 Reads retain ended, retired-Person and archived-company history; writes refuse
 archived/deleted/missing companies and retired or protected system Persons.
 Owners supply those rules through their public locking APIs.
+Every write, and its preview, also authorizes the affiliation's company as a company write would (`bilibi_company::authorize_target` with the operation's own capability): the actor's own company, or any live company of the tenant with `admin.company.tenant-wide.manage`. A company out of reach is `Forbidden`; a missing or other-tenant company is `NotFound`.
 
 Grid/Authz register work email and phone restrictions under
 `person_affiliations`. Read/list results remove those values and name them in

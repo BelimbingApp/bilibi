@@ -329,7 +329,8 @@ impl Link {
     }
 }
 
-/// A validated table. A scoped catalog holds copies with restricted fields removed.
+/// A validated table. A scoped catalog holds copies with restricted fields removed
+/// (Bilimbi `Bilimbi.Base.Grid`).
 #[derive(Clone, Debug)]
 pub struct Table {
     pub decl: &'static TableDecl,
@@ -366,6 +367,10 @@ impl Table {
     /// Fields marked personal, hidden ones included.
     pub fn personal_fields(&self) -> impl Iterator<Item = &Field> {
         self.fields.iter().filter(|field| field.personal.is_some())
+    }
+    /// Static detail fields contributed for records in this table.
+    pub fn record_fields(&self) -> &[bilibi_ui::RecordField] {
+        &self.record_fields
     }
     pub fn field(&self, id: &str) -> Option<&Field> {
         self.fields.iter().find(|field| field.id == id)

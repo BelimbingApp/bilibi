@@ -85,7 +85,11 @@ pub struct Extras<'a> {
 /// column never sorts (the page owns the order of its rows); a numeric one is
 /// right-aligned.
 pub fn flex_column(column: &Column, lens: Lens) -> FlexColumn {
-    let mut flex = FlexColumn::new(&column.id, &column.spec, &column.label)
+    // Grid paths contain `.` link separators and `:` aggregate separators; the
+    // shared table requires DOM-safe ids. Schema identifiers themselves are
+    // underscore-delimited, so these substitutions keep path ids distinct.
+    let id = column.id.replace(['.', ':'], "-");
+    let mut flex = FlexColumn::new(&id, &column.spec, &column.label)
         .short(&column.short_label)
         .typed(column_type(column.ty))
         .kind(match column.kind {

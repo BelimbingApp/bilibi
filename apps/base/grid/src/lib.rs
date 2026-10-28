@@ -122,6 +122,7 @@ fn restriction_snapshot(
                         id,
                         label,
                         personal,
+                        restriction_aliases: Vec::new(),
                     })
                     .collect(),
             })

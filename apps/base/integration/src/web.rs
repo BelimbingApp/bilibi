@@ -260,7 +260,7 @@ impl Index {
             filter: PeriodFilter::new("exchange-period", period, &clock),
             browser_zone: None,
             columns: PageColumns::mount(views, "integration-exchanges", builtins())
-                .map(|columns| columns.with_record_slots(fields::ALL))
+                .and_then(|columns| columns.with_record_slots(fields::ALL))
                 .map_err(|_| Error::Internal)?,
             reload: true,
         })

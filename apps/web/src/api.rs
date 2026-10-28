@@ -262,6 +262,49 @@ pub(crate) fn label(headers: &HeaderMap, name: &str) -> Option<String> {
         .then(|| value.to_owned())
 }
 
+/// Absolute links belong to the host; operations return paths. Every record
+/// reference in an answer (an object with `kind`, `id` and a page `path`,
+/// as `base/records` returns them) gains its `url`.
+pub(crate) fn record_urls(origin: &str, value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            let url = (map.contains_key("kind") && map.contains_key("id"))
+                .then(|| map.get("path").and_then(Value::as_str))
+                .flatten()
+                .filter(|path| path.starts_with('/'))
+                .map(|path| format!("{origin}{path}"));
+            if let Some(url) = url {
+                map.insert("url".into(), json!(url));
+            }
+            for value in map.values_mut() {
+                record_urls(origin, value);
+            }
+        }
+        Value::Array(items) => {
+            for value in items {
+                record_urls(origin, value);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// An operation, plan or commit answer with `record_urls` applied to its
+/// body, a refusal's too (a rejected plan carries the previews of its other
+/// operations), as `/mcp` does for every tool result.
+fn with_record_urls(app: &App, result: Result<Value, Refusal>) -> Result<Value, Refusal> {
+    match result {
+        Ok(mut answer) => {
+            record_urls(origin(app), &mut answer);
+            Ok(answer)
+        }
+        Err(mut refusal) => {
+            record_urls(origin(app), &mut refusal.body);
+            Err(refusal)
+        }
+    }
+}
+
 pub(crate) fn reply(status: StatusCode, body: Value) -> Response {
     (status, Json(body)).into_response()
 }
@@ -885,14 +928,14 @@ async fn call(State(app): State<App>, Path(key): Path<String>, request: Request)
             Some(input @ Value::Object(_)) => input,
             _ => return Err(invalid_request()),
         };
-        let client = app.db.get().await.map_err(|e| unavailable(&e.into()))?;
         app.api
             .registry
-            .call(&**client, &agent.scope, &key, &input)
+            .read(&app.db, &agent.scope, &key, &input)
             .await
             .map_err(api_error)
     }
     .await;
+    let result = with_record_urls(&app, result);
     agent.answer(Some(key), result)
 }
 
@@ -928,6 +971,7 @@ async fn plan(State(app): State<App>, request: Request) -> Response {
             .map_err(api_error)
     }
     .await;
+    let result = with_record_urls(&app, result);
     agent.answer(Some("agent_api.plan".into()), result)
 }
 
@@ -961,5 +1005,6 @@ async fn commit(State(app): State<App>, request: Request) -> Response {
             .map_err(api_error)
     }
     .await;
+    let result = with_record_urls(&app, result);
     agent.answer(Some("agent_api.commit".into()), result)
 }

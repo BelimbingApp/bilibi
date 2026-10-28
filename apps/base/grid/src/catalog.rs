@@ -147,6 +147,36 @@ impl Catalog {
         let allowed = bilibi_authz::effective_capabilities(client, scope).await?;
         let restricted = bilibi_authz::fields::restricted(client, scope).await?;
         let masked = bilibi_authz::fields::masked(client, scope).await?;
+        // A record owner can expose a field stored in a linked Extension table.
+        // Apply that record-level restriction to the resolved Grid field too,
+        // so the alternate path cannot bypass the Company's field identity
+        // (Bilimbi `Bilimbi.Base.Grid`).
+        let mut contributed_hidden: BTreeMap<&'static str, BTreeSet<&'static str>> =
+            BTreeMap::new();
+        for (root_id, root) in installed.map() {
+            let denied: BTreeSet<&str> = restricted
+                .get(*root_id)
+                .into_iter()
+                .flatten()
+                .map(String::as_str)
+                .collect();
+            for field in root
+                .record_fields()
+                .iter()
+                .filter(|field| denied.contains(field.id))
+            {
+                let Some(path) = field.column else { continue };
+                let Ok(column) = column::resolve(path, root, &|id| installed.table(id)) else {
+                    continue;
+                };
+                if let Some(field) = column.field {
+                    contributed_hidden
+                        .entry(column.table)
+                        .or_default()
+                        .insert(field.id);
+                }
+            }
+        }
         let mut tables = BTreeMap::new();
         let mut masks = BTreeMap::new();
         for (id, table) in installed.map() {
@@ -160,7 +190,7 @@ impl Catalog {
             // Protected fields are never offered for restriction, so a stale row
             // naming one is inert here (record pages still mask by name). A
             // masked field stays, and its values are masked when projected.
-            let hidden: BTreeSet<&str> = restricted
+            let mut hidden: BTreeSet<&str> = restricted
                 .get(*id)
                 .into_iter()
                 .flatten()
@@ -168,6 +198,7 @@ impl Catalog {
                 .filter(|field| !table.is_protected(field))
                 .filter(|field| !masked.get(*id).is_some_and(|m| m.contains_key(*field)))
                 .collect();
+            hidden.extend(contributed_hidden.get(*id).into_iter().flatten().copied());
             tables.insert(*id, table.without(&hidden));
             if !own.is_empty() {
                 masks.insert(*id, own);
