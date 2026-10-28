@@ -1,6 +1,7 @@
-//! Media: private asset storage, content-checked uploads, signed streams, the
-//! trusted subject-owner seam and private subject attachments. Owners call this API after authorizing their
-//! own workflow; it is not a browser endpoint. Read `README.md` before use.
+//! Media: private asset storage, content-checked uploads, malware scanning
+//! with quarantine, signed streams, the trusted subject-owner seam and private
+//! subject attachments. Owners call this API after authorizing their own
+//! workflow; it is not a browser endpoint. Read `README.md` before use.
 //!
 //! Bytes live on operator-mapped private disks and metadata in
 //! `base_media_assets`. Filesystem work and database work cannot share a
@@ -9,31 +10,45 @@
 //! write in a transaction they might roll back. `register_*` only records
 //! metadata for bytes an owner already produced, and composes into the owner's
 //! `MutationTransaction`.
+mod agent;
 mod attachments;
 mod contributions;
 mod owner;
+mod quarantine;
 mod response;
+mod scan;
 mod signing;
 mod storage;
 mod upload;
+mod web;
 
 pub use attachments::{
     Attachment, AttachmentErasure, AttachmentState, AttachmentSubject, Cleanup, ErasedAttachment,
     Removal, ASSET_KIND, ATTACHMENT_KIND,
 };
 pub use owner::{Subject, SubjectAction, SubjectOwner, Subjects, SUBJECTS};
+pub use quarantine::{
+    QuarantinePage, QuarantineQuery, QuarantinedFile, MANAGE as QUARANTINE_MANAGE,
+    VIEW as QUARANTINE_VIEW,
+};
 pub use response::{Delivery, StreamFile};
+pub use scan::{ScanFacts, ScanFuture, ScanState, Scanner, Verdict, PRINCIPAL, SCAN};
 pub use signing::Signer;
 pub use storage::EXTERNAL;
 pub use upload::{Rules, Upload};
 
-use bilibi_database::{Change, MutationBoundary, MutationTransaction};
+use bilibi_database::{Change, Db, MutationBoundary, MutationTransaction};
 use bilibi_module_registry::{Catalog, Service};
+use bilibi_notifications::NotificationBoundary;
+use bilibi_queue::{
+    execution::{HandlerBinding, HandlerService, HANDLERS},
+    Queue, Worker, WORKERS,
+};
 use bilibi_settings::Settings;
-use bilibi_tenancy::Scope;
+use bilibi_tenancy::{Authentication, Scope};
 use serde_json::{json, Value};
 use std::{
-    sync::Arc,
+    sync::{Arc, OnceLock},
     time::{SystemTime, UNIX_EPOCH},
 };
 use tokio_postgres::{Client, GenericClient};
@@ -93,6 +108,24 @@ pub enum Error {
     ImmutableAttachment,
     #[error("Only the uploader may discard a draft")]
     NotUploader,
+    #[error("File scanning is required, but no scanner is installed")]
+    ScanningRequired,
+    #[error("No malware scanner is installed")]
+    NoScanner,
+    #[error("The file is still being checked for malware")]
+    ScanPending,
+    #[error("The file failed a malware check and is quarantined")]
+    Quarantined,
+    #[error("The file could not be checked for malware")]
+    ScanFailed,
+    #[error("The file has not been checked for malware")]
+    NotScanned,
+    #[error("The file is already clean")]
+    AlreadyClean,
+    #[error("Only a quarantined or failed file can be purged")]
+    NotPurgeable,
+    #[error("The file's contents were purged")]
+    Purged,
     #[error(transparent)]
     Database(#[from] bilibi_database::Error),
     #[error("Database unavailable")]
@@ -109,6 +142,8 @@ pub struct Asset {
     pub mime_type: Option<String>,
     pub file_size: Option<i64>,
     pub metadata: Option<Value>,
+    /// The malware verdict; only a readable file is ever served.
+    pub scan_state: ScanState,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -144,8 +179,20 @@ struct Stored {
     disk: String,
     key: String,
     private: bool,
+    scanner: Option<String>,
+    scanner_version: Option<String>,
+    signature: Option<String>,
+    reason: Option<String>,
+    /// A manager purged it: never read or rescanned again, its bytes queued
+    /// for removal.
+    purge_requested: bool,
+    /// The purge job removed its bytes.
+    purged: bool,
+    created_by: Option<i64>,
+    /// Raised by each rescan; a scan job records its verdict only for its own.
+    generation: i64,
 }
-const COLUMNS: &str = "id,tenant_id,parent_id,disk,storage_key,original_filename,mime_type,file_size,kind,private,metadata,floor(extract(epoch FROM created_at))::bigint AS created_at,floor(extract(epoch FROM updated_at))::bigint AS updated_at";
+const COLUMNS: &str = "id,tenant_id,parent_id,disk,storage_key,original_filename,mime_type,file_size,kind,private,metadata,scan_state,scan_generation,scanner,scanner_version,scan_signature,scan_reason,purge_requested_at IS NOT NULL AS purge_requested,bytes_purged_at IS NOT NULL AS purged,created_by_id,floor(extract(epoch FROM created_at))::bigint AS created_at,floor(extract(epoch FROM updated_at))::bigint AS updated_at";
 fn stored(row: &tokio_postgres::Row) -> Stored {
     Stored {
         asset: Asset {
@@ -156,6 +203,7 @@ fn stored(row: &tokio_postgres::Row) -> Stored {
             mime_type: row.get("mime_type"),
             file_size: row.get("file_size"),
             metadata: row.get("metadata"),
+            scan_state: ScanState::parse(row.get("scan_state")),
             created_at: row.get("created_at"),
             updated_at: row.get("updated_at"),
         },
@@ -163,11 +211,19 @@ fn stored(row: &tokio_postgres::Row) -> Stored {
         disk: row.get("disk"),
         key: row.get("storage_key"),
         private: row.get("private"),
+        scanner: row.get("scanner"),
+        scanner_version: row.get("scanner_version"),
+        signature: row.get("scan_signature"),
+        reason: row.get("scan_reason"),
+        purge_requested: row.get("purge_requested"),
+        purged: row.get("purged"),
+        created_by: row.get("created_by_id"),
+        generation: row.get("scan_generation"),
     }
 }
 /// Audit facts name the asset, never its bytes, key or free-form metadata.
 fn audit(row: &Stored) -> Value {
-    json!({"kind":row.asset.kind,"parent_id":row.asset.parent_id,"disk":row.disk,"original_filename":row.asset.original_filename,"mime_type":row.asset.mime_type,"file_size":row.asset.file_size,"private":row.private})
+    json!({"kind":row.asset.kind,"parent_id":row.asset.parent_id,"disk":row.disk,"original_filename":row.asset.original_filename,"mime_type":row.asset.mime_type,"file_size":row.asset.file_size,"private":row.private,"scan_state":row.asset.scan_state.as_str()})
 }
 fn now() -> u64 {
     SystemTime::now()
@@ -176,26 +232,18 @@ fn now() -> u64 {
 }
 
 pub struct Media {
+    db: Db,
     settings: Arc<Settings>,
     boundary: Arc<MutationBoundary>,
     signer: Signer,
     subjects: Subjects,
+    queue: Arc<Queue>,
+    notifications: Arc<NotificationBoundary>,
+    authentication: Arc<Authentication>,
+    /// The installation's one malware scanner, bound by an Extension (`scan.rs`).
+    scanner: OnceLock<Arc<dyn scan::Scanner>>,
 }
 impl Media {
-    pub fn new(
-        settings: Arc<Settings>,
-        boundary: Arc<MutationBoundary>,
-        signer: Signer,
-        subjects: Subjects,
-    ) -> Self {
-        Self {
-            settings,
-            boundary,
-            signer,
-            subjects,
-        }
-    }
-
     async fn setting(&self, client: &(impl GenericClient + Sync), key: &str) -> Result<Value> {
         Ok(self.settings.get_global(client, key).await?)
     }
@@ -366,6 +414,8 @@ impl Media {
         if self.private_tree(tx.sql(), parent_id).await? {
             return Err(Error::PrivateAsset);
         }
+        let parent = self.fetch(tx.sql(), scope.tenant(), parent_id).await?;
+        self.readable(tx.sql(), &parent).await?;
         self.register(tx, scope, Some(parent_id), kind, place, new)
             .await
     }
@@ -392,19 +442,22 @@ impl Media {
         if taken.is_some() {
             return Err(Error::StorageKeyExists);
         }
-        let (tenant, disk, key, kind) = (
+        let state = self.initial_state(tx.sql(), disk).await?;
+        let (tenant, user, disk, key, kind, state_text) = (
             scope.tenant(),
+            scope.user(),
             disk.to_owned(),
             key.to_owned(),
             kind.to_owned(),
+            state.as_str(),
         );
         let row = tx
             .mutate(move |sql| {
                 Box::pin(async move {
                     let row = sql
                         .query_one(
-                            &format!("INSERT INTO base_media_assets(tenant_id,parent_id,disk,storage_key,original_filename,mime_type,file_size,kind,private,metadata) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING {COLUMNS}"),
-                            &[&tenant, &parent, &disk, &key, &new.original_filename, &new.mime_type, &new.file_size, &kind, &new.private, &new.metadata],
+                            &format!("INSERT INTO base_media_assets(tenant_id,parent_id,disk,storage_key,original_filename,mime_type,file_size,kind,private,metadata,scan_state,created_by_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING {COLUMNS}"),
+                            &[&tenant, &parent, &disk, &key, &new.original_filename, &new.mime_type, &new.file_size, &kind, &new.private, &new.metadata, &state_text, &user],
                         )
                         .await?;
                     let row = stored(&row);
@@ -413,6 +466,10 @@ impl Media {
                 })
             })
             .await?;
+        if state == ScanState::Pending {
+            self.enqueue_scan(tx, tenant, row.asset.id, row.generation)
+                .await?;
+        }
         Ok(row.asset)
     }
 
@@ -432,6 +489,8 @@ impl Media {
         if disk == EXTERNAL {
             return Err(Error::SourceNotStored);
         }
+        // Refused before any bytes are written; registration decides again.
+        self.initial_state(&*client, disk).await?;
         let (max_bytes, types) = self.limits(&*client).await?;
         let inspected = upload::inspect(
             &file,
@@ -476,7 +535,9 @@ impl Media {
         if place.disk == EXTERNAL {
             return Err(Error::SourceNotStored);
         }
-        self.public(&*client, scope, of.parent_id).await?;
+        let parent = self.public(&*client, scope, of.parent_id).await?;
+        self.readable(&*client, &parent).await?;
+        self.initial_state(&*client, place.disk).await?;
         let (max_bytes, types) = self.limits(&*client).await?;
         let upload = Upload {
             filename: place.key.rsplit('/').next().unwrap_or("derivative").into(),
@@ -642,6 +703,7 @@ impl Media {
         if row.disk == EXTERNAL {
             return Err(Error::SourceNotStored);
         }
+        self.readable(client, &row).await?;
         let ttl = self
             .setting(client, "media.stream_ttl_seconds")
             .await?
@@ -666,6 +728,9 @@ impl Media {
         if row.disk == EXTERNAL {
             return Err(Error::SourceNotStored);
         }
+        // Rechecked at every read: a link issued while the file was clean
+        // stops working if it is rescanned and quarantined.
+        self.readable(client, &row).await?;
         let bytes = storage::read(&self.disks(client).await?, &row.disk, &row.key).await?;
         Ok(StreamFile {
             bytes,
@@ -716,24 +781,68 @@ inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_personal_d
 bilibi_module_registry::Provenance { module: "base/media", source: file!(), line: line!() },
 &bilibi_personal_data::RecordKind { kind: ASSET_KIND, fields: &["original_filename"], subject_identifier: false, person: false }) }
 
+macro_rules! provenance {
+    () => {
+        bilibi_module_registry::Provenance {
+            module: "base/media",
+            source: file!(),
+            line: line!(),
+        }
+    };
+}
+inventory::submit! { bilibi_module_registry::Contribution::new(WORKERS, scan::WORKER, provenance!(), &Worker { max_attempts: scan::MAX_ATTEMPTS, validate: scan::arguments }) }
+inventory::submit! { bilibi_module_registry::Contribution::new(HANDLERS, scan::WORKER, provenance!(), &HandlerBinding { service: scan::HANDLER, capability: scan::SCAN }) }
+inventory::submit! { bilibi_module_registry::Contribution::new(WORKERS, quarantine::WORKER, provenance!(), &Worker { max_attempts: quarantine::MAX_ATTEMPTS, validate: quarantine::arguments }) }
+inventory::submit! { bilibi_module_registry::Contribution::new(HANDLERS, quarantine::WORKER, provenance!(), &HandlerBinding { service: quarantine::HANDLER, capability: quarantine::REMOVE }) }
+
+pub const SERVICE: &str = "base/media.store";
 inventory::submit! {
     bilibi_module_registry::Module {
         id: "base/media", layer: bilibi_module_registry::Layer::Base,
-        dependencies: &["base/audit", "base/authz", "base/database", "base/personal_data", "base/settings", "base/tenancy"],
+        dependencies: &["base/agent_api", "base/audit", "base/authz", "base/database", "base/datetime", "base/locale", "base/menu", "base/notifications", "base/personal_data", "base/queue", "base/settings", "base/tenancy", "base/ui"],
         migrations: &[
             ("base-media-001", include_str!("../migrations/001-media.sql")),
             ("base-media-002", include_str!("../migrations/002-attachments.sql")),
-            ("base-media-003-erasure", include_str!("../migrations/003-erasure.sql")),
+            ("base-media-003", include_str!("../migrations/003-scan.sql")),
+            ("base-media-004-erasure", include_str!("../migrations/004-erasure.sql")),
         ],
-        services: &[Service { id: "base/media.store", factory: |services| {
-            let modules = bilibi_module_registry::discover()?;
-            let catalog = Catalog::discover(&modules)?;
-            Ok(Arc::new(Media::new(
-                services.get("base/settings.store")?,
-                services.get("base/database.mutations")?,
-                Signer::from_hex(std::env::var("BILIBI_MEDIA_SIGNING_KEY").ok().as_deref()),
-                Subjects::from_catalog(&catalog, &modules)?,
-            )))
-        }}],
+        services: &[
+            Service { id: SERVICE, factory: |services| {
+                let modules = bilibi_module_registry::discover()?;
+                let catalog = Catalog::discover(&modules)?;
+                Ok(Arc::new(Media {
+                    db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
+                    settings: services.get("base/settings.store")?,
+                    boundary: services.get("base/database.mutations")?,
+                    signer: Signer::from_hex(std::env::var("BILIBI_MEDIA_SIGNING_KEY").ok().as_deref()),
+                    subjects: Subjects::from_catalog(&catalog, &modules)?,
+                    queue: services.get("base/queue.store")?,
+                    notifications: services.get("base/notifications.sink")?,
+                    authentication: services.get("base/tenancy.authentication")?,
+                    scanner: OnceLock::new(),
+                }))
+            }},
+            Service { id: scan::HANDLER, factory: |services| {
+                Ok(Arc::new(HandlerService(Arc::new(scan::ScanJob { media: services.get(SERVICE)? }))))
+            }},
+            Service { id: quarantine::HANDLER, factory: |services| {
+                Ok(Arc::new(HandlerService(Arc::new(quarantine::PurgeJob { media: services.get(SERVICE)? }))))
+            }},
+            Service { id: "base/media.agent", factory: |services| {
+                if !agent::bind(services.get(SERVICE)?) {
+                    return Err(bilibi_module_registry::RegistryError::Service("duplicate media agent binding".into()));
+                }
+                Ok(Arc::new(()))
+            }},
+            Service { id: web::PAGES, factory: |services| {
+                Ok(Arc::new(bilibi_ui::page::PageService::<Scope, bilibi_database::Error>(Arc::new(web::Pages {
+                    db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
+                    media: services.get(SERVICE)?,
+                    contracts: services.get(bilibi_agent_api::page::SERVICE)?,
+                    display: services.get("base/datetime.display")?,
+                    locales: services.get("base/locale.locales")?,
+                }))))
+            }},
+        ],
     }
 }

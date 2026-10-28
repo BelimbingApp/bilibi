@@ -90,9 +90,9 @@ struct IndexView<'a> {
     source = r#"{% import "flex_table.html" as flex %}{% call flex::instant(id=id, i=i) %}{% endcall %}"#,
     ext = "html"
 )]
-struct UpdatedCell<'a> {
-    id: &'a str,
-    i: bilibi_ui::Instant,
+pub(crate) struct UpdatedCell<'a> {
+    pub id: &'a str,
+    pub i: bilibi_ui::Instant,
 }
 
 impl Index {
@@ -163,7 +163,8 @@ impl Index {
             return Ok(None);
         }
         let definition = match kind {
-            Kind::Rows => {
+            Kind::Summary => json!({"chart": "kpi"}),
+            Kind::Rows | Kind::Matrix => {
                 let columns = match self.pages.reports.columns(scope, &draft.record_type).await {
                     Ok(columns) => columns,
                     Err(_) => {
@@ -179,9 +180,26 @@ impl Index {
                     .take(STARTER_COLUMNS)
                     .map(|c| c.spec.clone())
                     .collect();
-                json!({"columns": own})
+                if kind == Kind::Rows {
+                    json!({"columns": own})
+                } else {
+                    // A matrix starts down and across the first two of the
+                    // record's own text or choice fields.
+                    let groups: Vec<_> = columns
+                        .iter()
+                        .filter(|c| {
+                            !c.spec.contains('.') && matches!(c.ty, "string" | "choice" | "boolean")
+                        })
+                        .take(2)
+                        .map(|c| json!({"column": c.spec}))
+                        .collect();
+                    if groups.len() < 2 {
+                        draft.errors.push(("kind", "needs two text or choice fields to group by; this record type has fewer".into()));
+                        return Ok(None);
+                    }
+                    json!({"groupings": groups})
+                }
             }
-            Kind::Summary => json!({"chart": "kpi"}),
         };
         let input = json!({"name": draft.name.trim(), "description": "", "record_type": draft.record_type, "kind": kind.key(), "definition": definition});
         match self
@@ -227,28 +245,38 @@ impl Index {
             .map_err(super::page_error)?
             .into_iter()
             .collect();
-        // The search and the page are the facade's one query; a page past
-        // the last (after a search narrows it) is fetched again at the last.
+        // Stored reports page in one query with their search; the built-ins
+        // that match follow them, so both count toward the pages.
         let search = self.state.search.trim().to_owned();
-        let (mut entries, mut total) = pages
+        let needle = search.to_lowercase();
+        let builtins: Vec<_> = pages
             .reports
-            .page(scope, &search, self.state.offset(), self.state.page_size)
+            .builtins(scope)
             .await
-            .map_err(super::page_error)?;
-        if self
-            .state
-            .clamp_to_last_page(total.div_ceil(self.state.page_size.max(1)), true)
-        {
-            (entries, total) = pages
-                .reports
-                .page(scope, &search, self.state.offset(), self.state.page_size)
-                .await
-                .map_err(super::page_error)?;
+            .map_err(super::page_error)?
+            .into_iter()
+            .filter(|r| {
+                needle.is_empty()
+                    || r.name.to_lowercase().contains(&needle)
+                    || r.description.to_lowercase().contains(&needle)
+            })
+            .collect();
+        let size = self.state.page_size.max(1);
+        let read = |offset: u64| pages.reports.page(scope, &search, offset, size);
+        let (mut entries, mut stored) =
+            read(self.state.offset()).await.map_err(super::page_error)?;
+        let mut total = stored + builtins.len() as u64;
+        if self.state.clamp_to_last_page(total.div_ceil(size), true) {
+            (entries, stored) = read(self.state.offset()).await.map_err(super::page_error)?;
+            total = stored + builtins.len() as u64;
         }
+        let skip = self.state.offset().saturating_sub(stored) as usize;
+        let room = (size as usize).saturating_sub(entries.len());
+        entries.extend(builtins.into_iter().skip(skip).take(room));
         let counts = PageCounts::new(self.state.page, self.state.page_size, total);
         self.rows = entries;
         if self.rows_changed {
-            self.columns.load(&self.rows, |r| r.id.to_string());
+            self.columns.load(&self.rows, row_key);
         }
         let actions = if can.author {
             render(CreateButton {
@@ -280,8 +308,11 @@ impl Index {
         ))?;
         let mut rows = Vec::with_capacity(self.rows.len());
         for report in &self.rows {
-            let href = report_path(report.id);
-            let id = report.id.to_string();
+            let href = match report.builtin {
+                Some(key) => format!("{}/{key}", super::BUILTIN_BASE),
+                None => report_path(report.id),
+            };
+            let id = row_key(report);
             let name = render(RecordLink {
                 workspace: false,
                 kind: "report",
@@ -290,7 +321,9 @@ impl Index {
                 class: "font-medium text-link hover:underline",
                 body: Html::text(&report.name),
             })?;
-            let sharing = if report.owned {
+            let sharing = if report.builtin.is_some() {
+                render(Badge::status(BadgeKind::Neutral, "Built-in"))?
+            } else if report.owned {
                 if report.shared_with_everyone {
                     render(Badge::status(BadgeKind::Plain, "Everyone"))?
                 } else if !report.role_ids.is_empty() {
@@ -323,7 +356,7 @@ impl Index {
                 .slot("kind", Html::text(kind_label(report.kind)))
                 .slot("sharing", sharing)
                 .slot("updated", updated);
-            row.dom_id = Some(format!("report-{}", report.id));
+            row.dom_id = Some(format!("report-{id}"));
             rows.push(row);
         }
         let mut table = FlexTable::new("reports", self.columns.flex_columns(), rows);
@@ -369,10 +402,19 @@ impl Index {
     }
 }
 
+/// A list row's key: a stored report's id, or `b-<key>` for a built-in.
+fn row_key(report: &Report) -> String {
+    match report.builtin {
+        Some(key) => format!("b-{key}"),
+        None => report.id.to_string(),
+    }
+}
+
 pub(crate) fn kind_label(kind: Kind) -> &'static str {
     match kind {
         Kind::Rows => "List",
         Kind::Summary => "Summary",
+        Kind::Matrix => "Matrix",
     }
 }
 
@@ -441,6 +483,7 @@ fn new_dialog(draft: &NewDraft, types: &HashMap<String, String>) -> Result<Html>
             .options(choices(&[
                 ("List: chosen columns, row by row", "rows"),
                 ("Summary: totals by group, with a chart", "summary"),
+                ("Matrix: one group down, one across", "matrix"),
             ]))
             .value(if draft.kind.is_empty() {
                 "rows"

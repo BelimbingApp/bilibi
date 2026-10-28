@@ -6,8 +6,10 @@
 //! Every update re-derives the arrangement from storage and a freshly guarded
 //! scope: an entry whose capability is gone leaves the page (and its panel state
 //! is dropped by Web) while its siblings keep running, and returns in its stored
-//! place when the capability does.
-use crate::{Dashboard, PanelArgs, Placement, Widget, LAYOUT, SECTIONS};
+//! place when the capability does. Provided entries (`Provider`) are asked for
+//! on every update with the reader's scope and arranged like contributed ones,
+//! but only ever placed by the reader.
+use crate::{Dashboard, Item, PanelArgs, Placement, LAYOUT, SECTIONS};
 use askama::Template;
 use bilibi_authz::authorize_key;
 use bilibi_database::{Db, Error, MutationBoundary, Result};
@@ -50,10 +52,10 @@ impl Pages {
 /// What one account sees right now: the arrangement of the entries it may see
 /// and the authorized entries it has not placed.
 struct Arrangement {
-    grid: Vec<&'static Widget>,
-    sections: Vec<&'static Widget>,
-    spare_grid: Vec<&'static Widget>,
-    spare_sections: Vec<&'static Widget>,
+    grid: Vec<Item>,
+    sections: Vec<Item>,
+    spare_grid: Vec<Item>,
+    spare_sections: Vec<Item>,
     /// The capabilities that withheld every grid entry, for the empty wording.
     withheld: Vec<&'static str>,
     catalogue_empty: bool,
@@ -62,12 +64,18 @@ impl Core {
     async fn arrangement(&self, scope: &Scope) -> Result<Arrangement> {
         let client = self.db.get().await?;
         let mut decided: HashMap<&str, bool> = HashMap::new();
-        for key in self
+        let capabilities = self
             .dashboard
             .entries()
             .iter()
             .filter_map(|widget| widget.capability)
-        {
+            .chain(
+                self.dashboard
+                    .providers()
+                    .iter()
+                    .filter_map(|p| p.capability),
+            );
+        for key in capabilities {
             if !decided.contains_key(key) {
                 let allowed = match authorize_key(&**client, scope, key).await {
                     Ok(()) => true,
@@ -77,7 +85,14 @@ impl Core {
                 decided.insert(key, allowed);
             }
         }
-        let offered = |widget: &Widget| widget.capability.is_none_or(|key| decided[key]);
+        let offered = |capability: Option<&str>| capability.is_none_or(|key| decided[key]);
+        let contributed: Vec<Item> = self
+            .dashboard
+            .entries()
+            .iter()
+            .filter(|widget| offered(widget.capability))
+            .map(|widget| Item::widget(widget))
+            .collect();
         let mut stored = self
             .settings
             .resolve_many(
@@ -87,26 +102,68 @@ impl Core {
                 &[LAYOUT, SECTIONS],
             )
             .await?;
+        // A provider takes its own pooled clients: holding this one across
+        // them lets concurrent page updates starve the pool.
+        drop(client);
+        // Placed ids, so a provider answers those before choosing which of
+        // its other entries to offer: a pin never falls past the offer cap.
+        let placed_ids: Vec<String> = stored
+            .values()
+            .filter(|s| s.overridden)
+            .filter_map(|s| s.value.as_array())
+            .flatten()
+            .filter_map(|id| id.as_str().map(str::to_owned))
+            .collect();
+        let mut provided: Vec<Item> = Vec::new();
+        for provider in self.dashboard.providers() {
+            if !offered(provider.capability) {
+                continue;
+            }
+            let prefix = format!("{}-", provider.prefix);
+            let pinned: Vec<String> = placed_ids
+                .iter()
+                .filter_map(|id| id.strip_prefix(&prefix).map(str::to_owned))
+                .collect();
+            let entries = match (provider.entries)(scope, &pinned).await {
+                Ok(entries) => entries,
+                Err(Error::Forbidden) => continue,
+                Err(error) => return Err(error),
+            };
+            let (kept, others): (Vec<_>, Vec<_>) =
+                entries.into_iter().partition(|e| pinned.contains(&e.key));
+            provided.extend(
+                kept.into_iter()
+                    .chain(others.into_iter().take(crate::MAX_PROVIDED))
+                    .filter_map(|entry| Item::provided(provider, entry)),
+            );
+        }
         let mut arrange = |key: &str, placement: Placement| -> Result<_> {
             let stored = stored.remove(key).ok_or(Error::Internal)?;
-            let available: Vec<_> = self
-                .dashboard
-                .entries()
+            let own: Vec<_> = contributed
                 .iter()
-                .filter(|widget| widget.placement == placement)
-                .filter(|widget| offered(widget))
-                .copied()
+                .filter(|i| i.placement == placement)
+                .cloned()
                 .collect();
-            // No stored row shows the whole authorized catalogue; a stored one
-            // keeps its order and drops ids the account can no longer see.
-            let placed: Vec<_> = if stored.overridden {
+            let available: Vec<_> = own
+                .iter()
+                .chain(provided.iter().filter(|i| i.placement == placement))
+                .cloned()
+                .collect();
+            // No stored row shows the whole authorized catalogue of contributed
+            // entries (never a provided one); a stored row keeps its order and
+            // drops ids the account can no longer see.
+            let placed: Vec<Item> = if stored.overridden {
                 let ids = stored.value.as_array().ok_or(Error::Invalid)?;
                 ids.iter()
-                    .filter_map(|id| available.iter().find(|w| Some(w.id) == id.as_str()))
-                    .copied()
+                    .filter_map(|id| {
+                        available
+                            .iter()
+                            .find(|w| Some(w.id.as_str()) == id.as_str())
+                    })
+                    .cloned()
                     .collect()
             } else {
-                available.clone()
+                own
             };
             let spare = available
                 .into_iter()
@@ -124,25 +181,27 @@ impl Core {
             .collect();
         withheld.sort_unstable();
         withheld.dedup();
+        let catalogue_empty = self.dashboard.widgets().is_empty()
+            && !provided.iter().any(|i| i.placement == Placement::Grid);
         Ok(Arrangement {
             grid,
             sections,
             spare_grid,
             spare_sections,
             withheld,
-            catalogue_empty: self.dashboard.widgets().is_empty(),
+            catalogue_empty,
         })
     }
 
     /// A self-service write to the signed-in account's own preference, so it is
     /// not a privileged administration write.
-    async fn persist(&self, scope: &Scope, key: &str, entries: &[&Widget]) -> Result<()> {
+    async fn persist(&self, scope: &Scope, key: &str, entries: &[Item]) -> Result<()> {
         let mut client = self.db.get().await?;
         let mut tx = self
             .boundary
             .begin_view_state(&mut client, scope.mutation_context("dashboard.arrangement"))
             .await?;
-        let ids: Vec<_> = entries.iter().map(|widget| widget.id).collect();
+        let ids: Vec<_> = entries.iter().map(|widget| widget.id.as_str()).collect();
         self.settings
             .put(
                 &mut tx,
@@ -228,6 +287,12 @@ impl Dash {
                     self.flash = None;
                 }
             }
+            Event::AddWidget { .. } | Event::AddSection { .. } if full(arrangement) => {
+                self.flash = Some((
+                    StatusKind::Error,
+                    format!("A dashboard holds at most {MAX_PANELS} panels. Remove one first."),
+                ));
+            }
             Event::AddWidget { id } => {
                 self.add(
                     scope,
@@ -283,18 +348,18 @@ impl Dash {
                 let mut sorted: Vec<_> = ids.iter().map(String::as_str).collect();
                 sorted.sort_unstable();
                 sorted.dedup();
-                let mut known: Vec<_> = current.iter().map(|w| w.id).collect();
+                let mut known: Vec<_> = current.iter().map(|w| w.id.as_str()).collect();
                 known.sort_unstable();
                 if sorted.len() == ids.len() && sorted == known {
                     let reordered: Vec<_> = ids
                         .iter()
-                        .filter_map(|id| current.iter().find(|w| w.id == id))
-                        .copied()
+                        .filter_map(|id| current.iter().find(|w| &w.id == id))
+                        .cloned()
                         .collect();
                     if reordered
                         .iter()
-                        .map(|w| w.id)
-                        .ne(current.iter().map(|w| w.id))
+                        .map(|w| &w.id)
+                        .ne(current.iter().map(|w| &w.id))
                     {
                         self.core.persist(scope, LAYOUT, &reordered).await?;
                         arrangement.grid = reordered;
@@ -308,16 +373,16 @@ impl Dash {
         &mut self,
         scope: &Scope,
         key: &str,
-        placed: &mut Vec<&'static Widget>,
-        spare: &[&'static Widget],
+        placed: &mut Vec<Item>,
+        spare: &[Item],
         id: &str,
     ) -> Result<()> {
         // A stale or forged id changes nothing.
-        let Some(&widget) = spare.iter().find(|w| w.id == id) else {
+        let Some(widget) = spare.iter().find(|w| w.id == id) else {
             return Ok(());
         };
         let mut next = placed.clone();
-        next.push(widget);
+        next.push(widget.clone());
         self.core.persist(scope, key, &next).await?;
         *placed = next;
         self.flash = Some((
@@ -330,7 +395,7 @@ impl Dash {
         &mut self,
         scope: &Scope,
         key: &str,
-        placed: &mut Vec<&'static Widget>,
+        placed: &mut Vec<Item>,
         id: &str,
         message: Option<&str>,
     ) -> Result<()> {
@@ -354,7 +419,7 @@ impl Dash {
         &mut self,
         scope: &Scope,
         key: &str,
-        placed: &mut Vec<&'static Widget>,
+        placed: &mut Vec<Item>,
         id: &str,
         direction: isize,
     ) -> Result<()> {
@@ -375,18 +440,24 @@ impl Dash {
     }
 }
 
+/// Panels the live host mounts for one page at most.
+const MAX_PANELS: usize = 32;
+fn full(arrangement: &Arrangement) -> bool {
+    arrangement.grid.len() + arrangement.sections.len() >= MAX_PANELS
+}
+
 struct Placed<'a> {
     id: &'a str,
     label: &'a str,
     panel: String,
 }
-fn placed<'a>(entries: &'a [&'static Widget]) -> Vec<Placed<'a>> {
+fn placed(entries: &[Item]) -> Vec<Placed<'_>> {
     entries
         .iter()
         .map(|w| Placed {
-            id: w.id,
-            label: w.label,
-            panel: crate::panel_id(w.id),
+            id: &w.id,
+            label: &w.label,
+            panel: crate::panel_id(&w.id),
         })
         .collect()
 }
@@ -394,12 +465,12 @@ struct Spare<'a> {
     id: &'a str,
     label: &'a str,
 }
-fn spare<'a>(entries: &'a [&'static Widget]) -> Vec<Spare<'a>> {
+fn spare(entries: &[Item]) -> Vec<Spare<'_>> {
     entries
         .iter()
         .map(|w| Spare {
-            id: w.id,
-            label: w.label,
+            id: &w.id,
+            label: &w.label,
         })
         .collect()
 }
@@ -527,6 +598,9 @@ impl LiveState<Scope, Error> for Dash {
                     let event: Event =
                         serde_json::from_value(value.clone()).map_err(|_| Error::Invalid)?;
                     self.event(scope, &mut arrangement, event).await?;
+                    // Re-read so what was removed is offered again at once,
+                    // not after the next refresh.
+                    arrangement = self.core.arrangement(scope).await?;
                 }
             }
             self.specs = arrangement

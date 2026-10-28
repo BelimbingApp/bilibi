@@ -616,6 +616,7 @@ dependencies = [
  "bilibi-picklists",
  "bilibi-principal-directory",
  "bilibi-records",
+ "bilibi-reports",
  "bilibi-search",
  "bilibi-security",
  "bilibi-settings",
@@ -624,6 +625,7 @@ dependencies = [
  "bilibi-walkthrough-fixture",
  "bilibi-web",
  "inventory",
+ "jiff",
  "serde",
  "serde_json",
  "thiserror",
@@ -647,6 +649,7 @@ dependencies = [
  "bilibi-tenant-administration",
  "bilibi-user",
  "bilibi-user-administration",
+ "bilibi-work-calendar",
 ]
 
 [[package]]
@@ -912,19 +915,28 @@ dependencies = [
 name = "bilibi-media"
 version = "0.1.1"
 dependencies = [
+ "askama",
  "axum",
+ "bilibi-agent-api",
  "bilibi-authz",
  "bilibi-base",
  "bilibi-core",
  "bilibi-database",
+ "bilibi-datetime",
+ "bilibi-locale",
+ "bilibi-menu",
  "bilibi-module-registry",
+ "bilibi-notifications",
  "bilibi-personal-data",
+ "bilibi-queue",
  "bilibi-settings",
  "bilibi-tenancy",
+ "bilibi-ui",
  "bilibi-walkthrough-fixture",
  "bilibi-web",
  "hmac 0.13.0",
  "inventory",
+ "jiff",
  "libc",
  "serde_json",
  "sha2 0.11.1",
@@ -1195,14 +1207,22 @@ version = "0.1.1"
 dependencies = [
  "askama",
  "bilibi-agent-api",
+ "bilibi-artifacts",
  "bilibi-audit",
  "bilibi-authz",
+ "bilibi-dashboard",
  "bilibi-database",
  "bilibi-datetime",
  "bilibi-grid",
  "bilibi-locale",
+ "bilibi-mail",
  "bilibi-menu",
  "bilibi-module-registry",
+ "bilibi-notifications",
+ "bilibi-party-ids",
+ "bilibi-queue",
+ "bilibi-records",
+ "bilibi-schedule",
  "bilibi-settings",
  "bilibi-tenancy",
  "bilibi-ui",
@@ -1603,6 +1623,32 @@ dependencies = [
  "tokio-postgres",
  "tower-http",
  "uuid",
+]
+
+[[package]]
+name = "bilibi-work-calendar"
+version = "0.1.1"
+dependencies = [
+ "bilibi-agent-api",
+ "bilibi-authz",
+ "bilibi-base",
+ "bilibi-core",
+ "bilibi-database",
+ "bilibi-datetime",
+ "bilibi-events",
+ "bilibi-geonames",
+ "bilibi-module-registry",
+ "bilibi-party-ids",
+ "bilibi-settings",
+ "bilibi-tenancy",
+ "bilibi-walkthrough-fixture",
+ "bilibi-web",
+ "inventory",
+ "jiff",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tokio-postgres",
 ]
 
 [[package]]

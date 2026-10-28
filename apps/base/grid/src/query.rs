@@ -1,7 +1,7 @@
 //! Page-only projections. Every table and edge comes from its owner's scoped
 //! source. The caller supplies specs, never trusted resolved columns or SQL.
 use crate::lens::{self, Range, TREND_MONTHS};
-use crate::{Agg, Catalog, Column, ColumnError, Join, Link, LinkKind, Table, MAX_COLUMNS};
+use crate::{Agg, Bounds, Catalog, Column, ColumnError, Join, Link, LinkKind, Table, MAX_COLUMNS};
 use bilibi_database::{Db, Error};
 use bilibi_tenancy::Scope;
 use jiff::{civil, ToSpan};
@@ -41,6 +41,10 @@ impl fmt::Display for QueryError {
 impl std::error::Error for QueryError {}
 impl From<tokio_postgres::Error> for QueryError {
     fn from(error: tokio_postgres::Error) -> Self {
+        // A statement past its timeout is the read's bound, not a fault.
+        if error.code() == Some(&tokio_postgres::error::SqlState::QUERY_CANCELED) {
+            return Self::Limit("the read took longer than its time bound");
+        }
         Self::Database(error.into())
     }
 }
@@ -153,6 +157,30 @@ pub async fn project<S: AsRef<str>>(
     project_lenses(db, scope, root, ids, specs, &Lenses::default()).await
 }
 
+/// [`project`] under the caller's [`Bounds`] (its statement timeout and cost
+/// bound) instead of the interactive ones: the report builder fills a page
+/// of keys it read under the same bounds, interactive or background.
+pub async fn project_within<S: AsRef<str>>(
+    db: &Db,
+    scope: &Scope,
+    root: &str,
+    ids: &[Value],
+    specs: &[S],
+    bounds: Bounds,
+) -> Result<Projection, QueryError> {
+    read(
+        db,
+        scope,
+        root,
+        ids,
+        specs,
+        &Lenses::default(),
+        bounds,
+        None,
+    )
+    .await
+}
+
 /// [`project`] plus each trend column's monthly series and each delta column's
 /// aggregate before the date, from the same statement under the same bounds.
 /// Months and dates are UTC calendar days (`TimeZone` is UTC for the read).
@@ -164,7 +192,7 @@ pub async fn project_lenses<S: AsRef<str>>(
     specs: &[S],
     lenses: &Lenses,
 ) -> Result<Projection, QueryError> {
-    project_in(db, scope, root, ids, specs, lenses, None).await
+    read(db, scope, root, ids, specs, lenses, Bounds::default(), None).await
 }
 
 /// The full value of one masked field of one record (ADR 05): the same read
@@ -192,13 +220,14 @@ pub async fn reveal(
             return Err(QueryError::Database(Error::Forbidden));
         }
     }
-    let projection = project_in(
+    let projection = read(
         db,
         scope,
         table,
         std::slice::from_ref(key),
         &[field],
         &Lenses::default(),
+        Bounds::default(),
         Some((table, field)),
     )
     .await?;
@@ -209,15 +238,18 @@ pub async fn reveal(
         .and_then(|mut row| row.cells.remove(field)))
 }
 
-async fn project_in<S: AsRef<str>>(
+#[allow(clippy::too_many_arguments)]
+async fn read<S: AsRef<str>>(
     db: &Db,
     scope: &Scope,
     root: &str,
     ids: &[Value],
     specs: &[S],
     lenses: &Lenses,
+    bounds: Bounds,
     reveal: Option<(&str, &str)>,
 ) -> Result<Projection, QueryError> {
+    bounds.check()?;
     if ids.len() > MAX_ROWS {
         return Err(QueryError::Limit("page exceeds 100 IDs"));
     }
@@ -239,7 +271,7 @@ async fn project_in<S: AsRef<str>>(
         .isolation_level(tokio_postgres::IsolationLevel::RepeatableRead)
         .start()
         .await?;
-    tx.batch_execute(BOUNDS).await?;
+    tx.batch_execute(&bounds.sql()).await?;
     let catalog = match reveal {
         Some((table, field)) => Catalog::revealing(&*tx, scope, table, field).await?,
         None => Catalog::for_scope(&*tx, scope).await?,
@@ -297,8 +329,10 @@ async fn project_in<S: AsRef<str>>(
     let cost = explain[0]["Plan"]["Total Cost"]
         .as_f64()
         .ok_or(Error::Internal)?;
-    if !cost.is_finite() || cost > MAX_ESTIMATED_COST {
-        return Err(QueryError::Limit("estimated query cost exceeds 100000"));
+    if !cost.is_finite() || cost > bounds.max_cost {
+        return Err(QueryError::Limit(
+            "the estimated cost of the read exceeds its bound",
+        ));
     }
     let selected = tx.query(&sql, params).await?;
     if selected.len() > MAX_ROWS {

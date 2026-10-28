@@ -59,6 +59,11 @@ pub fn copy_for(status: u16) -> ErrorCopy {
             "Request too large",
             "That request was larger than this workspace accepts.",
         ),
+        423 => (
+            "file-held",
+            "File not available",
+            "This file is being checked for malware, or it failed the check. Try again in a moment; if it stays unavailable, ask an administrator.",
+        ),
         429 => (
             "rate-limited",
             "Too many requests",

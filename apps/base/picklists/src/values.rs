@@ -346,11 +346,25 @@ impl PickLists {
         code: &str,
         parent: Option<&str>,
     ) -> Result<std::result::Result<(), Refusal>> {
+        self.check_in(tx.sql(), scope, list, code, parent).await
+    }
+
+    /// The same assignment check for an owner's raw SQL transaction. Use it
+    /// after reading the previous code inside that transaction, and only when
+    /// the proposed code differs, so existing retired values remain stable.
+    pub async fn check_in(
+        &self,
+        client: &(impl GenericClient + Sync),
+        scope: &Scope,
+        list: &str,
+        code: &str,
+        parent: Option<&str>,
+    ) -> Result<std::result::Result<(), Refusal>> {
         let list = self.list(list)?;
-        let Some(tenant) = home(tx.sql(), scope, list).await? else {
+        let Some(tenant) = home(client, scope, list).await? else {
             return Ok(Err(Refusal::Unknown));
         };
-        let Some(value) = self.one(tx.sql(), tenant, list, code, " FOR SHARE").await? else {
+        let Some(value) = self.one(client, tenant, list, code, " FOR SHARE").await? else {
             return Ok(Err(Refusal::Unknown));
         };
         if value.retired() {

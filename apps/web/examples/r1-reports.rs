@@ -9,8 +9,8 @@ use bilibi_base::{
     authz::grants::Grants,
     grid,
     reports::{
-        Definition, Draft, FilterDef, GroupingDef, Kind, MeasureDef, ReportError, Reports,
-        RunInput, RunResult, SortDef,
+        Definition, Draft, FilterDef, Format, Frequency, GroupingDef, Kind, MeasureDef, Plan,
+        ReportError, Reports, RunInput, RunResult, SortDef,
     },
     tenancy::{Authentication, Scope},
 };
@@ -26,11 +26,42 @@ bilibi_walkthrough_fixture::inventory::submit! { bilibi_walkthrough_fixture::reg
     verbs: &[],
     capabilities: &[],
     roles: &[
-        bilibi_walkthrough_fixture::authz::RoleDefinition { code: "manager", name: "manager", description: "Walkthrough fixture role", grant_all: false, capabilities: &["reports.view", "reports.author", "reports.share", "reports.export"] },
+        bilibi_walkthrough_fixture::authz::RoleDefinition { code: "manager", name: "manager", description: "Walkthrough fixture role", grant_all: false, capabilities: &["reports.view", "reports.author", "reports.share", "reports.export", "reports.schedule"] },
         bilibi_walkthrough_fixture::authz::RoleDefinition { code: "viewer", name: "viewer", description: "Walkthrough fixture role", grant_all: false, capabilities: &["reports.view"] },
     ],
     system_principals: &[],
 }) }
+
+// A source the planner thinks is heavy (20 million rows) that returns one
+// row at once: over the interactive cost bound, within the background one.
+// And a value that takes 2.5 s to draw: past the interactive time bound
+// (2 s), within the background one (60 s).
+static HEAVY: grid::GridContribution = grid::GridContribution {
+    record_fields: &[],
+    tables: &[
+        grid::TableDecl::new(
+            "r1_heavy",
+            "Heavy estimate",
+            "grid.reference.view",
+            grid::Source::global("SELECT n AS id FROM r1_heavy() n"),
+            "id",
+            &[grid::Field::new("id", "ID", grid::FieldType::Integer)],
+        ),
+        grid::TableDecl::new(
+            "r1_slow",
+            "Slow value",
+            "grid.reference.view",
+            grid::Source::global("SELECT 1 AS id, r1_slow() AS slow"),
+            "id",
+            &[
+                grid::Field::new("id", "ID", grid::FieldType::Integer),
+                grid::Field::new("slow", "Slow", grid::FieldType::Integer),
+            ],
+        ),
+    ],
+    links: &[],
+};
+grid::contribute!("base/grid", "r1.walkthrough", &HEAVY);
 
 struct Checks {
     failed: usize,
@@ -131,6 +162,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let db = pool(&std::env::var("DATABASE_URL")?)?;
     bilibi_walkthrough_fixture::install(&db).await?;
+    // Before the first catalog read, which describes each source once.
+    db.get().await?.batch_execute("CREATE OR REPLACE FUNCTION r1_heavy() RETURNS SETOF int LANGUAGE plpgsql STABLE ROWS 20000000 AS 'BEGIN RETURN NEXT 1; END'; CREATE OR REPLACE FUNCTION r1_slow() RETURNS int LANGUAGE plpgsql STABLE AS 'BEGIN PERFORM pg_sleep(2.5); RETURN 1; END'").await?;
     let app = bilibi_web::App::new(db.clone(), "http://localhost:35567")?;
     let auth = app
         .services
@@ -403,9 +436,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
     let csv = reports
-        .csv(&manager, rows_id, &BTreeMap::new(), &[])
+        .export(&manager, rows_id, &RunInput::default(), Format::Csv)
         .await?;
-    let lines_out: Vec<&str> = csv.text.split("\r\n").filter(|l| !l.is_empty()).collect();
+    let text = String::from_utf8(csv.bytes.clone()).unwrap_or_default();
+    let lines_out: Vec<&str> = text.split("\r\n").filter(|l| !l.is_empty()).collect();
     checks.check(
         "the CSV holds a header and every row",
         lines_out.len() == 13 && csv.rows == 12,
@@ -424,17 +458,483 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             && !exported.to_string().contains("Bench"),
         exported.to_string(),
     );
-    let refused = reports.csv(&viewer, id, &BTreeMap::new(), &[]).await;
+    let refused = reports
+        .export(&viewer, id, &RunInput::default(), Format::Csv)
+        .await;
     checks.check(
         "a reader without reports.export cannot download",
         matches!(refused, Err(ReportError::Forbidden)),
         format!("{refused:?}").chars().take(60).collect::<String>(),
     );
+    let pdf = reports
+        .export(&manager, rows_id, &RunInput::default(), Format::Pdf)
+        .await?;
+    checks.check(
+        "the same result renders as a PDF",
+        pdf.bytes.starts_with(b"%PDF-") && pdf.filename == "items-by-cost.pdf",
+        format!("{} bytes, {}", pdf.bytes.len(), pdf.filename),
+    );
+
+    println!("== Phase 2: totals, drill into records, matrix");
+    let totals = Draft {
+        name: "Quantities".into(),
+        description: String::new(),
+        record_type: "reference_items".into(),
+        kind: Kind::Rows,
+        definition: Definition {
+            columns: vec!["name".into(), "quantity".into()],
+            totals: true,
+            ..Definition::default()
+        },
+    };
+    let totals_id = write(&boundary, &db, &manager, "reports.create", async |tx| {
+        reports.create(tx, &manager, &totals).await
+    })
+    .await?;
+    let run = reports
+        .run(&manager, totals_id, &RunInput::default())
+        .await?;
+    let want: f64 = client
+        .query_one(
+            "SELECT sum(quantity)::float8 FROM base_grid_ref_items WHERE tenant_id=1",
+            &[],
+        )
+        .await?
+        .get(0);
+    if let RunResult::Rows { totals, .. } = &run.result {
+        let got = totals
+            .as_ref()
+            .and_then(|t| t.get(1))
+            .map(number)
+            .unwrap_or_default();
+        checks.check(
+            "a totals line sums the number column over every row",
+            got == format!("{want:.2}") && totals.as_ref().is_some_and(|t| t[0].is_null()),
+            format!("{got} against {want}"),
+        );
+    }
+    let drill = RunInput {
+        drill: vec![filter("category", "equals", json!("parts"), false)],
+        as_rows: true,
+        ..RunInput::default()
+    };
+    let run = reports.run(&manager, id, &drill).await;
+    let parts: i64 = client
+        .query_one(
+            "SELECT count(*) FROM base_grid_ref_items WHERE tenant_id=1 AND category='parts'",
+            &[],
+        )
+        .await?
+        .get(0);
+    checks.check(
+        "a summary drills into the records behind one group",
+        matches!(&run, Ok(r) if matches!(&r.result, RunResult::Rows { total, .. } if *total == parts)),
+        format!("{parts} parts expected"),
+    );
+    let matrix = Draft {
+        name: "Stock across groups".into(),
+        description: String::new(),
+        record_type: "reference_items".into(),
+        kind: Kind::Matrix,
+        definition: Definition {
+            groupings: vec![
+                GroupingDef {
+                    column: "category".into(),
+                    bucket: None,
+                },
+                GroupingDef {
+                    column: "group.name".into(),
+                    bucket: None,
+                },
+            ],
+            measures: vec![MeasureDef {
+                column: "quantity".into(),
+                agg: "sum".into(),
+            }],
+            ..Definition::default()
+        },
+    };
+    let matrix_id = write(&boundary, &db, &manager, "reports.create", async |tx| {
+        reports.create(tx, &manager, &matrix).await
+    })
+    .await?;
+    let run = reports
+        .run(&manager, matrix_id, &RunInput::default())
+        .await?;
+    let cells: i64 = client.query_one("SELECT count(*) FROM (SELECT DISTINCT i.category, g.name FROM base_grid_ref_items i JOIN base_grid_ref_groups g ON g.id=i.group_id WHERE i.tenant_id=1) c", &[]).await?.get(0);
+    if let RunResult::Summary { lines, .. } = &run.result {
+        let detail = lines.iter().filter(|l| !l.1).count() as i64;
+        checks.check(
+            "a matrix reads one cell per pair down and across",
+            detail == cells,
+            format!("{detail} cells, {cells} in SQL"),
+        );
+    }
+    let file = reports
+        .export(&manager, matrix_id, &RunInput::default(), Format::Csv)
+        .await?;
+    let csv = String::from_utf8_lossy(&file.bytes).into_owned();
+    let last: Vec<f64> = csv
+        .lines()
+        .last()
+        .unwrap_or_default()
+        .split(',')
+        .skip(1)
+        .map(|v| v.parse().unwrap_or(f64::NAN))
+        .collect();
+    let (columns, grand) = last.split_at(last.len().saturating_sub(1));
+    checks.check(
+        "a matrix file carries the page's column totals, adding up to the grand total",
+        !columns.is_empty()
+            && columns.iter().all(|v| v.is_finite())
+            && grand
+                .first()
+                .is_some_and(|g| (columns.iter().sum::<f64>() - g).abs() < 1e-6),
+        csv.lines().last().unwrap_or_default().to_owned(),
+    );
+    let ungrouped = Draft {
+        name: "Stock in all".into(),
+        description: String::new(),
+        record_type: "reference_items".into(),
+        kind: Kind::Summary,
+        definition: Definition {
+            measures: vec![MeasureDef {
+                column: "quantity".into(),
+                agg: "sum".into(),
+            }],
+            ..Definition::default()
+        },
+    };
+    let ungrouped_id = write(&boundary, &db, &manager, "reports.create", async |tx| {
+        reports.create(tx, &manager, &ungrouped).await
+    })
+    .await?;
+    let file = reports
+        .export(&manager, ungrouped_id, &RunInput::default(), Format::Csv)
+        .await?;
+    checks.check(
+        "an ungrouped summary's file is one line and not empty",
+        file.rows == 1 && !file.empty,
+        format!("rows {}, empty {}", file.rows, file.empty),
+    );
+    let mut lopsided = matrix.clone();
+    lopsided.definition.groupings.pop();
+    let refused = write(&boundary, &db, &manager, "reports.create", async |tx| {
+        reports.create(tx, &manager, &lopsided).await
+    })
+    .await;
+    checks.check(
+        "a matrix needs two groupings",
+        matches!(refused, Err(ReportError::Invalid(_))),
+        format!("{refused:?}").chars().take(100).collect::<String>(),
+    );
+
+    println!("== Phase 2: built-in reports");
+    let builtins = reports.builtins(&manager).await?;
+    checks.check(
+        "a module's built-in report is offered to a reader of its records",
+        builtins
+            .iter()
+            .any(|r| r.builtin == Some("companies-by-status") && !r.owned),
+        format!(
+            "{:?}",
+            builtins.iter().map(|r| r.builtin).collect::<Vec<_>>()
+        ),
+    );
+    let run = reports
+        .run_builtin(&manager, "companies-by-status", &RunInput::default())
+        .await;
+    checks.check(
+        "a built-in runs as the reader",
+        run.is_ok(),
+        format!(
+            "{:?}",
+            run.as_ref()
+                .map(|r| r.report.name.clone())
+                .map_err(|e| e.to_string())
+        ),
+    );
+    let copy = write(&boundary, &db, &manager, "reports.copy", async |tx| {
+        reports
+            .copy_builtin(tx, &manager, "companies-by-status", None)
+            .await
+    })
+    .await?;
+    let copied = reports.get(&manager, copy).await?;
+    checks.check(
+        "a built-in copies into the reader's own report",
+        copied.owned && copied.name == "Copy of Companies by status",
+        copied.name.clone(),
+    );
+    let missing = reports.builtin(&manager, "no-such-report").await;
+    checks.check(
+        "an unknown built-in key is refused",
+        matches!(missing, Err(ReportError::NotFound)),
+        format!("{missing:?}").chars().take(60).collect::<String>(),
+    );
+
+    println!("== Phase 2: prepared exports and schedules");
+    let prepared = write(
+        &boundary,
+        &db,
+        &manager,
+        "reports.prepare_export",
+        async |tx| {
+            reports
+                .prepare_export(tx, &manager, rows_id, &BTreeMap::new(), Format::Csv)
+                .await
+        },
+    )
+    .await;
+    match &prepared {
+        Ok(export) => {
+            let jobs: i64 = client.query_one("SELECT count(*) FROM base_queue_jobs WHERE worker_id='base/reports-export' AND args->>'export'=$1", &[&export.to_string()]).await?.get(0);
+            checks.check(
+                "a prepared export commits its request with its queue job",
+                jobs == 1,
+                format!("export {export}, {jobs} job(s)"),
+            );
+            // Queue ends the job before it runs (as when it refuses the
+            // requester): the request shows as failed, not preparing.
+            client.execute("UPDATE base_queue_jobs SET state='cancelled', cancelled_at=now(), failure_code='actor_refused' WHERE id=(SELECT job_id FROM base_report_exports WHERE id=$1)", &[export]).await?;
+            let listed = reports.exports(&manager, Some(rows_id)).await?;
+            let shown = listed.iter().find(|e| e.id == *export);
+            checks.check(
+                "a request whose job ended unrun shows as failed with why",
+                shown.is_some_and(|e| e.state == "failed" && e.message.is_some()),
+                format!("{:?}", shown.map(|e| (e.state, e.message.clone()))),
+            );
+            // A file made under other access than the requester has now
+            // is refused before any byte is read.
+            client.execute("UPDATE base_report_exports SET state='ready', artifact_id='none', filename='stale.csv', access='0:stale' WHERE id=$1", &[export]).await?;
+            let stale = reports.exported(&manager, *export).await;
+            checks.check(
+                "a stored file is refused once what its requester may see has changed",
+                matches!(&stale, Err(ReportError::Refused(m)) if m.contains("changed")),
+                format!("{:?}", stale.map(|f| f.rows)),
+            );
+        }
+        Err(ReportError::Refused(message)) => checks.check(
+            "an account with no company is told why it cannot prepare an export",
+            message.contains("company"),
+            message.clone(),
+        ),
+        Err(error) => checks.check("a prepared export is accepted", false, error.to_string()),
+    }
+    let plan = Plan {
+        frequency: Frequency::Weekly,
+        at_minute: 8 * 60,
+        weekday: Some(1),
+        monthday: None,
+        format: Format::Csv,
+        include_owner: true,
+        skip_empty: true,
+        roles: Vec::new(),
+    };
+    let refused = write(&boundary, &db, &viewer, "reports.subscribe", async |tx| {
+        reports.subscribe(tx, &viewer, rows_id, &plan).await
+    })
+    .await;
+    checks.check(
+        "a reader without reports.schedule cannot subscribe",
+        matches!(refused, Err(ReportError::Forbidden)),
+        format!("{refused:?}").chars().take(60).collect::<String>(),
+    );
+    let subscription = write(&boundary, &db, &manager, "reports.subscribe", async |tx| {
+        reports.subscribe(tx, &manager, rows_id, &plan).await
+    })
+    .await?;
+    let held = reports.subscriptions(&manager, rows_id).await?;
+    let next = held
+        .first()
+        .map(|s| s.next_run_at.clone())
+        .unwrap_or_default();
+    let weekday: Option<f64> = client.query_one("SELECT extract(isodow FROM next_run_at AT TIME ZONE timezone)::float8 FROM base_report_subscriptions WHERE id=$1", &[&subscription]).await?.get(0);
+    checks.check(
+        "a weekly schedule next runs on its weekday, in the future",
+        held.len() == 1 && weekday == Some(1.0) && next.as_str() > "2000",
+        format!("next {next}, weekday {weekday:?}"),
+    );
+    write(
+        &boundary,
+        &db,
+        &manager,
+        "reports.pause_subscription",
+        async |tx| reports.pause(tx, &manager, subscription, 1, true).await,
+    )
+    .await?;
+    let held = reports.subscriptions(&manager, rows_id).await?;
+    checks.check(
+        "pausing holds the schedule",
+        held.first().is_some_and(|s| s.paused && s.version == 2),
+        format!("{:?}", held.first().map(|s| (s.paused, s.version))),
+    );
+    let stale = write(
+        &boundary,
+        &db,
+        &manager,
+        "reports.unsubscribe",
+        async |tx| reports.unsubscribe(tx, &manager, subscription, 1).await,
+    )
+    .await;
+    checks.check(
+        "a stale schedule version is refused",
+        matches!(stale, Err(ReportError::Conflict)),
+        format!("{stale:?}"),
+    );
+    write(
+        &boundary,
+        &db,
+        &manager,
+        "reports.unsubscribe",
+        async |tx| reports.unsubscribe(tx, &manager, subscription, 2).await,
+    )
+    .await?;
+    checks.check(
+        "unsubscribing removes it",
+        reports.subscriptions(&manager, rows_id).await?.is_empty(),
+        "",
+    );
+
+    println!("== Totals over every column once, wider than one Grid read, and agent date drills (review of #172)");
+    let mut doubled = totals.clone();
+    doubled.definition.columns = vec!["name".into(), "quantity".into(), "quantity".into()];
+    let refused = write(&boundary, &db, &manager, "reports.create", async |tx| {
+        reports.create(tx, &manager, &doubled).await
+    })
+    .await;
+    checks.check(
+        "a column listed twice is refused when saved",
+        matches!(&refused, Err(ReportError::Invalid(fields)) if fields.contains_key("definition.columns")),
+        format!("{refused:?}").chars().take(80).collect::<String>(),
+    );
+    let numbers = [
+        "quantity",
+        "reorder_level",
+        "unit_cost",
+        "movements:count",
+        "movements.delta:sum",
+        "movements.delta:min",
+        "movements.delta:max",
+        "movements.delta:avg",
+        "group.id",
+    ];
+    let mut wide = totals.clone();
+    wide.name = "Nine totals".into();
+    wide.definition.columns = std::iter::once("name")
+        .chain(numbers)
+        .map(String::from)
+        .collect();
+    let wide_id = write(&boundary, &db, &manager, "reports.create", async |tx| {
+        reports.create(tx, &manager, &wide).await
+    })
+    .await?;
+    let run = reports.run(&manager, wide_id, &RunInput::default()).await?;
+    let want: (f64, f64) = {
+        let row = client
+            .query_one(
+                "SELECT sum(quantity)::float8, (SELECT sum(delta) FROM base_grid_ref_movements WHERE tenant_id=1)::float8 FROM base_grid_ref_items WHERE tenant_id=1",
+                &[],
+            )
+            .await?;
+        (row.get(0), row.get(1))
+    };
+    let got = match &run.result {
+        RunResult::Rows {
+            columns, totals, ..
+        } => totals
+            .as_ref()
+            .filter(|t| t.len() == columns.len() && columns.len() == 10)
+            .map(|t| (number(&t[1]), number(&t[5]))),
+        _ => None,
+    };
+    checks.check(
+        "nine number columns total in one line, each under its own column",
+        got == Some((format!("{:.2}", want.0), format!("{:.2}", want.1))),
+        format!("{got:?} against {want:?}"),
+    );
+    let by_month = Draft {
+        name: "Movements by month".into(),
+        description: String::new(),
+        record_type: "reference_movements".into(),
+        kind: Kind::Summary,
+        definition: Definition {
+            groupings: vec![GroupingDef {
+                column: "recorded_at".into(),
+                bucket: Some("month".into()),
+            }],
+            ..Definition::default()
+        },
+    };
+    let month_id = write(&boundary, &db, &manager, "reports.create", async |tx| {
+        reports.create(tx, &manager, &by_month).await
+    })
+    .await?;
+    let first: String = client
+        .query_one(
+            "SELECT to_char(date_trunc('month', min(recorded_at) AT TIME ZONE 'UTC'), 'YYYY-MM-DD') FROM base_grid_ref_movements WHERE tenant_id=1",
+            &[],
+        )
+        .await?
+        .get(0);
+    let last = {
+        let day: jiff::civil::Date = first.parse()?;
+        day.last_of_month().to_string()
+    };
+    let page_drill = RunInput {
+        drill: vec![filter(
+            "recorded_at",
+            "range",
+            json!({"min": first, "max": last}),
+            false,
+        )],
+        as_rows: true,
+        ..RunInput::default()
+    };
+    let page_total = match reports.run(&manager, month_id, &page_drill).await?.result {
+        RunResult::Rows { total, .. } => total,
+        _ => -1,
+    };
+    let registry = app
+        .services
+        .get::<bilibi_base::agent_api::Registry>("base/agent_api.registry")?;
+    let agent = registry
+        .call(
+            client,
+            &manager,
+            "base.reports.run",
+            &json!({"id": month_id, "as_rows": true, "drill": [{"column": "recorded_at", "test": "range", "min": first, "max": last}]}),
+        )
+        .await;
+    let agent_total = agent
+        .as_ref()
+        .ok()
+        .and_then(|v| {
+            v.pointer("/data/result/total")
+                .or_else(|| v.pointer("/result/total"))
+        })
+        .and_then(Value::as_i64);
+    checks.check(
+        "an agent drills into a month as the page does",
+        page_total > 0 && agent_total == Some(page_total),
+        format!(
+            "agent {agent_total:?}, page {page_total} ({:?})",
+            agent.as_ref().err()
+        ),
+    );
 
     println!("== Drill-downs in the file, and search past 500 reports (review of #168)");
     let drill = vec![filter("category", "equals", json!("tools"), false)];
     let drilled = reports
-        .csv(&manager, rows_id, &BTreeMap::new(), &drill)
+        .export(
+            &manager,
+            rows_id,
+            &RunInput {
+                drill: drill.clone(),
+                ..RunInput::default()
+            },
+            Format::Csv,
+        )
         .await?;
     let tools: i64 = client
         .query_one(
@@ -539,6 +1039,89 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .await?;
 
+    println!("== Read bounds: interactive and background");
+    let heavy = Draft {
+        name: "Heavy".into(),
+        description: String::new(),
+        record_type: "r1_heavy".into(),
+        kind: Kind::Summary,
+        definition: Definition {
+            groupings: vec![GroupingDef {
+                column: "id".into(),
+                bucket: None,
+            }],
+            ..Definition::default()
+        },
+    };
+    let heavy_id = write(&boundary, &db, &manager, "reports.create", async |tx| {
+        reports.create(tx, &manager, &heavy).await
+    })
+    .await?;
+    let refused = reports.run(&manager, heavy_id, &RunInput::default()).await;
+    checks.check(
+        "a report over the interactive cost bound is refused with the export offer",
+        matches!(&refused, Err(ReportError::TooHeavy(_)))
+            && refused
+                .as_ref()
+                .err()
+                .is_some_and(|e| e.to_string().contains("Prepare it as an export")),
+        refused
+            .as_ref()
+            .err()
+            .map(ToString::to_string)
+            .unwrap_or_default()
+            .chars()
+            .take(120)
+            .collect::<String>(),
+    );
+    let background = RunInput {
+        background: true,
+        ..RunInput::default()
+    };
+    let run = reports.run(&manager, heavy_id, &background).await;
+    checks.check(
+        "the same report runs under the larger background bounds",
+        run.is_ok(),
+        format!("{:?}", run.as_ref().err()),
+    );
+    // The Rows projection reads under the same bounds as its keys (review
+    // of #175).
+    let rows_of = |record_type: &str, column: &str| Draft {
+        name: format!("Rows of {record_type}"),
+        description: String::new(),
+        record_type: record_type.into(),
+        kind: Kind::Rows,
+        definition: Definition {
+            columns: vec![column.into()],
+            ..Definition::default()
+        },
+    };
+    for (record_type, column, what) in [
+        ("r1_heavy", "id", "a heavy-estimate list"),
+        ("r1_slow", "slow", "a list with a 2.5 s value"),
+    ] {
+        let draft = rows_of(record_type, column);
+        let id = write(&boundary, &db, &manager, "reports.create", async |tx| {
+            reports.create(tx, &manager, &draft).await
+        })
+        .await?;
+        let refused = reports.run(&manager, id, &RunInput::default()).await;
+        checks.check(
+            &format!("{what} is refused under the interactive bounds"),
+            matches!(&refused, Err(ReportError::TooHeavy(_))),
+            format!("{:?}", refused.as_ref().err())
+                .chars()
+                .take(120)
+                .collect::<String>(),
+        );
+        let started = std::time::Instant::now();
+        let run = reports.run(&manager, id, &background).await;
+        checks.check(
+            &format!("{what} is read whole under the background bounds"),
+            matches!(&run, Ok(r) if matches!(&r.result, RunResult::Rows { rows, .. } if rows.len() == 1)),
+            format!("{:?} in {:?}", run.as_ref().err(), started.elapsed()),
+        );
+    }
     println!("== Sharing at a stale version, instants and full definitions (review 2 of #168)");
     let held = reports.get(&manager, rows_id).await?;
     write(&boundary, &db, &manager, "reports.share", async |tx| {

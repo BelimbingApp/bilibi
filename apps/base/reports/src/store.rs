@@ -29,6 +29,9 @@ pub struct Report {
     pub role_ids: Vec<i64>,
     pub version: i64,
     pub updated_at: String,
+    /// A built-in report's key; `None` for a stored one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub builtin: Option<&'static str>,
 }
 
 fn report(row: &Row, reader: i64) -> Result<Report> {
@@ -47,6 +50,7 @@ fn report(row: &Row, reader: i64) -> Result<Report> {
         version: row.get(8),
         updated_at: row.get(9),
         role_ids: row.get(10),
+        builtin: None,
     })
 }
 

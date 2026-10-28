@@ -728,9 +728,10 @@ impl<O: Owner> Owned<'_, O> {
         self.store(client, reference, bytes, content_type, None, None)
             .await
     }
-    /// Like `put`, but the document expires after `days` (1–36,500), or after
-    /// `artifacts.retention_days` when that is sooner: for a document that
-    /// must not outlive its purpose, such as a data-subject export.
+    /// Like `put`, for a document wanted only briefly (a prepared report
+    /// export, a data-subject export): it expires after `days`, never later
+    /// than `artifacts.retention_days` would, so an owner can shorten a
+    /// document's life but not extend it.
     pub async fn put_expiring(
         &self,
         client: &mut Client,
@@ -739,7 +740,7 @@ impl<O: Owner> Owned<'_, O> {
         content_type: &str,
         days: i64,
     ) -> Result<Metadata> {
-        if !(1..=36500).contains(&days) {
+        if days <= 0 {
             return Err(Error::Invalid);
         }
         self.store(client, reference, bytes, content_type, None, Some(days))
@@ -809,7 +810,7 @@ impl<O: Owner> Owned<'_, O> {
             .as_i64()
             .filter(|d| *d > 0 && *d <= 36500)
             .ok_or(Error::Policy)?;
-        let days = expiry_days.map_or(days, |sooner| sooner.min(days));
+        let days = expiry_days.map_or(days, |shorter| shorter.min(days));
         let max = self
             .store
             .settings

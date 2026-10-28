@@ -24,8 +24,8 @@ pub async fn effective_capabilities(
 }
 
 /// What a named system principal holds in `tenant` right now (SP1): its
-/// declared keys with an allowing durable grant and no denying one, a
-/// platform key only in the operator tenant. Roles and grant-all never apply
+/// declared keys with an allowing durable grant or a standing grant, and no
+/// denying one, a platform key only in the operator tenant. Roles and grant-all never apply
 /// to a principal, so `grant_all` is false and the overrides are the grants.
 pub async fn effective_system(
     client: &impl GenericClient,
@@ -67,7 +67,7 @@ pub async fn effective_system(
         .iter()
         .copied()
         .filter(|key| {
-            effective.direct_allowed.contains(*key)
+            (effective.direct_allowed.contains(*key) || vocabulary.standing(principal, key))
                 && !effective.direct_denied.contains(*key)
                 && (operator
                     || !vocabulary
@@ -77,6 +77,36 @@ pub async fn effective_system(
         })
         .collect();
     Ok(effective)
+}
+
+/// The accounts of `tenant` that hold tenant capability `key` through a
+/// direct allow, a grant-all role or a role grant, with no direct deny, in
+/// id order and at most `limit` of them: the people a Base owner tells about
+/// work only they may act on (Media's quarantine notices). A read, not a
+/// decision: nothing is logged, a platform key holds nobody, and the owner
+/// proves each account live before it writes to it.
+pub async fn holders(
+    client: &impl GenericClient,
+    tenant: i64,
+    key: &str,
+    limit: i64,
+) -> Result<Vec<i64>> {
+    let known = crate::vocabulary()?
+        .capabilities
+        .get(key)
+        .is_some_and(|capability| !capability.definition.platform);
+    if !known || limit <= 0 {
+        return Ok(Vec::new());
+    }
+    Ok(client
+        .query(
+            "SELECT h.user_id FROM (SELECT user_id FROM principal_capabilities WHERE tenant_id=$1 AND capability=$2 AND is_allowed UNION SELECT p.user_id FROM effective_principal_roles p JOIN roles r ON r.tenant_id=p.tenant_id AND r.id=p.role_id WHERE p.tenant_id=$1 AND r.grant_all UNION SELECT p.user_id FROM effective_principal_roles p JOIN role_capabilities r ON r.tenant_id=p.tenant_id AND r.role_id=p.role_id WHERE p.tenant_id=$1 AND r.capability=$2) h WHERE NOT EXISTS (SELECT 1 FROM principal_capabilities d WHERE d.tenant_id=$1 AND d.user_id=h.user_id AND d.capability=$2 AND NOT d.is_allowed) ORDER BY h.user_id LIMIT $3",
+            &[&tenant, &key, &limit],
+        )
+        .await?
+        .iter()
+        .map(|row| row.get(0))
+        .collect())
 }
 
 /// What one account of the actor's tenant holds, as a screen that administers

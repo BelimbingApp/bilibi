@@ -70,6 +70,7 @@ pub struct Pages {
     pub views: Arc<PageViews>,
     pub datetime: Arc<bilibi_datetime::DisplayPolicy>,
     pub locales: Arc<bilibi_locale::Locales>,
+    pub picklists: Arc<bilibi_picklists::PickLists>,
     pub record_panels: Vec<RecordPanel>,
 }
 /// A panel another module contributes for a company record (Address's
@@ -163,6 +164,7 @@ impl Pages {
             company: self.company.clone(),
             datetime: self.datetime.clone(),
             locales: self.locales.clone(),
+            picklists: self.picklists.clone(),
             operation: request.operation,
             id,
             params: list_state(request.query)?,
@@ -324,6 +326,7 @@ struct CompanyPage {
     company: Arc<crate::CompanyService>,
     datetime: Arc<bilibi_datetime::DisplayPolicy>,
     locales: Arc<bilibi_locale::Locales>,
+    picklists: Arc<bilibi_picklists::PickLists>,
     operation: &'static str,
     id: Option<i64>,
     params: ListState,
@@ -465,6 +468,8 @@ impl CompanyPage {
                     views::ExtensionListFields {
                         masked: &masked,
                         values: &extension_values,
+                        display: &display,
+                        picklists: &self.picklists,
                     },
                 )
                 .await?
@@ -479,6 +484,11 @@ impl CompanyPage {
                         Err(error) => return Err(error),
                     };
                 let id = self.id.ok_or(Error::Invalid)?;
+                let locale = self.locales.resolve(&**client, scope, None).await?;
+                let display = self
+                    .datetime
+                    .display(&**client, scope, None, locale.locale)
+                    .await?;
                 self.active_panels = self.allowed_panels(&**client, scope, id).await?;
                 let anchors: Vec<String> =
                     self.active_panels.iter().map(|p| p.id.clone()).collect();
@@ -486,6 +496,7 @@ impl CompanyPage {
                     &client,
                     scope,
                     id,
+                    &self.picklists,
                     views::DetailState {
                         statuses: &self.statuses,
                         pending: self.pending.as_ref(),
@@ -494,6 +505,7 @@ impl CompanyPage {
                         departments_columns: &mut self.departments_columns,
                         children_columns: &self.children_columns,
                         workspace: self.framed,
+                        display: &display,
                         panels: &anchors,
                     },
                 )
@@ -503,6 +515,7 @@ impl CompanyPage {
                 views::create(
                     &**client,
                     scope,
+                    &self.picklists,
                     views::CreateState {
                         values: &self.form,
                         errors: &self.errors,

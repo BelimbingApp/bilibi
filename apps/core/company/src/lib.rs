@@ -749,11 +749,12 @@ async fn finish(tx: bilibi_database::MutationTransaction<'_>, saved: bool) -> Re
 inventory::submit! {
     bilibi_module_registry::Module {
         id:"core/company",layer:bilibi_module_registry::Layer::Core,
-        dependencies:&["base/database","base/security","base/ui","base/notifications","base/party_ids","base/session","base/menu","base/grid","base/search","base/dashboard","base/authz","base/tenancy","base/audit","base/agent_api","base/datetime","base/locale","base/principal_directory","base/media","base/artifacts","base/picklists","base/settings","base/records","core/party","core/geonames","core/person"],
+        dependencies:&["base/database","base/security","base/ui","base/notifications","base/party_ids","base/session","base/menu","base/grid","base/search","base/dashboard","base/reports","base/authz","base/tenancy","base/audit","base/agent_api","base/datetime","base/locale","base/principal_directory","base/media","base/artifacts","base/picklists","base/settings","base/records","core/party","core/geonames","core/person"],
         migrations:&[MIGRATION, MIGRATION_ORGANISATION, MIGRATION_RELATIONSHIPS, MIGRATION_ROLE_OWNER, MIGRATION_SEARCH, ("core-company-008-match-keys", include_str!("../migrations/008-match-keys.sql")), MIGRATION_SESSION_COMPANY],
         services: &[
             bilibi_module_registry::Service { id: SERVICE, factory: |services| {
                 let db = services.get::<Db>("base/database.pool")?.as_ref().clone();
+                field_contributions::bind_picklists(services.get(bilibi_picklists::SERVICE)?)?;
                 // Company is the Organisation owner: it proves targets for
                 // Tenancy and reads for the agent operations.
                 let proofs = services.get::<bilibi_tenancy::PartyProofs>("base/tenancy.parties")?;
@@ -769,7 +770,7 @@ inventory::submit! {
                 }))
             } },
             bilibi_module_registry::Service { id: "core/company.pages", factory: |services| Ok(Arc::new(bilibi_ui::page::PageService(Arc::new(web::Pages {
-                db: services.get::<Db>("base/database.pool")?.as_ref().clone(), company: services.get(SERVICE)?, views: services.get(bilibi_grid::PAGE_VIEWS)?, datetime: services.get("base/datetime.display")?, locales: services.get("base/locale.locales")?, record_panels: web::record_panels()?,
+                db: services.get::<Db>("base/database.pool")?.as_ref().clone(), company: services.get(SERVICE)?, views: services.get(bilibi_grid::PAGE_VIEWS)?, datetime: services.get("base/datetime.display")?, locales: services.get("base/locale.locales")?, picklists: services.get(bilibi_picklists::SERVICE)?, record_panels: web::record_panels()?,
             })))) },
             bilibi_module_registry::Service { id: web::relationships::SERVICE, factory: |services| Ok(Arc::new(bilibi_ui::page::PageService(Arc::new(web::relationships::RelationshipPages {
                 db: services.get::<Db>("base/database.pool")?.as_ref().clone(), company: services.get(SERVICE)?, persons: services.get(bilibi_person::SERVICE)?,

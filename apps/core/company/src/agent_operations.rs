@@ -362,9 +362,17 @@ fn create_schema() -> Value {
     }});
     if let Ok(fields) = crate::field_contributions::definitions() {
         for (_, field) in fields {
-            let crate::CompanyFieldKind::Text { max_length } = field.kind;
-            schema["properties"][field.id] =
-                json!({"type":"string","maxLength":max_length,"description":field.label});
+            schema["properties"][field.id] = match field.kind {
+                crate::CompanyFieldKind::Text { max_length } => {
+                    json!({"type":"string","maxLength":max_length,"description":field.label})
+                }
+                crate::CompanyFieldKind::Date => {
+                    json!({"type":"string","format":"date","description":field.label})
+                }
+                crate::CompanyFieldKind::Choice { picklist } => {
+                    json!({"type":"string","description":format!("{}; stable code from pick-list {}", field.label, picklist)})
+                }
+            };
         }
     }
     schema

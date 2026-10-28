@@ -46,7 +46,7 @@ Three steps in the owning module, nothing anywhere else.
    | A form's options, in the reader's language | `choices(client, scope, list, parent)` → `Vec<bilibi_ui::Choice>` |
    | The value that pre-fills a new record | `default(client, scope, list)` |
    | How a record shows its stored code | `label(client, scope, list, code)` → `Label { text, retired }` |
-   | Accept a newly chosen code | `check(&tx, scope, list, code, parent)` on the owner's `MutationTransaction` |
+   | Accept a newly chosen code | `check(&tx, scope, list, code, parent)` on the owner's `MutationTransaction`; `check_in(sql, …)` is available inside a scoped SQL mutation closure when the old value is read there |
 
    - `check` locks the value `FOR SHARE`, so a concurrent retirement waits for the owner's commit. A refusal (`Unknown`, `Retired`, `Parent`) is the owner's field error: `refusal.message()`.
    - Call `check` only when the code changes. A record keeps a retired code it already holds and saves unchanged.

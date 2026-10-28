@@ -143,7 +143,7 @@ struct CompanyName<'a> {
     legal: Option<&'a str>,
 }
 pub(super) async fn list(
-    client: &impl GenericClient,
+    client: &(impl GenericClient + Sync),
     scope: &Scope,
     data: &crate::Page,
     params: &Params,
@@ -302,16 +302,45 @@ pub(super) async fn list(
                     .ok_or(Error::Internal)?;
                 if columns.columns.iter().any(|column| column.id == slot) {
                     let value = fields.get(definition.id).and_then(Value::as_str);
+                    let display_value = match (definition.kind, value) {
+                        (crate::CompanyFieldKind::Date, Some(value)) => value
+                            .parse::<jiff::civil::Date>()
+                            .ok()
+                            .map(|date| extension_fields.display.render_date(date))
+                            .unwrap_or_else(|| value.to_owned()),
+                        (_, Some(value)) => value.to_owned(),
+                        (_, None) => String::new(),
+                    };
                     row.slots.insert(
-                        slot,
+                        slot.clone(),
                         if extension_fields.masked.contains(definition.id) {
                             restricted(&format!("company-{}-restricted", definition.id))?
                         } else {
                             render(&ReadValue {
-                                value, empty: "—"
+                                value: (!display_value.is_empty())
+                                    .then_some(display_value.as_str()),
+                                empty: "—",
                             })?
                         },
                     );
+                    if !extension_fields.masked.contains(definition.id) {
+                        if let (crate::CompanyFieldKind::Choice { picklist }, Some(code)) =
+                            (definition.kind, value)
+                        {
+                            if let Some(label) = extension_fields
+                                .picklists
+                                .label(client, scope, picklist, code)
+                                .await?
+                            {
+                                let text = if label.retired {
+                                    format!("{} (Retired)", label.text)
+                                } else {
+                                    label.text
+                                };
+                                row.slots.insert(slot, Html::text(&text));
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -386,6 +415,8 @@ pub(super) async fn list(
 pub(super) struct ExtensionListFields<'a> {
     pub masked: &'a HashSet<String>,
     pub values: &'a std::collections::BTreeMap<i64, crate::CompanyFieldValues>,
+    pub display: &'a bilibi_datetime::DisplayContext,
+    pub picklists: &'a bilibi_picklists::PickLists,
 }
 #[derive(Template)]
 #[template(
@@ -524,6 +555,7 @@ pub(super) struct DetailState<'a> {
     pub departments_columns: &'a mut ListColumns,
     pub children_columns: &'a ListColumns,
     pub workspace: bool,
+    pub display: &'a bilibi_datetime::DisplayContext,
     /// Anchors of the contributed record panels the reader may mount.
     pub panels: &'a [String],
 }
@@ -531,6 +563,7 @@ pub(super) async fn detail(
     client: &Client,
     scope: &Scope,
     id: i64,
+    picklists: &bilibi_picklists::PickLists,
     state: DetailState<'_>,
 ) -> Result<String> {
     let DetailState {
@@ -541,6 +574,7 @@ pub(super) async fn detail(
         departments_columns,
         children_columns,
         workspace,
+        display,
         panels,
     } = state;
     let (company, masked) = crate::detail(client, scope, id).await?;
@@ -743,7 +777,21 @@ pub(super) async fn detail(
         let id_attr = format!("company-{}", definition.id.replace('_', "-"));
         let value_html = if masked.contains(definition.id) {
             restricted(&id_attr)?
-        } else {
+        } else if let crate::CompanyFieldKind::Choice { picklist } = definition.kind {
+            let label = if value.is_empty() {
+                None
+            } else {
+                picklists.label(client, scope, picklist, value).await?
+            };
+            let display_text = label
+                .map(|label| {
+                    if label.retired {
+                        format!("{} (Retired)", label.text)
+                    } else {
+                        label.text
+                    }
+                })
+                .unwrap_or_else(|| "—".into());
             let mut field = InlineField::new(
                 id_attr,
                 definition.id,
@@ -753,6 +801,45 @@ pub(super) async fn detail(
             .version(company.version)
             .allow_empty()
             .status(statuses.get(definition.id));
+            field.id_value = id.to_string();
+            field.editable = editable;
+            let editor = Combobox::new(format!("{}-input", definition.id), definition.id)
+                .value(value)
+                .options(picklists.choices(client, scope, picklist, None).await?)
+                .wrapper_class("mb-0");
+            render(&InlineChoice {
+                field,
+                display: Html::text(&display_text),
+                editor: render(&editor)?,
+            })?
+        } else {
+            let (input_type, display_value) = match definition.kind {
+                crate::CompanyFieldKind::Text { .. } => ("text", None),
+                crate::CompanyFieldKind::Date => (
+                    "date",
+                    (!value.is_empty()).then(|| {
+                        value
+                            .parse::<jiff::civil::Date>()
+                            .ok()
+                            .map(|date| display.render_date(date))
+                            .unwrap_or_else(|| value.to_owned())
+                    }),
+                ),
+                crate::CompanyFieldKind::Choice { .. } => unreachable!("handled above"),
+            };
+            let mut field = InlineField::new(
+                id_attr,
+                definition.id,
+                format!("Edit {}", definition.label),
+                value,
+            )
+            .version(company.version)
+            .allow_empty()
+            .status(statuses.get(definition.id))
+            .input_type(input_type);
+            if let Some(display_value) = display_value {
+                field = field.display_value(display_value);
+            }
             field.id_value = id.to_string();
             field.editable = editable;
             render(&InlineEdit { field })?
@@ -1116,6 +1203,7 @@ pub(super) fn duplicate_builtins() -> Vec<BuiltinColumn> {
 pub(super) async fn create(
     client: &(impl GenericClient + Sync),
     scope: &Scope,
+    picklists: &bilibi_picklists::PickLists,
     state: CreateState<'_>,
 ) -> Result<String> {
     let CreateState {
@@ -1213,18 +1301,10 @@ pub(super) async fn create(
             ))?);
             continue;
         }
-        let crate::CompanyFieldKind::Text { max_length } = definition.kind;
-        let field = Field::named(definition.id)
+        let mut field = Field::named(definition.id)
             .id(format!("company-{}", definition.id))
-            .kind(InputKind::Text)
             .label(definition.label)
             .value(values.get(definition.id).cloned().unwrap_or_default())
-            .attr(
-                "maxlength",
-                &max_length
-                    .min(crate::field_contributions::MAX_TEXT_FIELD_LENGTH)
-                    .to_string(),
-            )
             .errors(
                 errors
                     .iter()
@@ -1232,6 +1312,41 @@ pub(super) async fn create(
                     .map(|error| error.message.clone())
                     .collect(),
             );
+        match definition.kind {
+            crate::CompanyFieldKind::Text { max_length } => {
+                field = field.kind(InputKind::Text).attr(
+                    "maxlength",
+                    &max_length
+                        .min(crate::field_contributions::MAX_TEXT_FIELD_LENGTH)
+                        .to_string(),
+                );
+            }
+            crate::CompanyFieldKind::Date => field = field.kind(InputKind::Date),
+            crate::CompanyFieldKind::Choice { picklist } => {
+                let choices = picklists.choices(client, scope, picklist, None).await?;
+                let value = match values.get(definition.id) {
+                    Some(value) => value.clone(),
+                    None => picklists
+                        .default(client, scope, picklist)
+                        .await?
+                        .unwrap_or_default(),
+                };
+                extension_fields.push(render(
+                    &Combobox::new(format!("company-{}", definition.id), definition.id)
+                        .label(definition.label)
+                        .value(value)
+                        .options(choices)
+                        .errors(
+                            errors
+                                .iter()
+                                .filter(|error| error.field == definition.id)
+                                .map(|error| error.message.clone())
+                                .collect(),
+                        ),
+                )?);
+                continue;
+            }
+        }
         extension_fields.push(render(&field)?);
     }
     let mut additional_fields = Html::EMPTY;

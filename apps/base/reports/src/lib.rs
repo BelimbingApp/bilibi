@@ -4,19 +4,30 @@
 //! agents both reach it through the operation contracts in
 //! `agent_operations.rs`. Contract: `README.md`.
 mod agent_operations;
+mod builtin;
 mod contributions;
 mod definition;
+mod export;
+mod exports;
+mod schedules;
 mod store;
 mod web;
 
-pub use contributions::{AUTHOR, EXPORT, MANAGE, SHARE, VIEW};
+#[doc(hidden)]
+pub use bilibi_module_registry::{Contribution, Provenance};
+pub use builtin::{Builtin, BUILTINS};
+pub use contributions::{AUTHOR, EXPORT, MANAGE, SCHEDULE, SHARE, VIEW};
 pub use definition::{
     Definition, FilterDef, GroupingDef, Kind, MeasureDef, SortDef, CHARTS, MAX_COLUMNS,
 };
+pub use export::{File, Format};
+pub use exports::Prepared;
+#[doc(hidden)]
+pub use inventory;
+pub use schedules::{Frequency, Plan, Subscription};
 pub use store::Report;
 
 use bilibi_agent_api::schema::FieldErrors;
-use bilibi_audit::{record_action, Attribution};
 use bilibi_database::{Change, Db, Error, MutationTransaction};
 use bilibi_datetime::DisplayPolicy;
 use bilibi_grid::{
@@ -30,10 +41,32 @@ use std::{collections::BTreeMap, sync::Arc};
 
 pub const SERVICE: &str = "base/reports.reports";
 const DOWNLOAD: &str = "base/reports.export";
-pub const MIGRATION: (&str, &str) = (
-    "base-reports-001-reports",
-    include_str!("../migrations/001-reports.sql"),
-);
+const EXPORTED: &str = "base/reports.exported";
+const PREPARER: &str = "base/reports.preparer";
+const SWEEPER: &str = "base/reports.sweeper";
+const DELIVERER: &str = "base/reports.deliverer";
+const MIGRATIONS: [(&str, &str); 5] = [
+    (
+        "base-reports-001-reports",
+        include_str!("../migrations/001-reports.sql"),
+    ),
+    (
+        "base-reports-002-matrix",
+        include_str!("../migrations/002-matrix.sql"),
+    ),
+    (
+        "base-reports-003-exports",
+        include_str!("../migrations/003-exports.sql"),
+    ),
+    (
+        "base-reports-004-subscriptions",
+        include_str!("../migrations/004-subscriptions.sql"),
+    ),
+    (
+        "base-reports-005-export-access",
+        include_str!("../migrations/005-export-access.sql"),
+    ),
+];
 const KIND: &str = "base_report";
 /// Columns offered to a builder for one record type, at most.
 const MAX_OFFERED: usize = 300;
@@ -61,6 +94,10 @@ pub enum ReportError {
     /// does not fit): the message is the reader's to see.
     #[error("{0}")]
     Refused(String),
+    /// Over the read's cost or time bound: a prepared export, which runs in
+    /// the background under the larger bounds, may still produce it.
+    #[error("This report is too heavy to show here ({0}). Prepare it as an export instead; it runs in the background and the bell says when it is ready.")]
+    TooHeavy(&'static str),
     #[error(transparent)]
     Database(#[from] Error),
 }
@@ -84,6 +121,12 @@ pub struct RunInput {
     pub drill: Vec<FilterDef>,
     /// Rows reports: the page, from 0.
     pub page: usize,
+    /// A summary or matrix read as the rows behind it (a drill-down): its
+    /// label field, groupings and measured columns, page by page.
+    pub as_rows: bool,
+    /// A prepared export or scheduled delivery: the background bounds apply
+    /// instead of the interactive ones.
+    pub background: bool,
 }
 
 /// One column of a result, as the reader's catalog names it.
@@ -112,9 +155,14 @@ pub enum RunResult {
         columns: Vec<ColumnInfo>,
         /// Each row: its key, then one cell per column.
         rows: Vec<(Value, Vec<Value>)>,
+        /// Each row's own record page, where its module declares one.
+        pages: Vec<Option<String>>,
         total: i64,
         page: usize,
         page_size: usize,
+        /// The definition's totals line: one sum per number column over
+        /// every row, `null` for any other column.
+        totals: Option<Vec<Value>>,
     },
     Summary {
         groupings: Vec<(ColumnInfo, Option<&'static str>)>,
@@ -126,18 +174,20 @@ pub enum RunResult {
     },
 }
 
-/// A CSV export of one run, every page included up to the export cap.
-#[derive(Debug)]
-pub struct Csv {
-    pub filename: String,
-    pub text: String,
-    pub rows: usize,
-}
-
 pub struct Reports {
     db: Db,
     settings: Arc<Settings>,
     display: Arc<DisplayPolicy>,
+    records: Arc<bilibi_records::Records>,
+    queue: Arc<bilibi_queue::Queue>,
+    artifacts: Arc<bilibi_artifacts::Artifacts>,
+    notifications: Arc<bilibi_notifications::NotificationBoundary>,
+    authentication: Arc<bilibi_tenancy::Authentication>,
+    mutations: Arc<bilibi_database::MutationBoundary>,
+    mailer: Arc<bilibi_mail::Mailer>,
+    /// The public origin emailed links point at (`APP_ORIGIN`).
+    origin: String,
+    builtins: Vec<&'static Builtin>,
 }
 
 fn field_errors(field: &str, message: impl Into<String>) -> FieldErrors {
@@ -189,6 +239,27 @@ fn typed(value: &Value, ty: FieldType) -> Value {
     }
 }
 
+/// The columns a summary's drill-down lists: the record's name, then each
+/// grouping and measured column once, within the rows bound.
+fn behind(root: &bilibi_grid::Table, definition: &Definition) -> Vec<String> {
+    let mut specs: Vec<String> = Vec::new();
+    let candidates = root
+        .label_field()
+        .map(str::to_owned)
+        .into_iter()
+        .chain(definition.groupings.iter().map(|g| g.column.clone()))
+        .chain(definition.measures.iter().map(|m| m.column.clone()));
+    for spec in candidates {
+        if !specs.contains(&spec) && specs.len() < MAX_COLUMNS {
+            specs.push(spec);
+        }
+    }
+    if specs.is_empty() {
+        specs.push(root.key().to_owned());
+    }
+    specs
+}
+
 /// One saved or drill filter as a Grid filter on `column`, with the reader's
 /// answer for an ask filter and text typed for the column. `None` when an
 /// ask filter is left without a value.
@@ -213,6 +284,10 @@ fn grid(error: QueryError) -> ReportError {
         QueryError::ForbiddenRoot => ReportError::Unreadable,
         QueryError::Database(error) => ReportError::Database(error),
         QueryError::Catalog(error) => ReportError::Database(error.into()),
+        QueryError::Limit(
+            why @ ("the estimated cost of the read exceeds its bound"
+            | "the read took longer than its time bound"),
+        ) => ReportError::TooHeavy(why),
         QueryError::Limit(why) => ReportError::Refused(format!(
             "This report is too large to run ({why}). Add a filter or group more coarsely."
         )),
@@ -237,6 +312,25 @@ impl Reports {
             .as_u64()
             .and_then(|n| usize::try_from(n).ok())
             .ok_or(Error::Internal)
+    }
+
+    /// The read bounds for the reader's company: interactive, or the larger
+    /// background pair.
+    async fn bounds(&self, scope: &Scope, background: bool) -> Result<bilibi_grid::Bounds, Error> {
+        let client = self.db.get().await?;
+        let (ms, cost) = if background {
+            (
+                contributions::QUEUED_STATEMENT_MS_KEY,
+                contributions::QUEUED_MAX_COST_KEY,
+            )
+        } else {
+            (contributions::STATEMENT_MS_KEY, contributions::MAX_COST_KEY)
+        };
+        Ok(bilibi_grid::Bounds {
+            statement_ms: u32::try_from(self.setting(&**client, scope, ms).await?)
+                .map_err(|_| Error::Internal)?,
+            max_cost: self.setting(&**client, scope, cost).await? as f64,
+        })
     }
 
     /// One page of the reports the reader may run, searched by name and
@@ -330,7 +424,8 @@ impl Reports {
             return Err(ReportError::Invalid(errors));
         }
         drop(client);
-        let probe = self.probe(scope, draft, filters).await;
+        let bounds = self.bounds(scope, false).await?;
+        let probe = self.probe(scope, draft, filters, bounds).await;
         match probe {
             Ok(()) => Ok(()),
             Err(QueryError::Column(spec, error)) => Err(ReportError::Invalid(field_errors(
@@ -356,15 +451,17 @@ impl Reports {
         scope: &Scope,
         draft: &Draft,
         filters: Vec<Filter>,
+        bounds: bilibi_grid::Bounds,
     ) -> Result<(), QueryError> {
         match draft.kind {
             Kind::Rows => {
-                bilibi_grid::project(
+                bilibi_grid::project_within(
                     &self.db,
                     scope,
                     &draft.record_type,
                     &[],
                     &draft.definition.columns,
+                    bounds,
                 )
                 .await?;
                 bilibi_grid::page_keys(
@@ -372,6 +469,7 @@ impl Reports {
                     scope,
                     &draft.record_type,
                     &PageSpec {
+                        bounds,
                         filters,
                         sorts: draft.definition.sorts(),
                         timezone: "UTC".into(),
@@ -381,12 +479,13 @@ impl Reports {
                 )
                 .await?;
             }
-            Kind::Summary => {
+            Kind::Summary | Kind::Matrix => {
                 bilibi_grid::summarize(
                     &self.db,
                     scope,
                     &draft.record_type,
                     &SummarySpec {
+                        bounds,
                         filters,
                         groupings: draft.definition.groupings(),
                         measures: draft.definition.measures(),
@@ -463,6 +562,62 @@ impl Reports {
         Ok(store::roles(&**client, scope.tenant()).await?)
     }
 
+    /// What this reader may see of a report now, as a key that changes when
+    /// it does: its version and which of its columns their catalog resolves.
+    /// A cached drawing is reused only while this key holds, so a field
+    /// restriction or a lost share shows at the next refresh, not the next
+    /// run. Cheaper than a run: no Grid read. Needs `reports.view`.
+    pub async fn access(&self, scope: &Scope, id: i64) -> Outcome<String> {
+        let client = self.db.get().await.map_err(Error::from)?;
+        authorize(&**client, scope, VIEW).await?;
+        let report = match store::read(&**client, scope.tenant(), scope.user(), id, false).await {
+            Err(Error::NotFound) => return Err(ReportError::NotFound),
+            other => other?,
+        };
+        let catalog = Catalog::for_scope(&**client, scope)
+            .await
+            .map_err(|e| ReportError::Database(e.into()))?;
+        let Some(root) = catalog.table(&report.record_type) else {
+            return Ok(format!("{}:unreadable", report.version));
+        };
+        let d = &report.definition;
+        let seen: String = d
+            .columns
+            .iter()
+            .chain(d.groupings.iter().map(|g| &g.column))
+            .chain(d.measures.iter().map(|m| &m.column))
+            .chain(d.sort.iter().map(|s| &s.column))
+            .chain(d.filters.iter().map(|f| &f.column))
+            .map(|spec| {
+                if catalog.resolve(root, spec).is_ok() {
+                    '1'
+                } else {
+                    '0'
+                }
+            })
+            .collect();
+        Ok(format!("{}:{seen}", report.version))
+    }
+
+    /// Each row's own page, through Base Records: a kind its owner registers
+    /// for this table names the record only when the reader may open it.
+    async fn record_pages(
+        &self,
+        scope: &Scope,
+        table: &bilibi_grid::Table,
+        rows: &[(Value, Vec<Value>)],
+    ) -> Outcome<Vec<Option<String>>> {
+        let Some(kind) = self.records.kinds().find(|k| k.table == table.id()) else {
+            return Ok(vec![None; rows.len()]);
+        };
+        let references: Vec<_> = rows
+            .iter()
+            .map(|(key, _)| bilibi_records::Reference::new(kind.key, cell(key)))
+            .collect();
+        let resolved = self.records.resolve(scope, &references).await?;
+        Ok(resolved.into_iter().map(|r| r.path).collect())
+    }
+
     /// Runs a report as the reader: their catalog, grants and time zone.
     /// Columns, groupings, measures and sorts the reader cannot see are left
     /// out and listed; a filter on one refuses the run, so it cannot be used
@@ -474,6 +629,56 @@ impl Reports {
             Err(Error::NotFound) => return Err(ReportError::NotFound),
             other => other?,
         };
+        drop(client);
+        self.run_report(scope, report, input).await
+    }
+
+    /// Runs a built-in report as the reader, like a stored one.
+    pub async fn run_builtin(&self, scope: &Scope, key: &str, input: &RunInput) -> Outcome<Run> {
+        let report = self.builtin(scope, key).await?;
+        self.run_report(scope, report, input).await
+    }
+
+    /// The built-in reports the reader can run: those over a record type
+    /// their catalog includes. Needs `reports.view`.
+    pub async fn builtins(&self, scope: &Scope) -> Outcome<Vec<Report>> {
+        let client = self.db.get().await.map_err(Error::from)?;
+        authorize(&**client, scope, VIEW).await?;
+        let catalog = Catalog::for_scope(&**client, scope)
+            .await
+            .map_err(|e| ReportError::Database(e.into()))?;
+        Ok(self
+            .builtins
+            .iter()
+            .filter(|b| catalog.table(b.record_type).is_some())
+            .filter_map(|b| as_report(b))
+            .collect())
+    }
+
+    /// One built-in report the reader can run.
+    pub async fn builtin(&self, scope: &Scope, key: &str) -> Outcome<Report> {
+        self.builtins(scope)
+            .await?
+            .into_iter()
+            .find(|r| r.builtin == Some(key))
+            .ok_or(ReportError::NotFound)
+    }
+
+    /// Saves the reader's own copy of a built-in report. Needs `reports.author`.
+    pub async fn copy_builtin(
+        &self,
+        tx: &mut MutationTransaction<'_>,
+        scope: &Scope,
+        key: &str,
+        name: Option<&str>,
+    ) -> Outcome<i64> {
+        let original = self.builtin(scope, key).await?;
+        self.create(tx, scope, &copy_of(&original, name)).await
+    }
+
+    async fn run_report(&self, scope: &Scope, report: Report, input: &RunInput) -> Outcome<Run> {
+        let bounds = self.bounds(scope, input.background).await?;
+        let client = self.db.get().await.map_err(Error::from)?;
         let timezone = self
             .display
             .display(&**client, scope, None, "en")
@@ -510,15 +715,48 @@ impl Reports {
             })?;
             filters.extend(typed);
         }
+        let as_rows = report.kind == Kind::Rows || input.as_rows;
         let result = match report.kind {
-            Kind::Rows => {
-                let columns: Vec<Column> =
-                    definition.columns.iter().filter_map(|s| keep(s)).collect();
-                let sorts = definition
-                    .sorts()
-                    .into_iter()
-                    .filter(|s| keep(&s.column).is_some())
+            _ if as_rows => {
+                let specs: Vec<String> = if report.kind == Kind::Rows {
+                    definition.columns.clone()
+                } else {
+                    behind(root, definition)
+                };
+                // Each column once, as the projection draws it, so a totals
+                // cell always sits under its own column (a definition saved
+                // before duplicates were refused may still hold one).
+                let mut once = std::collections::HashSet::new();
+                let columns: Vec<Column> = specs
+                    .iter()
+                    .filter(|s| once.insert(s.as_str()))
+                    .filter_map(|s| keep(s))
                     .collect();
+                let sorts = if report.kind == Kind::Rows {
+                    definition
+                        .sorts()
+                        .into_iter()
+                        .filter(|s| keep(&s.column).is_some())
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                let totals_of: Vec<Option<bilibi_grid::Measure>> = if report.kind == Kind::Rows
+                    && definition.totals
+                {
+                    columns
+                        .iter()
+                        .map(|c| {
+                            (c.ty.number() && c.spec != root.key()).then(|| bilibi_grid::Measure {
+                                column: c.spec.clone(),
+                                agg: bilibi_grid::Agg::Sum,
+                            })
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                let totals_filters = filters.clone();
                 // A value saved before the setting's bound was 100 still runs.
                 let page_size = self
                     .setting(&**client, scope, contributions::PAGE_SIZE_KEY)
@@ -530,6 +768,7 @@ impl Reports {
                     scope,
                     &report.record_type,
                     &PageSpec {
+                        bounds,
                         filters,
                         sorts,
                         timezone: timezone.clone(),
@@ -540,11 +779,18 @@ impl Reports {
                 .await
                 .map_err(grid)?;
                 let specs: Vec<&str> = columns.iter().map(|c| c.spec.as_str()).collect();
-                let projection =
-                    bilibi_grid::project(&self.db, scope, &report.record_type, &page.keys, &specs)
-                        .await
-                        .map_err(grid)?;
-                let rows = projection
+                // Filled under the same bounds the keys were read under.
+                let projection = bilibi_grid::project_within(
+                    &self.db,
+                    scope,
+                    &report.record_type,
+                    &page.keys,
+                    &specs,
+                    bounds,
+                )
+                .await
+                .map_err(grid)?;
+                let rows: Vec<(Value, Vec<Value>)> = projection
                     .rows
                     .into_iter()
                     .map(|row| {
@@ -556,15 +802,57 @@ impl Reports {
                         (row.key, cells)
                     })
                     .collect();
+                let pages = self.record_pages(scope, root, &rows).await?;
+                let totals = if totals_of.iter().any(Option::is_some) {
+                    // Grid totals up to 8 measures a read; a wider list
+                    // (up to 32 columns) takes one read per eight.
+                    let measures: Vec<_> = totals_of.iter().flatten().cloned().collect();
+                    let mut values = Vec::with_capacity(measures.len());
+                    for chunk in measures.chunks(bilibi_grid::MAX_MEASURES) {
+                        let summary = bilibi_grid::summarize(
+                            &self.db,
+                            scope,
+                            &report.record_type,
+                            &SummarySpec {
+                                bounds,
+                                filters: totals_filters.clone(),
+                                groupings: Vec::new(),
+                                measures: chunk.to_vec(),
+                                timezone: timezone.clone(),
+                                max_groups: 1,
+                            },
+                        )
+                        .await
+                        .map_err(grid)?;
+                        values.extend(summary.total.values);
+                    }
+                    let mut sums = values.into_iter();
+                    Some(
+                        totals_of
+                            .iter()
+                            .map(|m| {
+                                if m.is_some() {
+                                    sums.next().unwrap_or(Value::Null)
+                                } else {
+                                    Value::Null
+                                }
+                            })
+                            .collect(),
+                    )
+                } else {
+                    None
+                };
                 RunResult::Rows {
                     columns: projection.columns.iter().map(info).collect(),
                     rows,
+                    pages,
                     total: page.total,
                     page: input.page,
                     page_size,
+                    totals,
                 }
             }
-            Kind::Summary => {
+            Kind::Rows | Kind::Summary | Kind::Matrix => {
                 let groupings: Vec<_> = definition
                     .groupings()
                     .into_iter()
@@ -584,6 +872,7 @@ impl Reports {
                     scope,
                     &report.record_type,
                     &SummarySpec {
+                        bounds,
                         filters,
                         groupings,
                         measures,
@@ -619,153 +908,6 @@ impl Reports {
             left_out,
             timezone,
             result,
-        })
-    }
-
-    /// The whole result as CSV, up to the export cap: every page of a Rows
-    /// report, or every line of a Summary, narrowed by the same answers and
-    /// drill-downs as the page. Audited with the report, the reader
-    /// and the row count, never the data. Needs `reports.export`.
-    pub async fn csv(
-        &self,
-        scope: &Scope,
-        id: i64,
-        answers: &BTreeMap<usize, Value>,
-        drill: &[FilterDef],
-    ) -> Outcome<Csv> {
-        let client = self.db.get().await.map_err(Error::from)?;
-        authorize(&**client, scope, EXPORT).await?;
-        let cap = self
-            .setting(&**client, scope, contributions::EXPORT_ROWS_KEY)
-            .await?;
-        drop(client);
-        let mut input = RunInput {
-            answers: answers.clone(),
-            drill: drill.to_vec(),
-            ..RunInput::default()
-        };
-        let first = self.run(scope, id, &input).await?;
-        let mut out = String::new();
-        let mut rows = 0;
-        let name = first.report.name.clone();
-        match &first.result {
-            RunResult::Rows {
-                columns,
-                total,
-                page_size,
-                ..
-            } => {
-                if *total as usize > cap {
-                    return Err(ReportError::Refused(format!("This report has {total} rows; an export holds at most {cap}. Add a filter and try again.")));
-                }
-                line(&mut out, columns.iter().map(|c| c.label.clone()));
-                let pages = (*total as usize).div_ceil((*page_size).max(1));
-                let mut current = Some(first);
-                for page in 0..pages {
-                    let run = match current.take() {
-                        Some(run) => run,
-                        None => {
-                            input.page = page;
-                            self.run(scope, id, &input).await?
-                        }
-                    };
-                    if let RunResult::Rows {
-                        rows: page_rows, ..
-                    } = run.result
-                    {
-                        for (_, cells) in page_rows {
-                            line(&mut out, cells.iter().map(cell));
-                            rows += 1;
-                        }
-                    }
-                }
-            }
-            RunResult::Summary {
-                groupings,
-                measures,
-                lines,
-                total,
-                ..
-            } => {
-                let headers = groupings
-                    .iter()
-                    .map(|(c, _)| c.label.clone())
-                    .chain(std::iter::once("Rows".to_owned()))
-                    .chain(
-                        measures
-                            .iter()
-                            .map(|(c, agg)| format!("{} ({agg})", c.label)),
-                    );
-                line(&mut out, headers);
-                for (keys, subtotal, count, values) in lines {
-                    let mut fields: Vec<String> = keys.iter().map(cell).collect();
-                    if *subtotal {
-                        if let Some(last) = fields.last_mut() {
-                            *last = "Subtotal".into();
-                        }
-                    }
-                    line(
-                        &mut out,
-                        fields
-                            .into_iter()
-                            .chain(std::iter::once(count.to_string()))
-                            .chain(values.iter().map(cell)),
-                    );
-                    rows += 1;
-                }
-                let blanks = groupings.len().saturating_sub(1);
-                let label = if groupings.is_empty() {
-                    Vec::new()
-                } else {
-                    std::iter::once("Total".to_owned())
-                        .chain(std::iter::repeat_n(String::new(), blanks))
-                        .collect()
-                };
-                line(
-                    &mut out,
-                    label
-                        .into_iter()
-                        .chain(std::iter::once(total.0.to_string()))
-                        .chain(total.1.iter().map(cell)),
-                );
-            }
-        }
-        let client = self.db.get().await.map_err(Error::from)?;
-        record_action(
-            &**client,
-            &Attribution::from_scope(scope),
-            None,
-            "base.reports.exported",
-            json!({"semantic": true, "source": "Reports", "summary": "Report exported as CSV", "report_id": id, "rows": rows, "format": "csv"}),
-            true,
-        )
-        .await?;
-        let slug: String = name
-            .chars()
-            .map(|c| {
-                if c.is_ascii_alphanumeric() {
-                    c.to_ascii_lowercase()
-                } else {
-                    '-'
-                }
-            })
-            .collect();
-        let slug = slug
-            .split('-')
-            .filter(|s| !s.is_empty())
-            .collect::<Vec<_>>()
-            .join("-");
-        Ok(Csv {
-            filename: format!(
-                "{}.csv",
-                if slug.is_empty() {
-                    "report".into()
-                } else {
-                    slug
-                }
-            ),
-            text: out,
-            rows,
         })
     }
 
@@ -984,6 +1126,25 @@ fn change(id: i64, old: Value, new: Value) -> Change {
 fn after(draft: &Draft) -> Value {
     json!({"name": draft.name.trim(), "description": draft.description, "record_type": draft.record_type, "kind": draft.kind.key(), "definition": draft.definition})
 }
+/// A built-in as the report a reader runs: never owned, never shared.
+fn as_report(builtin: &'static Builtin) -> Option<Report> {
+    Some(Report {
+        id: 0,
+        owner_id: 0,
+        owned: false,
+        name: builtin.name.to_owned(),
+        description: builtin.description.to_owned(),
+        record_type: builtin.record_type.to_owned(),
+        kind: builtin.kind,
+        definition: Definition::from_input(&(builtin.definition)()).ok()?,
+        shared_with_everyone: false,
+        role_ids: Vec::new(),
+        version: 1,
+        updated_at: String::new(),
+        builtin: Some(builtin.key),
+    })
+}
+
 /// A copy's draft: the given name, or "Copy of" the original's, kept to the
 /// name bound.
 fn copy_of(report: &Report, name: Option<&str>) -> Draft {
@@ -1040,13 +1201,22 @@ fn line(out: &mut String, fields: impl IntoIterator<Item = String>) {
 inventory::submit! {
     bilibi_module_registry::Module {
         id: "base/reports", layer: bilibi_module_registry::Layer::Base,
-        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/audit", "base/settings", "base/datetime", "base/grid", "base/agent_api", "base/ui", "base/menu", "base/locale"],
-        migrations: &[MIGRATION],
+        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/audit", "base/settings", "base/datetime", "base/grid", "base/agent_api", "base/ui", "base/menu", "base/locale", "base/dashboard", "base/artifacts", "base/queue", "base/notifications", "base/party_ids", "base/schedule", "base/mail", "base/records"],
+        migrations: &MIGRATIONS,
         services: &[bilibi_module_registry::Service { id: SERVICE, factory: |services| {
             let reports = Arc::new(Reports {
                 db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
                 settings: services.get("base/settings.store")?,
                 display: services.get("base/datetime.display")?,
+                records: services.get(bilibi_records::SERVICE)?,
+                queue: services.get("base/queue.store")?,
+                artifacts: services.get("base/artifacts.store")?,
+                notifications: services.get("base/notifications.sink")?,
+                authentication: services.get("base/tenancy.authentication")?,
+                mutations: services.get("base/database.mutations")?,
+                mailer: services.get("base/mail.mailer")?,
+                origin: std::env::var("APP_ORIGIN").unwrap_or_else(|_| "http://localhost:3000".into()).trim_end_matches('/').to_owned(),
+                builtins: builtin::validate(bilibi_module_registry::Catalog::discover(&bilibi_module_registry::discover()?)?.entries::<Builtin>(BUILTINS)?)?,
             });
             agent_operations::bind(reports.clone())?;
             Ok(reports)
@@ -1057,6 +1227,16 @@ inventory::submit! {
                 contracts: services.get(bilibi_agent_api::page::SERVICE)?,
                 display: services.get("base/datetime.display")?,
                 locales: services.get("base/locale.locales")?,
+            }))))
+        }}, bilibi_module_registry::Service { id: PREPARER, factory: |services| {
+            Ok(Arc::new(bilibi_queue::execution::HandlerService(Arc::new(exports::Preparer(services.get(SERVICE)?)))))
+        }}, bilibi_module_registry::Service { id: SWEEPER, factory: |services| {
+            Ok(Arc::new(bilibi_queue::execution::HandlerService(Arc::new(schedules::Sweeper { reports: services.get(SERVICE)?, schedule: services.get("base/schedule.store")? }))))
+        }}, bilibi_module_registry::Service { id: DELIVERER, factory: |services| {
+            Ok(Arc::new(bilibi_queue::execution::HandlerService(Arc::new(schedules::Deliverer(services.get(SERVICE)?)))))
+        }}, bilibi_module_registry::Service { id: EXPORTED, factory: |services| {
+            Ok(Arc::new(bilibi_ui::download::DownloadService::<Scope, Error>(Arc::new(web::download::Prepared {
+                reports: services.get(SERVICE)?,
             }))))
         }}, bilibi_module_registry::Service { id: DOWNLOAD, factory: |services| {
             Ok(Arc::new(bilibi_ui::download::DownloadService::<Scope, Error>(Arc::new(web::download::Csv {
@@ -1081,7 +1261,7 @@ inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_reg
 // Every page write is an operation contract (ADR 01).
 inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::PAGE_WRITES, web::SERVICE, bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_module_registry::contributions::PageWrites {
     service: web::SERVICE,
-    contracts: &[("create", "base.reports.create"), ("save_definition", "base.reports.update"), ("copy", "base.reports.copy"), ("save_sharing", "base.reports.share"), ("delete", "base.reports.delete")],
+    contracts: &[("create", "base.reports.create"), ("save_definition", "base.reports.update"), ("copy", "base.reports.copy"), ("save_sharing", "base.reports.share"), ("delete", "base.reports.delete"), ("prepare_export", "base.reports.prepare_export"), ("subscribe", "base.reports.subscribe"), ("pause_schedule", "base.reports.pause_subscription"), ("unsubscribe", "base.reports.unsubscribe")],
     pending: bilibi_module_registry::contributions::Pending::None,
 }) }
 bilibi_menu::contribute!(
@@ -1091,3 +1271,45 @@ bilibi_menu::contribute!(
         .requires(bilibi_menu::Requirement::Capability(VIEW))
         .order(800)
 );
+
+// A report the reader may run can be placed on their dashboard.
+bilibi_dashboard::provide!(
+    "base/reports",
+    bilibi_dashboard::Provider {
+        prefix: web::panel::PREFIX,
+        embed: "base/reports.dashboard",
+        placement: bilibi_dashboard::Placement::Grid,
+        capability: Some(VIEW),
+        refresh_interval: 60_000,
+        entries: web::panel::entries,
+    }
+);
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::EMBEDS, "base/reports.dashboard", bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_module_registry::contributions::Embed {
+    slot: "dashboard.reports", context: bilibi_module_registry::contributions::EmbedContext::Dashboard,
+    service: web::SERVICE, operation: "panel", access: bilibi_module_registry::contributions::Access::Capability(VIEW),
+}) }
+
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_queue::WORKERS, exports::WORKER, bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_queue::Worker { max_attempts: 5, validate: exports::validate }) }
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_queue::execution::HANDLERS, exports::WORKER, bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_queue::execution::HandlerBinding { service: PREPARER, capability: EXPORT }) }
+// A prepared export downloads from its own path, for its requester only.
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::DOWNLOADS, "base/reports.exported", bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_module_registry::contributions::Download {
+    path: "/report-exports/{id}", service: EXPORTED, operation: "file",
+    access: bilibi_module_registry::contributions::Access::Capability(EXPORT),
+}) }
+
+// Scheduled deliveries: Schedule's recurrence sweeps due subscriptions as the
+// `scheduler` principal; each delivery then runs as its recipient. Like every
+// contributed recurrence it runs nothing until an operator enables it.
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_queue::WORKERS, schedules::SWEEP, bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_queue::Worker { max_attempts: 5, validate: schedules::validate_sweep }) }
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_queue::execution::HANDLERS, schedules::SWEEP, bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_queue::execution::HandlerBinding { service: SWEEPER, capability: bilibi_schedule::EXECUTE }) }
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_schedule::DEFINITIONS, "base/reports.deliveries", bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_schedule::Definition {
+    name: "Deliver scheduled reports", expression: "*/15 * * * *", timezone: "Etc/UTC",
+    task_name: "Base Reports scheduled deliveries", worker: schedules::SWEEP, args: || json!({}),
+    overlap: bilibi_schedule::Overlap::Forbid, misfire: bilibi_schedule::Misfire::Coalesce, owner_route: Some(web::INDEX),
+}) }
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_queue::WORKERS, schedules::DELIVER, bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_queue::Worker { max_attempts: 5, validate: schedules::validate_delivery }) }
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_queue::execution::HANDLERS, schedules::DELIVER, bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_queue::execution::HandlerBinding { service: DELIVERER, capability: EXPORT }) }
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::ROUTES, "base/reports.builtin", bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_module_registry::contributions::Route {
+    method: bilibi_module_registry::contributions::Method::Get, path: web::BUILTIN, service: web::SERVICE, operation: "builtin",
+    access: bilibi_module_registry::contributions::Access::Capability(VIEW), framed: true,
+}) }

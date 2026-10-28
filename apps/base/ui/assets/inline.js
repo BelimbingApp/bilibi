@@ -11,6 +11,7 @@
       this.sequence = 0;
       this.long = this.el.dataset.hook === 'InlineLongText';
       this.choice = this.el.dataset.hook === 'InlineChoice';
+      this.date = this.el.dataset.inputType === 'date';
       this.abort = new AbortController();
       const listen = (node, type, callback) => node.addEventListener(type, callback, {signal: this.abort.signal});
       listen(this.el, 'click', (event) => {
@@ -22,7 +23,7 @@
           if (['Enter', ' ', 'F2'].includes(event.key)) {
             event.preventDefault();
             this.start(undefined, event.key === 'F2');
-          } else if (!this.choice && event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
+          } else if (!this.choice && !this.date && event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
             event.preventDefault();
             this.start(event.key);
           }
@@ -47,7 +48,7 @@
         });
       });
       listen(this.el, 'change', (event) => {
-        if (this.choice && this.active && event.target.name === this.el.dataset.field) this.commit(true);
+        if ((this.choice || this.date) && this.active && event.target.name === this.el.dataset.field) this.commit(true);
       });
       this.updated();
       if (this.el.dataset.initialEdit === 'true') this.start(undefined, false, this.el.dataset.autofocus !== 'false');
@@ -86,7 +87,7 @@
       // Only committed server data paints the fact, even on failure.
       const text = this.el.querySelector('[data-role="text"]');
       if (text) {
-        const value = this.el.dataset.value;
+        const value = this.el.dataset.displayValue ?? this.el.dataset.value;
         const placeholder = this.el.querySelector('input[data-role="input"]')?.placeholder || '—';
         // The source HEEx wraps a long value in line breaks inside its
         // pre-wrap span; a fact shows the value where its field's text sits.
@@ -115,7 +116,7 @@
       if (!autofocus) return;
       const focus = this.editor().querySelector('[role="combobox"]') || input;
       focus.focus();
-      if (focus.select) {
+      if (focus.select && !this.date) {
         if (value !== undefined || atEnd) focus.setSelectionRange(focus.value.length, focus.value.length);
         else focus.select();
       }

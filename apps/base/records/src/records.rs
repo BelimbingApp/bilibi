@@ -595,6 +595,7 @@ impl Records {
             let mut count = 0;
             for chunk in ids.chunks(MAX_CHOICES) {
                 let spec = SummarySpec {
+                    bounds: bilibi_grid::Bounds::default(),
                     filters: vec![
                         Filter {
                             column: holder.kind_field.into(),

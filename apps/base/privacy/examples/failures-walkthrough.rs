@@ -1030,6 +1030,7 @@ async fn main() -> Result<()> {
         }],
         timezone: "UTC".into(),
         max_groups: 100,
+        bounds: Default::default(),
     };
     let outcome = |result: std::result::Result<Summary, QueryError>| match result {
         Ok(summary) => format!(

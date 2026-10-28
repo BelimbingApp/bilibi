@@ -9,13 +9,21 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     future::Future,
     pin::Pin,
+    sync::{Arc, OnceLock},
 };
 use tokio_postgres::{Client, Transaction};
 
 /// Static field kinds supported by the first Company field contribution.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CompanyFieldKind {
-    Text { max_length: usize },
+    Text {
+        max_length: usize,
+    },
+    Date,
+    /// A stable code from a pick-list declared by the contributing module.
+    Choice {
+        picklist: &'static str,
+    },
 }
 
 /// Stable metadata supplied by the field's owning Extension.
@@ -58,6 +66,15 @@ pub const COMPANY_FIELDS: &str = "core/company.company_fields";
 /// Keep every valid field value inside the live event frame, including JSON
 /// escaping and the surrounding Company form payload.
 pub const MAX_TEXT_FIELD_LENGTH: usize = 10_000;
+static PICKLISTS: OnceLock<Arc<bilibi_picklists::PickLists>> = OnceLock::new();
+
+pub(crate) fn bind_picklists(
+    lists: Arc<bilibi_picklists::PickLists>,
+) -> bilibi_module_registry::Result<()> {
+    PICKLISTS
+        .set(lists)
+        .map_err(|_| RegistryError::Service("duplicate Company pick-list binding".into()))
+}
 
 /// Names a browser exposes as properties or methods of a form element. A control
 /// named like one shadows it on `form.<name>` (`attributes`, `elements`,
@@ -142,12 +159,13 @@ pub fn validate(entries: &[Entry]) -> bilibi_module_registry::Result<()> {
                     field.id, entry.provenance.module
                 )));
             }
-            let CompanyFieldKind::Text { max_length } = field.kind;
-            if max_length > MAX_TEXT_FIELD_LENGTH {
-                return Err(RegistryError::Contribution(format!(
-                    "Company text field {} from {} exceeds the {MAX_TEXT_FIELD_LENGTH} character live-input bound",
-                    field.id, entry.provenance.module,
-                )));
+            if let CompanyFieldKind::Text { max_length } = field.kind {
+                if max_length > MAX_TEXT_FIELD_LENGTH {
+                    return Err(RegistryError::Contribution(format!(
+                        "Company text field {} from {} exceeds the {MAX_TEXT_FIELD_LENGTH} character live-input bound",
+                        field.id, entry.provenance.module,
+                    )));
+                }
             }
         }
     }
@@ -323,14 +341,19 @@ pub(crate) fn validate_grid() -> bilibi_module_registry::Result<()> {
                         field.id
                     ))
                 })?;
+        let expected = match field.kind {
+            CompanyFieldKind::Text { .. } => bilibi_grid::FieldType::String,
+            CompanyFieldKind::Date => bilibi_grid::FieldType::Date,
+            CompanyFieldKind::Choice { .. } => bilibi_grid::FieldType::String,
+        };
         if column.kind != bilibi_grid::ColumnKind::Field
             || column.many.is_some()
             || column.agg.is_some()
-            || column.ty != bilibi_grid::FieldType::String
+            || column.ty != expected
         {
             return Err(RegistryError::Contribution(format!(
-                "Company text field {} must resolve to a scalar Grid string field",
-                field.id
+                "Company field {} must resolve to a scalar Grid {:?} field",
+                field.id, expected
             )));
         }
         let target_owner = installed.table(column.table).ok_or_else(|| {
@@ -343,6 +366,37 @@ pub(crate) fn validate_grid() -> bilibi_module_registry::Result<()> {
             return Err(RegistryError::Contribution(format!(
                 "Company field {} must resolve through a link to a scalar field owned by its contributing module {}",
                 field.id, module
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_picklists(
+    _services: &bilibi_module_registry::Services,
+) -> bilibi_module_registry::Result<()> {
+    let declarations = inventory::iter::<bilibi_module_registry::Contribution>
+        .into_iter()
+        .filter(|entry| entry.consumer == bilibi_picklists::LISTS)
+        .collect::<Vec<_>>();
+    for (owner, field) in definitions().map_err(|error| {
+        RegistryError::Contribution(format!("Company field catalog unavailable: {error}"))
+    })? {
+        let CompanyFieldKind::Choice { picklist } = field.kind else {
+            continue;
+        };
+        let declared = declarations.iter().any(|entry| {
+            entry.provenance.module == owner
+                && entry.get::<bilibi_picklists::PickList>().is_ok_and(|list| {
+                    list.key == picklist
+                        && list.reach == bilibi_picklists::Reach::Tenant
+                        && list.parent.is_none()
+                })
+        });
+        if !declared {
+            return Err(RegistryError::Contribution(format!(
+                "Company choice field {} from {owner} must name a standalone tenant pick-list declared by that Extension: {picklist}",
+                field.id
             )));
         }
     }
@@ -376,6 +430,68 @@ pub(crate) fn validate_update(values: &CompanyFieldValues) -> Vec<crate::FieldEr
     validate_values_for(values)
 }
 
+pub(crate) async fn validate_choices(
+    tx: &MutationTransaction<'_>,
+    scope: &Scope,
+    values: &CompanyFieldValues,
+) -> Vec<crate::FieldError> {
+    let Some(lists) = PICKLISTS.get() else {
+        return vec![crate::FieldError::new(
+            "name",
+            "pick-list service is unavailable",
+        )];
+    };
+    let mut errors = Vec::new();
+    for (_, field) in definitions().unwrap_or_default() {
+        let CompanyFieldKind::Choice { picklist } = field.kind else {
+            continue;
+        };
+        let Some(code) = values.get(field.id).and_then(Value::as_str) else {
+            continue;
+        };
+        match lists.check(tx, scope, picklist, code, None).await {
+            Ok(Ok(())) => {}
+            Ok(Err(refusal)) => errors.push(crate::FieldError::new(field.id, refusal.message())),
+            Err(_) => errors.push(crate::FieldError::new(
+                field.id,
+                "could not validate this value",
+            )),
+        }
+    }
+    errors
+}
+
+pub(crate) async fn validate_choice_snapshot(
+    client: &(impl tokio_postgres::GenericClient + Sync),
+    scope: &Scope,
+    values: &CompanyFieldValues,
+) -> Vec<crate::FieldError> {
+    let Some(lists) = PICKLISTS.get() else {
+        return vec![crate::FieldError::new(
+            "name",
+            "pick-list service is unavailable",
+        )];
+    };
+    let mut errors = Vec::new();
+    for (_, field) in definitions().unwrap_or_default() {
+        let CompanyFieldKind::Choice { picklist } = field.kind else {
+            continue;
+        };
+        let Some(code) = values.get(field.id).and_then(Value::as_str) else {
+            continue;
+        };
+        match lists.choices(client, scope, picklist, None).await {
+            Ok(options) if options.iter().any(|option| option.value == code) => {}
+            Ok(_) => errors.push(crate::FieldError::new(field.id, "is not an active choice")),
+            Err(_) => errors.push(crate::FieldError::new(
+                field.id,
+                "could not validate this value",
+            )),
+        }
+    }
+    errors
+}
+
 fn validate_values_for(values: &CompanyFieldValues) -> Vec<crate::FieldError> {
     let Ok(contributions) = contributions() else {
         return vec![crate::FieldError::new(
@@ -394,6 +510,9 @@ fn validate_values_for(values: &CompanyFieldValues) -> Vec<crate::FieldError> {
                 (_, Value::Null) => {}
                 (CompanyFieldKind::Text { max_length }, Value::String(text))
                     if text.chars().count() <= max_length => {}
+                (CompanyFieldKind::Date, Value::String(text)) if valid_date(text) => {}
+                (CompanyFieldKind::Choice { .. }, Value::String(code))
+                    if !code.is_empty() && code.len() <= bilibi_picklists::CODE_MAX => {}
                 _ => errors.push(crate::FieldError::new(field.id, "has an invalid value")),
             }
         }
@@ -402,6 +521,20 @@ fn validate_values_for(values: &CompanyFieldValues) -> Vec<crate::FieldError> {
         errors.push(crate::FieldError::new("name", "contains an unknown field"));
     }
     errors
+}
+
+fn valid_date(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() == 10
+        && bytes[4] == b'-'
+        && bytes[7] == b'-'
+        && bytes
+            .iter()
+            .enumerate()
+            .all(|(index, byte)| index == 4 || index == 7 || byte.is_ascii_digit())
+        && value
+            .parse::<jiff::civil::Date>()
+            .is_ok_and(|date| date.year() > 0)
 }
 
 pub(crate) async fn create(
@@ -457,6 +590,7 @@ pub(crate) async fn update(
     if writes.is_empty() {
         return Ok(());
     }
+    let picklists = PICKLISTS.get().cloned().ok_or(Error::Internal)?;
     let scope = scope.clone();
     tx.mutate(move |sql| {
         Box::pin(async move {
@@ -480,6 +614,18 @@ pub(crate) async fn update(
                     || !change_matches_values(&Value::Object(after.clone()), &fields)
                 {
                     return Err(Error::Internal);
+                }
+                for key in fields.keys() {
+                    let Some((_, definition)) = field(key)? else { return Err(Error::Internal) };
+                    let CompanyFieldKind::Choice { picklist } = definition.kind else { continue };
+                    let previous = before.get(key).filter(|value| !value.is_null());
+                    let proposed = after.get(key).filter(|value| !value.is_null());
+                    if previous == proposed { continue; }
+                    if let Some(code) = proposed.and_then(Value::as_str) {
+                        if picklists.check_in(sql, &scope, picklist, code, None).await?.is_err() {
+                            return Err(Error::Invalid);
+                        }
+                    }
                 }
                 old.extend(before.clone());
                 new.extend(after.clone());
@@ -526,7 +672,10 @@ inventory::submit! {
 inventory::submit! {
     bilibi_module_registry::Ready {
         module: "core/company",
-        check: |_| validate_grid(),
+        check: |services| {
+            validate_picklists(services)?;
+            validate_grid()
+        },
     }
 }
 inventory::submit! {

@@ -32,18 +32,23 @@ pub enum Kind {
     Rows,
     /// Rows grouped by up to two columns, with measures, subtotals and a total.
     Summary,
+    /// One grouping down and one across, one measure in each cell, with row,
+    /// column and grand totals.
+    Matrix,
 }
 impl Kind {
     pub fn key(self) -> &'static str {
         match self {
             Self::Rows => "rows",
             Self::Summary => "summary",
+            Self::Matrix => "matrix",
         }
     }
     pub fn from_key(key: &str) -> Option<Self> {
         match key {
             "rows" => Some(Self::Rows),
             "summary" => Some(Self::Summary),
+            "matrix" => Some(Self::Matrix),
             _ => None,
         }
     }
@@ -69,6 +74,9 @@ pub struct Definition {
     /// Summary: one of [`CHARTS`], or none.
     #[serde(default)]
     pub chart: Option<String>,
+    /// Rows: a totals line summing each number column over every row.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub totals: bool,
 }
 
 /// One filter. `value` depends on `test`: a scalar for `equals`, an array
@@ -137,7 +145,8 @@ pub fn schema() -> Value {
             "column":column,
             "descending":{"type":"boolean"}
         }}},
-        "chart":{"type":"string","enum":CHARTS}
+        "chart":{"type":"string","enum":CHARTS},
+        "totals":{"type":"boolean","description":"Rows reports: add a line summing each number column over every row."}
     }})
 }
 
@@ -189,6 +198,14 @@ impl Definition {
         let mut errors = FieldErrors::new();
         match kind {
             Kind::Rows => {
+                let mut once = std::collections::HashSet::new();
+                if !self.columns.iter().all(|c| once.insert(c)) {
+                    err(
+                        &mut errors,
+                        "definition.columns",
+                        "each column can appear once",
+                    );
+                }
                 if self.columns.is_empty() || self.columns.len() > MAX_COLUMNS {
                     err(
                         &mut errors,
@@ -207,8 +224,36 @@ impl Definition {
                     err(&mut errors, "definition.sort", "at most 3 sorts");
                 }
             }
+            Kind::Matrix => {
+                if !self.columns.is_empty() || !self.sort.is_empty() || self.totals {
+                    err(
+                        &mut errors,
+                        "definition",
+                        "a matrix report has no columns, sort or totals line",
+                    );
+                }
+                if self.groupings.len() != 2 {
+                    err(
+                        &mut errors,
+                        "definition.groupings",
+                        "a matrix needs one grouping down and one across",
+                    );
+                }
+                if self.measures.len() > 1 {
+                    err(
+                        &mut errors,
+                        "definition.measures",
+                        "a matrix shows one measure",
+                    );
+                }
+                if let Some(chart) = &self.chart {
+                    if !CHARTS.contains(&chart.as_str()) {
+                        err(&mut errors, "definition.chart", "is not a chart kind");
+                    }
+                }
+            }
             Kind::Summary => {
-                if !self.columns.is_empty() || !self.sort.is_empty() {
+                if !self.columns.is_empty() || !self.sort.is_empty() || self.totals {
                     err(
                         &mut errors,
                         "definition",

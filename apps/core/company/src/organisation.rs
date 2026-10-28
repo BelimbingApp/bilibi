@@ -795,6 +795,7 @@ pub async fn create_with_fields(
     authorize_key(tx.sql(), scope, CREATE).await?;
     let restricted = crate::field_contributions::effective_restrictions(tx.sql(), scope).await?;
     let mut field_errors = crate::field_contributions::validate_create(fields);
+    field_errors.extend(crate::field_contributions::validate_choices(tx, scope, fields).await);
     field_errors.extend(crate::field_contributions::validate_restrictions(
         fields,
         &restricted,
@@ -864,6 +865,8 @@ pub async fn preview_with_fields(
     authorize_key(client, scope, CREATE).await?;
     let restricted = crate::field_contributions::effective_restrictions(client, scope).await?;
     let mut field_errors = crate::field_contributions::validate_create(fields);
+    field_errors
+        .extend(crate::field_contributions::validate_choice_snapshot(client, scope, fields).await);
     field_errors.extend(crate::field_contributions::validate_restrictions(
         fields,
         &restricted,
