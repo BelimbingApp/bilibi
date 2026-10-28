@@ -751,15 +751,19 @@ impl Currencies {
             users.push("the tenant".to_owned());
         }
         for company in bilibi_company::list_tenant_company_ids(client, scope).await? {
-            if self
-                .own_base(client, scope, company)
-                .await?
-                .is_some_and(|base| base.code == code)
-            {
+            let own = match self.own_base(client, scope, company).await {
+                Ok(own) => own,
+                Err(Error::NotFound | Error::Forbidden) => continue,
+                Err(error) => return Err(error),
+            };
+            if own.is_some_and(|base| base.code == code) {
                 users.push(
                     match bilibi_company::detail(client, scope, company.get()).await {
                         Ok((company, _)) => company.display_name(),
-                        Err(_) => format!("company {}", company.get()),
+                        Err(Error::NotFound | Error::Forbidden) => {
+                            format!("company {}", company.get())
+                        }
+                        Err(error) => return Err(error),
                     },
                 );
             }
