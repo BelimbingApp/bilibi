@@ -368,11 +368,27 @@ impl OrganisationDirectory for Directory {
             // company; anyone else sees their own company alone.
             let tenant_wide =
                 scope.principal().is_some() || holds_proof(client, scope, TENANT_WIDE).await?;
-            let own = scope.actor().organisation();
-            Ok(named_in_scope(client, scope)
+            if tenant_wide {
+                return Ok(named_in_scope(client, scope)
+                    .await?
+                    .into_iter()
+                    .filter(|company| !company.archived)
+                    .collect());
+            }
+            let Some(own) = scope.actor().organisation() else {
+                return Ok(Vec::new());
+            };
+            let own = client
+                .query_opt(
+                    &format!("{NAMED_SQL} AND id=$2"),
+                    &[&scope.tenant(), &own.get()],
+                )
                 .await?
+                .map(|row| named(&row))
+                .transpose()?;
+            Ok(own
+                .filter(|company| !company.archived)
                 .into_iter()
-                .filter(|company| !company.archived && (tenant_wide || own == Some(company.id)))
                 .collect())
         })
     }
