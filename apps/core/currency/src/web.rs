@@ -501,8 +501,14 @@ impl CurrencyPage {
         let mut company_bases = HashMap::new();
         for company in &companies {
             if let Ok(id) = OrganisationId::new(company.id) {
-                if let Some(own) = pages.currencies.own_base(&**client, scope, id).await? {
-                    company_bases.insert(company.id, own.code);
+                // An archived company is listed but refuses its settings read;
+                // it holds no usable base, so it shows none.
+                match pages.currencies.own_base(&**client, scope, id).await {
+                    Ok(Some(own)) => {
+                        company_bases.insert(company.id, own.code);
+                    }
+                    Ok(None) | Err(Error::NotFound | Error::Forbidden) => {}
+                    Err(error) => return Err(error),
                 }
             }
         }
