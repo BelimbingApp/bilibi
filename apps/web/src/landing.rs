@@ -29,18 +29,25 @@ pub struct Landing {
     held: Mutex<HashMap<String, Held>>,
 }
 
-/// The path of a local redirect, without its query: the only kind that can
-/// carry a message (an OAuth client's callback is another origin).
-fn local_path(to: &str) -> Option<&str> {
-    let path = to.split(['?', '#']).next()?;
-    (path.starts_with('/') && !path.starts_with("//") && !path.contains('\\')).then_some(path)
+/// An address on this site to come back to: a path with an optional query,
+/// never another origin (`//host`, a backslash), a scheme or a control
+/// character (a tab or newline is dropped by browsers, so `/<TAB>/host` would
+/// resolve to `//host`).
+pub(crate) fn local_path(to: &str) -> Option<&str> {
+    (to.starts_with('/')
+        && !to.starts_with("//")
+        && to.len() <= 2048
+        && !to.contains(|ch: char| ch == '\\' || ch.is_control()))
+    .then_some(to)
 }
 
 impl Landing {
     /// Holds `message` for `credential`'s next navigation to `to`, replacing
     /// any message still waiting.
     pub fn hold(&self, credential: &str, to: &str, kind: StatusKind, message: String) {
-        let Some(path) = local_path(to) else { return };
+        let Some(path) = local_path(to).and_then(|to| to.split(['?', '#']).next()) else {
+            return;
+        };
         let now = Instant::now();
         let mut held = self.held.lock().unwrap_or_else(|e| e.into_inner());
         held.retain(|_, slot| slot.until > now);

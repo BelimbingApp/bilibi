@@ -1,12 +1,14 @@
 //! Companies: the Organisation of the approved party model, its reference
 //! catalogs (legal entity types, department types), departments, the tenant's
 //! primary company and provisioning, plus shared-UI list/create/detail pages
-//! and audited inline facts. See `README.md` for the contracts.
+//! and audited inline facts. It mirrors Bilimbi `Bilimbi.Core.Company`.
+//! See `README.md` for the contracts.
 mod agent_operations;
 mod contributions;
 mod departments;
 mod duplicates;
 mod eligibility;
+mod field_contributions;
 mod files;
 mod hierarchy;
 mod lifecycle;
@@ -16,6 +18,7 @@ mod policy;
 mod tenant_provisioning;
 pub use tenant_provisioning::TenantCompanyErrors;
 mod primary;
+mod records;
 mod reference_types;
 mod relationship_operations;
 mod relationship_roles;
@@ -36,6 +39,10 @@ pub use eligibility::{
     account_eligibility, lock_account_company, lock_account_company_in, lock_writable_companies,
     AccountEligibility,
 };
+pub use field_contributions::{
+    CompanyField, CompanyFieldContribution, CompanyFieldKind, CompanyFieldReadFuture,
+    CompanyFieldValues, CompanyFieldWrite, CompanyFieldWriteFuture, COMPANY_FIELDS,
+};
 pub use files::{CompanyFiles, ARTIFACT_OWNER, ATTACHMENT_SUBJECT, FILES};
 // A transition on another owner's transaction, and what it offers or refuses.
 pub use lifecycle::{
@@ -44,7 +51,7 @@ pub use lifecycle::{
 };
 // A company as another owner reads, authorizes or writes into it.
 pub use organisation::{
-    authorize_target, identity, list_tenant_company_ids, require_live, require_writable,
+    authorize_target, identity, list_tenant_company_ids, reachable, require_live, require_writable,
     require_writable_in, search, CreateOutcome, Directory, Entry as SearchEntry, Identity,
     NewCompany, SearchPage, SearchQuery, ValidCompany, RESTRICTABLE,
 };
@@ -94,6 +101,12 @@ pub const MIGRATION_ROLE_OWNER: (&str, &str) = (
 pub const MIGRATION_SEARCH: (&str, &str) = (
     "core-company-007-search",
     include_str!("../migrations/007-search.sql"),
+);
+/// The scoped foreign key behind Base Session's `sessions.company_id`, the
+/// company a session chose to work in (`Scope::current_company`).
+pub const MIGRATION_SESSION_COMPANY: (&str, &str) = (
+    "core-company-009-session-company",
+    include_str!("../migrations/009-session-company.sql"),
 );
 pub const MASK: &str = "••••";
 /// The registry service id of the Companies facade.
@@ -252,7 +265,7 @@ use organisation::COLUMNS;
 pub async fn list(client: &impl GenericClient, scope: &Scope, params: &Params) -> Result<Page> {
     params.validate()?;
     bilibi_authz::authorize_key(client, scope, LIST).await?;
-    let masked = restrictions(client, scope).await?;
+    let masked = field_contributions::effective_restrictions(client, scope).await?;
     let query = format!("%{}%", organisation::escape_like(&params.q));
     let searchable = ["name", "code", "legal_name", "email", "jurisdiction"]
         .into_iter()
@@ -306,7 +319,7 @@ pub async fn detail(
     id: i64,
 ) -> Result<(Company, HashSet<String>)> {
     bilibi_authz::authorize_key(client, scope, VIEW).await?;
-    let masked = restrictions(client, scope).await?;
+    let masked = field_contributions::effective_restrictions(client, scope).await?;
     let row = client.query_opt(&format!("SELECT {COLUMNS} FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL"), &[&scope.tenant(),&id]).await?.ok_or(Error::NotFound)?;
     Ok((Company::from_row(&row, &masked), masked))
 }
@@ -451,12 +464,22 @@ impl CompanyService {
     }
     /// `create_company/3`: a refused create rolls back and reports its fields.
     pub async fn create_company(&self, scope: &Scope, new: &NewCompany) -> Result<CreateOutcome> {
+        self.create_company_with_fields(scope, new, &CompanyFieldValues::new())
+            .await
+    }
+    /// Creates a Company with Extension-owned fields in the same audited transaction.
+    pub async fn create_company_with_fields(
+        &self,
+        scope: &Scope,
+        new: &NewCompany,
+        fields: &CompanyFieldValues,
+    ) -> Result<CreateOutcome> {
         let mut client = self.db.get().await.map_err(Error::from)?;
         let mut tx = self
             .mutations
             .begin(&mut client, scope.mutation_context("company.create"))
             .await?;
-        let outcome = organisation::create(&mut tx, scope, new).await?;
+        let outcome = organisation::create_with_fields(&mut tx, scope, new, fields).await?;
         match &outcome {
             CreateOutcome::Created(_) => tx.commit().await?,
             CreateOutcome::Refused(_) => tx.rollback().await?,
@@ -726,8 +749,8 @@ async fn finish(tx: bilibi_database::MutationTransaction<'_>, saved: bool) -> Re
 inventory::submit! {
     bilibi_module_registry::Module {
         id:"core/company",layer:bilibi_module_registry::Layer::Core,
-        dependencies:&["base/database","base/security","base/ui","base/notifications","base/party_ids","base/session","base/menu","base/grid","base/search","base/dashboard","base/authz","base/tenancy","base/audit","base/agent_api","base/datetime","base/locale","base/principal_directory","base/media","base/artifacts","base/picklists","base/settings","core/party","core/geonames","core/person"],
-        migrations:&[MIGRATION, MIGRATION_ORGANISATION, MIGRATION_RELATIONSHIPS, MIGRATION_ROLE_OWNER, MIGRATION_SEARCH, ("core-company-008-match-keys", include_str!("../migrations/008-match-keys.sql"))],
+        dependencies:&["base/database","base/security","base/ui","base/notifications","base/party_ids","base/session","base/menu","base/grid","base/search","base/dashboard","base/authz","base/tenancy","base/audit","base/agent_api","base/datetime","base/locale","base/principal_directory","base/media","base/artifacts","base/picklists","base/settings","base/records","core/party","core/geonames","core/person"],
+        migrations:&[MIGRATION, MIGRATION_ORGANISATION, MIGRATION_RELATIONSHIPS, MIGRATION_ROLE_OWNER, MIGRATION_SEARCH, ("core-company-008-match-keys", include_str!("../migrations/008-match-keys.sql")), MIGRATION_SESSION_COMPANY],
         services: &[
             bilibi_module_registry::Service { id: SERVICE, factory: |services| {
                 let db = services.get::<Db>("base/database.pool")?.as_ref().clone();

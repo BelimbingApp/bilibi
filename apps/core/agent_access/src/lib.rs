@@ -7,6 +7,7 @@
 //! reproved through the injected Tenancy providers on every issuance
 //! (`base/tenancy.authentication`, `base/tenancy.parties`); this module runs no
 //! SQL against Core account, company or person tables.
+mod ai_status;
 mod contributions;
 mod oauth_client;
 mod registration;
@@ -191,6 +192,9 @@ pub struct AgentAccess {
     parties: Arc<PartyProofs>,
     integration: Arc<bilibi_integration::Integration>,
     metadata_throttle: Throttle,
+    /// Wakes the person's own live panels (the status bar's AI tag) after a
+    /// connection of theirs is approved or revoked, once that commit stands.
+    connections: tokio::sync::broadcast::Sender<bilibi_ui::page::Change>,
 }
 
 struct Connection {
@@ -402,6 +406,7 @@ impl AgentAccess {
         })
         .await?;
         tx.commit().await?;
+        self.connections_changed(scope);
         Ok(code)
     }
     /// Redeems a short-lived code once, bound to client, callback, resource and
@@ -613,6 +618,7 @@ impl AgentAccess {
         })
         .await?;
         tx.commit().await?;
+        self.connections_changed(scope);
         Ok(())
     }
     /// The client's poll. Pending, slow_down and refusals commit their state;
@@ -1001,13 +1007,32 @@ impl AgentAccess {
             })
             .await;
         match revoked {
-            Ok(()) => Ok(tx.commit().await?),
+            Ok(()) => {
+                tx.commit().await?;
+                self.connections_changed(scope);
+                Ok(())
+            }
             Err(Error::NotFound) => {
                 tx.rollback().await?;
                 Err(OAuthError::NotFound)
             }
             Err(error) => Err(error.into()),
         }
+    }
+    /// A live panel's subscription to this account's connection changes
+    /// (approved, revoked); with `Integration::subscribe_agent_activity` it
+    /// keeps the status bar's AI tag current without a refresh.
+    pub fn subscribe_connections(&self) -> bilibi_ui::page::Subscription {
+        bilibi_ui::page::Subscription {
+            receiver: self.connections.subscribe(),
+        }
+    }
+    /// After commit only; a send with no live subscriber is not a failure.
+    fn connections_changed(&self, scope: &Scope) {
+        let _ = self.connections.send(bilibi_ui::page::Change {
+            tenant: scope.tenant(),
+            user: Some(scope.user()),
+        });
     }
 
     async fn connection(
@@ -1181,7 +1206,7 @@ impl bilibi_tenancy::AgentVerifier for GrantVerifier {
 inventory::submit! {
     bilibi_module_registry::Module {
         id: "core/agent_access", layer: bilibi_module_registry::Layer::Core,
-        dependencies: &["base/database", "base/settings", "base/tenancy", "base/integration", "base/audit", "base/authz", "base/party_ids", "base/ui", "base/datetime", "base/locale", "base/system", "core/user", "core/company"],
+        dependencies: &["base/database", "base/settings", "base/tenancy", "base/integration", "base/agent_api", "base/audit", "base/authz", "base/party_ids", "base/ui", "base/datetime", "base/locale", "base/system", "core/user", "core/company"],
         migrations: &[MIGRATION, SELF_REPORT_MIGRATION, ("core-agent-access-003-client-identity", include_str!("../migrations/003-client-identity.sql")), ("core-agent-access-004-client-registration", include_str!("../migrations/004-client-registration.sql"))],
         services: &[bilibi_module_registry::Service { id: "core/agent_access.grants", factory: |services| {
             let authentication = services.get::<Authentication>("base/tenancy.authentication")?;
@@ -1194,6 +1219,7 @@ inventory::submit! {
             parties: services.get("base/tenancy.parties")?,
             integration: services.get(bilibi_integration::SERVICE)?,
             metadata_throttle: Throttle::default(),
+            connections: tokio::sync::broadcast::channel(128).0,
         })) } }, bilibi_module_registry::Service { id: "core/agent_access.pages", factory: |services| Ok(Arc::new(bilibi_ui::page::PageService(Arc::new(web::Pages {
             access: services.get("core/agent_access.grants")?,
             db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
@@ -1201,6 +1227,8 @@ inventory::submit! {
             locales: services.get("base/locale.locales")?,
             settings: services.get("base/settings.store")?,
             origin: std::env::var("APP_ORIGIN").unwrap_or_else(|_| "http://localhost:3000".into()).trim_end_matches('/').to_owned(),
+            integration: services.get(bilibi_integration::SERVICE)?,
+            registry: services.get("base/agent_api.registry")?,
         })))) }],
     }
 }

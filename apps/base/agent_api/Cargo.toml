@@ -14,10 +14,13 @@ bilibi-settings = { path = "../settings" }
 bilibi-session.workspace = true
 bilibi-step-up.workspace = true
 bilibi-system.workspace = true
+bilibi-queue.workspace = true
 inventory.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio-postgres.workspace = true
+tokio.workspace = true
+deadpool-postgres.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
 jiff = "0.2.38"
@@ -25,4 +28,3 @@ jiff = "0.2.38"
 [dev-dependencies]
 bilibi-walkthrough-fixture = { path = "../../../fixtures/walkthrough" }
 bilibi-web = { path = "../../web" }
-tokio.workspace = true

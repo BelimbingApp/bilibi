@@ -33,19 +33,24 @@ mod instance;
 pub mod list_columns;
 pub mod list_state;
 pub mod lists;
+mod live_transport;
+pub use live_transport::{LIVE_EVENT_LIMIT, LIVE_EVENT_TOO_LARGE};
 mod page_search;
 pub mod params;
 mod record_fields;
+mod record_reference;
 pub use record_fields::RecordField;
+pub use record_reference::{PickerHit, RecordPicker, RecordState, RelatedRecord};
 mod section;
 mod settings;
 mod shell;
 mod specimen;
+mod statusbar;
 pub mod upload;
 pub mod workspace;
 pub use shell::{
-    navigation, navigation_unpinned, version_badges, AppShell, DisplayPreferences, Framed, NavNode,
-    ShellContext, VersionBadge,
+    company_bar, navigation, navigation_unpinned, version_badges, AppShell, CompanyChoice,
+    DisplayPreferences, Framed, NavNode, ShellContext, VersionBadge,
 };
 
 pub use auth::{
@@ -96,6 +101,7 @@ pub use lists::{
 pub use page_search::{page_search, RecordGroup, RecordHit, SearchPage, SearchRecords};
 pub use settings::{SettingsTab, SETTINGS_LOCATION};
 pub use specimen::ComponentsSpecimen;
+pub use statusbar::StatusbarTag;
 pub use upload::{
     ChunkOutcome, ClientEntry, FileInput, Registration, UploadEntry, UploadError, UploadSpec,
     UploadedFile, Uploads,

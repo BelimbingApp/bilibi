@@ -942,7 +942,7 @@ impl Reports {
                         definition: &draft.definition,
                     };
                     let id = store::insert(sql, tenant, owner, &write).await?;
-                    Ok((id, vec![change(id, Value::Null, after(&draft))]))
+                    Ok((id, vec![change(id, json!({}), after(&draft))]))
                 })
             })
             .await?)
@@ -1055,7 +1055,7 @@ impl Reports {
                     if !store::delete(sql, tenant, id, version).await? {
                         return Err(Error::Conflict);
                     }
-                    Ok(((), vec![change(id, snapshot(&before), Value::Null)]))
+                    Ok(((), vec![change(id, snapshot(&before), json!({}))]))
                 })
             })
             .await;

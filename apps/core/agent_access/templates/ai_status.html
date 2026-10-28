@@ -1,0 +1,61 @@
+{#- The status bar's AI tag and its panel, the `shell.ai` embed
+    (src/ai_status.rs). Web renders it in the status bar's centre and mounts
+    it as the shell panel keyed by this root's id, so the copy buttons reach
+    this panel and a recorded agent request or a connection change re-renders
+    only this fragment. The panel starts hidden; the shell's disclosure
+    controller (base/ui assets/shell.js) owns open/closed, focus and Escape,
+    as it does for the bell. No Bilimbi counterpart. -#}
+{%- import "components.html" as ui -%}
+{%- import "feedback.html" as fb -%}
+{%- import "forms.html" as forms -%}
+<div id="app-ai" data-target="app-ai" class="relative flex shrink-0 items-center">
+{{ tag }}
+{% call fb::statusbar_panel(id="app-ai-panel", label="AI") %}
+<div class="flex items-center justify-between border-b border-line bg-surface-muted/50 px-3 py-2">
+<span class="text-[11px] font-semibold uppercase tracking-wider text-ink-muted">AI</span>
+<span id="app-ai-state" class="font-medium {% if connected %}text-ink{% else %}text-ink-muted{% endif %}">{{ state_text }}</span>
+</div>
+<div class="max-h-[70vh] space-y-4 overflow-y-auto p-3">
+{% if !own_account %}
+<p id="app-ai-own-account" class="text-ink-muted">AI apps are connected and seen from your own account.</p>
+{% endif %}
+{% if connected %}
+<section id="app-ai-connections" aria-labelledby="app-ai-connections-heading">
+{% call ui::section_heading(id="app-ai-connections-heading", title="Connected AI apps", actions=manage_link) %}{% endcall %}
+<ul class="divide-y divide-line">
+{% for connection in connections %}
+<li id="app-ai-connection-{{ connection.id }}" class="flex items-baseline justify-between gap-3 py-1.5"><span class="min-w-0 truncate font-medium text-ink">{{ connection.name }}</span><span class="shrink-0 text-ink-subtle">{{ connection.last_used }} · {{ connection.ends }}</span></li>
+{% endfor %}
+</ul>
+</section>
+<section id="app-ai-activity" aria-labelledby="app-ai-activity-heading">
+{% call ui::section_heading(id="app-ai-activity-heading", title="Recent activity") %}{% endcall %}
+{% if activity.is_empty() %}
+<p id="app-ai-activity-empty" class="text-ink-subtle">Nothing yet. What your AI reads and changes shows here.</p>
+{% else %}
+<ol class="divide-y divide-line" aria-label="What your AI did, newest first">
+{% for item in activity %}
+<li id="app-ai-activity-{{ item.id }}" class="flex items-baseline justify-between gap-3 py-1.5"><span class="min-w-0 text-ink">{{ item.what }}{% if !item.outcome.is_empty() %} <span class="text-danger">· {{ item.outcome }}</span>{% endif %}</span><span class="shrink-0 text-ink-subtle">{% if !item.app.is_empty() %}{{ item.app }} · {% endif %}{{ item.when }}</span></li>
+{% endfor %}
+</ol>
+{% endif %}
+</section>
+{% endif %}
+{% if let Some(field) = prompt %}
+{% if connected %}
+{% call ui::fold(id="app-ai-connect", title="Connect another AI app") %}
+{% include "ai_status_connect.html" %}
+{% endcall %}
+{% else %}
+<section id="app-ai-connect" aria-labelledby="app-ai-connect-heading">
+{% call ui::section_heading(id="app-ai-connect-heading", title="Connect your AI app") %}{% endcall %}
+{% include "ai_status_connect.html" %}
+</section>
+{% endif %}
+{% endif %}
+</div>
+<div class="border-t border-line bg-surface-muted/30 px-3 py-1.5 text-center">
+<a id="app-ai-settings" href="{{ manage }}" class="font-medium text-brand hover:underline">All AI connection settings</a>
+</div>
+{% endcall %}
+</div>

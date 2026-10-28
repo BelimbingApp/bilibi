@@ -37,7 +37,7 @@ pub(crate) fn bind(parties: Arc<PartyProofs>) -> bilibi_module_registry::Result<
     })
 }
 
-fn person_id(subject: &str) -> Result<PersonId> {
+pub(crate) fn person_id(subject: &str) -> Result<PersonId> {
     subject
         .parse::<i64>()
         .ok()
@@ -45,7 +45,7 @@ fn person_id(subject: &str) -> Result<PersonId> {
         .ok_or(Error::NotFound)
 }
 
-async fn authorize(
+pub(crate) async fn authorize(
     client: &dyn ProofClient,
     scope: &Scope,
     id: PersonId,

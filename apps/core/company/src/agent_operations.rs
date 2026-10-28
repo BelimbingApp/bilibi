@@ -1,7 +1,9 @@
 //! The Company operations agents may call (Bilimbi
 //! `Bilimbi.Core.Company.AgentOperations`), each a thin adapter over this
 //! module's facade with the sealed scope the registry proved: `core.company.list`
-//! and `core.company.get` are reads under the list and view capabilities;
+//! and `core.company.get` are reads under the list and view capabilities,
+//! `core.company.reachable` lists the companies the caller may work in (the
+//! ones the shell's company switcher offers, under the view capability);
 //! `core.company.create` is a reviewed safe write (`admin.company.create`)
 //! whose preview shares create's defaults, validation and restricted-field
 //! refusal and whose commit writes through the plan's audited transaction.
@@ -19,7 +21,7 @@ use bilibi_agent_api::{
 };
 use bilibi_database::{Db, MutationTransaction};
 use bilibi_module_registry::{Contribution, Provenance};
-use bilibi_tenancy::Scope;
+use bilibi_tenancy::{OrganisationDirectory, Scope};
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, sync::OnceLock};
 
@@ -46,9 +48,22 @@ fn invalid(errors: Vec<FieldError>) -> bilibi_agent_api::Error {
     }
     bilibi_agent_api::Error::InvalidInput(fields)
 }
-fn parse(input: &Value) -> bilibi_agent_api::Result<NewCompany> {
-    serde_json::from_value(input.clone())
-        .map_err(|_| bilibi_agent_api::Error::Backend(bilibi_database::Error::Invalid))
+fn parse(input: &Value) -> bilibi_agent_api::Result<(NewCompany, crate::CompanyFieldValues)> {
+    let mut company = input.clone();
+    let object = company
+        .as_object_mut()
+        .ok_or(bilibi_agent_api::Error::Backend(
+            bilibi_database::Error::Invalid,
+        ))?;
+    let mut fields = crate::CompanyFieldValues::new();
+    for (_, field) in crate::field_contributions::definitions()? {
+        if let Some(value) = object.remove(field.id) {
+            fields.insert(field.id.into(), value);
+        }
+    }
+    let new = serde_json::from_value(company)
+        .map_err(|_| bilibi_agent_api::Error::Backend(bilibi_database::Error::Invalid))?;
+    Ok((new, fields))
 }
 
 struct List;
@@ -71,20 +86,30 @@ impl ReadHandler for List {
             };
             let client = db()?.get().await.map_err(bilibi_database::Error::from)?;
             let page = organisation::search(&**client, scope, &query).await?;
+            let ids = page
+                .entries
+                .iter()
+                .map(|entry| entry.company.id)
+                .collect::<Vec<_>>();
+            let extension_values = crate::field_contributions::read(&client, scope, &ids).await?;
+            let restricted =
+                crate::field_contributions::effective_restrictions(&**client, scope).await?;
             let entries = page
                 .entries
                 .into_iter()
                 .map(|entry| {
                     let company = &entry.company;
-                    let masked = company.masked_fields();
-                    Data::restricted(
-                        json!({
+                    let mut masked = company.masked_fields();
+                    masked.extend(restricted.iter().cloned());
+                    let mut company_value = json!({
                             "id": company.id, "name": company.name, "code": company.code, "legal_name": company.legal_name,
                             "status": company.status, "jurisdiction": company.jurisdiction, "parent_id": company.parent_id,
                             "parent_name": entry.parent_name, "primary": entry.primary,
-                        }),
-                        &masked,
-                    )
+                        });
+                    if let Some(fields) = extension_values.get(&company.id) {
+                        for (field, field_value) in fields { value_map_insert(&mut company_value, field, field_value.clone()); }
+                    }
+                    Data::restricted(company_value, &masked)
                 })
                 .collect();
             Ok(Output::Page(Page {
@@ -93,6 +118,41 @@ impl ReadHandler for List {
                 page_size: query.page_size.unsigned_abs(),
                 total: page.total.unsigned_abs(),
             }))
+        })
+    }
+}
+
+/// The companies the caller may work in, as the shell's switcher offers
+/// them: every operation that takes a `company_id` accepts one of these and
+/// proves it again. An agent carries no session choice, so `own` is the
+/// only default a Finance operation could fall back to.
+struct Reachable;
+impl ReadHandler for Reachable {
+    fn owner(&self) -> &'static str {
+        "core/company"
+    }
+    fn call<'a>(
+        &'a self,
+        _client: &'a dyn OperationClient,
+        scope: &'a Scope,
+        _input: &'a Value,
+    ) -> OperationFuture<'a> {
+        Box::pin(async move {
+            let client = db()?.get().await.map_err(bilibi_database::Error::from)?;
+            bilibi_authz::authorize_key(&**client, scope, VIEW).await?;
+            let own = scope.actor().organisation();
+            let companies = organisation::Directory
+                .reachable(&**client, scope)
+                .await?
+                .into_iter()
+                .map(|company| {
+                    Data::Json(json!({
+                        "id": company.id.get(), "name": company.name, "status": company.status,
+                        "own": Some(company.id) == own,
+                    }))
+                })
+                .collect();
+            Ok(Output::Data(Data::Array(companies)))
         })
     }
 }
@@ -122,7 +182,13 @@ impl ReadHandler for Get {
                         other => other.into(),
                     })?;
             let primary = crate::primary::is_primary(&**client, scope, id).await?;
+            let extension_values = crate::field_contributions::read(&client, scope, &[id]).await?;
             let mut value = company.to_json();
+            if let Some(fields) = extension_values.get(&id) {
+                for (field, field_value) in fields {
+                    value_map_insert(&mut value, field, field_value.clone());
+                }
+            }
             value["primary"] = json!(primary);
             value["path"] = json!(format!("/companies/{id}"));
             Ok(Output::Data(Data::restricted(value, &masked)))
@@ -196,9 +262,9 @@ impl WriteHandler for Create {
         input: &'a Value,
     ) -> OperationFuture<'a> {
         Box::pin(async move {
-            let new = parse(input)?;
+            let (new, custom_values) = parse(input)?;
             let client = db()?.get().await.map_err(bilibi_database::Error::from)?;
-            let company = organisation::preview(&**client, scope, &new)
+            let company = organisation::preview_with_fields(&**client, scope, &new, &custom_values)
                 .await?
                 .map_err(invalid)?;
             let fields = [
@@ -221,6 +287,13 @@ impl WriteHandler for Create {
                 .map(|(field, to)| json!({"field":field,"from":null,"to":to}))
                 .collect();
             let matches = crate::duplicates::create_matches(&**client, scope, &new).await?;
+            let mut changes = changes;
+            changes.extend(
+                custom_values
+                    .iter()
+                    .filter(|(_, value)| !value.is_null() && value.as_str() != Some(""))
+                    .map(|(field, value)| json!({"field":field,"from":null,"to":value})),
+            );
             Ok(json!({"summary":"Create company","changes":changes,"duplicate_candidates":matches.candidates,"duplicates_likely":matches.likely,"create_anyway":new.create_anyway}).into())
         })
     }
@@ -231,15 +304,19 @@ impl WriteHandler for Create {
         input: &'a Value,
     ) -> OperationFuture<'a> {
         Box::pin(async move {
-            let new = parse(input)?;
-            match organisation::create(tx, scope, &new).await? {
+            let (new, fields) = parse(input)?;
+            match organisation::create_with_fields(tx, scope, &new, &fields).await? {
                 organisation::CreateOutcome::Created(company) => {
-                    let masked = company.masked_fields();
-                    let mut data = BTreeMap::new();
-                    data.insert(
-                        "record".into(),
-                        Data::restricted(company.to_json(), &masked),
+                    let mut masked = company.masked_fields();
+                    masked.extend(
+                        crate::field_contributions::effective_restrictions(tx.sql(), scope).await?,
                     );
+                    let mut record = company.to_json();
+                    for (field, value) in &fields {
+                        value_map_insert(&mut record, field, value.clone());
+                    }
+                    let mut data = BTreeMap::new();
+                    data.insert("record".into(), Data::restricted(record, &masked));
                     data.insert(
                         "path".into(),
                         Data::from(json!(format!("/companies/{}", company.id))),
@@ -267,7 +344,7 @@ fn get_schema() -> Value {
     json!({"type":"object","required":["company_id"],"properties":{"company_id":{"type":"integer","minimum":1}}})
 }
 fn create_schema() -> Value {
-    json!({"type":"object","required":["name"],"properties":{
+    let mut schema = json!({"type":"object","required":["name"],"properties":{
         "name":{"type":"string","maxLength":160},
         "code":text(),"legal_name":text(),"registration_number":text(),
         "tax_id":{"type":"string","maxLength":64},
@@ -282,13 +359,33 @@ fn create_schema() -> Value {
             "candidate_ids":{"type":"array","items":{"type":"integer","minimum":1}},
             "reason":{"type":"string","maxLength":500}
         }}
-    }})
+    }});
+    if let Ok(fields) = crate::field_contributions::definitions() {
+        for (_, field) in fields {
+            let crate::CompanyFieldKind::Text { max_length } = field.kind;
+            schema["properties"][field.id] =
+                json!({"type":"string","maxLength":max_length,"description":field.label});
+        }
+    }
+    schema
+}
+
+fn value_map_insert(target: &mut Value, key: &str, value: Value) {
+    if let Some(object) = target.as_object_mut() {
+        object.insert(key.into(), value);
+    }
 }
 fn list_output() -> Value {
     json!({"type":"array","description":"Companies with id, name, code, legal_name, status, jurisdiction, parent_id, parent_name and primary."})
 }
 fn get_output() -> Value {
     json!({"type":"object","description":"The company's identity, legal and contact facts. A field you may not see reads {\"restricted\": true}."})
+}
+fn empty_schema() -> Value {
+    json!({"type":"object","properties":{}})
+}
+fn reachable_output() -> Value {
+    json!({"type":"array","description":"Companies you may work in, each with id, name, status and own (true for the company your account is affiliated with). Pass one of these ids as company_id to an operation that acts on a company."})
 }
 fn create_output() -> Value {
     json!({"type":"object","description":"Created company and its Bilibi URL."})
@@ -301,6 +398,7 @@ inventory::submit! { Contribution::new(DEFINITIONS, "core/company.agent", Proven
         Operation { key: "core.company.create", title: "Create a company", summary: "Create an organisation in your tenant after searching for an existing company.", keywords: &["add", "organisation", "business"], capability: CREATE, input: create_schema, output: create_output, handler: Handler::SafeWrite(&Create), channels: Channels::Every, step_up: &[] },
         Operation { key: "core.company.list", title: "List companies", summary: "Find companies of your tenant by name, code, legal name, email or jurisdiction, one page at a time, with the fields you may see.", keywords: &["find", "search", "browse", "organisation", "business", "firm"], capability: LIST, input: list_schema, output: list_output, handler: Handler::Read(&List), channels: Channels::Every, step_up: &[] },
         Operation { key: "core.company.get", title: "Read a company", summary: "One company of your tenant by id, with the fields you may see.", keywords: &["show", "detail", "organisation", "business", "firm"], capability: VIEW, input: get_schema, output: get_output, handler: Handler::Read(&Get), channels: Channels::Every, step_up: &[] },
+        Operation { key: "core.company.reachable", title: "List the companies you may work in", summary: "The companies you may act in: your own company, or every live company of your tenant when you hold tenant-wide reach. Use one of their ids as company_id.", keywords: &["current", "switch", "context", "my company", "organisation"], capability: VIEW, input: empty_schema, output: reachable_output, handler: Handler::Read(&Reachable), channels: Channels::Every, step_up: &[] },
     ],
-    guides: &[Guide { key: "core.company", title: "Companies", summary: "What a company is in this tenant, and how to find, read and create one.", keywords: &["organisation", "business", "firm", "status"], capability: LIST, body:"Postal addresses are saved and linked through core.address, not a scalar field here. Search address or read guide core.address. Use core.address.company.list or core.address.person.list to find existing addresses; create_and_attach or attach links an office, billing or other address to its company or contact. A namecard flow can create the contact first and then attach the office address in a separate reviewed write.\n\nA company is an organisation recorded in your tenant. A company may have a parent company, and one company is the tenant's primary company.\n\nBefore creating, call core.company.duplicates with the known name, website, email, phone or registration_number. It returns scored candidates and matched facts, including archived companies. Use an existing company or supply create_anyway with candidate_ids and a reason of 1–500 characters. The create transaction rechecks these facts. core.company.hierarchy returns the parent chain and descendants up to the configured depth and 1,000 nodes; truncated means more relatives exist. Reuse the existing company rather than making a duplicate. Company roles are relationships, never legal entity types or access grants: a related company assigned vendor supplies the source company, and a company may hold customer and vendor roles at once as separate links. Discover core.company.relationship.* and core.company.relationship_role.* for list, read and reviewed writes (guide core.company.relationship). Contacts use core.affiliation.contact.create, never an HR employee record. A person's employer must exist as a company first: reuse it, or create it before recording the person. Use core.company.create through a dry run, local review and plan-code commit. A missing code is generated from the name and shown in the preview. Do not invent legal identifiers or a jurisdiction from a phone number; ask when the source is unclear.\n\nA company's status is one of pending, active, suspended or archived. Status changes only through the lifecycle actions on the company's page, never through an edit of its fields.\n\nTo find companies, call core.company.list with search words. To read one, call core.company.get with its id. A field an administrator restricted reads as {\"restricted\": true}: the company has a value there, and you may not see it." }],
+    guides: &[Guide { key: "core.company", title: "Companies", summary: "What a company is in this tenant, and how to find, read and create one.", keywords: &["organisation", "business", "firm", "status"], capability: LIST, body:"Postal addresses are saved and linked through core.address, not a scalar field here. Search address or read guide core.address. Use core.address.company.list or core.address.person.list to find existing addresses; create_and_attach or attach links an office, billing or other address to its company or contact. A namecard flow can create the contact first and then attach the office address in a separate reviewed write.\n\nA company is an organisation recorded in your tenant. A company may have a parent company, and one company is the tenant's primary company.\n\nBefore creating, call core.company.duplicates with the known name, website, email, phone or registration_number. It returns scored candidates and matched facts, including archived companies. Use an existing company or supply create_anyway with candidate_ids and a reason of 1–500 characters. The create transaction rechecks these facts. core.company.hierarchy returns the parent chain and descendants up to the configured depth and 1,000 nodes; truncated means more relatives exist. Reuse the existing company rather than making a duplicate. Company roles are relationships, never legal entity types or access grants: a related company assigned vendor supplies the source company, and a company may hold customer and vendor roles at once as separate links. Discover core.company.relationship.* and core.company.relationship_role.* for list, read and reviewed writes (guide core.company.relationship). Contacts use core.affiliation.contact.create, never an HR employee record. A person's employer must exist as a company first: reuse it, or create it before recording the person. Use core.company.create through a dry run, local review and plan-code commit. A missing code is generated from the name and shown in the preview. Do not invent legal identifiers or a jurisdiction from a phone number; ask when the source is unclear.\n\nA company's status is one of pending, active, suspended or archived. Status changes only through the lifecycle actions on the company's page, never through an edit of its fields.\n\nTo find companies, call core.company.list with search words. To read one, call core.company.get with its id. To learn which companies you may act in, call core.company.reachable: an operation that takes a company_id accepts one of those ids and checks it again. A person's choice in the Bilibi top bar never applies to you; name the company on every call. A field an administrator restricted reads as {\"restricted\": true}: the company has a value there, and you may not see it." }],
 }) }

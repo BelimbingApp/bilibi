@@ -1,0 +1,35 @@
+[package]
+name = "bilibi-bulk-data"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+askama.workspace = true
+bilibi-agent-api.workspace = true
+bilibi-artifacts.workspace = true
+bilibi-authz.workspace = true
+bilibi-database.workspace = true
+bilibi-datetime.workspace = true
+bilibi-locale.workspace = true
+bilibi-menu.workspace = true
+bilibi-module-registry.workspace = true
+bilibi-notifications.workspace = true
+bilibi-party-ids.workspace = true
+bilibi-queue.workspace = true
+bilibi-settings.workspace = true
+bilibi-tenancy.workspace = true
+bilibi-ui.workspace = true
+inventory.workspace = true
+jiff.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tokio-postgres.workspace = true
+
+[dev-dependencies]
+bilibi-base = { path = ".." }
+bilibi-core = { path = "../../core" }
+bilibi-walkthrough-fixture = { path = "../../../fixtures/walkthrough" }
+bilibi-web = { path = "../../web" }

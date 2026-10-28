@@ -29,6 +29,14 @@ const TESTS: [(&str, &str); 7] = [
     ("is empty", "empty"),
     ("is not empty", "not_empty"),
 ];
+/// Every total a measure may take, as the definition's `agg` accepts them.
+const AGGS: [(&str, &str); 5] = [
+    ("Count of values", "count"),
+    ("Sum", "sum"),
+    ("Average", "avg"),
+    ("Lowest", "min"),
+    ("Highest", "max"),
+];
 const PERIODS: [(&str, &str); 7] = [
     ("Today", "today"),
     ("This week", "this_week"),
@@ -85,6 +93,56 @@ pub(crate) struct Builder {
     pub errors: BTreeMap<String, Vec<String>>,
 }
 
+/// One value of a one-of list as the editor shows it: a value holding a
+/// comma, a quote or edge spaces is quoted (`"North, East"`, with `""` for a
+/// quote), so the text and the list convert both ways without loss.
+fn quote_value(value: &str) -> String {
+    if value.contains([',', '"']) || value.trim() != value || value.is_empty() {
+        format!("\"{}\"", value.replace('"', "\"\""))
+    } else {
+        value.to_owned()
+    }
+}
+
+/// The list a one-of text holds: values split at commas outside quotes,
+/// trimmed, blanks dropped. The inverse of [`quote_value`] joined by ", ".
+fn split_values(text: &str) -> Vec<String> {
+    let mut values = Vec::new();
+    let (mut current, mut quoted, mut in_quotes) = (String::new(), false, false);
+    let mut chars = text.chars().peekable();
+    let mut finish = |current: &mut String, quoted: &mut bool| {
+        let value = std::mem::take(current);
+        if *quoted || !value.trim().is_empty() {
+            values.push(if *quoted {
+                value
+            } else {
+                value.trim().to_owned()
+            });
+        }
+        *quoted = false;
+    };
+    while let Some(c) = chars.next() {
+        match c {
+            '"' if in_quotes && chars.peek() == Some(&'"') => {
+                chars.next();
+                current.push('"');
+            }
+            '"' if in_quotes => in_quotes = false,
+            '"' if current.trim().is_empty() => {
+                current.clear();
+                in_quotes = true;
+                quoted = true;
+            }
+            ',' if !in_quotes => finish(&mut current, &mut quoted),
+            // Spaces after a closing quote are not part of the value.
+            ' ' if quoted && !in_quotes => {}
+            c => current.push(c),
+        }
+    }
+    finish(&mut current, &mut quoted);
+    values
+}
+
 fn text(value: &Value) -> String {
     match value {
         Value::Null => String::new(),
@@ -111,7 +169,11 @@ impl Builder {
             .map(|f| {
                 let (value, to) = match (f.test.as_str(), &f.value) {
                     ("one_of", Value::Array(values)) => (
-                        values.iter().map(text).collect::<Vec<_>>().join(", "),
+                        values
+                            .iter()
+                            .map(|v| quote_value(&text(v)))
+                            .collect::<Vec<_>>()
+                            .join(", "),
                         String::new(),
                     ),
                     ("range", range) => (text(&range["min"]), text(&range["max"])),
@@ -252,12 +314,7 @@ impl Builder {
                 let mut filter = json!({"column": f.column, "test": f.test, "ask": f.ask});
                 match f.test.as_str() {
                     "one_of" => {
-                        let values: Vec<&str> = f
-                            .value
-                            .split(',')
-                            .map(str::trim)
-                            .filter(|v| !v.is_empty())
-                            .collect();
+                        let values = split_values(&f.value);
                         if !values.is_empty() {
                             filter["values"] = json!(values);
                         }
@@ -486,8 +543,15 @@ impl Builder {
                 if numeric(column) {
                     aggs.extend([("Sum", "sum"), ("Average", "avg")]);
                 }
-                if numeric(column) || dated(column) {
+                if numeric(column) || dated(column) || ty(column) == "string" {
                     aggs.extend([("Lowest", "min"), ("Highest", "max")]);
+                }
+                // A saved total the column no longer offers still shows, so a
+                // save never drops it silently.
+                if let Some(kept) = AGGS.iter().find(|(_, key)| key == agg) {
+                    if !aggs.contains(kept) {
+                        aggs.push(*kept);
+                    }
                 }
                 let row = [
                     render(
@@ -529,7 +593,7 @@ impl Builder {
                 "one_of" => render(
                     field(&format!("f{i}_value"), "Values")
                         .value(&row.value)
-                        .hint("Separate values with commas."),
+                        .hint("Separate values with commas; quote a value that holds one."),
                 )?,
                 "range" => render(bound(format!("f{i}_value"), "From", &row.value, row))?,
                 _ => render(bound(format!("f{i}_value"), "Value", &row.value, row))?,
@@ -592,8 +656,7 @@ impl Builder {
         let actions = if editable {
             let mut actions = render(Button {
                 id: "def-save",
-                button_type: "button",
-                event: "save_definition",
+                button_type: "submit",
                 variant: ButtonVariant::Primary,
                 working: "Saving…",
                 body: Html::text("Save report"),

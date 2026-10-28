@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+bilibi-records.workspace = true
 askama.workspace = true
 bilibi-ui.workspace = true
 bilibi-menu.workspace = true
@@ -14,6 +15,7 @@ bilibi-locale = { path = "../../base/locale" }
 bilibi-agent-api = { path = "../../base/agent_api" }
 bilibi-artifacts = { path = "../../base/artifacts" }
 bilibi-authz = { path = "../../base/authz" }
+bilibi-bulk-data.workspace = true
 bilibi-database.workspace = true
 bilibi-grid = { path = "../../base/grid" }
 bilibi-search.workspace = true

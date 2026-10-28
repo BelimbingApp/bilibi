@@ -8,7 +8,7 @@ use crate::{
     contributions::{CREATE, TENANT_WIDE},
     Company, FieldError, WriteError, MASK,
 };
-use bilibi_authz::{authorize_key, authorize_proof, decide_proof, restrictions};
+use bilibi_authz::{authorize_key, authorize_proof, decide_proof, holds_proof, restrictions};
 use bilibi_database::{Change, Error, MutationTransaction, Result};
 use bilibi_party_ids::OrganisationId;
 use bilibi_tenancy::{
@@ -248,18 +248,53 @@ async fn named_in_scope(client: &dyn ProofClient, scope: &Scope) -> Result<Vec<N
     companies.sort_by_cached_key(|company| (company.name.to_lowercase(), company.id.get()));
     Ok(companies)
 }
+/// Whether `scope` may work in company `id` right now: a live, unarchived
+/// company of its own tenant that it reaches (`reaches`). This is the fact
+/// Tenancy asks for a session's chosen company (`Scope::current_company`) and the
+/// test the switch applies before storing a choice. It grants nothing: an
+/// operation on that company still proves it with `authorize_target` and its
+/// own capability. A missing, cross-tenant or archived company is `false`,
+/// never an error, so a stale choice simply falls back to the affiliation.
+pub async fn reachable(
+    client: &dyn ProofClient,
+    scope: &Scope,
+    id: OrganisationId,
+) -> Result<bool> {
+    let live = client
+        .query_opt(
+            "SELECT status FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL",
+            &[&scope.tenant(), &id.get()],
+        )
+        .await?
+        .is_some_and(|row| row.get::<_, String>(0) != ARCHIVED);
+    if !live {
+        return Ok(false);
+    }
+    Ok(reaches_without_tenant_wide(scope, id.get())
+        || holds_proof(client, scope, TENANT_WIDE).await?)
+}
+
+/// Whether the actor reaches the whole tenant's companies (the tenant-wide
+/// reach, or a granted system principal), read without logging a decision.
+pub(crate) async fn reaches_tenant(client: &dyn ProofClient, scope: &Scope) -> Result<bool> {
+    Ok(scope.principal().is_some() || holds_proof(client, scope, TENANT_WIDE).await?)
+}
+
 /// Own company, or the whole tenant with the tenant-wide reach; a granted
 /// system principal reaches every company of its tenant (`authorize_target`).
+/// The tenant-wide decision is logged: this is the proof an operation relies on.
 async fn reaches(client: &dyn ProofClient, scope: &Scope, id: i64) -> Result<bool> {
-    if scope.principal().is_some()
+    if reaches_without_tenant_wide(scope, id) {
+        return Ok(true);
+    }
+    Ok(decide_proof(client, scope, TENANT_WIDE).await?.allowed)
+}
+fn reaches_without_tenant_wide(scope: &Scope, id: i64) -> bool {
+    scope.principal().is_some()
         || scope
             .actor()
             .organisation()
             .is_some_and(|organisation| organisation.get() == id)
-    {
-        return Ok(true);
-    }
-    Ok(decide_proof(client, scope, TENANT_WIDE).await?.allowed)
 }
 impl OrganisationDirectory for Directory {
     fn in_scope<'a>(
@@ -326,6 +361,39 @@ impl OrganisationDirectory for Directory {
                 .await?
                 .map(|row| named(&row))
                 .transpose()
+        })
+    }
+    fn reachable<'a>(
+        &'a self,
+        client: &'a dyn ProofClient,
+        scope: &'a Scope,
+    ) -> ProofFuture<'a, Vec<NamedOrganisation>> {
+        Box::pin(async move {
+            // The same reach as `reaches`, listed: everyone with the
+            // tenant-wide grant (or a granted principal) sees every unarchived
+            // company; anyone else sees their own company alone.
+            if reaches_tenant(client, scope).await? {
+                return Ok(named_in_scope(client, scope)
+                    .await?
+                    .into_iter()
+                    .filter(|company| !company.archived)
+                    .collect());
+            }
+            let Some(own) = scope.actor().organisation() else {
+                return Ok(Vec::new());
+            };
+            let own = client
+                .query_opt(
+                    &format!("{NAMED_SQL} AND id=$2"),
+                    &[&scope.tenant(), &own.get()],
+                )
+                .await?
+                .map(|row| named(&row))
+                .transpose()?;
+            Ok(own
+                .filter(|company| !company.archived)
+                .into_iter()
+                .collect())
         })
     }
 }
@@ -696,8 +764,27 @@ pub async fn create(
     scope: &Scope,
     new: &NewCompany,
 ) -> Result<CreateOutcome> {
+    create_with_fields(tx, scope, new, &crate::CompanyFieldValues::new()).await
+}
+
+/// Creates a company and its statically contributed Extension fields in the
+/// same audited transaction (Bilimbi `create_company/3`).
+pub async fn create_with_fields(
+    tx: &mut MutationTransaction<'_>,
+    scope: &Scope,
+    new: &NewCompany,
+    fields: &crate::CompanyFieldValues,
+) -> Result<CreateOutcome> {
     authorize_key(tx.sql(), scope, CREATE).await?;
-    let restricted = restrictions(tx.sql(), scope).await?;
+    let restricted = crate::field_contributions::effective_restrictions(tx.sql(), scope).await?;
+    let mut field_errors = crate::field_contributions::validate_create(fields);
+    field_errors.extend(crate::field_contributions::validate_restrictions(
+        fields,
+        &restricted,
+    ));
+    if !field_errors.is_empty() {
+        return Ok(CreateOutcome::Refused(field_errors));
+    }
     let company = match validate(new, &restricted) {
         Ok(company) => company,
         Err(errors) => return Ok(CreateOutcome::Refused(errors)),
@@ -744,19 +831,29 @@ pub async fn create(
             })
         })
         .await?;
+    crate::field_contributions::create(tx, scope, created.id, fields).await?;
     Ok(CreateOutcome::Created(Box::new(created)))
 }
 
-/// Validates a prospective company, including generated defaults, field
-/// access and current code uniqueness, without writing or reserving the code
-/// (Bilimbi `preview_create_company/2`).
-pub async fn preview(
+/// Validates the Company and contributed Extension fields for a reviewed
+/// create without writing or reserving generated values (Bilimbi
+/// `preview_create_company/2`).
+pub async fn preview_with_fields(
     client: &(impl GenericClient + Sync),
     scope: &Scope,
     new: &NewCompany,
+    fields: &crate::CompanyFieldValues,
 ) -> Result<std::result::Result<ValidCompany, Vec<FieldError>>> {
     authorize_key(client, scope, CREATE).await?;
-    let restricted = restrictions(client, scope).await?;
+    let restricted = crate::field_contributions::effective_restrictions(client, scope).await?;
+    let mut field_errors = crate::field_contributions::validate_create(fields);
+    field_errors.extend(crate::field_contributions::validate_restrictions(
+        fields,
+        &restricted,
+    ));
+    if !field_errors.is_empty() {
+        return Ok(Err(field_errors));
+    }
     let company = match validate(new, &restricted) {
         Ok(company) => company,
         Err(errors) => return Ok(Err(errors)),

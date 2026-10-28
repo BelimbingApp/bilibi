@@ -5,7 +5,9 @@
 //! fragments rendered by the same macros; `static/ui-feedback-driver.js` stands in
 //! for the server by inserting and removing them.
 use crate::section::sections;
-use crate::{FlashMap, InstanceBadge, InstanceBanner, InstanceStatus, StatusKind, Tab};
+use crate::{
+    FlashMap, InstanceBadge, InstanceBanner, InstanceStatus, StatusKind, StatusbarTag, Tab,
+};
 use askama::Template;
 
 /// The page is cut into sections, each its own template; see `section`.
@@ -22,6 +24,7 @@ pub struct FeedbackSpecimen {
     instance_statuses: Vec<InstanceStatus<'static>>,
     instance_badges: Vec<InstanceBadge<'static>>,
     instance_banners: Vec<InstanceBanner<'static>>,
+    statusbar_tags: Vec<StatusbarTag<'static>>,
 }
 
 sections! {
@@ -74,6 +77,10 @@ impl FeedbackSpecimen {
                 info: "Nothing else changed.",
                 ..FlashMap::default()
             },
+            statusbar_tags: vec![
+                StatusbarTag { id: "design-library-ai-quiet", label: "AI", title: "No AI app connected. Open to connect one.", controls: "design-library-ai-panel", state: "not-connected", quiet: true },
+                StatusbarTag { id: "design-library-ai-connected", label: "AI", title: "Claude, ChatGPT · last used 5 min ago", controls: "design-library-ai-panel", state: "connected", quiet: false },
+            ],
             instance_statuses: vec![
                 InstanceStatus { id: "", tone: StatusKind::Info, role: "development", role_label: "Dev", label: "Dev", title: "You are on Dev.", editable: true },
                 InstanceStatus { id: "", tone: StatusKind::Warning, role: "staging", role_label: "Staging", label: "Training", title: "You are on Training (Staging).", editable: false },
