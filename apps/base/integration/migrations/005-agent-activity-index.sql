@@ -4,3 +4,6 @@
 CREATE INDEX base_integration_exchanges_agent_activity_idx
  ON base_integration_exchanges (tenant_id, user_id, connection_id, occurred_at DESC)
  WHERE direction = 'incoming' AND connection_id IS NOT NULL;
+CREATE INDEX base_integration_exchanges_agent_timeline_idx
+ ON base_integration_exchanges (tenant_id, user_id, occurred_at DESC, id DESC)
+ WHERE direction = 'incoming' AND connection_id IS NOT NULL;
