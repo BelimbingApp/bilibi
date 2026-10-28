@@ -16,15 +16,16 @@
 //! submissions, notices, the quarantine list per tenant, a stopped scanner
 //! ending in `failed`, rescan, a rescan overtaking an older scan still
 //! running, the size limit read from the stored bytes, a verdict that cannot
-//! be recorded settling `failed`, purge and the audit trail. `no-scanner` shows
+//! be recorded settling `failed`, a purge that cannot be recorded leaving the
+//! bytes, purge and its removal job, and the audit trail. `no-scanner` shows
 //! the policy without a scanner: `when_available` stores unscanned, `required`
 //! refuses. `serve` runs the real Bilibi host with the fixture scanner (unless
 //! `BILIBI_SCAN_FIXTURE=none`), the fixture ticket owner and the executor, for
 //! the Quarantined Files page and `/media/attachments/{public_id}`.
 use bilibi_database::{pool, MutationBoundary, Result as DbResult};
 use bilibi_media::{
-    AttachmentSubject, Media, NewAsset, Placement, Rules, ScanFacts, ScanFuture, ScanState,
-    Scanner, Subject, SubjectAction, SubjectOwner, Upload, Verdict, SUBJECTS,
+    AttachmentSubject, Media, NewAsset, Placement, QuarantineQuery, Rules, ScanFacts, ScanFuture,
+    ScanState, Scanner, Subject, SubjectAction, SubjectOwner, Upload, Verdict, SUBJECTS,
 };
 use bilibi_module_registry::{Contribution, Provenance, Services};
 use bilibi_queue::execution::{Config, Executor};
@@ -180,11 +181,47 @@ async fn asset_of(client: &Client, public_id: &str) -> DbResult<i64> {
 async fn scan_state(client: &Client, id: i64) -> DbResult<String> {
     Ok(client
         .query_one(
-            "SELECT scan_state || CASE WHEN bytes_purged_at IS NULL THEN '' ELSE ' (purged)' END FROM base_media_assets WHERE id=$1",
+            "SELECT scan_state || CASE WHEN bytes_purged_at IS NOT NULL THEN ' (purged)' WHEN purge_requested_at IS NOT NULL THEN ' (purging)' ELSE '' END FROM base_media_assets WHERE id=$1",
             &[&id],
         )
         .await?
         .get(0))
+}
+/// Wait for the purge job to remove the file's bytes, up to `seconds`.
+async fn removed(client: &Client, id: i64, seconds: u64) -> DbResult<String> {
+    for _ in 0..seconds * 5 {
+        let state = scan_state(client, id).await?;
+        if state.ends_with("(purged)") {
+            return Ok(state);
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    scan_state(client, id).await
+}
+/// One purge in its own transaction, as a manager's confirmation commits it.
+async fn purge(
+    media: &Media,
+    boundary: &MutationBoundary,
+    client: &mut Client,
+    scope: &Scope,
+    id: i64,
+) -> bilibi_media::Result<Value> {
+    let mut tx = boundary
+        .begin(
+            client,
+            scope.mutation_context("base.media.quarantine.purge"),
+        )
+        .await?;
+    match media.purge(&mut tx, scope, id).await {
+        Ok(facts) => {
+            tx.commit().await?;
+            Ok(facts)
+        }
+        Err(error) => {
+            tx.rollback().await?;
+            Err(error)
+        }
+    }
 }
 /// Wait for the executor to decide a pending file, up to `seconds`.
 async fn settled(client: &Client, id: i64, seconds: u64) -> DbResult<String> {
@@ -574,33 +611,53 @@ async fn prepare(db: bilibi_database::Db) -> DbResult<()> {
 
     println!("== quarantine list per tenant");
     let attention = [ScanState::Infected, ScanState::Failed];
+    let newest = QuarantineQuery {
+        states: &attention,
+        search: "",
+        offset: 0,
+        limit: 100,
+    };
     show(
         "tenant 1 quarantine manager",
         media
-            .quarantine(&**client, &admin, &attention, 100)
+            .quarantine(&**client, &admin, newest)
             .await
-            .map(|files| {
-                files
+            .map(|page| {
+                page.files
                     .iter()
                     .map(|file| (file.id, file.state.as_str(), file.signature.clone()))
                     .collect::<Vec<_>>()
             }),
     );
     show(
+        "tenant 1 searching \"INVOICE\"",
+        media
+            .quarantine(
+                &**client,
+                &admin,
+                QuarantineQuery {
+                    search: "INVOICE",
+                    ..newest
+                },
+            )
+            .await
+            .map(|page| (page.total, page.files.len())),
+    );
+    show(
         "tenant 1 uploader without the capability",
         media
-            .quarantine(&**client, &manager, &attention, 100)
+            .quarantine(&**client, &manager, newest)
             .await
-            .map(|files| files.len()),
+            .map(|page| page.total),
     );
     // Demonstration only: tenant 2's manager is given the view capability.
     client.execute("INSERT INTO principal_capabilities(tenant_id,user_id,capability,is_allowed) VALUES(2,5,'admin.media.quarantine.view',true) ON CONFLICT DO NOTHING", &[]).await?;
     show(
         "tenant 2 with the view capability",
         media
-            .quarantine(&**client, &other, &attention, 100)
+            .quarantine(&**client, &other, newest)
             .await
-            .map(|files| files.len()),
+            .map(|page| page.total),
     );
     show(
         "tenant 2 reading tenant 1's file",
@@ -805,27 +862,55 @@ async fn prepare(db: bilibi_database::Db) -> DbResult<()> {
             .map(|file| file.bytes.len()),
     );
 
-    println!("== purge the quarantined file");
-    println!(
-        "invoice.txt bytes on disk: {}",
-        on_disk(&client, &setup.root, infected_id).await?
+    println!("== a purge that cannot be recorded");
+    // Demonstration only: a trigger refusing the purge's audit row stands in
+    // for an audit, queue or commit failure.
+    client.batch_execute("CREATE OR REPLACE FUNCTION walkthrough_refuse_purge() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.auditable_type='base/media/asset' AND NEW.new_values->>'purge_requested'='true' AND NEW.old_values->>'purge_requested'='false' THEN RAISE EXCEPTION 'walkthrough: the purge cannot be audited'; END IF; RETURN NEW; END $$; DROP TRIGGER IF EXISTS walkthrough_refuse_purge ON base_audit_mutations; CREATE TRIGGER walkthrough_refuse_purge BEFORE INSERT ON base_audit_mutations FOR EACH ROW EXECUTE FUNCTION walkthrough_refuse_purge()").await?;
+    show(
+        "purge invoice.txt",
+        purge(&media, &boundary, &mut client, &admin, infected_id)
+            .await
+            .map(|facts| facts["purge_requested"].clone()),
     );
-    for label in ["purge", "purge again"] {
-        let mut tx = boundary
-            .begin(
-                &mut client,
-                admin.mutation_context("base.media.quarantine.purge"),
-            )
-            .await?;
-        let result = media.purge(&mut tx, &admin, infected_id).await;
-        tx.commit().await?;
-        show(label, result.map(|facts| facts["purged"].clone()));
-    }
+    client.batch_execute("DROP TRIGGER walkthrough_refuse_purge ON base_audit_mutations; DROP FUNCTION walkthrough_refuse_purge()").await?;
     println!(
         "invoice.txt bytes on disk: {}; row: {}",
         on_disk(&client, &setup.root, infected_id).await?,
         scan_state(&client, infected_id).await?
     );
+
+    println!("== purge the quarantined file");
+    show(
+        "purge",
+        purge(&media, &boundary, &mut client, &admin, infected_id)
+            .await
+            .map(|facts| (facts["purge_requested"].clone(), facts["purged"].clone())),
+    );
+    println!(
+        "invoice.txt once the purge job ran: {}; bytes on disk: {}",
+        removed(&client, infected_id, 15).await?,
+        on_disk(&client, &setup.root, infected_id).await?
+    );
+    for row in client.query("SELECT state,attempt FROM base_queue_jobs WHERE worker_id='base/media-purge' AND args->>'asset_id'=$1 ORDER BY id", &[&infected_id.to_string()]).await? {
+        println!("purge job: {} after attempt {}", row.get::<_, String>(0), row.get::<_, i32>(1));
+    }
+    show(
+        "purge again",
+        purge(&media, &boundary, &mut client, &admin, infected_id)
+            .await
+            .map(|facts| facts["purged"].clone()),
+    );
+    let mut tx = boundary
+        .begin(
+            &mut client,
+            admin.mutation_context("base.media.quarantine.rescan"),
+        )
+        .await?;
+    show(
+        "rescan the purged file",
+        media.rescan(&mut tx, &admin, infected_id).await,
+    );
+    tx.rollback().await?;
     let mut tx = boundary
         .begin(
             &mut client,
@@ -871,8 +956,8 @@ async fn prepare(db: bilibi_database::Db) -> DbResult<()> {
         .await?;
 
     println!("== audit evidence");
-    for row in client.query("SELECT auditable_id,actor_type,coalesce(system_principal,actor_id::text),new_values->>'scan_state',coalesce(new_values->>'signature',''),coalesce(new_values->>'reason','') FROM base_audit_mutations WHERE auditable_type='base/media/asset' AND new_values ? 'scanner' ORDER BY id", &[]).await? {
-        println!("asset {} by {} {}: {} {} {}", row.get::<_, String>(0), row.get::<_, String>(1), row.get::<_, String>(2), row.get::<_, Option<String>>(3).unwrap_or_default(), row.get::<_, String>(4), row.get::<_, String>(5));
+    for row in client.query("SELECT auditable_id,actor_type,coalesce(system_principal,actor_id::text),new_values->>'scan_state',coalesce(new_values->>'signature',''),coalesce(new_values->>'reason',''),CASE WHEN new_values->>'purged'='true' THEN 'bytes removed' WHEN new_values->>'purge_requested'='true' THEN 'purge requested' ELSE '' END FROM base_audit_mutations WHERE auditable_type='base/media/asset' AND new_values ? 'scanner' ORDER BY id", &[]).await? {
+        println!("asset {} by {} {}: {} {} {} {}", row.get::<_, String>(0), row.get::<_, String>(1), row.get::<_, String>(2), row.get::<_, Option<String>>(3).unwrap_or_default(), row.get::<_, String>(4), row.get::<_, String>(5), row.get::<_, String>(6));
     }
     let leaks: i64 = client.query_one("SELECT count(*) FROM base_audit_mutations WHERE auditable_type='base/media/asset' AND new_values ? 'scanner' AND (new_values::text LIKE '%.txt%' OR new_values::text LIKE '%tenants/%')", &[]).await?.get(0);
     println!("verdict rows naming a filename or storage key: {leaks}");

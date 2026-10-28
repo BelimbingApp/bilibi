@@ -24,7 +24,10 @@ mod web;
 
 pub use attachments::{Attachment, AttachmentState, AttachmentSubject, Cleanup};
 pub use owner::{Subject, SubjectAction, SubjectOwner, Subjects, SUBJECTS};
-pub use quarantine::{QuarantinedFile, MANAGE as QUARANTINE_MANAGE, VIEW as QUARANTINE_VIEW};
+pub use quarantine::{
+    QuarantinePage, QuarantineQuery, QuarantinedFile, MANAGE as QUARANTINE_MANAGE,
+    VIEW as QUARANTINE_VIEW,
+};
 pub use response::{Delivery, StreamFile};
 pub use scan::{ScanFacts, ScanFuture, ScanState, Scanner, Verdict, PRINCIPAL, SCAN};
 pub use signing::Signer;
@@ -177,12 +180,16 @@ struct Stored {
     scanner_version: Option<String>,
     signature: Option<String>,
     reason: Option<String>,
+    /// A manager purged it: never read or rescanned again, its bytes queued
+    /// for removal.
+    purge_requested: bool,
+    /// The purge job removed its bytes.
     purged: bool,
     created_by: Option<i64>,
     /// Raised by each rescan; a scan job records its verdict only for its own.
     generation: i64,
 }
-const COLUMNS: &str = "id,tenant_id,parent_id,disk,storage_key,original_filename,mime_type,file_size,kind,private,metadata,scan_state,scan_generation,scanner,scanner_version,scan_signature,scan_reason,bytes_purged_at IS NOT NULL AS purged,created_by_id,floor(extract(epoch FROM created_at))::bigint AS created_at,floor(extract(epoch FROM updated_at))::bigint AS updated_at";
+const COLUMNS: &str = "id,tenant_id,parent_id,disk,storage_key,original_filename,mime_type,file_size,kind,private,metadata,scan_state,scan_generation,scanner,scanner_version,scan_signature,scan_reason,purge_requested_at IS NOT NULL AS purge_requested,bytes_purged_at IS NOT NULL AS purged,created_by_id,floor(extract(epoch FROM created_at))::bigint AS created_at,floor(extract(epoch FROM updated_at))::bigint AS updated_at";
 fn stored(row: &tokio_postgres::Row) -> Stored {
     Stored {
         asset: Asset {
@@ -205,6 +212,7 @@ fn stored(row: &tokio_postgres::Row) -> Stored {
         scanner_version: row.get("scanner_version"),
         signature: row.get("scan_signature"),
         reason: row.get("scan_reason"),
+        purge_requested: row.get("purge_requested"),
         purged: row.get("purged"),
         created_by: row.get("created_by_id"),
         generation: row.get("scan_generation"),
@@ -772,6 +780,8 @@ macro_rules! provenance {
 }
 inventory::submit! { bilibi_module_registry::Contribution::new(WORKERS, scan::WORKER, provenance!(), &Worker { max_attempts: scan::MAX_ATTEMPTS, validate: scan::arguments }) }
 inventory::submit! { bilibi_module_registry::Contribution::new(HANDLERS, scan::WORKER, provenance!(), &HandlerBinding { service: scan::HANDLER, capability: scan::SCAN }) }
+inventory::submit! { bilibi_module_registry::Contribution::new(WORKERS, quarantine::WORKER, provenance!(), &Worker { max_attempts: quarantine::MAX_ATTEMPTS, validate: quarantine::arguments }) }
+inventory::submit! { bilibi_module_registry::Contribution::new(HANDLERS, quarantine::WORKER, provenance!(), &HandlerBinding { service: quarantine::HANDLER, capability: quarantine::REMOVE }) }
 
 pub const SERVICE: &str = "base/media.store";
 inventory::submit! {
@@ -801,6 +811,9 @@ inventory::submit! {
             }},
             Service { id: scan::HANDLER, factory: |services| {
                 Ok(Arc::new(HandlerService(Arc::new(scan::ScanJob { media: services.get(SERVICE)? }))))
+            }},
+            Service { id: quarantine::HANDLER, factory: |services| {
+                Ok(Arc::new(HandlerService(Arc::new(quarantine::PurgeJob { media: services.get(SERVICE)? }))))
             }},
             Service { id: "base/media.agent", factory: |services| {
                 if !agent::bind(services.get(SERVICE)?) {

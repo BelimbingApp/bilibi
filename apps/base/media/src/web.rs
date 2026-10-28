@@ -8,7 +8,7 @@
 //! holds the row's file id, and `purge` acts on that held request, never on a
 //! client value. Media rechecks `admin.media.quarantine.manage` in its own
 //! transaction; a refusal is a flash.
-use crate::{agent, Media, ScanState, QUARANTINE_MANAGE};
+use crate::{agent, Media, QuarantinePage, QuarantineQuery, ScanState, QUARANTINE_MANAGE};
 use askama::Template;
 use bilibi_agent_api::{
     page::{Call, PageContracts},
@@ -22,7 +22,7 @@ use bilibi_module_registry::{
     contributions::{Access, Method, PageWrites, Pending, Route, PAGE_WRITES, ROUTES},
     Contribution, Provenance,
 };
-use bilibi_tenancy::Scope;
+use bilibi_tenancy::{ReadClient, Scope};
 use bilibi_ui::{
     choices,
     list_state::{Filter, FILTERS_FORM},
@@ -32,8 +32,8 @@ use bilibi_ui::{
     },
     params, Alert, Badge, BadgeKind, BuiltinColumn, Card, ColumnType, ColumnsOutcome,
     ConfirmDialog, FilterToolbar, FlashMap, FlexRow, FlexTable, Header, Html, IconButton,
-    IconContext, IconKind, Instant, ListColumns, ListSpec, ListState, Pagination, RowMode,
-    StatusKind, TableEmpty, ToolbarControl, NO_FLASH,
+    IconContext, IconKind, Instant, ListColumns, ListSpec, ListState, PageCounts, Pagination,
+    RowMode, StatusKind, TableEmpty, ToolbarControl, NO_FLASH,
 };
 use jiff::Timestamp;
 use serde_json::{json, Value};
@@ -192,6 +192,34 @@ impl Index {
             .ok()?;
         self.rows.iter().find(|row| row.id == id)
     }
+    /// The page of files the list asks for. Search and paging run in SQL,
+    /// so every matching file is within reach however many there are.
+    async fn window(
+        &self,
+        client: &dyn ReadClient,
+        scope: &Scope,
+        states: &[ScanState],
+        search: &str,
+    ) -> Result<QuarantinePage> {
+        let query = QuarantineQuery {
+            states,
+            search,
+            offset: i64::try_from(self.state.offset()).map_err(|_| Error::Invalid)?,
+            limit: i64::try_from(self.state.page_size).map_err(|_| Error::Invalid)?,
+        };
+        self.pages
+            .media
+            .quarantine(client, scope, query)
+            .await
+            .map_err(|error| match error {
+                crate::Error::Database(error) => error,
+                _ => Error::Internal,
+            })
+    }
+    fn counts(&self, found: &QuarantinePage) -> PageCounts {
+        let total = u64::try_from(found.total).unwrap_or(0);
+        PageCounts::new(self.state.page, self.state.page_size, total)
+    }
 
     /// Run one quarantine contract as the page's person and say how it went.
     async fn act(
@@ -220,7 +248,7 @@ impl Index {
             ),
             Ok(_) => self.flash(
                 StatusKind::Success,
-                format!("{name}'s contents were purged. Its record stays as evidence."),
+                format!("{name}'s contents are being removed for good. Its record stays as evidence."),
             ),
             Err(ContractError::Backend(error @ (Error::StepUpRequired { .. } | Error::Unauthorized))) => {
                 return Err(error)
@@ -306,21 +334,14 @@ impl Index {
         let scanning = pages.media.scanning();
         let filter = self.state.filters["state"].clone();
         let states = agent::states(&filter).ok_or(Error::Invalid)?;
-        let mut all = pages
-            .media
-            .quarantine(&**client, scope, &states, crate::quarantine::MAX_LISTED)
-            .await
-            .map_err(|error| match error {
-                crate::Error::Database(error) => error,
-                _ => Error::Internal,
-            })?;
-        let search = self.state.search.to_lowercase();
-        if !search.is_empty() {
-            all.retain(|row| display_name(row).to_lowercase().contains(&search));
+        let search = self.state.search.trim().to_owned();
+        let mut found = self.window(&**client, scope, &states, &search).await?;
+        let mut counts = self.counts(&found);
+        if self.state.clamp_to_last_page(counts.total_pages, true) {
+            found = self.window(&**client, scope, &states, &search).await?;
+            counts = self.counts(&found);
         }
-        let page = self.state.paginate(&all);
-        let (entries, counts) = (page.entries.to_vec(), page.counts);
-        self.rows = entries;
+        self.rows = found.files;
         if self.rows_changed {
             self.columns.load(&self.rows, |row| row.id.to_string());
         }
@@ -376,14 +397,16 @@ impl Index {
         let mut rows = Vec::with_capacity(self.rows.len());
         for file in &self.rows {
             let key = file.id.to_string();
+            let requested = file.purge_requested_at.is_some();
             let purged = file.purged_at.is_some();
-            let status = render(match (file.state, purged) {
-                (_, true) => Badge::status(BadgeKind::Neutral, "Purged"),
-                (ScanState::Infected, _) => Badge::status(BadgeKind::Danger, "Quarantined"),
-                (ScanState::Failed, _) => Badge::status(BadgeKind::Warning, "Scan failed"),
-                (ScanState::Pending, _) => Badge::status(BadgeKind::Plain, "Being checked"),
-                (ScanState::Unscanned, _) => Badge::status(BadgeKind::Neutral, "Not scanned"),
-                (ScanState::Clean, _) => Badge::status(BadgeKind::Success, "Clean"),
+            let status = render(match (file.state, requested, purged) {
+                (_, _, true) => Badge::status(BadgeKind::Neutral, "Purged"),
+                (_, true, _) => Badge::status(BadgeKind::Plain, "Purging"),
+                (ScanState::Infected, ..) => Badge::status(BadgeKind::Danger, "Quarantined"),
+                (ScanState::Failed, ..) => Badge::status(BadgeKind::Warning, "Scan failed"),
+                (ScanState::Pending, ..) => Badge::status(BadgeKind::Plain, "Being checked"),
+                (ScanState::Unscanned, ..) => Badge::status(BadgeKind::Neutral, "Not scanned"),
+                (ScanState::Clean, ..) => Badge::status(BadgeKind::Success, "Clean"),
             })?;
             let detail = (!compact).then(|| {
                 [file.mime_type.clone(), size(file.file_size)]
@@ -428,7 +451,7 @@ impl Index {
                 None => Html::text("—"),
             };
             let mut actions = Html::EMPTY;
-            if can_manage && scanning && !purged && file.state != ScanState::Clean {
+            if can_manage && scanning && !requested && file.state != ScanState::Clean {
                 let id = format!("media-quarantine-rescan-{key}");
                 actions.push(&render(IconButton {
                     id: &id,

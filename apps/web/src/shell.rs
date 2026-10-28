@@ -120,9 +120,6 @@ async fn context<'a>(
         Err(Error::Forbidden) => false,
         Err(error) => return Err(error),
     };
-    if platform_operator {
-        adopt_installation_locale(app, scope).await;
-    }
     // The company the account signs in under, through its affiliation
     // (Bilimbi `company_name_for`): display only, so a company the directory
     // cannot name never blocks an otherwise proven session.
@@ -144,6 +141,15 @@ async fn context<'a>(
             bilibi_core::company::platform_operator_company(&**client).await,
             Ok(None)
         );
+    let pins = bilibi_user::list_pins(&**client, scope).await?;
+    // Everything below takes connections of its own. Holding this one across
+    // them would let as many simultaneous renders as the pool holds take every
+    // connection and wait on each other for good (every live reply renders
+    // the shell), so it goes back to the pool first.
+    drop(client);
+    if platform_operator {
+        adopt_installation_locale(app, scope).await;
+    }
     // A module contributes the bell through the `shell.notifications` embed,
     // the search dialog's records through `shell.search.records` and the
     // status bar's AI tag through `shell.ai`; an account an embed refuses has
@@ -194,8 +200,7 @@ async fn context<'a>(
         may_open(route.access) && (route.path != OPERATOR_SETUP || operator_company_missing)
     });
     let served = served_routes(app);
-    let pins: Vec<_> = bilibi_user::list_pins(&**client, scope)
-        .await?
+    let pins: Vec<_> = pins
         .into_iter()
         .filter(|pin| is_served(&served, &pin.url))
         .collect();
@@ -701,14 +706,17 @@ async fn adopt_installation_locale(app: &App, scope: &Scope) {
         let locales = app
             .services
             .get::<bilibi_base::locale::Locales>("base/locale.locales")?;
-        let mut client = app.db.get().await?;
-        if locales
-            .resolve_global(&**client, scope, None)
-            .await?
-            .persisted
-        {
+        let persisted = {
+            let client = app.db.get().await?;
+            locales
+                .resolve_global(&**client, scope, None)
+                .await?
+                .persisted
+        };
+        if persisted {
             return Ok::<bool, Error>(true);
         }
+        // Address takes a connection of its own: hold none across it.
         let Some(facts) = app
             .services
             .get::<bilibi_core::address::AddressService>(bilibi_core::address::SERVICE)?
@@ -717,6 +725,7 @@ async fn adopt_installation_locale(app: &App, scope: &Scope) {
         else {
             return Ok(false);
         };
+        let mut client = app.db.get().await?;
         let mut tx = app
             .services
             .get::<bilibi_database::MutationBoundary>("base/database.mutations")?

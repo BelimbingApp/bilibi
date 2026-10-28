@@ -128,7 +128,7 @@ fn signature(text: &str) -> String {
 }
 /// What the scan facts say, for audit and agents: never filename, key or bytes.
 pub(crate) fn verdict(row: &Stored) -> Value {
-    json!({"scan_state":row.asset.scan_state.as_str(),"scanner":row.scanner,"scanner_version":row.scanner_version,"signature":row.signature,"reason":row.reason,"purged":row.purged})
+    json!({"scan_state":row.asset.scan_state.as_str(),"scanner":row.scanner,"scanner_version":row.scanner_version,"signature":row.signature,"reason":row.reason,"purge_requested":row.purge_requested,"purged":row.purged})
 }
 
 pub(crate) fn arguments(args: Value) -> bilibi_database::Result<Value> {
@@ -222,7 +222,7 @@ impl Media {
         client: &(impl GenericClient + Sync),
         row: &Stored,
     ) -> Result<()> {
-        if row.purged {
+        if row.purge_requested {
             return Err(Error::Quarantined);
         }
         match row.asset.scan_state {
@@ -238,8 +238,7 @@ impl Media {
     }
 
     /// Queue the scan in the transaction that stores or rescans the file, so
-    /// the row never commits without its job. The job runs as `media-scanner`;
-    /// a refusal here poisons the caller's transaction.
+    /// the row never commits without its job. The job runs as `media-scanner`.
     pub(crate) async fn enqueue_scan(
         &self,
         tx: &mut MutationTransaction<'_>,
@@ -247,11 +246,24 @@ impl Media {
         id: i64,
         generation: i64,
     ) -> Result<()> {
+        let args = json!({"asset_id": id, "generation": generation});
+        self.enqueue_as(tx, tenant, PRINCIPAL, WORKER, args).await
+    }
+    /// Queue `worker` as `principal` in the transaction that writes the
+    /// file's row, so the row never commits without its job. A refusal here
+    /// poisons the caller's transaction.
+    pub(crate) async fn enqueue_as(
+        &self,
+        tx: &mut MutationTransaction<'_>,
+        tenant: i64,
+        principal: &str,
+        worker: &str,
+        args: Value,
+    ) -> Result<()> {
         let enqueued = async {
-            let system = SystemScope::rehydrate(tx.sql(), tenant, Some(PRINCIPAL)).await?;
-            let args = json!({"asset_id": id, "generation": generation});
+            let system = SystemScope::rehydrate(tx.sql(), tenant, Some(principal)).await?;
             self.queue
-                .enqueue_system_within(tx, &system, WORKER, args)
+                .enqueue_system_within(tx, &system, worker, args)
                 .await
         }
         .await;

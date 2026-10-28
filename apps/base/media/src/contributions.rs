@@ -1,7 +1,7 @@
 //! Operator settings Media owns (Administration → Settings → Operator, P3),
-//! its capabilities and the `media-scanner` principal.
+//! its capabilities and the `media-scanner` and `media-purger` principals.
 use crate::{
-    quarantine::{MANAGE as QUARANTINE_MANAGE, VIEW as QUARANTINE_VIEW},
+    quarantine::{MANAGE as QUARANTINE_MANAGE, PURGER, REMOVE, VIEW as QUARANTINE_VIEW},
     scan::{POLICY, PRINCIPAL, SCAN, TIMEOUT},
 };
 use bilibi_authz::{
@@ -30,15 +30,21 @@ inventory::submit! { Contribution::new(VOCABULARY, "base/media", provenance!(), 
         CapabilityDefinition::tenant(QUARANTINE_VIEW),
         CapabilityDefinition::tenant(QUARANTINE_MANAGE),
         CapabilityDefinition::tenant(SCAN),
+        CapabilityDefinition::tenant(REMOVE),
     ],
     domains: &["media"],
-    verbs: &["scan"],
+    verbs: &["scan", "purge"],
     roles: &[],
-    system_principals: &[SystemPrincipalDefinition { name: PRINCIPAL, capabilities: &[SCAN] }],
+    system_principals: &[
+        SystemPrincipalDefinition { name: PRINCIPAL, capabilities: &[SCAN] },
+        SystemPrincipalDefinition { name: PURGER, capabilities: &[REMOVE] },
+    ],
 }) }
-// Scanning is Platform work no tenant should have to switch on; a tenant
-// administrator may still deny it, and that tenant's files then stay pending.
+// Scanning and removing purged bytes are Platform work no tenant should have
+// to switch on; a tenant administrator may still deny either, and that
+// tenant's files then stay pending, or its purged bytes stay on disk.
 inventory::submit! { Contribution::new(STANDING_GRANTS, PRINCIPAL, provenance!(), &StandingGrant { principal: PRINCIPAL, capabilities: &[SCAN] }) }
+inventory::submit! { Contribution::new(STANDING_GRANTS, PURGER, provenance!(), &StandingGrant { principal: PURGER, capabilities: &[REMOVE] }) }
 const GLOBAL: &[ScopeKind] = &[ScopeKind::Global];
 const ALLOWED: [&str; 11] = [
     "application/pdf",

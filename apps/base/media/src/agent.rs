@@ -4,7 +4,7 @@
 //! plans (ADR 01). No Bilimbi counterpart.
 use crate::{
     quarantine::{MANAGE, MAX_LISTED, VIEW},
-    Error, Media, ScanState,
+    Error, Media, QuarantineQuery, ScanState,
 };
 use bilibi_agent_api::{
     json::{Data, Output},
@@ -78,7 +78,7 @@ impl ReadHandler for List {
     }
     fn call<'a>(
         &'a self,
-        _client: &'a dyn OperationClient,
+        client: &'a dyn OperationClient,
         scope: &'a Scope,
         input: &'a Value,
     ) -> OperationFuture<'a> {
@@ -90,19 +90,20 @@ impl ReadHandler for List {
                 )
             })?;
             let media = media()?;
-            let client = media.db.get().await.map_err(bilibi_database::Error::from)?;
-            let files = media
-                .quarantine(
-                    &**client,
-                    scope,
-                    &states,
-                    input["limit"].as_i64().unwrap_or(100),
-                )
+            let query = QuarantineQuery {
+                states: &states,
+                search: input["search"].as_str().unwrap_or_default(),
+                offset: input["offset"].as_i64().unwrap_or(0),
+                limit: input["limit"].as_i64().unwrap_or(100),
+            };
+            let page = media
+                .quarantine(client, scope, query)
                 .await
                 .map_err(refusal)?;
             Ok(Output::Data(Data::Json(json!({
                 "scanner_installed": media.scanning(),
-                "files": files.iter().map(|file| file.to_json()).collect::<Vec<_>>(),
+                "total": page.total,
+                "files": page.files.iter().map(|file| file.to_json()).collect::<Vec<_>>(),
             }))))
         })
     }
@@ -120,22 +121,24 @@ impl WriteHandler for Write {
     }
     fn preview<'a>(
         &'a self,
-        _client: &'a dyn OperationClient,
+        client: &'a dyn OperationClient,
         scope: &'a Scope,
         input: &'a Value,
     ) -> OperationFuture<'a> {
         Box::pin(async move {
             let id = file_id(input)?;
             let media = media()?;
-            let client = media.db.get().await.map_err(bilibi_database::Error::from)?;
+            // The plan holds one pooled transaction while it previews: read
+            // on the client it hands us and take no other connection, so
+            // concurrent plans cannot fill the pool and wait on each other.
             let file = media
-                .quarantined_file(&**client, scope, id)
+                .quarantined_file(client, scope, id)
                 .await
                 .map_err(refusal)?;
             let name = file.original_filename.as_deref().unwrap_or("this file");
-            let purged = file.purged_at.is_some();
+            let requested = file.purge_requested_at.is_some();
             let summary = match self.0 {
-                Act::Rescan if purged => return Err(refusal(Error::Purged)),
+                Act::Rescan if requested => return Err(refusal(Error::Purged)),
                 Act::Rescan if file.state == ScanState::Clean => {
                     return Err(refusal(Error::AlreadyClean))
                 }
@@ -144,8 +147,11 @@ impl WriteHandler for Write {
                     "Scan {name} again (now {}); nobody can open it until the scanner calls it clean",
                     file.state.as_str()
                 ),
-                Act::Purge if purged => {
+                Act::Purge if file.purged_at.is_some() => {
                     format!("{name}'s contents were already purged; nothing changes")
+                }
+                Act::Purge if requested => {
+                    format!("{name} was purged but its contents are not removed yet; queue their removal again")
                 }
                 Act::Purge if matches!(file.state, ScanState::Infected | ScanState::Failed) => {
                     format!("Remove {name}'s contents for good; its record and verdict stay as evidence")
@@ -180,6 +186,8 @@ impl WriteHandler for Write {
 fn list_schema() -> Value {
     json!({"type":"object","properties":{
         "state":{"type":"string","enum":["attention","infected","failed","pending","unscanned","all"],"description":"attention (default): infected and failed files; or one state; or all files that are not clean"},
+        "search":{"type":"string","maxLength":255,"description":"Part of the file name, any case"},
+        "offset":{"type":"integer","minimum":0,"description":"Matching files to skip, newest first, for the next page; default 0"},
         "limit":{"type":"integer","minimum":1,"maximum":MAX_LISTED,"description":"Newest first; default 100"}
     }})
 }
@@ -189,10 +197,10 @@ fn file_schema() -> Value {
     }})
 }
 fn list_output() -> Value {
-    json!({"type":"object","description":"scanner_installed, and each file: id, filename, type, size, scan_state, scanner and version, signature (infected), reason (failed or unscanned: too_large, scanner_unavailable, file_unavailable, scan_error), scanned_at, purged_at, created_at, uploaded_by_id and, for a private attachment, its subject."})
+    json!({"type":"object","description":"scanner_installed, total (every matching file, not only this page), and each file: id, filename, type, size, scan_state, scanner and version, signature (infected), reason (failed or unscanned: too_large, scanner_unavailable, file_unavailable, scan_error), scanned_at, purge_requested_at (when a manager purged it), purged_at (when its contents were removed), created_at, uploaded_by_id and, for a private attachment, its subject."})
 }
 fn write_output() -> Value {
-    json!({"type":"object","description":"The file's scan facts after the write: scan_state, scanner, scanner_version, signature, reason and purged."})
+    json!({"type":"object","description":"The file's scan facts after the write: scan_state, scanner, scanner_version, signature, reason, purge_requested (purged: nobody can open or rescan it, and its contents are removed right after the commit) and purged (its contents are gone)."})
 }
 
 static LIST: List = List;
@@ -202,8 +210,8 @@ inventory::submit! { Contribution::new(DEFINITIONS, "base/media", Provenance { m
     operations: &[
         Operation { key:"base.media.quarantine.list", title:"List quarantined files", summary:"This tenant's stored files that are not clean: quarantined (infected), failed to scan, still being scanned or never scanned, newest first.", keywords:&["malware","virus","scan","quarantine","upload","file","infected"], capability:VIEW, input:list_schema, output:list_output, handler:Handler::Read(&LIST), channels:Channels::Every, step_up:&[] },
         Operation { key:"base.media.quarantine.rescan", title:"Scan a file again", summary:"Queue a new malware scan for a file that failed, was quarantined, was stored unscanned or is stuck pending. It stays unreadable until the scanner calls it clean.", keywords:&["malware","scan","rescan","quarantine","failed"], capability:MANAGE, input:file_schema, output:write_output, handler:Handler::SafeWrite(&RESCAN), channels:Channels::Every, step_up:&[] },
-        Operation { key:"base.media.quarantine.purge", title:"Purge a quarantined file", summary:"Remove the contents of a quarantined or failed file for good. Its record, verdict and audit trail stay as evidence; a repeat does nothing.", keywords:&["malware","quarantine","purge","delete","infected"], capability:MANAGE, input:file_schema, output:write_output, handler:Handler::SafeWrite(&PURGE), channels:Channels::Every, step_up:&[] },
+        Operation { key:"base.media.quarantine.purge", title:"Purge a quarantined file", summary:"Remove the contents of a quarantined or failed file for good: from the commit nobody can open or rescan it, and its contents are removed right after. Its record, verdict and audit trail stay as evidence; a repeat does nothing once the contents are gone.", keywords:&["malware","quarantine","purge","delete","infected"], capability:MANAGE, input:file_schema, output:write_output, handler:Handler::SafeWrite(&PURGE), channels:Channels::Every, step_up:&[] },
     ],
     guides: &[Guide { key:"base.media.quarantine", title:"Quarantined files", summary:"Find files a malware scan held back, rescan or purge them.", keywords:&["malware","virus","scan","quarantine","upload"], capability:VIEW,
-        body:"When a malware scanner is installed, every uploaded file is scanned before anyone can open it. List the files that need attention with base.media.quarantine.list (state attention: infected and failed). An infected file failed the scan: purge its contents with base.media.quarantine.purge, or rescan it with base.media.quarantine.rescan if the scanner has since been corrected. A failed file could not be scanned (the scanner was down, or the file was larger than it accepts): rescan it once the scanner is back. Before turning on the required policy, list state unscanned and rescan those files, or nobody can open them. Plan, show the review to the person, then commit." }],
+        body:"When a malware scanner is installed, every uploaded file is scanned before anyone can open it. List the files that need attention with base.media.quarantine.list (state attention: infected and failed; search by file name, and page with offset while total is larger). An infected file failed the scan: purge its contents with base.media.quarantine.purge, or rescan it with base.media.quarantine.rescan if the scanner has since been corrected. A failed file could not be scanned (the scanner was down, or the file was larger than it accepts): rescan it once the scanner is back. Before turning on the required policy, list state unscanned and rescan those files, or nobody can open them. Plan, show the review to the person, then commit." }],
 }) }

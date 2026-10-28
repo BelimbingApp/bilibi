@@ -102,11 +102,23 @@ Tenant capabilities `admin.media.quarantine.view` and `admin.media.quarantine.ma
 
 | Call | Agent operation | What it does |
 | --- | --- | --- |
-| `quarantine(client, scope, states, limit)` | `base.media.quarantine.list` | This tenant's files in the given states, newest first, at most 1,000 |
+| `quarantine(client, scope, QuarantineQuery)` | `base.media.quarantine.list` | This tenant's files in the given states whose name contains the search (any case), newest first: one window (offset, 1–1,000 rows) and the `total` that match |
+| `quarantined_file(client, scope, id)` | (the write previews) | One file, whatever its state |
 | `rescan(tx, scope, id)` | `base.media.quarantine.rescan` | A file that is not clean and not purged goes back to `pending` with a new job and scan generation; needs a bound scanner |
-| `purge(tx, scope, id)` | `base.media.quarantine.purge` | Removes an `infected` or `failed` file's bytes; the row, verdict, attachment binding and audit stay. A repeat is a no-op |
+| `purge(tx, scope, id)` | `base.media.quarantine.purge` | Purges an `infected` or `failed` file (below); the row, verdict, attachment binding and audit stay |
 
-The Quarantined Files page (`/system/media/quarantine`, Administration › System) lists them by status (Needs attention, Quarantined, Scan failed, Being checked, Not scanned), with Scan again and Purge contents for managers. Purge confirms first. A database trigger keeps a purged file's verdict fixed.
+- The reads take the caller's client (`&dyn ReadClient`). A write's preview passes the `OperationClient` its plan hands it, the plan's own transaction, so concurrent plans never wait on the pool for a second connection.
+- Search and paging run in SQL, so a file is reachable however many purged files the tenant keeps.
+
+Purge never deletes bytes inside the manager's transaction:
+
+1. `purge` commits `purge_requested_at` as an audited `Change` together with the `base/media-purge` job. From then nobody can open or rescan the file. Any failure before that commit (audit, queue, commit) leaves the row and the bytes as they were.
+2. The job runs as system principal `media-purger`, which holds `media.file.purge` in every tenant through a standing grant. Under its fenced lease and the row's lock it removes the bytes, then records `bytes_purged_at` as an audited `Change`. Bytes already gone count as removed, so a retry after a lost record finishes the removal.
+3. A failed removal retries with Queue's backoff for about an hour (12 attempts). The file then stays purging, unreadable, and a repeat purge queues the removal again. Once the bytes are gone a repeat is a no-op. A tenant that denies `media-purger` keeps purged bytes on disk.
+
+An impersonated session cannot rescan or purge: Queue refuses to enqueue for an impersonator.
+
+The Quarantined Files page (`/system/media/quarantine`, Administration › System) lists them by status (Needs attention, Quarantined, Scan failed, Being checked, Not scanned, and Purging or Purged once purged), with Scan again and Purge contents for managers. Purge confirms first. A database trigger keeps a purged file's verdict fixed and both purge times final.
 
 ## Signed streams
 
@@ -184,7 +196,7 @@ Per-owner adapters for Company and Person records follow K15.
 
 ### Scanning
 
-`scan-walkthrough` binds a fixture scanner that lives only in that executable: a file holding the EICAR test string is infected, everything else is clean, and it answers `Unavailable` while `<BILIBI_MEDIA_DEMO_ROOT>-scanner-down` exists. While `…-scanner-slow` exists a scan takes three seconds, a scan that starts while `…-scanner-stale` exists calls the file infected (`Stale-Signature`), and it accepts at most 1 MiB. Run it like `media-walkthrough` below. `prepare` (default) runs Queue's executor in process and prints pending then clean or infected files, refused downloads and submissions, notices, the quarantine list per tenant, a stopped scanner ending `failed`, rescan, a rescan overtaking an older scan still running, the size limit read from the stored bytes, a verdict that cannot be recorded settling `failed` (`scan_error`), purge, a tenant that denies the standing grant, and the verdicts in the audit trail. `no-scanner` shows both policies without a scanner. `-- serve` (with `APP_ORIGIN`, `BIND_ADDR`, the signing keys, and `BILIBI_SCAN_FIXTURE=none` for no scanner) runs the real host with the fixture scanner, the fixture ticket owner and the executor, for the Quarantined Files page and `/media/attachments/{id}`.
+`scan-walkthrough` binds a fixture scanner that lives only in that executable: a file holding the EICAR test string is infected, everything else is clean, and it answers `Unavailable` while `<BILIBI_MEDIA_DEMO_ROOT>-scanner-down` exists. While `…-scanner-slow` exists a scan takes three seconds, a scan that starts while `…-scanner-stale` exists calls the file infected (`Stale-Signature`), and it accepts at most 1 MiB. Run it like `media-walkthrough` below. `prepare` (default) runs Queue's executor in process and prints pending then clean or infected files, refused downloads and submissions, notices, the quarantine list per tenant, a stopped scanner ending `failed`, rescan, a rescan overtaking an older scan still running, the size limit read from the stored bytes, a verdict that cannot be recorded settling `failed` (`scan_error`), a purge whose audit row is refused leaving the bytes and the row as they were, purge with its removal job, a tenant that denies the standing grant, and the verdicts, purge requests and removals in the audit trail. `no-scanner` shows both policies without a scanner. `-- serve` (with `APP_ORIGIN`, `BIND_ADDR`, the signing keys, and `BILIBI_SCAN_FIXTURE=none` for no scanner) runs the real host with the fixture scanner, the fixture ticket owner and the executor, for the Quarantined Files page and `/media/attachments/{id}`.
 
 ### Attachments
 
