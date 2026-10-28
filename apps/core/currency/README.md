@@ -18,7 +18,7 @@ Never keep a free-text currency code, your own minor-units list or your own rate
 ## The list
 
 - **ISO 4217 ships.** `currencies` is global, with code, numeric code, name, decimal places (`minor_units`, 0 to 4) and a `withdrawn` flag. Production seed `currencies-iso4217-v1` inserts the list by code and never updates a row, so a rerun changes nothing. It leaves out the precious-metal and test codes (XAU, XTS, XXX…). A later seed version adds new codes and marks withdrawn ones.
-- **Tenants enable and disable; they never add a code or change decimal places.** A disabled or withdrawn currency stays readable (`get`) for records that hold it, but `check` refuses it for a new assignment. A withdrawn code cannot be enabled. The base currency cannot be disabled.
+- **Tenants enable and disable; they never add a code or change decimal places.** A disabled or withdrawn currency stays readable (`get`) for records that hold it, but `check` refuses it for a new assignment. A withdrawn code cannot be enabled. A currency that is the tenant's base, or any company's own base, cannot be disabled; the refusal names who uses it.
 
 ## Base currency
 

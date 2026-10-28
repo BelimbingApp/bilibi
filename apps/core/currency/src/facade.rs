@@ -720,18 +720,51 @@ impl Currencies {
                 "has been withdrawn from ISO 4217, so it cannot be enabled",
             )]));
         }
-        if !enable
-            && self
-                .base(client, scope, None)
-                .await?
-                .is_some_and(|base| base.code == currency.code)
-        {
-            return Ok(Err(vec![FieldError::new(
-                "code",
-                "is the base currency; choose another base currency first",
-            )]));
+        if !enable {
+            let users = self.base_users(client, scope, &currency.code).await?;
+            if !users.is_empty() {
+                return Ok(Err(vec![FieldError::new(
+                    "code",
+                    format!(
+                        "is the base currency of {}; choose another base currency first",
+                        users.join(", ")
+                    ),
+                )]));
+            }
         }
         Ok(Ok(currency))
+    }
+    /// Who has `code` as a base currency: the tenant, and each company that
+    /// chose it for itself.
+    async fn base_users(
+        &self,
+        client: &(impl GenericClient + Sync),
+        scope: &Scope,
+        code: &str,
+    ) -> Result<Vec<String>> {
+        let mut users = Vec::new();
+        if self
+            .base(client, scope, None)
+            .await?
+            .is_some_and(|base| base.code == code)
+        {
+            users.push("the tenant".to_owned());
+        }
+        for company in bilibi_company::list_tenant_company_ids(client, scope).await? {
+            if self
+                .own_base(client, scope, company)
+                .await?
+                .is_some_and(|base| base.code == code)
+            {
+                users.push(
+                    match bilibi_company::detail(client, scope, company.get()).await {
+                        Ok((company, _)) => company.display_name(),
+                        Err(_) => format!("company {}", company.get()),
+                    },
+                );
+            }
+        }
+        Ok(users)
     }
     /// The currency as it would stand after the change, without making it.
     pub async fn preview_enabled(

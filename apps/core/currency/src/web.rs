@@ -20,6 +20,8 @@ use bilibi_agent_api::{
 };
 use bilibi_authz::effective_capabilities;
 use bilibi_database::{Db, Error, Result};
+use bilibi_datetime::DisplayPolicy;
+use bilibi_locale::Locales;
 use bilibi_party_ids::{OrganisationId, PartyId};
 use bilibi_settings::{Settings, Target};
 use bilibi_tenancy::Scope;
@@ -87,6 +89,8 @@ pub(crate) struct Pages {
     pub settings: Arc<Settings>,
     pub addresses: Arc<AddressService>,
     pub contracts: Arc<PageContracts>,
+    pub display: Arc<DisplayPolicy>,
+    pub locales: Arc<Locales>,
 }
 
 fn render(fragment: impl Template) -> Result<Html> {
@@ -225,10 +229,18 @@ struct Badges {
     badges: Vec<Html>,
 }
 
-fn today() -> Date {
-    jiff::Timestamp::now()
-        .to_zoned(jiff::tz::TimeZone::UTC)
-        .date()
+impl Pages {
+    /// The calendar day in the reader's display zone (UTC until the browser
+    /// reports one), the default for a date a person types.
+    async fn today(
+        &self,
+        client: &(impl tokio_postgres::GenericClient + Sync),
+        scope: &Scope,
+    ) -> Result<Date> {
+        let locale = self.locales.resolve(client, scope, None).await?.locale;
+        let display = self.display.display(client, scope, None, locale).await?;
+        Ok(display.clock(None, jiff::Timestamp::now()).today)
+    }
 }
 
 // ------------------------------------------------------------ the currencies
@@ -881,10 +893,14 @@ impl Rates {
             },
             "clear-flash" => clear_flash(&mut self.flash, get("key")),
             "new" => {
+                let today = {
+                    let client = self.pages.db.get().await?;
+                    self.pages.today(&**client, scope).await?
+                };
                 let mut draft = Draft::default();
                 draft
                     .values
-                    .insert("effective_on".into(), today().to_string());
+                    .insert("effective_on".into(), today.to_string());
                 self.draft = Some(draft);
             }
             "close_new" => self.draft = None,
@@ -1129,6 +1145,7 @@ impl Rates {
             )
             .await?;
         let enabled = pages.currencies.enabled(&**client, scope).await?;
+        let today = pages.today(&**client, scope).await?;
         drop(client);
         self.rates = rates;
         self.shown = self.rates.len();
@@ -1233,7 +1250,7 @@ impl Rates {
             body,
             ..Card::default()
         })?;
-        let check = self.check_card(&enabled)?;
+        let check = self.check_card(&enabled, today)?;
         let dialog = match (&self.confirm, &self.draft) {
             (Some(rate), _) => render(ConfirmDialog {
                 id: "currency-rate-delete-confirm",
@@ -1266,7 +1283,7 @@ impl Rates {
 
     /// "Check a conversion": the same call every module makes, shown with the
     /// rate, its date and how it was found.
-    fn check_card(&self, enabled: &[Currency]) -> Result<Html> {
+    fn check_card(&self, enabled: &[Currency], today: Date) -> Result<Html> {
         let value = |key: &str| self.check.values.get(key).cloned().unwrap_or_default();
         let combo = |key: &str, label: &str| {
             Combobox::new(format!("convert_{key}"), format!("convert[{key}]"))
@@ -1296,7 +1313,7 @@ impl Rates {
                 .label("On")
                 .kind(InputKind::Date)
                 .value(if value("date").is_empty() {
-                    today().to_string()
+                    today.to_string()
                 } else {
                     value("date")
                 })

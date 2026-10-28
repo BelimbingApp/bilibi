@@ -12,6 +12,8 @@ bilibi-agent-api.workspace = true
 bilibi-authz.workspace = true
 bilibi-company = { path = "../company" }
 bilibi-database.workspace = true
+bilibi-datetime.workspace = true
+bilibi-locale.workspace = true
 bilibi-menu.workspace = true
 bilibi-module-registry.workspace = true
 bilibi-party-ids.workspace = true

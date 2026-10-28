@@ -69,7 +69,7 @@ macro_rules! provenance {
 inventory::submit! {
     Module {
         id: "core/currency", layer: Layer::Core,
-        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/settings", "base/ui", "base/agent_api", "base/menu", "base/party_ids", "core/address", "core/company"],
+        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/settings", "base/ui", "base/agent_api", "base/menu", "base/party_ids", "core/address", "core/company", "base/datetime", "base/locale"],
         migrations: &[MIGRATION],
         services: &[
             Service { id: SERVICE, factory: |services| {
@@ -85,6 +85,8 @@ inventory::submit! {
                 settings: services.get("base/settings.store")?,
                 addresses: services.get("core/address.addresses")?,
                 contracts: services.get(bilibi_agent_api::page::SERVICE)?,
+                display: services.get("base/datetime.display")?,
+                locales: services.get("base/locale.locales")?,
             })))) },
         ],
     }

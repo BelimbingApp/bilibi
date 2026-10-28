@@ -614,6 +614,8 @@ dependencies = [
  "bilibi-company",
  "bilibi-core",
  "bilibi-database",
+ "bilibi-datetime",
+ "bilibi-locale",
  "bilibi-menu",
  "bilibi-module-registry",
  "bilibi-party-ids",

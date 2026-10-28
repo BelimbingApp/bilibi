@@ -7,7 +7,7 @@ INSERT INTO currencies(code,numeric_code,name,minor_units,withdrawn) VALUES
 ('AFN','971','Afghan afghani',2,false),
 ('ALL','008','Albanian lek',2,false),
 ('AMD','051','Armenian dram',2,false),
-('ANG','532','Netherlands Antillean guilder',2,false),
+('ANG','532','Netherlands Antillean guilder',2,true),
 ('AOA','973','Angolan kwanza',2,false),
 ('ARS','032','Argentine peso',2,false),
 ('AUD','036','Australian dollar',2,false),
