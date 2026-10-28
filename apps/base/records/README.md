@@ -5,7 +5,7 @@ One way for any module to point at a record that another module owns, including 
 - **A holder stores `(record_kind, record_id)`, both text.** No foreign key crosses a module boundary, and the owner never learns who points at its records.
 - **An owner registers each kind of record once:** its key, Grid table, page path and an access check.
 - **Names follow the reader's own permissions.** A record the reader cannot see stays unnamed; the pill, the picker and linking all follow the owner's own access check.
-- **Every page shows a reference the same way,** with the `RelatedRecord` pill and `RecordPicker` from `base/ui`. Why a Base module, and why one key per kind: [ADR 08](../../../docs/architecture/decisions/08-record-references.md).
+- **Every page shows a reference the same way,** with the `RelatedRecord` pill and `RecordPicker` from `base/ui`. Why a Base module, and why one key per kind: [ADR 11](../../../docs/architecture/decisions/11-record-references.md).
 
 ## Register a kind (owner)
 

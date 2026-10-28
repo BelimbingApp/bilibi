@@ -1,4 +1,4 @@
-# ADR 08: Record references across modules
+# ADR 11: Record references across modules
 
 **Document Type:** Architecture Decision Record
 **Status:** Proposed
