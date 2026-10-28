@@ -10,7 +10,7 @@
 //! capability to read, and each link is offered only to a reader its page
 //! admits.
 use super::views::{allowed, render};
-use crate::{organisation::display_name, LIST, VIEW};
+use crate::{organisation::{display_name, reaches_tenant}, LIST, VIEW};
 use askama::Template;
 use bilibi_dashboard::PanelArgs;
 use bilibi_database::{Db, Error, Result};
@@ -36,8 +36,12 @@ struct Summary {
     total: i64,
     active: i64,
     company: Option<Current>,
+    /// Whether the top bar offers a company to choose: with no affiliation
+    /// (so no current company unless one was chosen), only the tenant-wide
+    /// reach does.
+    chooses: bool,
 }
-async fn summary(client: &impl GenericClient, scope: &Scope) -> Result<Summary> {
+async fn summary(client: &(impl GenericClient + Sync), scope: &Scope) -> Result<Summary> {
     let current = scope.current_company().map_or(0, |id| id.get());
     let row = client
         .query_opt(
@@ -50,10 +54,12 @@ async fn summary(client: &impl GenericClient, scope: &Scope) -> Result<Summary> 
             total: 0,
             active: 0,
             company: None,
+            chooses: false,
         },
         Some(row) => Summary {
             total: row.get(5),
             active: row.get(6),
+            chooses: scope.current_company().is_some() || reaches_tenant(client, scope).await?,
             company: (row.get::<_, i64>(0) == current).then(|| Current {
                 id: row.get(0),
                 code: row.get(1),
@@ -196,6 +202,13 @@ impl LiveState<Scope, Error> for CurrentCompany {
                 None if read.total == 0 => render(
                     &EmptyState::missing("No company yet.", "")
                         .id("dashboard-current-company-none"),
+                )?,
+                None if !read.chooses => render(
+                    &EmptyState::missing(
+                        "No company.",
+                        "Ask your administrator for access to a company.",
+                    )
+                    .id("dashboard-current-company-none"),
                 )?,
                 None => render(
                     &EmptyState::missing(

@@ -274,6 +274,12 @@ pub async fn reachable(
         || holds_proof(client, scope, TENANT_WIDE).await?)
 }
 
+/// Whether the actor reaches the whole tenant's companies (the tenant-wide
+/// reach, or a granted system principal), read without logging a decision.
+pub(crate) async fn reaches_tenant(client: &dyn ProofClient, scope: &Scope) -> Result<bool> {
+    Ok(scope.principal().is_some() || holds_proof(client, scope, TENANT_WIDE).await?)
+}
+
 /// Own company, or the whole tenant with the tenant-wide reach; a granted
 /// system principal reaches every company of its tenant (`authorize_target`).
 /// The tenant-wide decision is logged: this is the proof an operation relies on.
@@ -366,9 +372,7 @@ impl OrganisationDirectory for Directory {
             // The same reach as `reaches`, listed: everyone with the
             // tenant-wide grant (or a granted principal) sees every unarchived
             // company; anyone else sees their own company alone.
-            let tenant_wide =
-                scope.principal().is_some() || holds_proof(client, scope, TENANT_WIDE).await?;
-            if tenant_wide {
+            if reaches_tenant(client, scope).await? {
                 return Ok(named_in_scope(client, scope)
                     .await?
                     .into_iter()
