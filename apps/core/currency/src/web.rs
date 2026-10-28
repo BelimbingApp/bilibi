@@ -20,7 +20,7 @@ use bilibi_agent_api::{
 };
 use bilibi_authz::effective_capabilities;
 use bilibi_database::{Db, Error, Result};
-use bilibi_datetime::DisplayPolicy;
+use bilibi_datetime::{DisplayPolicy, Mode};
 use bilibi_locale::Locales;
 use bilibi_party_ids::{OrganisationId, PartyId};
 use bilibi_settings::{Settings, Target};
@@ -230,16 +230,20 @@ struct Badges {
 }
 
 impl Pages {
-    /// The calendar day in the reader's display zone (UTC until the browser
-    /// reports one), the default for a date a person types.
+    /// The calendar day in the reader's display zone, the default for a date a
+    /// person types. `None` in the browser-local mode, where only the browser
+    /// knows the day.
     async fn today(
         &self,
         client: &(impl tokio_postgres::GenericClient + Sync),
         scope: &Scope,
-    ) -> Result<Date> {
+    ) -> Result<Option<Date>> {
         let locale = self.locales.resolve(client, scope, None).await?.locale;
         let display = self.display.display(client, scope, None, locale).await?;
-        Ok(display.clock(None, jiff::Timestamp::now()).today)
+        Ok(
+            (display.mode != Mode::Local)
+                .then(|| display.clock(None, jiff::Timestamp::now()).today),
+        )
     }
 }
 
@@ -898,9 +902,11 @@ impl Rates {
                     self.pages.today(&**client, scope).await?
                 };
                 let mut draft = Draft::default();
-                draft
-                    .values
-                    .insert("effective_on".into(), today.to_string());
+                if let Some(today) = today {
+                    draft
+                        .values
+                        .insert("effective_on".into(), today.to_string());
+                }
                 self.draft = Some(draft);
             }
             "close_new" => self.draft = None,
@@ -1283,7 +1289,7 @@ impl Rates {
 
     /// "Check a conversion": the same call every module makes, shown with the
     /// rate, its date and how it was found.
-    fn check_card(&self, enabled: &[Currency], today: Date) -> Result<Html> {
+    fn check_card(&self, enabled: &[Currency], today: Option<Date>) -> Result<Html> {
         let value = |key: &str| self.check.values.get(key).cloned().unwrap_or_default();
         let combo = |key: &str, label: &str| {
             Combobox::new(format!("convert_{key}"), format!("convert[{key}]"))
@@ -1312,10 +1318,9 @@ impl Rates {
                 .id("currency-check-date")
                 .label("On")
                 .kind(InputKind::Date)
-                .value(if value("date").is_empty() {
-                    today.to_string()
-                } else {
-                    value("date")
+                .value(match (value("date"), today) {
+                    (date, Some(today)) if date.is_empty() => today.to_string(),
+                    (date, _) => date,
                 })
                 .required(),
         )?);
