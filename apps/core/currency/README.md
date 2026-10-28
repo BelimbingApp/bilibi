@@ -18,7 +18,7 @@ Never keep a free-text currency code, your own minor-units list or your own rate
 ## The list
 
 - **ISO 4217 ships.** `currencies` is global, with code, numeric code, name, decimal places (`minor_units`, 0 to 4) and a `withdrawn` flag. Production seed `currencies-iso4217-v1` inserts the list by code and never updates a row, so a rerun changes nothing. It leaves out the precious-metal and test codes (XAU, XTS, XXX…). A later seed version adds new codes and marks withdrawn ones.
-- **Tenants enable and disable; they never add a code or change decimal places.** A disabled or withdrawn currency stays readable (`get`) for records that hold it, but `check` refuses it for a new assignment. A withdrawn code cannot be enabled. A currency that is the tenant's base, or any company's own base, cannot be disabled; the refusal names who uses it.
+- **Tenants enable and disable; they never add a code or change decimal places.** A disabled or withdrawn currency stays readable (`get`) for records that hold it, but `check` refuses it for a new assignment. A withdrawn code cannot be enabled. A currency that is the tenant's base, or any company's own base, cannot be disabled; the refusal names who uses it. An archived or deleted company holds no usable base, so it never blocks a disable.
 
 ## Base currency
 
@@ -55,7 +55,7 @@ All three are tenant capabilities contributed to `tenant_owner`. `enabled`, `get
 ## Pages and agents
 
 - `/currencies`: the base currency and per-company currencies (read first, chosen in place), then the list with an enable or disable action.
-- `/currencies/rates`: the rates, edited in place, a dialog to add one, a confirm to delete one, and a conversion check that calls the same `convert` modules use.
+- `/currencies/rates`: the rates, edited in place, a dialog to add one, a confirm to delete one, and a conversion check that calls the same `convert` modules use. The date fields start as today in the reader's display zone; in browser-local display mode they start empty, because only the browser knows the day.
 - Operations: `core.currency.list`, `.rates.list` and `.convert` (reads), and the reviewed writes `.enabled.set`, `.base.set`, `.rates.set` and `.rates.delete`. The pages call these same contracts (`PageWrites`).
 
 ## Runtime check
