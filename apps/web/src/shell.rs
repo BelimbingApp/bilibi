@@ -641,7 +641,7 @@ pub async fn choose_company(
                 .ok_or(Error::Invalid)?,
         ),
     };
-    let back = local_path(&form.back).unwrap_or("/");
+    let back = crate::landing::local_path(&form.back).unwrap_or("/");
     let info = bilibi_base::audit::RequestInfo {
         ip: crate::api::client_address(
             peer.map(|axum::extract::Extension(axum::extract::ConnectInfo(peer))| peer),
@@ -670,16 +670,6 @@ pub async fn choose_company(
         Err(ChoiceRefusal::Other(error)) => Err(error.into()),
     }
 }
-/// An address on this site to come back to: a path with an optional query,
-/// never another origin (`//host`), a scheme or control characters.
-fn local_path(value: &str) -> Option<&str> {
-    (value.starts_with('/')
-        && !value.starts_with("//")
-        && value.len() <= 2048
-        && !value.contains(['\\', '\r', '\n', '\0']))
-    .then_some(value)
-}
-
 /// The account's pins for a client that must refresh: the shell renders the
 /// same list into `data-pins`.
 pub async fn pins(
