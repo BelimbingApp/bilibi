@@ -10,7 +10,9 @@
 //! with the tenant-wide grant), and Tenancy proves the same fact again on
 //! every later authentication, so the stored choice never outlives its
 //! reach. The switch commits with a `user.company.switched` action, so the
-//! trail says which company was current from when. Choosing
+//! trail says which company was current from when; a refused switch leaves a
+//! non-retained `user.company.switch_refused` action naming the requested
+//! company. The reach check itself writes no authorization decision. Choosing
 //! the account's own company stores nothing: the affiliation is the default.
 use crate::UserService;
 use bilibi_audit::{record_action, Attribution, RequestInfo};
@@ -55,10 +57,28 @@ impl UserService {
         let own = scope.actor().organisation().map(OrganisationId::get);
         let company = company.filter(|id| Some(*id) != own);
         if let Some(id) = company {
-            let id = OrganisationId::new(id).map_err(|_| ChoiceRefusal::Unavailable)?;
-            // Decided on the pooled connection, as a refusal's decision-log
-            // row commits even though nothing else does.
-            if !bilibi_company::reachable(&**client, &scope, id).await? {
+            let reached = match OrganisationId::new(id) {
+                Ok(company) => bilibi_company::reachable(&**client, &scope, company).await?,
+                Err(_) => false,
+            };
+            if !reached {
+                record_action(
+                    &**client,
+                    &Attribution::from_scope(&scope),
+                    Some(request),
+                    "user.company.switch_refused",
+                    json!({
+                        "semantic": true,
+                        "source": "CompanyContext",
+                        "summary": "Refused a switch to a company the account does not reach",
+                        "surface": "shell.company",
+                        "subject": {"name": "company", "id": id},
+                        "context": {"requested": id, "own": own},
+                        "result": "refused",
+                    }),
+                    false,
+                )
+                .await?;
                 return Err(ChoiceRefusal::Unavailable);
             }
         }
