@@ -26,7 +26,9 @@
 //! `/api/v1` and MCP doors, never exhaust the connection pool, a kind named
 //! twice is searched once, a plan's references carry their `url` on both
 //! doors, a merged id counts the survivor's referrers, and a 160-character
-//! name stays within a 390 px page.
+//! name stays within a 390 px page. Last, #223: synchronized plans of the
+//! notes write, previewed and committed through both doors, never exhaust
+//! the pool.
 //!
 //! Fixture setup that has no page of its own is plain SQL on the disposable
 //! database, and says so: a retired person, a soft-deleted company, the
@@ -600,6 +602,26 @@ struct Door {
     mcp: String,
 }
 impl Door {
+    /// A plan of `ops` through `/api/v1/plans`, or MCP's `plan` tool.
+    async fn plan(&self, mcp: bool, ops: &Value) -> std::result::Result<Value, String> {
+        if mcp {
+            let answer = mcp_post(self, json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "plan", "arguments": {"operations": ops}}}))
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(answer["result"]["structuredContent"].clone())
+        } else {
+            post(
+                self.addr,
+                &self.host,
+                &self.api,
+                "/api/v1/plans",
+                "",
+                json!({"operations": ops}),
+            )
+            .await
+            .map_err(|e| e.to_string())
+        }
+    }
     async fn read(&self, mcp: bool, key: &str, input: Value) -> std::result::Result<Value, String> {
         let answer = if mcp {
             mcp_read(self.addr, &self.host, &self.mcp, key, input).await
@@ -689,6 +711,88 @@ async fn doors(door: &Door) -> Outcome {
             Box::pin(async move {
                 let (mcp, key, input) = read_case(index);
                 Ok(expected(key, &door.read(mcp, key, input).await?))
+            })
+        },
+    )
+    .await
+}
+
+/// Issue #223: synchronized plans of the holder's reviewed write on the pool
+/// of 16. A plan holds one pooled transaction while the owner previews, so a
+/// preview that takes another connection starves the pool.
+async fn plan_doors(door: &Door) -> Outcome {
+    println!("-- synchronized plans of the notes write on a pool of 16 connections");
+    let ops = json!([{"key": "extensions.records_reference.notes.create", "input": {"body": "Concurrent preview only", "record": {"kind": "company", "id": "1"}}}]);
+    let previewed = |plan: &Value| {
+        plan["valid"] == json!(true)
+            && plan["results"][0]["preview"]["result"]["record"]["path"] == "/companies/1"
+    };
+    for round in 1..=3 {
+        for mcp in [false, true] {
+            let (door, ops) = (door.clone(), ops.clone());
+            concurrently(
+                &format!(
+                    "round {round}, 16 x {} plan",
+                    if mcp { "MCP" } else { "/api/v1" }
+                ),
+                16,
+                Duration::from_secs(8),
+                move |_| {
+                    let (door, ops) = (door.clone(), ops.clone());
+                    Box::pin(async move {
+                        let plan = door.plan(mcp, &ops).await?;
+                        Ok(previewed(&plan))
+                    })
+                },
+            )
+            .await?;
+        }
+    }
+    // Plans beside unrelated requests: the reads must be served too.
+    let (both, plan_ops) = (door.clone(), ops.clone());
+    concurrently(
+        "16 x /api/v1 plan beside 16 unrelated /api/v1 reads",
+        32,
+        Duration::from_secs(8),
+        move |index| {
+            let (door, ops) = (both.clone(), plan_ops.clone());
+            Box::pin(async move {
+                if index < 16 {
+                    Ok(previewed(&door.plan(false, &ops).await?))
+                } else {
+                    let (mcp, key, input) = read_case(0);
+                    Ok(expected(key, &door.read(mcp, key, input).await?))
+                }
+            })
+        },
+    )
+    .await?;
+    // Each commit re-runs the owner's preview inside its own transaction.
+    let mut codes = Vec::new();
+    for _ in 0..16 {
+        let plan = door.plan(false, &ops).await?;
+        codes.push(plan["plan_code"].as_str().unwrap_or_default().to_owned());
+    }
+    let codes = Arc::new(codes);
+    let (door, ops) = (door.clone(), ops.clone());
+    concurrently(
+        "16 x /api/v1 commit of a previewed plan",
+        16,
+        Duration::from_secs(8),
+        move |index| {
+            let (door, ops, codes) = (door.clone(), ops.clone(), codes.clone());
+            Box::pin(async move {
+                let committed = post(
+                    door.addr,
+                    &door.host,
+                    &door.api,
+                    "/api/v1/plans/commit",
+                    "",
+                    json!({"plan_code": codes[index], "operations": ops}),
+                )
+                .await
+                .map_err(|e| e.to_string())?;
+                Ok(committed["results"][0]["result"]["result"]["record_kind"] == "company")
             })
         },
     )
@@ -791,6 +895,22 @@ async fn call(
         &format!("/api/v1/operations/{key}/call"),
         "",
         json!({"input": input}),
+    )
+    .await
+}
+
+/// One MCP JSON-RPC message from `door`'s MCP connection.
+async fn mcp_post(
+    door: &Door,
+    message: Value,
+) -> std::result::Result<Value, Box<dyn std::error::Error + Send + Sync>> {
+    post(
+        door.addr,
+        &door.host,
+        &door.mcp,
+        "/mcp",
+        "Accept: application/json, text/event-stream\r\n",
+        message,
     )
     .await
 }
@@ -1182,6 +1302,7 @@ async fn main() -> Outcome {
     };
     denied_doors(&denied).await?;
     doors(&door).await?;
+    plan_doors(&door).await?;
     served.abort();
 
     if let Ok(bind) = std::env::var("BIND_ADDR") {

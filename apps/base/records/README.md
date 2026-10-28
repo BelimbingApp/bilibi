@@ -48,7 +48,7 @@ Each refusal names the kind and its source line.
 
 | Need | Call |
 | --- | --- |
-| Accept a new reference | `check(client, scope, kind, id)`: with your write's `tx.sql()`; a preview may pass any client. Store the `Reference` it returns. |
+| Accept a new reference | `check(client, scope, kind, id)` on the connection you already hold: your write's `tx.sql()` in a commit, and in a preview the `OperationClient` the plan hands you. Store the `Reference` it returns. |
 | Show references | `resolve(scope, &references)` → `Resolved { label, path, … }`, in the order given; `resolved.pill(id, framed)` gives the `RelatedRecord`. |
 | Pick a record | `search(scope, &kinds, text)` → hits; `records.picker_hits(&hits)` feeds `RecordPicker`. |
 | Who points here | `referrers(scope, kind, id)` → a count per holder table the reader may read, through Grid's bounded `summarize`, for the record `id` names now (a merged id counts its survivor's referrers); a malformed id of a mounted kind is refused. |
@@ -63,6 +63,7 @@ Each refusal names the kind and its source line.
 - **One spelling per id:** a number key is read as plain decimal everywhere. `check` returns `01` as `1` for the holder to store, and `resolve`, `redirect` and `referrers` read `01` as `1` too.
 - **Unknown kinds fail closed:** `check` refuses them; `resolve` shows them as unavailable, never as an error, so unmounting a Domain leaves holders working.
 - **Names with the reader's permissions:** `resolve` projects each kind's `label_field` through `bilibi_grid::project` with the reader's scope, at most 100 ids per kind per call, then puts each named record to the owner's `RecordOwner::authorize`, the check `check` asks on save. A row Grid drops (no read capability on the table, a restricted label, a removed or soft-deleted record) and a record the owner refuses (a reader who may list companies but not view one) show as unavailable, so the pill, the picker and saving agree.
+- **Previews take no connection:** a plan holds one pooled transaction while the owner previews, so a holder's preview checks on the client the plan hands it and calls nothing that takes another connection, `resolve` and `search` included. Show the checked reference and its page (`kind.path_of`); agents name it with `base.records.resolve`.
 - **Connections:** no facade method holds a pooled connection while Grid takes one, and the agent dispatcher holds none while a read runs (`apps/base/agent_api/README.md`), so concurrent resolves and searches, direct or through `/api/v1` and `/mcp`, cannot fill the pool and wait on each other.
 - **Removed records** are never cascaded and holders' rows are never deleted.
 - **Merges:** a redirect `(tenant, kind, from) → to` is followed by `check`, `resolve` and the pill, so every holder repoints on read. Chains collapse on write, and each redirect row is an audited `Change` on `record_redirect`. `redirect` takes a transaction lock per tenant and kind, so overlapping merges run one after the other and never commit a chain (`a → b` beside `b → c`).
@@ -116,4 +117,5 @@ Add `APP_ORIGIN` and `BIND_ADDR` to serve the app afterwards, with the notes pag
 | Plan references | A notes plan preview's record carries the same absolute `url` through `/api/v1/plans` and MCP's `plan`, and so does a plan refused at commit (`plan_rejected`) through both doors. |
 | Merged referrers | After 61 → 1, `referrers` of 61 counts the same notes as of 1. |
 | Long names | A 160-character company name: the pill, the picker hit and the chosen pill stay within a 390 px page, ending in "…" with the whole name as their title. |
+| Synchronized plans | 16 plans of the notes write at once through `/api/v1/plans` and through MCP's `plan` answer within 8 s on the pool of 16, three rounds, and 16 commits of previewed plans at once all finish. |
 | List but not view | For the manager allowed `admin.company.list` and denied `admin.company.view`, `check` refuses company 1, `resolve` shows it unavailable and `search` offers no company, directly and through `/api/v1` and MCP; in the browser their company pills are Restricted and the picker offers no company. |
