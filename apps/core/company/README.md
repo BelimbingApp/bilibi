@@ -7,7 +7,7 @@ primary company and the provisioning commands. The public API is the
 `core/company.companies` service (`CompanyService`) and what the crate root
 exports: the functions other owners call on their own connection or
 transaction (`authorize_target`, `require_writable`, `lock_account_company`,
-`create_department`, `apply_lifecycle`, `assign_relationship`, the primary-company
+`create`, `create_department`, `apply_lifecycle`, `assign_relationship`, the primary-company
 functions, ...) and the types they take and return. Every module is private, so
 table layout and SQL stay private too. The module-owned pages (`web.rs`, `web/views.rs`) serve
 `/companies`, `/companies/create` and `/companies/{id}`, and
