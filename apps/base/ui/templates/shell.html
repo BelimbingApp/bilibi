@@ -8,7 +8,7 @@
 {{ context.instance|safe }}
 <nav id="app-pinned" aria-label="Pinned pages" class="app-pinned relative flex min-w-0 flex-1 items-center" hidden>
 <button type="button" id="app-pinned-button" class="inline-flex size-6 shrink-0 items-center justify-center rounded-sm text-action transition hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-strong lg:hidden" aria-label="Pinned pages" title="Pinned pages" aria-controls="app-pinned-items" aria-expanded="false">{% call ui::icon(name="bilimbi-pin", class="size-4") %}{% endcall %}</button>
-<template id="app-pinned-tile-icon">{% call ui::icon(name="tile", class="size-3.5") %}{% endcall %}</template>
+<template id="app-pinned-tile-icon">{% call ui::icon(name="tile", class="size-3.5") %}{% endcall %}</template>{% for name in context.pin_icons %}<template data-pin-icon="{{ name }}">{% call ui::icon(name=name, class="app-nav-icon size-[1.125rem] shrink-0") %}{% endcall %}</template>{% endfor %}
 <div id="app-pinned-items" data-live-ignore class="app-pinned-items absolute top-full left-0 z-50 mt-1 hidden w-64 max-w-[calc(100vw-1.5rem)] flex-col gap-0.5 rounded-md border border-line bg-surface p-1 shadow-lg data-[open=true]:flex lg:static lg:mt-0 lg:flex lg:w-auto lg:max-w-none lg:flex-row lg:items-center lg:gap-1 lg:overflow-x-auto lg:rounded-none lg:border-0 lg:bg-transparent lg:p-0 lg:shadow-none"></div>
 <p id="app-pinned-announcement" data-live-ignore class="sr-only" role="status" aria-live="polite"></p>
 </nav>

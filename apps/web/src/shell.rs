@@ -196,6 +196,9 @@ async fn context<'a>(
         .into_iter()
         .filter(|pin| is_served(&served, &pin.url))
         .collect();
+    let mut pin_icons: Vec<String> = pins.iter().filter_map(|pin| pin.icon.clone()).collect();
+    pin_icons.sort();
+    pin_icons.dedup();
     let home = if served.contains(&"/dashboard") {
         "/dashboard"
     } else {
@@ -218,6 +221,7 @@ async fn context<'a>(
         home,
         served_routes: serde_json::to_string(&served).map_err(|_| Error::Internal)?,
         pins: serde_json::to_string(&pins).map_err(|_| Error::Internal)?,
+        pin_icons,
         instance: if instance.role == bilibi_base::system::Role::Dev {
             Html::EMPTY
         } else {
