@@ -6,7 +6,8 @@
 //! `media.scan.policy` allows it, is ever read back: `pending`, `infected` and
 //! `failed` bytes stay on disk, unreadable. A scanner outage never makes a
 //! file readable; it retries with Queue's backoff, then marks the file
-//! `failed` for a quarantine manager to rescan.
+//! `failed` for a quarantine manager to rescan. Each job carries the file's
+//! scan generation, which a rescan raises: only the newest job may decide.
 use crate::{quarantine::MANAGE, storage, stored, Error, Media, Result, Stored, COLUMNS, EXTERNAL};
 use bilibi_authz::SystemScope;
 use bilibi_database::{Change, MutationTransaction};
@@ -26,7 +27,13 @@ pub(crate) const WORKER: &str = "base/media-scan";
 pub(crate) const HANDLER: &str = "base/media.scan";
 /// Queue's backoff (2, 4, … 256 seconds) gives a scanner about eight minutes
 /// to come back before its files are marked `failed`.
-pub(crate) const MAX_ATTEMPTS: i32 = 8;
+pub(crate) const SCAN_ATTEMPTS: i32 = 8;
+/// The attempts after the last scan ask no scanner. They settle a file whose
+/// scans all ended without a recorded verdict (a store, audit or notice
+/// error, a crash, a lost lease) as `failed` with reason `scan_error`, so no
+/// file is left `pending`. Queue's backoff spreads them over about thirty
+/// minutes.
+pub(crate) const MAX_ATTEMPTS: i32 = SCAN_ATTEMPTS + 3;
 pub(crate) const POLICY: &str = "media.scan.policy";
 pub(crate) const TIMEOUT: &str = "media.scan.timeout_seconds";
 
@@ -127,10 +134,13 @@ pub(crate) fn verdict(row: &Stored) -> Value {
 pub(crate) fn arguments(args: Value) -> bilibi_database::Result<Value> {
     match args.as_object() {
         Some(o)
-            if o.len() == 1
+            if o.len() == 2
                 && o.get("asset_id")
                     .and_then(Value::as_i64)
-                    .is_some_and(|id| id > 0) =>
+                    .is_some_and(|id| id > 0)
+                && o.get("generation")
+                    .and_then(Value::as_i64)
+                    .is_some_and(|generation| generation >= 0) =>
         {
             Ok(args)
         }
@@ -144,6 +154,19 @@ enum Finding {
     Infected(String),
     TooLarge,
     NoAnswer(&'static str),
+}
+/// What one attempt writes.
+struct Decision {
+    state: ScanState,
+    reason: Option<&'static str>,
+    signature: Option<String>,
+    scanner: Option<String>,
+    version: Option<String>,
+}
+/// Still waiting for the job queued at `generation`: anything else was
+/// decided by an earlier attempt or belongs to a rescan's newer job.
+fn awaits(row: &Stored, generation: i64) -> bool {
+    row.asset.scan_state == ScanState::Pending && row.generation == generation
 }
 
 impl Media {
@@ -222,11 +245,13 @@ impl Media {
         tx: &mut MutationTransaction<'_>,
         tenant: i64,
         id: i64,
+        generation: i64,
     ) -> Result<()> {
         let enqueued = async {
             let system = SystemScope::rehydrate(tx.sql(), tenant, Some(PRINCIPAL)).await?;
+            let args = json!({"asset_id": id, "generation": generation});
             self.queue
-                .enqueue_system_within(tx, &system, WORKER, json!({"asset_id": id}))
+                .enqueue_system_within(tx, &system, WORKER, args)
                 .await
         }
         .await;
@@ -239,7 +264,9 @@ impl Media {
 
     /// One attempt of the job: read the bytes, ask the scanner with no
     /// connection held, then record the verdict under the job's fenced lease.
-    async fn scan(&self, execution: &Execution, id: i64) -> Result<Outcome> {
+    /// An attempt after [`SCAN_ATTEMPTS`] asks no scanner and settles the file
+    /// `failed` (`scan_error`).
+    async fn scan(&self, execution: &Execution, id: i64, generation: i64) -> Result<Outcome> {
         let tenant = execution.tenant();
         let client = self.db.get().await.map_err(bilibi_database::Error::from)?;
         let row = client
@@ -250,9 +277,19 @@ impl Media {
             .await?
             .map(|row| stored(&row))
             .ok_or(Error::NotFound)?;
-        // Decided already (an earlier attempt, a rescan's newer job): idempotent.
-        if row.asset.scan_state != ScanState::Pending {
+        if !awaits(&row, generation) {
             return Ok(Outcome::Completed);
+        }
+        if execution.attempt > SCAN_ATTEMPTS {
+            drop(client);
+            let settled = Decision {
+                state: ScanState::Failed,
+                reason: Some("scan_error"),
+                signature: None,
+                scanner: None,
+                version: None,
+            };
+            return self.record(execution, id, generation, settled).await;
         }
         let policy = self.policy(&**client).await?;
         let timeout = self
@@ -266,30 +303,34 @@ impl Media {
         let (finding, name, version) = match &scanner {
             None => (Finding::NoAnswer("scanner_unavailable"), None, None),
             Some(scanner) => {
-                let size = row.asset.file_size.unwrap_or_default().max(0) as u64;
-                let finding = if scanner.max_bytes().is_some_and(|max| size > max) {
-                    Finding::TooLarge
-                } else {
-                    match storage::read(&roots, &row.disk, &row.key).await {
-                        Err(_) => Finding::NoAnswer("file_unavailable"),
-                        Ok(bytes) => {
-                            let facts = ScanFacts {
-                                mime_type: row.asset.mime_type.as_deref(),
-                                size: bytes.len() as u64,
-                            };
-                            match tokio::time::timeout(
-                                Duration::from_secs(timeout),
-                                scanner.scan(&bytes, facts),
-                            )
-                            .await
-                            {
-                                Ok(Verdict::Clean) => Finding::Clean,
-                                Ok(Verdict::Infected { signature: found }) => {
-                                    Finding::Infected(signature(&found))
-                                }
-                                Ok(Verdict::Unavailable) | Err(_) => {
-                                    Finding::NoAnswer("scanner_unavailable")
-                                }
+                let finding = match storage::read(&roots, &row.disk, &row.key).await {
+                    Err(_) => Finding::NoAnswer("file_unavailable"),
+                    // The length read, never the size an owner declared
+                    // when registering the bytes.
+                    Ok(bytes)
+                        if scanner
+                            .max_bytes()
+                            .is_some_and(|max| bytes.len() as u64 > max) =>
+                    {
+                        Finding::TooLarge
+                    }
+                    Ok(bytes) => {
+                        let facts = ScanFacts {
+                            mime_type: row.asset.mime_type.as_deref(),
+                            size: bytes.len() as u64,
+                        };
+                        match tokio::time::timeout(
+                            Duration::from_secs(timeout),
+                            scanner.scan(&bytes, facts),
+                        )
+                        .await
+                        {
+                            Ok(Verdict::Clean) => Finding::Clean,
+                            Ok(Verdict::Infected { signature: found }) => {
+                                Finding::Infected(signature(&found))
+                            }
+                            Ok(Verdict::Unavailable) | Err(_) => {
+                                Finding::NoAnswer("scanner_unavailable")
                             }
                         }
                     }
@@ -308,11 +349,31 @@ impl Media {
                 Policy::Required => (ScanState::Failed, Some("too_large"), None),
                 Policy::WhenAvailable => (ScanState::Unscanned, Some("too_large"), None),
             },
-            Finding::NoAnswer(code) if execution.attempt < execution.max_attempts => {
+            Finding::NoAnswer(code) if execution.attempt < SCAN_ATTEMPTS => {
                 return Ok(Outcome::Retry(code))
             }
             Finding::NoAnswer(code) => (ScanState::Failed, Some(code), None),
         };
+        let decision = Decision {
+            state,
+            reason,
+            signature: found,
+            scanner: name,
+            version,
+        };
+        self.record(execution, id, generation, decision).await
+    }
+
+    /// Write one attempt's decision under the job's fenced lease, while the
+    /// file still awaits this job's generation.
+    async fn record(
+        &self,
+        execution: &Execution,
+        id: i64,
+        generation: i64,
+        decision: Decision,
+    ) -> Result<Outcome> {
+        let tenant = execution.tenant();
         let mut client = self.db.get().await.map_err(bilibi_database::Error::from)?;
         // `begin` fences the lease and re-proves the principal's grant.
         let mut tx = execution.begin(&mut client, "media.scan.verdict").await?;
@@ -325,19 +386,26 @@ impl Media {
             .await?
             .map(|row| stored(&row))
             .ok_or(Error::NotFound)?;
-        if locked.asset.scan_state != ScanState::Pending {
+        if !awaits(&locked, generation) {
             tx.rollback().await?;
             return Ok(Outcome::Completed);
         }
         let old = verdict(&locked);
-        let (state_text, signature) = (state.as_str(), found.clone());
+        let Decision {
+            state,
+            reason,
+            signature,
+            scanner,
+            version,
+        } = decision;
+        let state_text = state.as_str();
         let updated = tx
             .mutate(move |sql| {
                 Box::pin(async move {
                     let row = sql
                         .query_one(
-                            &format!("UPDATE base_media_assets SET scan_state=$2,scanner=$3,scanner_version=$4,scan_signature=$5,scan_reason=$6,scanned_at=now(),updated_at=now() WHERE id=$1 RETURNING {COLUMNS}"),
-                            &[&id, &state_text, &name, &version, &signature, &reason],
+                            &format!("UPDATE base_media_assets SET scan_state=$3,scanner=$4,scanner_version=$5,scan_signature=$6,scan_reason=$7,scanned_at=now(),updated_at=now() WHERE id=$1 AND tenant_id=$2 AND scan_generation=$8 RETURNING {COLUMNS}"),
+                            &[&id, &tenant, &state_text, &scanner, &version, &signature, &reason, &generation],
                         )
                         .await?;
                     let row = stored(&row);
@@ -430,10 +498,13 @@ pub(crate) struct ScanJob {
 impl Handler for ScanJob {
     fn perform<'a>(&'a self, execution: &'a Execution, args: Value) -> HandlerFuture<'a> {
         Box::pin(async move {
-            let Some(id) = args.get("asset_id").and_then(Value::as_i64) else {
+            let (Some(id), Some(generation)) = (
+                args.get("asset_id").and_then(Value::as_i64),
+                args.get("generation").and_then(Value::as_i64),
+            ) else {
                 return Outcome::Cancel("invalid_asset_reference");
             };
-            match self.media.scan(execution, id).await {
+            match self.media.scan(execution, id, generation).await {
                 Ok(outcome) => outcome,
                 Err(Error::NotFound) => Outcome::Cancel("asset_unavailable"),
                 Err(_) => Outcome::Retry("scan_store_unavailable"),

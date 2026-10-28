@@ -163,6 +163,7 @@ fn reason(code: Option<&str>) -> Option<&'static str> {
         "too_large" => Some("Larger than the scanner accepts"),
         "scanner_unavailable" => Some("The scanner did not answer"),
         "file_unavailable" => Some("The stored file could not be read"),
+        "scan_error" => Some("The check could not be recorded"),
         _ => None,
     }
 }

@@ -33,7 +33,7 @@ pub struct QuarantinedFile {
     pub scanner_version: Option<String>,
     pub signature: Option<String>,
     /// Why a file is `failed` or `unscanned`: `too_large`,
-    /// `scanner_unavailable` or `file_unavailable`.
+    /// `scanner_unavailable`, `file_unavailable` or `scan_error`.
     pub reason: Option<String>,
     pub scanned_at: Option<i64>,
     pub purged_at: Option<i64>,
@@ -119,7 +119,8 @@ impl Media {
     /// Scan a file again: one that failed, was quarantined (a scanner can be
     /// wrong), was stored unscanned or is stuck pending. Needs
     /// `admin.media.quarantine.manage` and a bound scanner; joins the
-    /// caller's transaction, so the row and its job commit together.
+    /// caller's transaction, so the row and its job commit together. The new
+    /// scan generation means a job still in flight can no longer decide.
     pub async fn rescan(
         &self,
         tx: &mut MutationTransaction<'_>,
@@ -138,13 +139,14 @@ impl Media {
             return Err(Error::AlreadyClean);
         }
         let old = verdict(&row);
+        let tenant = scope.tenant();
         let updated = tx
             .mutate(move |sql| {
                 Box::pin(async move {
                     let row = sql
                         .query_one(
-                            &format!("UPDATE base_media_assets SET scan_state='pending',scanner=NULL,scanner_version=NULL,scan_signature=NULL,scan_reason=NULL,scanned_at=NULL,updated_at=now() WHERE id=$1 RETURNING {COLUMNS}"),
-                            &[&id],
+                            &format!("UPDATE base_media_assets SET scan_state='pending',scan_generation=scan_generation+1,scanner=NULL,scanner_version=NULL,scan_signature=NULL,scan_reason=NULL,scanned_at=NULL,updated_at=now() WHERE id=$1 AND tenant_id=$2 RETURNING {COLUMNS}"),
+                            &[&id, &tenant],
                         )
                         .await?;
                     let row = stored(&row);
@@ -155,7 +157,8 @@ impl Media {
                 })
             })
             .await?;
-        self.enqueue_scan(tx, scope.tenant(), id).await?;
+        self.enqueue_scan(tx, tenant, id, updated.generation)
+            .await?;
         Ok(verdict(&updated))
     }
 
@@ -186,13 +189,14 @@ impl Media {
             .await
             .map_err(|_| Error::CleanupFailed)?;
         let old = verdict(&row);
+        let tenant = scope.tenant();
         let updated = tx
             .mutate(move |sql| {
                 Box::pin(async move {
                     let row = sql
                         .query_one(
-                            &format!("UPDATE base_media_assets SET bytes_purged_at=now(),updated_at=now() WHERE id=$1 RETURNING {COLUMNS}"),
-                            &[&id],
+                            &format!("UPDATE base_media_assets SET bytes_purged_at=now(),updated_at=now() WHERE id=$1 AND tenant_id=$2 RETURNING {COLUMNS}"),
+                            &[&id, &tenant],
                         )
                         .await?;
                     let row = stored(&row);

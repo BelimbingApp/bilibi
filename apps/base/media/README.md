@@ -61,7 +61,7 @@ Every stored file carries a scan state; only a readable one is ever served. Deci
 | `pending` | Waiting for the scanner | Never |
 | `clean` | The scanner found nothing | Yes |
 | `infected` | Quarantined: the scanner named a signature | Never |
-| `failed` | No verdict after the last attempt (`scanner_unavailable`, `file_unavailable`), or too large under `required` | Never |
+| `failed` | No verdict after the last scan attempt (`scanner_unavailable`, `file_unavailable`), no verdict could be recorded (`scan_error`), or too large under `required` | Never |
 
 ### The scanner seam
 
@@ -74,7 +74,9 @@ Every stored file carries a scan state; only a readable one is ever served. Deci
 - While a scanner is bound, every file Media stores (`put_upload`, `put_derivative_bytes`, `upload_attachment`, `register_*`) starts `pending`, and the `base/media-scan` job is queued in the registering transaction.
 - The job runs as system principal `media-scanner`, which holds `media.file.scan` in every tenant through a standing grant (`apps/base/authz/README.md`). A tenant that denies it keeps its files `pending`.
 - `Unavailable`, a timeout or an unreadable file retries with Queue's backoff; after 8 attempts (about eight minutes) the file is `failed`.
-- A file larger than the scanner's `max_bytes` is never sent: `failed` under `required`, `unscanned` under `when_available`, with reason `too_large`.
+- An attempt that cannot record its verdict (a store, audit or notice error, a crash, a lost lease) retries the same way. After the eighth, up to three more attempts (about thirty minutes) ask no scanner and settle the file `failed` with reason `scan_error`, so none is left `pending`.
+- Each job carries the file's scan generation, which a rescan raises. A verdict is recorded only while the file still awaits that generation, so an older scan still running cannot decide a rescanned file.
+- A file larger than the scanner's `max_bytes`, measured from the stored bytes and never from the size an owner declared, is never sent: `failed` under `required`, `unscanned` under `when_available`, with reason `too_large`.
 - Each verdict is an audited `Change` on the asset by `media-scanner`: state, scanner, version, signature and reason, never filename, key or bytes.
 - An infected file notifies its uploader and the tenant's accounts holding `admin.media.quarantine.manage` (live accounts only, at most 500).
 - An impersonated session cannot store files while a scanner is bound: Queue refuses to enqueue for an impersonator.
@@ -101,7 +103,7 @@ Tenant capabilities `admin.media.quarantine.view` and `admin.media.quarantine.ma
 | Call | Agent operation | What it does |
 | --- | --- | --- |
 | `quarantine(client, scope, states, limit)` | `base.media.quarantine.list` | This tenant's files in the given states, newest first, at most 1,000 |
-| `rescan(tx, scope, id)` | `base.media.quarantine.rescan` | A file that is not clean and not purged goes back to `pending` with a new job; needs a bound scanner |
+| `rescan(tx, scope, id)` | `base.media.quarantine.rescan` | A file that is not clean and not purged goes back to `pending` with a new job and scan generation; needs a bound scanner |
 | `purge(tx, scope, id)` | `base.media.quarantine.purge` | Removes an `infected` or `failed` file's bytes; the row, verdict, attachment binding and audit stay. A repeat is a no-op |
 
 The Quarantined Files page (`/system/media/quarantine`, Administration › System) lists them by status (Needs attention, Quarantined, Scan failed, Being checked, Not scanned), with Scan again and Purge contents for managers. Purge confirms first. A database trigger keeps a purged file's verdict fixed.
@@ -180,7 +182,7 @@ Per-owner adapters for Company and Person records follow K15.
 
 ### Scanning
 
-`scan-walkthrough` binds a fixture scanner that lives only in that executable: a file holding the EICAR test string is infected, everything else is clean, and it answers `Unavailable` while `<BILIBI_MEDIA_DEMO_ROOT>-scanner-down` exists. Run it like `media-walkthrough` below. `prepare` (default) runs Queue's executor in process and prints pending then clean or infected files, refused downloads and submissions, notices, the quarantine list per tenant, a stopped scanner ending `failed`, rescan, purge, a tenant that denies the standing grant, and the verdicts in the audit trail. `no-scanner` shows both policies without a scanner. `-- serve` (with `APP_ORIGIN`, `BIND_ADDR`, the signing keys, and `BILIBI_SCAN_FIXTURE=none` for no scanner) runs the real host with the fixture scanner, the fixture ticket owner and the executor, for the Quarantined Files page and `/media/attachments/{id}`.
+`scan-walkthrough` binds a fixture scanner that lives only in that executable: a file holding the EICAR test string is infected, everything else is clean, and it answers `Unavailable` while `<BILIBI_MEDIA_DEMO_ROOT>-scanner-down` exists. While `…-scanner-slow` exists a scan takes three seconds, a scan that starts while `…-scanner-stale` exists calls the file infected (`Stale-Signature`), and it accepts at most 1 MiB. Run it like `media-walkthrough` below. `prepare` (default) runs Queue's executor in process and prints pending then clean or infected files, refused downloads and submissions, notices, the quarantine list per tenant, a stopped scanner ending `failed`, rescan, a rescan overtaking an older scan still running, the size limit read from the stored bytes, a verdict that cannot be recorded settling `failed` (`scan_error`), purge, a tenant that denies the standing grant, and the verdicts in the audit trail. `no-scanner` shows both policies without a scanner. `-- serve` (with `APP_ORIGIN`, `BIND_ADDR`, the signing keys, and `BILIBI_SCAN_FIXTURE=none` for no scanner) runs the real host with the fixture scanner, the fixture ticket owner and the executor, for the Quarantined Files page and `/media/attachments/{id}`.
 
 ### Attachments
 

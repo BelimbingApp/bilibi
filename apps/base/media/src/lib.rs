@@ -179,8 +179,10 @@ struct Stored {
     reason: Option<String>,
     purged: bool,
     created_by: Option<i64>,
+    /// Raised by each rescan; a scan job records its verdict only for its own.
+    generation: i64,
 }
-const COLUMNS: &str = "id,tenant_id,parent_id,disk,storage_key,original_filename,mime_type,file_size,kind,private,metadata,scan_state,scanner,scanner_version,scan_signature,scan_reason,bytes_purged_at IS NOT NULL AS purged,created_by_id,floor(extract(epoch FROM created_at))::bigint AS created_at,floor(extract(epoch FROM updated_at))::bigint AS updated_at";
+const COLUMNS: &str = "id,tenant_id,parent_id,disk,storage_key,original_filename,mime_type,file_size,kind,private,metadata,scan_state,scan_generation,scanner,scanner_version,scan_signature,scan_reason,bytes_purged_at IS NOT NULL AS purged,created_by_id,floor(extract(epoch FROM created_at))::bigint AS created_at,floor(extract(epoch FROM updated_at))::bigint AS updated_at";
 fn stored(row: &tokio_postgres::Row) -> Stored {
     Stored {
         asset: Asset {
@@ -205,6 +207,7 @@ fn stored(row: &tokio_postgres::Row) -> Stored {
         reason: row.get("scan_reason"),
         purged: row.get("purged"),
         created_by: row.get("created_by_id"),
+        generation: row.get("scan_generation"),
     }
 }
 /// Audit facts name the asset, never its bytes, key or free-form metadata.
@@ -453,7 +456,8 @@ impl Media {
             })
             .await?;
         if state == ScanState::Pending {
-            self.enqueue_scan(tx, tenant, row.asset.id).await?;
+            self.enqueue_scan(tx, tenant, row.asset.id, row.generation)
+                .await?;
         }
         Ok(row.asset)
     }

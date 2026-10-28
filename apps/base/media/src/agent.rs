@@ -189,7 +189,7 @@ fn file_schema() -> Value {
     }})
 }
 fn list_output() -> Value {
-    json!({"type":"object","description":"scanner_installed, and each file: id, filename, type, size, scan_state, scanner and version, signature (infected), reason (failed or unscanned: too_large, scanner_unavailable, file_unavailable), scanned_at, purged_at, created_at, uploaded_by_id and, for a private attachment, its subject."})
+    json!({"type":"object","description":"scanner_installed, and each file: id, filename, type, size, scan_state, scanner and version, signature (infected), reason (failed or unscanned: too_large, scanner_unavailable, file_unavailable, scan_error), scanned_at, purged_at, created_at, uploaded_by_id and, for a private attachment, its subject."})
 }
 fn write_output() -> Value {
     json!({"type":"object","description":"The file's scan facts after the write: scan_state, scanner, scanner_version, signature, reason and purged."})
