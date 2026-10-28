@@ -56,7 +56,7 @@ reader knows the record changed, but it carries no values and renders the
 shared `Restricted` marker. `bilibi_authz::fields::withheld_by_record_type`
 maps the reader's field restrictions to audit kinds through the Grid field
 catalog's `record_types` (`CatalogTable.record_types`), and `mutations::withhold`
-takes the values out of every entry before it is drawn. A record kind reaches
+takes the values out of every entry each time it is drawn, so a field restricted after the page loaded is withheld from the next diff that opens; a screen that keeps a read must keep the stored entries and call it per draw. A record kind reaches
 this only when its owner's Grid table names it in `record_types`: Companies
 (`core/company/src/contributions.rs`) and the Grid reference items do; a table
 without it is not withheld in the audit views, so declare `record_types` with
