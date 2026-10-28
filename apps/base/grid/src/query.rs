@@ -272,7 +272,9 @@ async fn read<S: AsRef<str>>(
         .as_f64()
         .ok_or(Error::Internal)?;
     if !cost.is_finite() || cost > bounds.max_cost {
-        return Err(QueryError::Limit("estimated query cost exceeds the bound"));
+        return Err(QueryError::Limit(
+            "the estimated cost of the read exceeds its bound",
+        ));
     }
     let selected = tx.query(&sql, params).await?;
     if selected.len() > MAX_ROWS {
