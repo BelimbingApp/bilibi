@@ -366,11 +366,28 @@
         this.applyFilter()
       }
 
+      // The box shows the name with its code muted and italic through a
+      // display layer over the plain input, which stays the accessible value.
+      // Write only on change: a hook child-list write reports `updated`.
+      this.renderDisplay = option => {
+        const display = this.el.querySelector("[data-combobox-display]")
+        if (!display) return
+        const [name, detail] = display.children
+        const nextName = option?.dataset.name || ""
+        const nextDetail = option?.dataset.detail || ""
+        if (name.textContent !== nextName) name.textContent = nextName
+        if (detail.textContent !== nextDetail) detail.textContent = nextDetail
+        if (this.el.hasAttribute("data-detailed") !== (nextDetail !== "")) {
+          this.el.toggleAttribute("data-detailed", nextDetail !== "")
+        }
+      }
+
       this.restore = () => {
         this.selectedValue = this.valueInput?.value || ""
         const selected = this.options().find(option => option.dataset.value === this.selectedValue)
         this.selectedLabel = selected?.dataset.label || ""
         this.input.value = this.selectedLabel
+        this.renderDisplay(selected)
       }
 
       this.close = () => {
@@ -385,6 +402,7 @@
         this.selectedLabel = option.dataset.label
         this.input.value = this.selectedLabel
         this.valueInput.value = this.selectedValue
+        this.renderDisplay(option)
         this.setOpen(false)
         this.valueInput.dispatchEvent(new Event("input", {bubbles: true}))
         this.valueInput.dispatchEvent(new Event("change", {bubbles: true}))
@@ -470,6 +488,7 @@
         this.selectedLabel = ""
         this.input.value = ""
         this.valueInput.value = ""
+        this.renderDisplay(null)
         this.valueInput.dispatchEvent(new Event("input", {bubbles: true}))
         this.valueInput.dispatchEvent(new Event("change", {bubbles: true}))
         this.input.focus()

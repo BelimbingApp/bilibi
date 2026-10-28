@@ -885,6 +885,49 @@ body:has(dialog:modal) #flash-group > #connection-server-error {
   }
 }
 
+/* A combobox choice with a code (`Choice::detail`) draws name and code over the
+ * plain input, whose text goes transparent while the field is not being edited.
+ * The input keeps the accessible value; the layer is `aria-hidden`. */
+.ui-combobox-display {
+  display: none;
+  pointer-events: none;
+  position: absolute;
+  inset: 0 2.25rem 0 0.75rem;
+  align-items: center;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 1rem;
+  line-height: 1.25rem;
+  color: var(--color-ink);
+}
+
+.ui-combobox-display.ui-combobox-display-inset {
+  align-items: flex-start;
+  padding-top: 0.875rem;
+}
+
+.ui-combobox-display > span + span {
+  margin-left: 0.35em;
+}
+
+[data-hook="Combobox"][data-detailed] [data-combobox-display] {
+  display: block;
+}
+
+[data-hook="Combobox"][data-detailed] [data-combobox-display]:not(.ui-combobox-display-inset) {
+  display: flex;
+}
+
+[data-hook="Combobox"][data-detailed] input[role="combobox"]:not(:focus) {
+  color: transparent;
+}
+
+[data-hook="Combobox"][data-detailed] input[role="combobox"]:focus ~ [data-combobox-display],
+[data-hook="Combobox"][data-detailed] [data-combobox-display][hidden] {
+  display: none;
+}
+
 /* Menu typography & font colors matching Belimbing */
 .app-nav-menu {
   font-family: var(--font-sans);

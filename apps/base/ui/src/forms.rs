@@ -282,6 +282,10 @@ impl InputKind {
 pub struct Choice {
     pub label: String,
     pub value: String,
+    /// A code that follows the name (an account's number), drawn muted and
+    /// italic by a combobox in the box and in the list, and searched like
+    /// the name. A native select ignores it.
+    pub detail: String,
 }
 
 impl Choice {
@@ -289,6 +293,22 @@ impl Choice {
         Self {
             label: label.into(),
             value: value.into(),
+            detail: String::new(),
+        }
+    }
+
+    pub fn detail(mut self, detail: impl Into<String>) -> Self {
+        self.detail = detail.into();
+        self
+    }
+
+    /// The name and the code as one plain string: what a screen reader
+    /// reads, and what the combobox filters on.
+    pub fn text(&self) -> String {
+        if self.detail.is_empty() {
+            self.label.clone()
+        } else {
+            format!("{} {}", self.label, self.detail)
         }
     }
 }
@@ -1280,12 +1300,24 @@ impl Combobox {
         }
     }
 
-    pub fn selected_label(&self) -> &str {
+    pub fn selected(&self) -> Option<&Choice> {
         self.options
             .iter()
             .find(|option| option.value == self.value)
-            .map(|option| option.label.as_str())
-            .unwrap_or("")
+    }
+
+    pub fn selected_label(&self) -> String {
+        self.selected().map(Choice::text).unwrap_or_default()
+    }
+
+    pub fn selected_name(&self) -> &str {
+        self.selected().map_or("", |option| option.label.as_str())
+    }
+
+    /// The code of the selected option, which the box draws muted and italic
+    /// over its plain text while the field is not being edited.
+    pub fn selected_detail(&self) -> &str {
+        self.selected().map_or("", |option| option.detail.as_str())
     }
 
     pub fn control_class(&self) -> String {

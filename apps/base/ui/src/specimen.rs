@@ -6,8 +6,8 @@
 use crate::inline_specimen::InlineSamples;
 use crate::section::sections;
 use crate::{
-    choices, error_sentence, ActionLink, AddMore, BadgeKind, Button, ButtonVariant, Card, Chrome,
-    ClientEntry, CodeInput, Combobox, ErrorSummary, Field, FileInput, Html, IconButton,
+    choices, error_sentence, ActionLink, AddMore, BadgeKind, Button, ButtonVariant, Card, Choice,
+    Chrome, ClientEntry, CodeInput, Combobox, ErrorSummary, Field, FileInput, Html, IconButton,
     IconContext, IconKind, InputKind, LocationAction, MultiSelect, PageVariant, RadioGroup,
     Restricted, RestrictedField, SecretInput, StatItem, UploadSpec, Uploads,
 };
@@ -114,6 +114,8 @@ pub struct FormControls {
     pub combobox_selected: Combobox,
     pub combobox_empty: Combobox,
     pub combobox_inline: Combobox,
+    pub combobox_account: Combobox,
+    pub combobox_account_inline: Combobox,
     pub restricted: Restricted,
     pub restricted_reason: Restricted,
     pub restricted_field: RestrictedField,
@@ -138,6 +140,27 @@ const TEAMS: [(&str, &str); 3] = [
     ("Billing", "billing"),
     ("Support", "support"),
 ];
+/// Records with a code after the name, as a ledger's accounts are.
+fn accounts() -> Vec<Choice> {
+    [
+        ("Cash at bank", "1000"),
+        ("Trade receivables", "1100"),
+        ("Inventory", "1200"),
+        ("Prepaid expenses", "1300"),
+        ("Property and equipment", "1500"),
+        ("Trade payables", "2000"),
+        ("Accrued expenses", "2100"),
+        ("Retained earnings", "3100"),
+        ("Product sales", "4000"),
+        ("Cost of goods sold", "5000"),
+        ("Rent", "6100"),
+        ("Salaries and wages", "6200"),
+    ]
+    .into_iter()
+    .map(|(name, code)| Choice::new(name, code).detail(code))
+    .collect()
+}
+
 const COUNTRIES: [(&str, &str); 3] = [
     ("Malaysia (MY)", "MY"),
     ("Singapore (SG)", "SG"),
@@ -345,6 +368,16 @@ impl FormControls {
                 .value("MY")
                 .cancel_event("preview-combobox-cancel")
                 .options(choices(&COUNTRIES)),
+            combobox_account: Combobox::new("specimen-combobox-account", "example_account")
+                .label("Account")
+                .placeholder("Search accounts…")
+                .value("2000")
+                .options(accounts()),
+            combobox_account_inline: Combobox::new("specimen-combobox-account-inline", "")
+                .aria_label("Inline account editor")
+                .value("1100")
+                .cancel_event("preview-combobox-cancel")
+                .options(accounts()),
             restricted: Restricted::new("specimen-restricted"),
             restricted_reason: Restricted::new("specimen-restricted-reason")
                 .reason("Bonuses are shown to payroll only."),
