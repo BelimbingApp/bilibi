@@ -4,6 +4,8 @@ pub mod accounts;
 mod appearance;
 pub mod bootstrap;
 pub mod company_accounts;
+mod company_context;
+pub use company_context::{ChoiceRefusal, Switched};
 pub mod contributions;
 mod credential_attempts;
 pub mod database_queries;

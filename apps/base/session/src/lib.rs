@@ -427,6 +427,10 @@ impl Sessions {
     /// session already moved, ended or expired) is `Conflict` and changes
     /// nothing. The CSRF secret is rotated, so every form, method link and
     /// live socket issued to the old identity is refused from now on.
+    /// The company choice does not travel: entering an impersonation starts
+    /// from the viewed account's own default and parks the operator's choice
+    /// beside the row, and leaving restores it, so what the operator sees is
+    /// what the account sees and the operator's choice survives the view.
     /// Returns the new CSRF secret. Nothing is announced: the host's live
     /// sockets bind the secret they were opened with and reload once it moves.
     pub async fn switch(
@@ -452,11 +456,36 @@ impl Sessions {
         let csrf = uuid::Uuid::new_v4().simple().to_string();
         let moved = sql
             .query_opt(
-                "UPDATE sessions SET user_id=$5,impersonator_id=$6,csrf=$7,last_activity=now(),stepped_up_at=NULL,step_up_used_at=NULL,step_up_spent_at=NULL WHERE id=$1 AND tenant_id=$2 AND user_id=$3 AND impersonator_id IS NOT DISTINCT FROM $4 AND expires_at>now() AND last_activity>now()-make_interval(secs => $8::double precision) RETURNING id",
+                "UPDATE sessions SET held_company_id=CASE WHEN $6::bigint IS NULL THEN NULL WHEN $4::bigint IS NULL THEN company_id ELSE held_company_id END,company_id=CASE WHEN $6::bigint IS NULL THEN held_company_id END,user_id=$5,impersonator_id=$6,csrf=$7,last_activity=now(),stepped_up_at=NULL,step_up_used_at=NULL,step_up_spent_at=NULL WHERE id=$1 AND tenant_id=$2 AND user_id=$3 AND impersonator_id IS NOT DISTINCT FROM $4 AND expires_at>now() AND last_activity>now()-make_interval(secs => $8::double precision) RETURNING id",
                 &[&token, &tenant, &from.user, &from.impersonator, &to.user, &to.impersonator, &csrf, &(policy.idle_seconds as f64)],
             )
             .await?;
         moved.map(|_| csrf).ok_or(Error::Conflict)
+    }
+    /// Records the company the signed-in session works in from now on
+    /// (`Scope::current_company`), or `None` for the account's own company. The
+    /// caller (Core User) proved the reach and audits the switch on the same
+    /// transaction; the session is named by the proof Tenancy sealed, never a
+    /// token. A session that no longer exists or already moved is `Conflict`.
+    pub async fn choose_company(
+        &self,
+        sql: &impl GenericClient,
+        scope: &Scope,
+        company: Option<i64>,
+    ) -> Result<()> {
+        if company.is_some_and(|id| id <= 0) {
+            return Err(Error::Invalid);
+        }
+        let updated = sql
+            .execute(
+                "UPDATE sessions SET company_id=$4 WHERE tenant_id=$1 AND user_id=$2 AND csrf=$3 AND expires_at>now()",
+                &[&scope.tenant(), &scope.user(), &scope.csrf, &company],
+            )
+            .await?;
+        if updated == 0 {
+            return Err(Error::Conflict);
+        }
+        Ok(())
     }
     /// Records that the signed-in session just passed a step-up check,
     /// inside the caller's transaction (the verification that proved it).
@@ -569,12 +598,32 @@ impl Sessions {
             return Err(Error::Unauthorized);
         }
         let policy = self.policy(client).await?;
-        let row = client.query_opt("SELECT tenant_id,user_id,csrf,impersonator_id FROM sessions WHERE id=$1 AND expires_at>now() AND last_activity>now()-make_interval(secs => $2::double precision)", &[&token, &(policy.idle_seconds as f64)]).await?.ok_or(Error::Unauthorized)?;
+        let row = client.query_opt("SELECT tenant_id,user_id,csrf,impersonator_id,company_id FROM sessions WHERE id=$1 AND expires_at>now() AND last_activity>now()-make_interval(secs => $2::double precision)", &[&token, &(policy.idle_seconds as f64)]).await?.ok_or(Error::Unauthorized)?;
+        let chosen: Option<i64> = row.get(4);
         let scope = self
             .authentication
-            .authenticate_session(client, row.get(0), row.get(1), row.get(3), row.get(2))
+            .authenticate_session(
+                client,
+                row.get(0),
+                row.get(1),
+                row.get(3),
+                chosen,
+                row.get(2),
+            )
             .await?;
         if activity {
+            // A chosen company the account no longer reaches (grant revoked,
+            // company archived) is forgotten, so it cannot come back unasked
+            // when the reach is granted again; the scope already fell back to
+            // the affiliation for this request.
+            if chosen.is_some() && scope.chosen_company().map(|id| id.get()) != chosen {
+                client
+                    .execute(
+                        "UPDATE sessions SET company_id=NULL WHERE id=$1 AND company_id=$2",
+                        &[&token, &chosen],
+                    )
+                    .await?;
+            }
             // Lock the valid row, even when renewal is throttled. The UPDATE
             // executes only when due; a revoked/expired row cannot be revived.
             let touched = client.query_opt("WITH valid AS MATERIALIZED (SELECT id,last_activity FROM sessions WHERE id=$1 AND tenant_id=$2 AND user_id=$3 AND expires_at>now() AND last_activity>now()-make_interval(secs => $4::double precision) FOR UPDATE), touched AS (UPDATE sessions s SET last_activity=now() FROM valid v WHERE s.id=v.id AND v.last_activity<now()-make_interval(secs => $5::double precision) RETURNING s.id) SELECT id FROM valid", &[&token,&scope.tenant(),&scope.user(),&(policy.idle_seconds as f64),&(policy.touch_seconds as f64)]).await?;
@@ -603,6 +652,7 @@ inventory::submit! {
             ("base-session-001-client", include_str!("../migrations/001-client.sql")),
             ("base-session-002-impersonation", include_str!("../migrations/002-impersonation.sql")),
             ("base-session-003-step-up", include_str!("../migrations/003-step-up.sql")),
+            ("base-session-004-company", include_str!("../migrations/004-company.sql")),
         ],
         services: &[
             bilibi_module_registry::Service { id: "base/session.sessions", factory: |services| Ok(Arc::new(Sessions::new(services.get("base/tenancy.authentication")?, services.get("base/settings.store")?).with_factors(services.get(bilibi_step_up::SERVICE)?))) },

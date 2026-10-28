@@ -10,7 +10,10 @@ pub const CREATE: &str = "admin.affiliation.create";
 pub const UPDATE: &str = "admin.affiliation.update";
 pub const UNLINK: &str = "admin.affiliation.unlink";
 pub const PROVE: &str = "admin.affiliation.prove";
-pub const CAPS: &[&str] = &[LIST, VIEW, CREATE, UPDATE, UNLINK, PROVE];
+/// Import affiliations from CSV (`base/bulk_data`); each row still needs the
+/// create capability, and reading the contacts it names.
+pub const IMPORT: &str = "admin.affiliation.import";
+pub const CAPS: &[&str] = &[LIST, VIEW, CREATE, UPDATE, UNLINK, PROVE, IMPORT];
 const fn role(
     code: &'static str,
     name: &'static str,
@@ -26,9 +29,27 @@ const fn role(
 }
 inventory::submit! { Contribution::new(VOCABULARY, "core/affiliation", Provenance { module: "core/affiliation", source: file!(), line: line!() }, &VocabularyContribution {
     domains: &[], verbs: &["unlink", "prove"],
-    capabilities: &[C::tenant(LIST), C::tenant(VIEW), C::tenant(CREATE), C::tenant(UPDATE), C::tenant(UNLINK), C::tenant(PROVE)],
+    capabilities: &[C::tenant(LIST), C::tenant(VIEW), C::tenant(CREATE), C::tenant(UPDATE), C::tenant(UNLINK), C::tenant(PROVE), C::tenant(IMPORT)],
     roles: &[role("tenant_owner", "Tenant Owner", CAPS)],
     system_principals: &[],
+}) }
+
+// Affiliations import from CSV through `core.affiliation.create` (issue 133).
+// The contact is a row of an earlier contacts import, by its source key, or
+// is found by email; the organisation is a column of company ids or one
+// fixed company (Company's duplicates read scores names, so it cannot be a
+// lookup that must find exactly one).
+inventory::submit! { Contribution::new(bilibi_bulk_data::RECORD_TYPES, "core/affiliation.affiliations", Provenance { module: "core/affiliation", source: file!(), line: line!() }, &bilibi_bulk_data::RecordType {
+    label: "Affiliations", table: "person_affiliations", path: None,
+    import: bilibi_bulk_data::Import {
+        capability: IMPORT, create: "core.affiliation.create", id: "id",
+        duplicates: None,
+        references: &[bilibi_bulk_data::Reference {
+            field: "person_id",
+            parent: Some("core/person.contacts"),
+            lookup: Some(bilibi_bulk_data::Lookup { read: "core.person.duplicates", by: "email", noun: "contact" }),
+        }],
+    },
 }) }
 
 // Work contacts share the same masking path as API results and audit evidence.

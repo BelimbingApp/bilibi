@@ -166,6 +166,17 @@ impl ActorVerifier for AccountVerifier {
             }
         })
     }
+    /// The chosen company is proved by its owner, Core Company, as the
+    /// session's other party links are: live, unarchived and within the
+    /// account's reach on this connection.
+    fn reaches_company<'a>(
+        &'a self,
+        client: &'a dyn ProofClient,
+        scope: &'a Scope,
+        company: OrganisationId,
+    ) -> ProofFuture<'a, bool> {
+        Box::pin(bilibi_company::reachable(client, scope, company))
+    }
     fn confirm_password<'a>(
         &'a self,
         client: &'a dyn ProofClient,

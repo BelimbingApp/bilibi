@@ -188,7 +188,7 @@ impl AffiliationService {
 inventory::submit! {
     bilibi_module_registry::Module {
         id: "core/affiliation", layer: bilibi_module_registry::Layer::Core,
-        dependencies: &["base/audit", "base/database", "base/tenancy", "base/authz", "base/grid", "base/agent_api", "base/ui", "base/datetime", "base/locale", "base/principal_directory", "base/personal_data", "core/party", "core/person", "core/company"],
+        dependencies: &["base/audit", "base/database", "base/tenancy", "base/authz", "base/grid", "base/agent_api", "base/ui", "base/datetime", "base/locale", "base/principal_directory", "base/bulk_data", "base/personal_data", "core/party", "core/person", "core/company"],
         migrations: &[("001-core-affiliation", include_str!("../migrations/001-affiliation.sql")),
             ("core-affiliation-002-personal-data", include_str!("../migrations/002-personal-data.sql"))],
         services: &[bilibi_module_registry::Service { id: SERVICE, factory: |services| {

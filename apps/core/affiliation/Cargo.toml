@@ -11,6 +11,7 @@ askama.workspace = true
 bilibi-audit.workspace = true
 bilibi-agent-api = { path = "../../base/agent_api" }
 bilibi-authz = { path = "../../base/authz" }
+bilibi-bulk-data.workspace = true
 bilibi-company.workspace = true
 bilibi-database.workspace = true
 bilibi-datetime = { path = "../../base/datetime" }

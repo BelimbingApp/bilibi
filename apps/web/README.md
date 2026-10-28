@@ -54,11 +54,12 @@ Step-up (`apps/base/step_up/README.md`) is the same on every surface:
 
 A live page or panel event runs under the page-write permit its service declared (`PageWrites`, `base/agent_api.pages`): the host wraps the owner's `update` in `bilibi_database::page_write::during`, so a business transaction the declaration does not cover is refused before it writes. Refresh and params carry no permit. Contract: `apps/base/agent_api/README.md` (Page writes declaration and check).
 
+`POST /session/company` is the top bar's company switcher (`bilibi_ui::company_bar`, `src/shell.rs` `choose_company`): an ordinary form with the session's CSRF secret, the chosen company (empty for the account's own) and the address to return to, which must be a path on this site. Core User proves the company is one the account reaches and records the switch; the browser comes back to that address under the new company, and a company the person does not reach answers with a flash there. The shell shows the current company (`Scope::current_company`) in the top bar and names both it and the affiliation in the account menu; the choices come from `PartyProofs::reachable_organisations`. Contract: [Core Company README](../core/company/README.md#the-current-company).
+
 Other methods also require the configured Origin and, for an authenticated
 scope, `X-CSRF-Token`. The secret rotates when the session switches identity
 (impersonation), so a request from a page rendered before the switch is refused;
-the live socket likewise binds the identity and secret it was opened under
-(`live::Identity`) and reloads its page, without acting, once they differ. Owners must reauthorize mutations inside their transaction.
+the live socket likewise binds the identity, the secret and the current company it was opened under (`live::Identity`) and reloads its page, without acting, once they differ. The company is the one the page was rendered under: stamped as `data-company-id` on the shell root and sent by `live.js` as the `company` query of `/live`, so a reconnect after the session switched company reloads the page rather than re-rendering under a stale top bar. Owners must reauthorize mutations inside their transaction.
 The adapter receives the operation, proven optional scope, path/query values,
 bounded request body and presentation flag. HTML escaping belongs to the owner.
 
