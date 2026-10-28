@@ -156,13 +156,15 @@ impl Handler for Addresses {
                         })
                     })
                     .await?;
+                    // Only records this transaction changed: the database
+                    // clears evidence of nothing else.
+                    erased.records.push(ErasedRecord {
+                        kind: KIND.into(),
+                        id,
+                        person: None,
+                    });
                 }
                 count += 1;
-                erased.records.push(ErasedRecord {
-                    kind: KIND.into(),
-                    id,
-                    person: None,
-                });
             }
             erased.count(KIND, Action::Anonymised, count);
             Ok(erased)
@@ -172,7 +174,7 @@ impl Handler for Addresses {
 
 inventory::submit! { Contribution::new(PERSONAL_DATA, "core/address.addresses",
 Provenance { module: "core/address", source: file!(), line: line!() },
-&PersonalData { label: "Addresses", kinds: &[KIND], handler: &ADDRESSES }) }
+&PersonalData { label: "Addresses", kinds: &[KIND], person_subjects: &[], handler: &ADDRESSES }) }
 inventory::submit! { Contribution::new(RECORD_KINDS, "core/address.address",
 Provenance { module: "core/address", source: file!(), line: line!() },
 &RecordKind { kind: KIND, fields: &FIELDS, subject_identifier: false, person: false }) }

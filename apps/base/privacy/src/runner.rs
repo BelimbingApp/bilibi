@@ -832,14 +832,16 @@ async fn complete(
                     &[&tenant, &person.get()],
                 )
                 .await?;
-                // A hold kept records: the cleanup they owe is persisted and
-                // retried by the daily retention run once the hold is gone.
+                // A hold or a retention date kept records, or a store deferred:
+                // the cleanup they owe is persisted and retried by the daily
+                // retention run until nothing is kept for those reasons.
                 if let Some(row) = sql
                     .query_opt(
                         "INSERT INTO base_privacy_resumptions(tenant_id,request_id,person_id) \
-                         SELECT $1,$2,$3 WHERE EXISTS (SELECT 1 FROM base_privacy_request_stores s, \
-                           jsonb_array_elements(coalesce(s.result->'kept','[]'::jsonb)) k \
-                           WHERE s.tenant_id=$1 AND s.request_id=$2 AND k->>'reason'='legal_hold') \
+                         SELECT $1,$2,$3 WHERE EXISTS (SELECT 1 FROM base_privacy_request_stores s \
+                           WHERE s.tenant_id=$1 AND s.request_id=$2 AND (s.state='deferred' OR EXISTS ( \
+                             SELECT 1 FROM jsonb_array_elements(coalesce(s.result->'kept','[]'::jsonb)) k \
+                              WHERE k->>'reason' IN ('legal_hold','retained_until')))) \
                          ON CONFLICT (request_id) DO NOTHING RETURNING id",
                         &[&tenant, &id, &person.get()],
                     )
@@ -859,14 +861,25 @@ async fn complete(
     .await
 }
 
+/// Whether an erasure's answer still owes cleanup: a record kept for a legal
+/// hold or a retention date, or a store that deferred.
+fn owes(answer: &Answer) -> bool {
+    answer.deferral.is_some()
+        || answer
+            .kept
+            .iter()
+            .any(|k| matches!(k.reason, KeptReason::LegalHold | KeptReason::RetainedUntil))
+}
+
 /// Open owed cleanups per retention run, oldest first.
 const RESUME_BATCH: i64 = 200;
 
 impl Privacy {
-    /// Cleanup that completed erasures still owe because a legal hold kept
-    /// records (B4): each store erases the person again as the scheduler,
-    /// under the original request's grant and the hold guard. Records still
-    /// held stay owed; once no hold keeps anything the cleanup is done. Runs
+    /// Cleanup that completed erasures still owe because a legal hold or a
+    /// retention date kept records, or a store deferred: each store erases the
+    /// person again as the scheduler, under the original request's grant and
+    /// the hold guard. Records still kept for those reasons stay owed; once
+    /// none are the cleanup is done. Runs
     /// whatever the class settings say. One failing cleanup is recorded on
     /// its row and the others still run; the run then reports failure.
     pub(crate) async fn resume_erasures(
@@ -890,10 +903,7 @@ impl Privacy {
             let (result, owed) = match &outcome {
                 Ok(answer) => (
                     serde_json::to_value(answer).map_err(|_| Error::Internal)?,
-                    answer
-                        .kept
-                        .iter()
-                        .any(|k| k.reason == KeptReason::LegalHold),
+                    owes(answer),
                 ),
                 Err(error) => {
                     failed = true;

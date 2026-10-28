@@ -363,7 +363,7 @@ impl Artifacts {
         owner: &O,
         subject: &str,
     ) -> Result<Vec<(OrganisationId, Metadata)>> {
-        grant.check(scope)?;
+        grant.check_file_subject(scope, owner.owner_id(), subject)?;
         self.documents_of(client, scope, owner, subject, false)
             .await
     }
@@ -377,7 +377,7 @@ impl Artifacts {
         owner: &O,
         subject: &str,
     ) -> Result<Vec<(OrganisationId, Metadata)>> {
-        grant.check(scope)?;
+        grant.check_file_subject(scope, owner.owner_id(), subject)?;
         self.documents_of(client, scope, owner, subject, true).await
     }
     async fn documents_of<O: Owner>(
@@ -594,10 +594,16 @@ impl<O: Owner> Owned<'_, O> {
         // the account must still be live, but the owner is not asked.
         let granted = match (&self.grant, operation, reference) {
             (Some(Granted::Disclose(grant, subject)), Operation::Read, Some(reference)) => {
-                grant.tenant() == live.tenant() && reference.subject == *subject
+                grant
+                    .check_file_subject(&live, self.owner.owner_id(), subject)
+                    .is_ok()
+                    && reference.subject == *subject
             }
             (Some(Granted::Erase(grant, subject)), Operation::Delete, Some(reference)) => {
-                grant.tenant() == live.tenant() && reference.subject == *subject
+                grant
+                    .check_file_subject(&live, self.owner.owner_id(), subject)
+                    .is_ok()
+                    && reference.subject == *subject
             }
             _ => false,
         };

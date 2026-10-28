@@ -299,6 +299,7 @@ impl Handler for People {
                 None => {
                     // Current values decide, not an earlier erasure's mark: the
                     // stub may have been edited since.
+                    erased.count(PERSON_KIND, Action::Anonymised, 1);
                     if old.name != ERASED || old.email.is_some() || old.phone.is_some() {
                         let tenant = scope.tenant();
                         let before = old.json();
@@ -321,13 +322,14 @@ impl Handler for People {
                             })
                         })
                         .await?;
+                        // Only records this transaction changed: the database
+                        // clears evidence of nothing else.
+                        erased.records.push(ErasedRecord {
+                            kind: PERSON_KIND.into(),
+                            id,
+                            person: None,
+                        });
                     }
-                    erased.count(PERSON_KIND, Action::Anonymised, 1);
-                    erased.records.push(ErasedRecord {
-                        kind: PERSON_KIND.into(),
-                        id,
-                        person: None,
-                    });
                 }
             }
             let files = services()?
@@ -448,7 +450,7 @@ impl Handler for People {
 
 inventory::submit! { Contribution::new(PERSONAL_DATA, "core/person.people",
 Provenance { module: "core/person", source: file!(), line: line!() },
-&PersonalData { label: "People (contacts)", kinds: &[PERSON_KIND, ATTACHMENT_KIND, ASSET_KIND], handler: &PEOPLE }) }
+&PersonalData { label: "People (contacts)", kinds: &[PERSON_KIND, ATTACHMENT_KIND, ASSET_KIND], person_subjects: &[ATTACHMENT_SUBJECT], handler: &PEOPLE }) }
 inventory::submit! { Contribution::new(RECORD_KINDS, "core/person.person",
 Provenance { module: "core/person", source: file!(), line: line!() },
 &RecordKind { kind: PERSON_KIND, fields: &FIELDS, subject_identifier: true, person: true }) }

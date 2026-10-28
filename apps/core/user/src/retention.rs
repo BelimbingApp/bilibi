@@ -15,14 +15,6 @@ use std::collections::BTreeMap;
 
 const USER_KIND: &str = "user";
 const NOTIFICATION_KIND: &str = "notification";
-/// Sign-in links an anonymised account no longer needs.
-const LINKS: [&str; 5] = [
-    "password_reset_tokens",
-    "user_external_sessions",
-    "user_external_identities",
-    "user_credential_attempts",
-    "user_sign_ins",
-];
 
 /// Which of `rows` (record ID, its person) a hold keeps.
 async fn held(
@@ -103,18 +95,14 @@ impl Sweeper for ClosedAccounts {
                                 &[&tenant, &user, &ERASED, &placeholder],
                             )
                             .await?;
-                            let mut links = 0;
-                            for table in LINKS {
-                                links += sql
-                                    .execute(&format!("DELETE FROM {table} WHERE tenant_id=$1 AND user_id=$2"), &[&tenant, &user])
-                                    .await?;
-                            }
+                            let links = crate::privacy::remove_links(sql, tenant, user).await?;
                             changes.push(Change {
                                 kind: USER_KIND.into(),
                                 id: user,
                                 old: json!({"name": name, "email": email}),
-                                new: json!({"name": ERASED, "email": ERASED, "links_removed": links}),
+                                new: json!({"name": ERASED, "email": ERASED, "links_removed": links.len()}),
                             });
+                            changes.extend(links);
                             ids.push(user);
                         }
                         Ok((ids, changes))

@@ -37,6 +37,10 @@ pub struct PersonalData {
     /// The audit record kinds (`Change::kind`) the store erases. Each must be
     /// declared by a [`RecordKind`]; holds name records by these kinds.
     pub kinds: &'static [&'static str],
+    /// File subject kinds (a Media attachment subject, an Artifacts owner)
+    /// whose subject ID is the person ID. A grant reaches files only of these
+    /// kinds, and only the grant's own person's.
+    pub person_subjects: &'static [&'static str],
     pub handler: &'static dyn Handler,
 }
 
@@ -500,6 +504,12 @@ impl Stores {
     /// A declared record kind.
     pub fn kind(&self, kind: &str) -> Option<&'static RecordKind> {
         self.kinds.get(kind).copied()
+    }
+    /// Whether some store declared `kind` a file subject keyed by person ID.
+    pub fn person_subject(&self, kind: &str) -> bool {
+        self.stores
+            .values()
+            .any(|(_, data)| data.person_subjects.contains(&kind))
     }
     /// The kinds whose records are people.
     pub fn person_kinds(&self) -> Vec<&'static str> {

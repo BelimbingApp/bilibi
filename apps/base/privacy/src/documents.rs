@@ -540,9 +540,12 @@ impl Privacy {
         reason: Option<&str>,
     ) -> Result<(String, Vec<u8>, String)> {
         let request = self.request(&*client, scope, id).await?;
+        // An export's reveal record commits only once its bytes are read.
+        let mut recorder = self.db.get().await?;
+        let record = recorder.transaction().await?;
         let (artifact, name) = match (&request.export_artifact, &request.certificate_artifact) {
             (Some(artifact), _) => {
-                self.reveal_export(&*client, scope, id, reason).await?;
+                self.reveal_export(&*record, scope, id, reason).await?;
                 (artifact.clone(), format!("privacy-request-{id}-export.zip"))
             }
             (None, Some(artifact)) => (
@@ -557,6 +560,7 @@ impl Privacy {
             .read(client, &artifact)
             .await
             .map_err(artifact_error)?;
+        record.commit().await?;
         Ok((document.metadata.content_type, document.bytes, name))
     }
 }

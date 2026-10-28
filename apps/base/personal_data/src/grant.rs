@@ -45,6 +45,16 @@ impl Erasure {
             Err(Error::Forbidden)
         }
     }
+    /// `Forbidden` unless `scope` is in the grant's tenant and the file
+    /// subject `kind`/`id` is the request's own person: a kind some store
+    /// declared keyed by person ID. A sweep grant reaches no files.
+    pub fn check_file_subject(&self, scope: &Scope, kind: &str, id: &str) -> Result<()> {
+        self.check(scope)?;
+        match self.person {
+            Some(person) => file_subject(kind, id, person),
+            None => Err(Error::Forbidden),
+        }
+    }
     /// `Forbidden` unless `scope` is in the grant's tenant and `subject` is
     /// the person the request was approved for. A sweep grant names no person
     /// and answers for no subject.
@@ -83,6 +93,12 @@ impl Disclosure {
         } else {
             Err(Error::Forbidden)
         }
+    }
+    /// `Forbidden` unless `scope` is in the grant's tenant and the file
+    /// subject `kind`/`id` is the request's own person.
+    pub fn check_file_subject(&self, scope: &Scope, kind: &str, id: &str) -> Result<()> {
+        self.check(scope)?;
+        file_subject(kind, id, self.person)
     }
     /// `Forbidden` unless `scope` is in the grant's tenant and `subject` is
     /// the person the request was approved for.
@@ -154,5 +170,17 @@ impl Issuer {
             request,
             person,
         }
+    }
+}
+
+/// Whether `kind`/`id` names `person`'s files: a declared person-keyed kind.
+fn file_subject(kind: &str, id: &str, person: PersonId) -> Result<()> {
+    let declared = crate::Stores::installed()
+        .map_err(|_| Error::Internal)?
+        .person_subject(kind);
+    if declared && id == person.get().to_string() {
+        Ok(())
+    } else {
+        Err(Error::Forbidden)
     }
 }

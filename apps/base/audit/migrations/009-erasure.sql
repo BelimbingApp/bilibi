@@ -76,8 +76,10 @@ CREATE INDEX base_audit_erasures_request ON base_audit_erasures(tenant_id, reque
 CREATE INDEX base_audit_erasures_sweep ON base_audit_erasures(tenant_id, sweep_id, id) WHERE sweep_id IS NOT NULL;
 
 -- Who may name an erasure's cause: one checker function per cause, registered
--- once by the module that owns that cause and never replaced. A cause with no
--- checker, or that its checker does not confirm in the tenant, is refused.
+-- once, in a migration, by the module that owns that cause and never replaced.
+-- A checker takes (tenant, cause ID, person) and confirms the cause is open in
+-- the tenant for that person. A cause with no checker, or that its checker
+-- does not confirm, is refused.
 CREATE TABLE base_audit_erasure_causes (
  cause text PRIMARY KEY CHECK (cause IN ('request', 'sweep')),
  checker regprocedure NOT NULL
@@ -91,6 +93,8 @@ CREATE TRIGGER base_audit_erasure_causes_guard BEFORE UPDATE OR DELETE ON base_a
   FOR EACH ROW EXECUTE FUNCTION base_audit_causes_guard();
 CREATE TRIGGER base_audit_erasure_causes_truncate_guard BEFORE TRUNCATE ON base_audit_erasure_causes
   FOR EACH STATEMENT EXECUTE FUNCTION base_audit_causes_guard();
+CREATE CONSTRAINT TRIGGER base_audit_erasure_causes_migration AFTER INSERT ON base_audit_erasure_causes
+  DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION base_personal_data_in_migration();
 
 -- Evidence kept for its legal minimum, waiting for the sweep. One open row per
 -- record, naming the person it was erased for, so the sweep can honour a hold
@@ -206,8 +210,11 @@ $$;
 
 -- Erases one record's evidence for one cause. Refused unless the record
 -- kind's row in base_personal_data_kinds declares every field passed (and the
--- subject identifier, when asked), and the cause's registered checker confirms
--- it in the tenant. Legal minimums are per company: a row of a company in
+-- subject identifier, when asked), the cause's registered checker confirms it
+-- in the tenant for p_person (a request names its own person), and the target
+-- is bound to the cause: the calling transaction itself wrote the record's
+-- change (the store's erasure, captured in the same transaction), or the
+-- retention sweep is finishing that record's own due deferral. Legal minimums are per company: a row of a company in
 -- p_keep_companies stays while newer than that company's p_keep_days; a row of
 -- no company follows p_keep_default (the strictest); a row of any other
 -- company has none. Kept rows get one open deferral naming p_person, which the
@@ -245,9 +252,19 @@ BEGIN
   IF checker IS NULL THEN
     RAISE EXCEPTION 'audit erasure cause has no checker' USING ERRCODE = '42501';
   END IF;
-  EXECUTE format('SELECT %s($1, $2)', checker::regproc) INTO confirmed USING p_tenant, coalesce(p_request, p_sweep);
+  IF p_request IS NOT NULL AND p_person IS NULL THEN
+    RAISE EXCEPTION 'a request erasure names its person' USING ERRCODE = '22023';
+  END IF;
+  EXECUTE format('SELECT %s($1, $2, $3)', checker::regproc) INTO confirmed
+    USING p_tenant, coalesce(p_request, p_sweep), p_person;
   IF confirmed IS NOT TRUE THEN
-    RAISE EXCEPTION 'audit erasure cause is not open in this tenant' USING ERRCODE = '42501';
+    RAISE EXCEPTION 'audit erasure cause is not open in this tenant for this person' USING ERRCODE = '42501';
+  END IF;
+  IF NOT base_audit_within('base_audit_erase_deferred', 'base_audit_erasure_deferrals'::regclass)
+     AND NOT EXISTS (SELECT 1 FROM base_audit_mutations
+                      WHERE tenant_id = p_tenant AND auditable_type = p_type AND auditable_id = p_id
+                        AND xmin = pg_current_xact_id()::xid) THEN
+    RAISE EXCEPTION 'audit erasure of a record this transaction did not change' USING ERRCODE = '42501';
   END IF;
   -- Each row's legal end: its time plus its company's minimum, if any.
   SELECT coalesce(array_agg(m.id), '{}'), count(*), max(m.occurred_at + make_interval(days => d.days))

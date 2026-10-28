@@ -87,7 +87,7 @@ impl Integrity {
     fn render(&self) -> Result<String> {
         let header = render(Header {
             title: Html::text("Verify audit log"),
-            subtitle: "Every audit row is linked to the one before it by a hash over its ID, time, actor, action, record and field names. Approved erasure changes values only, so it keeps the chain whole; removing or altering evidence breaks it.",
+            subtitle: "Every audit row is linked to the one before it by a hash over its ID, time, actor, action, record and field names. Removing a row, or changing any of those, breaks the chain. Values are not in the hash, so approved erasure can clear them; a changed value is not detected here.",
             actions: render(Button {
                 variant: ButtonVariant::Primary,
                 event: "verify",

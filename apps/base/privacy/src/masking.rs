@@ -51,10 +51,21 @@ impl Privacy {
         {
             return Err(Error::Invalid);
         }
-        let client = self.db.get().await?;
-        bilibi_authz::authorize_key(&**client, scope, FIELD_REVEAL).await?;
+        // One transaction holds the capability check and the record; it commits
+        // only once the value is read, so there is no value without a record
+        // and no record of a reveal that read nothing.
+        let mut client = self.db.get().await?;
+        let tx = client.transaction().await?;
+        bilibi_authz::authorize_key(&*tx, scope, FIELD_REVEAL).await?;
         let target = format!("{table}.{field}:{}", record_text(record));
         self.step_up.require(scope, STEP_UP_REVEAL, &target).await?;
+        record_action(
+            &*tx,
+            scope,
+            "privacy.field.revealed",
+            json!({"table": table, "field": field, "record": record, "reason": reason}),
+        )
+        .await?;
         let grant = self.issuer.reveal(scope, table, field);
         let value = bilibi_grid::query::reveal(&self.db, scope, &grant, table, field, record)
             .await
@@ -64,14 +75,7 @@ impl Privacy {
                 _ => Error::Invalid,
             })?
             .ok_or(Error::NotFound)?;
-        // Recorded before the value leaves: no record, no value.
-        record_action(
-            &**client,
-            scope,
-            "privacy.field.revealed",
-            json!({"table": table, "field": field, "record": record, "reason": reason}),
-        )
-        .await?;
+        tx.commit().await?;
         Ok(match value {
             Value::Null => None,
             Value::String(text) => Some(text),
@@ -81,7 +85,8 @@ impl Privacy {
 
     /// Before an export leaves: a reader who sees no field restricted reads it
     /// as before. Anyone else needs `privacy.field.reveal` and a reason, and
-    /// the download is recorded like a reveal (`privacy.export.revealed`).
+    /// the download is recorded like a reveal (`privacy.export.revealed`) in
+    /// `client`'s transaction, which the caller commits once the bytes are read.
     pub(crate) async fn reveal_export(
         &self,
         client: &impl GenericClient,

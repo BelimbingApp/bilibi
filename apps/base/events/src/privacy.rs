@@ -327,7 +327,7 @@ impl Handler for Payloads {
 
 inventory::submit! { Contribution::new(PERSONAL_DATA, "base/events.payloads",
 Provenance { module: "base/events", source: file!(), line: line!() },
-&PersonalData { label: "Event payloads", kinds: &[KIND], handler: &PAYLOADS }) }
+&PersonalData { label: "Event payloads", kinds: &[KIND], person_subjects: &[], handler: &PAYLOADS }) }
 // Event changes never carry the payload itself.
 inventory::submit! { Contribution::new(RECORD_KINDS, "base/events.event",
 Provenance { module: "base/events", source: file!(), line: line!() },

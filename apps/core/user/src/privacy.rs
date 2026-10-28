@@ -187,24 +187,14 @@ impl Handler for Accounts {
                                     &[&tenant, &user, &ERASED, &placeholder],
                                 )
                                 .await?;
-                                let mut links = 0;
-                                for table in [
-                                    "password_reset_tokens",
-                                    "user_external_sessions",
-                                    "user_external_identities",
-                                    "user_credential_attempts",
-                                    "user_sign_ins",
-                                ] {
-                                    links += sql
-                                        .execute(&format!("DELETE FROM {table} WHERE tenant_id=$1 AND user_id=$2"), &[&tenant, &user])
-                                        .await?;
-                                }
+                                let links = remove_links(sql, tenant, user).await?;
                                 changes.push(Change {
                                     kind: USER_KIND.into(),
                                     id: user,
                                     old: before,
-                                    new: json!({"name": ERASED, "email": ERASED, "status": "deleted", "links_removed": links}),
+                                    new: json!({"name": ERASED, "email": ERASED, "status": "deleted", "links_removed": links.len()}),
                                 });
+                                changes.extend(links);
                             }
                             let rows = sql
                                 .query("DELETE FROM notifications WHERE tenant_id=$1 AND id=ANY($2) RETURNING id", &[&tenant, &gone])
@@ -232,11 +222,15 @@ impl Handler for Accounts {
                 }
                 erased.count(USER_KIND, Action::Anonymised, 1);
                 erased.count(NOTIFICATION_KIND, Action::Deleted, removed.len() as i64);
-                erased.records.push(ErasedRecord {
-                    kind: USER_KIND.into(),
-                    id: user,
-                    person: None,
-                });
+                // Only records this transaction changed: the database clears
+                // evidence of nothing else.
+                if !done {
+                    erased.records.push(ErasedRecord {
+                        kind: USER_KIND.into(),
+                        id: user,
+                        person: None,
+                    });
+                }
                 erased
                     .records
                     .extend(removed.into_iter().map(|id| ErasedRecord {
@@ -252,10 +246,85 @@ impl Handler for Accounts {
 
 inventory::submit! { Contribution::new(PERSONAL_DATA, "core/user.accounts",
 Provenance { module: "core/user", source: file!(), line: line!() },
-&PersonalData { label: "User accounts and notifications", kinds: &[USER_KIND, NOTIFICATION_KIND], handler: &ACCOUNTS }) }
+&PersonalData { label: "User accounts and notifications", kinds: &[USER_KIND, NOTIFICATION_KIND], person_subjects: &[], handler: &ACCOUNTS }) }
 inventory::submit! { Contribution::new(RECORD_KINDS, "core/user.user",
 Provenance { module: "core/user", source: file!(), line: line!() },
 &RecordKind { kind: USER_KIND, fields: &["name", "email"], subject_identifier: false, person: false }) }
 inventory::submit! { Contribution::new(RECORD_KINDS, "core/user.notification",
 Provenance { module: "core/user", source: file!(), line: line!() },
 &RecordKind { kind: NOTIFICATION_KIND, fields: &["title", "body"], subject_identifier: false, person: false }) }
+
+/// Deletes an account's sign-in and credential rows, one `Change` per row
+/// with its key and owner only: never a token, hash or external subject.
+pub(crate) async fn remove_links(
+    sql: &tokio_postgres::Transaction<'_>,
+    tenant: i64,
+    user: i64,
+) -> bilibi_database::Result<Vec<Change>> {
+    let mut changes = Vec::new();
+    let removed = |kind: &str, id: i64, old: Value| Change {
+        kind: kind.into(),
+        id,
+        old,
+        new: json!({}),
+    };
+    for row in sql
+        .query(
+            "DELETE FROM password_reset_tokens WHERE tenant_id=$1 AND user_id=$2 RETURNING user_id",
+            &[&tenant, &user],
+        )
+        .await?
+    {
+        changes.push(removed(
+            "password_reset_token",
+            row.get(0),
+            json!({"user": user}),
+        ));
+    }
+    for row in sql
+        .query(
+            "DELETE FROM user_external_sessions WHERE tenant_id=$1 AND user_id=$2 RETURNING id",
+            &[&tenant, &user],
+        )
+        .await?
+    {
+        changes.push(removed(
+            "user_external_session",
+            row.get(0),
+            json!({"user": user}),
+        ));
+    }
+    for row in sql
+        .query("DELETE FROM user_external_identities WHERE tenant_id=$1 AND user_id=$2 RETURNING id,provider_id", &[&tenant, &user])
+        .await?
+    {
+        changes.push(removed(
+            "user_external_identity",
+            row.get(0),
+            json!({"user": user, "provider": row.get::<_, i64>(1)}),
+        ));
+    }
+    for row in sql
+        .query(
+            "DELETE FROM user_credential_attempts WHERE tenant_id=$1 AND user_id=$2 RETURNING kind",
+            &[&tenant, &user],
+        )
+        .await?
+    {
+        changes.push(removed(
+            "user_credential_attempt",
+            user,
+            json!({"user": user, "kind": row.get::<_, String>(0)}),
+        ));
+    }
+    for row in sql
+        .query(
+            "DELETE FROM user_sign_ins WHERE tenant_id=$1 AND user_id=$2 RETURNING id",
+            &[&tenant, &user],
+        )
+        .await?
+    {
+        changes.push(removed("user_sign_in", row.get(0), json!({"user": user})));
+    }
+    Ok(changes)
+}

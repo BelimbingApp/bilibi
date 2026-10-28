@@ -135,13 +135,15 @@ impl Handler for Affiliations {
                         })
                     })
                     .await?;
+                    // Only records this transaction changed: the database
+                    // clears evidence of nothing else.
+                    erased.records.push(ErasedRecord {
+                        kind: KIND.into(),
+                        id,
+                        person: None,
+                    });
                 }
                 count += 1;
-                erased.records.push(ErasedRecord {
-                    kind: KIND.into(),
-                    id,
-                    person: None,
-                });
             }
             erased.count(KIND, Action::Anonymised, count);
             Ok(erased)
@@ -151,7 +153,7 @@ impl Handler for Affiliations {
 
 inventory::submit! { Contribution::new(PERSONAL_DATA, "core/affiliation.affiliations",
 Provenance { module: "core/affiliation", source: file!(), line: line!() },
-&PersonalData { label: "Affiliations (work contact)", kinds: &[KIND], handler: &AFFILIATIONS }) }
+&PersonalData { label: "Affiliations (work contact)", kinds: &[KIND], person_subjects: &[], handler: &AFFILIATIONS }) }
 inventory::submit! { Contribution::new(RECORD_KINDS, "core/affiliation.affiliation",
 Provenance { module: "core/affiliation", source: file!(), line: line!() },
 &RecordKind { kind: KIND, fields: &FIELDS, subject_identifier: false, person: false }) }

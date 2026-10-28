@@ -185,7 +185,7 @@ impl Handler for Previews {
 
 inventory::submit! { Contribution::new(PERSONAL_DATA, "base/integration.previews",
 Provenance { module: "base/integration", source: file!(), line: line!() },
-&PersonalData { label: "API exchange previews", kinds: &[KIND], handler: &PREVIEWS }) }
+&PersonalData { label: "API exchange previews", kinds: &[KIND], person_subjects: &[], handler: &PREVIEWS }) }
 // Exchange changes never carry the preview itself.
 inventory::submit! { Contribution::new(RECORD_KINDS, "base/integration.exchange",
 Provenance { module: "base/integration", source: file!(), line: line!() },

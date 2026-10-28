@@ -656,7 +656,7 @@ impl Media {
         grant: &Disclosure,
         subject: AttachmentSubject<'_>,
     ) -> Result<Vec<Attachment>> {
-        grant.check(scope)?;
+        grant.check_file_subject(scope, subject.kind, subject.id)?;
         let (mut all, mut after) = (Vec::new(), 0_i64);
         loop {
             let rows = client
@@ -687,7 +687,7 @@ impl Media {
         subject: AttachmentSubject<'_>,
         public_id: &str,
     ) -> Result<StreamFile> {
-        grant.check(scope)?;
+        grant.check_file_subject(scope, subject.kind, subject.id)?;
         if !valid_public_id(public_id) {
             return Err(Error::NotFound);
         }
@@ -727,7 +727,7 @@ impl Media {
         subject: AttachmentSubject<'_>,
         holds: &Holds,
     ) -> Result<AttachmentErasure> {
-        grant.check(scope)?;
+        grant.check_file_subject(scope, subject.kind, subject.id)?;
         if tx.context().tenant != scope.tenant() {
             return Err(Error::Database(bilibi_database::Error::Forbidden));
         }
@@ -806,7 +806,7 @@ impl Media {
         grant: &Erasure,
         subject: AttachmentSubject<'_>,
     ) -> Result<Removal> {
-        grant.check(scope)?;
+        grant.check_file_subject(scope, subject.kind, subject.id)?;
         let roots = self.disks(&*client).await?;
         let mut removal = Removal::default();
         for _ in 0..CLEANUP_BATCH {

@@ -109,4 +109,4 @@ impl Handler for History {
 
 inventory::submit! { Contribution::new(PERSONAL_DATA, "base/audit.history",
 Provenance { module: "base/audit", source: file!(), line: line!() },
-&PersonalData { label: "Audit history", kinds: &[], handler: &HISTORY }) }
+&PersonalData { label: "Audit history", kinds: &[], person_subjects: &[], handler: &HISTORY }) }

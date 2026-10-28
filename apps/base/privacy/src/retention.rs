@@ -299,7 +299,7 @@ impl Privacy {
         })
     }
     /// Every mounted record class with one company's settings (the tenant's
-    /// primary company when `company` is `None`) and its last sweep. Needs
+    /// primary company when `company` is `None`) and that company's last sweep. Needs
     /// `privacy.retention.view`. Returns the company shown.
     pub async fn retention_classes(
         &self,
@@ -317,8 +317,8 @@ impl Privacy {
             .query(
                 &format!("SELECT DISTINCT ON (class) class,id,company_id,period_days,acted,kept,\
                  to_char(started_at AT TIME ZONE 'UTC',{TIME}),to_char(finished_at AT TIME ZONE 'UTC',{TIME}) \
-                 FROM base_privacy_sweeps WHERE tenant_id=$1 ORDER BY class,id DESC"),
-                &[&scope.tenant()],
+                 FROM base_privacy_sweeps WHERE tenant_id=$1 AND company_id=$2 ORDER BY class,id DESC"),
+                &[&scope.tenant(), &company.map(OrganisationId::get)],
             )
             .await?
         {

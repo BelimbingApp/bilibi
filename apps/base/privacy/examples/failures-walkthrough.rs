@@ -6,7 +6,9 @@
 //! complete a request by itself, the database refuses an erasure with a
 //! made-up cause or field, the hash chain links rows as they commit, a
 //! refused setting rolls back its whole save, and Search neither matches nor
-//! shows a masked field. Explicit disposable DB only (`seed` first); prints
+//! shows a masked field; a request erases evidence only of its own person's
+//! records it changed, and a document kept for its retention date is erased
+//! once the date passes. Explicit disposable DB only (`seed` first); prints
 //! real outcomes for inspection. No assertions or test harness.
 use bilibi_authz::grants::Grants;
 use bilibi_base::workflow::{engine::Engine, engine::Request, Operation};
@@ -390,7 +392,7 @@ async fn main() -> Result<()> {
         "erase person fields for request 999999",
         client
             .execute(
-                "SELECT base_audit_erase_values(1,999999,NULL,NULL,'person','1',ARRAY['name'],false,'{}','{}',NULL,'user',4,'walkthrough')",
+                "SELECT base_audit_erase_values(1,999999,NULL,1,'person','1',ARRAY['name'],false,'{}','{}',NULL,'user',4,'walkthrough')",
                 &[],
             )
             .await,
@@ -399,7 +401,7 @@ async fn main() -> Result<()> {
         "erase an undeclared field (amount) of person",
         client
             .execute(
-                "SELECT base_audit_erase_values(1,1,NULL,NULL,'person','1',ARRAY['amount'],false,'{}','{}',NULL,'user',4,'walkthrough')",
+                "SELECT base_audit_erase_values(1,1,NULL,1,'person','1',ARRAY['amount'],false,'{}','{}',NULL,'user',4,'walkthrough')",
                 &[],
             )
             .await,
@@ -408,7 +410,7 @@ async fn main() -> Result<()> {
         "erase a kind no module declares (invoice)",
         client
             .execute(
-                "SELECT base_audit_erase_values(1,1,NULL,NULL,'invoice','1',ARRAY['amount'],false,'{}','{}',NULL,'user',4,'walkthrough')",
+                "SELECT base_audit_erase_values(1,1,NULL,1,'invoice','1',ARRAY['amount'],false,'{}','{}',NULL,'user',4,'walkthrough')",
                 &[],
             )
             .await,
@@ -426,7 +428,7 @@ async fn main() -> Result<()> {
         "replace the request cause checker",
         client
             .execute(
-                "UPDATE base_audit_erasure_causes SET checker='base_privacy_sweep_cause(bigint,bigint)'::regprocedure WHERE cause='request'",
+                "UPDATE base_audit_erasure_causes SET checker='base_privacy_sweep_cause(bigint,bigint,bigint)'::regprocedure WHERE cause='request'",
                 &[],
             )
             .await,
@@ -623,6 +625,29 @@ async fn main() -> Result<()> {
 
     println!("== B1a: an access request waits while an erasure of the person runs");
     let ann = new_person(&client, "Ann Race", "ann-race@example.test").await?;
+    // Ann's account with a pending sign-in and a reset request: child rows the
+    // account erasure deletes, each recorded as its own change.
+    let ann_user: i64 = client
+        .query_one(
+            "INSERT INTO users(id,tenant_id,name,email,password_hash,person_id) \
+             SELECT max(id)+1,1,'Ann Race','ann-account@example.test','walkthrough',$1 FROM users RETURNING id",
+            &[&ann.get()],
+        )
+        .await?
+        .get(0);
+    client
+        .execute(
+            "INSERT INTO user_sign_ins(tenant_id,user_id,token_hash,csrf,credential_hash,state,expires_at) \
+             VALUES(1,$1,sha256('walkthrough sign-in'::bytea),'walkthrough',sha256('walkthrough credential'::bytea),'pending',now()+interval '5 minutes')",
+            &[&ann_user],
+        )
+        .await?;
+    client
+        .execute(
+            "INSERT INTO password_reset_tokens(tenant_id,user_id,token_hash,created_at,expires_at) VALUES(1,$1,sha256('walkthrough reset'::bytea),now(),now()+interval '1 hour')",
+            &[&ann_user],
+        )
+        .await?;
     client
         .batch_execute(&format!(
             "CREATE OR REPLACE FUNCTION walkthrough_slow() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.id = {} THEN RAISE EXCEPTION 'walkthrough: the person store is slow'; END IF; RETURN NEW; END $$; \
@@ -673,6 +698,21 @@ async fn main() -> Result<()> {
         text.contains("ann-race@example.test"),
         text.contains("[erased]")
     );
+    rows(
+        &client,
+        "child rows of Ann's account, each audited",
+        &format!(
+            "SELECT auditable_type||' '||auditable_id||' '||event||' '||old_values::text FROM base_audit_mutations \
+             WHERE auditable_type IN ('user_sign_in','password_reset_token') AND old_values->>'user'='{ann_user}' ORDER BY id"
+        ),
+    )
+    .await?;
+    rows(
+        &client,
+        "rows left",
+        &format!("SELECT (SELECT count(*) FROM user_sign_ins WHERE user_id={ann_user})||' sign-ins, '||(SELECT count(*) FROM password_reset_tokens WHERE user_id={ann_user})||' reset tokens'"),
+    )
+    .await?;
 
     println!("== B1b: an export staged before an erasure is rebuilt, never published");
     let ben = new_person(&client, "Ben Race", "ben-race@example.test").await?;
@@ -1024,6 +1064,131 @@ async fn main() -> Result<()> {
         .batch_execute("DELETE FROM field_restrictions WHERE tenant_id=1 AND role_id=4 AND table_id='persons' AND field_id='email'")
         .await?;
     let _ = probe;
+
+    println!("== P1-B: a document kept for its retention date is erased once the date passes");
+    let rita = new_person(&client, "Rita Retained", "rita-retained@example.test").await?;
+    let files = app
+        .services
+        .get::<bilibi_base::artifacts::Artifacts>("base/artifacts.store")?;
+    let until = std::time::SystemTime::now() + Duration::from_secs(90);
+    let document = files
+        .for_owner(
+            &admin.scope,
+            OrganisationId::new(1)?,
+            &bilibi_core::person::FILES,
+        )
+        .put_retained(
+            &mut client,
+            bilibi_base::artifacts::Reference {
+                subject: rita.get().to_string(),
+                kind: "evidence".into(),
+            },
+            b"Rita signed contract",
+            "text/plain",
+            bilibi_base::artifacts::Retention::until(until),
+        )
+        .await?;
+    let erasure = received(
+        &privacy,
+        &mut client,
+        &second.scope,
+        RequestKind::Erasure,
+        rita,
+        "rita-retained@example.test",
+    )
+    .await?;
+    let erasure = privacy
+        .approve(
+            &mut client,
+            &admin.step_up().await,
+            erasure.id,
+            erasure.version,
+        )
+        .await?;
+    summary(&settle(&privacy, &client, &admin.scope, erasure.id, 180).await?);
+    rows(
+        &client,
+        "kept by the person store",
+        &format!("SELECT k::text FROM base_privacy_request_stores s, jsonb_array_elements(s.result->'kept') k WHERE s.request_id={} AND s.store='core/person.people'", erasure.id),
+    )
+    .await?;
+    rows(
+        &client,
+        "owed cleanup",
+        &format!("SELECT 'runs='||runs||' done='||(done_at IS NOT NULL) FROM base_privacy_resumptions WHERE request_id={}", erasure.id),
+    )
+    .await?;
+
+    println!("== P1-A: a request authorises erasure of its own person's changed records only");
+    let other_request: i64 = client
+        .query_one(
+            "SELECT id FROM base_privacy_requests WHERE person_id=$1 AND kind='erasure'",
+            &[&eve.get()],
+        )
+        .await?
+        .get(0);
+    let probe_sql = |request: i64, person: i64, record: i64| {
+        format!(
+            "SELECT base_audit_erase_values(1,{request},NULL,{person},'person','{record}',ARRAY['email'],false,'{{}}','{{}}',NULL,'user',4,'walkthrough')"
+        )
+    };
+    sql_outcome(
+        "completed request with no owed cleanup, its own person",
+        client
+            .execute(&probe_sql(other_request, eve.get(), eve.get()), &[])
+            .await,
+    );
+    sql_outcome(
+        "request owing cleanup, another person",
+        client
+            .execute(&probe_sql(erasure.id, dee.get(), dee.get()), &[])
+            .await,
+    );
+    sql_outcome(
+        "request owing cleanup, its person, naming another person's record",
+        client
+            .execute(&probe_sql(erasure.id, rita.get(), dee.get()), &[])
+            .await,
+    );
+    sql_outcome(
+        "request owing cleanup, its own record, which this transaction did not change",
+        client
+            .execute(&probe_sql(erasure.id, rita.get(), rita.get()), &[])
+            .await,
+    );
+    sql_outcome(
+        "widen a kind's declared fields outside a migration",
+        client
+            .execute(
+                "UPDATE base_personal_data_kinds SET fields = array_append(fields, 'amount') WHERE kind='person'",
+                &[],
+            )
+            .await,
+    );
+
+    println!("== P1-B continued: after the retention date");
+    while std::time::SystemTime::now() < until + Duration::from_secs(2) {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+    sweep(&app, &mut client, &admin.scope, "sweep after the date").await?;
+    rows(
+        &client,
+        "owed cleanup",
+        &format!("SELECT 'runs='||runs||' done='||(done_at IS NOT NULL)||' '||coalesce(last_result::text,'') FROM base_privacy_resumptions WHERE request_id={}", erasure.id),
+    )
+    .await?;
+    show(
+        "owner reads the document",
+        files
+            .for_owner(
+                &admin.scope,
+                OrganisationId::new(1)?,
+                &bilibi_core::person::FILES,
+            )
+            .read(&mut client, &document.id)
+            .await
+            .map(|read| String::from_utf8_lossy(&read.bytes).into_owned()),
+    );
 
     println!("== B7: a row committed with its chain trigger bypassed is reported");
     client
