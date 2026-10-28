@@ -250,7 +250,7 @@ impl TwoFactorPage {
         let (heading, first) = match self.stage {
             Stage::Off | Stage::Setup(_) => (
                 "Set up your authenticator app",
-                "Link an authenticator app on your phone, such as Google Authenticator or Microsoft Authenticator. Before risky changes, Bilibi asks for the 6-digit code from the app.",
+                "Link an authenticator app, such as Google Authenticator or Microsoft Authenticator. Some actions require its 6-digit code.",
             ),
             Stage::Move(_) => (
                 "Move to a new phone",
@@ -258,7 +258,7 @@ impl TwoFactorPage {
             ),
             Stage::On => (
                 "Authenticator app",
-                "Your authenticator app is set up. Before risky changes, Bilibi asks for the 6-digit code from the app.",
+                "Your authenticator app is set up. Some actions require its 6-digit code.",
             ),
         };
         let password = fragment(Html::render(

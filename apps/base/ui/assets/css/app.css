@@ -885,6 +885,62 @@ body:has(dialog:modal) #flash-group > #connection-server-error {
   }
 }
 
+/* A combobox choice with a code (`Choice::detail`) draws name and code over the
+ * plain input, whose text goes transparent until the person edits it. The
+ * Combobox hook sets `data-editing` on the wrapper from the first input until
+ * the choice is committed, restored or cancelled. The input keeps the
+ * accessible value; the layer is `aria-hidden`. The layer sits where the
+ * input draws its text, inside the input's 1px border. */
+.ui-combobox-display {
+  display: none;
+  pointer-events: none;
+  position: absolute;
+  inset: 1px 2.25rem 1px calc(0.75rem + 1px);
+  align-items: center;
+  /* The size of the input's own text (`text-base`, 1rem on a phone). */
+  font-size: var(--text-base);
+  line-height: 1.25rem;
+  color: var(--color-ink);
+}
+
+@media (width < 40rem) {
+  .ui-combobox-display {
+    font-size: 1rem;
+  }
+}
+
+.ui-combobox-display.ui-combobox-display-inset {
+  top: 0;
+  align-items: flex-start;
+  padding-top: calc(0.875rem + 1px);
+}
+
+.ui-combobox-display > span {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.ui-combobox-display > span + span {
+  flex-shrink: 0;
+  margin-left: 0.35em;
+}
+
+[data-hook="Combobox"][data-detailed]:not([data-editing]) [data-combobox-display] {
+  display: flex;
+}
+
+[data-hook="Combobox"][data-detailed]:not([data-editing]) input[role="combobox"] {
+  color: transparent;
+}
+
+/* Focus selects the whole value; keep that selection from painting over the display layer. */
+[data-hook="Combobox"][data-detailed]:not([data-editing]) input[role="combobox"]::selection {
+  background: transparent;
+  color: transparent;
+}
+
 /* Menu typography & font colors matching Belimbing */
 .app-nav-menu {
   font-family: var(--font-sans);

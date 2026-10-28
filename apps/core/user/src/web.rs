@@ -25,7 +25,7 @@ use std::sync::Arc;
 const BLANK: &str = "can't be blank";
 const INCORRECT: &str = "is incorrect";
 const CONFIRMATION_MISMATCH: &str = "does not match password";
-const UPDATED: &str = "Password updated successfully.";
+const UPDATED: &str = "Password updated.";
 const NOT_UPDATED: &str = "Could not update password.";
 
 /// The field errors of the last attempt; values are never echoed back.
@@ -56,7 +56,12 @@ impl PasswordView {
             Html::render(
                 &SecretInput::in_form("password_change", key, "password")
                     .label(label)
-                    .errors(errors.to_vec())
+                    .errors(
+                        errors
+                            .iter()
+                            .map(|message| bilibi_ui::error_sentence(label, message))
+                            .collect(),
+                    )
                     .attrs(Attrs {
                         autocomplete: Some(autocomplete.into()),
                         ..Attrs::default()
@@ -78,7 +83,7 @@ impl PasswordView {
             }))?,
             current: bilibi_ui::SettingsTab::Password,
             heading: "Update Password",
-            subheading: "Ensure your account is using a long, random password to stay secure.",
+            subheading: "At least 8 characters.",
             current_password: secret(
                 "current_password",
                 "Current password",

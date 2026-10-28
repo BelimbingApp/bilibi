@@ -540,12 +540,22 @@ impl CompanyPage {
                 }
             }
             "departments_grid" if self.operation == "detail" => {
-                self.departments_columns
-                    .handle(&bilibi_ui::params::string_values(value));
+                self.departments_columns.handle(
+                    &bilibi_ui::params::string_values_checked(
+                        value,
+                        bilibi_ui::params::FIELD_LIMIT,
+                    )
+                    .map_err(Error::refused)?,
+                );
             }
             "children_grid" if self.operation == "detail" => {
-                self.children_columns
-                    .handle(&bilibi_ui::params::string_values(value));
+                self.children_columns.handle(
+                    &bilibi_ui::params::string_values_checked(
+                        value,
+                        bilibi_ui::params::FIELD_LIMIT,
+                    )
+                    .map_err(Error::refused)?,
+                );
             }
             "sort" => self.sort(if get("sort").is_empty() {
                 get("field")
@@ -719,8 +729,13 @@ impl CompanyPage {
                 }
             }
             "duplicate_grid" if self.operation == "create" => {
-                self.duplicate_columns
-                    .handle(&bilibi_ui::params::string_values(value));
+                self.duplicate_columns.handle(
+                    &bilibi_ui::params::string_values_checked(
+                        value,
+                        bilibi_ui::params::FIELD_LIMIT,
+                    )
+                    .map_err(Error::refused)?,
+                );
             }
             "cancel_duplicate_create" => self.confirming_duplicate = false,
             "duplicate_reason" if self.operation == "create" => {
@@ -769,8 +784,7 @@ impl CompanyPage {
                             .await?
                         {
                             CreateOutcome::Created(company) => {
-                                self.landing
-                                    .put(StatusKind::Success, "Company created successfully.");
+                                self.landing.put(StatusKind::Success, "Company created.");
                                 return Ok(Some(format!("/companies/{}", company.id)));
                             }
                             CreateOutcome::Refused(errors) => self.errors = errors,

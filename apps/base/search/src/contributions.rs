@@ -116,7 +116,7 @@ inventory::submit! { Contribution::new(DEFINITIONS, BOOST, provenance!(), &Setti
 inventory::submit! { Contribution::new(DEFINITIONS, MIN_CHARS, provenance!(), &Setting::Definition(Definition {
     value_type: ValueType::Integer, scopes: OPERATOR, default: || json!(2), nullable: false, encrypted: false,
     minimum: Some(1.0), maximum: Some(10.0), validator: None,
-    editor: editor("Characters before records", "How many characters a person types before the search box looks for records."),
+    editor: editor("Minimum search characters", "How many characters a person types before the search box looks for records."),
 })) }
 inventory::submit! { Contribution::new(DEFINITIONS, SUGGESTIONS, provenance!(), &Setting::Definition(Definition {
     value_type: ValueType::Integer, scopes: OPERATOR, default: || json!(5), nullable: false, encrypted: false,

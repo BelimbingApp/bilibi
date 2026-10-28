@@ -43,6 +43,7 @@ mod section;
 mod settings;
 mod shell;
 mod specimen;
+mod statusbar;
 pub mod upload;
 pub mod workspace;
 pub use shell::{
@@ -98,6 +99,7 @@ pub use lists::{
 pub use page_search::{page_search, RecordGroup, RecordHit, SearchPage, SearchRecords};
 pub use settings::{SettingsTab, SETTINGS_LOCATION};
 pub use specimen::ComponentsSpecimen;
+pub use statusbar::StatusbarTag;
 pub use upload::{
     ChunkOutcome, ClientEntry, FileInput, Registration, UploadEntry, UploadError, UploadSpec,
     UploadedFile, Uploads,

@@ -3,7 +3,7 @@
 **Document Type:** Index of architecture decision records
 **Status:** Active
 **Scope:** Decisions that shape Bilibi's architecture
-**Last Updated:** 2026-10-27
+**Last Updated:** 2026-10-28
 
 Each record states one decision, its context and its consequences. The format follows [Bilimbi's records](https://github.com/BelimbingApp/bilimbi/tree/main/docs/architecture/decisions). The architecture overview is [`../README.md`](../README.md).
 
@@ -79,6 +79,7 @@ Every record carries these header lines: Document Type, Status, Agents, Scope, L
 | Record | Status |
 | --- | --- |
 | [07 Hard-coded values and operator pick-lists](./07-hard-coded-values-and-operator-pick-lists.md) | Proposed |
+| [08 Currencies as Core master data, and conversion always names its rate](./08-currencies-as-core-master-data.md) | Accepted; implemented |
 
 ### Business time
 

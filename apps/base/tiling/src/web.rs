@@ -560,7 +560,7 @@ impl Workspace {
             None => {
                 self.flash = Some((
                     StatusKind::Error,
-                    "The layout in the address could not be read, so the workspace opened empty."
+                    "The layout in the address could not be read. The workspace opened empty."
                         .into(),
                 ));
                 self.layout = Layout::empty();
@@ -1217,10 +1217,7 @@ impl Workspace {
             .map(|tile| Tab::button("focus_tile", &tile.id, &tile.title, tile.focused))
             .collect();
         let empty = if tiles.is_empty() {
-            let mut state = EmptyState::missing(
-                "No pages open",
-                "Add a page to start; each new page splits the selected tile in half.",
-            );
+            let mut state = EmptyState::missing("No pages open", "Add a page to start.");
             state.id = "workspace-empty-state".into();
             state.action = Html::render(&Button {
                 variant: ButtonVariant::Primary,
@@ -1403,7 +1400,7 @@ impl Workspace {
         if self.saved.entries.is_empty() {
             saved.empty = Some(TableEmpty::State(EmptyState::missing(
                 "No saved layouts",
-                "Save the current tiles under a name to open them again later.",
+                "Save this layout to open it again later.",
             )));
         }
         let saved = Html::render(&saved).map_err(internal)?;

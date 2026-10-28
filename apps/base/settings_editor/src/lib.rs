@@ -59,7 +59,7 @@ bilibi_menu::contribute!(
     "base/settings_editor",
     bilibi_menu::MenuItem::page("admin.system.settings", "Settings", "/system/settings")
         .under("admin.system")
-        .icon("cog-6-tooth")
+        .icon("settings-cog")
         .requires(bilibi_menu::Requirement::Capability(GLOBAL_MANAGE))
         .order(10)
 );

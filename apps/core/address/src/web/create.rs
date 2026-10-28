@@ -115,7 +115,7 @@ impl Create {
         })
     }
     async fn take(&mut self, value: &Value) -> Result<()> {
-        let fields = form(value, "address");
+        let fields = form(value, "address")?;
         let get = |key: &str| fields.get(key).cloned();
         self.location
             .change(&self.pages.addresses, &LocationDraft::posted(&fields))
@@ -183,7 +183,7 @@ impl Create {
         if self.created {
             return Ok(LiveBody {
                 redirect: Some("/addresses".into()),
-                flash: Some((StatusKind::Success, "Address created successfully.".into())),
+                flash: Some((StatusKind::Success, "Address created.".into())),
                 ..LiveBody::default()
             });
         }

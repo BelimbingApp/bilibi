@@ -372,7 +372,9 @@ contribute!(
 );
 contribute!(
     "base/menu",
-    MenuItem::container("finance", "Finance").order(400)
+    MenuItem::container("finance", "Finance")
+        .icon("gmdi-money-r")
+        .order(400)
 );
 contribute!(
     "base/menu",
