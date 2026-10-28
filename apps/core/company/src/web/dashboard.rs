@@ -10,7 +10,10 @@
 //! capability to read, and each link is offered only to a reader its page
 //! admits.
 use super::views::{allowed, render};
-use crate::{organisation::{display_name, reaches_tenant}, LIST, VIEW};
+use crate::{
+    organisation::{display_name, reaches_tenant},
+    LIST, VIEW,
+};
 use askama::Template;
 use bilibi_dashboard::PanelArgs;
 use bilibi_database::{Db, Error, Result};

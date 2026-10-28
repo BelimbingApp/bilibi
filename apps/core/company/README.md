@@ -236,8 +236,10 @@ primary company.
 and the `dashboard.company` section (`current-company`: name, code, status and
 Open company). The current company is the one the session works in
 (`Scope::current_company`: the chosen company, else the affiliation's); an
-account with neither sees "No current company" and the top bar's prompt to
-choose one, never a guessed company. Neither needs a
+account that reaches companies but has chosen none sees "No current company"
+and the top bar's prompt to choose one; one that reaches none sees "No
+company" and is told to ask an administrator. No account is shown a guessed
+company. The widget and section need no
 capability to read, as in Bilimbi; the links show only to a reader holding
 `admin.company.list` / `admin.company.view`.
 

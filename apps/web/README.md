@@ -59,8 +59,7 @@ A live page or panel event runs under the page-write permit its service declared
 Other methods also require the configured Origin and, for an authenticated
 scope, `X-CSRF-Token`. The secret rotates when the session switches identity
 (impersonation), so a request from a page rendered before the switch is refused;
-the live socket likewise binds the identity, the secret and the current company it was opened under (the company the page was rendered under, stamped as `data-company-id` on the shell root and sent by `live.js` as the `company` query of `/live`, so a reconnect after the session switched company reloads the page rather than re-rendering under a stale top bar)
-(`live::Identity`) and reloads its page, without acting, once they differ. Owners must reauthorize mutations inside their transaction.
+the live socket likewise binds the identity, the secret and the current company it was opened under (`live::Identity`) and reloads its page, without acting, once they differ. The company is the one the page was rendered under: stamped as `data-company-id` on the shell root and sent by `live.js` as the `company` query of `/live`, so a reconnect after the session switched company reloads the page rather than re-rendering under a stale top bar. Owners must reauthorize mutations inside their transaction.
 The adapter receives the operation, proven optional scope, path/query values,
 bounded request body and presentation flag. HTML escaping belongs to the owner.
 
