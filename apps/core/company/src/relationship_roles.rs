@@ -152,6 +152,28 @@ pub async fn get(
         .await?
         .ok_or(Error::NotFound)
 }
+/// Resolves a tenant-local role code under `admin.company.view` on the
+/// caller's connection. Retired roles remain visible, with `retired_on` set;
+/// they cannot be used for new assignments. This read never seeds defaults.
+pub async fn by_code(
+    client: &dyn bilibi_tenancy::ReadClient,
+    scope: &Scope,
+    code: &str,
+) -> Result<Option<RelationshipRole>> {
+    bilibi_authz::authorize_proof(client, scope, VIEW).await?;
+    client
+        .query_opt(
+            &format!(
+                "SELECT {COLUMNS} FROM company_relationship_roles WHERE tenant_id=$1 AND code=$2"
+            ),
+            &[&scope.tenant(), &code],
+        )
+        .await?
+        .as_ref()
+        .map(RelationshipRole::from_row)
+        .transpose()
+}
+
 /// A role an assignment may use, locked `FOR SHARE` on the write's
 /// transaction so a concurrent retirement waits for the assignment.
 pub(crate) async fn assignable(

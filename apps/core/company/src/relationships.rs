@@ -100,6 +100,26 @@ impl Relationship {
     }
 }
 
+/// One current directed relationship under `admin.company.view`, on the
+/// caller's connection. Dates include both endpoints and NULL is unbounded.
+/// Retiring a role prevents new assignments but keeps existing links effective.
+/// Overlapping intervals resolve by latest start, then id; an absent, deleted
+/// or other-tenant company never supplies a relationship.
+pub async fn current(
+    client: &dyn bilibi_tenancy::ReadClient,
+    scope: &Scope,
+    source: OrganisationId,
+    target: PartyId,
+    role: RelationshipRoleId,
+) -> Result<Option<Relationship>> {
+    bilibi_authz::authorize_proof(client, scope, VIEW).await?;
+    let (organisation, person) = split(target);
+    client.query_opt(
+        &format!("SELECT {COLUMNS} FROM company_relationships r JOIN companies s ON s.tenant_id=r.tenant_id AND s.id=r.source_organisation_id LEFT JOIN companies o ON o.tenant_id=r.tenant_id AND o.id=r.target_organisation_id WHERE r.tenant_id=$1 AND r.source_organisation_id=$2 AND r.target_organisation_id IS NOT DISTINCT FROM $3 AND r.target_person_id IS NOT DISTINCT FROM $4 AND r.role_id=$5 AND r.unlinked_at IS NULL AND (r.effective_from IS NULL OR r.effective_from<=CURRENT_DATE) AND (r.effective_to IS NULL OR r.effective_to>=CURRENT_DATE) AND s.deleted_at IS NULL AND (r.target_organisation_id IS NULL OR o.deleted_at IS NULL) ORDER BY r.effective_from DESC NULLS LAST,r.id DESC LIMIT 1"),
+        &[&scope.tenant(), &source.get(), &organisation, &person, &role.get()],
+    ).await?.as_ref().map(Relationship::from_row).transpose()
+}
+
 /// Which way a link runs relative to the party whose page lists it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]

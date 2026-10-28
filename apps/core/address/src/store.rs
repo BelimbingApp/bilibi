@@ -1,6 +1,6 @@
 //! Owner reads and transaction writes shared by the facade and operation contracts. Lock order (with Company/Person/Affiliation): Company
 //! (ascending IDs) → Person → Address → Attachment. A write never locks a
-//! company after its address.
+//! company after its address. Mirrors Bilimbi `Core.Address`.
 use crate::{contributions::*, model::*, publish};
 use bilibi_authz::{authorize_key, restrictions_for};
 use bilibi_database::{Change, Error, MutationTransaction, Result};
@@ -125,7 +125,7 @@ async fn attachments_of(
 /// Every live owner of one address, named through its owner. A company that
 /// was deleted drops out; a Person the actor may not view is named by number.
 pub async fn owners(
-    client: &impl GenericClient,
+    client: &(impl GenericClient + Sync),
     scope: &Scope,
     address: AddressId,
 ) -> Result<Vec<LinkedOwner>> {
@@ -174,13 +174,17 @@ pub async fn owners(
 /// The owner exists in this tenant and the actor may read its addresses.
 /// Archived companies and retired Persons stay readable.
 async fn require_readable_owner(
-    client: &impl GenericClient,
+    client: &dyn bilibi_tenancy::ReadClient,
     scope: &Scope,
     owner: PartyId,
 ) -> Result<()> {
     match owner {
         PartyId::Organisation(id) => {
-            bilibi_company::require_live(client, scope, id.get()).await?;
+            use bilibi_tenancy::OrganisationDirectory;
+            bilibi_company::Directory
+                .lookup(client, scope, id)
+                .await?
+                .ok_or(Error::NotFound)?;
         }
         PartyId::Person(id) => {
             bilibi_person::read_person(client, scope, id).await?;
@@ -198,7 +202,7 @@ const OWNER_MATCH: &str = "(($2::bigint IS NOT NULL AND t.organisation_id=$2) OR
 
 /// An owner's live addresses: primary first, then priority, then id.
 pub async fn attached(
-    client: &impl GenericClient,
+    client: &(impl GenericClient + Sync),
     scope: &Scope,
     owner: PartyId,
 ) -> Result<Vec<AttachedAddress>> {
@@ -251,16 +255,51 @@ pub async fn attached(
 /// The address an owner is reached at: its primary, else the first by
 /// priority. `None` when it has no live address.
 pub async fn primary(
-    client: &impl GenericClient,
+    client: &(impl GenericClient + Sync),
     scope: &Scope,
     owner: PartyId,
 ) -> Result<Option<AttachedAddress>> {
     Ok(attached(client, scope, owner).await?.into_iter().next())
 }
 
+/// Billing facts for an inclusive calendar day, under `admin.address.view`.
+/// Uses only the caller's connection. Effective billing attachments win,
+/// primary first, then priority and address id. Without one, use the effective
+/// primary-address ordering (primary, priority, id). Deleted addresses never
+/// qualify; archived companies and retired persons remain readable.
+pub async fn billing_address(
+    client: &dyn bilibi_tenancy::ReadClient,
+    scope: &Scope,
+    owner: PartyId,
+    as_of: &CalendarDate,
+) -> Result<Option<AttachedAddress>> {
+    bilibi_authz::authorize_proof(client, scope, VIEW).await?;
+    require_readable_owner(client, scope, owner).await?;
+    let (organisation, person) = owner_columns(owner);
+    // Select one attachment in SQL instead of loading a bounded list whose
+    // cutoff could hide the applicable interval or billing kind.
+    let Some(row) = client.query_opt(
+        &format!("SELECT {ATTACHMENT_COLUMNS} FROM address_attachments t WHERE t.tenant_id=$1 AND {OWNER_MATCH} AND (t.valid_from IS NULL OR t.valid_from<=$4::text::date) AND (t.valid_to IS NULL OR t.valid_to>=$4::text::date) AND EXISTS(SELECT 1 FROM addresses a WHERE a.tenant_id=t.tenant_id AND a.id=t.address_id AND a.deleted_at IS NULL) ORDER BY ('billing'=ANY(t.kinds)) DESC,t.is_primary DESC,t.priority,t.address_id,t.id LIMIT 1"),
+        &[&scope.tenant(), &organisation, &person, &as_of.as_str()],
+    ).await? else { return Ok(None); };
+    let attachment = Attachment::from_row(&row)?;
+    let Some(row) = client.query_opt(
+        &format!("SELECT {COLUMNS} FROM addresses WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL"),
+        &[&scope.tenant(), &attachment.address_id.get()],
+    ).await? else { return Ok(None); };
+    let masked = bilibi_authz::fields::restricted_read(client, scope)
+        .await?
+        .remove("addresses")
+        .unwrap_or_default();
+    Ok(Some(AttachedAddress {
+        address: Address::from_row(&row)?.redact(&masked),
+        attachment,
+    }))
+}
+
 /// Live addresses not yet attached to `owner`, for its attach picker.
 pub async fn available(
-    client: &impl GenericClient,
+    client: &(impl GenericClient + Sync),
     scope: &Scope,
     owner: PartyId,
     q: &Option<String>,
@@ -698,7 +737,7 @@ pub(crate) async fn preview_input(
 }
 
 pub(crate) async fn preview_owner(
-    client: &impl GenericClient,
+    client: &(impl GenericClient + Sync),
     scope: &Scope,
     owner: PartyId,
 ) -> WriteResult<Value> {

@@ -95,6 +95,8 @@ Directory providers name only bounded, live Person/agent candidates within the
 request tenant. Agent candidates must have `kind=agent`. Base never reads Core
 tables directly; the providers contain the owning queries.
 
+`bilibi_person::read_person(client, scope, id)` accepts `&dyn bilibi_tenancy::ReadClient`. Composed reads, including billing-address owner checks, keep the caller's connection and the same `admin.person.view` check and contact masks. Retired Persons remain readable.
+
 ## Runtime walkthrough without unit tests
 
 Use a freshly migrated disposable database, then run:

@@ -88,6 +88,27 @@ Domains that need an active-company chooser can carry `summary.status` through t
 
 Existing readers can keep using `archived`. A custom `OrganisationDirectory` implementation that constructs `NamedOrganisation` must also set `status` from its company lifecycle state and keep `archived` consistent. Exhaustive destructuring must include `status` or `..`.
 
+## Reads in another module's transaction
+
+**Pass your existing connection to Company when previewing or saving a Finance customer.** These reads take `&dyn bilibi_tenancy::ReadClient`, so an operation preview and a mutation transaction use the same API. They never acquire a pooled connection or commit the caller's transaction.
+
+| Function | Result and access |
+| --- | --- |
+| `detail(client, scope, company_id)` | Company facts and restricted field names under `admin.company.view`; masks match the ordinary detail page, including Extension field aliases. A missing, deleted or other-tenant company is `NotFound` |
+| `relationship_role_by_code(client, scope, code)` | `Option<RelationshipRole>` under `admin.company.view`. The tenant comes only from `scope`. Retired entries remain visible with `retired_on`; this read never installs defaults |
+| `current_relationship(client, scope, source, target, role)` | `Option<Relationship>` for that directed pair and role under `admin.company.view`. Both dates include their endpoints; null dates are unbounded. Future, ended and unlinked intervals do not qualify. Overlaps choose the latest start, then highest id. Role retirement keeps existing links effective |
+
+A relationship grants no access. Company facts and relationship reads retain the existing view capability and tenant boundaries; writes still require company reach. Use [`bilibi_address::billing_address`](../address/README.md#billing-address-in-another-modules-transaction) to freeze an address for a document date.
+
+`bilibi_company::create(tx, scope, new)` composes company creation in the caller's `MutationTransaction`. It keeps validation, duplicate review (`NewCompany::create_anyway`), field restrictions, reference checks, locks and audit capture. The caller commits or rolls back the whole operation. There is no second transaction.
+
+To inspect uncommitted reads, rollback, dates, masking, direct denies and reads with every pool connection held, use a freshly migrated disposable database. Initialize its Dev instance role through the production seeds before running the walkthrough; ordinary grant changes otherwise require an enrolled second factor:
+
+```sh
+BILIBI_ENV=development cargo run -p bilibi-web --locked -- seed-production
+BILIBI_CALLER_READS=disposable cargo run -p bilibi-company --example caller-reads-walkthrough --locked
+```
+
 ## Writes
 
 Every write takes the sealed scope, checks its capability at the moment of

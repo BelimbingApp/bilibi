@@ -245,6 +245,19 @@ pub(crate) async fn effective_restrictions(
     scope: &Scope,
 ) -> Result<std::collections::HashSet<String>> {
     let restrictions = bilibi_authz::fields::restricted(client, scope).await?;
+    resolve_restrictions(restrictions)
+}
+
+pub(crate) async fn effective_restrictions_read(
+    client: &dyn bilibi_tenancy::ReadClient,
+    scope: &Scope,
+) -> Result<std::collections::HashSet<String>> {
+    resolve_restrictions(bilibi_authz::fields::restricted_read(client, scope).await?)
+}
+
+fn resolve_restrictions(
+    restrictions: BTreeMap<String, std::collections::HashSet<String>>,
+) -> Result<std::collections::HashSet<String>> {
     let mut company = restrictions.get("companies").cloned().unwrap_or_default();
     for (_, field) in definitions()? {
         let (table, target, _) =

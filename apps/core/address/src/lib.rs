@@ -1,5 +1,6 @@
 //! Tenant-owned postal addresses, their Geonames-normalized location and the
 //! links that attach them to Organisations and Persons. See `README.md`.
+//! Mirrors Bilimbi `Core.Address`.
 mod agent_operations;
 mod bootstrap;
 mod contributions;
@@ -19,7 +20,7 @@ pub use model::{
     WriteResult,
 };
 use std::sync::{Arc, OnceLock};
-pub use store::ValidAddress;
+pub use store::{billing_address, ValidAddress};
 use tokio::sync::broadcast;
 
 pub const SERVICE: &str = "core/address.addresses";

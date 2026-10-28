@@ -161,3 +161,7 @@ Keep provider-managed roles separate from administrator assignments.
 Automatic memberships live in `authz_identity_roles`, while manual memberships remain in `principal_roles`. `effective_principal_roles` combines them for decisions, masking, role displays, agent reach and saved-layout eligibility. Use the Authz read APIs or that view for effective memberships. Never write the view or delete manual assignments to reflect a provider group change. Direct denies retain precedence over both kinds of role grant.
 
 `Grants::revoke_identity_source_roles_in` removes only one authenticated system identity source's automatic grants, even when the target account is frozen. Its caller proves the source credential; the system attribution must name that same source. It cannot add grants or touch manual roles.
+
+## Restrictions on a caller's read connection
+
+`fields::restricted_read(client, scope)` reads the same live field restrictions as `fields::restricted`, using `&dyn bilibi_tenancy::ReadClient`. Use it when a reviewed preview or another owner's transaction supplies that connection. Any restricting role wins, including alongside a grant-all role; named principals receive every restriction in their tenant. The function acquires no pooled connection.

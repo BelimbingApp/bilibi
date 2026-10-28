@@ -51,9 +51,9 @@ pub use lifecycle::{
 };
 // A company as another owner reads, authorizes or writes into it.
 pub use organisation::{
-    authorize_target, identity, list_tenant_company_ids, reachable, require_live, require_writable,
-    require_writable_in, search, CreateOutcome, Directory, Entry as SearchEntry, Identity,
-    NewCompany, SearchPage, SearchQuery, ValidCompany, RESTRICTABLE,
+    authorize_target, create, identity, list_tenant_company_ids, reachable, require_live,
+    require_writable, require_writable_in, search, CreateOutcome, Directory, Entry as SearchEntry,
+    Identity, NewCompany, SearchPage, SearchQuery, ValidCompany, RESTRICTABLE,
 };
 pub use primary::{
     assign, is_primary, platform_operator_company, primary_company, provision_platform_operator,
@@ -65,12 +65,14 @@ pub use reference_types::{
     Outcome as TypeOutcome, TypeSort, TypeUpdate,
 };
 pub use relationship_roles::{
+    by_code as relationship_role_by_code,
     ensure_defaults_if_empty as ensure_default_relationship_roles, RelationshipRole,
     RoleUpdate as RelationshipRoleUpdate,
 };
 pub use relationships::{
-    assign as assign_relationship, Direction as RelationshipDirection, Entry as RelationshipEntry,
-    Relationship, RelationshipUpdate,
+    assign as assign_relationship, current as current_relationship,
+    Direction as RelationshipDirection, Entry as RelationshipEntry, Relationship,
+    RelationshipUpdate,
 };
 
 use bilibi_database::{Change, Db, Error, MutationBoundary, Result};
@@ -314,12 +316,12 @@ pub async fn list(client: &impl GenericClient, scope: &Scope, params: &Params) -
 }
 
 pub async fn detail(
-    client: &impl GenericClient,
+    client: &dyn bilibi_tenancy::ReadClient,
     scope: &Scope,
     id: i64,
 ) -> Result<(Company, HashSet<String>)> {
-    bilibi_authz::authorize_key(client, scope, VIEW).await?;
-    let masked = field_contributions::effective_restrictions(client, scope).await?;
+    bilibi_authz::authorize_proof(client, scope, VIEW).await?;
+    let masked = field_contributions::effective_restrictions_read(client, scope).await?;
     let row = client.query_opt(&format!("SELECT {COLUMNS} FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL"), &[&scope.tenant(),&id]).await?.ok_or(Error::NotFound)?;
     Ok((Company::from_row(&row, &masked), masked))
 }

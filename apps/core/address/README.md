@@ -2,8 +2,8 @@
 
 `AddressService` (`core/address.addresses`) owns `addresses` and
 `address_attachments`. Pages, panels and agent operations call its
-APIs; no other module reads or writes these tables. Every call refreshes the
-actor's scope and rechecks contributed `admin.address.*` capabilities; no API
+APIs; no other module reads or writes these tables. Service calls refresh the
+actor's scope and recheck contributed `admin.address.*` capabilities; no API
 accepts a client-selected tenant. The `/addresses` pages and the two owner
 panels (`src/web/`) are built on these APIs.
 
@@ -91,6 +91,16 @@ address and affected owners after commit only. Grid links: `addresses.country`,
 Existing installations run `bilibi-web authz-reconcile` to grant the new
 capabilities to contributed roles: the tenant owner gets all of them. The
 walkthrough fixture's manager gets all, staff all but delete, viewer view/list.
+
+## Billing address in another module's transaction
+
+**Call `bilibi_address::billing_address(client, scope, owner, as_of)` to freeze a billing address for a document date.** It takes `&dyn bilibi_tenancy::ReadClient`, a `PartyId` owner and a `CalendarDate`; every query uses the supplied connection, including authorization and phone restrictions.
+
+The read requires `admin.address.view`. The owner must exist in the scope's tenant; a Person also requires `admin.person.view`, as with `attached`. Archived companies and retired Persons remain readable. A missing or other-tenant owner is `NotFound`.
+
+Only attachments effective on `as_of` qualify: both endpoints are inclusive and null dates are unbounded. Among live addresses, a `billing` attachment wins, ordered by primary flag, priority, then address id. If no billing attachment qualifies, the same ordering selects the owner's primary address, falling back to the first address by priority. No qualifying address returns `None`. Deleted addresses never qualify, and a restricted phone is removed from the result.
+
+The returned `AttachedAddress` includes the chosen attachment and masked address facts. The caller owns document snapshotting and transaction completion. Existing `attached` and `primary` reads keep their current behavior; this date-aware selection is explicit.
 
 ## Platform-operator locale bootstrap
 

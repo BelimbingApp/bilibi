@@ -1,4 +1,5 @@
-//! Scope-aware owner APIs shared by future pages, account links and agents.
+//! Scope-aware owner APIs shared by pages, account links and agents.
+//! Mirrors Bilimbi `Core.Person` identity and contact reads.
 use crate::{contributions::*, model::*, WriteError};
 use bilibi_authz::{authorize_key, restrictions_for};
 use bilibi_database::{Change, Error, MutationTransaction, Result};
@@ -28,11 +29,25 @@ async fn raw(
         .ok_or(Error::NotFound)?;
     Person::from_row(&row)
 }
-pub async fn read(client: &impl GenericClient, scope: &Scope, id: PersonId) -> Result<Person> {
-    authorize_key(client, scope, VIEW).await?;
-    Ok(raw(client, scope, id, false)
+/// Reads a person, including a retired person, on the caller's connection.
+pub async fn read(
+    client: &dyn bilibi_tenancy::ReadClient,
+    scope: &Scope,
+    id: PersonId,
+) -> Result<Person> {
+    bilibi_authz::authorize_proof(client, scope, VIEW).await?;
+    let row = client
+        .query_opt(
+            &format!("SELECT {COLUMNS} FROM persons WHERE tenant_id=$1 AND id=$2"),
+            &[&scope.tenant(), &id.get()],
+        )
         .await?
-        .redact(&fields(client, scope).await?))
+        .ok_or(Error::NotFound)?;
+    let fields = bilibi_authz::fields::restricted_read(client, scope)
+        .await?
+        .remove("persons")
+        .unwrap_or_default();
+    Ok(Person::from_row(&row)?.redact(&fields))
 }
 
 pub async fn search(client: &impl GenericClient, scope: &Scope, query: &Search) -> Result<Page> {
