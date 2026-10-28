@@ -771,6 +771,88 @@ async fn main() -> Result<(), Failure> {
         println!("  twin changed {}", row.get::<_, String>(0));
     }
 
+    println!("== one reviewed plan writes one calendar twice, and one holiday set twice: each names the version read before the plan");
+    show("create pair", admin.write("core.work_calendar.create", json!({"code": "pair", "name": "Pair", "timezone": "UTC", "effective_from": "2026-01-01", "week": office})).await);
+    let off = |day: &str, version: i64| {
+        op(
+            "core.work_calendar.exception.add",
+            json!({"code": "pair", "version": version, "starts_on": day, "name": format!("Closed {day}"), "type": "off"}),
+        )
+    };
+    let read = admin.version("core.work_calendar.get", "pair").await;
+    show(
+        "the second naming the version the first will make",
+        admin
+            .plan(&[off("2027-06-01", read), off("2027-06-02", read + 1)])
+            .await
+            .map(|_| json!("valid")),
+    );
+    let two = [off("2027-06-01", read), off("2027-06-02", read)];
+    match admin.plan(&two).await {
+        Ok(code) => show(
+            "both naming the version read: preview valid; commit",
+            admin.commit(&code, &two).await.map(Value::from),
+        ),
+        Err(error) => println!("preview: refused — {error}"),
+    }
+    print_days(
+        &admin
+            .read(
+                "core.work_calendar.days",
+                json!({"code": "pair", "from": "2027-06-01", "to": "2027-06-02"}),
+            )
+            .await?,
+    );
+    println!(
+        "pair version {read} before the plan, {} after",
+        admin.version("core.work_calendar.get", "pair").await
+    );
+    show(
+        "create pair-set",
+        admin
+            .write(
+                "core.work_calendar.holiday_set.create",
+                json!({"code": "pair-set", "name": "Pair set"}),
+            )
+            .await,
+    );
+    let read = admin
+        .version("core.work_calendar.holiday_set.get", "pair-set")
+        .await;
+    let both = [
+        op(
+            "core.work_calendar.holiday_set.update",
+            json!({"code": "pair-set", "version": read, "name": "Pair holidays"}),
+        ),
+        op(
+            "core.work_calendar.holiday_set.holidays",
+            json!({"code": "pair-set", "version": read, "add": [{"date": "2027-06-07", "name": "Pair day"}]}),
+        ),
+    ];
+    match admin.plan(&both).await {
+        Ok(code) => show(
+            "rename the set and add a holiday: commit",
+            admin.commit(&code, &both).await.map(Value::from),
+        ),
+        Err(error) => println!("preview: refused — {error}"),
+    }
+    let read = admin.version("core.work_calendar.get", "pair").await;
+    let later = [off("2027-06-08", read), off("2027-06-09", read)];
+    let code = admin.plan(&later).await?;
+    show(
+        "after that review, another session renames pair",
+        second
+            .write(
+                "core.work_calendar.update",
+                json!({"code": "pair", "version": read, "name": "Pair renamed"}),
+            )
+            .await,
+    );
+    show(
+        "the plan reviewed before the rename",
+        admin.commit(&code, &later).await.map(Value::from),
+    );
+
     println!("== a holiday write and an inclusion commit at once: whichever commits second records changed");
     show("create race", admin.write("core.work_calendar.create", json!({"code": "race", "name": "Race", "timezone": "UTC", "effective_from": "2026-01-01", "week": office})).await);
     show(
@@ -818,6 +900,95 @@ async fn main() -> Result<(), Failure> {
     );
     let events: i64 = client.query_one("SELECT count(*) FROM base_events WHERE name='core/work_calendar.changed' AND subject='race'", &[]).await?.get(0);
     println!("changed events for race: {events}");
+
+    println!("== a read held while a plan commits answers from one snapshot");
+    // Monday 2026-11-02 is a holiday; one plan moves it to the Sunday before
+    // and turns on substitutes, which carry it back to Monday. A read sees the
+    // old state or the new, never the old rule with the new holidays.
+    show("create snap", admin.write("core.work_calendar.create", json!({"code": "snap", "name": "Snapshot", "timezone": "UTC", "effective_from": "2026-01-01", "week": office})).await);
+    show(
+        "create snap-set",
+        admin
+            .write(
+                "core.work_calendar.holiday_set.create",
+                json!({"code": "snap-set", "name": "Snapshot set"}),
+            )
+            .await,
+    );
+    let version = admin
+        .version("core.work_calendar.holiday_set.get", "snap-set")
+        .await;
+    show("a Monday holiday", admin.write("core.work_calendar.holiday_set.holidays", json!({"code": "snap-set", "version": version, "add": [{"date": "2026-11-02", "name": "Founders' Day"}]})).await.map(|r| r["added_or_renamed"].clone()));
+    let version = admin.version("core.work_calendar.get", "snap").await;
+    show(
+        "include snap-set in snap",
+        admin
+            .write(
+                "core.work_calendar.include",
+                json!({"code": "snap", "version": version, "holiday_set": "snap-set"}),
+            )
+            .await
+            .map(|r| r["included"].clone()),
+    );
+    let open = json!({"code": "snap", "operation": "is_open", "at": "2026-11-02T10:00:00Z"});
+    admin
+        .ask("is_open Monday 10:00Z before the plan", open.clone())
+        .await;
+    let moved = [
+        op(
+            "core.work_calendar.update",
+            json!({"code": "snap", "version": admin.version("core.work_calendar.get", "snap").await, "substitute": "rest"}),
+        ),
+        op(
+            "core.work_calendar.holiday_set.holidays",
+            json!({"code": "snap-set", "version": admin.version("core.work_calendar.holiday_set.get", "snap-set").await, "remove": ["2026-11-02"], "add": [{"date": "2026-11-01", "name": "Founders' Day"}]}),
+        ),
+    ];
+    let moved_code = admin.plan(&moved).await?;
+    // Demonstration only: rule versions are read through a gate that holds a
+    // read after it has begun, as a slow read overlapping the commit would.
+    // The plan reads no rule version, so it commits past the gate.
+    client.batch_execute("CREATE FUNCTION walkthrough_read_gate() RETURNS boolean LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_advisory_lock_shared(4243); PERFORM pg_advisory_unlock_shared(4243); RETURN true; END $$; ALTER TABLE core_work_calendar_rules RENAME TO walkthrough_rules; CREATE VIEW core_work_calendar_rules AS SELECT * FROM walkthrough_rules WHERE walkthrough_read_gate()").await?;
+    gate.execute("SELECT pg_advisory_lock(4243)", &[]).await?;
+    let (held, (waited, committed, opened)) = tokio::join!(
+        admin.read("core.work_calendar.business_time", open.clone()),
+        async {
+            // Commit once the read waits at the gate (10 s at most).
+            let mut waited = false;
+            for _ in 0..200 {
+                waited = client.query_one("SELECT EXISTS(SELECT 1 FROM pg_locks WHERE locktype='advisory' AND objid=4243 AND NOT granted)", &[]).await.is_ok_and(|row| row.get::<_, bool>(0));
+                if waited {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+            let committed = admin.commit(&moved_code, &moved).await;
+            (
+                waited,
+                committed,
+                gate.execute("SELECT pg_advisory_unlock(4243)", &[]).await,
+            )
+        }
+    );
+    opened?;
+    client.batch_execute("DROP VIEW core_work_calendar_rules; ALTER TABLE walkthrough_rules RENAME TO core_work_calendar_rules; DROP FUNCTION walkthrough_read_gate()").await?;
+    println!("the read waited at the gate while the plan committed: {waited}");
+    show("the plan", committed.map(Value::from));
+    show(
+        "is_open Monday 10:00Z, read across the commit",
+        held.map(|answer| answer["result"].clone()),
+    );
+    admin
+        .ask("is_open Monday 10:00Z after the plan", open)
+        .await;
+    print_days(
+        &admin
+            .read(
+                "core.work_calendar.days",
+                json!({"code": "snap", "from": "2026-11-01", "to": "2026-11-02"}),
+            )
+            .await?,
+    );
 
     println!("== replacing the first rule moves the dates before it too");
     show("create early (from 2026-01-01, 09:00-18:00)", admin.write("core.work_calendar.create", json!({"code": "early", "name": "Early", "timezone": "UTC", "effective_from": "2026-01-01", "week": week(&["09:00-18:00"], json!({"type": "off"}), json!({"type": "rest"}))})).await);

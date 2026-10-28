@@ -2,8 +2,9 @@
 //! holiday sets. No Bilimbi counterpart. Writes are reached through the
 //! `core.work_calendar.*` contracts (ADR 01): `prepare` validates the input,
 //! `review` checks it against stored state (a preview stops there), and
-//! `apply` locks the row, reviews again and writes, recording each `Change`
-//! and a `core/work_calendar.changed` event per calendar whose dates moved.
+//! `apply` locks the row, reviews again against the version its plan read
+//! and writes, recording each `Change` and a `core/work_calendar.changed`
+//! event per calendar whose dates moved.
 use crate::{
     model::{
         date, day_entry, invalid, name, valid_code, Calendar, CalendarEntry, Choice, Exception,
@@ -820,15 +821,17 @@ impl WorkCalendars {
     }
 
     /// Check a prepared write against stored state, as a preview shows it.
-    /// `apply` runs it again under the row locks.
+    /// `apply` runs it again under the row locks, fencing against `read`: the
+    /// version its plan read of the calendar or set it writes (`plan_read`).
     pub(crate) async fn review(
         &self,
         client: &(impl GenericClient + Sync),
         tenant: i64,
         prepared: &Prepared,
+        read: Option<i64>,
     ) -> WriteResult<Value> {
         let fenced = |stored: i64, version: i64| {
-            if stored == version {
+            if read.unwrap_or(stored) == version {
                 Ok(())
             } else {
                 Err(WriteError::Stale)
@@ -1000,14 +1003,15 @@ impl WorkCalendars {
         authorize_key(tx.sql(), scope, MANAGE).await?;
         let tenant = scope.tenant();
         let lock_set =
-            "SELECT id FROM core_work_calendar_holiday_sets WHERE tenant_id=$1 AND code=$2";
+            "SELECT id,version FROM core_work_calendar_holiday_sets WHERE tenant_id=$1 AND code=$2";
         let lock_calendar =
-            "SELECT id FROM core_work_calendars WHERE tenant_id=$1 AND code=$2 FOR UPDATE";
+            "SELECT id,version FROM core_work_calendars WHERE tenant_id=$1 AND code=$2 FOR UPDATE";
         // Serialize writers of one calendar or set before reviewing. A
         // holiday write locks its set, and an inclusion its calendar and then
         // the set (shared), so whichever commits second reads the other's
-        // rows and records `changed` for the pair.
-        match &prepared {
+        // rows and records `changed` for the pair. The row the write is
+        // fenced on comes back with its version.
+        let locked = match &prepared {
             Prepared::Create { .. } | Prepared::CreateSet { .. } => {
                 tx.sql()
                     .execute(
@@ -1015,26 +1019,34 @@ impl WorkCalendars {
                         &[&i32::try_from(tenant).map_err(|_| Error::Invalid)?],
                     )
                     .await?;
+                None
             }
-            Prepared::UpdateSet { code, .. } | Prepared::Holidays { code, .. } => {
-                tx.sql()
-                    .query_opt(&format!("{lock_set} FOR UPDATE"), &[&tenant, code])
-                    .await?;
-            }
+            Prepared::UpdateSet { code, .. } | Prepared::Holidays { code, .. } => tx
+                .sql()
+                .query_opt(&format!("{lock_set} FOR UPDATE"), &[&tenant, code])
+                .await?
+                .map(|row| ("set", row)),
             Prepared::Include { code, set, .. } => {
-                tx.sql().query_opt(lock_calendar, &[&tenant, code]).await?;
+                let calendar = tx.sql().query_opt(lock_calendar, &[&tenant, code]).await?;
                 tx.sql()
                     .query_opt(&format!("{lock_set} FOR SHARE"), &[&tenant, set])
                     .await?;
+                calendar.map(|row| ("calendar", row))
             }
             Prepared::Update { code, .. }
             | Prepared::Rule { code, .. }
             | Prepared::AddException { code, .. }
-            | Prepared::RemoveException { code, .. } => {
-                tx.sql().query_opt(lock_calendar, &[&tenant, code]).await?;
-            }
-        }
-        self.review(tx.sql(), tenant, &prepared).await?;
+            | Prepared::RemoveException { code, .. } => tx
+                .sql()
+                .query_opt(lock_calendar, &[&tenant, code])
+                .await?
+                .map(|row| ("calendar", row)),
+        };
+        let read = match locked {
+            Some((kind, row)) => Some(plan_read(tx.sql(), kind, row.get(0), row.get(1)).await?),
+            None => None,
+        };
+        self.review(tx.sql(), tenant, &prepared, read).await?;
         let mut changed: Vec<(String, Option<Date>, Option<Date>)> = Vec::new();
         let result = match prepared {
             Prepared::Create {
@@ -1311,6 +1323,43 @@ fn substitute(value: &Value, errors: &mut Vec<FieldError>) -> Option<Substitute>
         ));
     }
     parsed
+}
+/// The version of a calendar or set its plan read: the one stored when this
+/// transaction first locked it for a write. A plan commits its operations in
+/// one transaction, each reviewed against the version read before the plan,
+/// so a later write to the same calendar or set is fenced against that, not
+/// the version an earlier write of the plan advanced; a change committed by
+/// anyone else since still makes it stale. A transaction-local setting keeps
+/// the versions, so PostgreSQL drops them when the transaction ends.
+async fn plan_read(
+    client: &(impl GenericClient + Sync),
+    kind: &str,
+    id: i64,
+    stored: i64,
+) -> Result<i64> {
+    let key = format!("{kind}:{id}");
+    let setting: Option<String> = client
+        .query_one(
+            "SELECT current_setting('bilibi_work_calendar.plan_read',true)",
+            &[],
+        )
+        .await?
+        .get(0);
+    // Empty (or absent) when no write of this transaction has locked one.
+    let mut read: serde_json::Map<String, Value> = setting
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default();
+    if let Some(version) = read.get(&key).and_then(Value::as_i64) {
+        return Ok(version);
+    }
+    read.insert(key, json!(stored));
+    client
+        .execute(
+            "SELECT set_config('bilibi_work_calendar.plan_read',$1,true)",
+            &[&Value::Object(read).to_string()],
+        )
+        .await?;
+    Ok(stored)
 }
 async fn today(client: &(impl GenericClient + Sync)) -> Result<Date> {
     client

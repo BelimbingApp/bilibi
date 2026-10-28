@@ -209,7 +209,7 @@ inventory::submit! { Contribution::new(EVENTS, CHANGED, provenance!(), &EventTyp
 inventory::submit! { Contribution::new(DEFINITIONS, DEFAULT, provenance!(), &Setting::Definition(Definition {
     value_type: ValueType::String, scopes: &[ScopeKind::Tenant, ScopeKind::Company], default: || serde_json::Value::Null, nullable: true, encrypted: false, minimum: None, maximum: None,
     validator: Some(Validator { accepts: |value| value.is_null() || value.as_str().is_some_and(model::valid_code), message: "Name a work calendar by its code" }),
-    editor: Some(Editor { group: "Work calendars", label: "Default work calendar", help: "The calendar's code, such as \"office\". A company's own value wins over the tenant's; leave it empty for none.", capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
+    editor: Some(Editor { group: "Work calendars", label: "Default work calendar", help: "The calendar's code, such as \"office\". A company's own value wins over the tenant's; clear a company's value and it uses the tenant's again. A tenant left empty has none.", capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
 })) }
 
 inventory::submit! {

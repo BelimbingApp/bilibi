@@ -1,7 +1,7 @@
 //! Business-time arithmetic (issue 135, item 8). `Timetable::load` reads one
-//! calendar's window (at most 731 days) in three indexed queries and answers
-//! in memory: it is the per-request cache, so the next request sees a saved
-//! change. No Bilimbi counterpart.
+//! calendar's window (at most 731 days) in one statement, so from one
+//! snapshot, and answers in memory: it is the per-request cache, so the next
+//! request sees a saved change. No Bilimbi counterpart.
 //!
 //! Periods are wall-clock minutes in the zone of the rule version in force,
 //! turned into UTC instants by `Period::bounds`' rules: a time in a
@@ -19,6 +19,7 @@ use jiff::{
     tz::{AmbiguousOffset, TimeZone},
     SignedDuration, Timestamp, ToSpan,
 };
+use serde_json::Value;
 use tokio_postgres::GenericClient;
 
 /// The widest window one load reads.
@@ -291,8 +292,32 @@ impl Timetable {
     }
 }
 
-/// The three queries: the calendar with its rule versions, the holidays of
-/// its included sets, and its exceptions in the window.
+/// What a window resolves from, read in one statement so from one snapshot:
+/// separate reads could pair a plan's old substitute rule with its new
+/// holidays, a state that never existed. It answers the substitute rule and,
+/// as JSON arrays, the rule versions, the holidays of included sets from
+/// `earliest` to the window's last day ($5), and the exceptions meeting the
+/// day before the window ($4) to its last day.
+///
+/// Substitutes chain: an earlier holiday's substitute can take the day a
+/// later one would move to, however far back the chain runs. Allocation
+/// starts where no earlier holiday can reach the window, so a date resolves
+/// the same whatever window asks: `earliest` is the latest holiday on or
+/// before $3 (15 days before the window) that follows more than $6 (14) days
+/// without one, since no substitute moves further, or $3 when none falls on
+/// or before it. A calendar that substitutes nothing starts at $4.
+const SOURCE: &str = "WITH c AS (SELECT id,substitute FROM core_work_calendars WHERE tenant_id=$1 AND code=$2), \
+dates AS (SELECT DISTINCT h.date FROM c JOIN core_work_calendar_includes i ON i.tenant_id=$1 AND i.calendar_id=c.id JOIN core_work_calendar_holidays h ON h.tenant_id=i.tenant_id AND h.holiday_set_id=i.holiday_set_id WHERE c.substitute<>'none' AND h.date<=$3::text::date), \
+gaps AS (SELECT date,lag(date) OVER (ORDER BY date) AS prev FROM dates), \
+w AS (SELECT CASE WHEN c.substitute='none' THEN $4::text::date ELSE coalesce((SELECT max(date) FROM gaps WHERE prev IS NULL OR date-prev>$6),$3::text::date) END AS earliest FROM c) \
+SELECT c.substitute, \
+(SELECT json_agg(json_build_array(r.effective_from,r.timezone,r.week) ORDER BY r.effective_from) FROM core_work_calendar_rules r WHERE r.tenant_id=$1 AND r.calendar_id=c.id), \
+(SELECT json_agg(json_build_array(h.date,s.code,h.name) ORDER BY h.date,s.code) FROM core_work_calendar_includes i JOIN core_work_calendar_holiday_sets s ON s.tenant_id=i.tenant_id AND s.id=i.holiday_set_id JOIN core_work_calendar_holidays h ON h.tenant_id=i.tenant_id AND h.holiday_set_id=i.holiday_set_id WHERE i.tenant_id=$1 AND i.calendar_id=c.id AND h.date BETWEEN w.earliest AND $5::text::date), \
+(SELECT json_agg(json_build_array(e.id,e.starts_on,e.ends_on,e.name,e.day_type,e.periods) ORDER BY e.starts_on) FROM core_work_calendar_exceptions e WHERE e.tenant_id=$1 AND e.calendar_id=c.id AND e.starts_on<=$5::text::date AND e.ends_on>=$4::text::date) \
+FROM c,w";
+
+/// The calendar with its rule versions, the holidays of its included sets,
+/// and its exceptions in the window.
 async fn source(
     client: &(impl GenericClient + Sync),
     tenant: i64,
@@ -307,66 +332,61 @@ async fn source(
     {
         return Err(Error::Invalid);
     }
-    let rows = client
-        .query(
-            "SELECT c.id,c.substitute,r.effective_from::text,r.timezone,r.week FROM core_work_calendars c JOIN core_work_calendar_rules r ON r.tenant_id=c.tenant_id AND r.calendar_id=c.id WHERE c.tenant_id=$1 AND c.code=$2 ORDER BY r.effective_from",
-            &[&tenant, &code],
+    let (cut, before) = (shift(from, -(SUBSTITUTE_SEARCH + 1))?, shift(from, -1)?);
+    let row = client
+        .query_opt(
+            SOURCE,
+            &[
+                &tenant,
+                &code,
+                &cut.to_string(),
+                &before.to_string(),
+                &to.to_string(),
+                &(SUBSTITUTE_SEARCH as i32),
+            ],
         )
-        .await?;
-    let first = rows.first().ok_or(Error::NotFound)?;
-    let (calendar, substitute): (i64, &str) = (first.get(0), first.get(1));
-    let substitute = Substitute::parse(substitute).ok_or(Error::Internal)?;
-    let rules = rows
+        .await?
+        .ok_or(Error::NotFound)?;
+    let substitute = Substitute::parse(row.get(0)).ok_or(Error::Internal)?;
+    let list = |index: usize| match row.get::<_, Option<Value>>(index) {
+        Some(Value::Array(items)) => items,
+        _ => Vec::new(),
+    };
+    let rules = list(1)
         .iter()
-        .map(|row| {
+        .map(|rule| {
             Ok(Rule {
-                effective_from: row.get::<_, &str>(2).parse().map_err(|_| Error::Internal)?,
-                timezone: row.get(3),
-                week: Week::from_stored(&row.get(4))?,
+                effective_from: day(&rule[0])?,
+                timezone: text(&rule[1])?.to_owned(),
+                week: Week::from_stored(&rule[2])?,
             })
         })
         .collect::<Result<Vec<_>>>()?;
-    // Substitutes chain: an earlier holiday's substitute can take the day a
-    // later one would move to, however far back the chain runs. Allocation
-    // starts where no earlier holiday can reach the window, so a date
-    // resolves the same whatever window asks.
-    let earliest = match substitute {
-        Substitute::None => shift(from, -1)?,
-        _ => {
-            start(
-                client,
-                tenant,
-                calendar,
-                shift(from, -(SUBSTITUTE_SEARCH + 1))?,
-            )
-            .await?
-        }
-    };
-    let (earliest, before) = (earliest.to_string(), shift(from, -1)?.to_string());
-    let last = to.to_string();
-    let holidays = client
-        .query(
-            "SELECT h.date::text,s.code,h.name FROM core_work_calendar_includes i JOIN core_work_calendar_holiday_sets s ON s.tenant_id=i.tenant_id AND s.id=i.holiday_set_id JOIN core_work_calendar_holidays h ON h.tenant_id=i.tenant_id AND h.holiday_set_id=i.holiday_set_id WHERE i.tenant_id=$1 AND i.calendar_id=$2 AND h.date BETWEEN $3::text::date AND $4::text::date ORDER BY h.date,s.code",
-            &[&tenant, &calendar, &earliest, &last],
-        )
-        .await?
+    if rules.is_empty() {
+        return Err(Error::NotFound);
+    }
+    let holidays = list(2)
         .iter()
-        .map(|row| {
+        .map(|holiday| {
             Ok((
-                row.get::<_, &str>(0).parse().map_err(|_| Error::Internal)?,
-                row.get(1),
-                row.get(2),
+                day(&holiday[0])?,
+                text(&holiday[1])?.to_owned(),
+                text(&holiday[2])?.to_owned(),
             ))
         })
         .collect::<Result<Vec<_>>>()?;
-    let exceptions = client
-        .query(
-            "SELECT id,starts_on::text,ends_on::text,name,day_type,periods FROM core_work_calendar_exceptions WHERE tenant_id=$1 AND calendar_id=$2 AND starts_on<=$4::text::date AND ends_on>=$3::text::date ORDER BY starts_on",
-            &[&tenant, &calendar, &before, &last],
-        )
-        .await?
+    let exceptions = list(3)
         .iter()
-        .map(exception)
+        .map(|e| {
+            stored_exception(
+                e[0].as_i64().ok_or(Error::Internal)?,
+                text(&e[1])?,
+                text(&e[2])?,
+                text(&e[3])?.to_owned(),
+                text(&e[4])?,
+                &e[5],
+            )
+        })
         .collect::<Result<Vec<_>>>()?;
     Ok(Source {
         substitute,
@@ -375,26 +395,11 @@ async fn source(
         exceptions,
     })
 }
-/// Where substitute allocation may start for dates after `cut + 14`: the
-/// latest holiday on or before `cut` preceded by more than
-/// [`SUBSTITUTE_SEARCH`] days without a holiday, since no substitute moves
-/// further than that; `cut` when no holiday falls on or before it.
-async fn start(
-    client: &(impl GenericClient + Sync),
-    tenant: i64,
-    calendar: i64,
-    cut: Date,
-) -> Result<Date> {
-    let row = client
-        .query_one(
-            "SELECT max(date)::text FROM (SELECT date,lag(date) OVER (ORDER BY date) AS prev FROM (SELECT DISTINCT h.date FROM core_work_calendar_includes i JOIN core_work_calendar_holidays h ON h.tenant_id=i.tenant_id AND h.holiday_set_id=i.holiday_set_id WHERE i.tenant_id=$1 AND i.calendar_id=$2 AND h.date<=$3::text::date) d) g WHERE prev IS NULL OR date-prev>$4",
-            &[&tenant, &calendar, &cut.to_string(), &(SUBSTITUTE_SEARCH as i32)],
-        )
-        .await?;
-    match row.get::<_, Option<&str>>(0) {
-        Some(text) => Ok(text.parse::<Date>().map_err(|_| Error::Internal)?.min(cut)),
-        None => Ok(cut),
-    }
+fn text(value: &Value) -> Result<&str> {
+    value.as_str().ok_or(Error::Internal)
+}
+fn day(value: &Value) -> Result<Date> {
+    text(value)?.parse().map_err(|_| Error::Internal)
 }
 /// The last date a change to holidays on or before `last` can move, for
 /// each calendar including `set` (or the one `calendar`): a substitute moves
@@ -433,20 +438,32 @@ pub(crate) async fn reach(
         .collect()
 }
 pub(crate) fn exception(row: &tokio_postgres::Row) -> Result<Exception> {
+    stored_exception(
+        row.get("id"),
+        row.get("starts_on"),
+        row.get("ends_on"),
+        row.get("name"),
+        row.get("day_type"),
+        &row.get("periods"),
+    )
+}
+/// An exception from its stored columns, dates as `YYYY-MM-DD`.
+fn stored_exception(
+    id: i64,
+    starts_on: &str,
+    ends_on: &str,
+    name: String,
+    day_type: &str,
+    periods: &Value,
+) -> Result<Exception> {
     Ok(Exception {
-        id: row.get("id"),
-        starts_on: row
-            .get::<_, &str>("starts_on")
-            .parse()
-            .map_err(|_| Error::Internal)?,
-        ends_on: row
-            .get::<_, &str>("ends_on")
-            .parse()
-            .map_err(|_| Error::Internal)?,
-        name: row.get("name"),
+        id,
+        starts_on: starts_on.parse().map_err(|_| Error::Internal)?,
+        ends_on: ends_on.parse().map_err(|_| Error::Internal)?,
+        name,
         day: WeekDay {
-            day_type: DayType::parse(row.get("day_type")).ok_or(Error::Internal)?,
-            periods: periods_from_json(&row.get("periods"))?,
+            day_type: DayType::parse(day_type).ok_or(Error::Internal)?,
+            periods: periods_from_json(periods)?,
         },
     })
 }

@@ -19,6 +19,7 @@ Declare a dependency on `core/work_calendar` and resolve `WorkCalendars` from se
 - Store the calendar **code**, never an id. Codes are stable: a calendar is retired, never deleted.
 - `None` from `default_for` is the caller's choice: the facade never substitutes clock time. `Timetable::clock()` is always open, so a caller that falls back to clock time keeps one code path.
 - A `Timetable` is the per-request cache: one load serves a list of 50 cases. There is no process-wide cache, so the next request sees a saved change.
+- A load is one statement, so it reads one snapshot on any connection: a plan committing meanwhile is seen whole or not at all.
 
 ## Day types and resolution
 
@@ -66,6 +67,7 @@ A search looks at most 366 days ahead (`SEARCH_DAYS`) and never past the loaded 
 Tenant capabilities `admin.work-calendar.view`, `.list` and `.manage`; the `tenant_owner` role holds all three. Writes recheck `.manage` inside their transaction, are audited (`core/work_calendar.calendar`, `.rule`, `.exception`, `.holiday_set`, `.holiday`, `.include`) and carry a version fence on the calendar or set. Every statement carries the tenant predicate.
 
 - **Locks.** A write locks its calendar or set before reading. A holiday write locks its set, and an inclusion its calendar and then the set (shared), so of a concurrent pair the second to commit sees the other and records `changed`.
+- **One plan, one version.** Each operation of a reviewed plan names the version read before the plan, and the commit fences each against it, so one plan may write a calendar or set several times. A change committed elsewhere since the review is still refused as stale.
 - **Bounded reads.** Lists page (`page`, `page_size` at most 100) with the total. A calendar's rule versions and included sets, and a set's including calendars, come as the first 400 with the total; exceptions and holidays page 400 at a time (`page`).
 
 Agents, and later the pages, use these contracts (ADR 01); writes are reviewed (plan, then commit):
@@ -86,7 +88,7 @@ Agents, and later the pages, use these contracts (ADR 01); writes are reviewed (
 | `core.work_calendar.holiday_set.holidays` | write | Add (or rename) and remove up to 400 holidays: a year at a time. A removal names a date the set holds, once; the reply counts what was removed |
 | `core.work_calendar.include` | write | Include a set in a calendar, or leave it out |
 
-Setting `work_calendar.default` (tenant and company scopes, null by default) names a calendar code.
+Setting `work_calendar.default` (tenant and company scopes, null by default) names a calendar code. A company without its own value, or whose value is cleared, uses the tenant's.
 
 ### Retirement
 
@@ -105,4 +107,4 @@ Shifts, rosters and attendance; pay rates by day type and leave-day counting; SL
 
 ## Walkthrough
 
-On a disposable database, set `DATABASE_URL`, `BILIBI_WORK_CALENDAR_DEMO=disposable`, `BILIBI_SETTINGS_KEY` and `BILIBI_USER_SIGNING_KEY`, then run `cargo run -p bilibi-work-calendar --example work-calendar-walkthrough`. It migrates, installs the walkthrough fixture and, through the reviewed contracts, builds a Monday–Friday calendar with a lunch break, national and state holiday sets, a shutdown, a special working Saturday and a half day; prints the resolved days with their reasons, substitutes under a Friday–Saturday weekend and a new rule version; answers each `business_time` operation across breaks, weekends, holidays, a close boundary, a closed start, a daylight-saving gap and fold and a period past midnight; and shows the company default, retirement, `changed` events, tenant isolation, refused writes and the audit trail. It also shows a substitute chain resolving the same in any window, one plan editing two sets of a calendar, a holiday write and an inclusion committing at once, replacing the first rule version, an exception's hours in its removal evidence, paged lists and holidays, removals of dates a set does not hold, a tenant owner managing calendars, and the migration ID.
+On a disposable database, set `DATABASE_URL`, `BILIBI_WORK_CALENDAR_DEMO=disposable`, `BILIBI_SETTINGS_KEY` and `BILIBI_USER_SIGNING_KEY`, then run `cargo run -p bilibi-work-calendar --example work-calendar-walkthrough`. It migrates, installs the walkthrough fixture and, through the reviewed contracts, builds a Monday–Friday calendar with a lunch break, national and state holiday sets, a shutdown, a special working Saturday and a half day; prints the resolved days with their reasons, substitutes under a Friday–Saturday weekend and a new rule version; answers each `business_time` operation across breaks, weekends, holidays, a close boundary, a closed start, a daylight-saving gap and fold and a period past midnight; and shows the company default, retirement, `changed` events, tenant isolation, refused writes and the audit trail. It also shows a substitute chain resolving the same in any window, one plan editing two sets of a calendar, one plan writing one calendar twice and one set twice (refused when an operation names the version an earlier one makes, or when another session changed the calendar after the review), a holiday write and an inclusion committing at once, a business-time read held while a plan commits answering from one snapshot, replacing the first rule version, an exception's hours in its removal evidence, paged lists and holidays, removals of dates a set does not hold, a tenant owner managing calendars, and the migration ID.
