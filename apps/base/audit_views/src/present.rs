@@ -330,14 +330,14 @@ pub fn present(action: &ActionEntry) -> Presentation {
         return match auth {
             "login" => plain(
                 "Auth",
-                "Login".into(),
+                "Sign in".into(),
                 dash(),
                 "Succeeded",
                 BadgeKind::Success,
             ),
             "logout" => plain(
                 "Auth",
-                "Logout".into(),
+                "Sign out".into(),
                 dash(),
                 "Completed",
                 BadgeKind::Neutral,

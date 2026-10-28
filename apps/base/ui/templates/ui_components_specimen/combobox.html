@@ -3,4 +3,6 @@
 {% call ui::card(id="specimen-combobox", title="Combobox", class="lg:col-span-2", inner_class="p-4 lg:col-span-2") %}
 <p class="mb-3 text-xs text-ink-muted">Type to filter, use the arrow keys to move, and press Enter to commit. Escape or leaving the field restores the last committed choice. The unlabelled inline editor also reports the cancel to its page, as an inline field editor does.</p>
 <div class="grid gap-x-3 sm:grid-cols-3">{% call form::combobox(combo=controls.combobox_country) %}{% endcall %}{% call form::combobox(combo=controls.combobox_selected) %}{% endcall %}{% call form::combobox(combo=controls.combobox_empty) %}{% endcall %}{% call form::combobox(combo=controls.combobox_inline) %}{% endcall %}</div>
+<p class="mb-3 mt-2 text-xs text-ink-muted">A choice can carry a code. The name comes first and the code follows in muted italics, in the box and in the list. Typing searches both.</p>
+<div class="grid gap-x-3 sm:grid-cols-2">{% call form::combobox(combo=controls.combobox_account) %}{% endcall %}{% call form::combobox(combo=controls.combobox_account_inline) %}{% endcall %}</div>
 {% endcall %}

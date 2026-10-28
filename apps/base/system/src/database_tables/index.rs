@@ -84,7 +84,7 @@ impl Index {
     pub(super) async fn body(&mut self, scope: &Scope) -> Result<Html> {
         let header = Header {
             title: Html::text("Database Tables"),
-            subtitle: "Browse the database tables; nothing can be changed here.",
+            subtitle: "Read-only view of the database tables.",
             title_actions: render(IconButton {
                 id: "database-tables-pin",
                 context: IconContext::Inline,
@@ -249,15 +249,19 @@ impl LiveState<Scope, Error> for Index {
                         ListState::parse(query, SPEC.clone()).map_err(|_| Error::Internal)?
                 }
                 LiveInput::Event(value) => match value.get("type").and_then(Value::as_str) {
-                    Some("filter") => self
-                        .list
-                        .apply_filters(&params::form_values(value, "filters")),
+                    Some("filter") => self.list.apply_filters(
+                        &params::form_values_checked(value, "filters", params::FIELD_LIMIT)
+                            .map_err(Error::refused)?,
+                    ),
                     Some("page") => self
                         .list
                         .put_page(value.get("page").and_then(Value::as_str)),
                     Some("grid") => {
                         if let bilibi_ui::list_columns::ColumnsOutcome::Sort(key) =
-                            self.columns.handle(&params::string_values(value))
+                            self.columns.handle(
+                                &params::string_values_checked(value, params::FIELD_LIMIT)
+                                    .map_err(Error::refused)?,
+                            )
                         {
                             self.list.next_sort(&key);
                         }

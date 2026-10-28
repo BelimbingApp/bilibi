@@ -1,0 +1,16 @@
+{#- The currencies page and the exchange rates page. The header, summary,
+    toolbar, table, pager and dialogs are rendered by src/web.rs through the
+    shared models; this file lays them out. -#}
+{%- import "components.html" as ui -%}
+{%- import "feedback.html" as feedback -%}
+<div data-shared-ui>
+{% call feedback::flash_group(messages=flash) %}{% endcall %}
+{% call ui::page(id=id) %}
+{{ header }}
+{{ summary }}
+{{ toolbar }}
+{{ card }}
+{{ footer }}
+{{ dialog }}
+{% endcall %}
+</div>

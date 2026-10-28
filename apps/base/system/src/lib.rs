@@ -187,7 +187,7 @@ bilibi_menu::contribute!(
         "/system/database-tables"
     )
     .under("admin.system.database")
-    .icon("table-cells")
+    .icon("database")
     .requires(bilibi_menu::Requirement::Owner)
     .order(10)
 );

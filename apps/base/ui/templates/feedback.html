@@ -25,7 +25,7 @@
 {% call flash(kind=bilibi_ui::StatusKind::Error, id="{}-client-error"|format(id), title="Connection interrupted", message="Reconnecting…", hidden=!revealed.is_client(), connection=revealed.binding("client")) %}{% endcall %}
 {%- endif -%}
 {%- if !revealed.is_client() -%}
-{% call flash(kind=bilibi_ui::StatusKind::Error, id="{}-server-error"|format(id), title="Server unavailable", message="Attempting to reconnect", spinner=true, hidden=!revealed.is_server(), connection=revealed.binding("server")) %}{% endcall %}
+{% call flash(kind=bilibi_ui::StatusKind::Error, id="{}-server-error"|format(id), title="Server unavailable", message="Reconnecting…", spinner=true, hidden=!revealed.is_server(), connection=revealed.binding("server")) %}{% endcall %}
 {%- endif -%}
 {% endmacro %}
 
@@ -52,7 +52,7 @@
 {#- Which installation a review or confirmation acts on, at its top
     (src/instance.rs). A note, not an alert: it is read in place, every time. -#}
 {% macro instance_banner(banner) %}
-<div{% if !banner.id.is_empty() %} id="{{ banner.id }}"{% endif %} role="note" aria-label="Which Bilibi this is" data-instance="{{ banner.role }}" class="flex items-start gap-3 rounded-lg border-2 px-3 py-2.5 text-sm {{ banner.tone.surface_class() }}{% if !banner.class.is_empty() %} {{ banner.class }}{% endif %}">{% call c::icon(name=banner.tone.icon(), class="mt-0.5 size-5 shrink-0") %}{% endcall %}<div class="min-w-0"><p class="break-words text-base font-semibold uppercase tracking-wide">{{ banner.label }}</p><p>{{ banner.message }}</p></div></div>
+<div{% if !banner.id.is_empty() %} id="{{ banner.id }}"{% endif %} role="note" aria-label="Server identity" data-instance="{{ banner.role }}" class="flex items-start gap-3 rounded-lg border-2 px-3 py-2.5 text-sm {{ banner.tone.surface_class() }}{% if !banner.class.is_empty() %} {{ banner.class }}{% endif %}">{% call c::icon(name=banner.tone.icon(), class="mt-0.5 size-5 shrink-0") %}{% endcall %}<div class="min-w-0"><p class="break-words text-base font-semibold uppercase tracking-wide">{{ banner.label }}</p><p>{{ banner.message }}</p></div></div>
 {% endmacro %}
 
 {#- An inline status alert. -#}
@@ -84,6 +84,22 @@
 {# The stored server role, never the compiler's build mode. #}
 {% macro instance_status(status) %}
 {% if status.editable %}<a{% if !status.id.is_empty() %} id="{{ status.id }}"{% endif %} href="/system/instance" title="Instance settings · {{ status.title }}" data-instance="{{ status.role }}" class="inline-flex shrink-0 items-center gap-1 rounded-sm border px-1.5 font-semibold {{ status.tone.surface_class() }}">{% else %}<span{% if !status.id.is_empty() %} id="{{ status.id }}"{% endif %} title="{{ status.title }}" data-instance="{{ status.role }}" class="inline-flex shrink-0 items-center gap-1 rounded-sm border px-1.5 font-semibold {{ status.tone.surface_class() }}">{% endif %}{{ status.role_label }}{% if status.label != status.role_label %} · {{ status.label }}{% endif %}{% if status.editable %}</a>{% else %}</span>{% endif %}
+{% endmacro %}
+
+{#- A tag in the status bar's centre that opens a panel (src/statusbar.rs):
+    the same text in every state, the border weight repeating it (quiet = a
+    faint line) and the title saying it in words. The shell's disclosure
+    controller (assets/shell.js) owns open/closed through
+    data-statusbar-toggle and aria-controls, as for the bell. -#}
+{% macro statusbar_tag(tag) %}
+<button type="button" id="{{ tag.id }}" data-statusbar-toggle data-state="{{ tag.state }}" aria-haspopup="true" aria-expanded="false" aria-controls="{{ tag.controls }}" aria-label="{{ tag.title }}" title="{{ tag.title }}" class="inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-sm border px-1.5 font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-strong {% if tag.quiet %}border-low-contrast-line text-ink-faint hover:border-line hover:text-ink-muted{% else %}border-high-contrast-line text-ink hover:bg-surface-sunken{% endif %}">{{ tag.label }}</button>
+{% endmacro %}
+
+{#- The panel a status-bar tag opens: upward over the bar, centred under the
+    tag from `sm`, the full width of a phone below it. Starts hidden; the
+    shell shows it. The body is the caller's. -#}
+{% macro statusbar_panel(id, label) %}
+<section id="{{ id }}" data-statusbar-panel hidden aria-label="{{ label }}" class="fixed inset-x-2 bottom-7 z-50 overflow-hidden rounded-xl border border-line bg-surface text-xs text-ink shadow-lg sm:absolute sm:inset-x-auto sm:bottom-full sm:left-1/2 sm:mb-1 sm:w-96 sm:-translate-x-1/2">{{ caller() }}</section>
 {% endmacro %}
 
 {# ShellControls uses the shared flash DOM for browser-owned preference outcomes.

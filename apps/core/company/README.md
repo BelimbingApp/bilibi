@@ -131,6 +131,58 @@ through the plan's transaction) plus the `core.company` guide. A restricted
 field arrives as `{"restricted": true}`. The handlers read through a pool
 bound once by the service factory.
 
+## Static Extension-owned fields
+
+Company accepts build-time `CompanyFieldContribution` entries on
+`core/company.company_fields`. An Extension depends on Company and contributes
+stable, globally unique lowercase field IDs and labels; Company never depends
+on the Extension. Discovery rejects duplicate IDs, built-in collisions and
+unsupported lengths before the app starts. This first slice supports optional
+text fields up to 10,000 characters so JSON-escaped values fit in a Company
+live-form event frame.
+
+The Extension owns its field table and migration. Its Grid contribution declares
+the tenant-scoped source and a `One` link from `companies`; its
+`RecordFields` contribution supplies the direct `extension_table.field` Grid
+path and detail label. Company
+uses the static field declaration for create and detail controls, and calls the
+owner's scoped read callback for Company pages and agent reads. The owner must
+bind the sealed scope's tenant in every read and write.
+
+Create and update callbacks run inside Company's mutation transaction through a
+borrowed SQL transaction and return field values before and after their write. Company
+captures those values as a `company` audit change; an inline update also
+increments the Company record version. Callbacks do not open or commit a
+transaction and do not record audit rows themselves. Company rechecks reach
+and current field restrictions before invoking a write. A restriction on either
+the Company field ID or its Extension table field ID masks the Company value and
+refuses writes. Authz maps both identities to the Company's audit kind and the
+Extension table's declared audit kinds, so the same value is withheld under
+either record identity, including when the target field is protected from new
+restrictions. Grid prunes the corresponding dotted path from each fresh scoped
+catalog.
+
+The same fields appear in the reviewed `core.company.create` schema and are
+accepted by its preview and commit handlers. List and detail agent output uses
+the same field IDs, with restricted values replaced by the shared restricted
+marker. Runtime tenant-defined fields, JSON storage, reference fields and
+governed choices are not part of this static contract.
+
+### Upgrade notes for field contributors
+
+Existing callers of `CompanyService::create_with_context` must pass the new
+`CompanyFieldValues` argument between `new` and `activities` (use an empty map
+when no contributed values are supplied). Owners constructing Authz
+`CatalogField` values must also populate `restriction_aliases` with the actual
+target table, field identity and that table's `record_types`; for linked Grid
+paths, resolve the path instead of treating its first segment as a table ID.
+Write callbacks must return exactly the values supplied by Company; callbacks
+that normalize a reviewed value are refused and rolled back. Callers of Grid's
+`PageColumns::with_record_slots` must handle its `Result` and propagate or map
+invalid and duplicate slot errors. Contributed field IDs must not use Company
+form transport keys or Company agent request/response envelope keys; discovery
+rejects those names before the app starts.
+
 ## Provisioning
 
 ```sh

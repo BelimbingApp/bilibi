@@ -80,6 +80,8 @@ The owner resolves its live record and checks its own capability; unknown
 subjects have no access. Contributions from modules that do not depend on
 `base/media` fail at boot.
 
+A module that only needs other modules to point at its records, not to hold files for them, registers a record kind with Base Records instead: [`../records/README.md`](../records/README.md). Its `RecordOwner` follows the same access pattern as `SubjectOwner`.
+
 ## Private attachments
 
 Attachments are files a user adds to *someone else's* record (a ticket photo, an

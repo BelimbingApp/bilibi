@@ -54,7 +54,7 @@ operation, guards the new route's access and refuses any other page's path. `pag
 be a mounted panel ID: a server-declared page panel, or a shell panel. Outside
 framed pages Web mounts every `EmbedContext::Shell` contribution once per socket
 under its element id (slot `shell.notifications` is `#app-notifications`, the
-bell) and drops it when its access is refused. Client payloads cannot
+bell; `shell.ai` is `#app-ai`, the status bar's AI tag) and drops it when its access is refused. Client payloads cannot
 choose an embed, operation, service, tenant, account or record binding.
 
 Responses are `page` (complete `#app`, canonical URL, notice and row count), `fragment` (one panel's complete root element with its existing ID), or `error` (message, target and clear flag). Accepted user events echo the request ID; background updates use null. A rejected intent with a valid request ID also acknowledges that ID. Canonical query values are encoded by Web, never supplied as a client URL. A mount or Back keeps the browser's address while the page's canonical query only adds values it left out, so a list opened at its bare path stays there (Bilimbi pushes a patch only on change); a page that drops or corrects a value the address carries replaces it with the canonical one. After that the URL is written only when the canonical address changes: user navigation/query changes push history, background refresh and history corrections replace it. A popstate that changes only the fragment leaves the page as mounted, since a remount would drop what was typed, so an ordinary `href="#id"` link keeps its native behaviour. A link marked `data-focus-link` (an error summary's link to its field) takes focus to its target instead, opening any closed `details` around it, with no history entry. Browser Back remounts the historical URL, except within a page that owns panel query namespaces (same pathname only) or marks an element `data-history="params"` (the tiled workspace): there a Back or Forward is a `params` update of the mounted state, Bilimbi's `handle_params` on a live patch, so the DOM it keeps is reconciled rather than rebuilt. A page inside a workspace frame never adds a history entry: its address changes are replaced, a plain same-origin link click becomes `location.replace`, and `bilibi:location` is raised on its `window` after each address change so the workspace can record where the tile went.
@@ -65,7 +65,7 @@ pushed detail (Bilimbi's `push_event`); the stored-secret reveal uses
 
 A reply that sets `LiveBody.redirect` to a local path may also set `LiveBody.flash`
 (kind plus the source's copy: Bilimbi's `put_flash` + `push_navigate`, e.g.
-`Success`, "Company created successfully."). The host holds it for that session
+`Success`, "Company created."). The host holds it for that session
 (`apps/web/src/landing.rs`, 60 seconds, text never leaves the server) and the
 session's next navigation to that path renders it once in the flash group. A
 flash without a redirect is dropped; an OAuth callback never carries one.
@@ -83,9 +83,11 @@ document.dispatchEvent(new CustomEvent('bilibi:navigate', {
 }));
 ```
 
-The socket processes events sequentially. Messages are limited to one upload
-chunk frame (`bilibi_web::live::FRAME_LIMIT`, 64 KiB plus a header); every
-JSON intent is far smaller.
+The socket processes events sequentially. **A complete encoded JSON intent may contain at most 1 MiB of UTF-8 bytes**, including its request ID (`bilibi_ui::LIVE_EVENT_LIMIT`). This budget is independent of upload chunks and carries multiple long-text fields. The browser serializes and checks every intent before queueing it, including while disconnected. An oversized intent is never sent: its source settles, its callback receives an error, and a persistent shared error flash explains that the draft is kept and asks the person to shorten the text or use a file upload.
+
+Web rechecks the encoded length before decoding a module event. A stale or custom client above the event budget receives an `error` with its valid request ID, target and `clear: false`; no module handler runs and the socket remains usable. A separate 2 MiB frame/message cap (`bilibi_web::live::FRAME_LIMIT`) bounds socket allocations while allowing these refusals. A peer exceeding that hard cap may be disconnected; Web attempts an error reply, and the browser keeps drafts on an unconfirmed disconnect. Binary uploads still carry at most `CHUNK_SIZE` (64 KiB) plus their eight-byte header, checked independently.
+
+Form authors follow [Shared UI's form-size rule](../apps/base/ui/README.md#form-size): field limits must match owner validation, and their combined encoded content must fit the event budget. A per-field character maximum alone cannot bound a repeating form's event.
 
 ## Browser adapter
 
@@ -103,8 +105,7 @@ JSON intent is far smaller.
   unkeyed siblings pair by position, and only attributes and text that differ
   are written. The browser's own dirty flags keep typed values, so an unfinished
   draft survives any patch, and the hidden inputs of a form holding a draft keep
-  their values (a record version still conflicts on save). The form whose
-  submission was accepted is reset to the stored values. On an existing element
+  their values (a record version still conflicts on save). The form whose submission was accepted is reset to the stored values unless it holds a newer refused draft. A refused draft stays protected from older replies, uploads and button actions until a later complete form snapshot is accepted; an older reply's redirect also stays on the draft. On an existing element
   the patcher leaves an iframe's `src`, a `<details>`/`<dialog>` `open` and a
   `data-live-ignore` subtree (except its `data-*` attributes) alone, keeps the
   `aria-expanded` a person gave the trigger of a `data-live-expanded`
@@ -128,8 +129,7 @@ JSON intent is far smaller.
   backoff (500ms doubling to 5s; `online` and window focus retry at once), then
   remounts the current URL into the existing DOM and sends the intents raised
   meanwhile. Intents that were in flight when the socket dropped cannot be
-  confirmed; the status region reports their count. Development reloads instead
-  so a rebuilt server serves fresh assets. A `clear` error on the page removes
+  confirmed; the status region reports their count. Development reloads fresh assets only when no form has a draft or unconfirmed submission. Otherwise it remounts into the existing DOM and keeps the draft. A `clear` error on the page removes
   `#app`, offers sign-in and stops reconnecting.
 
 Forms raise intent with `data-event`: `params` sends the form values as a

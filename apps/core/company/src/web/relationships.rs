@@ -432,19 +432,31 @@ fn access(error: Error, flash: &mut Flash) -> Result<()> {
     }
 }
 /// A form's or button's values, without the event name.
-fn values_of(value: &Value) -> HashMap<String, String> {
-    let mut values = bilibi_ui::params::string_values(value);
+fn values_of(value: &Value) -> Result<HashMap<String, String>> {
+    let mut values =
+        bilibi_ui::params::string_values_checked(value, bilibi_ui::params::FIELD_LIMIT)
+            .map_err(Error::refused)?;
     values.remove("type");
-    values
+    Ok(values)
 }
 fn get<'a>(value: &'a Value, key: &str) -> &'a str {
     value.get(key).and_then(Value::as_str).unwrap_or("")
 }
 fn errors_for(errors: &[FieldError], field: &str) -> Vec<String> {
+    let label = match field {
+        "code" => "Code",
+        "name" => "Name",
+        "inverse_name" => "Inverse name",
+        "target" => "Related party",
+        "role_id" => "Relationship role",
+        "effective_from" => "Effective from",
+        "effective_to" => "Effective to",
+        _ => "",
+    };
     errors
         .iter()
         .filter(|e| e.field == field)
-        .map(|e| e.message.clone())
+        .map(|e| bilibi_ui::error_sentence(label, &e.message))
         .collect()
 }
 fn page(id: &str, variant: PageVariant, body: Html) -> Result<String> {
@@ -719,7 +731,7 @@ impl RolesPage {
             html.push(&render(&ConfirmDialog {
                 id: "retire-relationship-role-confirm",
                 consequence: &format!("Relationship role “{}” will be retired.", role.name),
-                detail: "No new relationship can use it. Every existing relationship keeps it and stays visible as history.",
+                detail: "New relationships cannot use this role. Existing relationships keep it in their history.",
                 confirm: "Retire",
                 working: "Retiring…",
                 confirm_event: "retire",
@@ -819,7 +831,7 @@ impl RolesPage {
         }
         match kind {
             "grid" => {
-                self.columns.handle(&values_of(value));
+                self.columns.handle(&values_of(value)?);
             }
             "toggle_retired" => self.include_retired = !self.include_retired,
             "new" => {
@@ -858,7 +870,7 @@ impl RolesPage {
                 let Some(modal) = self.modal.as_mut() else {
                     return Ok(());
                 };
-                modal.values = values_of(value);
+                modal.values = values_of(value)?;
                 let text = |key: &str| modal.values.get(key).cloned().unwrap_or_default();
                 match &modal.editing {
                     Some(role) => {
@@ -870,7 +882,7 @@ impl RolesPage {
                         {
                             Ok(()) => {
                                 self.modal = None;
-                                self.flash.success("Relationship role updated successfully.");
+                                self.flash.success("Relationship role updated.");
                             }
                             Err(WriteError::Stale) => self.flash.error(
                                 "The role changed since it was opened. Close the dialog and try again.",
@@ -899,8 +911,7 @@ impl RolesPage {
                         {
                             Ok(()) => {
                                 self.modal = None;
-                                self.flash
-                                    .success("Relationship role created successfully.");
+                                self.flash.success("Relationship role created.");
                             }
                             Err(WriteError::Invalid(errors)) => modal.errors = errors,
                             Err(WriteError::Access(e)) => return access(e, &mut self.flash),
@@ -1431,7 +1442,7 @@ impl LinksPage {
                     .errors(target_errors)
                     .required();
                 if !modal.options.persons_readable {
-                    field = field.hint("You do not have permission to list persons.");
+                    field = field.hint("You do not have permission to list people.");
                 } else if modal.options.persons.is_empty() {
                     field = field.hint("No people have been added yet.");
                 }
@@ -1551,7 +1562,7 @@ impl LinksPage {
         }
         match kind {
             "grid" => {
-                self.columns.handle(&values_of(value));
+                self.columns.handle(&values_of(value)?);
             }
             "toggle_history" => self.history = !self.history,
             "new" => {
@@ -1622,7 +1633,7 @@ impl LinksPage {
                 if let Some(modal) = self.modal.as_mut() {
                     let was_person =
                         modal.values.get("target_kind").map(String::as_str) == Some("person");
-                    modal.values = values_of(value);
+                    modal.values = values_of(value)?;
                     // The picker the radio hid keeps nothing it never showed.
                     if was_person
                         != (modal.values.get("target_kind").map(String::as_str) == Some("person"))
@@ -1638,7 +1649,7 @@ impl LinksPage {
                 let Some(modal) = self.modal.as_mut() else {
                     return Ok(());
                 };
-                modal.values = values_of(value);
+                modal.values = values_of(value)?;
                 if modal.ending {
                     let Some(entry) = modal.editing.as_ref() else {
                         return Err(Error::Internal);
@@ -1697,7 +1708,7 @@ impl LinksPage {
                         {
                             Ok(()) => {
                                 self.modal = None;
-                                self.flash.success("Relationship updated successfully.");
+                                self.flash.success("Relationship updated.");
                             }
                             Err(error) => self.write_error(error, true),
                         }
@@ -1751,7 +1762,7 @@ impl LinksPage {
                         {
                             Ok(()) => {
                                 self.modal = None;
-                                self.flash.success("Relationship established successfully.");
+                                self.flash.success("Relationship established.");
                             }
                             Err(error) => self.write_error(error, false),
                         }
@@ -1962,7 +1973,7 @@ impl LiveState<Scope, Error> for Panel {
                 if get(value, "type") != "grid" {
                     return Err(Error::Invalid);
                 }
-                self.columns.handle(&values_of(value));
+                self.columns.handle(&values_of(value)?);
             }
             self.draw(request.scope).await
         })

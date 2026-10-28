@@ -114,21 +114,33 @@
   // the control in place. A submit button whose form fails the browser's own
   // constraint validation raises no submit and gets no reply, so it stays
   // enabled, as phx-disable-with only acts on a submit that happens.
+  const workingTimers = new WeakMap();
   document.addEventListener('click', (event) => {
     const button = event.target.closest('button[data-working]');
     if (!button || button.disabled) return;
     const form = button.form;
     if (form && button.type === 'submit' && !form.noValidate && !form.checkValidity()) return;
-    setTimeout(() => {
+    const timer = setTimeout(() => {
+      workingTimers.delete(button);
       if (!button.isConnected || button.disabled) return;
       button.dataset.workingFrom = button.textContent;
       button.textContent = button.dataset.working;
       button.disabled = true;
       button.setAttribute('aria-busy', 'true');
     }, 0);
+    workingTimers.set(button, timer);
   });
 
   function settle(root = document) {
+    // A local transport refusal can settle during the click/submit itself,
+    // before the deferred working label. Cancel it so refusal cannot leave
+    // the button disabled forever waiting for a reply that will never arrive.
+    const pending = [...root.querySelectorAll('button[data-working]')];
+    if (root instanceof Element && root.matches('button[data-working]')) pending.unshift(root);
+    for (const button of pending) {
+      clearTimeout(workingTimers.get(button));
+      workingTimers.delete(button);
+    }
     const buttons = [...root.querySelectorAll('button[data-working-from]')];
     if (root instanceof Element && root.matches('button[data-working-from]')) buttons.unshift(root);
     for (const button of buttons) {

@@ -115,7 +115,7 @@ impl Create {
         })
     }
     async fn take(&mut self, value: &Value) -> Result<()> {
-        let fields = form(value, "address");
+        let fields = form(value, "address")?;
         let get = |key: &str| fields.get(key).cloned();
         self.location
             .change(&self.pages.addresses, &LocationDraft::posted(&fields))
@@ -183,7 +183,7 @@ impl Create {
         if self.created {
             return Ok(LiveBody {
                 redirect: Some("/addresses".into()),
-                flash: Some((StatusKind::Success, "Address created successfully.".into())),
+                flash: Some((StatusKind::Success, "Address created.".into())),
                 ..LiveBody::default()
             });
         }
@@ -322,7 +322,9 @@ impl Create {
             provenance,
             provenance_summary,
             provenance_open,
-            raw_input: field("raw_input", "Raw input", &i.raw_input).kind(InputKind::Textarea),
+            raw_input: field("raw_input", "Raw input", &i.raw_input)
+                .kind(InputKind::Textarea)
+                .attr("maxlength", "10000"),
             submit: render(Button {
                 id: "address-save",
                 button_type: "submit",

@@ -28,7 +28,7 @@
 <div id="app-search-records-slot" data-live-ignore>{{ records|safe }}</div>
 {%- endif %}{% endfor %}
 </div>
-{%- let hint = "Type a page name, or where it lives." %}
+{%- let hint = "Search by page or section name." %}
 {%- let empty = "No pages found" %}
 <p id="app-search-hint"{% if !records.is_empty() %} data-pages-text="{{ hint }}" data-records-text="Type a page name, or the name or code of a record."{% endif %} class="px-2 py-3 text-xs text-ink-subtle">{{ hint }}</p>
 <p id="app-search-empty" role="status"{% if !records.is_empty() %} data-pages-text="{{ empty }}" data-records-text="Nothing found"{% endif %} hidden class="px-2 py-3 text-xs text-ink-subtle">{{ empty }}</p>
