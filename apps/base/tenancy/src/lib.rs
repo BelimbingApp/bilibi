@@ -85,6 +85,21 @@ pub trait ActorVerifier: Send + Sync {
     ) -> ProofFuture<'a, bool> {
         Box::pin(async { Ok(false) })
     }
+    /// Whether the account `scope` was just sealed for may work in
+    /// `company` right now: a live, unarchived company of its tenant that it
+    /// reaches (its own affiliation, or any company with Company's
+    /// tenant-wide reach). Asked on every authentication for the company the
+    /// session chose (`Scope::current_company`), so a choice outlives neither its
+    /// reach nor the company. A verifier that cannot tell keeps this default,
+    /// which never confirms, and the scope falls back to the affiliation.
+    fn reaches_company<'a>(
+        &'a self,
+        _client: &'a dyn ProofClient,
+        _scope: &'a Scope,
+        _company: OrganisationId,
+    ) -> ProofFuture<'a, bool> {
+        Box::pin(async { Ok(false) })
+    }
 }
 
 /// Who a sealed scope acts as: an account with its live party facets, or a
@@ -284,6 +299,9 @@ pub struct Scope {
     authentication: Authentication,
     /// A step-up code presented with this request, if any.
     step_up: Option<Box<PresentedCode>>,
+    /// The company the session chose to work in, kept only while the
+    /// verifier confirms the account reaches it (`Scope::current_company`).
+    company: Option<OrganisationId>,
     pub tenant_name: String,
     pub user_name: String,
     pub email: String,
@@ -298,6 +316,25 @@ impl Scope {
     }
     pub fn actor(&self) -> &Actor {
         &self.actor
+    }
+    /// The company this request works in: the one the browser session chose
+    /// (the shell's company switcher), when the account still reaches it,
+    /// else the account's own company through its affiliation
+    /// (`Actor::organisation`). A page or report that operates "on the
+    /// current company" reads this; an owner that decides reach or binds a
+    /// record to the person's employer keeps reading the affiliation. The
+    /// choice grants nothing: every read and write still proves the company
+    /// as its target with its own capability (`bilibi_company::authorize_target`,
+    /// `OrganisationDirectory::target`). An agent (bearer) scope and a system
+    /// principal carry no choice, so this is their affiliation, or `None`;
+    /// agent operations name their company explicitly.
+    pub fn current_company(&self) -> Option<OrganisationId> {
+        self.company.or(self.actor.organisation)
+    }
+    /// The session's explicit company choice, when it holds one the account
+    /// reaches now; `None` means the affiliation's company (`current_company`).
+    pub fn chosen_company(&self) -> Option<OrganisationId> {
+        self.company
     }
     /// The named system principal this scope runs as, `None` for an account
     /// (`Actor::principal`). A principal scope has no user, person,
@@ -465,19 +502,24 @@ impl Authentication {
         user: i64,
         csrf: String,
     ) -> Result<Scope> {
-        self.authenticate_session(client, tenant, user, None, csrf)
+        self.authenticate_session(client, tenant, user, None, None, csrf)
             .await
     }
     /// The durable session edge: `impersonator` is the operator the session
     /// row names, never a value from the browser. Both accounts are re-proved
     /// live in the same tenant, so a removed or frozen operator ends the
-    /// impersonated session as surely as a removed target does.
+    /// impersonated session as surely as a removed target does. `company` is
+    /// the company the session row says the person chose to work in; it is
+    /// kept on the scope only when the verifier confirms the account reaches
+    /// it now (`ActorVerifier::reaches_company`), and otherwise dropped, so
+    /// the scope falls back to the affiliation (`Scope::current_company`).
     pub async fn authenticate_session(
         &self,
         client: &(impl GenericClient + Sync),
         tenant: i64,
         user: i64,
         impersonator: Option<i64>,
+        company: Option<i64>,
         csrf: String,
     ) -> Result<Scope> {
         if tenant <= 0 || user <= 0 || impersonator.is_some_and(|id| id <= 0 || id == user) {
@@ -504,7 +546,7 @@ impl Authentication {
             }),
             None => None,
         };
-        Ok(Scope {
+        let mut scope = Scope {
             tenant,
             actor: Actor {
                 user,
@@ -517,11 +559,20 @@ impl Authentication {
             impersonator,
             authentication: self.clone(),
             step_up: None,
+            company: None,
             tenant_name: row.get(0),
             user_name: identity.name,
             email: identity.email,
             csrf,
-        })
+        };
+        // The chosen company is a request until its owner confirms the reach
+        // on this connection; an id that is not even a company id is nothing.
+        if let Some(company) = company.and_then(|id| OrganisationId::new(id).ok()) {
+            if verifier.reaches_company(client, &scope, company).await? {
+                scope.company = Some(company);
+            }
+        }
+        Ok(scope)
     }
     /// The trusted worker edge for a named system principal (SP1): a sealed
     /// scope whose actor is the principal, with no account, party facet,
@@ -561,6 +612,7 @@ impl Authentication {
             impersonator: None,
             authentication: self.clone(),
             step_up: None,
+            company: None,
             tenant_name: row.get(0),
             user_name: format!("System · {principal}"),
             email: String::new(),
@@ -586,11 +638,13 @@ impl Authentication {
                 scope.tenant(),
                 scope.user(),
                 scope.impersonator().map(Impersonator::user),
+                scope.chosen_company().map(OrganisationId::get),
                 scope.csrf.clone(),
             )
             .await?;
         // The request's own facts stay: its agent grant and channel, and a
-        // step-up code it presented. The CSRF value is the scope's already.
+        // step-up code it presented. The CSRF value is the scope's already;
+        // the chosen company was re-proved with the identity above.
         fresh.agent.clone_from(&scope.agent);
         if fresh.agent().is_some() {
             self.agents
@@ -833,6 +887,16 @@ pub trait OrganisationDirectory: Send + Sync {
         scope: &'a Scope,
         id: OrganisationId,
     ) -> ProofFuture<'a, Option<NamedOrganisation>>;
+    /// The unarchived companies this actor may work in, whatever the
+    /// operation: its own company, or every company of the tenant with
+    /// Company's tenant-wide reach (the shell's company switcher offers
+    /// these). No capability is asked, because the list is the reach alone;
+    /// each operation still proves its target with its own capability.
+    fn reachable<'a>(
+        &'a self,
+        client: &'a dyn ProofClient,
+        scope: &'a Scope,
+    ) -> ProofFuture<'a, Vec<NamedOrganisation>>;
 }
 #[derive(Clone, Debug)]
 pub struct OrganisationProof {
@@ -950,6 +1014,18 @@ impl PartyProofs {
     ) -> Result<Vec<NamedOrganisation>> {
         match self.directory.get() {
             Some(directory) => directory.selectable(client, scope, capability).await,
+            None => Ok(Vec::new()),
+        }
+    }
+    /// The companies the actor may work in (`OrganisationDirectory::reachable`);
+    /// none when no Company owner is installed.
+    pub async fn reachable_organisations(
+        &self,
+        client: &dyn ProofClient,
+        scope: &Scope,
+    ) -> Result<Vec<NamedOrganisation>> {
+        match self.directory.get() {
+            Some(directory) => directory.reachable(client, scope).await,
             None => Ok(Vec::new()),
         }
     }

@@ -248,6 +248,31 @@ async fn named_in_scope(client: &dyn ProofClient, scope: &Scope) -> Result<Vec<N
     companies.sort_by_cached_key(|company| (company.name.to_lowercase(), company.id.get()));
     Ok(companies)
 }
+/// Whether `scope` may work in company `id` right now: a live, unarchived
+/// company of its own tenant that it reaches (`reaches`). This is the fact
+/// Tenancy asks for a session's chosen company (`Scope::current_company`) and the
+/// test the switch applies before storing a choice. It grants nothing: an
+/// operation on that company still proves it with `authorize_target` and its
+/// own capability. A missing, cross-tenant or archived company is `false`,
+/// never an error, so a stale choice simply falls back to the affiliation.
+pub async fn reachable(
+    client: &dyn ProofClient,
+    scope: &Scope,
+    id: OrganisationId,
+) -> Result<bool> {
+    let live = client
+        .query_opt(
+            "SELECT status FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL",
+            &[&scope.tenant(), &id.get()],
+        )
+        .await?
+        .is_some_and(|row| row.get::<_, String>(0) != ARCHIVED);
+    if !live {
+        return Ok(false);
+    }
+    reaches(client, scope, id.get()).await
+}
+
 /// Own company, or the whole tenant with the tenant-wide reach; a granted
 /// system principal reaches every company of its tenant (`authorize_target`).
 async fn reaches(client: &dyn ProofClient, scope: &Scope, id: i64) -> Result<bool> {
@@ -326,6 +351,25 @@ impl OrganisationDirectory for Directory {
                 .await?
                 .map(|row| named(&row))
                 .transpose()
+        })
+    }
+    fn reachable<'a>(
+        &'a self,
+        client: &'a dyn ProofClient,
+        scope: &'a Scope,
+    ) -> ProofFuture<'a, Vec<NamedOrganisation>> {
+        Box::pin(async move {
+            // The same reach as `reaches`, listed: everyone with the
+            // tenant-wide grant (or a granted principal) sees every unarchived
+            // company; anyone else sees their own company alone.
+            let tenant_wide = scope.principal().is_some()
+                || decide_proof(client, scope, TENANT_WIDE).await?.allowed;
+            let own = scope.actor().organisation();
+            Ok(named_in_scope(client, scope)
+                .await?
+                .into_iter()
+                .filter(|company| !company.archived && (tenant_wide || own == Some(company.id)))
+                .collect())
         })
     }
 }

@@ -61,8 +61,12 @@
       this.openPanelId = null;
       this.onClick = (event) => this.click(event);
       this.onKey = (event) => this.key(event);
+      this.onInput = (event) => { if (event.target.matches('[data-company-filter]')) this.filterCompanies(event.target); };
+      this.onSubmit = (event) => { if (event.target.matches('#app-company-form')) this.submitCompany(event.target); };
       document.addEventListener('click', this.onClick);
       document.addEventListener('keydown', this.onKey);
+      this.root.addEventListener('input', this.onInput);
+      this.root.addEventListener('submit', this.onSubmit);
       this.apply();
     }
 
@@ -71,13 +75,15 @@
       this.abort?.abort();
       document.removeEventListener('click', this.onClick);
       document.removeEventListener('keydown', this.onKey);
+      this.root.removeEventListener('input', this.onInput);
+      this.root.removeEventListener('submit', this.onSubmit);
     }
 
     // The bell's dropdown is Core's `shell.notifications` embed and a status
     // bar tag's panel (`data-statusbar-panel`, Core's `shell.ai`) is another;
     // their contents follow the server while open/closed stays here, like
     // the other panels.
-    panels() { return [...this.root.querySelectorAll('[data-account-panel], [data-timezone-panel], [data-notifications-panel], [data-statusbar-panel]')]; }
+    panels() { return [...this.root.querySelectorAll('[data-account-panel], [data-timezone-panel], [data-company-panel], [data-notifications-panel], [data-statusbar-panel]')]; }
     openPanel() { return this.panels().find((panel) => panel.id === this.openPanelId) || null; }
     trigger(panel) { return this.root.querySelector(`[aria-controls="${panel.id}"]`); }
     close(panel, restore = false) {
@@ -95,12 +101,35 @@
       const opening = this.openPanelId !== panel.id;
       this.openPanelId = opening ? panel.id : null;
       this.apply();
-      if (opening) panel.querySelector('a[href], button:not([disabled])')?.focus();
+      // The company switcher's type-to-find box, when it has one, takes
+      // focus before its first row.
+      if (opening) panel.querySelector('[data-company-filter], a[href], button:not([disabled])')?.focus();
+    }
+    // The company switcher (templates/company_bar.html): rows whose name
+    // contains the typed text stay; the rest hide. Nothing is sent until a
+    // row is chosen, and the form carries the page's exact address so the
+    // switch comes back here, query included.
+    filterCompanies(input) {
+      const panel = input.closest('[data-company-panel]');
+      if (!panel) return;
+      const query = input.value.trim().toLowerCase();
+      let shown = 0;
+      for (const option of panel.querySelectorAll('[data-company-option]')) {
+        const match = !query || (option.dataset.companyLabel || '').toLowerCase().includes(query);
+        option.parentElement.hidden = !match;
+        if (match) shown += 1;
+      }
+      const none = panel.querySelector('[data-company-none]');
+      if (none) none.hidden = shown > 0;
+    }
+    submitCompany(form) {
+      const back = form.querySelector('[data-company-return]');
+      if (back) back.value = `${window.location.pathname}${window.location.search}`;
     }
     click(event) {
       const button = event.target.closest('button');
       if (button && this.root.contains(button)) {
-        if (button.matches('[data-account-toggle], [data-timezone-toggle], [data-notifications-toggle], [data-statusbar-toggle]')) {
+        if (button.matches('[data-account-toggle], [data-timezone-toggle], [data-company-toggle], [data-notifications-toggle], [data-statusbar-toggle]')) {
           this.toggle(button);
           return;
         }

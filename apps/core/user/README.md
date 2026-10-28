@@ -105,6 +105,10 @@ cannot be written refuses the switch. A return that cannot be made ends the
 session instead of trapping the operator. Every authentication re-proves both
 accounts, so removing or freezing either ends the borrowed session.
 
+## Current company
+
+`UserService::choose_company(token, csrf, company, request)` (`src/company_context.rs`; no Bilimbi counterpart) makes `company` the session's current company (`Scope::current_company`), behind the host's `POST /session/company` from the top bar's switcher. `None`, or the account's own company, returns to the affiliation. The company must be one the account reaches now (`bilibi_company::reachable`; `ChoiceRefusal::Unavailable` otherwise), the write goes through `Sessions::choose_company` and the `user.company.switched` action commits with it. A choice is a session fact, not an account preference, so an operator viewing as a user may make one; the reach checked is the viewed account's. `AccountVerifier::reaches_company` answers Tenancy's proof of the stored choice on every authentication with the same `reachable`.
+
 ## Token storage
 
 `password_reset_tokens` has one row per account (primary key tenant + user), so

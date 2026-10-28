@@ -57,6 +57,22 @@ capability in the tenant it reaches every live company of that tenant, in
 `.list` and `.view`; field saves and lifecycle commands use `.update` plus
 company reach. The generic field editor never accepts `status`.
 
+## The current company
+
+**A person who may act in several companies chooses which one to work in from the top bar; the choice grants nothing.** `Scope::current_company()` is that company: the session's choice while the account still reaches it, else the affiliation's company (`Scope::actor().organisation()`). A page or report that operates on "the current company" reads `current_company()`; an owner that decides reach, or binds a record to the person's employer, keeps reading the affiliation. Every read and write still proves its target with `authorize_target` and its own capability, so a chosen company the person may not act in is refused exactly as before. Decision and rejected options: [ADR 08](../../../docs/architecture/decisions/08-current-company-is-a-session-choice.md).
+
+| Piece | Owner | Contract |
+| --- | --- | --- |
+| `bilibi_company::reachable(client, scope, id)` | Company | `true` for a live, unarchived company of the tenant the account reaches: its own company, any company with `admin.company.tenant-wide.manage`, or every company for a granted system principal. Never an error for a missing, archived or other-tenant id |
+| `Directory::reachable` (`OrganisationDirectory`) | Company | The same reach, listed: what the top bar's switcher offers. No capability is asked, because the list is the reach alone |
+| `sessions.company_id` and `Sessions::choose_company` | Base Session | The stored choice (`NULL` is the account's own company); migration `009-session-company` adds the scoped key |
+| `ActorVerifier::reaches_company` | Core User, through `reachable` | Proves the stored choice on every authentication; a choice the account no longer reaches is dropped from the scope and the session edge forgets it |
+| `UserService::choose_company` | Core User | The switch: proves the reach, writes the row and records `user.company.switched` in one transaction ([Core User README](../user/README.md#working-company)) |
+| `POST /session/company` | Web | The top bar's form ([Web README](../../web/README.md)) |
+| `core.company.reachable` | Company | The same list for an agent, under `admin.company.view`; an agent carries no session choice and names `company_id` on every call |
+
+The dashboard's Companies strip and Current company card follow `current_company()`. The switcher offers the first companies of the tenant by name, with a type-to-find box past eight; a tenant with hundreds of companies still reaches each through the switcher's filter. Archived companies are never offered, and switching companies never crosses a tenant.
+
 ## Public company summaries
 
 `organisation::Directory` returns `bilibi_tenancy::NamedOrganisation` with the company's `id`, display `name`, full `status` and existing `archived` flag.
@@ -122,7 +138,9 @@ edits are rejected in the domain too.
 ## Agent operations
 
 `agent_operations.rs` registers `core.company.list`, `core.company.get`,
-`core.company.duplicates` and `core.company.hierarchy` (reads; see
+`core.company.reachable` (the companies the caller may work in, see [The
+current company](#the-current-company)), `core.company.duplicates` and
+`core.company.hierarchy` (reads; see
 [Duplicate candidates](#duplicate-candidates) and
 [Company hierarchies](#company-hierarchies)) and `core.company.create`
 (a reviewed safe write: preview shares
@@ -216,8 +234,10 @@ primary company.
 `src/web/dashboard.rs` draws the `dashboard.companies` widget
 (`base-dashboard-company-stats`: total, active, the current company's code)
 and the `dashboard.company` section (`current-company`: name, code, status and
-Open company). The current company is the one the account signs in under
-through its affiliation, else the tenant's first live company. Neither needs a
+Open company). The current company is the one the session works in
+(`Scope::current_company`: the chosen company, else the affiliation's); an
+account with neither sees "No current company" and the top bar's prompt to
+choose one, never a guessed company. Neither needs a
 capability to read, as in Bilimbi; the links show only to a reader holding
 `admin.company.list` / `admin.company.view`.
 

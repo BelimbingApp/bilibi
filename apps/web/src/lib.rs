@@ -342,6 +342,7 @@ pub fn router(app: App) -> Router {
         .route(impersonation::LEAVE, post(impersonation::leave))
         .route(impersonation::ENTER, post(impersonation::enter))
         .route("/preferences", post(shell::save))
+        .route(shell::COMPANY_PATH, post(shell::choose_company))
         .route("/api/pins", get(shell::pins))
         .route("/api/pins/toggle", post(shell::toggle_pin))
         .route("/api/pins/reorder", post(shell::reorder_pins))

@@ -1,0 +1,94 @@
+//! The company a browser session works in (`Scope::current_company`): the shell's
+//! company switcher posts a choice here, and this write is the one place a
+//! session's `company_id` is set. No Bilimbi counterpart: Bilimbi's shell
+//! only names the affiliated company. The choice is a session fact, not an
+//! account preference, so an operator viewing as a user may make it too; the
+//! reach it is checked against is the viewed account's.
+//!
+//! A choice is accepted only for a company the account reaches now (Core
+//! Company's `reachable`: live, unarchived, its own company or any company
+//! with the tenant-wide grant), and Tenancy proves the same fact again on
+//! every later authentication, so the stored choice never outlives its
+//! reach. The switch commits with a `user.company.switched` action, so the
+//! trail says which company was current from when. Choosing
+//! the account's own company stores nothing: the affiliation is the default.
+use crate::UserService;
+use bilibi_audit::{record_action, Attribution, RequestInfo};
+use bilibi_database::Error;
+use bilibi_party_ids::OrganisationId;
+use serde_json::json;
+
+/// Why a switch did not happen.
+#[derive(Debug, thiserror::Error)]
+pub enum ChoiceRefusal {
+    /// Not a live company of the tenant the account reaches; the shell never
+    /// offers one, so this is a stale or forged form.
+    #[error("That company is not available to you.")]
+    Unavailable,
+    #[error(transparent)]
+    Other(#[from] Error),
+}
+
+/// Where a switch left the session: the company it works in from now on.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Switched {
+    /// The chosen company, or `None` for the account's own company.
+    pub company: Option<i64>,
+}
+
+impl UserService {
+    /// Makes `company` the session's current company (`None`, or the
+    /// account's own company, returns to the affiliation). The session is
+    /// the one the credential names and the CSRF proof the form carried.
+    pub async fn choose_company(
+        &self,
+        token: &str,
+        csrf: &str,
+        company: Option<i64>,
+        request: &RequestInfo,
+    ) -> std::result::Result<Switched, ChoiceRefusal> {
+        let mut client = self.db.get().await.map_err(Error::from)?;
+        let scope = self.sessions.activity(&**client, token).await?;
+        if scope.csrf != csrf {
+            return Err(Error::Forbidden.into());
+        }
+        let own = scope.actor().organisation().map(OrganisationId::get);
+        let company = company.filter(|id| Some(*id) != own);
+        if let Some(id) = company {
+            let id = OrganisationId::new(id).map_err(|_| ChoiceRefusal::Unavailable)?;
+            // Decided on the pooled connection, as a refusal's decision-log
+            // row commits even though nothing else does.
+            if !bilibi_company::reachable(&**client, &scope, id).await? {
+                return Err(ChoiceRefusal::Unavailable);
+            }
+        }
+        let before = scope.chosen_company().map(OrganisationId::get);
+        let tx = client.transaction().await.map_err(Error::from)?;
+        match self.sessions.choose_company(&*tx, &scope, company).await {
+            Ok(()) => {}
+            // The session ended or moved underneath the request.
+            Err(Error::Conflict) => return Err(Error::Unauthorized.into()),
+            Err(error) => return Err(error.into()),
+        }
+        let to = company.or(own);
+        record_action(
+            &*tx,
+            &Attribution::from_scope(&scope),
+            Some(request),
+            "user.company.switched",
+            json!({
+                "semantic": true,
+                "source": "CompanyContext",
+                "summary": "Switched the current company",
+                "surface": "shell.company",
+                "subject": {"name": "company", "id": to, "label": to.map(|id| format!("Company#{id}"))},
+                "context": {"from": before.or(own), "to": to, "own": own},
+                "result": "succeeded",
+            }),
+            false,
+        )
+        .await?;
+        tx.commit().await.map_err(Error::from)?;
+        Ok(Switched { company })
+    }
+}

@@ -1,7 +1,9 @@
 //! Shared authenticated chrome. Owners supply already-authorized navigation and
 //! account metadata; no identity or capability decision is made by a template.
 //! Theme, time display and pins are the account's own (Core User); the
-//! company label is the account's affiliation (Web's `shell.rs`).
+//! company shown is the one the session works in and the companies offered
+//! are the ones the host says the person reaches (Web's `shell.rs`).
+use crate::forms::{field_base_class, Field, InputKind};
 use crate::Html;
 use askama::Template;
 
@@ -95,6 +97,62 @@ struct NavBranch<'a> {
     pinnable: bool,
 }
 
+/// One company the top bar's switcher offers: a company the host proved the
+/// person reaches. `current` marks the one the session works in and `own`
+/// the one the account is affiliated with.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CompanyChoice {
+    pub id: i64,
+    pub name: String,
+    pub current: bool,
+    pub own: bool,
+}
+
+/// Past this many companies the switcher adds a type-to-find box.
+const COMPANY_FILTER_FROM: usize = 8;
+
+/// The top bar's company switcher (`templates/company_bar.html`): the
+/// company the session works in (`current`, `None` for no company) and the
+/// companies the person may switch to. With one company, or none, it is a
+/// plain label. The host supplies `csrf` for the form and `path` as the
+/// address to return to after a switch.
+pub fn company_bar(
+    current: Option<&str>,
+    companies: &[CompanyChoice],
+    csrf: &str,
+    path: &str,
+) -> askama::Result<Html> {
+    let filter = (companies.len() > COMPANY_FILTER_FROM).then(|| {
+        // A plain text field: a search field would add the browser's own
+        // clear "×" inside the narrow panel.
+        Field::named("app-company-filter")
+            .kind(InputKind::Text)
+            .placeholder("Find a company…")
+            .aria_label("Find a company")
+            .autocomplete("off")
+            .wrapper_class("mb-0")
+            .class(field_base_class(false, "px-3"))
+            .attr("data-company-filter", "")
+            .attr("aria-controls", "app-company-options")
+    });
+    Html::render(&CompanyBar {
+        current,
+        companies,
+        csrf,
+        path,
+        filter,
+    })
+}
+#[derive(Template)]
+#[template(path = "company_bar.html")]
+struct CompanyBar<'a> {
+    current: Option<&'a str>,
+    companies: &'a [CompanyChoice],
+    csrf: &'a str,
+    path: &'a str,
+    filter: Option<Field>,
+}
+
 /// Display-only scope. The host must obtain operator standing from an explicit
 /// proof; a tenant ID or administrator role never implies it.
 pub struct ShellContext<'a> {
@@ -103,9 +161,14 @@ pub struct ShellContext<'a> {
     pub tenant: &'a str,
     pub tenant_id: i64,
     pub user_id: i64,
-    /// The company the account signs in under, through its affiliation
-    /// (Bilimbi `company_name`); `None` reads "Company unavailable".
-    pub company: Option<String>,
+    /// The company the session works in (`Scope::current_company`): the chosen one,
+    /// else the affiliation's; `None` reads "No company".
+    pub current_company: Option<String>,
+    /// The account's own company through its affiliation, only when it is
+    /// not the one the session works in, so the account menu can name both.
+    pub own_company: Option<String>,
+    /// The top bar's company label or switcher, from `company_bar`.
+    pub company_bar: Html,
     pub platform_operator: bool,
     /// The operator tenant stands on no primary company yet: the status bar
     /// links to `/setup/platform-operator` (Bilimbi

@@ -2,8 +2,10 @@
 //! `dashboard.companies`, and `DashboardCompanyPanel`, embed
 //! `dashboard.company`): the tenant's live company counts beside the viewer's
 //! company code, and that company's facts. The viewer's company is the one
-//! its account signs in under through its affiliation; an account without one
-//! sees the tenant's first live company, as Bilimbi's fallback does. Both read
+//! they are working in (`Scope::current_company`: the session's choice, else the
+//! affiliation); an account with neither has no current company, and the
+//! panels say so instead of guessing one (Bilimbi's first-company fallback
+//! would contradict the top bar's "Choose a company"). Both read
 //! `summary` once per refresh period the dashboard asks for; neither needs a
 //! capability to read, and each link is offered only to a reader its page
 //! admits.
@@ -36,11 +38,11 @@ struct Summary {
     company: Option<Current>,
 }
 async fn summary(client: &impl GenericClient, scope: &Scope) -> Result<Summary> {
-    let preferred = scope.actor().organisation().map_or(0, |id| id.get());
+    let current = scope.current_company().map_or(0, |id| id.get());
     let row = client
         .query_opt(
             "SELECT id, code, name, legal_name, status, count(*) OVER () AS total, count(*) FILTER (WHERE status = 'active') OVER () AS active FROM companies WHERE tenant_id = $1 AND deleted_at IS NULL ORDER BY id = $2 DESC, id LIMIT 1",
-            &[&scope.tenant(), &preferred],
+            &[&scope.tenant(), &current],
         )
         .await?;
     Ok(match row {
@@ -52,7 +54,7 @@ async fn summary(client: &impl GenericClient, scope: &Scope) -> Result<Summary> 
         Some(row) => Summary {
             total: row.get(5),
             active: row.get(6),
-            company: Some(Current {
+            company: (row.get::<_, i64>(0) == current).then(|| Current {
                 id: row.get(0),
                 code: row.get(1),
                 name: display_name(row.get::<_, Option<&str>>(3), row.get(2)),
@@ -191,9 +193,16 @@ impl LiveState<Scope, Error> for CurrentCompany {
                 .summary(&self.db, request.scope, &self.args, VIEW)
                 .await?;
             let body = match &read.company {
-                None => render(
+                None if read.total == 0 => render(
                     &EmptyState::missing("No company yet.", "")
                         .id("dashboard-current-company-none"),
+                )?,
+                None => render(
+                    &EmptyState::missing(
+                        "No current company.",
+                        "Choose a company in the top bar to see it here.",
+                    )
+                    .id("dashboard-current-company-none"),
                 )?,
                 Some(company) => {
                     let href = format!("/companies/{}", company.id);
@@ -211,7 +220,7 @@ impl LiveState<Scope, Error> for CurrentCompany {
                     };
                     let heading = render(&SectionHeading {
                         id: "dashboard-current-company-heading",
-                        title: "Your company",
+                        title: "Current company",
                         actions,
                         ..SectionHeading::default()
                     })?;
