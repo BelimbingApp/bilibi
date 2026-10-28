@@ -320,10 +320,12 @@ impl LiveState<Scope, Error> for Index {
                 }
                 LiveInput::Event(value) => match event(value)? {
                     "filters" => {
-                        let filters = bilibi_ui::params::form_values(
+                        let filters = bilibi_ui::params::form_values_checked(
                             value,
                             bilibi_ui::list_state::FILTERS_FORM,
-                        );
+                            bilibi_ui::params::FIELD_LIMIT,
+                        )
+                        .map_err(bilibi_database::Error::refused)?;
                         self.list.apply_filters(&filters);
                     }
                     "page" => {

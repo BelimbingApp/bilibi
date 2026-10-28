@@ -265,7 +265,7 @@ impl Detail {
             .draft
             .change(
                 &self.pages.addresses,
-                &LocationDraft::posted(&form(value, "location")),
+                &LocationDraft::posted(&form(value, "location")?),
             )
             .await?;
         let current = self.pages.addresses.read(scope, self.id).await?;
@@ -361,7 +361,7 @@ impl Detail {
                         .draft
                         .change(
                             &self.pages.addresses,
-                            &LocationDraft::posted(&form(value, "location")),
+                            &LocationDraft::posted(&form(value, "location")?),
                         )
                         .await?;
                 }
@@ -375,10 +375,10 @@ impl Detail {
                         .put("location", CommitStatus::Error(FORBIDDEN.into()));
                 }
             }
-            "grid" => match self
-                .columns
-                .handle(&bilibi_ui::params::string_values(value))
-            {
+            "grid" => match self.columns.handle(
+                &bilibi_ui::params::string_values_checked(value, bilibi_ui::params::FIELD_LIMIT)
+                    .map_err(bilibi_database::Error::refused)?,
+            ) {
                 ColumnsOutcome::Sort(key) => {
                     self.sort_dir = if key == self.sort_by && self.sort_dir == SortDir::Asc {
                         SortDir::Desc
@@ -837,7 +837,7 @@ impl LiveState<Scope, Error> for Detail {
 fn failure(error: &WriteError) -> CommitStatus {
     match error {
         WriteError::NotFound => CommitStatus::Error(
-            "This address no longer exists. Return to the list to find its replacement.".into(),
+            "This address no longer exists. Return to the address list.".into(),
         ),
         WriteError::Archived => CommitStatus::Error(
             "An archived company uses this address, so it is read-only and the change was not saved."

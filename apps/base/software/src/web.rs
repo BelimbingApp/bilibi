@@ -329,7 +329,8 @@ impl View {
         value: &Value,
         status: &Value,
     ) -> Result<()> {
-        let values = params::string_values(value);
+        let values =
+            params::string_values_checked(value, params::FIELD_LIMIT).map_err(Error::refused)?;
         let get = |key: &str| value.get(key).and_then(Value::as_str);
         match get("type").ok_or(Error::Invalid)? {
             "request_install" => {
@@ -606,17 +607,16 @@ impl View {
                     serde_json::from_value(results[0]["error"]["fields"].clone())
                         .unwrap_or_default();
                 review.error = Some(if fields.is_empty() {
-                    "The request was not accepted. Close this and look at the page again.".into()
+                    "The request was not accepted. Close the dialog and review the page.".into()
                 } else {
                     first_message(&fields)
                 });
             }
             Err(ContractError::Backend(Error::Conflict)) => {
                 review.error = Some(if kind == Kind::Go {
-                    "The job changed in the meantime (it was stopped, or already has its go-ahead). Close this and look at the page again.".into()
+                    "The job changed; it may have been stopped or already approved. Close the dialog and review its status.".into()
                 } else {
-                    "Another job was queued in the meantime. Close this and look at the page again."
-                        .into()
+                    "Another job was queued. Close the dialog and review its status.".into()
                 });
             }
             Err(
@@ -1029,7 +1029,7 @@ impl View {
         };
         let mut notes = Vec::new();
         if active && !handed_over {
-            notes.push("You can close this page. The work keeps going, and the result appears here and in your notifications.".to_owned());
+            notes.push("The job continues if you close this page. Its result appears here and in your notifications.".to_owned());
         }
         if awaiting_go {
             notes.push(format!(

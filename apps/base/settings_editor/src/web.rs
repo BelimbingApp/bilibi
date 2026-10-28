@@ -96,7 +96,8 @@ const PLATFORM_DENIED: &str = "You do not have permission to manage platform set
 const COMPANY_DENIED: &str = "You do not have permission to manage this company's settings.";
 const COMPANY_ARCHIVED: &str =
     "This company is archived and read-only, so its settings were not changed.";
-const COMPANY_GONE: &str = "That company is no longer available; choose another settings scope.";
+const COMPANY_GONE: &str =
+    "That company is no longer available. Choose another company or settings scope.";
 const UNAVAILABLE: &str = "Settings are unavailable; nothing was changed.";
 /// The scope picker's values besides a company id.
 const GLOBAL: &str = "global";
@@ -320,16 +321,25 @@ impl Editor {
         match get("type").ok_or(Error::Invalid)? {
             "clear-flash" => self.flash = None,
             "filters" => {
-                self.list
-                    .apply_filters(&bilibi_ui::params::form_values(payload, "filters"));
+                self.list.apply_filters(
+                    &bilibi_ui::params::form_values_checked(
+                        payload,
+                        "filters",
+                        bilibi_ui::params::FIELD_LIMIT,
+                    )
+                    .map_err(Error::refused)?,
+                );
                 self.apply_scope(scope).await?;
             }
             "page" => self.list.put_page(get("page")),
             "grid" => {
-                if let ColumnsOutcome::Sort(key) = self
-                    .columns
-                    .handle(&bilibi_ui::params::string_values(payload))
-                {
+                if let ColumnsOutcome::Sort(key) = self.columns.handle(
+                    &bilibi_ui::params::string_values_checked(
+                        payload,
+                        bilibi_ui::params::FIELD_LIMIT,
+                    )
+                    .map_err(Error::refused)?,
+                ) {
                     self.list.next_sort(&key);
                 }
             }
@@ -987,13 +997,13 @@ impl Editor {
                     Picked::Company(company) => format!("{} settings", company.name),
                 };
                 let consequence = format!(
-                    "This resets {} in {scope_name} to their defaults, including any hidden by your search or filters.",
+                    "This clears {} in {scope_name}, including any hidden by your search or filters.",
                     form::count(held.len(), "changed setting").unwrap_or_default()
                 );
                 render(ConfirmDialog {
                     id: "restore-defaults-confirm",
                     consequence: &consequence,
-                    detail: "Each of those settings returns to the value it inherits. This cannot be undone.",
+                    detail: "Each setting returns to its inherited value or default. This cannot be undone.",
                     confirm: "Restore",
                     working: "Restoring…",
                     confirm_event: "restore_defaults",

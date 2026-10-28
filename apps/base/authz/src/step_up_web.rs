@@ -52,7 +52,7 @@ pub(crate) fn columns() -> ListColumns {
             column("operation", "Operation", true),
             column("default", "Default", false),
             column("tenant", "This tenant", false),
-            column("floor", "Installation floor", false),
+            column("floor", "Required for all organisations", false),
         ],
     )
     .expect("step-up columns")
@@ -295,7 +295,7 @@ impl StepUpPolicy {
             Err(Error::Conflict) => {
                 self.flash = Some((
                     StatusKind::Error,
-                    "The installation floor keeps this operation on; it cannot be turned off here."
+                    "This action requires 2FA for all organisations and cannot be turned off here."
                         .into(),
                 ));
             }
@@ -435,9 +435,9 @@ impl StepUpPolicy {
         }
         if owner {
             let (event, label) = if rule.floor {
-                ("request_unlock", "Remove from floor")
+                ("request_unlock", "Allow organisation choice")
             } else {
-                ("request_lock", "Add to floor")
+                ("request_lock", "Require for all organisations")
             };
             html.push(&render(Button {
                 id: &format!("{id}-floor"),
@@ -553,7 +553,7 @@ impl StepUpPolicy {
         let mut html = self.section(
             "step-up-window",
             "After someone enters a 2FA code",
-            "We do not ask them again until one of these runs out.",
+            "After either limit is reached, the next protected action requires a new code.",
             self.facts(
                 "step-up-window-facts",
                 &[Setting::Minutes, Setting::Hours],
@@ -564,7 +564,7 @@ impl StepUpPolicy {
             html.push(&self.section(
                 "step-up-limits",
                 "Longest time any organisation may choose (server owner only)",
-                "No organisation on this server can choose more than these.",
+                "Organisations cannot exceed these limits.",
                 self.facts(
                     "step-up-limits-facts",
                     &[Setting::MinutesLimit, Setting::HoursLimit],
@@ -616,7 +616,7 @@ impl StepUpPolicy {
             table.empty = Some(TableEmpty::Content(Html::text(if search.is_empty() {
                 "No actions can require 2FA yet."
             } else {
-                "No operation matches this search."
+                "No actions match this search."
             })));
         }
         let form = self.state.filters_form();
@@ -625,9 +625,9 @@ impl StepUpPolicy {
             vec![ToolbarControl::search(
                 "step-up-search",
                 "search",
-                "Search operations",
+                "Search actions",
                 &form["search"],
-                "Search by operation or module...",
+                "Search by action or module...",
             )],
         ))?;
         let mut card = render(table)?;
@@ -665,8 +665,7 @@ impl StepUpPolicy {
         })?;
         html.push(&render(Header {
             title: Html::text("Step-up 2FA"),
-            subtitle:
-                "Ask for a fresh 2FA code before sensitive actions, such as giving someone a role.",
+            subtitle: "Choose which actions require 2FA, such as assigning a role.",
             ..Header::default()
         })?);
         // Each tab is this address with its own `tab`, so a refresh or Back
@@ -720,14 +719,14 @@ impl StepUpPolicy {
                 ),
                 Pending::Floor { key, floor } => (
                     format!(
-                        "{key} will {} for every organisation.",
+                        "{key} will {}.",
                         if *floor == Some(true) {
-                            "stay on whatever an organisation chooses"
+                            "require 2FA for every organisation"
                         } else {
                             "follow each organisation's choice"
                         }
                     ),
-                    "Save floor",
+                    "Save requirement",
                 ),
             };
             html.push(&render(ConfirmDialog {
@@ -792,8 +791,14 @@ impl LiveState<Scope, Error> for StepUpPolicy {
                         Some("cancel") => self.pending = None,
                         Some("save_field") => self.save_setting(scope, value).await?,
                         Some("filters") => {
-                            self.state
-                                .apply_filters(&params::form_values(value, FILTERS_FORM));
+                            self.state.apply_filters(
+                                &params::form_values_checked(
+                                    value,
+                                    FILTERS_FORM,
+                                    params::FIELD_LIMIT,
+                                )
+                                .map_err(Error::refused)?,
+                            );
                         }
                         Some("sort") => {
                             if !self.state.next_sort(get("sort").unwrap_or_default()) {
@@ -801,9 +806,10 @@ impl LiveState<Scope, Error> for StepUpPolicy {
                             }
                         }
                         Some("grid") => {
-                            if let ColumnsOutcome::Sort(key) =
-                                self.columns.handle(&params::string_values(value))
-                            {
+                            if let ColumnsOutcome::Sort(key) = self.columns.handle(
+                                &params::string_values_checked(value, params::FIELD_LIMIT)
+                                    .map_err(Error::refused)?,
+                            ) {
                                 if !self.state.next_sort(&key) {
                                     return Err(Error::Invalid);
                                 }

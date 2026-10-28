@@ -175,7 +175,7 @@ impl Software {
                 "available": false,
                 "token_set": saved.token_set,
                 "refresh_minutes": saved.refresh_minutes,
-                "message": "No GitHub repository is set. A server owner sets Software › GitHub repository, like your-company/my-bilibi.",
+                "message": "No GitHub repository is set. A server owner sets Software › Application repository on GitHub, like your-company/my-bilibi.",
             }));
         };
         let Some(target) = this_target() else {

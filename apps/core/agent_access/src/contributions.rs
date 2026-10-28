@@ -33,7 +33,7 @@ inventory::submit! { Contribution::new(DEFINITIONS, crate::CONNECTION_DAYS, prov
 })) }
 inventory::submit! { Contribution::new(DEFINITIONS, crate::AUTHORIZATION_CODE_SECONDS, provenance!(), &Setting::Definition(Definition {
     value_type: ValueType::Integer, scopes: GLOBAL, default: || json!(120), nullable: false, encrypted: false, minimum: Some(30.0), maximum: Some(600.0), validator: None,
-    editor: Some(Editor { group: "Agent access", label: "OAuth authorization code lifetime", help: "Seconds an app has to use its sign-in code after you approve it.", capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
+    editor: Some(Editor { group: "Agent access", label: "OAuth authorization code lifetime (seconds)", help: "Seconds an app has to use its sign-in code after you approve it.", capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
 })) }
 inventory::submit! { Contribution::new(DEFINITIONS, crate::OAUTH_REQUESTS_PER_MINUTE, provenance!(), &Setting::Definition(Definition {
     value_type: ValueType::Integer, scopes: GLOBAL, default: || json!(60), nullable: false, encrypted: false, minimum: Some(1.0), maximum: Some(10_000.0), validator: None,

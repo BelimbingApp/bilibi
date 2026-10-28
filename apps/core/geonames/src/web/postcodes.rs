@@ -87,7 +87,7 @@ bilibi_ui::record_fields! { mod fields {
     COUNTRY: bilibi_ui::RecordField::new("country_iso", "Country").slot("country_name"),
     POSTCODE: bilibi_ui::RecordField::new("postcode", "Postcode"),
     PLACE_NAME: bilibi_ui::RecordField::new("place_name", "Place Name"),
-    ADMIN1: bilibi_ui::RecordField::new("admin1_division", "Admin1 Division"),
+    ADMIN1: bilibi_ui::RecordField::new("admin1_division", "First-level division"),
     LATITUDE: bilibi_ui::RecordField::new("latitude", "Latitude"),
     LONGITUDE: bilibi_ui::RecordField::new("longitude", "Longitude"),
     ACCURACY: bilibi_ui::RecordField::new("accuracy", "Accuracy"),
@@ -1209,9 +1209,11 @@ impl LiveState<Scope, Error> for Postcodes {
                 LiveInput::Event(event) => {
                     let get = |key: &str| event.get(key).and_then(Value::as_str);
                     match get("type") {
-                        Some("filters") => {
-                            apply_filters(&mut self.list, &params::form_values(event, FILTERS_FORM))
-                        }
+                        Some("filters") => apply_filters(
+                            &mut self.list,
+                            &params::form_values_checked(event, FILTERS_FORM, params::FIELD_LIMIT)
+                                .map_err(bilibi_database::Error::refused)?,
+                        ),
                         Some("sort") => {
                             if !self.list.next_sort(get("sort").unwrap_or_default()) {
                                 return Err(Error::Invalid);
@@ -1274,12 +1276,20 @@ impl LiveState<Scope, Error> for Postcodes {
                             requery = false;
                         }
                         Some("validate-postcode") => {
-                            self.validate(params::form_values(event, FORM)).await?;
+                            self.validate(
+                                params::form_values_checked(event, FORM, params::FIELD_LIMIT)
+                                    .map_err(bilibi_database::Error::refused)?,
+                            )
+                            .await?;
                             requery = false;
                         }
                         Some("save-postcode") => {
                             requery = self
-                                .save(request.scope, params::form_values(event, FORM))
+                                .save(
+                                    request.scope,
+                                    params::form_values_checked(event, FORM, params::FIELD_LIMIT)
+                                        .map_err(bilibi_database::Error::refused)?,
+                                )
                                 .await?;
                         }
                         Some("save-postcode-place") => {

@@ -25,7 +25,7 @@
 {% call flash(kind=bilibi_ui::StatusKind::Error, id="{}-client-error"|format(id), title="Connection interrupted", message="Reconnecting…", hidden=!revealed.is_client(), connection=revealed.binding("client")) %}{% endcall %}
 {%- endif -%}
 {%- if !revealed.is_client() -%}
-{% call flash(kind=bilibi_ui::StatusKind::Error, id="{}-server-error"|format(id), title="Server unavailable", message="Attempting to reconnect", spinner=true, hidden=!revealed.is_server(), connection=revealed.binding("server")) %}{% endcall %}
+{% call flash(kind=bilibi_ui::StatusKind::Error, id="{}-server-error"|format(id), title="Server unavailable", message="Reconnecting…", spinner=true, hidden=!revealed.is_server(), connection=revealed.binding("server")) %}{% endcall %}
 {%- endif -%}
 {% endmacro %}
 
@@ -52,7 +52,7 @@
 {#- Which installation a review or confirmation acts on, at its top
     (src/instance.rs). A note, not an alert: it is read in place, every time. -#}
 {% macro instance_banner(banner) %}
-<div{% if !banner.id.is_empty() %} id="{{ banner.id }}"{% endif %} role="note" aria-label="Which Bilibi this is" data-instance="{{ banner.role }}" class="flex items-start gap-3 rounded-lg border-2 px-3 py-2.5 text-sm {{ banner.tone.surface_class() }}{% if !banner.class.is_empty() %} {{ banner.class }}{% endif %}">{% call c::icon(name=banner.tone.icon(), class="mt-0.5 size-5 shrink-0") %}{% endcall %}<div class="min-w-0"><p class="break-words text-base font-semibold uppercase tracking-wide">{{ banner.label }}</p><p>{{ banner.message }}</p></div></div>
+<div{% if !banner.id.is_empty() %} id="{{ banner.id }}"{% endif %} role="note" aria-label="Server identity" data-instance="{{ banner.role }}" class="flex items-start gap-3 rounded-lg border-2 px-3 py-2.5 text-sm {{ banner.tone.surface_class() }}{% if !banner.class.is_empty() %} {{ banner.class }}{% endif %}">{% call c::icon(name=banner.tone.icon(), class="mt-0.5 size-5 shrink-0") %}{% endcall %}<div class="min-w-0"><p class="break-words text-base font-semibold uppercase tracking-wide">{{ banner.label }}</p><p>{{ banner.message }}</p></div></div>
 {% endmacro %}
 
 {#- An inline status alert. -#}
