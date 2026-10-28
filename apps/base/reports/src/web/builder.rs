@@ -15,8 +15,8 @@ use bilibi_ui::{
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
-/// Filter rows the editor shows at most (the definition allows more).
-const MAX_FILTER_ROWS: usize = 8;
+/// Filter rows the editor holds at most: as many as a definition may have.
+const MAX_FILTER_ROWS: usize = bilibi_grid::MAX_FILTERS;
 /// Measure rows the editor shows at least; one blank row follows the last
 /// chosen measure, up to Grid's bound, so a saved definition opens whole.
 const MEASURE_ROWS: usize = 4;
@@ -166,9 +166,17 @@ impl Builder {
     }
 
     /// Takes the posted form: every field the editor draws, under `def`.
+    /// Each is read by its own name, so a definition at its bounds (sixteen
+    /// filters, eight measures) arrives whole; a field not drawn reads as
+    /// blank, and one too long is kept for the save to refuse by name.
     pub fn read(&mut self, value: &Value) {
-        let fields = bilibi_ui::params::form_values(value, "def");
-        let get = |key: &str| fields.get(key).cloned().unwrap_or_default();
+        let get = |key: &str| {
+            value
+                .get(format!("def[{key}]"))
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .unwrap_or_default()
+        };
         self.name = get("name");
         self.description = get("description");
         if Kind::from_key(&get("kind")).is_some() {
@@ -343,6 +351,19 @@ impl Builder {
                 .unwrap_or("")
         };
         let dated = |spec: &str| matches!(ty(spec), "date" | "datetime");
+        // A value box for the filter's column. A range on dates picks
+        // days, and so does an equals on a date. An equals on a timestamp is
+        // an exact instant with its offset, which no browser date or
+        // local-time control holds, so it stays text and survives a redraw.
+        let bound = |key: String, label: &str, value: &str, row: &FilterRow| {
+            let field = field(&key, label).value(value);
+            match ty(&row.column) {
+                "date" => field.kind(InputKind::Date),
+                "datetime" if row.test == "range" => field.kind(InputKind::Date),
+                "datetime" => field.hint("An instant like 2025-01-31T09:30:00Z."),
+                _ => field,
+            }
+        };
         let numeric = |spec: &str| matches!(ty(spec), "integer" | "float" | "decimal");
 
         let mut summary = Vec::new();
@@ -510,33 +531,11 @@ impl Builder {
                         .value(&row.value)
                         .hint("Separate values with commas."),
                 )?,
-                "range" => render(
-                    field(&format!("f{i}_value"), "From")
-                        .value(&row.value)
-                        .kind(if dated(&row.column) {
-                            InputKind::Date
-                        } else {
-                            InputKind::Text
-                        }),
-                )?,
-                _ => render(
-                    field(&format!("f{i}_value"), "Value")
-                        .value(&row.value)
-                        .kind(if dated(&row.column) {
-                            InputKind::Date
-                        } else {
-                            InputKind::Text
-                        }),
-                )?,
+                "range" => render(bound(format!("f{i}_value"), "From", &row.value, row))?,
+                _ => render(bound(format!("f{i}_value"), "Value", &row.value, row))?,
             };
             let to = if row.test == "range" {
-                render(field(&format!("f{i}_to"), "To").value(&row.to).kind(
-                    if dated(&row.column) {
-                        InputKind::Date
-                    } else {
-                        InputKind::Text
-                    },
-                ))?
+                render(bound(format!("f{i}_to"), "To", &row.to, row))?
             } else {
                 Html::EMPTY
             };

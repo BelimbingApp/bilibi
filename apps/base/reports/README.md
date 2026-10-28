@@ -14,8 +14,7 @@ Operator-built reports: a saved question over one Grid table, run as each reader
 
 | Call | Needs | Does |
 |---|---|---|
-| `list`, `get` | `reports.view` | Reports the reader may run: their own, shared with everyone, or shared with one of their roles. |
-| `page` | `reports.view` | One page of those reports by name, searched by name and description in the same query, with the number that match. |
+| `page`, `get` | `reports.view` | Reports the reader may run: their own, shared with everyone, or shared with one of their roles. `page` answers one page by name, searched by name and description in the same query, with the number that match. |
 | `run` | `reports.view` | One page of rows (each with its record's own page where the owner declares one, and the totals line), or a grouped summary with subtotals and a total. Answers ask-when-run filters by position; `as_rows` with drill filters lists the records behind a group; agents drill as the page does (`equals`, `empty`, or a date bucket's `range` of days). |
 | `csv` | `reports.export` | The whole result as CSV, up to the export cap, for the same `RunInput` as the page (answers, drill-downs, records view). Audited as `base.reports.exported` with report id and row count, never the data. Leading `=`, `+`, `-`, `@` are neutralised. |
 | `record_types`, `columns` | `reports.view` | What a builder may offer: readable record types, and a type's own fields plus fields one link away. |
@@ -57,13 +56,14 @@ Grid's cost bound and timeouts apply to every run on top of these.
 | `/reports/{id}/export` | The CSV download (`reports.export`), with the answers, drill-downs and records view in the address (`a<i>`, `a<i>_to`, `d<n>`, `v<n>`, `rows`). |
 
 - Answers, drill-downs, the tab and the page are in the address, so a link repeats the question. An ask box shows its stored value until answered; an answer left blank is no filter (`a<i>=` stays in the address), never the stored value.
-- The editor is a draft of the version it opened at: a save after someone else's is refused as a conflict, and the draft stays in the form. Every measure and sort a definition holds opens in it.
+- The editor and the Sharing form are drafts of the version they opened at: a save after someone else's is refused as a conflict, and the draft stays in the form until saved or discarded. Every filter, measure and sort a definition holds opens in the editor, and each field is read by name, so a definition at its bounds saves whole.
+- A date value, and a range on a timestamp, is a day picker; an equals on a timestamp is its exact instant as text with its offset (`2025-01-31T09:30:00Z`), so a stored default survives editing other fields.
 - Every write goes through the operation contracts below (`PAGE_WRITES`: `create`, `save_definition`, `copy`, `save_sharing`, `delete`).
 - The menu entry Reports needs `reports.view`.
 
 ## Agent operations
 
-Reads: `base.reports.list`, `base.reports.get`, `base.reports.fields` (record types, or one type's column paths), `base.reports.run`. Reviewed writes: `base.reports.create`, `update`, `copy`, `share`, `delete`. Guide: `base.reports`.
+Reads: `base.reports.list` (one page by name: `search`, `page` from 1, `page_size` up to 100, default 25; `meta.page.total` says how many match), `base.reports.get`, `base.reports.fields` (record types, or one type's column paths), `base.reports.run`. Reviewed writes: `base.reports.create`, `update`, `copy`, `share`, `delete`. Guide: `base.reports`.
 
 ## Storage
 
