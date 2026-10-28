@@ -916,6 +916,7 @@ body:has(dialog:modal) #flash-group > #connection-server-error {
 }
 
 .ui-combobox-display > span + span {
+  flex-shrink: 0;
   margin-left: 0.35em;
 }
 
@@ -925,7 +926,6 @@ body:has(dialog:modal) #flash-group > #connection-server-error {
 
 [data-hook="Combobox"][data-detailed]:not([data-editing]) input[role="combobox"] {
   color: transparent;
-  caret-color: var(--color-ink);
 }
 
 /* Focus selects the whole value; keep that selection from painting over the display layer. */
