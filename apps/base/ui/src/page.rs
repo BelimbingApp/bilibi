@@ -85,7 +85,7 @@ pub struct LiveBody {
     /// The message the page `redirect` lands on shows (Bilimbi's `put_flash` +
     /// `push_navigate`). The host holds it for the visitor's next navigation to
     /// that path; set it only with a local `redirect` and word it as the source
-    /// does (`Some((StatusKind::Success, "Company created successfully.".into()))`).
+    /// does (`Some((StatusKind::Success, "Company created.".into()))`).
     pub flash: Option<(crate::StatusKind, String)>,
     /// Pushes to browser hooks, dispatched after the patch as `window` events
     /// `bilibi:<name>` with `detail` (Bilimbi's `push_event`). Names are fixed

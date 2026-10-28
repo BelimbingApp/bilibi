@@ -75,7 +75,7 @@ inventory::submit! { Contribution::new(DEFINITIONS, "media.attachment_allowed_ty
 })) }
 inventory::submit! { Contribution::new(DEFINITIONS, "media.stream_ttl_seconds", provenance!(), &Setting::Definition(Definition {
     value_type: ValueType::Integer, scopes: GLOBAL, default: || json!(300), nullable: false, encrypted: false, minimum: Some(1.0), maximum: Some(86_400.0), validator: None,
-    editor: Some(Editor { group: "Media", label: "Asset link lifetime", help: "Seconds a file link stays valid after it is issued.", capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
+    editor: Some(Editor { group: "Media", label: "File link lifetime (seconds)", help: "Seconds a file link stays valid after it is issued.", capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
 })) }
 inventory::submit! { Contribution::new(DEFINITIONS, POLICY, provenance!(), &Setting::Definition(Definition {
     value_type: ValueType::String, scopes: GLOBAL, default: || json!("when_available"), nullable: false, encrypted: false, minimum: None, maximum: None,

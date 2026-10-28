@@ -82,6 +82,7 @@ bilibi-session = { path = "apps/base/session" }
 bilibi-settings = { path = "apps/base/settings" }
 bilibi-settings-editor = { path = "apps/base/settings_editor" }
 bilibi-picklists = { path = "apps/base/picklists" }
+bilibi-records = { path = "apps/base/records" }
 bilibi-step-up = { path = "apps/base/step_up" }
 bilibi-software = { path = "apps/base/software" }
 bilibi-authz-agent = { path = "apps/base/authz_agent" }
@@ -90,6 +91,7 @@ bilibi-tenancy = { path = "apps/base/tenancy" }
 bilibi-tiling = { path = "apps/base/tiling" }
 bilibi-workflow = { path = "apps/base/workflow" }
 bilibi-address = { path = "apps/core/address" }
+bilibi-currency = { path = "apps/core/currency" }
 bilibi-affiliation = { path = "apps/core/affiliation" }
 bilibi-agent-access = { path = "apps/core/agent_access" }
 bilibi-agent-plugins = { path = "apps/core/agent_plugins" }

@@ -40,7 +40,7 @@ inventory::submit! { Contribution::new(VOCABULARY, "base/integration", provenanc
 inventory::submit! { Contribution::new(DEFINITIONS, RETENTION_DAYS, provenance!(), &Setting::Definition(Definition {
     value_type: ValueType::Integer, scopes: &[ScopeKind::Global], default: || json!(RETENTION_DEFAULT), nullable: false, encrypted: false,
     minimum: Some(1.0), maximum: Some(RETENTION_MAX as f64), validator: None,
-    editor: Some(Editor { group: "Integration", label: "API exchange payload retention",
+    editor: Some(Editor { group: "Integration", label: "API exchange payload retention (days)",
         help: "Days to keep the saved content of API calls; the call summary stays.", capability: Some(DELETE), reveal_duration_ms: 5_000 }),
 })) }
 // Deleting an exchange is audited with metadata only; these names never carry
@@ -83,7 +83,7 @@ webhook_setting!(
     WEBHOOK_SETTINGS.max_bytes,
     1_048_576,
     67_108_864.0,
-    "Webhook body limit",
+    "Webhook body limit (bytes)",
     "Maximum bytes per inbound webhook."
 );
 webhook_setting!(

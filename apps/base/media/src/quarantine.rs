@@ -1,4 +1,4 @@
-//! The tenant's files that are not clean (issue 141, ADR 08): what the
+//! The tenant's files that are not clean (issue 141, ADR 12): what the
 //! quarantine page and the `base.media.quarantine.*` agent operations read
 //! and act on. No Bilimbi counterpart. Rescan queues a new scan; purge
 //! removes a quarantined or failed file's bytes and keeps its row and audit

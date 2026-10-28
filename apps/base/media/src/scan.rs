@@ -1,4 +1,4 @@
-//! Malware scanning (issue 141, ADR 08). No Bilimbi counterpart: Bilimbi
+//! Malware scanning (issue 141, ADR 12). No Bilimbi counterpart: Bilimbi
 //! stores uploads unscanned. An Extension binds the installation's one
 //! `Scanner`; while one is bound every file Media stores starts `pending`, and
 //! the `base/media-scan` job, run as the `media-scanner` system principal,

@@ -53,7 +53,7 @@ refuse with `MimeDetectionUnavailable` instead of trusting the client.
 
 ## Malware scanning and quarantine
 
-Every stored file carries a scan state; only a readable one is ever served. Decision and rejected alternatives: [ADR 08](../../../docs/architecture/decisions/08-malware-scanning-fails-closed.md).
+Every stored file carries a scan state; only a readable one is ever served. Decision and rejected alternatives: [ADR 12](../../../docs/architecture/decisions/12-malware-scanning-fails-closed.md).
 
 | State | Meaning | Served |
 | --- | --- | --- |
@@ -137,6 +137,8 @@ contributes `Subject { owner: &OWNER }` under a stable lowercase key
 The owner resolves its live record and checks its own capability; unknown
 subjects have no access. Contributions from modules that do not depend on
 `base/media` fail at boot.
+
+A module that only needs other modules to point at its records, not to hold files for them, registers a record kind with Base Records instead: [`../records/README.md`](../records/README.md). Its `RecordOwner` follows the same access pattern as `SubjectOwner`.
 
 ## Private attachments
 

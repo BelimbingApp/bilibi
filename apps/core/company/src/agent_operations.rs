@@ -46,9 +46,22 @@ fn invalid(errors: Vec<FieldError>) -> bilibi_agent_api::Error {
     }
     bilibi_agent_api::Error::InvalidInput(fields)
 }
-fn parse(input: &Value) -> bilibi_agent_api::Result<NewCompany> {
-    serde_json::from_value(input.clone())
-        .map_err(|_| bilibi_agent_api::Error::Backend(bilibi_database::Error::Invalid))
+fn parse(input: &Value) -> bilibi_agent_api::Result<(NewCompany, crate::CompanyFieldValues)> {
+    let mut company = input.clone();
+    let object = company
+        .as_object_mut()
+        .ok_or(bilibi_agent_api::Error::Backend(
+            bilibi_database::Error::Invalid,
+        ))?;
+    let mut fields = crate::CompanyFieldValues::new();
+    for (_, field) in crate::field_contributions::definitions()? {
+        if let Some(value) = object.remove(field.id) {
+            fields.insert(field.id.into(), value);
+        }
+    }
+    let new = serde_json::from_value(company)
+        .map_err(|_| bilibi_agent_api::Error::Backend(bilibi_database::Error::Invalid))?;
+    Ok((new, fields))
 }
 
 struct List;
@@ -71,20 +84,30 @@ impl ReadHandler for List {
             };
             let client = db()?.get().await.map_err(bilibi_database::Error::from)?;
             let page = organisation::search(&**client, scope, &query).await?;
+            let ids = page
+                .entries
+                .iter()
+                .map(|entry| entry.company.id)
+                .collect::<Vec<_>>();
+            let extension_values = crate::field_contributions::read(&client, scope, &ids).await?;
+            let restricted =
+                crate::field_contributions::effective_restrictions(&**client, scope).await?;
             let entries = page
                 .entries
                 .into_iter()
                 .map(|entry| {
                     let company = &entry.company;
-                    let masked = company.masked_fields();
-                    Data::restricted(
-                        json!({
+                    let mut masked = company.masked_fields();
+                    masked.extend(restricted.iter().cloned());
+                    let mut company_value = json!({
                             "id": company.id, "name": company.name, "code": company.code, "legal_name": company.legal_name,
                             "status": company.status, "jurisdiction": company.jurisdiction, "parent_id": company.parent_id,
                             "parent_name": entry.parent_name, "primary": entry.primary,
-                        }),
-                        &masked,
-                    )
+                        });
+                    if let Some(fields) = extension_values.get(&company.id) {
+                        for (field, field_value) in fields { value_map_insert(&mut company_value, field, field_value.clone()); }
+                    }
+                    Data::restricted(company_value, &masked)
                 })
                 .collect();
             Ok(Output::Page(Page {
@@ -122,7 +145,13 @@ impl ReadHandler for Get {
                         other => other.into(),
                     })?;
             let primary = crate::primary::is_primary(&**client, scope, id).await?;
+            let extension_values = crate::field_contributions::read(&client, scope, &[id]).await?;
             let mut value = company.to_json();
+            if let Some(fields) = extension_values.get(&id) {
+                for (field, field_value) in fields {
+                    value_map_insert(&mut value, field, field_value.clone());
+                }
+            }
             value["primary"] = json!(primary);
             value["path"] = json!(format!("/companies/{id}"));
             Ok(Output::Data(Data::restricted(value, &masked)))
@@ -196,9 +225,9 @@ impl WriteHandler for Create {
         input: &'a Value,
     ) -> OperationFuture<'a> {
         Box::pin(async move {
-            let new = parse(input)?;
+            let (new, custom_values) = parse(input)?;
             let client = db()?.get().await.map_err(bilibi_database::Error::from)?;
-            let company = organisation::preview(&**client, scope, &new)
+            let company = organisation::preview_with_fields(&**client, scope, &new, &custom_values)
                 .await?
                 .map_err(invalid)?;
             let fields = [
@@ -221,6 +250,13 @@ impl WriteHandler for Create {
                 .map(|(field, to)| json!({"field":field,"from":null,"to":to}))
                 .collect();
             let matches = crate::duplicates::create_matches(&**client, scope, &new).await?;
+            let mut changes = changes;
+            changes.extend(
+                custom_values
+                    .iter()
+                    .filter(|(_, value)| !value.is_null() && value.as_str() != Some(""))
+                    .map(|(field, value)| json!({"field":field,"from":null,"to":value})),
+            );
             Ok(json!({"summary":"Create company","changes":changes,"duplicate_candidates":matches.candidates,"duplicates_likely":matches.likely,"create_anyway":new.create_anyway}).into())
         })
     }
@@ -231,15 +267,19 @@ impl WriteHandler for Create {
         input: &'a Value,
     ) -> OperationFuture<'a> {
         Box::pin(async move {
-            let new = parse(input)?;
-            match organisation::create(tx, scope, &new).await? {
+            let (new, fields) = parse(input)?;
+            match organisation::create_with_fields(tx, scope, &new, &fields).await? {
                 organisation::CreateOutcome::Created(company) => {
-                    let masked = company.masked_fields();
-                    let mut data = BTreeMap::new();
-                    data.insert(
-                        "record".into(),
-                        Data::restricted(company.to_json(), &masked),
+                    let mut masked = company.masked_fields();
+                    masked.extend(
+                        crate::field_contributions::effective_restrictions(tx.sql(), scope).await?,
                     );
+                    let mut record = company.to_json();
+                    for (field, value) in &fields {
+                        value_map_insert(&mut record, field, value.clone());
+                    }
+                    let mut data = BTreeMap::new();
+                    data.insert("record".into(), Data::restricted(record, &masked));
                     data.insert(
                         "path".into(),
                         Data::from(json!(format!("/companies/{}", company.id))),
@@ -267,7 +307,7 @@ fn get_schema() -> Value {
     json!({"type":"object","required":["company_id"],"properties":{"company_id":{"type":"integer","minimum":1}}})
 }
 fn create_schema() -> Value {
-    json!({"type":"object","required":["name"],"properties":{
+    let mut schema = json!({"type":"object","required":["name"],"properties":{
         "name":{"type":"string","maxLength":160},
         "code":text(),"legal_name":text(),"registration_number":text(),
         "tax_id":{"type":"string","maxLength":64},
@@ -282,7 +322,21 @@ fn create_schema() -> Value {
             "candidate_ids":{"type":"array","items":{"type":"integer","minimum":1}},
             "reason":{"type":"string","maxLength":500}
         }}
-    }})
+    }});
+    if let Ok(fields) = crate::field_contributions::definitions() {
+        for (_, field) in fields {
+            let crate::CompanyFieldKind::Text { max_length } = field.kind;
+            schema["properties"][field.id] =
+                json!({"type":"string","maxLength":max_length,"description":field.label});
+        }
+    }
+    schema
+}
+
+fn value_map_insert(target: &mut Value, key: &str, value: Value) {
+    if let Some(object) = target.as_object_mut() {
+        object.insert(key.into(), value);
+    }
 }
 fn list_output() -> Value {
     json!({"type":"array","description":"Companies with id, name, code, legal_name, status, jurisdiction, parent_id, parent_name and primary."})

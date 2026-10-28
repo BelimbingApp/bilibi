@@ -594,14 +594,18 @@ impl LiveState<Scope, Error> for Results {
                         .map_err(|_| Error::Internal)?;
                 }
                 LiveInput::Event(value) => match value.get("type").and_then(Value::as_str) {
-                    Some("filters") => self
-                        .list
-                        .apply_filters(&params::form_values(value, FILTERS_FORM)),
+                    Some("filters") => self.list.apply_filters(
+                        &params::form_values_checked(value, FILTERS_FORM, params::FIELD_LIMIT)
+                            .map_err(Error::refused)?,
+                    ),
                     Some("page") => self
                         .list
                         .put_page(value.get("page").and_then(Value::as_str)),
                     Some("grid") => {
-                        self.columns.handle(&params::string_values(value));
+                        self.columns.handle(
+                            &params::string_values_checked(value, params::FIELD_LIMIT)
+                                .map_err(Error::refused)?,
+                        );
                     }
                     _ => return Err(Error::Invalid),
                 },
@@ -708,11 +712,13 @@ impl LiveState<Scope, Error> for Preferences {
                 LiveInput::Refresh | LiveInput::Params(_) => {}
                 LiveInput::Event(value) => match value.get("type").and_then(Value::as_str) {
                     Some("keep") => {
-                        let shown: BTreeSet<String> = params::form_values(value, "kinds")
-                            .into_iter()
-                            .filter(|(_, ticked)| ticked == "true")
-                            .map(|(kind, _)| kind)
-                            .collect();
+                        let shown: BTreeSet<String> =
+                            params::form_values_checked(value, "kinds", params::FIELD_LIMIT)
+                                .map_err(Error::refused)?
+                                .into_iter()
+                                .filter(|(_, ticked)| ticked == "true")
+                                .map(|(kind, _)| kind)
+                                .collect();
                         match self.pages.search.keep(request.scope, &shown).await {
                             Ok(()) => {
                                 self.saved = true;

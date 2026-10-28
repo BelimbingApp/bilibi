@@ -14,7 +14,7 @@ use bilibi_ui::{
 };
 use std::sync::LazyLock;
 
-const DENIED: &str = "You do not have permission to update Admin1 divisions.";
+const DENIED: &str = "You do not have permission to update first-level divisions.";
 const NOT_SAVED: &str = "Failed to save division name.";
 const FILTER: &str = "countryIso";
 const FILTER_PARAM: &str = "filterCountryIso";
@@ -92,7 +92,7 @@ impl Admin1 {
             shown: None,
             update: Update::new(update::Spec {
                 dataset: Dataset::Admin1,
-                noun: "Admin1 divisions",
+                noun: "First-level divisions",
                 button_id: "admin1-update",
                 event: "update-admin1",
                 denied: DENIED,
@@ -160,7 +160,7 @@ impl Admin1 {
                 self.statuses.put(field, CommitStatus::Saved);
                 self.flash.put(
                     StatusKind::Success,
-                    format!("Admin1 division {} updated.", updated.code),
+                    format!("First-level division {} updated.", updated.code),
                 );
             }
             Err(NameWriteError::Access(Error::Unauthorized)) => return Err(Error::Unauthorized),
@@ -174,7 +174,11 @@ impl Admin1 {
             Err(error @ (NameWriteError::Blank | NameWriteError::TooLong(_))) => {
                 self.statuses.put(
                     field,
-                    CommitStatus::refusal("Admin1 division name", value, &[&error.to_string()]),
+                    CommitStatus::refusal(
+                        "first-level division name",
+                        value,
+                        &[&error.to_string()],
+                    ),
                 );
                 self.flash.put(StatusKind::Error, NOT_SAVED);
             }
@@ -193,13 +197,13 @@ impl Admin1 {
         let shown = self.shown.as_ref().ok_or(Error::Internal)?;
         let can_update = shown.reader.can_update;
         let header = render(Header {
-            title: Html::text("Admin1 Divisions"),
+            title: Html::text("First-level divisions"),
             subtitle: "Edit the names of states and provinces.",
             title_actions: render(IconButton {
                 context: IconContext::Inline,
                 id: "admin1-pin",
                 nav_pin: "nav-admin-geonames-admin1-division",
-                ..IconButton::new("bilimbi-pin", "Pin Admin1 Divisions to sidebar")
+                ..IconButton::new("bilimbi-pin", "Pin first-level divisions to sidebar")
             })?,
             actions: if can_update {
                 self.update.button()?
@@ -214,7 +218,7 @@ impl Admin1 {
                 ToolbarControl::search(
                     "admin1-search",
                     "search",
-                    "Search Admin1 divisions",
+                    "Search first-level divisions",
                     &form["search"],
                     "Search by name, code, or country...",
                 ),
@@ -236,7 +240,7 @@ impl Admin1 {
             let name = if can_update {
                 let field_id = format!("admin1-{id}-name");
                 let mut field =
-                    InlineField::new(&field_id, "name", "Admin1 division name", &admin1.name)
+                    InlineField::new(&field_id, "name", "first-level division name", &admin1.name)
                         .status(self.statuses.get(&field_id));
                 field.id_value = id.to_string();
                 field.save_event = "save-admin1-name".into();
@@ -277,10 +281,10 @@ impl Admin1 {
         table.suggestions = self.columns.flex_suggestions();
         table.add_query = &self.columns.add_query;
         table.framed = false;
-        table.caption = "Admin1 divisions";
+        table.caption = "First-level divisions";
         if shown.page.entries.is_empty() {
             table.empty = Some(TableEmpty::Content(Html::text(
-                "No Admin1 divisions found.",
+                "No first-level divisions found.",
             )));
         }
         let mut body = render(table)?;
@@ -322,9 +326,11 @@ impl LiveState<Scope, Error> for Admin1 {
                 LiveInput::Event(event) => {
                     let get = |key: &str| event.get(key).and_then(Value::as_str);
                     match get("type") {
-                        Some("filters") => {
-                            apply_filters(&mut self.list, &params::form_values(event, FILTERS_FORM))
-                        }
+                        Some("filters") => apply_filters(
+                            &mut self.list,
+                            &params::form_values_checked(event, FILTERS_FORM, params::FIELD_LIMIT)
+                                .map_err(bilibi_database::Error::refused)?,
+                        ),
                         Some("sort") => {
                             if !self.list.next_sort(get("sort").unwrap_or_default()) {
                                 return Err(Error::Invalid);

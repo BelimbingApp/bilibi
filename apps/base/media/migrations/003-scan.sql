@@ -1,4 +1,4 @@
--- Malware scanning (issue 141, ADR 08). Every file Media stores carries its
+-- Malware scanning (issue 141, ADR 12). Every file Media stores carries its
 -- scanner's verdict: `unscanned` (no scanner was installed, or the file was
 -- too large for it), `pending` until the `base/media-scan` job answers, then
 -- `clean`, `infected` or `failed`. Only `clean`, and `unscanned` while the

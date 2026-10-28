@@ -1167,7 +1167,7 @@ impl Detail {
         let enrolled = self.pages.users.step_up.enrolled(scope).await?;
         let card = render(&TwoFactorCard {
             description: format!(
-                "{} set up 2FA. If they lost access, reset it: they are signed out and set it up again.",
+                "{} has set up 2FA. If they lost access, reset it so they can set it up again.",
                 loaded.account.name
             ),
             button: render(&Button {
@@ -1510,7 +1510,7 @@ impl Detail {
             Err(AccountError::Access(Error::Conflict)) => CommitStatus::refusal(
                 label,
                 submitted,
-                &["changed while this edit was in flight; reload before trying again"],
+                &["changed while you were editing; reload before trying again"],
             ),
             Err(AccountError::OwnAccount) | Err(AccountError::Access(_)) => CommitStatus::failure(),
         };
@@ -1639,7 +1639,7 @@ impl Detail {
             .await
         {
             Ok(()) => {
-                self.flash.success("Password updated successfully.");
+                self.flash.success("Password updated.");
                 self.password_errors = (Vec::new(), Vec::new());
                 self.show_password = false;
             }
@@ -1825,7 +1825,9 @@ impl Detail {
                 }
             }
             "grid" => {
-                let params = bilibi_ui::params::string_values(value);
+                let params =
+                    bilibi_ui::params::string_values_checked(value, bilibi_ui::params::FIELD_LIMIT)
+                        .map_err(Error::refused)?;
                 match self.columns.handle(&params) {
                     bilibi_ui::ColumnsOutcome::Sort(key) => {
                         self.sort = if self.sort.0 == key && self.sort.1 == SortDir::Asc {

@@ -24,7 +24,7 @@ pub const RETENTION_MAX: i64 = 3650;
 inventory::submit! { Contribution::new(DEFINITIONS, RETENTION_DAYS, Provenance { module: "base/authz", source: file!(), line: line!() }, &Setting::Definition(Definition {
     value_type: ValueType::Integer, scopes: &[ScopeKind::Global], default: || json!(RETENTION_DEFAULT), nullable: false, encrypted: false,
     minimum: Some(1.0), maximum: Some(RETENTION_MAX as f64), validator: None,
-    editor: Some(Editor { group: "Authorization", label: "Authorization log retention",
+    editor: Some(Editor { group: "Authorization", label: "Authorization log retention (days)",
         help: "Days to keep decision logs.", capability: Some(LIST), reveal_duration_ms: 5_000 }),
 })) }
 
