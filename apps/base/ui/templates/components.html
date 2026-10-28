@@ -86,6 +86,32 @@ ui-icon-button grid shrink-0 place-items-center transition focus-visible:outline
 <div class="mb-3 flex items-start justify-between gap-3{% if !class.is_empty() %} {{ class }}{% endif %}"><div class="min-w-0"><div class="flex items-center gap-2"><h2{% if !id.is_empty() %} id="{{ id }}"{% endif %} class="text-xs font-semibold uppercase tracking-wider text-ink-subtle">{{ title }}</h2>{% if let Some(count) = count %}{% call badge() %}{{ count }}{% endcall %}{% endif %}{{ title_actions|safe }}</div>{% if !description_html.is_empty() %}<div class="mt-0.5 text-xs text-ink-subtle">{{ description_html|safe }}</div>{% elif !description.is_empty() %}<div class="mt-0.5 text-xs text-ink-subtle">{{ description }}</div>{% endif %}</div>{% if !actions.is_empty() %}<div class="flex shrink-0 items-center gap-2">{{ actions|safe }}</div>{% endif %}</div>
 {% endmacro %}
 
+{#- Fragments the shared models rendered (a notice, a chart, a table),
+    stacked a compact step apart, or a section step apart when wide; no
+    Bilimbi counterpart. -#}
+{% macro stack(parts, wide=false) %}
+<div class="{% if wide %}space-y-4{% else %}space-y-2{% endif %}">{% for part in parts %}{{ part|safe }}{% endfor %}</div>
+{% endmacro %}
+
+{#- Fragments on one wrapping line (a page header's several actions); no
+    Bilimbi counterpart. -#}
+{% macro cluster(parts) %}
+<div class="flex flex-wrap items-center gap-2">{% for part in parts %}{{ part|safe }}{% endfor %}</div>
+{% endmacro %}
+
+{#- What a view is narrowed to (no Bilimbi counterpart): a lead word, then
+    its parts (removable labels, a way back), as one labelled strip. -#}
+{% macro narrowing(id, label, lead, parts) %}
+<nav id="{{ id }}" aria-label="{{ label }}" class="flex flex-wrap items-center gap-2"><span class="text-sm text-ink-muted">{{ lead }}</span>{% for part in parts %}{{ part|safe }}{% endfor %}</nav>
+{% endmacro %}
+
+{#- A value as text with the one control that acts on it (removes it, opens
+    what is behind it), on one line; no Bilimbi counterpart. Data keeps its
+    own spelling, which a badge would capitalise. -#}
+{% macro removable(label, button, strong=false) %}
+<span class="inline-flex items-center gap-1{% if strong %} text-sm font-medium text-ink{% endif %}">{{ label }}{{ button|safe }}</span>
+{% endmacro %}
+
 {#- Card with a subtle border; inner_class "p-0" is the flat full-bleed table frame.
     role/labelledby name a card as a landmark region (Bilimbi passes them as
     rest attributes: role="region" aria-labelledby="<heading id>").

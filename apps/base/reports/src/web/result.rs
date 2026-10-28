@@ -231,22 +231,22 @@ pub(crate) fn summary(
     table.caption = "Report summary";
     table.framed = false;
     out.push(&render(table)?);
-    Ok((render(Stack { body: out })?, drillable))
+    Ok((render(Stack { parts: vec![out] })?, drillable))
 }
 
 #[derive(askama::Template)]
 #[template(
-    source = r#"<div class="space-y-4">{{ body|safe }}</div>"#,
+    source = r#"{% import "components.html" as ui %}{% call ui::stack(parts=parts, wide=true) %}{% endcall %}"#,
     ext = "html"
 )]
 struct Stack {
-    body: Html,
+    parts: Vec<Html>,
 }
 
 /// A group's value with its drill button on the same line.
 #[derive(askama::Template)]
 #[template(
-    source = r#"<span class="inline-flex items-center gap-1">{{ text }}{{ button|safe }}</span>"#,
+    source = r#"{% import "components.html" as ui %}{% call ui::removable(label=text, button=button) %}{% endcall %}"#,
     ext = "html"
 )]
 struct DrillCell<'a> {

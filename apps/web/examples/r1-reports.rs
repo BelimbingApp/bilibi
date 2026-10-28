@@ -5,6 +5,7 @@
 //! plain SQL over the same rows, or proves a refusal; it prints PASS/FAIL and
 //! exits non-zero on any failure. No test runner or mocks.
 use bilibi_base::{
+    agent_api::Registry,
     authz::grants::Grants,
     grid,
     reports::{
@@ -139,6 +140,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .reconcile()
         .await?;
     let reports = app.services.get::<Reports>(bilibi_base::reports::SERVICE)?;
+    let agents = app.services.get::<Registry>("base/agent_api.registry")?;
     let boundary = app
         .services
         .get::<MutationBoundary>("base/database.mutations")?;
@@ -267,7 +269,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         reports.share(tx, &manager, id, 1, false, &[2]).await
     })
     .await?;
-    let listed = reports.list(&viewer).await?;
+    let (listed, _) = reports.page(&viewer, "", 0, 100).await?;
     checks.check(
         "shared with the viewer's role, it is listed",
         listed.iter().any(|r| r.id == id && !r.owned),
@@ -475,10 +477,160 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         all > 500 && last.first().is_some_and(|r| r.id == late_id),
         format!("{all} report(s)"),
     );
+    // Agents page the same list: the page envelope's total reaches the last.
+    let first = agents
+        .call(
+            client,
+            &manager,
+            "base.reports.list",
+            &json!({"page_size": 100}),
+        )
+        .await?;
+    let total = first["meta"]["page"]["total"].as_u64().unwrap_or(0);
+    let pages = total.div_ceil(100);
+    let last = agents
+        .call(
+            client,
+            &manager,
+            "base.reports.list",
+            &json!({"page": pages, "page_size": 100}),
+        )
+        .await?;
+    checks.check(
+        "an agent pages past 500 reports to the last, which holds it",
+        first["result"].as_array().map_or(0, Vec::len) == 100
+            && total == all
+            && last["result"]
+                .as_array()
+                .and_then(|r| r.last())
+                .is_some_and(|r| r["id"] == json!(late_id)),
+        format!("{total} report(s), {pages} page(s)"),
+    );
+    let found = agents
+        .call(
+            client,
+            &manager,
+            "base.reports.list",
+            &json!({"search": "zz late"}),
+        )
+        .await?;
+    checks.check(
+        "and finds it by search",
+        found["meta"]["page"]["total"] == json!(1) && found["result"][0]["id"] == json!(late_id),
+        found["meta"]["page"].to_string(),
+    );
+    let oversized = agents
+        .call(
+            client,
+            &manager,
+            "base.reports.list",
+            &json!({"page_size": 101}),
+        )
+        .await;
+    checks.check(
+        "a page larger than 100 is refused",
+        oversized.is_err(),
+        format!("{:?}", oversized.err()),
+    );
     client
         .execute(
             "DELETE FROM base_reports WHERE tenant_id=1 AND (name LIKE 'A filler %' OR id=$1)",
             &[&late_id],
+        )
+        .await?;
+
+    println!("== Sharing at a stale version, instants and full definitions (review 2 of #168)");
+    let held = reports.get(&manager, rows_id).await?;
+    write(&boundary, &db, &manager, "reports.share", async |tx| {
+        reports
+            .share(tx, &manager, rows_id, held.version, false, &[])
+            .await
+    })
+    .await?;
+    let refused = write(&boundary, &db, &manager, "reports.share", async |tx| {
+        reports
+            .share(tx, &manager, rows_id, held.version, true, &[])
+            .await
+    })
+    .await;
+    let after = reports.get(&manager, rows_id).await?;
+    checks.check(
+        "a share from an older form is refused, and the report stays private",
+        matches!(refused, Err(ReportError::Conflict)) && !after.shared_with_everyone,
+        format!("{refused:?}, everyone {}", after.shared_with_everyone),
+    );
+    let instant = "2025-01-01T00:00:00Z";
+    let movements = Draft {
+        name: "Movements since".into(),
+        description: String::new(),
+        record_type: "reference_movements".into(),
+        kind: Kind::Rows,
+        definition: Definition {
+            columns: vec!["recorded_at".into(), "delta".into()],
+            filters: vec![filter("recorded_at", "equals", json!(instant), true)],
+            ..Definition::default()
+        },
+    };
+    let since = write(&boundary, &db, &manager, "reports.create", async |tx| {
+        reports.create(tx, &manager, &movements).await
+    })
+    .await?;
+    let saved = reports.get(&manager, since).await?;
+    let described = Draft {
+        description: "Every movement since the start of 2025.".into(),
+        definition: saved.definition.clone(),
+        ..movements.clone()
+    };
+    write(&boundary, &db, &manager, "reports.update", async |tx| {
+        reports
+            .update(tx, &manager, since, saved.version, &described)
+            .await
+    })
+    .await?;
+    let kept = reports.get(&manager, since).await?;
+    checks.check(
+        "a timestamp default keeps its exact instant through an unrelated change",
+        kept.definition.filters[0].value == json!(instant),
+        kept.definition.filters[0].value.to_string(),
+    );
+    let full = Draft {
+        name: "Sixteen filters".into(),
+        definition: Definition {
+            filters: (0..16)
+                .map(|i| {
+                    filter(
+                        "quantity",
+                        "range",
+                        json!({"min": i, "max": null}),
+                        i % 2 == 0,
+                    )
+                })
+                .collect(),
+            ..summary_draft("", vec![]).definition
+        },
+        ..summary_draft("Sixteen filters", vec![])
+    };
+    let full_id = write(&boundary, &db, &manager, "reports.create", async |tx| {
+        reports.create(tx, &manager, &full).await
+    })
+    .await?;
+    let full_run = reports.run(&manager, full_id, &RunInput::default()).await;
+    checks.check(
+        "a definition at the filter bound saves and runs",
+        reports
+            .get(&manager, full_id)
+            .await?
+            .definition
+            .filters
+            .len()
+            == 16
+            && full_run.is_ok(),
+        format!("{:?}", full_run.err()),
+    );
+    client
+        .execute(
+            "DELETE FROM base_reports WHERE tenant_id=1 AND id = ANY($1)",
+            &[&vec![since, full_id]],
         )
         .await?;
 
