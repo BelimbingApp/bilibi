@@ -5,16 +5,19 @@
     account menu. The host decides which companies the person reaches; this
     only draws them. The choice posts as an ordinary form to
     `/session/company`, so it works without JavaScript; assets/shell.js adds
-    the disclosure, the type-to-find filter and the exact return address. -#}
+    the disclosure, the type-to-find filter and the exact return address. The
+    type-to-find box sits outside the form, so Enter in it submits nothing: only
+    a row the person presses chooses a company. -#}
 {% import "components.html" as ui %}
 {% import "forms.html" as forms %}
 {% if companies.len() > 1 || (current.is_none() && !companies.is_empty()) %}
 <div id="app-company" class="relative flex min-w-0 shrink items-center" data-company-menu>
 <button type="button" id="app-company-toggle" data-company-toggle aria-expanded="false" aria-controls="app-company-panel" aria-label="{% if let Some(name) = current %}Switch company. Current company: {{ name }}{% else %}Choose a company{% endif %}" title="{% if current.is_some() %}Switch company{% else %}Choose a company{% endif %}" class="inline-flex h-6 min-w-0 items-center gap-1 rounded-sm px-1 text-xs font-medium text-ink hover:bg-surface-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-strong">{% call ui::icon(name="building-office-2", class="size-4 shrink-0 text-ink-subtle") %}{% endcall %}<span id="app-company-name" class="max-w-36 truncate sm:max-w-48 lg:max-w-64">{% if let Some(name) = current %}{{ name }}{% else %}Choose a company{% endif %}</span>{% call ui::icon(name=bilibi_ui::Icons::shell("chevron"), class="size-3 shrink-0") %}{% endcall %}</button>
 <div id="app-company-panel" data-company-panel hidden class="absolute left-0 top-full z-50 mt-1 w-72 max-w-[calc(100vw-1rem)] rounded-xl border border-line bg-surface p-1 shadow-lg" aria-label="Switch company">
-<form method="post" action="/session/company" id="app-company-form" class="flex max-h-[min(24rem,calc(100vh-4rem))] flex-col">
-<input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="return" value="{{ path }}" data-company-return>
+<div class="flex max-h-[min(24rem,calc(100vh-4rem))] flex-col">
 {% if let Some(filter) = filter %}<div class="p-1">{% call forms::input(field=filter) %}{% endcall %}</div>{% endif %}
+<form method="post" action="/session/company" id="app-company-form" class="flex min-h-0 flex-1 flex-col">
+<input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="return" value="{{ path }}" data-company-return>
 <ul id="app-company-options" role="list" class="min-h-0 flex-1 overflow-y-auto">
 {%- for company in companies %}
 <li><button type="submit" id="app-company-{{ company.id }}" name="company" value="{{ company.id }}" aria-pressed="{{ company.current }}" data-company-option data-company-label="{{ company.name }}" class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-link hover:bg-surface-muted aria-pressed:bg-brand-surface aria-pressed:text-brand-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-strong max-sm:py-2.5">{% call ui::icon(name="building-office-2", class="size-4 shrink-0") %}{% endcall %}<span class="min-w-0 flex-1 truncate">{{ company.name }}{% if company.own %}<span class="block text-muted">Your company</span>{% endif %}</span></button></li>
@@ -22,6 +25,7 @@
 </ul>
 <p id="app-company-none" data-company-none hidden class="px-2 py-1.5 text-xs text-muted">No company matches.</p>
 </form>
+</div>
 </div>
 </div>
 {% else %}

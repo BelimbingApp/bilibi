@@ -67,11 +67,11 @@ company reach. The generic field editor never accepts `status`.
 | `Directory::reachable` (`OrganisationDirectory`) | Company | The same reach, listed: what the top bar's switcher offers. No capability is asked, because the list is the reach alone |
 | `sessions.company_id` and `Sessions::choose_company` | Base Session | The stored choice (`NULL` is the account's own company); migration `009-session-company` adds the scoped key |
 | `ActorVerifier::reaches_company` | Core User, through `reachable` | Proves the stored choice on every authentication; a choice the account no longer reaches is dropped from the scope and the session edge forgets it |
-| `UserService::choose_company` | Core User | The switch: proves the reach, writes the row and records `user.company.switched` in one transaction ([Core User README](../user/README.md#working-company)) |
+| `UserService::choose_company` | Core User | The switch: proves the reach, writes the row and records `user.company.switched` in one transaction ([Core User README](../user/README.md#current-company)) |
 | `POST /session/company` | Web | The top bar's form ([Web README](../../web/README.md)) |
 | `core.company.reachable` | Company | The same list for an agent, under `admin.company.view`; an agent carries no session choice and names `company_id` on every call |
 
-The dashboard's Companies strip and Current company card follow `current_company()`. The switcher offers the first companies of the tenant by name, with a type-to-find box past eight; a tenant with hundreds of companies still reaches each through the switcher's filter. Archived companies are never offered, and switching companies never crosses a tenant.
+The dashboard's Companies strip and Current company card follow `current_company()`. The switcher lists every reachable company of the tenant by name, with a type-to-find box past eight. Viewing as another account starts from that account's own default, and leaving restores the operator's choice. Archived companies are never offered, and switching companies never crosses a tenant.
 
 ## Public company summaries
 

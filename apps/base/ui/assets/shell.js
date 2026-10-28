@@ -107,8 +107,9 @@
     }
     // The company switcher (templates/company_bar.html): rows whose name
     // contains the typed text stay; the rest hide. Nothing is sent until a
-    // row is chosen, and the form carries the page's exact address so the
-    // switch comes back here, query included.
+    // row is pressed (the box is outside the form, so Enter sends nothing),
+    // and the form carries the page's exact address so the switch comes back
+    // here, query included.
     filterCompanies(input) {
       const panel = input.closest('[data-company-panel]');
       if (!panel) return;
