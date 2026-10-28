@@ -6,6 +6,7 @@ use crate::{
     RunInput, AUTHOR, EXPORT, SCHEDULE, SHARE, VIEW,
 };
 use bilibi_agent_api::{
+    json::{Data, Output, Page},
     Channels, Definitions, Error as AgentError, Guide, Handler, Operation, OperationClient,
     OperationFuture, ReadHandler, WriteHandler, DEFINITIONS,
 };
@@ -17,6 +18,10 @@ use std::{
     collections::BTreeMap,
     sync::{Arc, OnceLock},
 };
+
+/// Reports one `base.reports.list` page holds by default, and at most.
+const LIST_PAGE: u64 = 25;
+const MAX_LIST_PAGE: u64 = 100;
 
 static BOUND: OnceLock<Arc<Reports>> = OnceLock::new();
 pub(crate) fn bind(reports: Arc<Reports>) -> bilibi_module_registry::Result<()> {
@@ -175,10 +180,41 @@ impl ReadHandler for Read {
         Box::pin(async move {
             let reports = bound()?;
             let value = match self {
+                // One bounded page, searched in the same query, so every
+                // report is reachable however many there are.
                 Self::List => {
-                    let list = reports.list(scope).await?;
-                    let builtins = reports.builtins(scope).await?;
-                    json!({"reports": list.iter().map(listed).collect::<Vec<_>>(), "built_in": builtins.iter().map(listed).collect::<Vec<_>>()})
+                    let search = input["search"].as_str().unwrap_or_default().trim();
+                    let page = input["page"].as_u64().unwrap_or(1).max(1);
+                    let page_size = input["page_size"]
+                        .as_u64()
+                        .unwrap_or(LIST_PAGE)
+                        .clamp(1, MAX_LIST_PAGE);
+                    let offset = (page - 1).saturating_mul(page_size);
+                    let (list, total) = if input["built_in"].as_bool() == Some(true) {
+                        // Built-ins are few and in code: searched and paged here.
+                        let wanted = search.to_lowercase();
+                        let all: Vec<_> = reports
+                            .builtins(scope)
+                            .await?
+                            .into_iter()
+                            .filter(|r| {
+                                r.name.to_lowercase().contains(&wanted)
+                                    || r.description.to_lowercase().contains(&wanted)
+                            })
+                            .collect();
+                        let total = all.len() as u64;
+                        let start = usize::try_from(offset).unwrap_or(usize::MAX);
+                        let size = usize::try_from(page_size).unwrap_or(usize::MAX);
+                        (all.into_iter().skip(start).take(size).collect(), total)
+                    } else {
+                        reports.page(scope, search, offset, page_size).await?
+                    };
+                    return Ok(Output::Page(Page {
+                        entries: Data::Array(list.iter().map(|r| listed(r).into()).collect()),
+                        page,
+                        page_size,
+                        total,
+                    }));
                 }
                 Self::Get => {
                     let report = match builtin(input) {
@@ -398,8 +434,13 @@ impl WriteHandler for Write {
     }
 }
 
-fn empty_schema() -> Value {
-    json!({"type":"object","properties":{}})
+fn list_schema() -> Value {
+    json!({"type":"object","properties":{
+        "search":{"type":"string","maxLength":120,"description":"Only reports whose name or description holds this text, any case. Left out: every report you can run."},
+        "page":{"type":"integer","minimum":1,"maximum":100000,"description":"The page, from 1. meta.page.total says how many reports match."},
+        "page_size":{"type":"integer","minimum":1,"maximum":100,"description":"Reports per page. Left out: 25."},
+        "built_in":{"type":"boolean","description":"true: the built-in reports modules supply (by builtin key) instead of saved ones."}
+    }})
 }
 fn id_schema() -> Value {
     json!({"type":"object","required":["id"],"properties":{"id":{"type":"integer","minimum":1,"description":"The report's id from base.reports.list."}}})
@@ -555,7 +596,7 @@ fn version_schema() -> Value {
     json!({"type":"object","required":["id","version"],"properties":{"id":{"type":"integer","minimum":1},"version":{"type":"integer","minimum":1}}})
 }
 fn list_output() -> Value {
-    json!({"type":"object","description":"reports: id, name, description, record_type, kind (rows or summary), owned (you may change it), version, updated_at."})
+    json!({"type":"array","description":"One page of reports, by name: id, name, description, record_type, kind (rows, summary or matrix), owned (you may change it), version, updated_at; a built-in one has its builtin key instead of id and version. meta.page gives page, page_size and total, so the next page is page + 1 while page * page_size < total."})
 }
 fn get_output() -> Value {
     json!({"type":"object","description":"The report: id, owner_id, owned, name, description, record_type, kind, definition (columns, filters, groupings, measures, sort, chart), shared_with_everyone, role_ids, version, updated_at."})
@@ -567,11 +608,11 @@ fn write_output() -> Value {
     json!({"type":"object","description":"The review: summary and the before/after facts, with the version the commit must match. The commit answers the report id."})
 }
 
-const GUIDE: &str = "A report is a saved question over one record type, never saved data: every run reads as the person running it, so they see only the rows and fields their own access allows. Read base.reports.list (your reports, and built_in ones modules supply, which you can run and copy but not change), then base.reports.get for a definition and base.reports.run for its result. A rows report lists columns page by page; a summary groups by up to two columns (a date column by day, week, month, quarter or year, in the company's time zone) and totals measures (count, sum, avg, min, max) with subtotals. Filters test a column with equals, one_of, contains, range, within (a period like this_month), empty or not_empty; a filter marked ask takes the reader's value at run time through answers. Columns the reader cannot see are left out and listed in left_out; a filter on such a column refuses the run. Build with base.reports.create: base.reports.fields lists the record types and each one's column paths, change your own with update, share them with share, and copy anyone's you can run. Export a whole result with base.reports.prepare_export (csv or pdf); it runs as you in the background and base.reports.exports gives its download path when ready. Have a report delivered on a schedule with base.reports.subscribe; each recipient gets the result their own access allows. Every write is reviewed first; update, share and delete take the version from get.";
+const GUIDE: &str = "A report is a saved question over one record type, never saved data: every run reads as the person running it, so they see only the rows and fields their own access allows. Read base.reports.list (a page at a time, or searched by name; with built_in, the ones modules supply, which you can run and copy but not change), then base.reports.get for a definition and base.reports.run for its result. A rows report lists columns page by page; a summary groups by up to two columns (a date column by day, week, month, quarter or year, in the company's time zone) and totals measures (count, sum, avg, min, max) with subtotals. Filters test a column with equals, one_of, contains, range, within (a period like this_month), empty or not_empty; a filter marked ask takes the reader's value at run time through answers. Columns the reader cannot see are left out and listed in left_out; a filter on such a column refuses the run. Build with base.reports.create: base.reports.fields lists the record types and each one's column paths, change your own with update, share them with share, and copy anyone's you can run. Export a whole result with base.reports.prepare_export (csv or pdf); it runs as you in the background and base.reports.exports gives its download path when ready. Have a report delivered on a schedule with base.reports.subscribe; each recipient gets the result their own access allows. Every write is reviewed first; update, share and delete take the version from get.";
 
 inventory::submit! { Contribution::new(DEFINITIONS, "base/reports", Provenance { module: "base/reports", source: file!(), line: line!() }, &Definitions {
     operations: &[
-        Operation { key:"base.reports.list", title:"Reports", summary:"List the reports you can run: your own and those shared with you.", keywords:&["report","reports","list","saved"], capability:VIEW, input:empty_schema, output:list_output, handler:Handler::Read(&Read::List), channels:Channels::Every, step_up:&[] },
+        Operation { key:"base.reports.list", title:"Reports", summary:"List the reports you can run, your own and those shared with you, a page at a time, optionally searched by name.", keywords:&["report","reports","list","saved","search"], capability:VIEW, input:list_schema, output:list_output, handler:Handler::Read(&Read::List), channels:Channels::Every, step_up:&[] },
         Operation { key:"base.reports.get", title:"Report definition", summary:"Read one report's definition: record type, columns, filters, groupings, measures, sort and chart.", keywords:&["report","definition","get"], capability:VIEW, input:report_schema, output:get_output, handler:Handler::Read(&Read::Get), channels:Channels::Every, step_up:&[] },
         Operation { key:"base.reports.fields", title:"Report fields", summary:"The record types you can report on, or one type's columns with their paths and types, for building a report.", keywords:&["report","fields","columns","record","type"], capability:VIEW, input:fields_schema, output:fields_output, handler:Handler::Read(&Read::Fields), channels:Channels::Every, step_up:&[] },
         Operation { key:"base.reports.run", title:"Run a report", summary:"Run a report as yourself: a page of rows or a grouped summary with totals, answering its ask-when-run filters.", keywords:&["report","run","summary","total","group"], capability:VIEW, input:run_schema, output:run_output, handler:Handler::Read(&Read::Run), channels:Channels::Every, step_up:&[] },

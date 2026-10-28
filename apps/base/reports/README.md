@@ -14,8 +14,7 @@ Operator-built reports: a saved question over one Grid table, run as each reader
 
 | Call | Needs | Does |
 |---|---|---|
-| `list`, `get` | `reports.view` | Reports the reader may run: their own, shared with everyone, or shared with one of their roles. |
-| `page` | `reports.view` | One page of those reports by name, searched by name and description in the same query, with the number that match. |
+| `page`, `get` | `reports.view` | Reports the reader may run: their own, shared with everyone, or shared with one of their roles. `page` answers one page by name, searched by name and description in the same query, with the number that match. |
 | `run` | `reports.view` | One page of rows (each with its record's own page where the owner declares one, and the totals line), or a grouped summary or matrix with subtotals and a total. Answers ask-when-run filters by position; `as_rows` with drill filters lists the records behind a group; agents drill as the page does (`equals`, `empty`, or a date bucket's `range` of days). |
 | `export` | `reports.export` | The whole result as CSV or a text PDF, up to the download bound, for the same `RunInput` as the page (answers, drill-downs, records view). Audited as `base.reports.exported` with report, format and row count, never the data. CSV neutralises a leading `=`, `+`, `-`, `@`; a PDF holds 20 columns and Latin-1 text and refuses anything else in words. A matrix file has the page's layout, column totals included. |
 | `exportable` | `reports.export` | Whether that file can be made now, without making or auditing it: the page asks before sending the browser to a PDF, so a refusal is shown in words with CSV beside it. |
@@ -67,13 +66,14 @@ Grid's cost bound and timeouts apply to every run on top of these.
 | `/reports/{id}/export` | The CSV download, or a PDF with `format=pdf` (`reports.export`), with the answers, drill-downs and records view in the address (`a<i>`, `a<i>_to`, `d<n>`, `v<n>`, `rows`). |
 
 - Answers, drill-downs, the tab and the page are in the address, so a link repeats the question. An ask box shows its stored value until answered; an answer left blank is no filter (`a<i>=` stays in the address), never the stored value.
-- The editor is a draft of the version it opened at: a save after someone else's is refused as a conflict, and the draft stays in the form. Every measure and sort a definition holds opens in it.
+- The editor and the Sharing form are drafts of the version they opened at: a save after someone else's is refused as a conflict, and the draft stays in the form until saved or discarded. Every filter, measure and sort a definition holds opens in the editor, and each field is read by name, so a definition at its bounds saves whole.
+- A date value, and a range on a timestamp, is a day picker; an equals on a timestamp is its exact instant as text with its offset (`2025-01-31T09:30:00Z`), so a stored default survives editing other fields.
 - Every write goes through the operation contracts below (`PAGE_WRITES`: `create`, `save_definition`, `copy`, `save_sharing`, `delete`, `prepare_export`, `subscribe`, `pause_schedule`, `unsubscribe`).
 - The menu entry Reports needs `reports.view`.
 
 ## Agent operations
 
-Reads: `base.reports.list` (with `built_in`), `get` and `run` (by `id`, or `builtin` key), `fields` (record types, or one type's column paths), `exports`, `subscriptions`. Reviewed writes: `create`, `update`, `copy` (also of a built-in), `share`, `delete`, `prepare_export`, `subscribe`, `pause_subscription`, `unsubscribe`. Guide: `base.reports`.
+Reads: `base.reports.list` (one page by name: `search`, `page` from 1, `page_size` up to 100, default 25; `meta.page.total` says how many match; `built_in` lists the built-in ones), `get` and `run` (by `id`, or `builtin` key), `fields` (record types, or one type's column paths), `exports`, `subscriptions`. Reviewed writes: `create`, `update`, `copy` (also of a built-in), `share`, `delete`, `prepare_export`, `subscribe`, `pause_subscription`, `unsubscribe`. Guide: `base.reports`.
 
 ## Schedules
 
