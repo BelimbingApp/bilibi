@@ -51,21 +51,13 @@ impl Privacy {
         {
             return Err(Error::Invalid);
         }
-        // One transaction holds the capability check and the record; it commits
-        // only once the value is read, so there is no value without a record
-        // and no record of a reveal that read nothing.
-        let mut client = self.db.get().await?;
-        let tx = client.transaction().await?;
-        bilibi_authz::authorize_key(&*tx, scope, FIELD_REVEAL).await?;
+        // Checked first, then the value is read, then the reveal is recorded
+        // and committed before the value is returned: no value without a
+        // record, no record of a reveal that read nothing, and no connection
+        // held while another is taken.
+        bilibi_authz::authorize_key(&**self.db.get().await?, scope, FIELD_REVEAL).await?;
         let target = format!("{table}.{field}:{}", record_text(record));
         self.step_up.require(scope, STEP_UP_REVEAL, &target).await?;
-        record_action(
-            &*tx,
-            scope,
-            "privacy.field.revealed",
-            json!({"table": table, "field": field, "record": record, "reason": reason}),
-        )
-        .await?;
         let grant = self.issuer.reveal(scope, table, field);
         let value = bilibi_grid::query::reveal(&self.db, scope, &grant, table, field, record)
             .await
@@ -75,6 +67,18 @@ impl Privacy {
                 _ => Error::Invalid,
             })?
             .ok_or(Error::NotFound)?;
+        let mut client = self.db.get().await?;
+        let tx = client.transaction().await?;
+        // Rechecked in the recording transaction: a capability removed since
+        // the read returns nothing.
+        bilibi_authz::authorize_key(&*tx, scope, FIELD_REVEAL).await?;
+        record_action(
+            &*tx,
+            scope,
+            "privacy.field.revealed",
+            json!({"table": table, "field": field, "record": record, "reason": reason}),
+        )
+        .await?;
         tx.commit().await?;
         Ok(match value {
             Value::Null => None,
@@ -84,35 +88,45 @@ impl Privacy {
     }
 
     /// Before an export leaves: a reader who sees no field restricted reads it
-    /// as before. Anyone else needs `privacy.field.reveal` and a reason, and
-    /// the download is recorded like a reveal (`privacy.export.revealed`) in
-    /// `client`'s transaction, which the caller commits once the bytes are read.
-    pub(crate) async fn reveal_export(
+    /// as before (`None`). Anyone else needs `privacy.field.reveal`, a reason
+    /// and the tenant's Step-up check; the returned reveal is recorded with
+    /// [`Self::record_export_reveal`] once the bytes are read.
+    pub(crate) async fn check_export_reveal(
         &self,
         client: &impl GenericClient,
         scope: &Scope,
         request: i64,
         reason: Option<&str>,
-    ) -> Result<()> {
+    ) -> Result<Option<Value>> {
         if bilibi_authz::fields::restricted(client, scope)
             .await?
             .values()
             .all(|fields| fields.is_empty())
         {
-            return Ok(());
+            return Ok(None);
         }
         let reason = reason_text(reason.ok_or(Error::Forbidden)?)?;
         bilibi_authz::authorize_key(client, scope, FIELD_REVEAL).await?;
         self.step_up
             .require(scope, STEP_UP_REVEAL, &format!("privacy.request:{request}"))
             .await?;
-        record_action(
-            client,
-            scope,
-            "privacy.export.revealed",
-            json!({"request": request, "reason": reason}),
-        )
-        .await
+        Ok(Some(json!({"request": request, "reason": reason})))
+    }
+
+    /// Records an export download checked by [`Self::check_export_reveal`]
+    /// (`privacy.export.revealed`), rechecking `privacy.field.reveal` in the
+    /// same transaction; the caller returns the bytes only once it commits.
+    pub(crate) async fn record_export_reveal(
+        &self,
+        client: &mut tokio_postgres::Client,
+        scope: &Scope,
+        reveal: Value,
+    ) -> Result<()> {
+        let tx = client.transaction().await?;
+        bilibi_authz::authorize_key(&tx, scope, FIELD_REVEAL).await?;
+        record_action(&tx, scope, "privacy.export.revealed", reveal).await?;
+        tx.commit().await?;
+        Ok(())
     }
 }
 

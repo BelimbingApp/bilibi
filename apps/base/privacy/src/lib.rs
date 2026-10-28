@@ -23,8 +23,8 @@ pub use requests::{
     ConfirmedRecord, NewRequest, RequestKind, RequestView, StoreProgress, DUE_DAYS,
 };
 pub use retention::{
-    period_accepts, setting_keys, ClassView, RecordClass, RetentionAction, SweepView, Sweeper,
-    Swept, AUDIT_EVIDENCE, RECORD_CLASSES, SWEEP_SCHEDULE, SWEEP_WORKER,
+    period_accepts, setting_keys, ClassView, Companies, RecordClass, RetentionAction, SweepView,
+    Sweeper, Swept, AUDIT_EVIDENCE, RECORD_CLASSES, SWEEP_SCHEDULE, SWEEP_WORKER,
 };
 pub use runner::{FINISH_WORKER, STORE_WORKER};
 

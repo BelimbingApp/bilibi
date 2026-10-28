@@ -1,6 +1,7 @@
-//! User's record classes (ADR 05, `base/privacy` retention). Closed accounts
-//! are anonymised once the company's period has passed since they were
-//! closed: the row, its ID and its links stay, the name and sign-in email do
+//! User's record classes (ADR 05, `base/privacy` retention). Each account
+//! follows its company's settings (the primary company's for an account of
+//! no company), and a notification its recipient's. Closed accounts are
+//! anonymised once the period has passed since they were closed: the row, its ID and its links stay, the name and sign-in email do
 //! not, and the sign-in links that remain are deleted. Notifications, which
 //! have no business value, are purged once the period has passed since they
 //! were sent. Neither is swept until a company turns it on and sets a period,
@@ -8,7 +9,7 @@
 //! No Bilimbi counterpart.
 use bilibi_database::{Change, MutationTransaction};
 use bilibi_personal_data::{ErasedRecord, Erasure, HandlerFuture, Holds, ERASED};
-use bilibi_privacy::{Sweeper, Swept};
+use bilibi_privacy::{Companies, Sweeper, Swept};
 use bilibi_tenancy::Scope;
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -48,6 +49,7 @@ impl Sweeper for ClosedAccounts {
         tx: &'a mut MutationTransaction<'_>,
         scope: &'a Scope,
         grant: &'a Erasure,
+        companies: &'a Companies,
         cutoff: &'a str,
         holds: &'a Holds,
         after: i64,
@@ -56,12 +58,16 @@ impl Sweeper for ClosedAccounts {
         Box::pin(async move {
             grant.check(scope)?;
             let tenant = scope.tenant();
+            let (company, primary, listed) = companies.parameters();
             let rows = tx
                 .sql()
                 .query(
-                    "SELECT id,person_id,name,email FROM users WHERE tenant_id=$1 AND status='deleted' AND (anonymised_at IS NULL OR name<>$5 OR email NOT LIKE 'erased-%@erased.invalid') \
-                     AND deleted_at < $2::text::timestamptz AND id>$3 ORDER BY id LIMIT $4 FOR UPDATE",
-                    &[&tenant, &cutoff, &after, &limit, &ERASED],
+                    &format!(
+                        "SELECT id,person_id,name,email FROM users WHERE tenant_id=$1 AND status='deleted' AND (anonymised_at IS NULL OR name<>$5 OR email NOT LIKE 'erased-%@erased.invalid') \
+                         AND deleted_at < $2::text::timestamptz AND id>$3 AND {} ORDER BY id LIMIT $4 FOR UPDATE",
+                        Companies::predicate("organisation_id", 6)
+                    ),
+                    &[&tenant, &cutoff, &after, &limit, &ERASED, &company, &primary, &listed],
                 )
                 .await?;
             let keys: Vec<(i64, Option<i64>)> =
@@ -83,6 +89,23 @@ impl Sweeper for ClosedAccounts {
             if due.is_empty() {
                 return Ok(swept);
             }
+            // A sign-in link a legal hold names stays with its account.
+            let due_users: Vec<i64> = due.iter().map(|(user, _, _)| *user).collect();
+            let identities: Vec<i64> = tx
+                .sql()
+                .query(
+                    "SELECT id FROM user_external_identities WHERE tenant_id=$1 AND user_id=ANY($2) FOR UPDATE",
+                    &[&tenant, &due_users],
+                )
+                .await?
+                .iter()
+                .map(|row| row.get(0))
+                .collect();
+            let keep_identities: Vec<i64> = holds
+                .records(crate::privacy::EXTERNAL_IDENTITY_KIND, &identities)
+                .await?
+                .into_keys()
+                .collect();
             let ids: Vec<i64> = tx
                 .mutate(move |sql| {
                     Box::pin(async move {
@@ -95,7 +118,9 @@ impl Sweeper for ClosedAccounts {
                                 &[&tenant, &user, &ERASED, &placeholder],
                             )
                             .await?;
-                            let links = crate::privacy::remove_links(sql, tenant, user).await?;
+                            let links =
+                                crate::privacy::remove_links(sql, tenant, user, &keep_identities)
+                                    .await?;
                             changes.push(Change {
                                 kind: USER_KIND.into(),
                                 id: user,
@@ -131,6 +156,7 @@ impl Sweeper for Notifications {
         tx: &'a mut MutationTransaction<'_>,
         scope: &'a Scope,
         grant: &'a Erasure,
+        companies: &'a Companies,
         cutoff: &'a str,
         holds: &'a Holds,
         after: i64,
@@ -139,12 +165,17 @@ impl Sweeper for Notifications {
         Box::pin(async move {
             grant.check(scope)?;
             let tenant = scope.tenant();
+            // A notification follows its recipient's company.
+            let (company, primary, listed) = companies.parameters();
             let rows = tx
                 .sql()
                 .query(
-                    "SELECT n.id,u.person_id FROM notifications n JOIN users u ON u.tenant_id=n.tenant_id AND u.id=n.user_id \
-                     WHERE n.tenant_id=$1 AND n.created_at < $2::text::timestamptz AND n.id>$3 ORDER BY n.id LIMIT $4 FOR UPDATE OF n",
-                    &[&tenant, &cutoff, &after, &limit],
+                    &format!(
+                        "SELECT n.id,u.person_id FROM notifications n JOIN users u ON u.tenant_id=n.tenant_id AND u.id=n.user_id \
+                         WHERE n.tenant_id=$1 AND n.created_at < $2::text::timestamptz AND n.id>$3 AND {} ORDER BY n.id LIMIT $4 FOR UPDATE OF n",
+                        Companies::predicate("u.organisation_id", 5)
+                    ),
+                    &[&tenant, &cutoff, &after, &limit, &company, &primary, &listed],
                 )
                 .await?;
             let keys: Vec<(i64, Option<i64>)> =

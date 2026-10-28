@@ -420,8 +420,11 @@ Two limits, both operator settings (Settings › Session), with these defaults:
 
 **Erasure closes each linked account as `delete_account` does, then anonymises it and marks it (`anonymised_at`).** Store `core/user.accounts` under [`base/personal_data`](../../base/personal_data/README.md), [ADR 05](../../../docs/architecture/decisions/05-personal-data-registry.md).
 
-- Sessions end; step-up factors, reset tokens, sign-in links and notifications go, each unless a hold names it.
-- Kinds `user` (name, email) and `notification` (title, body).
+- Sessions end; step-up factors, reset tokens, sign-in links and notifications go, each unless a hold names it. Ending an account removes all its sign-in links, so a hold on one keeps the whole account.
+- The account's SCIM document keeps only its schemas, resource ID and a placeholder `userName`; a first-administrator receipt keeps a placeholder email.
+- An erasure of an already anonymised account still records its change, so earlier history is cleared too.
+- Kinds `user` (name, email), `notification` (title, body), `user.scim_user` (`*`: every attribute of the SCIM document, whatever the identity provider sent), `user.external_identity` (subject), `user.bootstrap` (admin email) and `user_two_factor_reset` (name, email, recorded by resets before they named the account by ID only).
+- The `user.bootstrap.completed` action carries no email: an action payload is never erased.
 - Accounts that only share an email are counted, never touched.
 - `NotificationBoundary::eligible` answers which recipients are active accounts.
 
@@ -432,7 +435,7 @@ Record classes (`src/retention.rs`, `bilibi_privacy::record_class!`), off until 
 | `core/user.closed_accounts` | When the account was closed | Anonymise: name and email replaced, sign-in links deleted, `anonymised_at` set |
 | `core/user.notifications` | When the notification was sent | Purge (no business value) |
 
-Both keep a held record and everything of a held person.
+Each account follows its company's settings, and a notification its recipient's; accounts of no company follow the primary company. Both keep a held record and everything of a held person.
 
 ## Known gaps
 

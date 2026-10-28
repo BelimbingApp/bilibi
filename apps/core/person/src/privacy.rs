@@ -9,7 +9,7 @@
 //! email or phone are counted for the operator, never touched. No Bilimbi
 //! counterpart.
 use crate::{
-    files::{ATTACHMENT_SUBJECT, FILES},
+    files::{ARTIFACT_OWNER, ATTACHMENT_SUBJECT, FILES},
     model::{Person, COLUMNS},
 };
 use bilibi_artifacts::Artifacts;
@@ -70,7 +70,14 @@ fn identifiers(subject: &Subject) -> (Vec<String>, Vec<String>) {
     for identifier in &subject.identifiers {
         match identifier {
             Identifier::Email(value) => emails.push(value.to_lowercase()),
-            Identifier::Phone(value) => phones.push(value.clone()),
+            // Digits only, compared with the stored phone's digits, so
+            // `+60 12-345 6789` and `60123456789` match.
+            Identifier::Phone(value) => {
+                let digits: String = value.chars().filter(char::is_ascii_digit).collect();
+                if !digits.is_empty() {
+                    phones.push(digits);
+                }
+            }
         }
     }
     (emails, phones)
@@ -108,7 +115,7 @@ impl Handler for People {
             let (emails, phones) = identifiers(subject);
             let row = client
                 .query_one(
-                    "SELECT count(*) FILTER (WHERE id=$2), count(*) FILTER (WHERE id<>$2 AND (lower(email)=ANY($3) OR phone=ANY($4))) \
+                    "SELECT count(*) FILTER (WHERE id=$2), count(*) FILTER (WHERE id<>$2 AND (lower(email)=ANY($3) OR regexp_replace(phone,'[^0-9]','','g')=ANY($4))) \
                      FROM persons WHERE tenant_id=$1",
                     &[&scope.tenant(), &subject.person.get(), &emails, &phones],
                 )
@@ -297,33 +304,35 @@ impl Handler for People {
             match holds.record(PERSON_KIND, id).await? {
                 Some(hold) => erased.kept.push(Kept::held(PERSON_KIND, id, hold)),
                 None => {
-                    // Current values decide, not an earlier erasure's mark: the
-                    // stub may have been edited since.
                     erased.count(PERSON_KIND, Action::Anonymised, 1);
-                    if old.name != ERASED || old.email.is_some() || old.phone.is_some() {
+                    // Current values decide, not an earlier erasure's mark: the
+                    // stub may have been edited since. A clean stub is still
+                    // written while its history holds values, since the
+                    // database clears evidence only of a record this
+                    // transaction changed; otherwise it is not a write.
+                    let live = old.name != ERASED || old.email.is_some() || old.phone.is_some();
+                    if live || bilibi_audit::holds_values(tx, PERSON_KIND, id).await? {
                         let tenant = scope.tenant();
                         let before = old.json();
                         tx.mutate(move |sql| {
-                            Box::pin(async move {
-                                let row = sql
-                                    .query_one(
-                                        &format!("UPDATE persons SET name=$3,email=NULL,phone=NULL,erased_at=now(),version=version+1,updated_at=now() WHERE tenant_id=$1 AND id=$2 RETURNING {COLUMNS}"),
-                                        &[&tenant, &id, &ERASED],
-                                    )
-                                    .await?;
-                                // `[erased]` where a value was: erasure, not absence.
-                                let mut after = Person::from_row(&row)?.json();
-                                for field in FIELDS {
-                                    if !before[field].is_null() {
-                                        after[field] = json!(ERASED);
-                                    }
+                        Box::pin(async move {
+                            let row = sql
+                                .query_one(
+                                    &format!("UPDATE persons SET name=$3,email=NULL,phone=NULL,erased_at=coalesce(erased_at,now()),version=version+1,updated_at=now() WHERE tenant_id=$1 AND id=$2 RETURNING {COLUMNS}"),
+                                    &[&tenant, &id, &ERASED],
+                                )
+                                .await?;
+                            // `[erased]` where a value was: erasure, not absence.
+                            let mut after = Person::from_row(&row)?.json();
+                            for field in FIELDS {
+                                if !before[field].is_null() {
+                                    after[field] = json!(ERASED);
                                 }
-                                Ok(((), vec![Change { kind: PERSON_KIND.into(), id, old: before, new: after }]))
-                            })
+                            }
+                            Ok(((), vec![Change { kind: PERSON_KIND.into(), id, old: before, new: after }]))
                         })
-                        .await?;
-                        // Only records this transaction changed: the database
-                        // clears evidence of nothing else.
+                    })
+                    .await?;
                         erased.records.push(ErasedRecord {
                             kind: PERSON_KIND.into(),
                             id,
@@ -448,9 +457,13 @@ impl Handler for People {
     }
 }
 
+// Media checks a grant against the attachment subject kind, Artifacts against
+// the owner ID. Both are "core.person" today, so the second entry changes
+// nothing now; each is listed under its own constant so that renaming one does
+// not silently stop erasure and disclosure of the other's files.
 inventory::submit! { Contribution::new(PERSONAL_DATA, "core/person.people",
 Provenance { module: "core/person", source: file!(), line: line!() },
-&PersonalData { label: "People (contacts)", kinds: &[PERSON_KIND, ATTACHMENT_KIND, ASSET_KIND], person_subjects: &[ATTACHMENT_SUBJECT], handler: &PEOPLE }) }
+&PersonalData { label: "People (contacts)", kinds: &[PERSON_KIND, ATTACHMENT_KIND, ASSET_KIND], person_subjects: &[ATTACHMENT_SUBJECT, ARTIFACT_OWNER], handler: &PEOPLE }) }
 inventory::submit! { Contribution::new(RECORD_KINDS, "core/person.person",
 Provenance { module: "core/person", source: file!(), line: line!() },
 &RecordKind { kind: PERSON_KIND, fields: &FIELDS, subject_identifier: true, person: true }) }

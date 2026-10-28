@@ -273,7 +273,7 @@ impl AddressService {
 inventory::submit! {
     bilibi_module_registry::Module {
         id: "core/address", layer: bilibi_module_registry::Layer::Core,
-        dependencies: &["base/agent_api", "base/database", "base/tenancy", "base/authz", "base/grid", "base/locale", "base/ui", "base/menu", "base/personal_data", "core/party", "core/company", "core/person", "core/geonames"],
+        dependencies: &["base/audit", "base/agent_api", "base/database", "base/tenancy", "base/authz", "base/grid", "base/locale", "base/ui", "base/menu", "base/personal_data", "core/party", "core/company", "core/person", "core/geonames"],
         migrations: &[MIGRATION, PERSONAL_DATA_MIGRATION],
         services: &[bilibi_module_registry::Service { id: SERVICE, factory: |services| {
             CHANGES.set(broadcast::channel(128).0).map_err(|_| bilibi_module_registry::RegistryError::Service("duplicate address change sender".into()))?;

@@ -254,6 +254,7 @@ version = "0.1.1"
 dependencies = [
  "askama",
  "bilibi-agent-api",
+ "bilibi-audit",
  "bilibi-authz",
  "bilibi-company",
  "bilibi-database",
@@ -284,6 +285,7 @@ version = "0.1.1"
 dependencies = [
  "askama",
  "bilibi-agent-api",
+ "bilibi-audit",
  "bilibi-authz",
  "bilibi-company",
  "bilibi-database",
@@ -940,6 +942,7 @@ dependencies = [
  "axum",
  "bilibi-agent-api",
  "bilibi-artifacts",
+ "bilibi-audit",
  "bilibi-authz",
  "bilibi-database",
  "bilibi-datetime",

@@ -135,7 +135,9 @@ impl Handler for StoreJob {
             // Boxed: a store's erase and an export nest deep futures.
             match Box::pin(answer(&self.privacy, execution, scope, id, store)).await {
                 Ok(()) => Outcome::Completed,
-                Err(Error::NotFound) => Outcome::Cancel("request_unavailable"),
+                Err(Error::NotFound) if !request_exists(&self.privacy, scope, id).await => {
+                    Outcome::Cancel("request_unavailable")
+                }
                 Err(error) => {
                     // Shown on the request as late; the queue retries.
                     let _ = failed(&self.privacy, execution, scope, id, store, code(&error)).await;
@@ -144,6 +146,25 @@ impl Handler for StoreJob {
             }
         })
     }
+}
+
+/// Whether the request a job names is still there. Only its absence cancels
+/// a job: a `NotFound` from a store or a file is a failure, recorded and
+/// retried, so the request shows as late. A check that cannot run counts as
+/// present.
+async fn request_exists(privacy: &Privacy, scope: &Scope, id: i64) -> bool {
+    let Ok(client) = privacy.db.get().await else {
+        return true;
+    };
+    !matches!(
+        client
+            .query_opt(
+                "SELECT 1 FROM base_privacy_requests WHERE tenant_id=$1 AND id=$2",
+                &[&scope.tenant(), &id],
+            )
+            .await,
+        Ok(None)
+    )
 }
 
 /// Records one failed attempt on the store row, in its own transaction.
@@ -527,8 +548,13 @@ impl Handler for FinishJob {
             };
             // Boxed: the certificate's A4 render nests deep futures.
             match Box::pin(finish(&self.privacy, execution, scope, id)).await {
-                Ok(()) => Outcome::Completed,
-                Err(Error::NotFound) => Outcome::Cancel("request_unavailable"),
+                Ok(Finish::Done) => Outcome::Completed,
+                // Another finish holds the request, or its stores read again:
+                // not a failure, so nothing is recorded and it is not late.
+                Ok(Finish::Busy) => Outcome::Retry("finish_busy"),
+                Err(Error::NotFound) if !request_exists(&self.privacy, scope, id).await => {
+                    Outcome::Cancel("request_unavailable")
+                }
                 Err(error) => {
                     // Shown on the request; the queue retries.
                     let _ = finish_failed(&self.privacy, execution, scope, id, &error).await;
@@ -619,22 +645,52 @@ impl Drop for FinishGuard {
     }
 }
 
-async fn finish(privacy: &Privacy, execution: &Execution, scope: &Scope, id: i64) -> Result<()> {
-    let guard = FinishGuard::take(&privacy.db, id).await?;
+/// How a finish attempt ended without an error.
+enum Finish {
+    Done,
+    /// Another finish holds the request, or a store is answering again.
+    Busy,
+}
+
+async fn finish(
+    privacy: &Privacy,
+    execution: &Execution,
+    scope: &Scope,
+    id: i64,
+) -> Result<Finish> {
+    let guard = match FinishGuard::take(&privacy.db, id).await {
+        Ok(guard) => guard,
+        Err(Error::Conflict) => return Ok(Finish::Busy),
+        Err(error) => return Err(error),
+    };
     let mut client = privacy.db.get().await?;
     let request = privacy.request(&**client, scope, id).await?;
     if request.status != "running" {
-        return guard.release().await;
+        guard.release().await?;
+        return Ok(Finish::Done);
     }
     if request.stores.iter().any(|s| s.state == "pending") {
-        return Err(Error::Conflict);
+        guard.release().await?;
+        return Ok(Finish::Busy);
     }
     requests::eligible(privacy, &**client, scope, request.company).await?;
     let access = request.kind != RequestKind::Erasure;
     if access && !current_export(&**client, scope, &request).await? {
         // An erasure of the person was approved since the stores read: read again.
         restart_export(privacy, execution, scope, &request).await?;
-        return guard.release().await;
+        guard.release().await?;
+        return Ok(Finish::Done);
+    }
+    if request.kind == RequestKind::Erasure {
+        // The person's earlier exports go before their requests forget them,
+        // and before the certificate is filed, so a failing deletion never
+        // files another retained certificate on each retry; deleting an
+        // already deleted one is a no-op, so a retry is safe.
+        let grant =
+            privacy
+                .issuer
+                .erasure(scope.tenant(), Cause::Request(id), Some(request.person));
+        documents::delete_exports(privacy, &mut client, scope, &grant, request.person).await?;
     }
     let artifact = match request.kind {
         RequestKind::Access | RequestKind::Portability => match &request.export_artifact {
@@ -654,15 +710,6 @@ async fn finish(privacy: &Privacy, execution: &Execution, scope: &Scope, id: i64
             }
         },
     };
-    if request.kind == RequestKind::Erasure {
-        // The person's earlier exports go before their requests forget them;
-        // deleting an already deleted one is a no-op, so a retry is safe.
-        let grant =
-            privacy
-                .issuer
-                .erasure(scope.tenant(), Cause::Request(id), Some(request.person));
-        documents::delete_exports(privacy, &mut client, scope, &grant, request.person).await?;
-    }
     let mut tx = execution
         .begin(&mut client, "privacy.request.complete")
         .await?;
@@ -674,7 +721,8 @@ async fn finish(privacy: &Privacy, execution: &Execution, scope: &Scope, id: i64
             tx.rollback().await?;
             documents::discard_export(privacy, &mut client, scope, &request, &artifact).await?;
             restart_export(privacy, execution, scope, &request).await?;
-            return guard.release().await;
+            guard.release().await?;
+            return Ok(Finish::Done);
         }
     }
     complete(&mut tx, scope, &request, artifact).await?;
@@ -690,7 +738,8 @@ async fn finish(privacy: &Privacy, execution: &Execution, scope: &Scope, id: i64
         )
         .await?;
     tx.commit().await?;
-    guard.release().await
+    guard.release().await?;
+    Ok(Finish::Done)
 }
 
 /// Whether every store of the request has its staged export, each read in
@@ -743,6 +792,22 @@ async fn restart_export(
                     id: row.get(0),
                     old: json!({"request": id, "store": row.get::<_, String>(1), "staged": true}),
                     new: json!({}),
+                });
+            }
+            // A finish error belongs to the export being restarted.
+            if let Some(row) = sql
+                .query_opt(
+                    "UPDATE base_privacy_requests r SET finish_error=NULL FROM (SELECT finish_error FROM base_privacy_requests \
+                     WHERE tenant_id=$1 AND id=$2 AND finish_error IS NOT NULL FOR UPDATE) o WHERE r.tenant_id=$1 AND r.id=$2 RETURNING o.finish_error",
+                    &[&tenant, &id],
+                )
+                .await?
+            {
+                changes.push(Change {
+                    kind: requests::REQUEST_KIND.into(),
+                    id,
+                    old: json!({"finish_error": row.get::<_, String>(0)}),
+                    new: json!({"finish_error": null}),
                 });
             }
             for row in sql
@@ -834,15 +899,18 @@ async fn complete(
                 .await?;
                 // A hold or a retention date kept records, or a store deferred:
                 // the cleanup they owe is persisted and retried by the daily
-                // retention run until nothing is kept for those reasons.
+                // retention run, from the earliest date one ends (at once
+                // while a hold keeps one), until nothing is kept for those
+                // reasons.
                 if let Some(row) = sql
                     .query_opt(
-                        "INSERT INTO base_privacy_resumptions(tenant_id,request_id,person_id) \
-                         SELECT $1,$2,$3 WHERE EXISTS (SELECT 1 FROM base_privacy_request_stores s \
-                           WHERE s.tenant_id=$1 AND s.request_id=$2 AND (s.state='deferred' OR EXISTS ( \
-                             SELECT 1 FROM jsonb_array_elements(coalesce(s.result->'kept','[]'::jsonb)) k \
-                              WHERE k->>'reason' IN ('legal_hold','retained_until')))) \
-                         ON CONFLICT (request_id) DO NOTHING RETURNING id",
+                        &format!(
+                            "INSERT INTO base_privacy_resumptions(tenant_id,request_id,person_id,not_before) \
+                             SELECT $1,$2,$3,CASE WHEN bool_or(o.after IS NULL) THEN NULL ELSE min(o.after) END \
+                             FROM (SELECT base_privacy_owed_after(s.result) AS after FROM base_privacy_request_stores s \
+                               WHERE s.tenant_id=$1 AND s.request_id=$2 AND {OWING}) o HAVING count(*) > 0 \
+                             ON CONFLICT (request_id) DO NOTHING RETURNING id"
+                        ),
                         &[&tenant, &id, &person.get()],
                     )
                     .await?
@@ -861,6 +929,11 @@ async fn complete(
     .await
 }
 
+/// A request store (`s`) whose erasure answer owes cleanup, in SQL; the same
+/// rule as [`owes`].
+const OWING: &str = "(s.state='deferred' OR EXISTS (SELECT 1 FROM jsonb_array_elements(coalesce(s.result->'kept','[]'::jsonb)) k \
+                     WHERE k->>'reason' IN ('legal_hold','retained_until')))";
+
 /// Whether an erasure's answer still owes cleanup: a record kept for a legal
 /// hold or a retention date, or a store that deferred.
 fn owes(answer: &Answer) -> bool {
@@ -871,17 +944,19 @@ fn owes(answer: &Answer) -> bool {
             .any(|k| matches!(k.reason, KeptReason::LegalHold | KeptReason::RetainedUntil))
 }
 
-/// Open owed cleanups per retention run, oldest first.
+/// Due owed cleanups per retention run, oldest first.
 const RESUME_BATCH: i64 = 200;
 
 impl Privacy {
     /// Cleanup that completed erasures still owe because a legal hold or a
-    /// retention date kept records, or a store deferred: each store erases the
-    /// person again as the scheduler, under the original request's grant and
-    /// the hold guard. Records still kept for those reasons stay owed; once
-    /// none are the cleanup is done. Runs
-    /// whatever the class settings say. One failing cleanup is recorded on
-    /// its row and the others still run; the run then reports failure.
+    /// retention date kept records, or a store deferred, once due: each store
+    /// that kept or deferred erases the person again as the scheduler, under
+    /// the original request's grant and the hold guard. Records still kept
+    /// for those reasons stay owed, due again when the first of them ends (at
+    /// the next run while a hold keeps one); once none are the cleanup is
+    /// done. Runs whatever the class settings say. One failing cleanup is
+    /// recorded on its row and the others still run; the run then reports
+    /// failure.
     pub(crate) async fn resume_erasures(
         &self,
         client: &mut tokio_postgres::Client,
@@ -890,7 +965,8 @@ impl Privacy {
     ) -> Result<()> {
         let open: Vec<(i64, i64)> = client
             .query(
-                "SELECT id,request_id FROM base_privacy_resumptions WHERE tenant_id=$1 AND done_at IS NULL ORDER BY id LIMIT $2",
+                "SELECT id,request_id FROM base_privacy_resumptions WHERE tenant_id=$1 AND done_at IS NULL \
+                 AND (not_before IS NULL OR not_before <= clock_timestamp()) ORDER BY id LIMIT $2",
                 &[&scope.tenant(), &RESUME_BATCH],
             )
             .await?
@@ -919,6 +995,7 @@ impl Privacy {
                 Box::pin(async move {
                     sql.execute(
                         "UPDATE base_privacy_resumptions SET runs=runs+1,last_run_at=clock_timestamp(),last_result=$3, \
+                         not_before=base_privacy_owed_after($3), \
                          done_at=CASE WHEN $4 THEN NULL ELSE clock_timestamp() END WHERE tenant_id=$1 AND id=$2 AND done_at IS NULL",
                         &[&tenant, &resumption, &result, &owed],
                     )
@@ -941,8 +1018,9 @@ impl Privacy {
         }
     }
 
-    /// One owed cleanup: every store, as at the request, keeping what is
-    /// still held. Returns what it did and kept.
+    /// One owed cleanup: every store that kept or deferred at the request, as
+    /// then, keeping what is still held. The others answered in full and are
+    /// not asked again. Returns what it did and kept.
     async fn resume(
         &self,
         client: &mut tokio_postgres::Client,
@@ -959,8 +1037,22 @@ impl Privacy {
         let grant = self
             .issuer
             .erasure(tenant, Cause::Request(id), Some(request.person));
+        let owing: Vec<String> = client
+            .query(
+                &format!(
+                    "SELECT s.store FROM base_privacy_request_stores s WHERE s.tenant_id=$1 AND s.request_id=$2 AND {OWING}"
+                ),
+                &[&tenant, &id],
+            )
+            .await?
+            .iter()
+            .map(|row| row.get(0))
+            .collect();
         let answer = std::sync::Mutex::new(Answer::default());
         for (key, _, data) in self.stores.iter() {
+            if !owing.iter().any(|store| store.as_str() == key) {
+                continue;
+            }
             let subject = requests::subject_for(&request, key);
             let holds = Holds::acquire(tenant, Some(request.person)).await?;
             let mut tx = self

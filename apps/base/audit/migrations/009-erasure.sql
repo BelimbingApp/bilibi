@@ -197,15 +197,30 @@ CREATE TRIGGER base_audit_erasure_deferrals_guard BEFORE INSERT OR UPDATE OR DEL
 CREATE TRIGGER base_audit_erasure_deferrals_truncate_guard BEFORE TRUNCATE ON base_audit_erasure_deferrals
   FOR EACH STATEMENT EXECUTE FUNCTION base_audit_deferrals_guard();
 
--- Replaces each named top-level key that holds a value; null and missing keys
--- stay as they were, so the evidence still says which fields changed.
+-- Replaces each named top-level key that holds a value (`*` names every key,
+-- for a kind whose values have no fixed keys); null and missing keys stay as
+-- they were, so the evidence still says which fields changed.
 CREATE FUNCTION base_audit_erase_json(v jsonb, fields text[]) RETURNS jsonb
 LANGUAGE sql IMMUTABLE AS $$
   SELECT CASE WHEN jsonb_typeof(v) = 'object' THEN
     COALESCE((SELECT jsonb_object_agg(key,
-        CASE WHEN key = ANY(fields) AND value <> 'null'::jsonb THEN '"[erased]"'::jsonb ELSE value END)
+        CASE WHEN (key = ANY(fields) OR '*' = ANY(fields)) AND value <> 'null'::jsonb THEN '"[erased]"'::jsonb ELSE value END)
       FROM jsonb_each(v)), '{}'::jsonb)
   ELSE v END
+$$;
+
+-- Whether a visible row was written by the calling transaction, or by one of
+-- its subtransactions (a savepoint): another transaction's rows are visible
+-- only once it has committed, so a visible row whose writer is still in
+-- progress is this transaction's. `xmin` holds a subtransaction's own ID, so
+-- a comparison with the top-level ID alone would miss those. The 32-bit xmin
+-- is widened against the current transaction's full ID, which it is within
+-- 2^31 of.
+CREATE FUNCTION base_audit_written_here(p_xmin xid) RETURNS boolean
+LANGUAGE sql VOLATILE AS $$
+  SELECT pg_xact_status((cur + ((p_xmin::text::bigint - (cur & 4294967295) + 2147483648) % 4294967296 + 4294967296) % 4294967296
+                          - 2147483648)::text::xid8) = 'in progress'
+    FROM (SELECT pg_current_xact_id()::text::bigint AS cur) c
 $$;
 
 -- Erases one record's evidence for one cause. Refused unless the record
@@ -263,7 +278,7 @@ BEGIN
   IF NOT base_audit_within('base_audit_erase_deferred', 'base_audit_erasure_deferrals'::regclass)
      AND NOT EXISTS (SELECT 1 FROM base_audit_mutations
                       WHERE tenant_id = p_tenant AND auditable_type = p_type AND auditable_id = p_id
-                        AND xmin = pg_current_xact_id()::xid) THEN
+                        AND base_audit_written_here(xmin)) THEN
     RAISE EXCEPTION 'audit erasure of a record this transaction did not change' USING ERRCODE = '42501';
   END IF;
   -- Each row's legal end: its time plus its company's minimum, if any.

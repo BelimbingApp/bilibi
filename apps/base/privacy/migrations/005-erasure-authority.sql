@@ -1,8 +1,10 @@
 -- Cleanup an erasure still owes (ADR 05): written when the request completes
 -- while a store kept some of the person's records for a legal hold or a
 -- retention date, or deferred its answer. The daily retention run retries it,
--- whatever the class settings say, until nothing is kept for those reasons;
--- then it is done. One row per request; rows are never removed.
+-- whatever the class settings say, from not_before (the earliest date a kept
+-- record or deferral ends; none while a hold, which has no end, keeps one),
+-- until nothing is kept for those reasons; then it is done. One row per
+-- request; rows are never removed.
 CREATE TABLE base_privacy_resumptions (
     id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     tenant_id bigint NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT,
@@ -13,10 +15,34 @@ CREATE TABLE base_privacy_resumptions (
     last_run_at timestamptz,
     -- Counts of the last run only: never a personal value.
     last_result jsonb,
+    not_before timestamptz,
     done_at timestamptz,
     UNIQUE (request_id)
 );
 CREATE INDEX base_privacy_resumptions_open ON base_privacy_resumptions(tenant_id, id) WHERE done_at IS NULL;
+
+-- When an owed answer (a store's, or a cleanup run's) is worth retrying: the
+-- earliest end of a record kept for a retention date or of a deferral. NULL,
+-- meaning the next run, while a hold keeps a record or a date is missing or
+-- unreadable.
+CREATE FUNCTION base_privacy_owed_after(p_answer jsonb) RETURNS timestamptz
+LANGUAGE plpgsql STABLE AS $$
+DECLARE
+  kept jsonb := CASE WHEN jsonb_typeof(p_answer->'kept') = 'array' THEN p_answer->'kept' ELSE '[]'::jsonb END;
+BEGIN
+  IF EXISTS (SELECT 1 FROM jsonb_array_elements(kept) k
+              WHERE k->>'reason' = 'legal_hold' OR (k->>'reason' = 'retained_until' AND k->>'until' IS NULL))
+     OR (jsonb_typeof(p_answer->'deferral') = 'object' AND p_answer->'deferral'->>'complete_by' IS NULL) THEN
+    RETURN NULL;
+  END IF;
+  RETURN (SELECT min(t) FROM (
+    SELECT (k->>'until')::timestamptz AS t FROM jsonb_array_elements(kept) k WHERE k->>'reason' = 'retained_until'
+    UNION ALL
+    SELECT (p_answer->'deferral'->>'complete_by')::timestamptz WHERE jsonb_typeof(p_answer->'deferral') = 'object') dates);
+EXCEPTION WHEN invalid_datetime_format OR datetime_field_overflow THEN
+  RETURN NULL;
+END;
+$$;
 
 CREATE FUNCTION base_privacy_resumptions_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN

@@ -4,8 +4,9 @@
 -- is refused by the database too, and `bilibi_audit::erase_record` refuses a
 -- kind whose code and row disagree. A kind with no personal field needs no row.
 -- Rows are never removed. A declaration changes only in a transaction that
--- also records a migration in the ledger, so the running application cannot
--- widen what erasure may clear.
+-- also records a migration in the ledger. This guards against mistakes (an
+-- ad hoc UPDATE, code that writes a declaration), not against code running as
+-- the application's own database role, which can also write the ledger.
 CREATE TABLE base_personal_data_kinds (
     kind text PRIMARY KEY CHECK (length(kind) BETWEEN 1 AND 255),
     module text NOT NULL CHECK (length(module) BETWEEN 1 AND 255),

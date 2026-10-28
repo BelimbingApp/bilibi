@@ -8,7 +8,8 @@
 //! refused setting rolls back its whole save, and Search neither matches nor
 //! shows a masked field; a request erases evidence only of its own person's
 //! records it changed, and a document kept for its retention date is erased
-//! once the date passes. Explicit disposable DB only (`seed` first); prints
+//! once the date passes, not before; history of a record an edit already
+//! emptied is erased; and an export filed under another company is deleted. Explicit disposable DB only (`seed` first); prints
 //! real outcomes for inspection. No assertions or test harness.
 use bilibi_authz::grants::Grants;
 use bilibi_base::workflow::{engine::Engine, engine::Request, Operation};
@@ -16,8 +17,8 @@ use bilibi_database::{pool, MutationBoundary};
 use bilibi_party_ids::{OrganisationId, PersonId};
 use bilibi_personal_data::Identifier;
 use bilibi_privacy::{
-    HoldTarget, NewRequest, Privacy, RequestKind, RequestView, AUDIT_MINIMUM, SERVICE,
-    SWEEP_SCHEDULE,
+    ConfirmedRecord, HoldTarget, NewRequest, Privacy, RequestKind, RequestView, AUDIT_MINIMUM,
+    SERVICE, SWEEP_SCHEDULE,
 };
 use bilibi_settings::{Settings, Target};
 use bilibi_tenancy::Scope;
@@ -1065,6 +1066,16 @@ async fn main() -> Result<()> {
         .await?;
     let _ = probe;
 
+    println!("== L-03: Media and Artifacts each find the person store's own file subject");
+    let stores = bilibi_personal_data::Stores::installed()?;
+    println!(
+        "attachment subject {} declared: {}; artifact owner {} declared: {}",
+        bilibi_core::person::ATTACHMENT_SUBJECT,
+        stores.person_subject(bilibi_core::person::ATTACHMENT_SUBJECT),
+        bilibi_core::person::ARTIFACT_OWNER,
+        stores.person_subject(bilibi_core::person::ARTIFACT_OWNER)
+    );
+
     println!("== P1-B: a document kept for its retention date is erased once the date passes");
     let rita = new_person(&client, "Rita Retained", "rita-retained@example.test").await?;
     let files = app
@@ -1115,6 +1126,13 @@ async fn main() -> Result<()> {
     rows(
         &client,
         "owed cleanup",
+        &format!("SELECT 'runs='||runs||' done='||(done_at IS NOT NULL)||' due at the retention date='||(not_before=(SELECT retain_until FROM base_artifacts WHERE public_id='{}')) FROM base_privacy_resumptions WHERE request_id={}", document.id, erasure.id),
+    )
+    .await?;
+    sweep(&app, &mut client, &admin.scope, "sweep before the date").await?;
+    rows(
+        &client,
+        "owed cleanup before the date",
         &format!("SELECT 'runs='||runs||' done='||(done_at IS NOT NULL) FROM base_privacy_resumptions WHERE request_id={}", erasure.id),
     )
     .await?;
@@ -1156,6 +1174,23 @@ async fn main() -> Result<()> {
             .execute(&probe_sql(erasure.id, rita.get(), rita.get()), &[])
             .await,
     );
+    // A store's write inside a savepoint is still this transaction's own
+    // (probed, then rolled back).
+    let in_savepoint = {
+        let tx = client.transaction().await?;
+        tx.batch_execute("SAVEPOINT store_write").await?;
+        evidence(&*tx, rita, 1, "0 seconds", "rita-retained@example.test").await?;
+        tx.batch_execute("RELEASE SAVEPOINT store_write").await?;
+        let outcome = tx
+            .execute(&probe_sql(erasure.id, rita.get(), rita.get()), &[])
+            .await;
+        tx.rollback().await?;
+        outcome
+    };
+    sql_outcome(
+        "request owing cleanup, its own record changed inside a savepoint of this transaction (rolled back)",
+        in_savepoint,
+    );
     sql_outcome(
         "widen a kind's declared fields outside a migration",
         client
@@ -1165,6 +1200,192 @@ async fn main() -> Result<()> {
             )
             .await,
     );
+
+    // Scoped: their requests must not shadow P1-B's, which is read again below.
+    {
+        println!("== P1-C: history of a record an edit already emptied is erased");
+        let edna = new_person(&client, "Edna Emptied", "edna-emptied@example.test").await?;
+        // The edit page cleared the work email and phone: the live row holds
+        // nothing, its history still holds both.
+        let affiliation: i64 = client
+        .query_one(
+            "INSERT INTO person_affiliations(tenant_id,person_id,organisation_id,title) VALUES(1,$1,1,NULL) RETURNING id",
+            &[&edna.get()],
+        )
+        .await?
+        .get(0);
+        client
+        .execute(
+            "INSERT INTO base_audit_mutations(company_id,tenant_id,actor_type,actor_id,auditable_type,auditable_id,event,old_values,new_values,trace_id,occurred_at) \
+             VALUES(1,1,'user',4,'affiliation',$1,'updated',jsonb_build_object('work_email','edna-work@example.test','work_phone','+60 3 5550 0101'), \
+             jsonb_build_object('work_email',NULL,'work_phone',NULL),'walkthrough-edit',clock_timestamp())",
+            &[&affiliation.to_string()],
+        )
+        .await?;
+        rows(
+        &client,
+        "affiliation before",
+        &format!("SELECT 'live work_email='||coalesce(work_email,'-')||' history rows with values='||(SELECT count(*) FROM base_audit_mutations WHERE auditable_type='affiliation' AND auditable_id='{affiliation}' AND old_values::text LIKE '%edna-work%') FROM person_affiliations WHERE id={affiliation}"),
+    )
+    .await?;
+        let erasure = received(
+            &privacy,
+            &mut client,
+            &second.scope,
+            RequestKind::Erasure,
+            edna,
+            "edna-emptied@example.test",
+        )
+        .await?;
+        let erasure = privacy
+            .approve(
+                &mut client,
+                &admin.step_up().await,
+                erasure.id,
+                erasure.version,
+            )
+            .await?;
+        summary(&settle(&privacy, &client, &admin.scope, erasure.id, 180).await?);
+        rows(
+        &client,
+        "affiliation history",
+        &format!("SELECT id||' old='||old_values::text FROM base_audit_mutations WHERE auditable_type='affiliation' AND auditable_id='{affiliation}' ORDER BY id"),
+    )
+    .await?;
+        rows(
+        &client,
+        "rows anywhere in audit holding Edna's work email or phone",
+        "SELECT count(*)::text FROM base_audit_mutations WHERE (old_values::text||new_values::text) LIKE '%edna-work@example.test%' OR (old_values::text||new_values::text) LIKE '%5550 0101%'",
+    )
+    .await?;
+        // A repeat erasure of the now clean records writes nothing new and
+        // keeps the date of the first erasure.
+        let first: String = client
+            .query_one(
+                "SELECT erased_at::text FROM persons WHERE id=$1",
+                &[&edna.get()],
+            )
+            .await?
+            .get(0);
+        let count_sql = format!(
+            "SELECT count(*) FROM base_audit_mutations WHERE auditable_type='affiliation' AND auditable_id='{affiliation}'"
+        );
+        let before: i64 = client.query_one(&count_sql, &[]).await?.get(0);
+        let again = received(
+            &privacy,
+            &mut client,
+            &second.scope,
+            RequestKind::Erasure,
+            edna,
+            "edna-emptied@example.test",
+        )
+        .await?;
+        let again = privacy
+            .approve(&mut client, &admin.step_up().await, again.id, again.version)
+            .await?;
+        summary(&settle(&privacy, &client, &admin.scope, again.id, 180).await?);
+        let after: i64 = client.query_one(&count_sql, &[]).await?.get(0);
+        let now: String = client
+            .query_one(
+                "SELECT erased_at::text FROM persons WHERE id=$1",
+                &[&edna.get()],
+            )
+            .await?
+            .get(0);
+        println!(
+            "after the repeat erasure: erased_at kept {}; new affiliation audit rows {}",
+            now == first,
+            after - before
+        );
+
+        println!("== P1-D: an erasure deletes the person's export filed under another company");
+        // The approver is the request company's own employee (company 1), not
+        // the export's (company 2).
+        client
+        .batch_execute(
+            "INSERT INTO role_capabilities(tenant_id,role_id,capability) VALUES(1,1,'privacy.request.view'),(1,1,'privacy.request.approve') ON CONFLICT DO NOTHING",
+        )
+        .await?;
+        let mut manager = Account::enroll(&app, "manager@example.test").await?;
+        let fay = new_person(&client, "Fay Elsewhere", "fay-elsewhere@example.test").await?;
+        // M-12: an address whose raw input and source reference the export must
+        // carry, since erasure clears them.
+        let fay_address: i64 = client
+        .query_one(
+            "INSERT INTO addresses(tenant_id,line1,locality,raw_input,source_ref) VALUES(1,'12 Jalan Fay','Petaling Jaya','12 Jalan Fay, PJ (as typed)','crm-fay-77') RETURNING id",
+            &[],
+        )
+        .await?
+        .get(0);
+        client
+        .execute(
+            "INSERT INTO address_attachments(tenant_id,address_id,person_id,kinds) VALUES(1,$1,$2,'{other}')",
+            &[&fay_address, &fay.get()],
+        )
+        .await?;
+        let access = privacy
+            .receive(
+                &mut client,
+                &second.scope,
+                NewRequest {
+                    kind: RequestKind::Access,
+                    person: fay,
+                    identifiers: vec![Identifier::Email("fay-elsewhere@example.test".into())],
+                    company: OrganisationId::new(2)?,
+                },
+            )
+            .await?;
+        let access = privacy
+            .verify(
+                &mut client,
+                &second.scope,
+                access.id,
+                access.version,
+                "Identity checked at the counter",
+                &[],
+            )
+            .await?;
+        let access = privacy
+            .approve(&mut client, &admin.scope, access.id, access.version)
+            .await?;
+        let access = settle(&privacy, &client, &admin.scope, access.id, 180).await?;
+        summary(&access);
+        let text = export_text(&privacy, &mut client, &admin.scope, access.id).await;
+        println!(
+            "M-12: export carries the address's raw input: {}; source reference: {}",
+            text.contains("12 Jalan Fay, PJ (as typed)"),
+            text.contains("crm-fay-77")
+        );
+        let export = access.export_artifact.clone().unwrap_or_default();
+        let erasure = received(
+            &privacy,
+            &mut client,
+            &second.scope,
+            RequestKind::Erasure,
+            fay,
+            "fay-elsewhere@example.test",
+        )
+        .await?;
+        show(
+            "company 1's manager approves the erasure",
+            privacy
+                .approve(
+                    &mut client,
+                    &manager.step_up().await,
+                    erasure.id,
+                    erasure.version,
+                )
+                .await
+                .map(|request| request.status),
+        );
+        summary(&settle(&privacy, &client, &admin.scope, erasure.id, 180).await?);
+        rows(
+        &client,
+        "the export filed under company 2",
+        &format!("SELECT 'company='||company_id||' deleted='||(deleted_at IS NOT NULL)||' purged='||(purged_at IS NOT NULL) FROM base_artifacts WHERE public_id='{export}'"),
+    )
+    .await?;
+    }
 
     println!("== P1-B continued: after the retention date");
     while std::time::SystemTime::now() < until + Duration::from_secs(2) {
@@ -1190,6 +1411,526 @@ async fn main() -> Result<()> {
             .map(|read| String::from_utf8_lossy(&read.bytes).into_owned()),
     );
 
+    println!("== H-01/H-03: an account's SCIM document, sign-in link, receipt and earlier 2FA resets keep nothing");
+    // The fixture writes its accounts with fixed IDs; new ones follow them.
+    client
+        .batch_execute(
+            "SELECT setval(pg_get_serial_sequence('users','id'),(SELECT max(id) FROM users))",
+        )
+        .await?;
+    let gil = new_person(&client, "Gil Provisioned", "gil-provisioned@example.test").await?;
+    let gil_user: i64 = client
+        .query_one(
+            "INSERT INTO users(tenant_id,name,email,password_hash,person_id) VALUES(1,'Gil Provisioned','gil-provisioned@example.test','!walkthrough',$1) RETURNING id",
+            &[&gil.get()],
+        )
+        .await?
+        .get(0);
+    let provider: i64 = client
+        .query_one(
+            "INSERT INTO user_identity_providers(tenant_id,company_id,public_id,configured_by,method) VALUES(1,1,'walkthrough-idp',4,'oidc') RETURNING id",
+            &[],
+        )
+        .await?
+        .get(0);
+    let identity: i64 = client
+        .query_one(
+            "INSERT INTO user_external_identities(tenant_id,provider_id,company_id,user_id,issuer,subject) VALUES(1,$1,1,$2,'https://idp.example.test','gil-subject-7731') RETURNING id",
+            &[&provider, &gil_user],
+        )
+        .await?
+        .get(0);
+    let document = json!({
+        "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"], "id": "scim-gil", "externalId": "gil-subject-7731",
+        "userName": "gil-provisioned@example.test", "name": {"formatted": "Gil Provisioned"},
+        "displayName": "Gil Provisioned", "emails": [{"value": "gil-provisioned@example.test", "primary": true}], "active": true,
+        "locale": "ms-MY", "urn:example:vendor:2.0:User": {"mobile": "+60 19-555 7788"},
+    });
+    let scim: i64 = client
+        .query_one(
+            "INSERT INTO user_scim_users(tenant_id,provider_id,resource_id,user_id,person_id,affiliation_id,document) VALUES(1,$1,'scim-gil',$2,$3,1,$4) RETURNING id",
+            &[&provider, &gil_user, &gil.get(), &document],
+        )
+        .await?
+        .get(0);
+    // The receipt names this account, as if it had been the first administrator.
+    let receipt = client
+        .execute(
+            "INSERT INTO user_bootstrap(id,tenant_name,company_name,company_code,admin_email,tenant_id,user_id,company_id) \
+             VALUES(1,'Walkthrough','Company 001','C001','gil-provisioned@example.test',1,$1,1) \
+             ON CONFLICT (id) DO UPDATE SET tenant_id=1,user_id=$1,admin_email='gil-provisioned@example.test'",
+            &[&gil_user],
+        )
+        .await?;
+    println!("first-administrator receipt moved to Gil: {}", receipt == 1);
+    // The trail as provisioning, linking, the bootstrap and an earlier 2FA reset wrote it.
+    for (kind, id, old, new) in [
+        ("user.scim_user", scim, json!({}), document.clone()),
+        (
+            "user.external_identity",
+            identity,
+            json!({}),
+            json!({"user": gil_user, "issuer": "https://idp.example.test", "subject": "gil-subject-7731"}),
+        ),
+        (
+            "user.bootstrap",
+            1,
+            json!({}),
+            json!({"user_id": gil_user, "admin_email": "gil-provisioned@example.test"}),
+        ),
+        (
+            "user_two_factor_reset",
+            gil_user,
+            json!({"name": "Gil Provisioned", "email": "gil-provisioned@example.test"}),
+            json!({"status": "off"}),
+        ),
+    ] {
+        history(&client, kind, id, old, new).await?;
+    }
+    let erasure = received(
+        &privacy,
+        &mut client,
+        &second.scope,
+        RequestKind::Erasure,
+        gil,
+        "gil-provisioned@example.test",
+    )
+    .await?;
+    let erasure = privacy
+        .approve(
+            &mut client,
+            &admin.step_up().await,
+            erasure.id,
+            erasure.version,
+        )
+        .await?;
+    summary(&settle(&privacy, &client, &admin.scope, erasure.id, 180).await?);
+    rows(
+        &client,
+        "SCIM document",
+        &format!("SELECT active||' '||document::text FROM user_scim_users WHERE id={scim}"),
+    )
+    .await?;
+    rows(
+        &client,
+        "sign-in links left",
+        &format!("SELECT count(*)::text FROM user_external_identities WHERE user_id={gil_user}"),
+    )
+    .await?;
+    rows(
+        &client,
+        "receipt email",
+        "SELECT admin_email FROM user_bootstrap",
+    )
+    .await?;
+    for needle in [
+        "gil-provisioned@example.test",
+        "gil-subject-7731",
+        "Gil Provisioned",
+        "555 7788",
+        "ms-MY",
+    ] {
+        println!(
+            "tables holding {needle:?}: {:?}",
+            search_everywhere(&client, needle).await?
+        );
+    }
+
+    println!("== H-01: a hold on an account's sign-in link keeps the account");
+    let hana = new_person(&client, "Hana Linked", "hana-linked@example.test").await?;
+    let hana_user: i64 = client
+        .query_one(
+            "INSERT INTO users(tenant_id,name,email,password_hash,person_id) VALUES(1,'Hana Linked','hana-linked@example.test','!walkthrough',$1) RETURNING id",
+            &[&hana.get()],
+        )
+        .await?
+        .get(0);
+    let hana_link: i64 = client
+        .query_one(
+            "INSERT INTO user_external_identities(tenant_id,provider_id,company_id,user_id,issuer,subject) VALUES(1,$1,1,$2,'https://idp.example.test','hana-subject-4410') RETURNING id",
+            &[&provider, &hana_user],
+        )
+        .await?
+        .get(0);
+    privacy
+        .place_hold(
+            &mut client,
+            &admin.scope,
+            HoldTarget::Record {
+                kind: "user.external_identity".into(),
+                id: hana_link,
+            },
+            "Litigation 31",
+        )
+        .await?;
+    let erasure = received(
+        &privacy,
+        &mut client,
+        &second.scope,
+        RequestKind::Erasure,
+        hana,
+        "hana-linked@example.test",
+    )
+    .await?;
+    let erasure = privacy
+        .approve(
+            &mut client,
+            &admin.step_up().await,
+            erasure.id,
+            erasure.version,
+        )
+        .await?;
+    summary(&settle(&privacy, &client, &admin.scope, erasure.id, 180).await?);
+    rows(
+        &client,
+        "held sign-in link and its account",
+        &format!("SELECT 'link kept='||(SELECT count(*) FROM user_external_identities WHERE id={hana_link})||' account='||name||' '||status FROM users WHERE id={hana_user}"),
+    )
+    .await?;
+    rows(
+        &client,
+        "listed as kept",
+        &format!("SELECT k->>'kind'||' '||(k->>'id')||' '||(k->>'reason') FROM base_privacy_request_stores s, jsonb_array_elements(s.result->'kept') k WHERE s.request_id={} AND s.store='core/user.accounts' ORDER BY 1", erasure.id),
+    )
+    .await?;
+
+    println!("== H-02: an exchange's endpoint and path-copied operation are erased with its path");
+    let ivy = new_person(&client, "Ivy Api", "ivy-api@example.test").await?;
+    let exchange: i64 = client
+        .query_one(
+            "INSERT INTO base_integration_exchanges(public_id,tenant_id,direction,system,operation,endpoint,path,outcome) \
+             VALUES('wt-ivy-1',1,'incoming','bilibi','/api/v1/persons/ivy-api@example.test','https://bilibi.example.test/api/v1/persons/ivy-api@example.test', \
+             '/api/v1/persons/ivy-api@example.test','success') RETURNING id",
+            &[],
+        )
+        .await?
+        .get(0);
+    let outgoing: i64 = client
+        .query_one(
+            "INSERT INTO base_integration_exchanges(public_id,tenant_id,direction,system,operation,endpoint,path,outcome) \
+             VALUES('wt-ivy-2',1,'outgoing','vendor','lookup','https://ivy-api@example.test:secret@api.vendor.test/v1/lookup','/v1/lookup','success') RETURNING id",
+            &[],
+        )
+        .await?
+        .get(0);
+    let request = privacy
+        .receive(
+            &mut client,
+            &second.scope,
+            NewRequest {
+                kind: RequestKind::Erasure,
+                person: ivy,
+                identifiers: vec![Identifier::Email("ivy-api@example.test".into())],
+                company: OrganisationId::new(1)?,
+            },
+        )
+        .await?;
+    let found = privacy.locate(&client, &second.scope, request.id).await?;
+    let candidates: Vec<String> = found
+        .iter()
+        .flat_map(|(store, _, located)| {
+            located
+                .candidates
+                .iter()
+                .map(move |c| format!("{store} {} {}", c.kind, c.id))
+        })
+        .collect();
+    println!("candidates: {candidates:?}");
+    let request = privacy
+        .verify(
+            &mut client,
+            &second.scope,
+            request.id,
+            request.version,
+            "Identity checked at the counter",
+            &[
+                ConfirmedRecord {
+                    store: "base/integration.previews".into(),
+                    kind: "base/integration.exchange".into(),
+                    id: exchange.to_string(),
+                },
+                ConfirmedRecord {
+                    store: "base/integration.previews".into(),
+                    kind: "base/integration.exchange".into(),
+                    id: outgoing.to_string(),
+                },
+            ],
+        )
+        .await?;
+    let request = privacy
+        .approve(
+            &mut client,
+            &admin.step_up().await,
+            request.id,
+            request.version,
+        )
+        .await?;
+    summary(&settle(&privacy, &client, &admin.scope, request.id, 180).await?);
+    rows(&client, "exchange", &format!("SELECT id||' endpoint='||endpoint||' operation='||operation||' path='||path FROM base_integration_exchanges WHERE id IN ({exchange},{outgoing}) ORDER BY id")).await?;
+    println!(
+        "tables holding Ivy's email: {:?}",
+        search_everywhere(&client, "ivy-api@example.test").await?
+    );
+
+    println!("== M-13: a phone matches by its digits, however it was written");
+    let nia = new_person(&client, "Nia Phone", "nia-phone@example.test").await?;
+    let ola = new_person(&client, "Ola Phone", "ola-phone@example.test").await?;
+    client
+        .execute(
+            "UPDATE persons SET phone='+60 12-345 6789' WHERE id=$1",
+            &[&nia.get()],
+        )
+        .await?;
+    client
+        .execute(
+            "UPDATE persons SET phone='60123456789' WHERE id=$1",
+            &[&ola.get()],
+        )
+        .await?;
+    let request = privacy
+        .receive(
+            &mut client,
+            &second.scope,
+            NewRequest {
+                kind: RequestKind::Access,
+                person: nia,
+                identifiers: vec![Identifier::Phone("+60 (12) 345-6789".into())],
+                company: OrganisationId::new(1)?,
+            },
+        )
+        .await?;
+    for (store, _, located) in privacy.locate(&client, &second.scope, request.id).await? {
+        if store == "core/person.people" {
+            for kind in located.kinds {
+                println!(
+                    "{store} {}: by person {}, by identifier only {}",
+                    kind.kind, kind.by_person, kind.by_identifier
+                );
+            }
+        }
+    }
+
+    println!(
+        "== H-06: a store or file that is not found fails visibly; it does not cancel the request"
+    );
+    let jon = new_person(&client, "Jon Expired", "jon-expired@example.test").await?;
+    let jon_document = files
+        .for_owner(
+            &admin.scope,
+            OrganisationId::new(1)?,
+            &bilibi_core::person::FILES,
+        )
+        .put(
+            &mut client,
+            bilibi_base::artifacts::Reference {
+                subject: jon.get().to_string(),
+                kind: "evidence".into(),
+            },
+            b"Jon's letter",
+            "text/plain",
+        )
+        .await?;
+    let access = received(
+        &privacy,
+        &mut client,
+        &admin.scope,
+        RequestKind::Access,
+        jon,
+        "jon-expired@example.test",
+    )
+    .await?;
+    let guard = db.get().await?;
+    guard
+        .execute(
+            "SELECT pg_advisory_lock(841331,$1::bigint::int)",
+            &[&access.id],
+        )
+        .await?;
+    let access = privacy
+        .approve(&mut client, &second.scope, access.id, access.version)
+        .await?;
+    tokio::time::sleep(Duration::from_secs(8)).await;
+    // The document expires after the stores listed it, before the export reads it.
+    sql_outcome(
+        "expire Jon's document",
+        client
+            .execute(
+                "UPDATE base_artifacts SET expires_at=clock_timestamp()-interval '1 second' WHERE public_id=$1",
+                &[&jon_document.id],
+            )
+            .await,
+    );
+    guard
+        .execute(
+            "SELECT pg_advisory_unlock(841331,$1::bigint::int)",
+            &[&access.id],
+        )
+        .await?;
+    drop(guard);
+    tokio::time::sleep(Duration::from_secs(20)).await;
+    let view = privacy.request(&**client, &admin.scope, access.id).await?;
+    println!(
+        "request {} status={} late={} finish_attempts={} finish_error={:?}",
+        view.id, view.status, view.late, view.finish_attempts, view.finish_error
+    );
+    rows(
+        &client,
+        "finish job",
+        &format!("SELECT state FROM base_queue_jobs WHERE worker_id='base/privacy-request-finish' AND args->>'request_id'='{}' ORDER BY id DESC LIMIT 1", access.id),
+    )
+    .await?;
+
+    println!(
+        "== H-07: Step-up set to every time, proved once on the web session, approves an erasure"
+    );
+    let step_up = app
+        .services
+        .get::<bilibi_step_up::StepUp>(bilibi_step_up::SERVICE)?;
+    {
+        let mut tx = boundary
+            .begin(
+                &mut client,
+                admin.scope.mutation_context("step_up.mode.save"),
+            )
+            .await?;
+        step_up
+            .set_mode(
+                &mut tx,
+                &admin.scope,
+                bilibi_privacy::STEP_UP_ERASURE,
+                Some(bilibi_step_up::Mode::EveryTime),
+            )
+            .await?;
+        tx.commit().await?;
+    }
+    let hal = new_person(&client, "Hal Everytime", "hal-everytime@example.test").await?;
+    let erasure = received(
+        &privacy,
+        &mut client,
+        &second.scope,
+        RequestKind::Erasure,
+        hal,
+        "hal-everytime@example.test",
+    )
+    .await?;
+    let target = format!("privacy.request:{}", erasure.id);
+    let method = step_up.enrolled_methods(&admin.scope).await?[0].id;
+    let code = admin.code().await;
+    show(
+        "web Step-up dialog verifies a code on the session",
+        step_up
+            .verify(
+                &admin.scope,
+                method,
+                &code,
+                bilibi_step_up::Purpose {
+                    operation: bilibi_privacy::STEP_UP_ERASURE,
+                    target: &target,
+                    channel: admin.scope.channel(),
+                },
+            )
+            .await
+            .map(|spent| format!("{spent:?}")),
+    );
+    show(
+        "approve with the session's proof (no code presented)",
+        privacy
+            .approve(&mut client, &admin.scope, erasure.id, erasure.version)
+            .await
+            .map(|request| request.status),
+    );
+    rows(
+        &client,
+        "Step-up audit for this approval",
+        &format!("SELECT coalesce(string_agg(event, ', ' ORDER BY id),'none') FROM base_audit_actions WHERE event LIKE 'step_up.%' AND payload->>'target'='{target}'"),
+    )
+    .await?;
+    summary(&settle(&privacy, &client, &admin.scope, erasure.id, 180).await?);
+    {
+        let mut tx = boundary
+            .begin(
+                &mut client,
+                admin.scope.mutation_context("step_up.mode.save"),
+            )
+            .await?;
+        step_up
+            .set_mode(&mut tx, &admin.scope, bilibi_privacy::STEP_UP_ERASURE, None)
+            .await?;
+        tx.commit().await?;
+    }
+
+    println!("== H-09: each company's retention settings bind its own records");
+    for (company, days) in [(1, 1), (2, 3650)] {
+        for (key, value) in [
+            (
+                "privacy.retention.core/user.closed_accounts.enabled",
+                json!(true),
+            ),
+            (
+                "privacy.retention.core/user.closed_accounts.period_days",
+                json!(days),
+            ),
+        ] {
+            show(
+                &format!("company {company} {key}={value}"),
+                company_put(
+                    &boundary,
+                    &settings,
+                    &mut client,
+                    &admin.scope,
+                    company,
+                    key,
+                    value,
+                )
+                .await,
+            );
+        }
+    }
+    let mut closed = Vec::new();
+    for (name, company) in [
+        ("Kai Company Two", Some(2_i64)),
+        ("Lea Company One", Some(1)),
+        ("Max No Company", None),
+    ] {
+        let email = format!(
+            "{}@closed.example.test",
+            name.to_lowercase().replace(' ', "-")
+        );
+        let person = new_person(&client, name, &email).await?;
+        let affiliation: Option<i64> = match company {
+            Some(company) => Some(
+                client
+                    .query_one(
+                        "INSERT INTO person_affiliations(tenant_id,person_id,organisation_id) VALUES(1,$1,$2) RETURNING id",
+                        &[&person.get(), &company],
+                    )
+                    .await?
+                    .get(0),
+            ),
+            None => None,
+        };
+        let user: i64 = client
+            .query_one(
+                "INSERT INTO users(tenant_id,name,email,password_hash,person_id,affiliation_id,organisation_id,status,deleted_at) \
+                 VALUES(1,$1,$2,'!walkthrough',$3,$4,$5,'deleted',now()-interval '10 days') RETURNING id",
+                &[&name, &email, &person.get(), &affiliation, &company],
+            )
+            .await?
+            .get(0);
+        closed.push((name, user));
+    }
+    sweep(&app, &mut client, &admin.scope, "sweep closed accounts").await?;
+    for (name, user) in closed {
+        rows(&client, name, &format!("SELECT name||' '||email||' anonymised='||(anonymised_at IS NOT NULL) FROM users WHERE id={user}")).await?;
+    }
+    rows(
+        &client,
+        "closed-account runs",
+        "SELECT coalesce(string_agg('company '||company_id||' period '||period_days||' acted='||acted, '; ' ORDER BY company_id),'none') FROM base_privacy_sweeps \
+         WHERE class='core/user.closed_accounts' AND started_at > clock_timestamp() - interval '2 minutes' AND acted>0",
+    )
+    .await?;
+
     println!("== B7: a row committed with its chain trigger bypassed is reported");
     client
         .batch_execute(
@@ -1205,6 +1946,51 @@ async fn main() -> Result<()> {
     let _ = stop.send(true);
     let _ = workers.await;
     Ok(())
+}
+
+/// Inserts one evidence row of record `kind`/`id` as its owner wrote it.
+async fn history(client: &Client, kind: &str, id: i64, old: Value, new: Value) -> Result<()> {
+    client
+        .execute(
+            "INSERT INTO base_audit_mutations(company_id,tenant_id,actor_type,actor_id,auditable_type,auditable_id,event,old_values,new_values,trace_id,occurred_at) \
+             VALUES(1,1,'user',4,$1,$2,'updated',$3,$4,'walkthrough-history',clock_timestamp())",
+            &[&kind, &id.to_string(), &old, &new],
+        )
+        .await?;
+    Ok(())
+}
+/// Every Platform table column holding `needle`, as a read-only console
+/// search over all text and JSON columns would find it.
+async fn search_everywhere(client: &Client, needle: &str) -> Result<Vec<String>> {
+    let quote = |name: &str| format!("\"{}\"", name.replace('"', "\"\""));
+    let columns = client
+        .query(
+            "SELECT c.table_name,c.column_name FROM information_schema.columns c JOIN information_schema.tables t \
+             ON t.table_schema=c.table_schema AND t.table_name=c.table_name AND t.table_type='BASE TABLE' \
+             WHERE c.table_schema='public' AND c.data_type IN ('text','character varying','jsonb','json','ARRAY') ORDER BY 1,2",
+            &[],
+        )
+        .await?;
+    let pattern = format!("%{needle}%");
+    let mut hits = Vec::new();
+    for column in columns {
+        let (table, name): (String, String) = (column.get(0), column.get(1));
+        let count: i64 = client
+            .query_one(
+                &format!(
+                    "SELECT count(*) FROM {} WHERE {}::text ILIKE $1",
+                    quote(&table),
+                    quote(&name)
+                ),
+                &[&pattern],
+            )
+            .await?
+            .get(0);
+        if count > 0 {
+            hits.push(format!("{table}.{name}={count}"));
+        }
+    }
+    Ok(hits)
 }
 
 async fn bilibi_audit_verify(client: &Client) -> Result<Vec<String>> {

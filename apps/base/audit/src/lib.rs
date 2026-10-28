@@ -5,8 +5,8 @@ mod erasure;
 mod privacy;
 mod read;
 pub use erasure::{
-    due_evidence, erase_deferred, erase_record, verify, ChainBreak, ChainReport, Cleared,
-    DueEvidence, Minimums,
+    due_evidence, erase_deferred, erase_record, holds_values, verify, ChainBreak, ChainReport,
+    Cleared, DueEvidence, Minimums,
 };
 pub use read::{
     list_actions, list_mutations, recent_mutations, subject_history, toggle_retained, ActionEntry,

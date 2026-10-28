@@ -85,19 +85,52 @@ pub struct Swept {
     pub next: Option<i64>,
 }
 
+/// Whose records one run covers. Each company's records follow that
+/// company's settings; the primary company's run also covers records of no
+/// company, or of a company that no longer exists.
+#[derive(Clone, Debug)]
+pub struct Companies {
+    company: OrganisationId,
+    primary: bool,
+    listed: Vec<i64>,
+}
+impl Companies {
+    /// The company whose settings this run follows.
+    pub fn company(&self) -> OrganisationId {
+        self.company
+    }
+    /// The records this run covers, in SQL over `column`, with the parameters
+    /// it reads:
+    /// `$n` the company, `$n+1` whether this is the primary company's run,
+    /// `$n+2` every live company of the tenant.
+    pub fn predicate(column: &str, n: usize) -> String {
+        format!(
+            "({column}=${n} OR (${p} AND ({column} IS NULL OR NOT {column}=ANY(${l}))))",
+            p = n + 1,
+            l = n + 2
+        )
+    }
+    /// The parameters [`Companies::predicate`] reads, in order.
+    pub fn parameters(&self) -> (i64, bool, &[i64]) {
+        (self.company.get(), self.primary, &self.listed)
+    }
+}
+
 /// Implement on the owning module's type.
 pub trait Sweeper: Send + Sync {
-    /// Examine at most `limit` of the tenant's records with an ID above
-    /// `after`, in ID order, whose clock started before `cutoff` (RFC 3339)
-    /// and that an earlier sweep has not already acted on. Purge or anonymise
-    /// those `holds` does not name, writing through `tx` and returning every
-    /// change; never open a second transaction. Count the held ones as kept.
+    /// Examine at most `limit` of the tenant's records that `companies`
+    /// covers, with an ID above `after`, in ID order, whose clock started
+    /// before `cutoff` (RFC 3339) and that an earlier sweep has not already
+    /// acted on. Purge or anonymise those `holds` does not name, writing
+    /// through `tx` and returning every change; never open a second
+    /// transaction. Count the held ones as kept.
     #[allow(clippy::too_many_arguments)]
     fn sweep<'a>(
         &'a self,
         tx: &'a mut MutationTransaction<'_>,
         scope: &'a Scope,
         grant: &'a Erasure,
+        companies: &'a Companies,
         cutoff: &'a str,
         holds: &'a Holds,
         after: i64,
@@ -469,12 +502,18 @@ impl Privacy {
         scope: &Scope,
         key: &'static str,
         class: &'static RecordClass,
-        company: OrganisationId,
+        companies: &Companies,
         period_days: i64,
         minimums: &Minimums,
     ) -> Result<()> {
         let (sweep, cutoff) = self
-            .open_sweep(client, scope, key, Some(company), Some(period_days))
+            .open_sweep(
+                client,
+                scope,
+                key,
+                Some(companies.company()),
+                Some(period_days),
+            )
             .await?;
         let cutoff = cutoff.ok_or(Error::Internal)?;
         let grant = self
@@ -489,7 +528,9 @@ impl Privacy {
                 .await?;
             let swept = class
                 .sweeper
-                .sweep(&mut tx, scope, &grant, &cutoff, &holds, after, BATCH)
+                .sweep(
+                    &mut tx, scope, &grant, companies, &cutoff, &holds, after, BATCH,
+                )
                 .await?;
             let mut step = bilibi_personal_data::Erased {
                 records: swept.records,
@@ -583,9 +624,11 @@ impl Privacy {
             .await
     }
 
-    /// Sweeps one tenant as the scheduler: every class its primary company
-    /// turned on with a period, then cleanup that completed erasures still
-    /// owe, then due audit evidence.
+    /// Sweeps one tenant as the scheduler: for each company, every class that
+    /// company turned on with a period, over that company's records (the
+    /// primary company's run also takes records of no company, or of one that
+    /// no longer exists); then cleanup that completed erasures still owe, then
+    /// due audit evidence.
     async fn sweep_tenant(
         &self,
         client: &mut Client,
@@ -597,23 +640,41 @@ impl Privacy {
         let scope = authentication.for_system(&*client, &system).await?;
         let minimums = self.evidence_minimums(client, &scope).await?;
         let mut failed = false;
-        if let Some(company) = self.parties.primary_organisation(&*client, &scope).await? {
-            for (key, (_, class)) in &self.classes.by_key {
-                let policy = self.policy(client, &scope, company, key).await?;
-                let Some(days) = policy.period_days.filter(|_| policy.enabled) else {
-                    continue;
+        if let Some(primary) = self.parties.primary_organisation(&*client, &scope).await? {
+            let mut listed: Vec<i64> = self
+                .parties
+                .organisations_in_scope(&*client, &scope)
+                .await?
+                .iter()
+                .map(|company| company.id.get())
+                .collect();
+            if !listed.contains(&primary.get()) {
+                listed.push(primary.get());
+            }
+            for &id in &listed {
+                let company = OrganisationId::new(id).map_err(|_| Error::Internal)?;
+                let companies = Companies {
+                    company,
+                    primary: company == primary,
+                    listed: listed.clone(),
                 };
-                // A setting saved before its constraint existed still may not shorten the law.
-                if !period_accepts(
-                    &[json!(days), json!(policy.legal_minimum_days)],
-                    class.floor_days,
-                ) {
-                    continue;
+                for (key, (_, class)) in &self.classes.by_key {
+                    let policy = self.policy(client, &scope, company, key).await?;
+                    let Some(days) = policy.period_days.filter(|_| policy.enabled) else {
+                        continue;
+                    };
+                    // A setting saved before its constraint existed still may not shorten the law.
+                    if !period_accepts(
+                        &[json!(days), json!(policy.legal_minimum_days)],
+                        class.floor_days,
+                    ) {
+                        continue;
+                    }
+                    failed |= self
+                        .sweep_class(client, &scope, key, class, &companies, days, &minimums)
+                        .await
+                        .is_err();
                 }
-                failed |= self
-                    .sweep_class(client, &scope, key, class, company, days, &minimums)
-                    .await
-                    .is_err();
             }
         }
         // Each part runs although another failed; the run still fails, and retries.

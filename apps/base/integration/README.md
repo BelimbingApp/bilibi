@@ -91,7 +91,7 @@ booleans and structure stay. Non-JSON or streamed bodies, and previews over
 32 KiB, record only `{"kind":"omitted","reason":…}`. `payload` redacts again
 on read (`redaction::inspect_stored`).
 
-**Data-subject requests.** The `base/integration.previews` store under [`base/personal_data`](../personal_data/README.md) lists a saved preview that holds a requester's email, or a phone's digits however formatted, as a candidate; only a confirmed one is exported or erased, and erasure replaces its whole path, headers and bodies with `[erased]`. Previews still expire after `integration.payload_retention_days`.
+**Data-subject requests.** The `base/integration.previews` store under [`base/personal_data`](../personal_data/README.md) lists a saved preview that holds a requester's email, or a phone's digits however formatted, as a candidate; only a confirmed one is exported or erased, and erasure replaces its whole path, headers and bodies with `[erased]`, cuts its endpoint to scheme and host, and erases an operation that is a copy of the path (an incoming call without an operation name). Locate searches the endpoint and operation too. Previews still expire after `integration.payload_retention_days`.
 
 ## Reads, deletion and retention
 
@@ -105,15 +105,7 @@ status, user and agent ids, exact status, actor, UTC `since` and exclusive
 `until`) and page sizes 25/50/100/300. Deletion is an audited mutation
 (`base/integration.exchange`) carrying metadata only.
 
-Recording and pruning are machine measurements on their own pooled connection,
-outside the caller's transaction and outside mutation capture. The global
-operator setting `integration.payload_retention_days` (default 30) drives the
-contributed daily schedule `base/integration-payload-retention` (03:17 UTC,
-forbid overlap), which clears previews and keeps metadata, per tenant in
-batches: a preview a legal hold names stays (checked under the hold guard), and
-each cleared preview is an audited change by the scheduler. Like every
-contributed recurrence it runs nothing until an operator enables it on
-`/system/schedule`.
+Recording is a machine measurement on its own pooled connection, outside the caller's transaction and outside mutation capture; pruning runs on the scheduler job's connection and is captured, as below. The global operator setting `integration.payload_retention_days` (default 30) drives the contributed daily schedule `base/integration-payload-retention` (03:17 UTC, forbid overlap), which clears previews and keeps metadata, per tenant in batches: a preview a legal hold names stays (checked under the hold guard), and each cleared preview is an audited change by the scheduler. Like every contributed recurrence it runs nothing until an operator enables it on `/system/schedule`.
 
 ## Runtime evidence
 

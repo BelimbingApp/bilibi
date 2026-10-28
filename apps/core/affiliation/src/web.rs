@@ -1025,8 +1025,17 @@ impl Panel {
                 let version: i64 = get("version").parse().map_err(|_| Error::Invalid)?;
                 let current = self.owned(scope, get("id")).await?;
                 let status_key = format!("{}-{field}", current.id.get());
-                // Never carry a hidden work contact into a replacement input.
+                // Never carry a hidden work contact into a replacement input:
+                // a masked one holds only its partial value. Left out, the
+                // owner keeps the stored value.
                 let mut input = current.affiliation.clone();
+                let masked = |key: &str| current.masked.iter().any(|m| m == key);
+                if masked("work_email") {
+                    input.work_email = None;
+                }
+                if masked("work_phone") {
+                    input.work_phone = None;
+                }
                 let text = Some(submitted.to_owned()).filter(|v| !v.trim().is_empty());
                 let shaped = match field {
                     "title" => {

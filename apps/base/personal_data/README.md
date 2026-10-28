@@ -19,7 +19,7 @@ inventory::submit! { Contribution::new(PERSONAL_DATA, "core/person.people", prov
 | A store's `kinds` must be declared `RecordKind`s | Holds and audit erasure name only real kinds |
 | `RecordKind.fields` are the top-level keys of the kind's `Change` values that are personal | Audit erasure clears exactly these, never a business field |
 | A kind is declared once, by its owner | One answer per kind |
-| A kind with personal fields also gets a `base_personal_data_kinds` row from its owner's migration (same fields and `subject_identifier`) | The database refuses audit erasure of anything else; a mismatch is `Internal`. The table changes only alongside a recorded migration |
+| A kind with personal fields also gets a `base_personal_data_kinds` row from its owner's migration (same fields and `subject_identifier`); `*` names every top-level field, for a kind whose values have no fixed keys (a SCIM document) | The database refuses audit erasure of anything else; a mismatch is `Internal`. The table changes only alongside a recorded migration: a guard against mistakes, not against code running as the application's database role, which can also write the ledger |
 | `person_subjects` names the file subject kinds (Media attachment subject, Artifacts owner) whose subject ID is the person ID | Media and Artifacts accept a grant only for those subjects, and only the grant's own person |
 | Report in `Erased.records` only records changed in that transaction | The database clears evidence only of records the erasing transaction changed |
 
@@ -40,7 +40,7 @@ inventory::submit! { Contribution::new(PERSONAL_DATA, "core/person.people", prov
 
 ## Grants
 
-**`Erasure`, `Disclosure` and `Reveal` are sealed: only the `Issuer`, claimed once at boot by `base/privacy`, makes them.** Media, Artifacts, Audit and Grid accept a grant as the authority for their erasure, disclosure and reveal paths; `grant.check(scope)` refuses another tenant; a handler given a `Subject` calls `grant.check_subject(scope, subject)`, which also refuses a subject other than the person the request was approved for (a sweep grant answers for no subject). Media and Artifacts call `grant.check_file_subject(scope, kind, id)`: the subject kind must be declared in some store's `person_subjects` and the ID must be the grant's person.
+**`Erasure`, `Disclosure` and `Reveal` are sealed: only the `Issuer`, claimed once at boot by `base/privacy`, makes them.** Media, Artifacts, Audit and Grid accept a grant as the authority for their erasure, disclosure and reveal paths; `grant.check(scope)` refuses another tenant; a handler given a `Subject` calls `grant.check_subject(scope, subject)`, which also refuses a subject other than the person the request was approved for (a sweep grant answers for no subject). Media and Artifacts call `grant.check_file_subject(scope, kind, id)`: the subject kind must be declared in some store's `person_subjects` and the ID must be the grant's person. An Artifacts owner whose subjects are not person IDs may answer `Owner::erasure_subject` for the grant's person instead (`base/privacy` does, for a request about that person).
 
 ## Holds
 

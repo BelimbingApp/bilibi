@@ -106,6 +106,34 @@ impl Owner for RequestDocuments {
             Ok(())
         })
     }
+    /// A request's documents belong to the person the request is about, so
+    /// an erasure of that person deletes them whichever company they were
+    /// filed under.
+    fn erasure_subject<'a>(
+        &'a self,
+        client: &'a dyn ProofClient,
+        grant: &'a Erasure,
+        subject: &'a str,
+    ) -> ProofFuture<'a, bool> {
+        Box::pin(async move {
+            let (Some(person), Some(id)) = (
+                grant.person(),
+                subject
+                    .strip_prefix("request:")
+                    .and_then(|id| id.parse::<i64>().ok())
+                    .filter(|id| *id > 0),
+            ) else {
+                return Ok(false);
+            };
+            Ok(client
+                .query_opt(
+                    "SELECT 1 FROM base_privacy_requests WHERE tenant_id=$1 AND id=$2 AND person_id=$3",
+                    &[&grant.tenant(), &id, &person.get()],
+                )
+                .await?
+                .is_some())
+        })
+    }
 }
 
 /// The certificate's facts. Counts, kinds, IDs, reasons and dates only.
@@ -540,27 +568,32 @@ impl Privacy {
         reason: Option<&str>,
     ) -> Result<(String, Vec<u8>, String)> {
         let request = self.request(&*client, scope, id).await?;
-        // An export's reveal record commits only once its bytes are read.
-        let mut recorder = self.db.get().await?;
-        let record = recorder.transaction().await?;
-        let (artifact, name) = match (&request.export_artifact, &request.certificate_artifact) {
-            (Some(artifact), _) => {
-                self.reveal_export(&*record, scope, id, reason).await?;
-                (artifact.clone(), format!("privacy-request-{id}-export.zip"))
-            }
-            (None, Some(artifact)) => (
-                artifact.clone(),
-                format!("privacy-request-{id}-certificate.pdf"),
-            ),
-            (None, None) => return Err(Error::NotFound),
-        };
+        // An export's reveal is checked before its bytes are read and recorded
+        // once they are, on this one connection, before they are returned.
+        let (artifact, name, reveal) =
+            match (&request.export_artifact, &request.certificate_artifact) {
+                (Some(artifact), _) => (
+                    artifact.clone(),
+                    format!("privacy-request-{id}-export.zip"),
+                    self.check_export_reveal(&*client, scope, id, reason)
+                        .await?,
+                ),
+                (None, Some(artifact)) => (
+                    artifact.clone(),
+                    format!("privacy-request-{id}-certificate.pdf"),
+                    None,
+                ),
+                (None, None) => return Err(Error::NotFound),
+            };
         let document = self
             .artifacts
             .for_owner(scope, request.company, &DOCUMENTS)
             .read(client, &artifact)
             .await
             .map_err(artifact_error)?;
-        record.commit().await?;
+        if let Some(reveal) = reveal {
+            self.record_export_reveal(client, scope, reveal).await?;
+        }
         Ok((document.metadata.content_type, document.bytes, name))
     }
 }

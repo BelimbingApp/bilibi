@@ -4,8 +4,10 @@
 //! tokens dropped) and anonymises it: the row, its ID and its links stay, the
 //! name and sign-in email do not. Single sign-on links, pending sign-ins and
 //! failed-attempt counters have no business value and are deleted, as are
-//! notifications, each unless a legal hold names it. Accounts that only share
-//! an email are counted, never touched. No Bilimbi counterpart.
+//! notifications, each unless a legal hold names it. The account's SCIM
+//! document keeps only its resource ID, and a first administrator's receipt
+//! its placeholder email. Accounts that only share an email are counted, never
+//! touched. No Bilimbi counterpart.
 use bilibi_database::{Change, Error, MutationTransaction};
 use bilibi_module_registry::{Contribution, Provenance};
 use bilibi_personal_data::{
@@ -21,6 +23,18 @@ use tokio_postgres::Client;
 
 const USER_KIND: &str = "user";
 const NOTIFICATION_KIND: &str = "notification";
+/// The account's SCIM document, as SCIM provisioning records it.
+const SCIM_KIND: &str = "user.scim_user";
+/// A single sign-on link, as SSO records it.
+pub(crate) const EXTERNAL_IDENTITY_KIND: &str = "user.external_identity";
+/// The first administrator's receipt, as the bootstrap records it.
+const BOOTSTRAP_KIND: &str = "user.bootstrap";
+/// An agent's two-factor reset, which once recorded the account's name and
+/// email.
+const TWO_FACTOR_RESET_KIND: &str = "user_two_factor_reset";
+/// Every top-level attribute of a SCIM document: an identity provider may
+/// send any attribute or vendor extension, all of them about the person.
+const SCIM_FIELDS: [&str; 1] = ["*"];
 
 struct Bound {
     sessions: Arc<Sessions>,
@@ -171,15 +185,109 @@ impl Handler for Accounts {
                     .into_iter()
                     .filter(|id| !held_notices.contains_key(id))
                     .collect();
+                let placeholder = format!("erased-{user}@erased.invalid");
+                // The account's other records, each kept while a hold names
+                // it, and written only while it, or its history, still holds
+                // a value: a repeat erasure of a clean account writes nothing.
+                let scim_rows: Vec<(i64, bool)> = tx
+                    .sql()
+                    .query(
+                        "SELECT id,document->>'userName'=$3 FROM user_scim_users WHERE tenant_id=$1 AND user_id=$2 ORDER BY id FOR UPDATE",
+                        &[&tenant, &user, &placeholder],
+                    )
+                    .await?
+                    .iter()
+                    .map(|row| (row.get(0), row.get(1)))
+                    .collect();
+                let held_scim = holds
+                    .records(
+                        SCIM_KIND,
+                        &scim_rows.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+                    )
+                    .await?;
+                let mut scim = Vec::new();
+                for (id, clean) in scim_rows {
+                    if let Some(hold) = held_scim.get(&id) {
+                        erased.kept.push(Kept::held(SCIM_KIND, id, *hold));
+                    } else if !clean || bilibi_audit::holds_values(tx, SCIM_KIND, id).await? {
+                        scim.push(id);
+                    }
+                }
+                let identities: Vec<i64> = tx
+                    .sql()
+                    .query(
+                        "SELECT id FROM user_external_identities WHERE tenant_id=$1 AND user_id=$2 ORDER BY id FOR UPDATE",
+                        &[&tenant, &user],
+                    )
+                    .await?
+                    .iter()
+                    .map(|row| row.get(0))
+                    .collect();
+                let held_identities = holds.records(EXTERNAL_IDENTITY_KIND, &identities).await?;
+                // Ending an account removes every sign-in link it has (the
+                // sign-in factor's lifecycle), so a hold on one keeps the
+                // whole account, as a hold on the account does.
+                if let Some(hold) = held_identities.values().next() {
+                    for (identity, hold) in &held_identities {
+                        erased
+                            .kept
+                            .push(Kept::held(EXTERNAL_IDENTITY_KIND, identity, *hold));
+                    }
+                    erased.kept.push(Kept::held(USER_KIND, user, *hold));
+                    continue;
+                }
+                let receipt = tx
+                    .sql()
+                    .query_opt(
+                        "SELECT admin_email=$3 FROM user_bootstrap WHERE tenant_id=$1 AND user_id=$2 FOR UPDATE",
+                        &[&tenant, &user, &placeholder],
+                    )
+                    .await?
+                    .map(|row| row.get::<_, bool>(0));
+                let bootstrap = match receipt {
+                    None => false,
+                    Some(clean) => match holds.records(BOOTSTRAP_KIND, &[1]).await?.get(&1) {
+                        Some(hold) => {
+                            erased.kept.push(Kept::held(BOOTSTRAP_KIND, 1, *hold));
+                            false
+                        }
+                        None => !clean || bilibi_audit::holds_values(tx, BOOTSTRAP_KIND, 1).await?,
+                    },
+                };
+                // Earlier resets recorded the name and email under their own
+                // kind: an erasure change of that kind lets the database clear
+                // that history too.
+                let reset = match holds
+                    .records(TWO_FACTOR_RESET_KIND, &[user])
+                    .await?
+                    .get(&user)
+                {
+                    Some(hold) => {
+                        erased
+                            .kept
+                            .push(Kept::held(TWO_FACTOR_RESET_KIND, user, *hold));
+                        false
+                    }
+                    None => bilibi_audit::holds_values(tx, TWO_FACTOR_RESET_KIND, user).await?,
+                };
+                let user_history = done && bilibi_audit::holds_values(tx, USER_KIND, user).await?;
+                let reset_before = json!({"name": name, "email": email});
                 let before = json!({"name": name, "email": email, "status": status});
-                // Already anonymised with nothing to delete: not a write.
-                let removed = if done && gone.is_empty() {
-                    Vec::new()
+                let writes = !done
+                    || user_history
+                    || !gone.is_empty()
+                    || !scim.is_empty()
+                    || bootstrap
+                    || reset;
+                let (removed, other) = if !writes {
+                    (Vec::new(), Vec::new())
                 } else {
                     tx.mutate(move |sql| {
                         Box::pin(async move {
-                            let placeholder = format!("erased-{user}@erased.invalid");
                             let mut changes = Vec::new();
+                            // Every other record holding the account's values,
+                            // reported so their history is cleared too.
+                            let mut other: Vec<(&'static str, i64)> = Vec::new();
                             if !done {
                                 sql.execute(
                                     "UPDATE users SET name=$3,email=$4,password_hash='!erased',status='deleted',deleted_at=coalesce(deleted_at,now()),\
@@ -187,7 +295,13 @@ impl Handler for Accounts {
                                     &[&tenant, &user, &ERASED, &placeholder],
                                 )
                                 .await?;
-                                let links = remove_links(sql, tenant, user).await?;
+                                let links = remove_links(sql, tenant, user, &[]).await?;
+                                other.extend(
+                                    links
+                                        .iter()
+                                        .filter(|link| link.kind == EXTERNAL_IDENTITY_KIND)
+                                        .map(|link| (EXTERNAL_IDENTITY_KIND, link.id)),
+                                );
                                 changes.push(Change {
                                     kind: USER_KIND.into(),
                                     id: user,
@@ -195,6 +309,60 @@ impl Handler for Accounts {
                                     new: json!({"name": ERASED, "email": ERASED, "status": "deleted", "links_removed": links.len()}),
                                 });
                                 changes.extend(links);
+                            } else if user_history {
+                                // Already anonymised, but earlier history still
+                                // holds values: this change lets it be cleared.
+                                sql.execute(
+                                    "UPDATE users SET version=version+1,updated_at=now() WHERE tenant_id=$1 AND id=$2",
+                                    &[&tenant, &user],
+                                )
+                                .await?;
+                                changes.push(Change {
+                                    kind: USER_KIND.into(),
+                                    id: user,
+                                    old: before,
+                                    new: json!({"name": ERASED, "email": ERASED, "status": "deleted"}),
+                                });
+                                other.push((USER_KIND, user));
+                            }
+                            // The identity provider keeps the resource ID; its
+                            // document keeps nothing about the person.
+                            for row in sql
+                                .query(
+                                    "UPDATE user_scim_users s SET active=false,document=jsonb_build_object('schemas',o.document->'schemas','id',s.resource_id,'userName',$3::text,'active',false) \
+                                     FROM (SELECT id,document FROM user_scim_users WHERE tenant_id=$1 AND id=ANY($2)) o WHERE s.id=o.id RETURNING s.id,o.document,s.document",
+                                    &[&tenant, &scim, &placeholder],
+                                )
+                                .await?
+                            {
+                                let id: i64 = row.get(0);
+                                changes.push(Change { kind: SCIM_KIND.into(), id, old: row.get(1), new: row.get(2) });
+                                other.push((SCIM_KIND, id));
+                            }
+                            if bootstrap {
+                                let row = sql
+                                    .query_one(
+                                        "UPDATE user_bootstrap b SET admin_email=$3 FROM (SELECT admin_email FROM user_bootstrap WHERE tenant_id=$1 AND user_id=$2) o \
+                                         WHERE b.tenant_id=$1 AND b.user_id=$2 RETURNING o.admin_email",
+                                        &[&tenant, &user, &placeholder],
+                                    )
+                                    .await?;
+                                changes.push(Change {
+                                    kind: BOOTSTRAP_KIND.into(),
+                                    id: 1,
+                                    old: json!({"admin_email": row.get::<_, String>(0)}),
+                                    new: json!({"admin_email": ERASED}),
+                                });
+                                other.push((BOOTSTRAP_KIND, 1));
+                            }
+                            if reset {
+                                changes.push(Change {
+                                    kind: TWO_FACTOR_RESET_KIND.into(),
+                                    id: user,
+                                    old: reset_before,
+                                    new: json!({"name": ERASED, "email": ERASED}),
+                                });
+                                other.push((TWO_FACTOR_RESET_KIND, user));
                             }
                             let rows = sql
                                 .query("DELETE FROM notifications WHERE tenant_id=$1 AND id=ANY($2) RETURNING id", &[&tenant, &gone])
@@ -206,7 +374,7 @@ impl Handler for Accounts {
                                 old: json!({"recipient": user}),
                                 new: json!({}),
                             }));
-                            Ok((ids, changes))
+                            Ok(((ids, other), changes))
                         })
                     })
                     .await?
@@ -238,6 +406,13 @@ impl Handler for Accounts {
                         id,
                         person: None,
                     }));
+                erased
+                    .records
+                    .extend(other.into_iter().map(|(kind, id)| ErasedRecord {
+                        kind: kind.into(),
+                        id,
+                        person: None,
+                    }));
             }
             Ok(erased)
         })
@@ -246,20 +421,34 @@ impl Handler for Accounts {
 
 inventory::submit! { Contribution::new(PERSONAL_DATA, "core/user.accounts",
 Provenance { module: "core/user", source: file!(), line: line!() },
-&PersonalData { label: "User accounts and notifications", kinds: &[USER_KIND, NOTIFICATION_KIND], person_subjects: &[], handler: &ACCOUNTS }) }
+&PersonalData { label: "User accounts and notifications", kinds: &[USER_KIND, NOTIFICATION_KIND, SCIM_KIND, EXTERNAL_IDENTITY_KIND, BOOTSTRAP_KIND, TWO_FACTOR_RESET_KIND], person_subjects: &[], handler: &ACCOUNTS }) }
 inventory::submit! { Contribution::new(RECORD_KINDS, "core/user.user",
 Provenance { module: "core/user", source: file!(), line: line!() },
 &RecordKind { kind: USER_KIND, fields: &["name", "email"], subject_identifier: false, person: false }) }
 inventory::submit! { Contribution::new(RECORD_KINDS, "core/user.notification",
 Provenance { module: "core/user", source: file!(), line: line!() },
 &RecordKind { kind: NOTIFICATION_KIND, fields: &["title", "body"], subject_identifier: false, person: false }) }
+inventory::submit! { Contribution::new(RECORD_KINDS, "core/user.scim_user",
+Provenance { module: "core/user", source: file!(), line: line!() },
+&RecordKind { kind: SCIM_KIND, fields: &SCIM_FIELDS, subject_identifier: false, person: false }) }
+inventory::submit! { Contribution::new(RECORD_KINDS, "core/user.external_identity",
+Provenance { module: "core/user", source: file!(), line: line!() },
+&RecordKind { kind: EXTERNAL_IDENTITY_KIND, fields: &["subject"], subject_identifier: false, person: false }) }
+inventory::submit! { Contribution::new(RECORD_KINDS, "core/user.bootstrap",
+Provenance { module: "core/user", source: file!(), line: line!() },
+&RecordKind { kind: BOOTSTRAP_KIND, fields: &["admin_email"], subject_identifier: false, person: false }) }
+inventory::submit! { Contribution::new(RECORD_KINDS, "core/user.two_factor_reset",
+Provenance { module: "core/user", source: file!(), line: line!() },
+&RecordKind { kind: TWO_FACTOR_RESET_KIND, fields: &["name", "email"], subject_identifier: false, person: false }) }
 
 /// Deletes an account's sign-in and credential rows, one `Change` per row
-/// with its key and owner only: never a token, hash or external subject.
+/// with its key and owner only: never a token, hash or external subject. A
+/// single sign-on link in `keep_identities` (a legal hold names it) stays.
 pub(crate) async fn remove_links(
     sql: &tokio_postgres::Transaction<'_>,
     tenant: i64,
     user: i64,
+    keep_identities: &[i64],
 ) -> bilibi_database::Result<Vec<Change>> {
     let mut changes = Vec::new();
     let removed = |kind: &str, id: i64, old: Value| Change {
@@ -289,17 +478,17 @@ pub(crate) async fn remove_links(
         .await?
     {
         changes.push(removed(
-            "user_external_session",
+            "user.external_session",
             row.get(0),
             json!({"user": user}),
         ));
     }
     for row in sql
-        .query("DELETE FROM user_external_identities WHERE tenant_id=$1 AND user_id=$2 RETURNING id,provider_id", &[&tenant, &user])
+        .query("DELETE FROM user_external_identities WHERE tenant_id=$1 AND user_id=$2 AND NOT id=ANY($3) RETURNING id,provider_id", &[&tenant, &user, &keep_identities])
         .await?
     {
         changes.push(removed(
-            "user_external_identity",
+            "user.external_identity",
             row.get(0),
             json!({"user": user, "provider": row.get::<_, i64>(1)}),
         ));
@@ -312,7 +501,7 @@ pub(crate) async fn remove_links(
         .await?
     {
         changes.push(removed(
-            "user_credential_attempt",
+            "user_credential_attempts",
             user,
             json!({"user": user, "kind": row.get::<_, String>(0)}),
         ));

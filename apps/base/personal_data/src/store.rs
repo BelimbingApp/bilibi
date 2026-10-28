@@ -51,7 +51,9 @@ pub struct RecordKind {
     /// `Change::kind`, as the owner's writes spell it.
     pub kind: &'static str,
     /// Top-level keys of the kind's `Change` values. Empty for a kind whose
-    /// changes hold no personal value but whose records can be held.
+    /// changes hold no personal value but whose records can be held; `["*"]`
+    /// for a kind whose values have no fixed keys (a document an outside
+    /// system sends), so every top-level value is erased.
     pub fields: &'static [&'static str],
     /// Whether the evidence's subject identifier names the person.
     pub subject_identifier: bool,

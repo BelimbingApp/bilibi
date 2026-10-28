@@ -193,7 +193,7 @@ alerting on `failed`; Base enumerates no companies.
 
 **`subject_documents(client, scope, owner, subject)` lists one subject's live documents of an owner** in every company of the tenant, keeping those the owner lets the scope `Read`, however many ([ADR 05](../../../docs/architecture/decisions/05-personal-data-registry.md)).
 
-- An approved request carries a sealed `base/personal_data` grant: `disclosed_documents` and `for_disclosure(.., &Disclosure, subject).read` read that subject's documents; `erasable_documents` and `for_erasure(.., &Erasure, subject).delete` delete them (live, or deleted but not purged). The owner is not asked for that subject's documents; the account must still be live, retention and legal holds still refuse, and every step is audited.
+- An approved request carries a sealed `base/personal_data` grant: `disclosed_documents` and `for_disclosure(.., &Disclosure, subject).read` read that subject's documents; `erasable_documents` and `for_erasure(.., &Erasure, subject).delete` delete them (live, or deleted but not purged). The owner is not asked for that subject's documents; the account must still be live, retention and legal holds still refuse, and every step is audited. An erasure's subject must be the grant's person ID under a declared person-keyed kind, or one the owner's `erasure_subject` confirms is that person's (default: none).
 - `PdfOptions::retained(Retention)` publishes a rendered PDF records-grade, as `put_retained` does.
 
 ## HTML PDFs (A4)

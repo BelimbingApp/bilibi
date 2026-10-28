@@ -49,6 +49,35 @@ impl Minimums {
     }
 }
 
+/// Whether one record's evidence in the transaction's tenant still holds a
+/// value in a personal field its kind declares (`*`: any top-level field).
+/// A store whose live record has nothing left to clear asks this before it
+/// writes the erasure change that lets that history be cleared, so a repeat
+/// erasure of an already clean record writes nothing. A kind no store
+/// declared is `Invalid`.
+pub async fn holds_values(tx: &MutationTransaction<'_>, kind: &str, id: i64) -> Result<bool> {
+    let declared = Stores::installed()
+        .map_err(|_| Error::Internal)?
+        .kind(kind)
+        .ok_or(Error::Invalid)?;
+    if declared.fields.is_empty() || id <= 0 {
+        return Ok(false);
+    }
+    let fields: Vec<&str> = declared.fields.to_vec();
+    Ok(tx
+        .sql()
+        .query_one(
+            "SELECT EXISTS (SELECT 1 FROM base_audit_mutations m CROSS JOIN LATERAL ( \
+               SELECT key,value FROM jsonb_each(CASE WHEN jsonb_typeof(m.old_values)='object' THEN m.old_values ELSE '{}'::jsonb END) \
+               UNION ALL SELECT key,value FROM jsonb_each(CASE WHEN jsonb_typeof(m.new_values)='object' THEN m.new_values ELSE '{}'::jsonb END)) kv \
+             WHERE m.tenant_id=$1 AND m.auditable_type=$2 AND m.auditable_id=$3 \
+               AND (kv.key=ANY($4) OR '*'=ANY($4)) AND kv.value NOT IN ('null'::jsonb,'\"[erased]\"'::jsonb))",
+            &[&tx.context().tenant, &kind, &id.to_string(), &fields],
+        )
+        .await?
+        .get(0))
+}
+
 /// Erases the declared personal fields of one record's evidence in the
 /// grant's tenant, in the caller's erasure transaction. Rows still within
 /// their company's legal minimum stay, and the sweep erases them once it has

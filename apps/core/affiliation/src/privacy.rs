@@ -21,7 +21,14 @@ fn identifiers(subject: &Subject) -> (Vec<String>, Vec<String>) {
     for identifier in &subject.identifiers {
         match identifier {
             Identifier::Email(value) => emails.push(value.to_lowercase()),
-            Identifier::Phone(value) => phones.push(value.clone()),
+            // Digits only, compared with the stored phone's digits, so
+            // `+60 12-345 6789` and `60123456789` match.
+            Identifier::Phone(value) => {
+                let digits: String = value.chars().filter(char::is_ascii_digit).collect();
+                if !digits.is_empty() {
+                    phones.push(digits);
+                }
+            }
         }
     }
     (emails, phones)
@@ -41,7 +48,7 @@ impl Handler for Affiliations {
             let row = client
                 .query_one(
                     "SELECT count(*) FILTER (WHERE person_id=$2), \
-                     count(*) FILTER (WHERE person_id<>$2 AND (lower(work_email)=ANY($3) OR work_phone=ANY($4))) \
+                     count(*) FILTER (WHERE person_id<>$2 AND (lower(work_email)=ANY($3) OR regexp_replace(work_phone,'[^0-9]','','g')=ANY($4))) \
                      FROM person_affiliations WHERE tenant_id=$1",
                     &[&scope.tenant(), &subject.person.get(), &emails, &phones],
                 )
@@ -118,31 +125,34 @@ impl Handler for Affiliations {
                     continue;
                 }
                 let before = json!({"title": row.get::<_, Option<String>>(1), "work_email": row.get::<_, Option<String>>(2), "work_phone": row.get::<_, Option<String>>(3)});
-                if before
+                // An empty affiliation is still written while its history
+                // holds values, since the database clears evidence only of a
+                // record this transaction changed; otherwise it is not a write.
+                let live = before
                     .as_object()
-                    .is_some_and(|o| o.values().any(|v| !v.is_null()))
-                {
-                    tx.mutate(move |sql| {
-                        Box::pin(async move {
-                            sql.execute(
-                                "UPDATE person_affiliations SET title=NULL,work_email=NULL,work_phone=NULL,version=version+1,updated_at=now() WHERE tenant_id=$1 AND id=$2",
-                                &[&tenant, &id],
-                            )
-                            .await?;
-                            // `[erased]` where a value was, so the trail tells erasure from absence.
-                            let after = Value::Object(before.as_object().into_iter().flatten().map(|(f, v)| (f.clone(), if v.is_null() { Value::Null } else { json!(ERASED) })).collect());
-                            Ok(((), vec![Change { kind: KIND.into(), id, old: before, new: after }]))
-                        })
-                    })
-                    .await?;
-                    // Only records this transaction changed: the database
-                    // clears evidence of nothing else.
-                    erased.records.push(ErasedRecord {
-                        kind: KIND.into(),
-                        id,
-                        person: None,
-                    });
+                    .is_some_and(|o| o.values().any(|v| !v.is_null()));
+                if !live && !bilibi_audit::holds_values(tx, KIND, id).await? {
+                    count += 1;
+                    continue;
                 }
+                tx.mutate(move |sql| {
+                    Box::pin(async move {
+                        sql.execute(
+                            "UPDATE person_affiliations SET title=NULL,work_email=NULL,work_phone=NULL,version=version+1,updated_at=now() WHERE tenant_id=$1 AND id=$2",
+                            &[&tenant, &id],
+                        )
+                        .await?;
+                        // `[erased]` where a value was, so the trail tells erasure from absence.
+                        let after = Value::Object(before.as_object().into_iter().flatten().map(|(f, v)| (f.clone(), if v.is_null() { Value::Null } else { json!(ERASED) })).collect());
+                        Ok(((), vec![Change { kind: KIND.into(), id, old: before, new: after }]))
+                    })
+                })
+                .await?;
+                erased.records.push(ErasedRecord {
+                    kind: KIND.into(),
+                    id,
+                    person: None,
+                });
                 count += 1;
             }
             erased.count(KIND, Action::Anonymised, count);

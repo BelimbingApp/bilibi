@@ -3,8 +3,9 @@
 //! person, so one is only ever a candidate, found by an email the requester
 //! gave or by a phone's digits however it was formatted, and listed for the
 //! operator to confirm. Only confirmed exchanges are exported or erased;
-//! erasure replaces the whole preview (headers, bodies and path), never just
-//! the matching text. Previews also expire after
+//! erasure replaces the whole preview (headers, bodies and path, the endpoint
+//! down to its scheme and host with no user part, and an operation that is
+//! the path), never just the matching text. Previews also expire after
 //! `integration.payload_retention_days`. No Bilimbi counterpart.
 use bilibi_database::{Change, MutationTransaction};
 use bilibi_module_registry::{Contribution, Provenance};
@@ -18,7 +19,9 @@ use serde_json::{json, Value};
 use tokio_postgres::Client;
 
 pub(crate) const KIND: &str = "base/integration.exchange";
-const TEXT: &str = "concat_ws(' ',path,request_headers::text,request_body::text,response_headers::text,response_body::text)";
+// The endpoint keeps the path, and an incoming call without an operation name
+// takes the path as its operation: all three are searched and erased.
+const TEXT: &str = "concat_ws(' ',endpoint,operation,path,request_headers::text,request_body::text,response_headers::text,response_body::text)";
 
 fn matching() -> String {
     format!("tenant_id=$1 AND ({TEXT} ILIKE ANY($2) OR regexp_replace({TEXT},'[^0-9]','','g') LIKE ANY($3))")
@@ -96,7 +99,7 @@ impl Handler for Previews {
             }
             let rows = client
                 .query(
-                    "SELECT public_id,direction,system,operation,occurred_at::text,path,request_headers,request_body,response_headers,response_body \
+                    "SELECT public_id,direction,system,operation,occurred_at::text,path,request_headers,request_body,response_headers,response_body,endpoint \
                      FROM base_integration_exchanges WHERE tenant_id=$1 AND id=ANY($2) ORDER BY id",
                     &[&scope.tenant(), &ids],
                 )
@@ -108,6 +111,7 @@ impl Handler for Previews {
                     "operation": row.get::<_, String>(3), "occurred_at": row.get::<_, String>(4), "path": row.get::<_, String>(5),
                     "request_headers": row.get::<_, Option<Value>>(6), "request_body": row.get::<_, Option<Value>>(7),
                     "response_headers": row.get::<_, Option<Value>>(8), "response_body": row.get::<_, Option<Value>>(9),
+                    "endpoint": row.get::<_, String>(10),
                 }))
                 .collect();
             Ok(Exported {
@@ -159,7 +163,9 @@ impl Handler for Previews {
                     let mark = json!(ERASED);
                     let rows = sql
                         .query(
-                            "UPDATE base_integration_exchanges SET path=$3,request_headers=$4,request_body=$4,response_headers=$4,response_body=$4 \
+                            "UPDATE base_integration_exchanges SET path=$3,request_headers=$4,request_body=$4,response_headers=$4,response_body=$4, \
+                             endpoint=coalesce(regexp_replace(substring(endpoint from '^[A-Za-z][A-Za-z0-9+.-]*://[^/?#]*'),'^([A-Za-z][A-Za-z0-9+.-]*://)[^/?#]*@','\\1'),$3), \
+                             operation=CASE WHEN operation=path THEN $3 ELSE operation END \
                              WHERE tenant_id=$1 AND id=ANY($2) RETURNING id",
                             &[&tenant, &erase, &ERASED, &mark],
                         )
@@ -170,7 +176,7 @@ impl Handler for Previews {
                             kind: KIND.into(),
                             id: row.get(0),
                             old: json!({"preview": "kept"}),
-                            new: json!({"path": ERASED, "request_headers": ERASED, "request_body": ERASED, "response_headers": ERASED, "response_body": ERASED}),
+                            new: json!({"endpoint": "origin only", "path": ERASED, "request_headers": ERASED, "request_body": ERASED, "response_headers": ERASED, "response_body": ERASED}),
                         })
                         .collect();
                     Ok(((), changes))

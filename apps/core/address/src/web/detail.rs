@@ -216,6 +216,11 @@ impl Detail {
             .map_or("Verification Status", |(_, label)| *label);
         let current = self.pages.addresses.read(scope, self.id).await?;
         let mut address = current.address;
+        // Never carry a masked phone into a replacement input: it holds only
+        // its partial value. Left out, the owner keeps the stored value.
+        if current.masked.iter().any(|m| m == "phone") {
+            address.phone = None;
+        }
         if name == "verification_status" {
             address.verification_status = Some(submitted.into());
         } else {
@@ -270,6 +275,11 @@ impl Detail {
             .await?;
         let current = self.pages.addresses.read(scope, self.id).await?;
         let mut address = current.address;
+        // A masked phone holds only its partial value: left out, the owner
+        // keeps the stored value.
+        if current.masked.iter().any(|m| m == "phone") {
+            address.phone = None;
+        }
         editing.draft.location.apply_to(&mut address);
         let version = editing.version;
         match self

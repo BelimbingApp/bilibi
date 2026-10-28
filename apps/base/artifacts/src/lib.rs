@@ -153,6 +153,19 @@ pub trait Owner: Send + Sync + 'static {
         operation: Operation,
         reference: Option<&'a Reference>,
     ) -> ProofFuture<'a, ()>;
+    /// Whether `subject`, one of this owner's subjects that is not a person ID
+    /// (such as a request about a person), names a document of the erasure
+    /// grant's own person, so the erasure may delete it in any company of the
+    /// tenant. Owners that file by person ID, or hold no one's documents,
+    /// answer no.
+    fn erasure_subject<'a>(
+        &'a self,
+        _client: &'a dyn ProofClient,
+        _grant: &'a Erasure,
+        _subject: &'a str,
+    ) -> ProofFuture<'a, bool> {
+        Box::pin(async { Ok(false) })
+    }
 }
 pub type RenderFuture<'a> = Pin<Box<dyn Future<Output = Result<Vec<u8>>> + Send + 'a>>;
 /// Implement on an owner that generates PDFs. Base authorizes `Create` before
@@ -304,7 +317,9 @@ impl Artifacts {
         }
     }
     /// A facade for one subject's documents under an approved erasure (ADR
-    /// 05): `delete` needs no owner permission for that subject's documents.
+    /// 05): `delete` needs no owner permission for that subject's documents,
+    /// when the subject is the grant's person ID under a declared person-keyed
+    /// kind, or the owner's `erasure_subject` says it is that person's.
     /// Retention and legal holds still refuse, and every step is audited.
     pub fn for_erasure<'a, O: Owner>(
         &'a self,
@@ -600,10 +615,12 @@ impl<O: Owner> Owned<'_, O> {
                     && reference.subject == *subject
             }
             (Some(Granted::Erase(grant, subject)), Operation::Delete, Some(reference)) => {
-                grant
-                    .check_file_subject(&live, self.owner.owner_id(), subject)
-                    .is_ok()
-                    && reference.subject == *subject
+                reference.subject == *subject
+                    && (grant
+                        .check_file_subject(&live, self.owner.owner_id(), subject)
+                        .is_ok()
+                        || (grant.check(&live).is_ok()
+                            && self.owner.erasure_subject(client, grant, subject).await?))
             }
             _ => false,
         };

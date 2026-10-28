@@ -137,7 +137,7 @@ fn columns() -> String {
          to_char(approved_at AT TIME ZONE 'UTC',{TIME}) AS approved_at,refused_reason,\
          to_char(completed_at AT TIME ZONE 'UTC',{TIME}) AS completed_at,export_artifact,certificate_artifact,\
          finish_attempts,finish_error,erased_at IS NOT NULL AS erased,\
-         (status NOT IN ('completed','refused') AND (due_at < clock_timestamp() OR EXISTS (\
+         (status NOT IN ('completed','refused') AND (due_at < clock_timestamp() OR finish_error IS NOT NULL OR EXISTS (\
             SELECT 1 FROM base_privacy_request_stores s WHERE s.request_id=base_privacy_requests.id \
             AND (s.state='pending' OR NOT s.finished) AND s.attempts>0))) AS late"
     )
@@ -519,15 +519,9 @@ impl Guard for Approved {
             if received_by == Some(scope.user()) {
                 return Err(Error::Forbidden);
             }
-            let bound = BOUND.get().ok_or(Error::Internal)?;
-            bound
-                .step_up
-                .require(
-                    scope,
-                    STEP_UP_ERASURE,
-                    &format!("privacy.request:{}", subject.id),
-                )
-                .await
+            // Step-up is checked once, by the owner as it records `approved`:
+            // in "every time" mode a second check would find the proof spent.
+            Ok(())
         })
     }
 }
@@ -834,10 +828,8 @@ impl Privacy {
             if scope.actor().person() == Some(subject.person) {
                 return Err(Error::Forbidden);
             }
-            // Refuse before any write, so a missing code costs nothing.
-            self.step_up
-                .require(scope, STEP_UP_ERASURE, &format!("privacy.request:{id}"))
-                .await?;
+            // Step-up is checked once, by the owner as it records `approved`
+            // below; a refusal there rolls this whole transaction back.
         }
         let approve = Move {
             expected_version: Some(expected_version),
