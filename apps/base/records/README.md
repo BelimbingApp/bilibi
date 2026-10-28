@@ -51,7 +51,7 @@ Each refusal names the kind and its source line.
 | Accept a new reference | `check(client, scope, kind, id)`: with your write's `tx.sql()`; a preview may pass any client. Store the `Reference` it returns. |
 | Show references | `resolve(scope, &references)` → `Resolved { label, path, … }`, in the order given; `resolved.pill(id, framed)` gives the `RelatedRecord`. |
 | Pick a record | `search(scope, &kinds, text)` → hits; `records.picker_hits(&hits)` feeds `RecordPicker`. |
-| Who points here | `referrers(scope, kind, id)` → a count per holder table the reader may read, through Grid's bounded `summarize`; a malformed id of a mounted kind is refused. |
+| Who points here | `referrers(scope, kind, id)` → a count per holder table the reader may read, through Grid's bounded `summarize`, for the record `id` names now (a merged id counts its survivor's referrers); a malformed id of a mounted kind is refused. |
 | Merge two records (owner) | `redirect(tx, scope, kind, from, to)` in the owner's merge transaction. |
 
 - A refusal from `check` (`UnknownKind`, `MalformedId`, `NotFound`, `Forbidden`) is your field error: `refusal.message()`.
@@ -66,7 +66,8 @@ Each refusal names the kind and its source line.
 - **Connections:** no facade method holds a pooled connection while Grid takes one, and the agent dispatcher holds none while a read runs (`apps/base/agent_api/README.md`), so concurrent resolves and searches, direct or through `/api/v1` and `/mcp`, cannot fill the pool and wait on each other.
 - **Removed records** are never cascaded and holders' rows are never deleted.
 - **Merges:** a redirect `(tenant, kind, from) → to` is followed by `check`, `resolve` and the pill, so every holder repoints on read. Chains collapse on write, and each redirect row is an audited `Change` on `record_redirect`. `redirect` takes a transaction lock per tenant and kind, so overlapping merges run one after the other and never commit a chain (`a → b` beside `b → c`).
-- **Picker:** `search` matches each allowed kind's `label_field` inside the owner's own source (`text_search_sql`), so tenant, soft delete and permissions apply. Matches are read in key order, 50 at a time, and named as `resolve` names them: records merged into one survivor are one hit and records the owner refuses are skipped. Each kind gathers up to the tenant setting `records.picker_hits` distinct records (default 8, Settings › Records), reading at most 500 matches. A choice is still `check`ed on save; a forged id is refused.
+- **Picker:** `search` matches each allowed kind's `label_field` inside the owner's own source (`text_search_sql`), so tenant, soft delete and permissions apply. Matches are read in key order, 50 at a time, and named as `resolve` names them: records merged into one survivor are one hit and records the owner refuses are skipped. Each kind gathers up to the tenant setting `records.picker_hits` distinct records (default 8, Settings › Records), reading at most 500 matches. Each kind is searched once, however often it is named, and an unmounted kind not at all. A choice is still `check`ed on save; a forged id is refused.
+- **Long names:** the pill stays on one line, at most 16rem (60% of a phone's width), and a picker hit within its row; a longer name ends in "…" with the whole name as the title, so a table cell never grows to fit it.
 - **Workspace:** the pill renders through `RecordLink` with the registering module as its workspace kind, so on a framed page it selects the record in a following tile.
 - **Isolation:** every read runs through the owner's tenant-scoped source or check; redirect and holder statements carry the tenant predicate.
 
@@ -75,9 +76,9 @@ Each refusal names the kind and its source line.
 | Key | Capability | Does |
 | --- | --- | --- |
 | `base.records.resolve` | `base.records.view` | Names up to 100 references `{kind, id}`: `label` (null when unavailable), `path`, `stored_id`. |
-| `base.records.search` | `base.records.view` | Finds records of the given kinds by name: `{kind, id, label, path}`. |
+| `base.records.search` | `base.records.view` | Finds records of up to 20 kinds by name: `{kind, id, label, path}`. |
 
-- The agent edge adds an absolute `url` beside every record reference's `path`, on both `/api/v1` and `/mcp`.
+- The agent edge adds an absolute `url` beside every record reference's `path`, on both `/api/v1` (operation calls, plan previews and commits, refusals included) and `/mcp`.
 - Writes that store a reference are the holder's own reviewed writes, which `check` the target in preview and commit.
 - `base.records.view` is granted to Authz's built-in roles; the guide `base.records` explains references to agents.
 
@@ -111,4 +112,8 @@ Add `APP_ORIGIN` and `BIND_ADDR` to serve the app afterwards, with the notes pag
 | Overlapping merges | Merging 52 into 53 waits while merging 51 into 52 is uncommitted; both then point at 53. |
 | Connection pool | 64 concurrent resolves on the pool of 16 connections all finish. |
 | Picker limit | With the first eight matches (companies 1 to 8) all pointing to company 1, searching `0` gives 8 distinct companies. |
+| Repeated kinds | `["company"]` named twice or 32 times gives the same 8 distinct hits in the same time as once; 21 kinds are refused. |
+| Plan references | A notes plan preview's record carries the same absolute `url` through `/api/v1/plans` and MCP's `plan`, and so does a plan refused at commit (`plan_rejected`) through both doors. |
+| Merged referrers | After 61 → 1, `referrers` of 61 counts the same notes as of 1. |
+| Long names | A 160-character company name: the pill, the picker hit and the chosen pill stay within a 390 px page, ending in "…" with the whole name as their title. |
 | List but not view | For the manager allowed `admin.company.list` and denied `admin.company.view`, `check` refuses company 1, `resolve` shows it unavailable and `search` offers no company, directly and through `/api/v1` and MCP; in the browser their company pills are Restricted and the picker offers no company. |

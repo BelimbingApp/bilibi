@@ -24,6 +24,8 @@ use tokio_postgres::GenericClient;
 
 /// The most ids named for one kind in one Grid projection.
 pub const MAX_PER_KIND: usize = 100;
+/// The most kinds one search may name.
+pub const MAX_SEARCH_KINDS: usize = 20;
 /// The tenant setting for how many picker hits each kind returns.
 pub const PICKER_HITS: &str = "records.picker_hits";
 /// The most a search reads of what a person typed.
@@ -350,7 +352,8 @@ impl Records {
     /// as `resolve` names them, so a merged record is its survivor, once, and
     /// a record the owner refuses is skipped. Each kind gathers up to the
     /// tenant's `records.picker_hits` distinct records, reading at most 500
-    /// matches. A hit is still `check`ed on save.
+    /// matches; a kind named twice or not mounted is searched once or not at
+    /// all. A hit is still `check`ed on save.
     pub async fn search(&self, scope: &Scope, kinds: &[&str], text: &str) -> Result<Vec<Hit>> {
         let needle: String = text
             .trim()
@@ -371,6 +374,12 @@ impl Records {
                 .unwrap_or(8)
                 .clamp(1, 50) as usize
         };
+        // Each mounted kind once: a repeated or unknown kind adds no work.
+        let kinds: BTreeSet<&str> = kinds
+            .iter()
+            .copied()
+            .filter(|key| self.kinds.contains_key(key))
+            .collect();
         let mut hits = Vec::new();
         for key in kinds {
             let Some(kind) = self.kind(key) else {
@@ -394,10 +403,8 @@ impl Records {
                 };
                 let last = (page.len() as i64) < SEARCH_PAGE;
                 offset += SEARCH_PAGE;
-                let page: Vec<Reference> = page
-                    .into_iter()
-                    .map(|id| Reference::new(*key, id))
-                    .collect();
+                let page: Vec<Reference> =
+                    page.into_iter().map(|id| Reference::new(key, id)).collect();
                 for resolved in self.resolve(scope, &page).await? {
                     let Some(label) = resolved.label else {
                         continue;
@@ -563,10 +570,14 @@ impl Records {
             Some(record) => Self::canonical(record, id).ok_or(Error::Invalid)?,
             None => id.to_owned(),
         };
-        let mut ids: Vec<String> = self
-            .db
-            .get()
+        // Count for the survivor: a merged id names the record it moved to,
+        // and every id merged into that record counts with it.
+        let client = self.db.get().await?;
+        let id = Self::redirected(&**client, scope.tenant(), kind, std::slice::from_ref(&id))
             .await?
+            .remove(&id)
+            .unwrap_or(id);
+        let mut ids: Vec<String> = client
             .query(
                 "SELECT from_id FROM base_records_redirects WHERE tenant_id=$1 AND kind=$2 AND to_id=$3",
                 &[&scope.tenant(), &kind, &id],
@@ -575,6 +586,7 @@ impl Records {
             .iter()
             .map(|row| row.get(0))
             .collect();
+        drop(client);
         ids.push(id);
         let mut counts = Vec::new();
         'holders: for holder in &self.holders {

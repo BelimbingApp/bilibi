@@ -18,14 +18,16 @@ pub enum RecordState {
 
 /// One reference as a pill. With a page, the name is a `RecordLink`: a link
 /// that opens the record, or inside a workspace tile a control that selects
-/// it in the following tile.
+/// it in the following tile. A long name stays on one
+/// line, at most 16rem (60% of a phone's width), and ends in "…", with the
+/// whole name as the pill's title, so a table cell never grows to fit it.
 #[derive(Template, Clone, Debug)]
 #[template(
     source = r#"{%- import "components.html" as ui -%}{%- import "lists.html" as lists -%}
 {%- match state -%}
 {%- when RecordState::Named with { label, href } -%}
 {%- let record_kind = kind -%}{%- let record_href = href -%}
-<span id="{{ id }}" data-related-record>{% call ui::badge(kind=crate::BadgeKind::Neutral, dot=false, class="normal-case") %}{% match record_href %}{% when Some with (target) %}{% call lists::record_link(workspace=workspace, kind=record_kind, record_id=record_id, href=target, class="hover:underline") %}{{ label }}{% endcall %}{% when None %}{{ label }}{% endmatch %}{% endcall %}</span>
+<span id="{{ id }}" data-related-record title="{{ label }}" class="inline-flex min-w-0 max-w-[min(16rem,60vw)] align-middle">{% call ui::badge(kind=crate::BadgeKind::Neutral, dot=false, class="min-w-0 max-w-full normal-case") %}{% match record_href %}{% when Some with (target) %}{% call lists::record_link(workspace=workspace, kind=record_kind, record_id=record_id, href=target, class="min-w-0 truncate hover:underline") %}{{ label }}{% endcall %}{% when None %}<span class="min-w-0 truncate">{{ label }}</span>{% endmatch %}{% endcall %}</span>
 {%- when RecordState::Unavailable -%}
 <span id="{{ id }}" data-related-record>{{ unavailable }}</span>
 {%- endmatch -%}"#,
@@ -68,6 +70,17 @@ impl RelatedRecord {
         self.workspace = framed;
         self
     }
+}
+
+/// A picker hit's text: one line within the button, ending in "…" when long,
+/// with the whole text as its title (a button is one fixed height).
+#[derive(Template)]
+#[template(
+    source = r#"<span class="min-w-0 truncate" title="{{ text }}">{{ text }}</span>"#,
+    ext = "html"
+)]
+struct HitLabel {
+    text: String,
 }
 
 /// One record a picker offers.
@@ -141,14 +154,17 @@ impl RecordPicker {
             .iter()
             .enumerate()
             .map(|(index, hit)| {
-                let body = Html::text(&format!("{} · {}", hit.label, hit.kind_label));
+                let body = Html::render(&HitLabel {
+                    text: format!("{} · {}", hit.label, hit.kind_label),
+                })
+                .unwrap_or(Html::EMPTY);
                 Html::render(&Button {
                     id: &format!("{id}-hit-{index}"),
                     button_type: "button",
                     event: pick_event,
                     name: "record",
                     value: &hit.value,
-                    class: "w-full justify-start",
+                    class: "w-full min-w-0 justify-start",
                     body,
                     ..Button::default()
                 })

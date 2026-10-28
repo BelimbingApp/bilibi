@@ -10,7 +10,8 @@ mod records;
 
 pub use declaration::{Access, Holder, RecordKind, RecordOwner, HOLDERS, KINDS};
 pub use records::{
-    Hit, Records, Reference, Referrers, Refusal, Resolved, MAX_PER_KIND, PICKER_HITS,
+    Hit, Records, Reference, Referrers, Refusal, Resolved, MAX_PER_KIND, MAX_SEARCH_KINDS,
+    PICKER_HITS,
 };
 #[doc(hidden)]
 pub use {

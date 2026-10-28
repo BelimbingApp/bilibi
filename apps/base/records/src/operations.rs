@@ -4,7 +4,7 @@
 //! reader cannot see the record) and `path`, which the agent edge turns into
 //! an absolute `url`. Writes that store a reference belong to the holder,
 //! which `check`s it in its own reviewed write.
-use crate::{records::Records, Reference, MAX_PER_KIND, VIEW};
+use crate::{records::Records, Reference, MAX_PER_KIND, MAX_SEARCH_KINDS, VIEW};
 use bilibi_agent_api::{
     json::{Data, Output},
     Channels, Definitions, Guide, Handler, Operation, OperationClient, OperationFuture,
@@ -80,6 +80,9 @@ impl ReadHandler for Read {
                         .flatten()
                         .filter_map(Value::as_str)
                         .collect();
+                    if kinds.len() > MAX_SEARCH_KINDS {
+                        return Err(invalid("kinds", "must name at most 20 kinds"));
+                    }
                     let hits = records
                         .search(scope, &kinds, input["text"].as_str().unwrap_or_default())
                         .await?;
@@ -102,7 +105,7 @@ fn resolve_schema() -> Value {
 }
 fn search_schema() -> Value {
     json!({"type":"object","required":["kinds","text"],"properties":{
-        "kinds":{"type":"array","items":{"type":"string","maxLength":100},"description":"The kinds to look in, such as [\"person\", \"company\"]."},
+        "kinds":{"type":"array","items":{"type":"string","maxLength":100},"description":"The kinds to look in, such as [\"person\", \"company\"]; at most 20, each searched once."},
         "text":{"type":"string","maxLength":100,"description":"Part of the record's name."}
     }})
 }

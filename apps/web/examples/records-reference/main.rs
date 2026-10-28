@@ -22,8 +22,11 @@
 //! reviews: an id with a leading zero is one record everywhere, overlapping
 //! merges commit no chain, the picker fills its limit with distinct records
 //! after merges, a reader who may list companies but not view them gets no
-//! name, hit or link, and many concurrent calls, direct and through the
-//! `/api/v1` and MCP doors, never exhaust the connection pool.
+//! name, hit or link, many concurrent calls, direct and through the
+//! `/api/v1` and MCP doors, never exhaust the connection pool, a kind named
+//! twice is searched once, a plan's references carry their `url` on both
+//! doors, a merged id counts the survivor's referrers, and a 160-character
+//! name stays within a 390 px page.
 //!
 //! Fixture setup that has no page of its own is plain SQL on the disposable
 //! database, and says so: a retired person, a soft-deleted company, the
@@ -308,6 +311,7 @@ async fn reads(
     for (who, scope, id) in [
         ("admin", admin, "1"),
         ("admin", admin, "01"),
+        ("admin", admin, "61"),
         ("staff (no notes table)", staff, "1"),
     ] {
         let counts = records.referrers(scope, "company", id).await?;
@@ -460,6 +464,22 @@ async fn review(
     }
     let hits = records.search(manager, &["company"], "Company 0").await?;
     println!("   search \"Company 0\": {} hit(s)", hits.len());
+
+    println!("-- a kind named more than once");
+    for copies in [1, 2, 32] {
+        let kinds = vec!["company"; copies];
+        let started = std::time::Instant::now();
+        let hits = records.search(admin, &kinds, "0").await?;
+        let mut distinct: Vec<&str> = hits.iter().map(|h| h.id.as_str()).collect();
+        distinct.sort_unstable();
+        distinct.dedup();
+        println!(
+            "   \"company\" x{copies}: {} hit(s), {} distinct, {} ms",
+            hits.len(),
+            distinct.len(),
+            started.elapsed().as_millis()
+        );
+    }
 
     println!("-- 64 concurrent resolves on a pool of 16 connections");
     let mut running = tokio::task::JoinSet::new();
@@ -863,7 +883,9 @@ async fn main() -> Outcome {
         "UPDATE persons SET retired_at=now() WHERE tenant_id=1 AND id=2;
          UPDATE companies SET deleted_at=now() WHERE tenant_id=1 AND id=62;
          INSERT INTO principal_capabilities(tenant_id,user_id,capability,is_allowed) VALUES(1,2,'admin.company.view',false),(1,2,'admin.company.list',false) ON CONFLICT DO NOTHING;
+         UPDATE companies SET name=rpad('Company 040 Long Name', 160, ' Holdings') WHERE tenant_id=1 AND id=40;
          INSERT INTO records_reference_notes(tenant_id, body, record_kind, record_id) VALUES
+           (1,'About a company with a 160-character name','company','40'),
            (1,'About a retired contact','person','2'),
            (1,'About a removed company','company','62'),
            (1,'About a company later merged','company','61'),
@@ -997,6 +1019,20 @@ async fn main() -> Outcome {
         listed["result"]["notes"][0]["record"]["url"]
     );
 
+    let kinds: Vec<&str> = vec!["company"; 21];
+    let refused = call(
+        addr,
+        &host,
+        &token,
+        "base.records.search",
+        json!({"kinds": kinds, "text": "0"}),
+    )
+    .await?;
+    println!(
+        "   base.records.search with 21 kinds: {}",
+        refused["fields"]["kinds"]
+    );
+
     review(&records, &boundary, &db, &admin, &manager).await?;
 
     println!("-- audit");
@@ -1034,6 +1070,111 @@ async fn main() -> Outcome {
         api: token.clone(),
         mcp: mcp_token(&app, &admin, &origin).await?,
     };
+    println!("-- a plan's record references on both doors");
+    let ops = json!([{"key": "extensions.records_reference.notes.create", "input": {"body": "Plan preview", "record": {"kind": "company", "id": "1"}}}]);
+    let over_api = post(
+        addr,
+        &host,
+        &door.api,
+        "/api/v1/plans",
+        "",
+        json!({"operations": ops}),
+    )
+    .await?;
+    println!(
+        "   /api/v1/plans preview record: path {} url {}",
+        over_api["results"][0]["preview"]["result"]["record"]["path"],
+        over_api["results"][0]["preview"]["result"]["record"]["url"]
+    );
+    let over_mcp = post(
+        addr,
+        &host,
+        &door.mcp,
+        "/mcp",
+        "Accept: application/json, text/event-stream\r\n",
+        json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "plan", "arguments": {"operations": ops}}}),
+    )
+    .await?;
+    let record = &over_mcp["result"]["structuredContent"]["result"]["results"][0]["preview"]
+        ["result"]["record"];
+    let record = if record.is_null() {
+        &over_mcp["result"]["structuredContent"]["results"][0]["preview"]["result"]["record"]
+    } else {
+        record
+    };
+    println!(
+        "   MCP plan preview record: path {} url {}",
+        record["path"], record["url"]
+    );
+    println!("-- a plan refused at commit keeps its references' url on both doors");
+    for (name, mcp, kept, removed) in [("/api/v1", false, "20", "21"), ("MCP", true, "22", "23")] {
+        let ops = json!([
+            {"key": "extensions.records_reference.notes.create", "input": {"body": "Kept", "record": {"kind": "company", "id": kept}}},
+            {"key": "extensions.records_reference.notes.create", "input": {"body": "Removed before commit", "record": {"kind": "company", "id": removed}}},
+        ]);
+        let mcp_call = |tool: &str, arguments: Value| json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": tool, "arguments": arguments}});
+        let mcp_headers = "Accept: application/json, text/event-stream\r\n";
+        let planned = if mcp {
+            post(
+                addr,
+                &host,
+                &door.mcp,
+                "/mcp",
+                mcp_headers,
+                mcp_call("plan", json!({"operations": ops})),
+            )
+            .await?["result"]["structuredContent"]
+                .clone()
+        } else {
+            post(
+                addr,
+                &host,
+                &door.api,
+                "/api/v1/plans",
+                "",
+                json!({"operations": ops}),
+            )
+            .await?
+        };
+        let code = planned["plan_code"].as_str().unwrap_or_default().to_owned();
+        // Fixture setup (plain SQL): the second record goes away before commit.
+        db.get()
+            .await?
+            .execute(
+                "UPDATE companies SET deleted_at=now() WHERE tenant_id=1 AND id=$1",
+                &[&removed.parse::<i64>()?],
+            )
+            .await?;
+        let refused = if mcp {
+            post(
+                addr,
+                &host,
+                &door.mcp,
+                "/mcp",
+                mcp_headers,
+                mcp_call("commit", json!({"plan_code": code, "operations": ops})),
+            )
+            .await?["result"]["structuredContent"]
+                .clone()
+        } else {
+            post(
+                addr,
+                &host,
+                &door.api,
+                "/api/v1/plans/commit",
+                "",
+                json!({"plan_code": code, "operations": ops}),
+            )
+            .await?
+        };
+        println!(
+            "   {name} commit: {} {}; kept preview record path {} url {}",
+            refused["error"],
+            refused["results"][1]["error"],
+            refused["results"][0]["preview"]["result"]["record"]["path"],
+            refused["results"][0]["preview"]["result"]["record"]["url"]
+        );
+    }
     let denied = Door {
         api: agent_token(&app, &db, &manager).await?,
         mcp: mcp_token(&app, &manager, &origin).await?,

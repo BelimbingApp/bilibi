@@ -289,6 +289,22 @@ pub(crate) fn record_urls(origin: &str, value: &mut Value) {
     }
 }
 
+/// An operation, plan or commit answer with `record_urls` applied to its
+/// body, a refusal's too (a rejected plan carries the previews of its other
+/// operations), as `/mcp` does for every tool result.
+fn with_record_urls(app: &App, result: Result<Value, Refusal>) -> Result<Value, Refusal> {
+    match result {
+        Ok(mut answer) => {
+            record_urls(origin(app), &mut answer);
+            Ok(answer)
+        }
+        Err(mut refusal) => {
+            record_urls(origin(app), &mut refusal.body);
+            Err(refusal)
+        }
+    }
+}
+
 pub(crate) fn reply(status: StatusCode, body: Value) -> Response {
     (status, Json(body)).into_response()
 }
@@ -918,11 +934,8 @@ async fn call(State(app): State<App>, Path(key): Path<String>, request: Request)
             .await
             .map_err(api_error)
     }
-    .await
-    .map(|mut answer| {
-        record_urls(origin(&app), &mut answer);
-        answer
-    });
+    .await;
+    let result = with_record_urls(&app, result);
     agent.answer(Some(key), result)
 }
 
@@ -958,6 +971,7 @@ async fn plan(State(app): State<App>, request: Request) -> Response {
             .map_err(api_error)
     }
     .await;
+    let result = with_record_urls(&app, result);
     agent.answer(Some("agent_api.plan".into()), result)
 }
 
@@ -991,5 +1005,6 @@ async fn commit(State(app): State<App>, request: Request) -> Response {
             .map_err(api_error)
     }
     .await;
+    let result = with_record_urls(&app, result);
     agent.answer(Some("agent_api.commit".into()), result)
 }
