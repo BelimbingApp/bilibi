@@ -9,6 +9,8 @@ logging is separate.
 
 The service is `base/integration.exchanges` (`Integration`).
 
+A person's own agent requests are theirs to see without a capability: `own_agent_activity(client, scope, limit)` lists the newest incoming requests recorded under one of the account's agent connections (tenant and user from the scope), `own_agent_last_use` gives each connection's latest request time, and `subscribe_agent_activity` wakes a live panel when `record_incoming` stores a request with a connection id. Both reads use partial indexes over incoming rows with a connection id: `base_integration_exchanges_agent_timeline_idx` lets `own_agent_activity` read its newest rows in order and stop at its limit, and `base_integration_exchanges_agent_activity_idx` serves `own_agent_last_use`, so the status bar's per-page render does not scan the tenant's whole exchange log. The status bar's AI tag (Core Agent Access) is the reader. An operator's view over everyone's exchanges stays `list`, behind `admin.system.outbound-exchange.list`.
+
 ## Outgoing calls: use `send`/`stream`, not `reqwest` directly
 
 ```rust

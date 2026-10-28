@@ -294,7 +294,9 @@ impl UserService {
         if url.len() > 500
             || label.is_empty()
             || label.chars().count() > 150
-            || icon.as_ref().is_some_and(|icon| icon.chars().count() > 100)
+            || icon
+                .as_ref()
+                .is_some_and(|icon| icon.chars().count() > 100 || !bilibi_ui::Icons::is_known(icon))
         {
             return Err(PreferenceError::Invalid);
         }

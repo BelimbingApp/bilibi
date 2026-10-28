@@ -33,7 +33,7 @@ Templates call the shared `ui::icon` macro with the same name. Prefer a semantic
 
 The macro defaults to `size-4` (16 px); pass a size class to change it. If you supply classes without a size, the SVG keeps its natural size. Icons inherit `currentColor`; outline strokes stay at 1.5 units. Busy buttons use the same `arrow-path` SVG with their existing motion class.
 
-`Icons` is the public catalogue facade. Cargo embeds the vendored Heroicons and product SVGs at build time, preserving path fill and clip rules. Semantic action and shell mappings live in `assets/vendor/product-icons/catalog.json`. There are no runtime file reads, CSS masks, icon plugins or icon safelists.
+`Icons` is the public catalogue facade; `Icons::is_known` asks whether a name resolves without the warning. Cargo embeds the vendored Heroicons and product SVGs at build time, preserving path fill and clip rules. Semantic action and shell mappings live in `assets/vendor/product-icons/catalog.json`. There are no runtime file reads, CSS masks, icon plugins or icon safelists.
 
 **An unknown name renders `missing-icon`**, a neutral dashed box in the caller’s size and colour, and logs one warning per name. At boot the host checks every menu contribution and includes its module in the warning; later rendering does not repeat that warning. Multiple contributing modules each get their own diagnostic. Missing icons never stop boot or panic during rendering. Names are exact: a prefixed or misspelled name gets the placeholder.
 
