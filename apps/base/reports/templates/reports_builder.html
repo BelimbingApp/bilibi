@@ -1,0 +1,17 @@
+{#- A report's definition editor (src/web/builder.rs): one data-change form
+    held by the page, in three parts. Fields and buttons are rendered by the
+    shared models and laid out by the shared form macros. -#}
+{%- import "forms.html" as forms -%}
+{% call forms::fields(fields=summary) %}{% endcall %}
+{% call forms::form(id="report-builder", event="edit_definition", change=true, submit_event="save_definition", actions=actions) %}
+{% call forms::section(labelledby="report-builder-about", heading="About") %}{% call forms::fields(fields=about) %}{% endcall %}{% endcall %}
+{% call forms::section(labelledby="report-builder-shape", heading=shape_heading) %}
+{% call forms::fields(fields=wide) %}{% endcall %}
+{% call forms::field_row(fields=shape) %}{% endcall %}
+{% for row in measures %}{% call forms::field_row(fields=row) %}{% endcall %}{% endfor %}
+{% endcall %}
+{% call forms::section(labelledby="report-builder-filters", heading="Filters", description=filters_note) %}
+{% for filter in filters %}{% call forms::field_row(fields=filter.fields, columns=4, id=filter.id) %}{% call forms::control_group(controls=filter.controls) %}{% endcall %}{% endcall %}{% endfor %}
+{% call forms::fields(fields=add_filter) %}{% endcall %}
+{% endcall %}
+{% endcall %}

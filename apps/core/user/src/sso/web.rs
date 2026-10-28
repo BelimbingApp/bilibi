@@ -280,7 +280,7 @@ impl State {
                 }
                 if self.rotate_scim {
                     parts.push(render(&bilibi_ui::ConfirmDialog {
-                        id: "scim-rotate", consequence: "Replace the SCIM token?", detail: "The old token will stop working immediately. Update your identity provider with the new token.", confirm: "Rotate token", confirm_event: "scim-rotate", cancel_event: "scim-cancel-rotate", ..Default::default()
+                        id: "scim-rotate", consequence: "Replace the SCIM token?", detail: "The old token will stop working immediately. Update your identity provider with the new token.", confirm: "Replace token", confirm_event: "scim-rotate", cancel_event: "scim-cancel-rotate", ..Default::default()
                     })?);
                 }
                 if self.revoke_scim {

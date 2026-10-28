@@ -506,9 +506,10 @@ impl LiveState<Scope, Error> for DecisionLogs {
                 LiveInput::Event(value) => {
                     let get = |key: &str| value.get(key).and_then(|v| v.as_str());
                     match get("type") {
-                        Some("filters") => self
-                            .state
-                            .apply_filters(&params::form_values(value, FILTERS_FORM)),
+                        Some("filters") => self.state.apply_filters(
+                            &params::form_values_checked(value, FILTERS_FORM, params::FIELD_LIMIT)
+                                .map_err(Error::refused)?,
+                        ),
                         Some("sort") => {
                             if !self.state.next_sort(get("sort").unwrap_or_default()) {
                                 return Err(Error::Invalid);

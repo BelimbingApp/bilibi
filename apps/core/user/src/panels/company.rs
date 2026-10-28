@@ -209,9 +209,10 @@ impl LiveState<Scope, Error> for CompanyUsers {
                         ListState::parse(values, SPEC.clone()).map_err(|_| Error::Internal)?;
                 }
                 LiveInput::Event(value) => match event(value)? {
-                    "users_filters" => self
-                        .list
-                        .apply_filters(&params::form_values(value, FILTERS_FORM)),
+                    "users_filters" => self.list.apply_filters(
+                        &params::form_values_checked(value, FILTERS_FORM, params::FIELD_LIMIT)
+                            .map_err(Error::refused)?,
+                    ),
                     "users_page" => self
                         .list
                         .put_page(value.get("page").and_then(serde_json::Value::as_str)),
@@ -223,7 +224,10 @@ impl LiveState<Scope, Error> for CompanyUsers {
                                 .unwrap_or(""),
                         );
                     }
-                    "users_grid" => match self.columns.handle(&params::string_values(value)) {
+                    "users_grid" => match self.columns.handle(
+                        &params::string_values_checked(value, params::FIELD_LIMIT)
+                            .map_err(Error::refused)?,
+                    ) {
                         ColumnsOutcome::Sort(column) => {
                             self.list.next_sort(&column);
                         }

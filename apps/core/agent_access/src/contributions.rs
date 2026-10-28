@@ -3,7 +3,7 @@
 use bilibi_audit::{Redaction, REDACTIONS};
 use bilibi_authz::{CapabilityDefinition, VocabularyContribution, VOCABULARY};
 use bilibi_module_registry::{
-    contributions::{Access, Method, Moved, Route, MOVED, ROUTES},
+    contributions::{Access, Embed, EmbedContext, Method, Moved, Route, EMBEDS, MOVED, ROUTES},
     Contribution, Provenance,
 };
 use bilibi_settings::{Definition, Editor, ScopeKind, Setting, ValueType, DEFINITIONS};
@@ -33,7 +33,7 @@ inventory::submit! { Contribution::new(DEFINITIONS, crate::CONNECTION_DAYS, prov
 })) }
 inventory::submit! { Contribution::new(DEFINITIONS, crate::AUTHORIZATION_CODE_SECONDS, provenance!(), &Setting::Definition(Definition {
     value_type: ValueType::Integer, scopes: GLOBAL, default: || json!(120), nullable: false, encrypted: false, minimum: Some(30.0), maximum: Some(600.0), validator: None,
-    editor: Some(Editor { group: "Agent access", label: "OAuth authorization code lifetime", help: "Seconds an app has to use its sign-in code after you approve it.", capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
+    editor: Some(Editor { group: "Agent access", label: "OAuth authorization code lifetime (seconds)", help: "Seconds an app has to use its sign-in code after you approve it.", capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
 })) }
 inventory::submit! { Contribution::new(DEFINITIONS, crate::OAUTH_REQUESTS_PER_MINUTE, provenance!(), &Setting::Definition(Definition {
     value_type: ValueType::Integer, scopes: GLOBAL, default: || json!(60), nullable: false, encrypted: false, minimum: Some(1.0), maximum: Some(10_000.0), validator: None,
@@ -56,6 +56,13 @@ inventory::submit! { Contribution::new(ROUTES, "core/agent_access.authorize", pr
 }) }
 inventory::submit! { Contribution::new(ROUTES, "core/agent_access.connections", provenance!(), &Route {
     method: Method::Get, path: "/settings/ai-connections", service: "core/agent_access.pages", operation: "connections", access: Access::SignedIn, framed: true,
+}) }
+// The status bar's AI tag and its panel (`src/ai_status.rs`). Web renders
+// every `EmbedContext::Shell` embed into the shell and mounts it as the panel
+// `#app-ai`; the panel shows only the signed-in person's own connections and
+// activity, so every signed-in account may see it.
+inventory::submit! { Contribution::new(EMBEDS, "core/agent_access.ai_status", provenance!(), &Embed {
+    slot: "shell.ai", context: EmbedContext::Shell, service: "core/agent_access.pages", operation: "ai_status", access: Access::SignedIn,
 }) }
 // The MCP page and the connections list are one tab. Old addresses keep working.
 inventory::submit! { Contribution::new(MOVED, "core/agent_access.connections.moved", provenance!(), &Moved {

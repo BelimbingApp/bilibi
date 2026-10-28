@@ -159,6 +159,7 @@ pub async fn create(
     let input = validate(input)?;
     let masked = fields(tx.sql(), scope).await?;
     restricted_input(&input, &masked)?;
+    bilibi_company::authorize_target(tx.sql(), scope, input.organisation_id.get(), CREATE).await?;
     lock_owners(tx, scope, &input).await?;
     let tenant = scope.tenant();
     let affiliation = insert(tx, tenant, input).await?;
@@ -169,9 +170,17 @@ async fn lock_existing(
     scope: &Scope,
     id: AffiliationId,
     version: i64,
+    capability: &str,
 ) -> Result<Affiliation> {
     // Endpoints never change, so this unlocked lookup only chooses lock targets.
     let identity = raw(tx.sql(), scope, id, false).await?;
+    bilibi_company::authorize_target(
+        tx.sql(),
+        scope,
+        identity.affiliation.organisation_id.get(),
+        capability,
+    )
+    .await?;
     lock_owners(tx, scope, &identity.affiliation).await?;
     let old = raw(tx.sql(), scope, id, true).await?;
     if version < 1 || old.version != version {
@@ -193,7 +202,7 @@ pub async fn update(
     let mut input = validate(&update.affiliation)?;
     let masked = fields(tx.sql(), scope).await?;
     restricted_input(&input, &masked)?;
-    let old = lock_existing(tx, scope, id, update.version).await?;
+    let old = lock_existing(tx, scope, id, update.version, UPDATE).await?;
     if input.person_id != old.affiliation.person_id
         || input.organisation_id != old.affiliation.organisation_id
     {
@@ -217,7 +226,7 @@ pub async fn end(
 ) -> Result<Affiliation> {
     check_context(tx, scope)?;
     authorize_key(tx.sql(), scope, UPDATE).await?;
-    let old = lock_existing(tx, scope, id, version).await?;
+    let old = lock_existing(tx, scope, id, version, UPDATE).await?;
     let mut input = old.affiliation.clone();
     input.dates =
         EffectiveDates::new(input.dates.from().cloned(), Some(on)).map_err(|_| Error::Invalid)?;
@@ -233,7 +242,7 @@ pub async fn unlink(
 ) -> Result<Affiliation> {
     check_context(tx, scope)?;
     authorize_key(tx.sql(), scope, UNLINK).await?;
-    let old = lock_existing(tx, scope, id, version).await?;
+    let old = lock_existing(tx, scope, id, version, UNLINK).await?;
     let input = old.affiliation.clone();
     let masked = fields(tx.sql(), scope).await?;
     save(tx, scope, old, input, true, masked).await
@@ -442,6 +451,7 @@ pub async fn preview_contact(
 ) -> Result<ContactFacts> {
     authorize_key(client, scope, CREATE).await?;
     let facts = facts.validate()?;
+    bilibi_company::authorize_target(client, scope, facts.organisation_id.get(), CREATE).await?;
     let masked = fields(client, scope).await?;
     if (facts.work_email.is_some() && masked.contains("work_email"))
         || (facts.work_phone.is_some() && masked.contains("work_phone"))
@@ -464,6 +474,13 @@ pub async fn preview_write(
 ) -> Result<Affiliation> {
     authorize_key(client, scope, capability).await?;
     let current = raw(client, scope, id, false).await?;
+    bilibi_company::authorize_target(
+        client,
+        scope,
+        current.affiliation.organisation_id.get(),
+        capability,
+    )
+    .await?;
     if version < 1 || current.version != version {
         return Err(Error::Conflict);
     }

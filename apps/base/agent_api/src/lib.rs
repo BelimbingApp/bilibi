@@ -44,6 +44,42 @@ pub type OperationFuture<'a> = Pin<Box<dyn Future<Output = Result<json::Output>>
 pub trait OperationClient: bilibi_tenancy::ReadClient {}
 impl<T: GenericClient + Sync> OperationClient for T {}
 
+/// The client a read handler gets from [`Registry::call`]: one pooled
+/// connection, taken on the handler's first query and kept until the call
+/// ends. The dispatcher holds none while the handler runs, so a handler whose
+/// facade takes connections of its own (Grid, Base Search, Base Records)
+/// never waits on a pool its own callers have filled.
+struct Pooled<'a> {
+    db: &'a bilibi_database::Db,
+    connection: tokio::sync::OnceCell<deadpool_postgres::Object>,
+}
+impl Pooled<'_> {
+    async fn connection(&self) -> bilibi_database::Result<&deadpool_postgres::Object> {
+        self.connection
+            .get_or_try_init(|| async { Ok(self.db.get().await?) })
+            .await
+    }
+}
+impl bilibi_tenancy::ProofClient for Pooled<'_> {
+    fn query_opt<'a>(
+        &'a self,
+        sql: &'a str,
+        params: &'a [&'a (dyn tokio_postgres::types::ToSql + Sync)],
+    ) -> bilibi_tenancy::ProofFuture<'a, Option<tokio_postgres::Row>> {
+        Box::pin(async move { Ok(self.connection().await?.query_opt(sql, params).await?) })
+    }
+}
+impl bilibi_tenancy::ReadClient for Pooled<'_> {
+    fn query<'a>(
+        &'a self,
+        sql: &'a str,
+        params: &'a [&'a (dyn tokio_postgres::types::ToSql + Sync)],
+    ) -> bilibi_tenancy::ProofFuture<'a, Vec<tokio_postgres::Row>> {
+        Box::pin(async move { Ok(self.connection().await?.query(sql, params).await?) })
+    }
+}
+impl OperationClient for Pooled<'_> {}
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("unknown_operation")]
@@ -621,6 +657,10 @@ impl Registry {
         }
         Ok(json!({"key":guide.key,"title":guide.title,"summary":guide.summary,"body":guide.body}))
     }
+    /// Runs read operation `key` for `scope` on the caller's connection, for
+    /// a caller that already holds one (a walkthrough, a test fixture). A door
+    /// that serves requests uses [`Registry::read`], which holds none while the
+    /// handler runs.
     pub async fn call(
         &self,
         client: &(impl GenericClient + Sync),
@@ -628,23 +668,64 @@ impl Registry {
         key: &str,
         input: &Value,
     ) -> Result<Value> {
+        let op = self.admitted(key, scope, input)?;
+        authorize(client, scope, op.capability).await?;
+        let Handler::Read(handler) = op.handler else {
+            return Err(Error::WritesNotEnabled);
+        };
+        Ok(handler.call(client, scope, input).await?.envelope(key))
+    }
+    /// Runs read operation `key` for `scope` from the pool, as the `/api/v1`,
+    /// MCP and page doors do. The capability check takes a pooled connection
+    /// and returns it; the handler then runs with no connection held here, on
+    /// a client that takes one on first use. A handler whose facade takes
+    /// connections of its own (Grid, Base Search, Base Records) so never
+    /// waits on a pool its own callers have filled.
+    pub async fn read(
+        &self,
+        db: &bilibi_database::Db,
+        scope: &Scope,
+        key: &str,
+        input: &Value,
+    ) -> Result<Value> {
+        let op = self.admitted(key, scope, input)?;
+        {
+            let client = db.get().await.map_err(bilibi_database::Error::from)?;
+            authorize(&**client, scope, op.capability).await?;
+        }
+        let Handler::Read(handler) = op.handler else {
+            return Err(Error::WritesNotEnabled);
+        };
+        let client = Pooled {
+            db,
+            connection: tokio::sync::OnceCell::new(),
+        };
+        Ok(handler.call(&client, scope, input).await?.envelope(key))
+    }
+    /// Operation `key` when `scope`'s channel may call it and `input` fits
+    /// its schema.
+    fn admitted(&self, key: &str, scope: &Scope, input: &Value) -> Result<&'static Operation> {
         let registered = self.operations.get(key).ok_or(Error::UnknownOperation)?;
         let op = registered.definition;
         if !op.channels.allows(scope.channel()) {
             return Err(Error::ChannelNotAllowed);
         }
         schema::validate(&registered.input, input).map_err(Error::InvalidInput)?;
-        bilibi_authz::authorize_key(client, scope, op.capability)
-            .await
-            .map_err(|error| match error {
-                bilibi_database::Error::Forbidden => Error::Forbidden,
-                other => Error::Backend(other),
-            })?;
-        match op.handler {
-            Handler::Read(handler) => Ok(handler.call(client, scope, input).await?.envelope(key)),
-            _ => Err(Error::WritesNotEnabled),
-        }
+        Ok(op)
     }
+}
+/// The operation's capability for `scope`, as a read refuses it.
+async fn authorize(
+    client: &(impl GenericClient + Sync),
+    scope: &Scope,
+    capability: &str,
+) -> Result<()> {
+    bilibi_authz::authorize_key(client, scope, capability)
+        .await
+        .map_err(|error| match error {
+            bilibi_database::Error::Forbidden => Error::Forbidden,
+            other => Error::Backend(other),
+        })
 }
 inventory::submit! { Consumer::new::<Definitions>(DEFINITIONS,"base/agent_api",|entries|Registry::from_entries(entries).map(|_|())) }
 inventory::submit! { Consumer::new::<App>(APPS,"base/agent_api",Registry::validate_apps) }

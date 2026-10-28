@@ -220,7 +220,7 @@ impl Setup {
                     Ok(_) => {
                         self.flash.put(
                             StatusKind::Success,
-                            "Platform-operator primary company designated successfully.",
+                            "Platform-operator primary company designated.",
                         );
                         return Ok(Some(format!("/companies/{id}")));
                     }
@@ -280,7 +280,7 @@ impl Setup {
                     Ok(CreateOutcome::Created(company)) => {
                         self.flash.put(
                             StatusKind::Success,
-                            "Platform-operator primary company created successfully.",
+                            "Platform-operator primary company created.",
                         );
                         return Ok(Some(format!("/companies/{}", company.id)));
                     }

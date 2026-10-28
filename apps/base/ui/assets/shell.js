@@ -73,9 +73,11 @@
       document.removeEventListener('keydown', this.onKey);
     }
 
-    // The bell's dropdown is Core's `shell.notifications` embed; its contents
-    // follow the server while open/closed stays here, like the other panels.
-    panels() { return [...this.root.querySelectorAll('[data-account-panel], [data-timezone-panel], [data-notifications-panel]')]; }
+    // The bell's dropdown is Core's `shell.notifications` embed and a status
+    // bar tag's panel (`data-statusbar-panel`, Core's `shell.ai`) is another;
+    // their contents follow the server while open/closed stays here, like
+    // the other panels.
+    panels() { return [...this.root.querySelectorAll('[data-account-panel], [data-timezone-panel], [data-notifications-panel], [data-statusbar-panel]')]; }
     openPanel() { return this.panels().find((panel) => panel.id === this.openPanelId) || null; }
     trigger(panel) { return this.root.querySelector(`[aria-controls="${panel.id}"]`); }
     close(panel, restore = false) {
@@ -98,7 +100,7 @@
     click(event) {
       const button = event.target.closest('button');
       if (button && this.root.contains(button)) {
-        if (button.matches('[data-account-toggle], [data-timezone-toggle], [data-notifications-toggle]')) {
+        if (button.matches('[data-account-toggle], [data-timezone-toggle], [data-notifications-toggle], [data-statusbar-toggle]')) {
           this.toggle(button);
           return;
         }
@@ -811,15 +813,17 @@
     pinFromControl(control) {
       // A record page supplies its own resolved label and same-origin path;
       // the server still validates the destination on /api/pins/toggle.
+      // Either names its icon, which the server keeps with the pin, so the
+      // bar can draw it when the page has no sidebar row.
       if (control.dataset.navPinRecord === 'true') {
         const url = this.normalizePinnedUrl(control.dataset.navPinUrl);
         const label = control.dataset.navPinLabel;
-        return url && label ? {label, url, icon: null} : null;
+        return url && label ? {label, url, icon: control.dataset.navPinIcon || null} : null;
       }
       const item = this.navItem(control.dataset.navPin);
       const url = this.normalizePinnedUrl(item?.getAttribute('href'));
       const label = item?.dataset.navLabel;
-      return url && label ? {label, url, icon: null} : null;
+      return url && label ? {label, url, icon: item.dataset.navIcon || null} : null;
     },
 
     // Pin or unpin a page. The server answers with the account's pins, which
@@ -901,7 +905,22 @@
 
     resolvePinnedItem(pin) {
       if (!this.isServedUrl(pin.url)) return null;
-      return {key: this.pinnedItemKey(pin), pin, item: this.navItemForUrl(pin.url), label: pin.label, url: pin.url};
+      const item = this.navItemForUrl(pin.url);
+      return {key: this.pinnedItemKey(pin), pin, item, icon: this.pinnedIcon(pin, item), label: pin.label, url: pin.url};
+    },
+
+    // The glyph drawn before a pin's label: its sidebar row's icon, else the
+    // `<template data-pin-icon>` the shell or the page's pin control rendered
+    // for the icon name the pin was stored with. A pin with neither shows
+    // its label alone.
+    pinnedIcon(pin, item) {
+      const fromSidebar = item?.querySelector('.app-nav-icon');
+      if (fromSidebar) return fromSidebar.cloneNode(true);
+      if (!pin.icon) return null;
+      for (const template of document.querySelectorAll('template[data-pin-icon]')) {
+        if (template.dataset.pinIcon === pin.icon) return template.content.firstElementChild?.cloneNode(true) ?? null;
+      }
+      return null;
     },
 
     pinnedRow(event) {
@@ -981,8 +1000,8 @@
       const items = this.pinnedEntries.map((pin) => this.resolvePinnedItem(pin)).filter(Boolean);
       // Rebuilding is a child-list mutation that ui.js reports as `updated`,
       // which calls back here: rebuild only when the drawn pins change.
-      const drawn = JSON.stringify([this.impersonating, items.map(({key, label, url, item}) => [
-        key, label, url, item?.querySelector('.app-nav-icon')?.outerHTML ?? null,
+      const drawn = JSON.stringify([this.impersonating, items.map(({key, label, url, icon}) => [
+        key, label, url, icon?.outerHTML ?? null,
       ])]);
       if (drawn !== this.drawnPins || this.pinnedItems.childElementCount !== items.length) {
         this.drawnPins = drawn;
@@ -1003,7 +1022,7 @@
 
     rebuildPinnedItems(items) {
       this.pinnedItems.replaceChildren();
-      for (const {key, item, label: pinLabel, url} of items) {
+      for (const {key, icon, label: pinLabel, url} of items) {
         const row = document.createElement('div');
         row.className = 'app-pinned-row group flex min-w-0 items-center rounded-sm lg:shrink-0';
         row.dataset.pinnedItem = key;
@@ -1012,10 +1031,11 @@
         const link = document.createElement('a');
         link.href = url;
         link.className = 'app-pinned-link flex min-w-0 flex-1 items-center rounded-sm px-1 py-0 text-sm font-normal text-link transition hover:bg-surface-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-strong';
-        const icon = item?.querySelector('.app-nav-icon')?.cloneNode(true);
         if (icon) link.append(icon);
         const label = document.createElement('span');
-        label.className = ['app-nav-label app-pinned-label min-w-0 truncate', item && 'ml-1.5'].filter(Boolean).join(' ');
+        // One spacing step tighter than Bilimbi's ml-1.5: the bar's icons
+        // read as part of the label at this size.
+        label.className = ['app-nav-label app-pinned-label min-w-0 truncate', icon && 'ml-1'].filter(Boolean).join(' ');
         label.textContent = pinLabel;
         link.append(label);
 

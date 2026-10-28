@@ -476,6 +476,7 @@ pub(crate) fn server_fault(error: &Error) -> bool {
             | Error::Forbidden
             | Error::NotFound
             | Error::Invalid
+            | Error::Refused(_)
             | Error::Conflict
             | Error::StepUpRequired { .. }
     )

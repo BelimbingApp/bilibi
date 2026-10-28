@@ -33,7 +33,7 @@ Templates call the shared `ui::icon` macro with the same name. Prefer a semantic
 
 The macro defaults to `size-4` (16 px); pass a size class to change it. If you supply classes without a size, the SVG keeps its natural size. Icons inherit `currentColor`; outline strokes stay at 1.5 units. Busy buttons use the same `arrow-path` SVG with their existing motion class.
 
-`Icons` is the public catalogue facade. Cargo embeds the vendored Heroicons and product SVGs at build time, preserving path fill and clip rules. Semantic action and shell mappings live in `assets/vendor/product-icons/catalog.json`. There are no runtime file reads, CSS masks, icon plugins or icon safelists.
+`Icons` is the public catalogue facade; `Icons::is_known` asks whether a name resolves without the warning. Cargo embeds the vendored Heroicons and product SVGs at build time, preserving path fill and clip rules. Semantic action and shell mappings live in `assets/vendor/product-icons/catalog.json`. There are no runtime file reads, CSS masks, icon plugins or icon safelists.
 
 **An unknown name renders `missing-icon`**, a neutral dashed box in the caller’s size and colour, and logs one warning per name. At boot the host checks every menu contribution and includes its module in the warning; later rendering does not repeat that warning. Multiple contributing modules each get their own diagnostic. Missing icons never stop boot or panic during rendering. Names are exact: a prefixed or misspelled name gets the placeholder.
 
@@ -48,6 +48,7 @@ Theme and time-display saves use the shared flash UI through `feedback::local_fl
 - Match each field's `maxlength` to its owner's validation. Character limits are not byte limits: CJK commonly needs three UTF-8 bytes per character, and JSON escaping can need six bytes per UTF-16 code unit.
 - Budget the whole form: all field names, values, selected arrays, hidden values and transport metadata. Leave headroom below `bilibi_ui::LIVE_EVENT_LIMIT`; two 10,000-character fields fit even when every code unit needs escaping.
 - Existing Platform declarations, including Address's 10,000-character raw input, fit this budget. New repeating forms must bound their total content as well as each field. Use the shared file uploader for larger documents; never put file bytes into JSON.
+- **A field's text limit belongs to its owner; read posted text with the checked extractors.** `params::form_values_checked(payload, form, limit)` and `params::string_values_checked(payload, limit)` return `Result<_, params::TooLong>`: a string over `limit` characters is an error, not an empty field. Pass `params::FIELD_LIMIT` (1,024) unless the owner allows more (Address 10,000, a saved query 100,000). Refuse the event with `.map_err(Error::refused)?` (`bilibi_database::Error::Refused`, shown as its message, nothing cleared) and the browser keeps the draft; the owner's validation still reports each field's own, shorter limit on the field. `params::form_values` and `params::string_values` keep their old signatures and silently drop a string over 1 KiB; they are deprecated, so move to the checked ones. `PeriodFilter::event` is deprecated the same way; use `event_checked`. Code that reads `payload` keys directly keeps its own limits.
 - Keep using `Form`, `Field` and the shared adapter. Forms, change events, hooks and mounted panels receive the same protection without a module-owned size check or script.
 
 The constants and refusal copy live in [`src/live_transport.rs`](src/live_transport.rs). [Live pages](../../../docs/live-pages.md#transport) defines the server's additional socket cap and reconnect behaviour.
@@ -111,6 +112,10 @@ let clock_in = LocationAction::new("clock-in", "clock", "Clock in")
 ```
 
 Render with `Html::render(&clock_in)` or `forms::location_action(control=clock_in)`. On click the button shows "Finding your location…" while the browser locates, then raises `clock` with `clock_type`, `latitude`, `longitude` and `accuracy`, or with `outcome` `permission_denied`, `unavailable` or `insecure_context`. Decode the event with `LocationReport::from_event` and show `LocationReport::refusal` for a report without a position, adding what the person can do instead on that page. The contract is in [`docs/live-pages.md`](../../../docs/live-pages.md#browser-location); the Design Library's Browser location card is the running specimen.
+
+## Record references
+
+`RelatedRecord` (a named pill through `RecordLink`, or unavailable) and `RecordPicker` (a server-driven type-ahead inside the owner's live `Form`) show and choose a reference to another module's record. Base Records resolves names and hits with the reader's permissions; this crate only draws them: [`../records/README.md`](../records/README.md).
 
 ## Where to go next
 

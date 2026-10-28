@@ -282,7 +282,7 @@ impl PersonAccounts {
         let dialog = match &self.pending_unlink {
             Some(user) => render(&ConfirmDialog {
                 id: &self.dom("unlink-confirm"),
-                consequence: &format!("{} will no longer sign in as {}.", user.name, person.name),
+                consequence: &format!("{} will be unlinked from {}.", user.name, person.name),
                 detail: "The account is kept and can be linked again. It then signs in with no company, and its open sessions end.",
                 confirm: "Unlink",
                 working: "Unlinking…",
@@ -339,7 +339,10 @@ impl PersonAccounts {
                     .and_then(serde_json::Value::as_str)
                     .unwrap_or(""),
             ),
-            "accounts_grid" => match self.columns.handle(&params::string_values(value)) {
+            "accounts_grid" => match self.columns.handle(
+                &params::string_values_checked(value, params::FIELD_LIMIT)
+                    .map_err(Error::refused)?,
+            ) {
                 ColumnsOutcome::Sort(column) => self.next_sort(&column),
                 ColumnsOutcome::Update | ColumnsOutcome::Noop => self.rows_changed = false,
             },

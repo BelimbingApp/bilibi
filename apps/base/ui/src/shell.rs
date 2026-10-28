@@ -121,11 +121,19 @@ pub struct ShellContext<'a> {
     pub navigation: Html,
     /// Core owns the bell. This slot permits its later embedded live panel.
     pub notifications: Html,
+    /// The status bar's centre: the AI tag and its panel, Core Agent Access's
+    /// `shell.ai` embed (`StatusbarTag`), empty when no module contributes it.
+    pub ai: Html,
     pub home: &'a str,
     pub served_routes: String,
     /// The account's pins as JSON (`[{id,label,url,icon,sort_order}]`), already
     /// limited to pages this deployment serves.
     pub pins: String,
+    /// The distinct icon names of those pins. The shell renders each as a
+    /// `<template data-pin-icon>` glyph, so `assets/shell.js` can draw a pin
+    /// whose page has no sidebar row (a record page) with the icon it was
+    /// pinned with.
+    pub pin_icons: Vec<String>,
     /// The shared role-based top-bar reminder (Staging only).
     pub instance: Html,
     pub instance_title: String,

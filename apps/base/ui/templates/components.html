@@ -45,11 +45,11 @@ ui-icon-button grid shrink-0 place-items-center transition focus-visible:outline
 
 {#- Compact icon-only action; label is the accessible name and default tooltip.
     A link with a method is a submitting action (Bilimbi `href` + `method="post"`), sent by ui.js with the CSRF token. -#}
-{% macro icon_button(icon, label, context=bilibi_ui::IconContext::Table, kind=bilibi_ui::IconKind::Neutral, chrome=bilibi_ui::Chrome::Utilities, busy=false, disabled=false, class="", id="", href="", title="", button_type="button", event="", name="", value="", draggable=false, data_role="", nav_pin="", record_label="", record_url="", method="") %}
+{% macro icon_button(icon, label, context=bilibi_ui::IconContext::Table, kind=bilibi_ui::IconKind::Neutral, chrome=bilibi_ui::Chrome::Utilities, busy=false, disabled=false, class="", id="", href="", title="", button_type="button", event="", name="", value="", draggable=false, data_role="", nav_pin="", record_label="", record_url="", record_icon="", method="") %}
 {%- if !href.is_empty() -%}
 <a href="{{ href }}"{% if !method.is_empty() %} data-method="{{ method }}" data-to="{{ href }}"{% endif %}{% if !id.is_empty() %} id="{{ id }}"{% endif %} aria-label="{{ label }}" title="{% if title.is_empty() %}{{ label }}{% else %}{{ title }}{% endif %}" class="{% call icon_button_class(context=context, kind=kind, chrome=chrome, busy=false, class=class) %}{% endcall %}">{% call icon(name=icon, class=context.icon_class()) %}{% endcall %}</a>
 {%- else -%}
-<button type="{% if button_type.is_empty() %}button{% else %}{{ button_type }}{% endif %}"{% if !id.is_empty() %} id="{{ id }}"{% endif %} aria-label="{{ label }}"{% if busy %} aria-busy="true"{% endif %} title="{% if title.is_empty() %}{{ label }}{% else %}{{ title }}{% endif %}" class="{% call icon_button_class(context=context, kind=kind, chrome=chrome, busy=busy, class=class) %}{% endcall %}"{% if busy || disabled %} disabled{% endif %}{% if !name.is_empty() %} name="{{ name }}"{% endif %}{% if !value.is_empty() %} value="{{ value }}"{% endif %}{% if draggable %} draggable="true"{% endif %}{% if !data_role.is_empty() %} data-role="{{ data_role }}"{% endif %}{% if !nav_pin.is_empty() %} data-nav-pin="{{ nav_pin }}" aria-pressed="false"{% endif %}{% if !record_url.is_empty() %} data-nav-pin-record="true" data-nav-pin-label="{{ record_label }}" data-nav-pin-url="{{ record_url }}"{% endif %}{% if !event.is_empty() %} data-event="{{ event }}"{% endif %}>{% if busy %}{% call icon(name="arrow-path", class=context.spinner_class()) %}{% endcall %}{% else %}{% call icon(name=icon, class=context.icon_class()) %}{% endcall %}{% endif %}</button>
+<button type="{% if button_type.is_empty() %}button{% else %}{{ button_type }}{% endif %}"{% if !id.is_empty() %} id="{{ id }}"{% endif %} aria-label="{{ label }}"{% if busy %} aria-busy="true"{% endif %} title="{% if title.is_empty() %}{{ label }}{% else %}{{ title }}{% endif %}" class="{% call icon_button_class(context=context, kind=kind, chrome=chrome, busy=busy, class=class) %}{% endcall %}"{% if busy || disabled %} disabled{% endif %}{% if !name.is_empty() %} name="{{ name }}"{% endif %}{% if !value.is_empty() %} value="{{ value }}"{% endif %}{% if draggable %} draggable="true"{% endif %}{% if !data_role.is_empty() %} data-role="{{ data_role }}"{% endif %}{% if !nav_pin.is_empty() %} data-nav-pin="{{ nav_pin }}" aria-pressed="false"{% endif %}{% if !record_url.is_empty() %} data-nav-pin-record="true" data-nav-pin-label="{{ record_label }}" data-nav-pin-url="{{ record_url }}"{% endif %}{% if !record_icon.is_empty() %} data-nav-pin-icon="{{ record_icon }}"{% endif %}{% if !event.is_empty() %} data-event="{{ event }}"{% endif %}>{% if busy %}{% call icon(name="arrow-path", class=context.spinner_class()) %}{% endcall %}{% else %}{% call icon(name=icon, class=context.icon_class()) %}{% endcall %}{% endif %}</button>{% if !record_icon.is_empty() %}<template data-pin-icon="{{ record_icon }}">{% call icon(name=record_icon, class="app-nav-icon size-[1.125rem] shrink-0") %}{% endcall %}</template>{% endif %}
 {%- endif -%}
 {% endmacro %}
 
@@ -84,6 +84,32 @@ ui-icon-button grid shrink-0 place-items-center transition focus-visible:outline
 {#- Heading row of one section on a detail page; count=Some(n) adds a badge. -#}
 {% macro section_heading(title, id="", count=bilibi_ui::NO_COUNT, class="", title_actions=bilibi_ui::Html::EMPTY, description="", description_html=bilibi_ui::Html::EMPTY, actions=bilibi_ui::Html::EMPTY) %}
 <div class="mb-3 flex items-start justify-between gap-3{% if !class.is_empty() %} {{ class }}{% endif %}"><div class="min-w-0"><div class="flex items-center gap-2"><h2{% if !id.is_empty() %} id="{{ id }}"{% endif %} class="text-xs font-semibold uppercase tracking-wider text-ink-subtle">{{ title }}</h2>{% if let Some(count) = count %}{% call badge() %}{{ count }}{% endcall %}{% endif %}{{ title_actions|safe }}</div>{% if !description_html.is_empty() %}<div class="mt-0.5 text-xs text-ink-subtle">{{ description_html|safe }}</div>{% elif !description.is_empty() %}<div class="mt-0.5 text-xs text-ink-subtle">{{ description }}</div>{% endif %}</div>{% if !actions.is_empty() %}<div class="flex shrink-0 items-center gap-2">{{ actions|safe }}</div>{% endif %}</div>
+{% endmacro %}
+
+{#- Fragments the shared models rendered (a notice, a chart, a table),
+    stacked a compact step apart, or a section step apart when wide; no
+    Bilimbi counterpart. -#}
+{% macro stack(parts, wide=false) %}
+<div class="{% if wide %}space-y-4{% else %}space-y-2{% endif %}">{% for part in parts %}{{ part|safe }}{% endfor %}</div>
+{% endmacro %}
+
+{#- Fragments on one wrapping line (a page header's several actions); no
+    Bilimbi counterpart. -#}
+{% macro cluster(parts) %}
+<div class="flex flex-wrap items-center gap-2">{% for part in parts %}{{ part|safe }}{% endfor %}</div>
+{% endmacro %}
+
+{#- What a view is narrowed to (no Bilimbi counterpart): a lead word, then
+    its parts (removable labels, a way back), as one labelled strip. -#}
+{% macro narrowing(id, label, lead, parts) %}
+<nav id="{{ id }}" aria-label="{{ label }}" class="flex flex-wrap items-center gap-2"><span class="text-sm text-ink-muted">{{ lead }}</span>{% for part in parts %}{{ part|safe }}{% endfor %}</nav>
+{% endmacro %}
+
+{#- A value as text with the one control that acts on it (removes it, opens
+    what is behind it), on one line; no Bilimbi counterpart. Data keeps its
+    own spelling, which a badge would capitalise. -#}
+{% macro removable(label, button, strong=false) %}
+<span class="inline-flex items-center gap-1{% if strong %} text-sm font-medium text-ink{% endif %}">{{ label }}{{ button|safe }}</span>
 {% endmacro %}
 
 {#- Card with a subtle border; inner_class "p-0" is the flat full-bleed table frame.
@@ -121,7 +147,7 @@ ui-icon-button grid shrink-0 place-items-center transition focus-visible:outline
     or preformatted value takes the whole row. Unbroken identifiers wrap
     within the cell without changing the text a person copies. -#}
 {% macro fact(title, id="") %}
-<div data-fact class="relative min-w-0 rounded-md has-[pre,[data-hook=InlineLongText]]:col-span-full"><dt class="pointer-events-none absolute left-3 top-1 z-[1] max-w-[calc(100%-1.5rem)] truncate text-[0.6875rem] font-medium leading-3 text-ink-muted">{{ title }}</dt><dd{% if !id.is_empty() %} id="{{ id }}"{% endif %} class="min-h-10 min-w-0 border border-transparent px-3 pt-[0.9375rem] pb-[0.1875rem] text-base leading-5 text-ink wrap-anywhere max-sm:text-[1rem]">{{ caller() }}</dd></div>
+<div data-fact class="relative min-w-0 rounded-md has-[pre,[data-hook=InlineLongText]]:col-span-full"><dt class="pointer-events-none absolute left-3 top-1 z-[1] max-w-[calc(100%-1.5rem)] truncate text-[0.6875rem] font-medium leading-3 text-ink-muted">{{ title }}</dt><dd{% if !id.is_empty() %} id="{{ id }}"{% endif %} class="min-h-10 min-w-0 border border-transparent px-3 pt-[0.9375rem] pb-[0.1875rem] text-base leading-5 text-ink wrap-anywhere">{{ caller() }}</dd></div>
 {% endmacro %}
 
 {#- Compact strip of statistics (items: &[StatItem]); href makes the strip a quiet link. -#}

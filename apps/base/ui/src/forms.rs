@@ -48,7 +48,7 @@ pub fn translate_error(template: &str, bindings: &[(&str, &str)]) -> String {
 /// horizontal padding; the list toolbar's search box makes room for its icon.
 pub fn field_base_class(readonly: bool, padding: &str) -> String {
     format!(
-        "ui-field block min-h-control w-full rounded-md border {padding} py-1.5 text-base leading-5 max-sm:text-[1rem] text-ink shadow-xs \
+        "ui-field block min-h-control w-full rounded-md border {padding} py-1.5 text-base leading-5 text-ink shadow-xs \
          transition placeholder:text-ink-faint focus:border-brand-strong focus:outline-none \
          focus:ring-2 focus:ring-brand-strong/30 disabled:cursor-not-allowed \
          disabled:bg-surface-sunken disabled:text-ink-subtle {}",
@@ -98,7 +98,7 @@ pub fn field_class(class: &str, errors: &[String], extra: &str, readonly: bool) 
 pub fn field_inset_class(readonly: bool, textarea: bool, prompt: bool) -> String {
     format!(
         "peer block w-full rounded-md border px-3 text-base leading-5 text-ink \
-         shadow-xs transition max-sm:text-[1rem] {} focus:border-brand-strong focus:outline-none \
+         shadow-xs transition {} focus:border-brand-strong focus:outline-none \
          focus:ring-2 focus:ring-brand-strong/30 disabled:cursor-not-allowed \
          disabled:bg-surface-sunken disabled:text-ink-subtle {} {}",
         if prompt {
@@ -282,6 +282,10 @@ impl InputKind {
 pub struct Choice {
     pub label: String,
     pub value: String,
+    /// A code that follows the name (an account's number), drawn muted and
+    /// italic by a combobox in the box and in the list, and searched like
+    /// the name. A native select ignores it.
+    pub detail: String,
 }
 
 impl Choice {
@@ -289,6 +293,22 @@ impl Choice {
         Self {
             label: label.into(),
             value: value.into(),
+            detail: String::new(),
+        }
+    }
+
+    pub fn detail(mut self, detail: impl Into<String>) -> Self {
+        self.detail = detail.into();
+        self
+    }
+
+    /// The name and the code as one plain string: what a screen reader
+    /// reads, and what the combobox filters on.
+    pub fn text(&self) -> String {
+        if self.detail.is_empty() {
+            self.label.clone()
+        } else {
+            format!("{} {}", self.label, self.detail)
         }
     }
 }
@@ -1280,12 +1300,24 @@ impl Combobox {
         }
     }
 
-    pub fn selected_label(&self) -> &str {
+    pub fn selected(&self) -> Option<&Choice> {
         self.options
             .iter()
             .find(|option| option.value == self.value)
-            .map(|option| option.label.as_str())
-            .unwrap_or("")
+    }
+
+    pub fn selected_label(&self) -> String {
+        self.selected().map(Choice::text).unwrap_or_default()
+    }
+
+    pub fn selected_name(&self) -> &str {
+        self.selected().map_or("", |option| option.label.as_str())
+    }
+
+    /// The code of the selected option, which the box draws muted and italic
+    /// over its plain text while the field is not being edited.
+    pub fn selected_detail(&self) -> &str {
+        self.selected().map_or("", |option| option.detail.as_str())
     }
 
     pub fn control_class(&self) -> String {

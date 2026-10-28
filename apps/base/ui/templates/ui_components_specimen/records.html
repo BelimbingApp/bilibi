@@ -23,6 +23,10 @@
 </div>
 {% endcall %}
 </div>
+{% call ui::card(id="specimen-related", title="Record references", inner_class="space-y-3 p-4") %}
+<p class="text-xs text-ink-muted">A named pill and an unavailable one, then the record picker with hits and with a choice</p>
+{{ related }}
+{% endcall %}
 {% call ui::card(id="specimen-stat-strip", title="Statistics", inner_class="space-y-4 p-4") %}
 <div><p class="mb-2 text-xs text-ink-muted">Linked strip with multiple numeric values</p>
 {% call ui::stat_strip(id="specimen-stat-linked", title="Workspace", href="/system/design-library/components", items=stats_linked) %}{% endcall %}

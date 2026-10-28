@@ -5,6 +5,7 @@ mod directory;
 mod files;
 mod identity;
 mod model;
+mod records;
 mod step_up;
 mod web;
 
