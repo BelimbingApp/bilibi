@@ -73,6 +73,11 @@
     retryTimer = null;
     const url = new URL('/live', location.href);
     if (document.querySelector('[data-framed=true]')) url.searchParams.set('framed', 'true');
+    // The company this page was rendered under (the shell's `data-company-id`,
+    // empty for none): the socket binds to it, so a reconnect after the
+    // session switched company reloads the page instead of re-rendering the
+    // live region under a top bar that still names the old company.
+    url.searchParams.set('company', document.getElementById('app-shell')?.dataset.companyId ?? '');
     url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     socket = new WebSocket(url);
     socket.onopen = opened;

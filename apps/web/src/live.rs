@@ -121,6 +121,19 @@ impl Identity {
             csrf: scope.csrf.clone(),
         }
     }
+    /// The identity a page was rendered under: the proven session's account,
+    /// operator and secret, with the company the page stamped on its shell
+    /// (`data-company-id`, sent by `live.js` when it opens the socket) in
+    /// place of the session's company now. The stamp narrows, never widens:
+    /// every event still acts on the session's own scope, and a stamp that no
+    /// longer matches it only makes the first event refuse and reload the
+    /// page, which is what a reconnect after a switch needs.
+    pub fn rendered(scope: &Scope, company: Option<i64>) -> Self {
+        Self {
+            company,
+            ..Self::of(scope)
+        }
+    }
 }
 
 struct Wake {

@@ -164,6 +164,10 @@ pub struct ShellContext<'a> {
     /// The company the session works in (`Scope::current_company`): the chosen one,
     /// else the affiliation's; `None` reads "No company".
     pub current_company: Option<String>,
+    /// Its id, stamped on the shell root as `data-company-id` so the live
+    /// socket binds to the company this page was rendered under
+    /// (`assets/live.js` sends it when it opens `/live`).
+    pub company_id: Option<i64>,
     /// The account's own company through its affiliation, only when it is
     /// not the one the session works in, so the account menu can name both.
     pub own_company: Option<String>,
@@ -316,5 +320,8 @@ pub struct Framed<'a> {
     pub live: bool,
     pub tenant_id: i64,
     pub user_id: i64,
+    /// The company the page was rendered under (`data-company-id`), as the
+    /// full shell stamps it.
+    pub company_id: Option<i64>,
     pub preferences: &'a DisplayPreferences,
 }

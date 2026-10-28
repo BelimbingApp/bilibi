@@ -58,6 +58,7 @@ pub async fn render(
             live,
             tenant_id: scope.map_or(0, Scope::tenant),
             user_id: scope.map_or(0, Scope::user),
+            company_id: scope.and_then(|scope| scope.current_company().map(|id| id.get())),
             preferences: &preferences,
         }
         .render()
@@ -239,6 +240,7 @@ async fn context<'a>(
         tenant_id: scope.tenant(),
         user_id: scope.user(),
         current_company,
+        company_id: scope.current_company().map(|id| id.get()),
         own_company,
         company_bar,
         platform_operator,
