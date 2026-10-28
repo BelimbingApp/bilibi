@@ -897,9 +897,16 @@ body:has(dialog:modal) #flash-group > #connection-server-error {
   position: absolute;
   inset: 1px 2.25rem 1px calc(0.75rem + 1px);
   align-items: center;
-  font-size: 1rem;
+  /* The size of the input's own text (`text-base`, 1rem on a phone). */
+  font-size: var(--text-base);
   line-height: 1.25rem;
   color: var(--color-ink);
+}
+
+@media (width < 40rem) {
+  .ui-combobox-display {
+    font-size: 1rem;
+  }
 }
 
 .ui-combobox-display.ui-combobox-display-inset {
