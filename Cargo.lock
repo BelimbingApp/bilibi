@@ -363,6 +363,7 @@ dependencies = [
  "bilibi-tenancy",
  "bilibi-walkthrough-fixture",
  "bilibi-web",
+ "deadpool-postgres",
  "inventory",
  "jiff",
  "serde",

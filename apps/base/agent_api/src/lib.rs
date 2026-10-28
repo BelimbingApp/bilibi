@@ -42,6 +42,42 @@ pub type OperationFuture<'a> = Pin<Box<dyn Future<Output = Result<json::Output>>
 pub trait OperationClient: bilibi_tenancy::ReadClient {}
 impl<T: GenericClient + Sync> OperationClient for T {}
 
+/// The client a read handler gets from [`Registry::call`]: one pooled
+/// connection, taken on the handler's first query and kept until the call
+/// ends. The dispatcher holds none while the handler runs, so a handler whose
+/// facade takes connections of its own (Grid, Base Search, Base Records)
+/// never waits on a pool its own callers have filled.
+struct Pooled<'a> {
+    db: &'a bilibi_database::Db,
+    connection: tokio::sync::OnceCell<deadpool_postgres::Object>,
+}
+impl Pooled<'_> {
+    async fn connection(&self) -> bilibi_database::Result<&deadpool_postgres::Object> {
+        self.connection
+            .get_or_try_init(|| async { Ok(self.db.get().await?) })
+            .await
+    }
+}
+impl bilibi_tenancy::ProofClient for Pooled<'_> {
+    fn query_opt<'a>(
+        &'a self,
+        sql: &'a str,
+        params: &'a [&'a (dyn tokio_postgres::types::ToSql + Sync)],
+    ) -> bilibi_tenancy::ProofFuture<'a, Option<tokio_postgres::Row>> {
+        Box::pin(async move { Ok(self.connection().await?.query_opt(sql, params).await?) })
+    }
+}
+impl bilibi_tenancy::ReadClient for Pooled<'_> {
+    fn query<'a>(
+        &'a self,
+        sql: &'a str,
+        params: &'a [&'a (dyn tokio_postgres::types::ToSql + Sync)],
+    ) -> bilibi_tenancy::ProofFuture<'a, Vec<tokio_postgres::Row>> {
+        Box::pin(async move { Ok(self.connection().await?.query(sql, params).await?) })
+    }
+}
+impl OperationClient for Pooled<'_> {}
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("unknown_operation")]
@@ -619,9 +655,12 @@ impl Registry {
         }
         Ok(json!({"key":guide.key,"title":guide.title,"summary":guide.summary,"body":guide.body}))
     }
+    /// Runs read operation `key` for `scope`. The capability check takes a
+    /// pooled connection and returns it; the handler then runs with no
+    /// connection held here, on a client that takes one on first use.
     pub async fn call(
         &self,
-        client: &(impl GenericClient + Sync),
+        db: &bilibi_database::Db,
         scope: &Scope,
         key: &str,
         input: &Value,
@@ -632,14 +671,23 @@ impl Registry {
             return Err(Error::ChannelNotAllowed);
         }
         schema::validate(&registered.input, input).map_err(Error::InvalidInput)?;
-        bilibi_authz::authorize_key(client, scope, op.capability)
-            .await
-            .map_err(|error| match error {
-                bilibi_database::Error::Forbidden => Error::Forbidden,
-                other => Error::Backend(other),
-            })?;
+        {
+            let client = db.get().await.map_err(bilibi_database::Error::from)?;
+            bilibi_authz::authorize_key(&**client, scope, op.capability)
+                .await
+                .map_err(|error| match error {
+                    bilibi_database::Error::Forbidden => Error::Forbidden,
+                    other => Error::Backend(other),
+                })?;
+        }
         match op.handler {
-            Handler::Read(handler) => Ok(handler.call(client, scope, input).await?.envelope(key)),
+            Handler::Read(handler) => {
+                let client = Pooled {
+                    db,
+                    connection: tokio::sync::OnceCell::new(),
+                };
+                Ok(handler.call(&client, scope, input).await?.envelope(key))
+            }
             _ => Err(Error::WritesNotEnabled),
         }
     }

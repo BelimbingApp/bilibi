@@ -159,22 +159,17 @@ async fn handle(State(app): State<App>, request: Request) -> Response {
         trace,
     } = agent;
     let scope = scope.over_mcp();
-    let outcome = match app.db.get().await {
-        Ok(client) => {
-            let authority = Grant {
-                access: &edge.access,
-                claims: &claims,
-                trace: &trace,
-            };
-            let session = Session {
-                client: &client,
-                scope: &scope,
-                authority: &authority,
-            };
-            protocol::dispatch(&edge.registry, &edge.plans, Some(session), &message).await
-        }
-        Err(error) => Outcome::Unavailable(error.into()),
+    let authority = Grant {
+        access: &edge.access,
+        claims: &claims,
+        trace: &trace,
     };
+    let session = Session {
+        db: &app.db,
+        scope: &scope,
+        authority: &authority,
+    };
+    let outcome = protocol::dispatch(&edge.registry, &edge.plans, Some(session), &message).await;
     answer(&app, outcome, Some(scope), operation, &trace.reported)
 }
 

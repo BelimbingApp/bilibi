@@ -4,7 +4,7 @@ One way for any module to point at a record that another module owns, including 
 
 - **A holder stores `(record_kind, record_id)`, both text.** No foreign key crosses a module boundary, and the owner never learns who points at its records.
 - **An owner registers each kind of record once:** its key, Grid table, page path and an access check.
-- **Names follow the reader's own permissions.** A record the reader cannot see stays unnamed; linking a record needs read access to it.
+- **Names follow the reader's own permissions.** A record the reader cannot see stays unnamed; the pill, the picker and linking all follow the owner's own access check.
 - **Every page shows a reference the same way,** with the `RelatedRecord` pill and `RecordPicker` from `base/ui`. Why a Base module, and why one key per kind: [ADR 08](../../../docs/architecture/decisions/08-record-references.md).
 
 ## Register a kind (owner)
@@ -51,7 +51,7 @@ Each refusal names the kind and its source line.
 | Accept a new reference | `check(client, scope, kind, id)`: with your write's `tx.sql()`; a preview may pass any client. Store the `Reference` it returns. |
 | Show references | `resolve(scope, &references)` → `Resolved { label, path, … }`, in the order given; `resolved.pill(id, framed)` gives the `RelatedRecord`. |
 | Pick a record | `search(scope, &kinds, text)` → hits; `records.picker_hits(&hits)` feeds `RecordPicker`. |
-| Who points here | `referrers(scope, kind, id)` → a count per holder table the reader may read; a malformed id of a mounted kind is refused. |
+| Who points here | `referrers(scope, kind, id)` → a count per holder table the reader may read, through Grid's bounded `summarize`; a malformed id of a mounted kind is refused. |
 | Merge two records (owner) | `redirect(tx, scope, kind, from, to)` in the owner's merge transaction. |
 
 - A refusal from `check` (`UnknownKind`, `MalformedId`, `NotFound`, `Forbidden`) is your field error: `refusal.message()`.
@@ -62,10 +62,11 @@ Each refusal names the kind and its source line.
 - **Ids are text,** at most 64 bytes in one path segment (`workspace::record_id`). A kind whose Grid key is a number only accepts numeric ids, so a forged id never reaches the owner's source as an error.
 - **One spelling per id:** a number key is read as plain decimal everywhere. `check` returns `01` as `1` for the holder to store, and `resolve`, `redirect` and `referrers` read `01` as `1` too.
 - **Unknown kinds fail closed:** `check` refuses them; `resolve` shows them as unavailable, never as an error, so unmounting a Domain leaves holders working.
-- **Names with the reader's permissions:** `resolve` projects each kind's `label_field` through `bilibi_grid::project` with the reader's scope, at most 100 ids per kind per call. It never holds a pooled connection while Grid takes its own, so concurrent resolves cannot exhaust the pool. A row Grid drops (no read capability on the table, a restricted label, a removed or soft-deleted record) shows as unavailable. A name follows the Grid table's read capability; the record's page still enforces its own access.
+- **Names with the reader's permissions:** `resolve` projects each kind's `label_field` through `bilibi_grid::project` with the reader's scope, at most 100 ids per kind per call, then puts each named record to the owner's `RecordOwner::authorize`, the check `check` asks on save. A row Grid drops (no read capability on the table, a restricted label, a removed or soft-deleted record) and a record the owner refuses (a reader who may list companies but not view one) show as unavailable, so the pill, the picker and saving agree.
+- **Connections:** no facade method holds a pooled connection while Grid takes one, and the agent dispatcher holds none while a read runs (`apps/base/agent_api/README.md`), so concurrent resolves and searches, direct or through `/api/v1` and `/mcp`, cannot fill the pool and wait on each other.
 - **Removed records** are never cascaded and holders' rows are never deleted.
 - **Merges:** a redirect `(tenant, kind, from) → to` is followed by `check`, `resolve` and the pill, so every holder repoints on read. Chains collapse on write, and each redirect row is an audited `Change` on `record_redirect`. `redirect` takes a transaction lock per tenant and kind, so overlapping merges run one after the other and never commit a chain (`a → b` beside `b → c`).
-- **Picker:** `search` matches each allowed kind's `label_field` inside the owner's own source (`text_search_sql`), so tenant, soft delete and permissions apply. Each kind returns at most the tenant setting `records.picker_hits` (default 8, Settings › Records). Records merged into one survivor are one hit. A choice is still `check`ed on save; a forged id is refused.
+- **Picker:** `search` matches each allowed kind's `label_field` inside the owner's own source (`text_search_sql`), so tenant, soft delete and permissions apply. Matches are read in key order, 50 at a time, and named as `resolve` names them: records merged into one survivor are one hit and records the owner refuses are skipped. Each kind gathers up to the tenant setting `records.picker_hits` distinct records (default 8, Settings › Records), reading at most 500 matches. A choice is still `check`ed on save; a forged id is refused.
 - **Workspace:** the pill renders through `RecordLink` with the registering module as its workspace kind, so on a framed page it selects the record in a following tile.
 - **Isolation:** every read runs through the owner's tenant-scoped source or check; redirect and holder statements carry the tenant predicate.
 
@@ -103,8 +104,11 @@ Add `APP_ORIGIN` and `BIND_ADDR` to serve the app afterwards, with the notes pag
 | Referrers | The administrator counts the notes table; staff, who cannot read it, get no holders. |
 | Search | The administrator finds companies; the viewer without company grants finds none. |
 | Agent edge | `base.records.resolve`, `base.records.search` and the holder's list answer over HTTP with a real agent connection: `label`, `path` and an absolute `url`; an unmounted kind has a null label and no url. |
+| Agent doors under load | On the pool of 16 connections, 16 synchronized `base.records.resolve` and 16 `base.records.search` calls each through `/api/v1` and through MCP's `read` tool (a real MCP connection from a PKCE code) answer within 8 s with the expected result, three rounds; then 128 mixed calls through both doors at once all answer. |
 | Browser | Pick a record by name, save, the pill opens the record's page; in a workspace the pill selects the record in a following tile; the viewer sees company pills unavailable and a forged pick is refused under the picker; no horizontal scroll at 390 px. |
 | Audit | `record_redirect` and the holder's note are each one `created` mutation by the actor. |
 | One spelling | `01` is accepted as company `1`, resolves to its name (also over HTTP) and counts the same referrers as `1`. |
 | Overlapping merges | Merging 52 into 53 waits while merging 51 into 52 is uncommitted; both then point at 53. |
 | Connection pool | 64 concurrent resolves on the pool of 16 connections all finish. |
+| Picker limit | With the first eight matches (companies 1 to 8) all pointing to company 1, searching `0` gives 8 distinct companies. |
+| List but not view | For the manager allowed `admin.company.list` and denied `admin.company.view`, `check` refuses company 1, `resolve` shows it unavailable and `search` offers no company, directly and through `/api/v1` and MCP; in the browser their company pills are Restricted and the picker offers no company. |

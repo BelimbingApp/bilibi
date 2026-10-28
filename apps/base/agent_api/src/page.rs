@@ -133,8 +133,7 @@ impl PageContracts {
     /// A read contract, called directly: the same validation and logged
     /// capability decision as the agent doors.
     pub async fn read(&self, scope: &Scope, key: &str, input: &Value) -> Result<Value> {
-        let client = self.db.get().await.map_err(bilibi_database::Error::from)?;
-        self.registry.call(&**client, scope, key, input).await
+        self.registry.call(&self.db, scope, key, input).await
     }
 
     /// A form the person has just reviewed on the page: the owner's preview

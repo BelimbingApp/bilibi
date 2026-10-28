@@ -535,7 +535,7 @@ async fn main() -> Result<(), Error> {
         "manager list",
         registry
             .call(
-                client,
+                &db,
                 &manager,
                 "core.company.list",
                 &json!({"search":"walkthrough","page_size":5}),
@@ -546,19 +546,14 @@ async fn main() -> Result<(), Error> {
     show(
         "viewer get company 1 (restricted fields)",
         registry
-            .call(
-                client,
-                &viewer,
-                "core.company.get",
-                &json!({"company_id":1}),
-            )
+            .call(&db, &viewer, "core.company.get", &json!({"company_id":1}))
             .await
             .map_err(|e| e.to_string()),
     );
     show(
         "tenant 2 get company 1",
         registry
-            .call(client, &other, "core.company.get", &json!({"company_id":1}))
+            .call(&db, &other, "core.company.get", &json!({"company_id":1}))
             .await
             .map_err(|e| e.to_string()),
     );
@@ -566,7 +561,7 @@ async fn main() -> Result<(), Error> {
         "direct create call is refused",
         registry
             .call(
-                client,
+                &db,
                 &manager,
                 "core.company.create",
                 &json!({"name":"Direct"}),

@@ -19,9 +19,11 @@
 //! notes table and for one who cannot read it; picker search; and the agent
 //! edge answering `label`, `path` and `url` over real HTTP with a real agent
 //! connection (its token is never printed). Then the cases of the #200
-//! review: an id with a leading zero is one record everywhere, overlapping
-//! merges commit no chain, and many concurrent resolves never exhaust the
-//! connection pool.
+//! reviews: an id with a leading zero is one record everywhere, overlapping
+//! merges commit no chain, the picker fills its limit with distinct records
+//! after merges, a reader who may list companies but not view them gets no
+//! name, hit or link, and many concurrent calls, direct and through the
+//! `/api/v1` and MCP doors, never exhaust the connection pool.
 //!
 //! Fixture setup that has no page of its own is plain SQL on the disposable
 //! database, and says so: a retired person, a soft-deleted company, the
@@ -34,7 +36,10 @@ mod notes;
 
 use bilibi_agent_api::plans::{PlanAuthority, PlanIdentity, PlannedOperation, Plans};
 use bilibi_base::authz::grants::Grants;
-use bilibi_core::agent_access::{AgentAccess, Decision, CLIENT_ID};
+use bilibi_core::agent_access::{
+    code_challenge, AgentAccess, AuthorizeParams, ClientRegistration, CodeExchange, Decision,
+    CLIENT_ID,
+};
 use bilibi_database::{pool, Db, Error, MutationBoundary};
 use bilibi_module_registry::{Catalog, Consumer, Contribution, Layer, Module, Provenance};
 use bilibi_records::{
@@ -48,7 +53,7 @@ use tokio_postgres::Transaction;
 bilibi_walkthrough_fixture::walkthrough_vocabulary!();
 bilibi_walkthrough_fixture::walkthrough_module_roles!();
 
-type Outcome = std::result::Result<(), Box<dyn std::error::Error>>;
+type Outcome = std::result::Result<(), Box<dyn std::error::Error + Send + Sync>>;
 
 // ---- Boot refusals ----------------------------------------------------------
 
@@ -352,12 +357,13 @@ async fn merge(
     tx.commit().await
 }
 
-/// The cases of the #200 review.
+/// The cases of the #200 reviews.
 async fn review(
     records: &Arc<Records>,
     boundary: &Arc<MutationBoundary>,
     db: &Db,
     admin: &Scope,
+    manager: &Scope,
 ) -> Outcome {
     println!("-- an id with a leading zero");
     for resolved in records
@@ -416,6 +422,45 @@ async fn review(
         );
     }
 
+    println!("-- picker limit after merges (the first eight matches, 1 to 8, all point to 1)");
+    for from in 2..=8 {
+        merge(records, boundary, db, admin, &from.to_string(), "1").await?;
+    }
+    let hits = records.search(admin, &["company"], "0").await?;
+    println!(
+        "   search \"0\" as admin: {} distinct hit(s): {:?}",
+        hits.len(),
+        hits.iter().map(|h| h.id.as_str()).collect::<Vec<_>>()
+    );
+
+    // Fixture setup (plain SQL): the manager may list companies but not view one.
+    db.get().await?.batch_execute(
+        "INSERT INTO principal_capabilities(tenant_id,user_id,capability,is_allowed) VALUES(1,1,'admin.company.list',true),(1,1,'admin.company.view',false),(1,1,'base.records.view',true) ON CONFLICT DO NOTHING;",
+    ).await?;
+    println!("-- the manager may list companies but not view them");
+    let checked = records
+        .check(&**db.get().await?, manager, "company", "1")
+        .await?;
+    println!(
+        "   check company 1: {}",
+        checked.map_or_else(
+            |refusal| format!("refused, {}", refusal.message()),
+            |r| format!("accepted as {} {}", r.kind, r.id)
+        )
+    );
+    for resolved in records
+        .resolve(manager, &[Reference::new("company", "1")])
+        .await?
+    {
+        println!(
+            "   resolve company 1 -> {} {}",
+            show(resolved.label.as_deref()),
+            resolved.path.unwrap_or_default()
+        );
+    }
+    let hits = records.search(manager, &["company"], "Company 0").await?;
+    println!("   search \"Company 0\": {} hit(s)", hits.len());
+
     println!("-- 64 concurrent resolves on a pool of 16 connections");
     let mut running = tokio::task::JoinSet::new();
     for _ in 0..64 {
@@ -433,7 +478,7 @@ async fn review(
                 named += 1;
             }
         }
-        Ok::<_, Box<dyn std::error::Error>>(())
+        Ok::<_, Box<dyn std::error::Error + Send + Sync>>(())
     })
     .await;
     match finished {
@@ -453,7 +498,7 @@ async fn agent_token(
     app: &bilibi_web::App,
     db: &bilibi_database::Db,
     scope: &Scope,
-) -> std::result::Result<String, Box<dyn std::error::Error>> {
+) -> std::result::Result<String, Box<dyn std::error::Error + Send + Sync>> {
     let access = app
         .services
         .get::<AgentAccess>("core/agent_access.grants")?;
@@ -476,6 +521,241 @@ async fn agent_token(
         .access_token)
 }
 
+/// Many agent calls started together through one door, which must all
+/// answer while the pool of 16 connections is shared by every request.
+async fn concurrently(
+    door: &str,
+    count: usize,
+    limit: Duration,
+    call: impl Fn(
+        usize,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = std::result::Result<bool, String>> + Send>,
+    >,
+) -> Outcome {
+    let start = Arc::new(tokio::sync::Barrier::new(count));
+    let mut running = tokio::task::JoinSet::new();
+    for index in 0..count {
+        let (start, call) = (start.clone(), call(index));
+        running.spawn(async move {
+            start.wait().await;
+            call.await
+        });
+    }
+    let mut answered = 0;
+    let finished = tokio::time::timeout(limit, async {
+        while let Some(done) = running.join_next().await {
+            if done.map_err(|e| e.to_string())?? {
+                answered += 1;
+            }
+        }
+        Ok::<_, String>(())
+    })
+    .await;
+    match finished {
+        Ok(result) => {
+            result?;
+            println!(
+                "   {door}: all {count} answered within {} s, {answered} with the expected result",
+                limit.as_secs()
+            );
+            Ok(())
+        }
+        Err(_) => {
+            println!(
+                "   {door}: stalled, {answered} of {count} answered after {} s",
+                limit.as_secs()
+            );
+            Err(format!("{door} stalled").into())
+        }
+    }
+}
+
+/// One agent read through a door: `/api/v1`, or MCP's `read` tool.
+#[derive(Clone)]
+struct Door {
+    addr: std::net::SocketAddr,
+    host: String,
+    api: String,
+    mcp: String,
+}
+impl Door {
+    async fn read(&self, mcp: bool, key: &str, input: Value) -> std::result::Result<Value, String> {
+        let answer = if mcp {
+            mcp_read(self.addr, &self.host, &self.mcp, key, input).await
+        } else {
+            call(self.addr, &self.host, &self.api, key, input).await
+        }
+        .map_err(|e| e.to_string())?;
+        Ok(if mcp {
+            answer["result"]["structuredContent"]["result"].clone()
+        } else {
+            answer["result"].clone()
+        })
+    }
+}
+
+/// The admin's resolve and search through both doors, each with the answer
+/// it must give: company 1 and person 1 named, and company hits only.
+fn read_case(index: usize) -> (bool, &'static str, Value) {
+    let mcp = index % 2 == 1;
+    if index % 4 < 2 {
+        (
+            mcp,
+            "base.records.resolve",
+            json!({"references": [{"kind": "company", "id": "1"}, {"kind": "person", "id": "1"}]}),
+        )
+    } else {
+        (
+            mcp,
+            "base.records.search",
+            json!({"kinds": ["company"], "text": "Company 0"}),
+        )
+    }
+}
+fn expected(key: &str, result: &Value) -> bool {
+    if key == "base.records.resolve" {
+        result["references"][0]["label"] == "Company 001"
+            && result["references"][1]["label"] == "Ada Manager"
+    } else {
+        result["hits"]
+            .as_array()
+            .is_some_and(|hits| !hits.is_empty() && hits.iter().all(|hit| hit["kind"] == "company"))
+    }
+}
+
+/// The agent doors under load, as the #200 review reproduced it: 16
+/// synchronized calls on the pool of 16 connections, answered within 8 s,
+/// for resolve and search through `/api/v1` and MCP, three rounds; then 128
+/// mixed calls at once.
+async fn doors(door: &Door) -> Outcome {
+    println!("-- synchronized agent calls on a pool of 16 connections");
+    for round in 1..=3 {
+        for (name, mcp, key) in [
+            (
+                "/api/v1 base.records.resolve",
+                false,
+                "base.records.resolve",
+            ),
+            ("/api/v1 base.records.search", false, "base.records.search"),
+            (
+                "MCP read base.records.resolve",
+                true,
+                "base.records.resolve",
+            ),
+            ("MCP read base.records.search", true, "base.records.search"),
+        ] {
+            let input = read_case(if key == "base.records.resolve" { 0 } else { 2 }).2;
+            let door = door.clone();
+            concurrently(
+                &format!("round {round}, 16 x {name}"),
+                16,
+                Duration::from_secs(8),
+                move |_| {
+                    let (door, input) = (door.clone(), input.clone());
+                    Box::pin(async move { Ok(expected(key, &door.read(mcp, key, input).await?)) })
+                },
+            )
+            .await?;
+        }
+    }
+    let door = door.clone();
+    concurrently(
+        "128 mixed resolve and search calls through both doors at once",
+        128,
+        Duration::from_secs(20),
+        move |index| {
+            let door = door.clone();
+            Box::pin(async move {
+                let (mcp, key, input) = read_case(index);
+                Ok(expected(key, &door.read(mcp, key, input).await?))
+            })
+        },
+    )
+    .await
+}
+
+/// The list-but-not-view reader through the agent doors: resolve and search
+/// answer as the pill and picker do.
+async fn denied_doors(door: &Door) -> Outcome {
+    println!("-- the manager (list but not view) through the agent doors");
+    for mcp in [false, true] {
+        let name = if mcp { "MCP read" } else { "/api/v1" };
+        let resolved = door
+            .read(
+                mcp,
+                "base.records.resolve",
+                json!({"references": [{"kind": "company", "id": "1"}, {"kind": "person", "id": "1"}]}),
+            )
+            .await?;
+        println!(
+            "   {name} base.records.resolve: company 1 label {} path {}, person 1 label {}",
+            resolved["references"][0]["label"],
+            resolved["references"][0]["path"],
+            resolved["references"][1]["label"]
+        );
+        let found = door
+            .read(
+                mcp,
+                "base.records.search",
+                json!({"kinds": ["company"], "text": "0"}),
+            )
+            .await?;
+        println!(
+            "   {name} base.records.search \"0\": {} hit(s)",
+            found["hits"].as_array().map_or(0, Vec::len)
+        );
+    }
+    Ok(())
+}
+
+/// A real MCP connection for `scope`'s account, as an MCP client gets it:
+/// a registered client, consent, and the PKCE code exchanged for a token
+/// bound to the app's MCP resource. The token is never printed.
+async fn mcp_token(
+    app: &bilibi_web::App,
+    scope: &Scope,
+    origin: &str,
+) -> std::result::Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    let access = app
+        .services
+        .get::<AgentAccess>("core/agent_access.grants")?;
+    let resource = format!("{}/mcp", origin.trim_end_matches('/'));
+    let callback = "https://agent.example/callback";
+    let registration: ClientRegistration = serde_json::from_value(
+        json!({"client_name": "Records reference", "redirect_uris": [callback]}),
+    )?;
+    let registered = access.register_client(&registration).await?;
+    let client_id = registered["client_id"]
+        .as_str()
+        .ok_or("no client id")?
+        .to_owned();
+    let verifier = "records-reference-fixture-pkce-verifier-0123456789abcdef";
+    let params = AuthorizeParams {
+        client_id: client_id.clone(),
+        redirect_uri: callback.into(),
+        response_type: "code".into(),
+        resource: resource.clone(),
+        scope: None,
+        code_challenge: code_challenge(verifier),
+        code_challenge_method: "S256".into(),
+        state: None,
+    };
+    let expiry = access.connection_expiry().await?;
+    let code = access.authorize(scope, &params, &resource, expiry).await?;
+    let exchange = CodeExchange {
+        code,
+        client_id,
+        redirect_uri: callback.into(),
+        code_verifier: verifier.into(),
+        resource: resource.clone(),
+    };
+    Ok(access
+        .exchange_code(&exchange, &resource)
+        .await?
+        .access_token)
+}
+
 /// One `POST /api/v1/operations/{key}/call` to the app served on `addr`.
 async fn call(
     addr: std::net::SocketAddr,
@@ -483,11 +763,50 @@ async fn call(
     token: &str,
     key: &str,
     input: Value,
-) -> std::result::Result<Value, Box<dyn std::error::Error>> {
-    let body = json!({"input": input}).to_string();
+) -> std::result::Result<Value, Box<dyn std::error::Error + Send + Sync>> {
+    post(
+        addr,
+        host,
+        token,
+        &format!("/api/v1/operations/{key}/call"),
+        "",
+        json!({"input": input}),
+    )
+    .await
+}
+
+/// One MCP `tools/call` of the `read` tool for operation `key`.
+async fn mcp_read(
+    addr: std::net::SocketAddr,
+    host: &str,
+    token: &str,
+    key: &str,
+    input: Value,
+) -> std::result::Result<Value, Box<dyn std::error::Error + Send + Sync>> {
+    post(
+        addr,
+        host,
+        token,
+        "/mcp",
+        "Accept: application/json, text/event-stream\r\n",
+        json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "read", "arguments": {"key": key, "input": input}}}),
+    )
+    .await
+}
+
+/// One JSON `POST` with the agent's bearer token to the app served on `addr`.
+async fn post(
+    addr: std::net::SocketAddr,
+    host: &str,
+    token: &str,
+    path: &str,
+    headers: &str,
+    body: Value,
+) -> std::result::Result<Value, Box<dyn std::error::Error + Send + Sync>> {
+    let body = body.to_string();
     let mut stream = tokio::net::TcpStream::connect(addr).await?;
     let request = format!(
-        "POST /api/v1/operations/{key}/call HTTP/1.1\r\nHost: {host}\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        "POST {path} HTTP/1.1\r\nHost: {host}\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\n{headers}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
     );
     stream.write_all(request.as_bytes()).await?;
@@ -513,7 +832,8 @@ async fn call(
     } else {
         payload.to_owned()
     };
-    Ok(serde_json::from_str(&payload)?)
+    let status = head.lines().next().unwrap_or_default().to_owned();
+    serde_json::from_str(&payload).map_err(|_| format!("{status}: no JSON answer").into())
 }
 
 #[tokio::main]
@@ -559,6 +879,9 @@ async fn main() -> Outcome {
         .await?;
     let viewer = authentication
         .authenticate(&**client, 1, 2, "records".into())
+        .await?;
+    let manager = authentication
+        .authenticate(&**client, 1, 1, "records".into())
         .await?;
     let staff = authentication
         .authenticate(&**client, 1, 3, "records".into())
@@ -673,14 +996,52 @@ async fn main() -> Outcome {
         listed["result"]["notes"].as_array().map_or(0, Vec::len),
         listed["result"]["notes"][0]["record"]["url"]
     );
-    served.abort();
 
-    review(&records, &boundary, &db, &admin).await?;
+    review(&records, &boundary, &db, &admin, &manager).await?;
 
     println!("-- audit");
     for row in db.get().await?.query("SELECT auditable_type, event, actor_type||' '||actor_id, new_values::text FROM base_audit_mutations WHERE auditable_type IN ('record_redirect','records_reference.note') ORDER BY id", &[]).await? {
         println!("   {} {} by {}: {}", row.get::<_, String>(0), row.get::<_, String>(1), row.get::<_, String>(2), row.get::<_, Option<String>>(3).unwrap_or_default().chars().take(90).collect::<String>());
     }
+
+    // Fixture setup: this one sender makes every call below, so the operator
+    // raises MCP's per-sender limit (Settings › Agent API) for the run.
+    {
+        let settings = app
+            .services
+            .get::<bilibi_base::settings::Settings>("base/settings.store")?;
+        let mut client = db.get().await?;
+        let mut tx = boundary
+            .begin(
+                &mut client,
+                admin.mutation_context("records.reference.configure"),
+            )
+            .await?;
+        settings
+            .put(
+                &mut tx,
+                &admin,
+                bilibi_base::settings::Target::Global,
+                "agent_api.mcp_requests_per_minute",
+                json!(10_000),
+            )
+            .await?;
+        tx.commit().await?;
+    }
+    let door = Door {
+        addr,
+        host: host.clone(),
+        api: token.clone(),
+        mcp: mcp_token(&app, &admin, &origin).await?,
+    };
+    let denied = Door {
+        api: agent_token(&app, &db, &manager).await?,
+        mcp: mcp_token(&app, &manager, &origin).await?,
+        ..door.clone()
+    };
+    denied_doors(&denied).await?;
+    doors(&door).await?;
+    served.abort();
 
     if let Ok(bind) = std::env::var("BIND_ADDR") {
         let listener = tokio::net::TcpListener::bind(bind).await?;

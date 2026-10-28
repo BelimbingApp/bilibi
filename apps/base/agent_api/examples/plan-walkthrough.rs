@@ -136,7 +136,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         "direct write: {:?}",
         app.services
             .get::<bilibi_agent_api::Registry>("base/agent_api.registry")?
-            .call(&**db.get().await?, &admin, &ops[0].key, &ops[0].input)
+            .call(&db, &admin, &ops[0].key, &ops[0].input)
             .await
     );
     println!(

@@ -34,6 +34,8 @@ service, with the host supplying a per-request `Session`. System scopes cannot
 enter this API. Never deserialize a scope, infer an actor from operation input,
 or cache reach across requests.
 
+**Reads hold no dispatcher connection.** `Registry::call(db, scope, key, input)` checks the capability on a pooled connection and returns it before the read handler runs. The handler's `OperationClient` takes one connection on its first query and keeps it until the call ends; a handler that only calls its facade (Base Search, Base Records) takes none. So a facade that takes connections of its own, such as Grid's reads, never waits on a pool filled by its own callers. MCP's `Session` carries the pool (`db`), and `search`, `describe` and `guide` each take a connection for that call only.
+
 Search uses one fresh capability snapshot without per-candidate decision logs.
 Direct deny wins over grants and `grant_all`; platform capabilities additionally
 need explicit operator identity. Tenancy reproofs read the actor and agent grant live; owner standing additionally re-reads the installation bootstrap receipt and refuses impersonation. An agent holds only its own person's standing, and an owner-only write still requires its declared step-up policy. An agent reaches every capability its person

@@ -1,13 +1,17 @@
 //! The `Records` facade: one way for any module to point at a record another
 //! module owns. A holder stores `(record_kind, record_id)` as text; this
 //! facade checks a new reference with the owner (`check`), names references
-//! with the reader's own permissions through the owner's Grid source
-//! (`resolve`), finds records for a picker (`search`), repoints merged
-//! records (`redirect`) and counts who points at a record (`referrers`). It
-//! reads no owner table directly and the owner never learns its holders.
+//! through the owner's Grid source and its own access check (`resolve`),
+//! finds records for a picker (`search`), repoints merged records
+//! (`redirect`) and counts who points at a record (`referrers`). It reads no
+//! owner table directly and the owner never learns its holders. No method
+//! holds a pooled connection while Grid takes one, so concurrent callers
+//! cannot fill the pool and wait on each other.
 use crate::declaration::{Access, Holder, RecordKind};
 use bilibi_database::{Change, Db, Error, MutationTransaction, Result};
-use bilibi_grid::{query::text_search_sql, Catalog, FieldType, QueryError, BOUNDS};
+use bilibi_grid::{
+    query::text_search_sql, FieldType, Filter, QueryError, SummarySpec, Test, BOUNDS, MAX_CHOICES,
+};
 use bilibi_settings::{Settings, Target};
 use bilibi_tenancy::Scope;
 use serde::{Deserialize, Serialize};
@@ -24,6 +28,11 @@ pub const MAX_PER_KIND: usize = 100;
 pub const PICKER_HITS: &str = "records.picker_hits";
 /// The most a search reads of what a person typed.
 const MAX_TEXT: usize = 100;
+/// Matches a search reads per page, and at most per kind, while it gathers
+/// distinct records: merged records collapse into their survivor and records
+/// the owner refuses are skipped, so a kind may need more than one page.
+const SEARCH_PAGE: i64 = 50;
+const SEARCH_SCAN: i64 = 500;
 
 /// A stored reference: the owner's kind key and the record's id, both text.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -114,10 +123,6 @@ pub struct Records {
     pub(crate) settings: Arc<Settings>,
     pub(crate) kinds: BTreeMap<&'static str, (&'static RecordKind, &'static str)>,
     pub(crate) holders: Vec<&'static Holder>,
-}
-
-fn quote(name: &str) -> String {
-    format!("\"{}\"", name.replace('"', "\"\""))
 }
 
 impl Records {
@@ -228,9 +233,11 @@ impl Records {
 
     /// Names a page of references with the reader's own permissions, in the
     /// order given: each kind's ids are projected through the owner's Grid
-    /// source with its `label_field`, at most 100 per kind. A row the reader
-    /// cannot see, a removed record, an unknown or unmounted kind and a
-    /// malformed id all come back unnamed, never as an error.
+    /// source with its `label_field`, at most 100 per kind, and each named
+    /// record is then put to the owner's own access check, the one `check`
+    /// asks on save. A row the reader cannot see, a record the owner refuses,
+    /// a removed record, an unknown or unmounted kind and a malformed id all
+    /// come back unnamed, never as an error.
     pub async fn resolve(&self, scope: &Scope, references: &[Reference]) -> Result<Vec<Resolved>> {
         let mut by_kind: BTreeMap<&str, Vec<&Reference>> = BTreeMap::new();
         for reference in references {
@@ -299,6 +306,21 @@ impl Records {
                     }
                 }
             }
+            // Grid names what the reader may list; the owner decides what
+            // they may view, as on save. One connection, after Grid's.
+            let named: Vec<String> = names
+                .keys()
+                .filter(|(named_kind, _)| *named_kind == key)
+                .map(|(_, id)| id.clone())
+                .collect();
+            if !named.is_empty() {
+                let client = self.db.get().await?;
+                for id in named {
+                    if kind.owner.authorize(&**client, scope, &id).await? != Access::Readable {
+                        names.remove(&(key, id));
+                    }
+                }
+            }
         }
         Ok(references
             .iter()
@@ -324,9 +346,11 @@ impl Records {
     /// Records whose name contains `text`, for a picker: each allowed kind's
     /// `label_field` is matched inside the owner's own source (Grid's
     /// `text_search_sql`), so the tenant predicate, soft delete and the
-    /// reader's permissions apply, and each kind returns at most the
-    /// tenant's `records.picker_hits`. A merged record is found as its
-    /// survivor, once. A hit is still `check`ed on save.
+    /// reader's permissions apply. Matches are read in key order and named
+    /// as `resolve` names them, so a merged record is its survivor, once, and
+    /// a record the owner refuses is skipped. Each kind gathers up to the
+    /// tenant's `records.picker_hits` distinct records, reading at most 500
+    /// matches. A hit is still `check`ed on save.
     pub async fn search(&self, scope: &Scope, kinds: &[&str], text: &str) -> Result<Vec<Hit>> {
         let needle: String = text
             .trim()
@@ -337,72 +361,108 @@ impl Records {
         if needle.is_empty() {
             return Ok(Vec::new());
         }
-        let mut client = self.db.get().await?;
-        let limit = self
-            .settings
-            .get(&**client, scope, Target::Tenant, PICKER_HITS)
-            .await?
-            .value
-            .as_i64()
-            .unwrap_or(8)
-            .clamp(1, 50);
-        let mut found = Vec::new();
-        {
-            let tx = client
-                .build_transaction()
-                .read_only(true)
-                .isolation_level(tokio_postgres::IsolationLevel::RepeatableRead)
-                .start()
-                .await?;
-            tx.batch_execute(BOUNDS).await?;
-            for key in kinds {
-                let Some(kind) = self.kind(key) else {
-                    continue;
-                };
-                let Some(label_field) = bilibi_grid::installed()
-                    .ok()
-                    .and_then(|installed| installed.table(kind.table))
-                    .and_then(|table| table.decl.label_field)
-                else {
-                    continue;
-                };
-                let sql = match text_search_sql(&*tx, scope, kind.table, &[label_field]).await {
-                    Ok(sql) => sql,
-                    Err(QueryError::ForbiddenRoot) => continue,
-                    Err(error) => return Err(error.into()),
-                };
-                for row in tx
-                    .query(
-                        &format!("SELECT k::text FROM ({sql}) AS s(k) LIMIT $4"),
-                        &[&scope.tenant(), &scope.user(), &needle, &limit],
-                    )
+        let limit = {
+            let client = self.db.get().await?;
+            self.settings
+                .get(&**client, scope, Target::Tenant, PICKER_HITS)
+                .await?
+                .value
+                .as_i64()
+                .unwrap_or(8)
+                .clamp(1, 50) as usize
+        };
+        let mut hits = Vec::new();
+        for key in kinds {
+            let Some(kind) = self.kind(key) else {
+                continue;
+            };
+            let Some(label_field) = bilibi_grid::installed()
+                .ok()
+                .and_then(|installed| installed.table(kind.table))
+                .and_then(|table| table.decl.label_field)
+            else {
+                continue;
+            };
+            let mut seen = BTreeSet::new();
+            let mut offset = 0;
+            while seen.len() < limit && offset < SEARCH_SCAN {
+                let Some(page) = self
+                    .matches(scope, kind.table, label_field, &needle, offset)
                     .await?
-                {
-                    found.push(Reference::new(*key, row.get::<_, String>(0)));
+                else {
+                    break;
+                };
+                let last = (page.len() as i64) < SEARCH_PAGE;
+                offset += SEARCH_PAGE;
+                let page: Vec<Reference> = page
+                    .into_iter()
+                    .map(|id| Reference::new(*key, id))
+                    .collect();
+                for resolved in self.resolve(scope, &page).await? {
+                    let Some(label) = resolved.label else {
+                        continue;
+                    };
+                    if seen.len() < limit && seen.insert(resolved.id.clone()) {
+                        hits.push(Hit {
+                            label,
+                            path: resolved.path,
+                            kind: resolved.reference.kind,
+                            id: resolved.id,
+                        });
+                    }
+                }
+                if last {
+                    break;
                 }
             }
-            tx.commit().await?;
         }
-        drop(client);
-        let mut hits: Vec<Hit> = self
-            .resolve(scope, &found)
-            .await?
-            .into_iter()
-            .filter_map(|resolved| {
-                Some(Hit {
-                    label: resolved.label?,
-                    path: resolved.path,
-                    kind: resolved.reference.kind,
-                    id: resolved.id,
-                })
-            })
-            .collect();
         hits.sort_by(|a, b| {
             (a.label.to_lowercase(), &a.kind, &a.id).cmp(&(b.label.to_lowercase(), &b.kind, &b.id))
         });
-        // Records merged into one survivor are one hit.
-        hits.dedup_by(|a, b| a.kind == b.kind && a.id == b.id);
         Ok(hits)
+    }
+
+    /// One page of a kind's matches in key order, read in a read-only
+    /// transaction of its own under Grid's bounds and released before the
+    /// page is named. `None` when the reader may not read the table.
+    async fn matches(
+        &self,
+        scope: &Scope,
+        table: &str,
+        label_field: &str,
+        needle: &str,
+        offset: i64,
+    ) -> Result<Option<Vec<String>>> {
+        let mut client = self.db.get().await?;
+        let tx = client
+            .build_transaction()
+            .read_only(true)
+            .isolation_level(tokio_postgres::IsolationLevel::RepeatableRead)
+            .start()
+            .await?;
+        tx.batch_execute(BOUNDS).await?;
+        let sql = match text_search_sql(&*tx, scope, table, &[label_field]).await {
+            Ok(sql) => sql,
+            Err(QueryError::ForbiddenRoot) => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
+        let page = tx
+            .query(
+                &format!("SELECT k::text FROM ({sql}) AS s(k) ORDER BY k LIMIT $4 OFFSET $5"),
+                &[
+                    &scope.tenant(),
+                    &scope.user(),
+                    &needle,
+                    &SEARCH_PAGE,
+                    &offset,
+                ],
+            )
+            .await?
+            .iter()
+            .map(|row| row.get(0))
+            .collect();
+        tx.commit().await?;
+        Ok(Some(page))
     }
 
     /// Points `(kind, from)` at `(kind, to)` after the owner merged the two
@@ -492,25 +552,21 @@ impl Records {
     }
 
     /// How many references each holder table has to `(kind, id)`, for this
-    /// reader: only tables the reader may read, counted through the holder's
-    /// own Grid source under Grid's bounds. References to records merged into
-    /// `id` count too. A mounted kind's id is read in its one spelling and a
-    /// malformed one is refused; an unmounted kind's is taken as given. The
-    /// owner never learns its holders.
+    /// reader: only tables the reader may read, each counted by Grid's own
+    /// bounded summary over the holder's table (its scoped catalog, field
+    /// restrictions, cost admission and timeouts). References to records
+    /// merged into `id` count too. A mounted kind's id is read in its one
+    /// spelling and a malformed one is refused; an unmounted kind's is taken
+    /// as given. The owner never learns its holders.
     pub async fn referrers(&self, scope: &Scope, kind: &str, id: &str) -> Result<Vec<Referrers>> {
         let id = match self.kind(kind) {
             Some(record) => Self::canonical(record, id).ok_or(Error::Invalid)?,
             None => id.to_owned(),
         };
-        let mut client = self.db.get().await?;
-        let tx = client
-            .build_transaction()
-            .read_only(true)
-            .isolation_level(tokio_postgres::IsolationLevel::RepeatableRead)
-            .start()
-            .await?;
-        tx.batch_execute(BOUNDS).await?;
-        let mut ids: Vec<String> = tx
+        let mut ids: Vec<String> = self
+            .db
+            .get()
+            .await?
             .query(
                 "SELECT from_id FROM base_records_redirects WHERE tenant_id=$1 AND kind=$2 AND to_id=$3",
                 &[&scope.tenant(), &kind, &id],
@@ -520,35 +576,38 @@ impl Records {
             .map(|row| row.get(0))
             .collect();
         ids.push(id);
-        let catalog = Catalog::for_scope(&*tx, scope).await?;
         let mut counts = Vec::new();
-        for holder in &self.holders {
-            let Some(table) = catalog.table(holder.table) else {
-                continue;
-            };
-            let (Some(kind_field), Some(id_field)) =
-                (table.field(holder.kind_field), table.field(holder.id_field))
-            else {
-                continue;
-            };
-            let count: i64 = tx
-                .query_one(
-                    &format!(
-                        "SELECT count(*) FROM ({}) r CROSS JOIN (SELECT $1::bigint AS tenant, $2::bigint AS usr) actor WHERE r.{}=$3 AND r.{}=ANY($4)",
-                        table.source().sql,
-                        quote(kind_field.source_key()),
-                        quote(id_field.source_key())
-                    ),
-                    &[&scope.tenant(), &scope.user(), &kind, &ids],
-                )
-                .await?
-                .get(0);
+        'holders: for holder in &self.holders {
+            let mut count = 0;
+            for chunk in ids.chunks(MAX_CHOICES) {
+                let spec = SummarySpec {
+                    filters: vec![
+                        Filter {
+                            column: holder.kind_field.into(),
+                            test: Test::Equals(json!(kind)),
+                        },
+                        Filter {
+                            column: holder.id_field.into(),
+                            test: Test::OneOf(chunk.iter().map(|id| json!(id)).collect()),
+                        },
+                    ],
+                    groupings: Vec::new(),
+                    measures: Vec::new(),
+                    timezone: "UTC".into(),
+                    max_groups: 1,
+                };
+                match bilibi_grid::summarize(&self.db, scope, holder.table, &spec).await {
+                    Ok(summary) => count += summary.total.rows,
+                    // The reader may not read the table or one of its fields.
+                    Err(QueryError::ForbiddenRoot | QueryError::Column(_, _)) => continue 'holders,
+                    Err(error) => return Err(error.into()),
+                }
+            }
             counts.push(Referrers {
                 table: holder.table,
                 count,
             });
         }
-        tx.commit().await?;
         Ok(counts)
     }
 }

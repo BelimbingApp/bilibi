@@ -143,7 +143,7 @@ async fn main() -> Result<(), Failure> {
         brief(
             &registry
                 .call(
-                    client,
+                    &db,
                     &manager,
                     "core.affiliation.list",
                     &json!({"person_id":person.id,"on":"2026-06-01"}),
@@ -156,7 +156,7 @@ async fn main() -> Result<(), Failure> {
         brief(
             &registry
                 .call(
-                    client,
+                    &db,
                     &manager,
                     "core.affiliation.list",
                     &json!({"person_id":person.id,"on":"2025-06-01"}),
@@ -169,7 +169,7 @@ async fn main() -> Result<(), Failure> {
         brief(
             &registry
                 .call(
-                    client,
+                    &db,
                     &manager,
                     "core.affiliation.get",
                     &json!({"affiliation_id":id}),
@@ -255,7 +255,7 @@ async fn main() -> Result<(), Failure> {
         brief(
             &registry
                 .call(
-                    client,
+                    &db,
                     &manager,
                     "core.affiliation.list",
                     &json!({"person_id":person.id}),
@@ -268,7 +268,7 @@ async fn main() -> Result<(), Failure> {
         brief(
             &registry
                 .call(
-                    client,
+                    &db,
                     &manager,
                     "core.affiliation.list",
                     &json!({"person_id":person.id,"include_unlinked":true}),

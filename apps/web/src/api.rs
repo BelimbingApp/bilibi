@@ -912,10 +912,9 @@ async fn call(State(app): State<App>, Path(key): Path<String>, request: Request)
             Some(input @ Value::Object(_)) => input,
             _ => return Err(invalid_request()),
         };
-        let client = app.db.get().await.map_err(|e| unavailable(&e.into()))?;
         app.api
             .registry
-            .call(&**client, &agent.scope, &key, &input)
+            .call(&app.db, &agent.scope, &key, &input)
             .await
             .map_err(api_error)
     }
