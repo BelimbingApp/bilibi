@@ -743,7 +743,7 @@ async fn main() -> Result<(), Error> {
     println!("== headless operations");
     let listed = registry
         .call(
-            &db,
+            client,
             &manager,
             "core.company.relationship_role.list",
             &json!({"include_retired":true}),
@@ -760,7 +760,7 @@ async fn main() -> Result<(), Error> {
     );
     let links = registry
         .call(
-            &db,
+            client,
             &manager,
             "core.company.relationship.list",
             &json!({"company_id":source.get(),"include_history":true}),
@@ -778,14 +778,14 @@ async fn main() -> Result<(), Error> {
     show(
         "viewer cannot call a write directly",
         registry
-            .call(&db, &viewer, "core.company.relationship.assign", &json!({"source_organisation_id":source.get(),"target_kind":"person","target_id":contact.id,"role_id":partner.get()}))
+            .call(client, &viewer, "core.company.relationship.assign", &json!({"source_organisation_id":source.get(),"target_kind":"person","target_id":contact.id,"role_id":partner.get()}))
             .await
             .map(|_| ()),
     );
     show(
         "manager cannot call a write directly either",
         registry
-            .call(&db, &manager, "core.company.relationship.assign", &json!({"source_organisation_id":source.get(),"target_kind":"person","target_id":contact.id,"role_id":partner.get()}))
+            .call(client, &manager, "core.company.relationship.assign", &json!({"source_organisation_id":source.get(),"target_kind":"person","target_id":contact.id,"role_id":partner.get()}))
             .await
             .map(|_| ()),
     );

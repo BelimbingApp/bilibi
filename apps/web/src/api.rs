@@ -914,7 +914,7 @@ async fn call(State(app): State<App>, Path(key): Path<String>, request: Request)
         };
         app.api
             .registry
-            .call(&app.db, &agent.scope, &key, &input)
+            .read(&app.db, &agent.scope, &key, &input)
             .await
             .map_err(api_error)
     }

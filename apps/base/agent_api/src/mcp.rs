@@ -290,7 +290,7 @@ async fn invoke(
                 _ => return Err(mismatch()),
             };
             Ok(registry
-                .call(session.db, session.scope, &key, &input)
+                .read(session.db, session.scope, &key, &input)
                 .await?)
         }
         "plan" if args.len() == 1 => {
@@ -319,7 +319,7 @@ async fn invoke(
         _ if registry.apps.contains_key(name) => {
             let operation = registry.apps[name].definition.operation;
             Ok(registry
-                .call(session.db, session.scope, operation, &Value::Object(args))
+                .read(session.db, session.scope, operation, &Value::Object(args))
                 .await?)
         }
         _ => Err(Invoke::Protocol(-32_602, "Unknown tool")),

@@ -86,7 +86,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!(
         "read: {}",
         registry
-            .call(&db, &admin, key, &json!({"message":"Runtime reference"}))
+            .call(client, &admin, key, &json!({"message":"Runtime reference"}))
             .await?
     );
     for input in [
@@ -99,20 +99,20 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     ] {
         println!(
             "invalid input {input}: {:?}",
-            registry.call(&db, &admin, key, &input).await
+            registry.call(client, &admin, key, &input).await
         );
     }
-    println!("valid schema sample: {}",registry.call(&db,&admin,key,&json!({"sample":{"label":"reference","enabled":true,"amount":1.5,"date":"2026-10-14","at":"2026-10-14T12:00:00+08:00","email":"reference@example.test","tags":["example"]}})).await?);
+    println!("valid schema sample: {}",registry.call(client,&admin,key,&json!({"sample":{"label":"reference","enabled":true,"amount":1.5,"date":"2026-10-14","at":"2026-10-14T12:00:00+08:00","email":"reference@example.test","tags":["example"]}})).await?);
     println!(
         "unknown: {:?}",
         registry
-            .call(&db, &admin, "uninstalled.operation", &json!({}))
+            .call(client, &admin, "uninstalled.operation", &json!({}))
             .await
     );
     println!(
         "write: {:?}",
         registry
-            .call(&db, &admin, "base.agent_api.reference.write", &json!({}))
+            .call(client, &admin, "base.agent_api.reference.write", &json!({}))
             .await
     );
     println!(
@@ -151,30 +151,30 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     );
     println!(
         "viewer call: {:?}",
-        registry.call(&db, &viewer, key, &json!({})).await
+        registry.call(client, &viewer, key, &json!({})).await
     );
     grants
         .set_direct(&admin, viewer.user(), cap, Some(true))
         .await?;
     println!(
         "viewer granted: {}",
-        registry.call(&db, &viewer, key, &json!({})).await?
+        registry.call(client, &viewer, key, &json!({})).await?
     );
     println!(
         "other tenant remains denied: {:?}",
-        registry.call(&db, &other, key, &json!({})).await
+        registry.call(client, &other, key, &json!({})).await
     );
     grants.set_direct(&admin, viewer.user(), cap, None).await?;
     println!(
         "viewer revoked, same sealed scope: {:?}",
-        registry.call(&db, &viewer, key, &json!({})).await
+        registry.call(client, &viewer, key, &json!({})).await
     );
     grants
         .set_direct(&admin, admin.user(), cap, Some(false))
         .await?;
     println!(
         "admin deny overrides grant_all: {:?}",
-        registry.call(&db, &admin, key, &json!({})).await
+        registry.call(client, &admin, key, &json!({})).await
     );
     println!(
         "admin deny hidden from discovery: {}",

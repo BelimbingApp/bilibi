@@ -745,7 +745,7 @@ async fn agent(
     println!("-- reviewed writes (agent operations)");
     let client = db.get().await?;
     let lists = registry
-        .call(db, &admin, "base.picklists.lists", &json!({}))
+        .call(&**client, &admin, "base.picklists.lists", &json!({}))
         .await?;
     println!(
         "base.picklists.lists: {:?}",
@@ -758,7 +758,7 @@ async fn agent(
     );
     let values = registry
         .call(
-            db,
+            &**client,
             &admin,
             "base.picklists.values",
             &json!({"list": CATEGORY}),

@@ -335,7 +335,7 @@ async fn main() -> Result<(), Failure> {
         "agent JSON restricted markers",
         registry
             .call(
-                &db,
+                client,
                 &viewer,
                 "core.person.get",
                 &json!({"person_id":alice.id}),
