@@ -43,11 +43,25 @@ pub async fn stream(
         Err(Error::InvalidToken | Error::ExpiredToken | Error::PrivateAsset) => {
             (StatusCode::FORBIDDEN, "Forbidden").into_response()
         }
+        Err(error) if held(&error) => held_response(&error),
         Err(Error::NotFound | Error::SourceNotStored | Error::StorageUnavailable) => {
             (StatusCode::NOT_FOUND, "Not found").into_response()
         }
         Err(_) => (StatusCode::SERVICE_UNAVAILABLE, "Unavailable").into_response(),
     }
+}
+
+/// A file malware scanning holds back: still being checked, quarantined,
+/// failed, or unscanned while scanning is required. Its own status (423), so
+/// a browser shows "File not available" rather than an access or missing page.
+fn held(error: &Error) -> bool {
+    matches!(
+        error,
+        Error::ScanPending | Error::Quarantined | Error::ScanFailed | Error::NotScanned
+    )
+}
+fn held_response(error: &Error) -> Response {
+    (StatusCode::LOCKED, error.to_string()).into_response()
 }
 
 /// Stream bytes under Media's delivery rules; the file alone picks the headers.
@@ -103,6 +117,7 @@ pub async fn attachment(
         Err(Error::NotFound | Error::StorageUnavailable) => {
             (StatusCode::NOT_FOUND, "Not found").into_response()
         }
+        Err(error) if held(&error) => held_response(&error),
         Err(Error::Postgres(_)) => (StatusCode::SERVICE_UNAVAILABLE, "Unavailable").into_response(),
         Err(Error::Database(bilibi_database::Error::Unauthorized)) => {
             crate::auth::sign_in_redirect(&app, true)

@@ -37,6 +37,11 @@ impl Icons {
         })
     }
 
+    /// Whether the catalogue knows the name, without warning about it.
+    pub fn is_known(name: &str) -> bool {
+        find(name).is_some()
+    }
+
     /// Diagnose menu contributions at boot, before the first render. Even a
     /// hidden or dropped menu item gets a warning naming its contributing module.
     pub fn check_menu(name: &str, module: &str) {

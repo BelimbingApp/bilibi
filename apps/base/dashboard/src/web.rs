@@ -102,6 +102,9 @@ impl Core {
                 &[LAYOUT, SECTIONS],
             )
             .await?;
+        // A provider takes its own pooled clients: holding this one across
+        // them lets concurrent page updates starve the pool.
+        drop(client);
         // Placed ids, so a provider answers those before choosing which of
         // its other entries to offer: a pin never falls past the offer cap.
         let placed_ids: Vec<String> = stored

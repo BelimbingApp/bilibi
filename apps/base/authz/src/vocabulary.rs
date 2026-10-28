@@ -3,6 +3,10 @@ use bilibi_module_registry::{Consumer, Contribution, Entry, Provenance, Registry
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const VOCABULARY: &str = "base/authz.vocabulary";
+/// The catalog a module grants its own system principal standing
+/// capabilities in: `Contribution::new(STANDING_GRANTS, "<principal>",
+/// provenance, &StandingGrant { principal, capabilities })`.
+pub const STANDING_GRANTS: &str = "base/authz.standing_grants";
 #[derive(Clone, Copy, Debug)]
 pub struct CapabilityDefinition {
     pub key: &'static str,
@@ -36,6 +40,17 @@ pub struct SystemPrincipalDefinition {
     /// This declaration bounds possible grants; it grants nothing by itself.
     pub capabilities: &'static [&'static str],
 }
+/// Capabilities a principal holds in every live tenant with no stored grant,
+/// for Platform work no tenant should have to switch on (Media's malware
+/// scans). A tenant's denying grant (`Grants::set_system(.., Some(false))`)
+/// still wins. Boot refuses a grant from a module that does not declare the
+/// principal, for a capability outside its declaration or a platform one,
+/// and a second grant for one principal.
+#[derive(Clone, Copy, Debug)]
+pub struct StandingGrant {
+    pub principal: &'static str,
+    pub capabilities: &'static [&'static str],
+}
 #[derive(Clone, Copy, Debug, Default)]
 pub struct VocabularyContribution {
     pub domains: &'static [&'static str],
@@ -62,6 +77,10 @@ pub struct Vocabulary {
     pub capabilities: BTreeMap<&'static str, OwnedCapability>,
     pub roles: BTreeMap<&'static str, SystemRole>,
     pub system_principals: BTreeMap<&'static str, SystemPrincipalDefinition>,
+    /// Each principal's standing capabilities (`StandingGrant`).
+    pub standing: BTreeMap<&'static str, BTreeSet<&'static str>>,
+    /// The module that declared each principal.
+    principal_modules: BTreeMap<&'static str, &'static str>,
 }
 pub fn segment(key: &str) -> bool {
     let mut chars = key.bytes();
@@ -144,6 +163,9 @@ impl Vocabulary {
                         principal.name
                     )));
                 }
+                result
+                    .principal_modules
+                    .insert(principal.name, entry.provenance.module);
             }
         }
         for cap in result.capabilities.values() {
@@ -175,7 +197,49 @@ impl Vocabulary {
         Ok(result)
     }
     pub fn from_catalog(catalog: &bilibi_module_registry::Catalog) -> Result<Self> {
-        Self::from_entries(catalog.entries::<VocabularyContribution>(VOCABULARY)?)
+        let mut vocabulary =
+            Self::from_entries(catalog.entries::<VocabularyContribution>(VOCABULARY)?)?;
+        vocabulary.add_standing(catalog.entries::<StandingGrant>(STANDING_GRANTS)?)?;
+        Ok(vocabulary)
+    }
+    fn add_standing(&mut self, entries: &[Entry]) -> Result<()> {
+        for entry in entries {
+            let grant = entry.get::<StandingGrant>()?;
+            let declared = self.system_principals.get(grant.principal);
+            let valid = entry.id == grant.principal
+                && self.principal_modules.get(grant.principal) == Some(&entry.provenance.module)
+                && !grant.capabilities.is_empty()
+                && declared.is_some_and(|declared| {
+                    grant.capabilities.iter().all(|key| {
+                        declared.capabilities.contains(key)
+                            && self
+                                .capabilities
+                                .get(key)
+                                .is_some_and(|capability| !capability.definition.platform)
+                    })
+                });
+            if !valid
+                || self
+                    .standing
+                    .insert(
+                        grant.principal,
+                        grant.capabilities.iter().copied().collect(),
+                    )
+                    .is_some()
+            {
+                return Err(invalid(format!(
+                    "invalid standing grant {} at {}:{}",
+                    entry.id, entry.provenance.source, entry.provenance.line
+                )));
+            }
+        }
+        Ok(())
+    }
+    /// Whether `principal` holds `key` in every tenant that has not denied it.
+    pub fn standing(&self, principal: &str, key: &str) -> bool {
+        self.standing
+            .get(principal)
+            .is_some_and(|keys| keys.contains(key))
     }
     pub fn from_inventory() -> Result<Self> {
         let catalog =
@@ -228,6 +292,8 @@ impl Vocabulary {
     }
 }
 inventory::submit! { Consumer::new::<VocabularyContribution>(VOCABULARY,"base/authz",|entries| Vocabulary::from_entries(entries).map(|_|())) }
+// The principal and capability checks need the whole vocabulary; `from_catalog` runs them.
+inventory::submit! { Consumer::new::<StandingGrant>(STANDING_GRANTS,"base/authz",|entries| entries.iter().try_for_each(|entry| entry.get::<StandingGrant>().map(|_| ()))) }
 
 use CapabilityDefinition as C;
 const fn role(

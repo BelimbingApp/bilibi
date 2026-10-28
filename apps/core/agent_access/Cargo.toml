@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 bilibi-database.workspace = true
 bilibi-integration.workspace = true
+bilibi-agent-api.workspace = true
 bilibi-module-registry.workspace = true
 bilibi-audit.workspace = true
 bilibi-authz = { path = "../../base/authz" }

@@ -11,8 +11,8 @@
 //! `submit_attachments`/`retain_drafts` only change rows and compose into the
 //! owner's own `MutationTransaction`.
 use crate::{
-    audit, storage, upload, Error, Media, NewAsset, Placement, Result, Rules, Stored, StreamFile,
-    SubjectAction, Upload,
+    audit, storage, upload, Error, Media, NewAsset, Placement, Result, Rules, ScanState, Stored,
+    StreamFile, SubjectAction, Upload,
 };
 use bilibi_database::{Change, Context, MutationTransaction, Principal};
 use bilibi_tenancy::Scope;
@@ -66,6 +66,9 @@ pub struct Attachment {
     pub original_filename: Option<String>,
     pub mime_type: Option<String>,
     pub file_size: Option<i64>,
+    /// The malware verdict. Show "Checking file…" while `Pending`; only a
+    /// readable file downloads.
+    pub scan_state: ScanState,
     pub submitted_at: Option<i64>,
     pub retained_at: Option<i64>,
     pub created_at: i64,
@@ -84,7 +87,7 @@ struct Bound {
     asset_id: i64,
     summary: Attachment,
 }
-const SELECT: &str = "SELECT a.id,a.media_asset_id,a.public_id,a.subject_type,a.subject_id,a.state,a.uploaded_by_id,s.original_filename,s.mime_type,s.file_size,floor(extract(epoch FROM a.submitted_at))::bigint AS submitted_at,floor(extract(epoch FROM a.retained_at))::bigint AS retained_at,floor(extract(epoch FROM a.created_at))::bigint AS created_at FROM base_media_attachments a JOIN base_media_assets s ON s.id=a.media_asset_id AND s.tenant_id=a.tenant_id";
+const SELECT: &str = "SELECT a.id,a.media_asset_id,a.public_id,a.subject_type,a.subject_id,a.state,a.uploaded_by_id,s.original_filename,s.mime_type,s.file_size,s.scan_state,floor(extract(epoch FROM a.submitted_at))::bigint AS submitted_at,floor(extract(epoch FROM a.retained_at))::bigint AS retained_at,floor(extract(epoch FROM a.created_at))::bigint AS created_at FROM base_media_attachments a JOIN base_media_assets s ON s.id=a.media_asset_id AND s.tenant_id=a.tenant_id";
 fn bound(row: &Row) -> Result<Bound> {
     Ok(Bound {
         id: row.get("id"),
@@ -98,6 +101,7 @@ fn bound(row: &Row) -> Result<Bound> {
             original_filename: row.get("original_filename"),
             mime_type: row.get("mime_type"),
             file_size: row.get("file_size"),
+            scan_state: ScanState::parse(row.get("scan_state")),
             submitted_at: row.get("submitted_at"),
             retained_at: row.get("retained_at"),
             created_at: row.get("created_at"),
@@ -166,6 +170,8 @@ impl Media {
             .as_str()
             .map(str::to_owned)
             .ok_or(Error::StorageNotConfigured)?;
+        // Refused before any bytes are written; registration decides again.
+        self.initial_state(&*client, &disk).await?;
         let key = format!(
             "tenants/{}/attachments/{}",
             scope.tenant(),
@@ -224,6 +230,7 @@ impl Media {
                             original_filename: asset.original_filename,
                             mime_type: asset.mime_type,
                             file_size: asset.file_size,
+                            scan_state: asset.scan_state,
                             submitted_at: None,
                             retained_at: None,
                             created_at: asset.created_at,
@@ -315,6 +322,16 @@ impl Media {
         self.subjects
             .authorize(tx.sql(), scope, subject.kind, action, subject.id)
             .await?;
+        // After the owner's answer. A pending file may be submitted and stays
+        // unreadable until clean; an infected one never becomes evidence.
+        if operation == Bind::Submit
+            && rows.iter().any(|row| {
+                row.summary.state == AttachmentState::Draft
+                    && row.summary.scan_state == ScanState::Infected
+            })
+        {
+            return Err(Error::Quarantined);
+        }
         let changing: Vec<&Bound> = rows
             .iter()
             .filter(|row| {
@@ -398,6 +415,8 @@ impl Media {
         if !asset.private {
             return Err(Error::InvalidAsset);
         }
+        // After the owner's answer, so a refused reader learns nothing more.
+        self.readable(client, &asset).await?;
         let bytes = storage::read(&self.disks(client).await?, &asset.disk, &asset.key).await?;
         Ok(StreamFile {
             bytes,

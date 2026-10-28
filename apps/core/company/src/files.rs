@@ -33,7 +33,7 @@ pub struct CompanyFiles;
 /// The one adapter instance Base and owner code share.
 pub static FILES: CompanyFiles = CompanyFiles;
 
-fn company_id(subject: &str) -> Result<OrganisationId> {
+pub(crate) fn company_id(subject: &str) -> Result<OrganisationId> {
     subject
         .parse::<i64>()
         .ok()
@@ -41,7 +41,7 @@ fn company_id(subject: &str) -> Result<OrganisationId> {
         .ok_or(Error::NotFound)
 }
 
-async fn authorize(
+pub(crate) async fn authorize(
     client: &dyn ProofClient,
     scope: &Scope,
     id: OrganisationId,

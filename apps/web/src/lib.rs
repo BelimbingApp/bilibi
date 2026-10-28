@@ -342,6 +342,7 @@ pub fn router(app: App) -> Router {
         .route(impersonation::LEAVE, post(impersonation::leave))
         .route(impersonation::ENTER, post(impersonation::enter))
         .route("/preferences", post(shell::save))
+        .route(shell::COMPANY_PATH, post(shell::choose_company))
         .route("/api/pins", get(shell::pins))
         .route("/api/pins/toggle", post(shell::toggle_pin))
         .route("/api/pins/reorder", post(shell::reorder_pins))
@@ -476,6 +477,7 @@ pub(crate) fn server_fault(error: &Error) -> bool {
             | Error::Forbidden
             | Error::NotFound
             | Error::Invalid
+            | Error::Refused(_)
             | Error::Conflict
             | Error::StepUpRequired { .. }
     )
@@ -578,10 +580,22 @@ async fn upgrade(
     // Upgrade proves the session only. Each discovered page/panel has its own
     // gate. The socket keeps the identity it was opened under and acts for
     // nobody else (an impersonation switch moves the session underneath it).
-    let identity = live::Identity::of(&app.security.guard(&token).await?);
+    // The company is the one the page was rendered under (`company`, the
+    // shell's `data-company-id`, empty for none), not the session's company
+    // now: a page whose session switched company while its socket was down
+    // then reloads at its first event instead of re-rendering under a top bar
+    // that names the old company. A socket opened without the parameter binds
+    // the session's company, as before.
+    let scope = app.security.guard(&token).await?;
+    let identity = match options.get("company") {
+        Some(company) => {
+            live::Identity::rendered(&scope, company.parse::<i64>().ok().filter(|id| *id > 0))
+        }
+        None => live::Identity::of(&scope),
+    };
     Ok(ws
-        // A JSON intent is small; the limit leaves room for one upload chunk
-        // frame (bilibi_ui::upload::CHUNK_SIZE plus its eight-byte header).
+        // Bound allocations above the accepted event budget so an oversized
+        // form can receive a nonfatal error (see live::run).
         .max_message_size(live::FRAME_LIMIT)
         .max_frame_size(live::FRAME_LIMIT)
         .on_upgrade(move |socket| {

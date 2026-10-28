@@ -146,8 +146,7 @@ static GRID: GridContribution = GridContribution {
     )
     .label_field("name")
     .time_field("created_at")
-    .record_types(&["company"])
-    .page("/companies/{key}"),
+    .record_types(&["company"]),
     // A department is in the tenant through its company, so the source joins
     // the tenant's live companies (Bilimbi `Grid.DepartmentsSource`); the
     // head is the affiliation id, which the affiliation owner links.

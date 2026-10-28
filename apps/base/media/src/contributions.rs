@@ -1,5 +1,13 @@
-//! Operator settings Media owns (Administration → Settings → Operator, P3).
-use bilibi_authz::{CapabilityDefinition, VocabularyContribution, VOCABULARY};
+//! Operator settings Media owns (Administration → Settings → Operator, P3),
+//! its capabilities and the `media-scanner` and `media-purger` principals.
+use crate::{
+    quarantine::{MANAGE as QUARANTINE_MANAGE, PURGER, REMOVE, VIEW as QUARANTINE_VIEW},
+    scan::{POLICY, PRINCIPAL, SCAN, TIMEOUT},
+};
+use bilibi_authz::{
+    CapabilityDefinition, StandingGrant, SystemPrincipalDefinition, VocabularyContribution,
+    STANDING_GRANTS, VOCABULARY,
+};
 use bilibi_module_registry::{Contribution, Provenance};
 use bilibi_settings::{Definition, Editor, ScopeKind, Setting, Validator, ValueType, DEFINITIONS};
 use serde_json::{json, Value};
@@ -15,14 +23,28 @@ macro_rules! provenance {
     };
 }
 // Operator settings are platform-only: a grant alone is not enough, the
-// persistent operator identity is required too.
+// persistent operator identity is required too. Quarantine is the tenant's.
 inventory::submit! { Contribution::new(VOCABULARY, "base/media", provenance!(), &VocabularyContribution {
-    capabilities: &[CapabilityDefinition::platform(MANAGE)],
-    domains: &[],
-    verbs: &[],
+    capabilities: &[
+        CapabilityDefinition::platform(MANAGE),
+        CapabilityDefinition::tenant(QUARANTINE_VIEW),
+        CapabilityDefinition::tenant(QUARANTINE_MANAGE),
+        CapabilityDefinition::tenant(SCAN),
+        CapabilityDefinition::tenant(REMOVE),
+    ],
+    domains: &["media"],
+    verbs: &["scan", "purge"],
     roles: &[],
-    system_principals: &[],
+    system_principals: &[
+        SystemPrincipalDefinition { name: PRINCIPAL, capabilities: &[SCAN] },
+        SystemPrincipalDefinition { name: PURGER, capabilities: &[REMOVE] },
+    ],
 }) }
+// Scanning and removing purged bytes are Platform work no tenant should have
+// to switch on; a tenant administrator may still deny either, and that
+// tenant's files then stay pending, or its purged bytes stay on disk.
+inventory::submit! { Contribution::new(STANDING_GRANTS, PRINCIPAL, provenance!(), &StandingGrant { principal: PRINCIPAL, capabilities: &[SCAN] }) }
+inventory::submit! { Contribution::new(STANDING_GRANTS, PURGER, provenance!(), &StandingGrant { principal: PURGER, capabilities: &[REMOVE] }) }
 const GLOBAL: &[ScopeKind] = &[ScopeKind::Global];
 const ALLOWED: [&str; 11] = [
     "application/pdf",
@@ -59,5 +81,14 @@ inventory::submit! { Contribution::new(DEFINITIONS, "media.attachment_allowed_ty
 })) }
 inventory::submit! { Contribution::new(DEFINITIONS, "media.stream_ttl_seconds", provenance!(), &Setting::Definition(Definition {
     value_type: ValueType::Integer, scopes: GLOBAL, default: || json!(300), nullable: false, encrypted: false, minimum: Some(1.0), maximum: Some(86_400.0), validator: None,
-    editor: Some(Editor { group: "Media", label: "Asset link lifetime", help: "Seconds a file link stays valid after it is issued.", capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
+    editor: Some(Editor { group: "Media", label: "File link lifetime (seconds)", help: "Seconds a file link stays valid after it is issued.", capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
+})) }
+inventory::submit! { Contribution::new(DEFINITIONS, POLICY, provenance!(), &Setting::Definition(Definition {
+    value_type: ValueType::String, scopes: GLOBAL, default: || json!("when_available"), nullable: false, encrypted: false, minimum: None, maximum: None,
+    validator: Some(Validator { accepts: |value| matches!(value.as_str(), Some("when_available" | "required")), message: "Choose \"when_available\" or \"required\"" }),
+    editor: Some(Editor { group: "Media", label: "Malware scanning", help: "\"when_available\": scan every new file when a scanner is installed, and without one store files unscanned. \"required\": refuse uploads while no scanner is installed, and never hand out a file that was not scanned clean, including every file stored before; rescan those from Quarantined Files first.", capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
+})) }
+inventory::submit! { Contribution::new(DEFINITIONS, TIMEOUT, provenance!(), &Setting::Definition(Definition {
+    value_type: ValueType::Integer, scopes: GLOBAL, default: || json!(60), nullable: false, encrypted: false, minimum: Some(5.0), maximum: Some(600.0), validator: None,
+    editor: Some(Editor { group: "Media", label: "Malware scan time limit", help: "Seconds one scan may take before it is retried; after eight tries the file is marked failed.", capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
 })) }

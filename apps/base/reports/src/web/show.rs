@@ -56,10 +56,13 @@ impl Sharing {
     }
 }
 
+/// A confirmation the dialog is asking. A delete holds the version the
+/// reader saw when they asked, so a report saved meanwhile refuses it as a
+/// conflict instead of being deleted unseen.
 #[derive(Clone, Copy, PartialEq)]
 enum Confirm {
     Copy,
-    Delete,
+    Delete(i64),
     /// A schedule of the reader's, by id and version.
     Unsubscribe(i64, i64),
 }
@@ -360,6 +363,7 @@ impl Show {
         value: &Value,
     ) -> Result<Option<(String, Option<String>)>> {
         let get = |key: &str| value.get(key).and_then(Value::as_str);
+        let shown = self.report.as_ref().map(|r| r.version);
         let report = self.load(scope).await?;
         match get("type").ok_or(Error::Invalid)? {
             "clear-flash" => clear_flash(&mut self.flash, value),
@@ -421,6 +425,11 @@ impl Show {
             "reset_definition" => self.builder = Some(Builder::from_report(&report)),
             "save_definition" if report.owned => {
                 self.save_definition(scope, credential, &report).await?
+            }
+            // Discard changes is a submit of the Sharing form (see `sharing`), so
+            // the browser resets the form's controls with the server's draft.
+            "save_sharing" if get("discard").is_some() => {
+                self.sharing = Some(Sharing::from_report(&report))
             }
             "edit_schedule" => self.schedule.read(value),
             "subscribe" => {
@@ -570,9 +579,10 @@ impl Show {
                 }
             }
             "save_sharing" if report.owned => self.save_sharing(scope, credential, value).await?,
-            "reset_sharing" => self.sharing = Some(Sharing::from_report(&report)),
             "request_copy" => self.confirm = Some(Confirm::Copy),
-            "request_delete" if report.owned => self.confirm = Some(Confirm::Delete),
+            "request_delete" if report.owned => {
+                self.confirm = Some(Confirm::Delete(shown.unwrap_or(report.version)))
+            }
             "cancel_confirm" => self.confirm = None,
             "copy" if self.confirm == Some(Confirm::Copy) => {
                 self.confirm = None;
@@ -603,8 +613,10 @@ impl Show {
                     )?),
                 }
             }
-            "delete" if self.confirm == Some(Confirm::Delete) => {
-                self.confirm = None;
+            "delete" if matches!(self.confirm, Some(Confirm::Delete(_))) => {
+                let Some(Confirm::Delete(version)) = self.confirm.take() else {
+                    return Ok(None);
+                };
                 match self
                     .pages
                     .submit(
@@ -612,7 +624,7 @@ impl Show {
                         credential,
                         "delete",
                         "base.reports.delete",
-                        json!({"id": report.id, "version": report.version}),
+                        json!({"id": report.id, "version": version}),
                     )
                     .await
                 {
@@ -859,7 +871,7 @@ impl Show {
                 confirm_event: "unsubscribe",
                 cancel_event: "cancel_confirm",
             })?,
-            Some(Confirm::Delete) => {
+            Some(Confirm::Delete(_)) => {
                 let consequence = format!("Delete {}?", report.name);
                 render(ConfirmDialog {
                     id: "report-delete-confirm",
@@ -1522,8 +1534,9 @@ impl Show {
         if sharing.dirty {
             actions.push(&render(Button {
                 id: "report-share-reset",
-                button_type: "button",
-                event: "reset_sharing",
+                button_type: "submit",
+                name: "discard",
+                value: "true",
                 body: Html::text("Discard changes"),
                 ..Button::default()
             })?);

@@ -124,7 +124,15 @@ impl LiveState<Scope, Error> for State {
                             .and_then(|v| v.as_str())
                             .and_then(|v| v.parse::<u64>().ok())
                             .ok_or(Error::Invalid)?;
-                        if !["name", "optional", "notes", "kind", "region"].contains(&field)
+                        if ![
+                            "name",
+                            "renewal_date",
+                            "optional",
+                            "notes",
+                            "kind",
+                            "region",
+                        ]
+                        .contains(&field)
                             || value.len() > 4096
                         {
                             return Err(Error::Invalid);
@@ -147,6 +155,15 @@ impl LiveState<Scope, Error> for State {
                                 "Name",
                                 value,
                                 &["must have at least 3 characters"],
+                            ))
+                        } else if field == "renewal_date"
+                            && !value.is_empty()
+                            && value.parse::<jiff::civil::Date>().is_err()
+                        {
+                            Some(CommitStatus::refusal(
+                                "Renewal date",
+                                value,
+                                &["must be a valid date"],
                             ))
                         } else if field == "kind" && !["customer", "vendor"].contains(&value) {
                             Some(CommitStatus::refusal(

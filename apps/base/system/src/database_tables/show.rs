@@ -835,7 +835,7 @@ fn section(id: &str, title: &str, description: &str, table: Html) -> Result<Html
 // Bilimbi base/ui page-header pin control, targeting this table's own address.
 #[derive(Template)]
 #[template(
-    source = r#"{% import "components.html" as ui %}{% call ui::icon_button(icon="bilimbi-pin", label="Pin this table to sidebar", context=bilibi_ui::IconContext::Inline, id="database-table-pin", nav_pin="record", record_label=pin_label, record_url=url) %}{% endcall %}"#,
+    source = r#"{% import "components.html" as ui %}{% call ui::icon_button(icon="bilimbi-pin", label="Pin this table to sidebar", context=bilibi_ui::IconContext::Inline, id="database-table-pin", nav_pin="record", record_label=pin_label, record_url=url, record_icon="database") %}{% endcall %}"#,
     ext = "html"
 )]
 struct TablePin<'a> {
@@ -876,14 +876,16 @@ impl LiveState<Scope, Error> for Show {
                         ListState::parse(query, self.spec.clone()).map_err(|_| Error::Internal)?;
                 }
                 LiveInput::Event(value) => match value.get("type").and_then(Value::as_str) {
-                    Some("filter") => self
-                        .list
-                        .apply_filters(&params::form_values(value, "filters")),
+                    Some("filter") => self.list.apply_filters(
+                        &params::form_values_checked(value, "filters", params::FIELD_LIMIT)
+                            .map_err(Error::refused)?,
+                    ),
                     Some("page") => self
                         .list
                         .put_page(value.get("page").and_then(Value::as_str)),
                     Some(event) => {
-                        let values = params::string_values(value);
+                        let values = params::string_values_checked(value, params::FIELD_LIMIT)
+                            .map_err(Error::refused)?;
                         let outcome = self
                             .columns_for(event)
                             .ok_or(Error::Invalid)?

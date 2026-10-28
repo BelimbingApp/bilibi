@@ -119,7 +119,11 @@ fn restriction_snapshot(
                 fields: entry
                     .fields
                     .into_iter()
-                    .map(|(id, label)| CatalogField { id, label })
+                    .map(|(id, label)| CatalogField {
+                        id,
+                        label,
+                        restriction_aliases: Vec::new(),
+                    })
                     .collect(),
             })
             .collect(),

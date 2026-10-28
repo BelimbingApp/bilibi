@@ -154,9 +154,10 @@ impl LiveState<Scope, Error> for People {
                 LiveInput::Params(_) => return Err(Error::Invalid),
                 LiveInput::Event(value) => match event(value)? {
                     "people_grid" => {
-                        if let ColumnsOutcome::Update | ColumnsOutcome::Noop =
-                            self.columns.handle(&params::string_values(value))
-                        {
+                        if let ColumnsOutcome::Update | ColumnsOutcome::Noop = self.columns.handle(
+                            &params::string_values_checked(value, params::FIELD_LIMIT)
+                                .map_err(Error::refused)?,
+                        ) {
                             rows_changed = false;
                         }
                     }

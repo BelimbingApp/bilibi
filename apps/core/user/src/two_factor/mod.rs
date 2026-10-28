@@ -73,9 +73,9 @@ pub enum TwoFactorError {
     AlreadyEnabled,
     #[error("This setup has expired. Start again.")]
     NoPendingEnrollment,
-    #[error("Leave impersonation first: only the account's own holder can do this.")]
+    #[error("Return to your own account to manage 2FA.")]
     Impersonating,
-    #[error("2FA needs BILIBI_SETTINGS_KEY, which this installation lacks.")]
+    #[error("2FA is unavailable. Contact your administrator.")]
     Unavailable,
     #[error(transparent)]
     Other(#[from] Error),

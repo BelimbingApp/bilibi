@@ -100,7 +100,7 @@ impl LocationDraft {
         // One line says why the three fields after the country are off,
         // instead of three grey boxes that do not.
         if country_blank {
-            country = country.hint("Postcode, state and locality open once you pick a country.");
+            country = country.hint("Choose a country to enter the postcode, state and locality.");
         }
         let admin1_options: Vec<Choice> = self
             .options

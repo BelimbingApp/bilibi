@@ -102,7 +102,9 @@ pub const IMPERSONATE_NESTED: &str = "impersonate-nested";
 pub const IMPERSONATE_SELF: &str = "impersonate-self";
 pub const IMPERSONATE_MISSING: &str = "impersonate-missing";
 pub const IMPERSONATE_UNABLE: &str = "impersonate-unable";
-const ACTION_REFUSALS: [(&str, &str); 5] = [
+/// The company switcher was sent a company the account does not reach.
+pub const COMPANY_UNAVAILABLE: &str = "company-unavailable";
+const ACTION_REFUSALS: [(&str, &str); 6] = [
     (
         IMPERSONATE_FORBIDDEN,
         "You do not have access to that action.",
@@ -117,6 +119,7 @@ const ACTION_REFUSALS: [(&str, &str); 5] = [
         "Unable to find that user in this workspace.",
     ),
     (IMPERSONATE_UNABLE, "Unable to impersonate that user."),
+    (COMPANY_UNAVAILABLE, "That company is not available to you."),
 ];
 
 /// Whether this request is the browser's own navigation. A method link's

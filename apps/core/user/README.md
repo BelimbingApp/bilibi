@@ -85,7 +85,7 @@ absence of a row); time-display mode and locale are the existing
 (`base/datetime`, `base/locale`). Pins are `user_pins`: one row per normalized
 URL per account (path with trailing slash, fragment and host dropped, query
 sorted; `url_hash` is md5 of it), at most 100, written under a lock on the
-account's row. A URL that would leave the site is refused. Pins to a page this
+account's row. A URL that would leave the site, or an icon name the UI catalogue does not know, is refused. Pins to a page this
 deployment no longer serves stay stored and are not drawn.
 
 Web adapters (`apps/web/src/shell.rs`): `POST /preferences` (`{kind,value}`), `GET /api/pins`, `POST /api/pins/toggle` (`{label,url,icon}`) and `POST /api/pins/reorder` (`{pins:[{id}]}`), each with Origin and CSRF checks and a 422 `{error}` for a refused value. The shell renders the account's theme (`<html data-theme>` on first paint), mode and pins (`data-pins`) itself, and `/settings/appearance` (`src/appearance.rs`) is the same three choices as a live form. It subscribes to committed theme and time zone display changes for the signed-in account and reloads the saved choices immediately, including changes from the top bar. An impersonated session reads the viewed account's choices but `PreferenceError::Impersonating` refuses every write (the shell answers 403 `{"error":"impersonating"}` and draws its controls locked), as Bilimbi does.
@@ -104,6 +104,10 @@ actor, target as subject, Bilimbi's payload) commits with it, so a trail that
 cannot be written refuses the switch. A return that cannot be made ends the
 session instead of trapping the operator. Every authentication re-proves both
 accounts, so removing or freezing either ends the borrowed session.
+
+## Current company
+
+`UserService::choose_company(token, csrf, company, request)` (`src/company_context.rs`; no Bilimbi counterpart) makes `company` the session's current company (`Scope::current_company`), behind the host's `POST /session/company` from the top bar's switcher. `None`, or the account's own company, returns to the affiliation. The company must be one the account reaches now (`bilibi_company::reachable`; `ChoiceRefusal::Unavailable` otherwise), the write goes through `Sessions::choose_company` and the `user.company.switched` action commits with it. A refused switch records a non-retained `user.company.switch_refused` action naming the requested company, on the pooled connection. A choice is a session fact, not an account preference, so an operator viewing as a user may make one; the reach checked is the viewed account's, and the choice applies to that view only. Viewing as a user starts from that user's own default, and leaving the view restores the operator's earlier choice (`Sessions::switch`). `AccountVerifier::reaches_company` answers Tenancy's proof of the stored choice on every authentication with the same `reachable`.
 
 ## Token storage
 
@@ -481,4 +485,4 @@ The query editor uses the shared page header for its title, description and Back
 
 The [Base Step-up provider contract](../../base/step_up/README.md#provider) owns method registration, challenge starts and lifecycle hooks. Core User registers TOTP beside Extensions. With one method the existing routes retain their original flow. Reset (including the server command) reads enrollment across all methods in the owner's transaction, removes all factor state, revokes challenges and signs out the target. Account deletion also calls every method's deletion hook. Password changes/resets and account reassignment use `Sessions::revoke`; they retain enrollment. Every provider change shares the owner's mutation transaction and audit trace. Sign-in admission is described under [Sign-in admission](#sign-in-admission).
 
-Saved notification, pin and database-query icons use the bare names in the [UI icon contract](../../base/ui/README.md#icons). Migration `core-user-019-bare-icon-names` removes the former CSS prefix from existing values and maps the duplicate impersonation name to `bilimbi-impersonate`. Unknown stored names render the shared neutral placeholder and warn once.
+Saved notification, pin and database-query icons use the bare names in the [UI icon contract](../../base/ui/README.md#icons). Migration `core-user-019-bare-icon-names` removes the former CSS prefix from existing values and maps the duplicate impersonation name to `bilimbi-impersonate`. Unknown stored names render the shared neutral placeholder and warn once. Migration `core-user-021-database-table-pin-icons` sets the `database` icon on stored database table pins that had none.

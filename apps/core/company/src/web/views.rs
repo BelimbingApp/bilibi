@@ -1,3 +1,4 @@
+//! Company pages mirror Bilimbi's Core Company list and record detail screens.
 use super::fields;
 use super::Pending;
 use crate::{Company, FieldError, NewCompany, Params};
@@ -11,7 +12,7 @@ use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
 };
-use tokio_postgres::GenericClient;
+use tokio_postgres::{Client, GenericClient};
 
 pub(crate) fn render(value: &impl Template) -> Result<Html> {
     Html::render(value).map_err(|_| Error::Internal)
@@ -42,7 +43,43 @@ pub(super) fn columns(views: Arc<PageViews>, masked: &HashSet<String>) -> Result
         }
     })
     .collect();
-    PageColumns::mount(views, "companies", columns).map_err(|_| Error::Internal)
+    let record_fields = record_slots(masked)?;
+    PageColumns::mount(views, "companies", columns)
+        .and_then(|columns| columns.with_record_slots(&record_fields))
+        .map_err(|_| Error::Internal)
+}
+
+/// Facts the Company page actually fills into its own row slots. Keep other
+/// Company Grid fields as projections (Bilimbi Core Company list columns).
+pub(super) fn record_slots(masked: &HashSet<String>) -> Result<Vec<bilibi_ui::RecordField>> {
+    let filled_slots = ["name", "code", "parent_name", "status", "jurisdiction"];
+    let mut record_fields = fields::ALL
+        .iter()
+        .filter(|field| {
+            field
+                .slot_id()
+                .is_some_and(|slot| filled_slots.contains(&slot.as_str()))
+        })
+        .copied()
+        .collect::<Vec<_>>();
+    let installed = bilibi_grid::installed().map_err(|_| Error::Internal)?;
+    if let Some(table) = installed.table("companies") {
+        let contributed_ids = crate::field_contributions::definitions()
+            .map_err(|_| Error::Internal)?
+            .into_iter()
+            .map(|(_, field)| field.id)
+            .collect::<HashSet<_>>();
+        let additions = table
+            .record_fields()
+            .iter()
+            .filter(|field| contributed_ids.contains(field.id))
+            .filter(|field| !record_fields.iter().any(|existing| existing.id == field.id))
+            .filter(|field| !masked.contains(field.id))
+            .copied()
+            .collect::<Vec<_>>();
+        record_fields.extend(additions);
+    }
+    Ok(record_fields)
 }
 pub(super) fn badge(status: &str) -> Result<Html> {
     render(&Badge::status(
@@ -112,7 +149,7 @@ pub(super) async fn list(
     params: &Params,
     columns: &PageColumns,
     workspace: bool,
-    masked: &HashSet<String>,
+    extension_fields: ExtensionListFields<'_>,
 ) -> Result<String> {
     let mut actions = Html::EMPTY;
     if allowed(client, scope, crate::CREATE).await? {
@@ -153,11 +190,13 @@ pub(super) async fn list(
             body: actions,
         })?,
     })?;
-    let placeholder = if masked.contains("email") && masked.contains("jurisdiction") {
+    let placeholder = if extension_fields.masked.contains("email")
+        && extension_fields.masked.contains("jurisdiction")
+    {
         "Search by name, code, or legal name..."
-    } else if masked.contains("email") {
+    } else if extension_fields.masked.contains("email") {
         "Search by name, code, legal name, or jurisdiction..."
-    } else if masked.contains("jurisdiction") {
+    } else if extension_fields.masked.contains("jurisdiction") {
         "Search by name, code, legal name, or email..."
     } else {
         "Search by name, code, legal name, email, or jurisdiction..."
@@ -244,6 +283,49 @@ pub(super) async fn list(
                 row.actions = render(&Badge::status(BadgeKind::Neutral, "Primary"))?;
             }
         }
+        if let Some(fields) = extension_fields.values.get(&company.id) {
+            for (_, definition) in
+                crate::field_contributions::definitions().map_err(|_| Error::Internal)?
+            {
+                let slot = fields::ALL
+                    .iter()
+                    .chain(
+                        bilibi_grid::installed()
+                            .map_err(|_| Error::Internal)?
+                            .table("companies")
+                            .ok_or(Error::Internal)?
+                            .record_fields()
+                            .iter(),
+                    )
+                    .find(|field| field.id == definition.id)
+                    .and_then(|field| field.slot_id())
+                    .ok_or(Error::Internal)?;
+                if columns.columns.iter().any(|column| column.id == slot) {
+                    let value = fields.get(definition.id).and_then(Value::as_str);
+                    let display_value = match (definition.kind, value) {
+                        (crate::CompanyFieldKind::Date, Some(value)) => value
+                            .parse::<jiff::civil::Date>()
+                            .ok()
+                            .map(|date| extension_fields.display.render_date(date))
+                            .unwrap_or_else(|| value.to_owned()),
+                        (_, Some(value)) => value.to_owned(),
+                        (_, None) => String::new(),
+                    };
+                    row.slots.insert(
+                        slot,
+                        if extension_fields.masked.contains(definition.id) {
+                            restricted(&format!("company-{}-restricted", definition.id))?
+                        } else {
+                            render(&ReadValue {
+                                value: (!display_value.is_empty())
+                                    .then_some(display_value.as_str()),
+                                empty: "—",
+                            })?
+                        },
+                    );
+                }
+            }
+        }
     }
     let mut table = columns.flex_table("companies", rows).sorted(
         Some(&params.sort),
@@ -310,6 +392,12 @@ pub(super) async fn list(
             card: card("companies-card", contents, true)?,
         })?,
     )
+}
+
+pub(super) struct ExtensionListFields<'a> {
+    pub masked: &'a HashSet<String>,
+    pub values: &'a std::collections::BTreeMap<i64, crate::CompanyFieldValues>,
+    pub display: &'a bilibi_datetime::DisplayContext,
 }
 #[derive(Template)]
 #[template(
@@ -448,11 +536,12 @@ pub(super) struct DetailState<'a> {
     pub departments_columns: &'a mut ListColumns,
     pub children_columns: &'a ListColumns,
     pub workspace: bool,
+    pub display: &'a bilibi_datetime::DisplayContext,
     /// Anchors of the contributed record panels the reader may mount.
     pub panels: &'a [String],
 }
 pub(super) async fn detail(
-    client: &(impl GenericClient + Sync),
+    client: &Client,
     scope: &Scope,
     id: i64,
     state: DetailState<'_>,
@@ -465,6 +554,7 @@ pub(super) async fn detail(
         departments_columns,
         children_columns,
         workspace,
+        display,
         panels,
     } = state;
     let (company, masked) = crate::detail(client, scope, id).await?;
@@ -655,6 +745,53 @@ pub(super) async fn detail(
                 masked.contains(name),
                 statuses.get(name),
             )?,
+        });
+    }
+    let contributed = crate::field_contributions::read(client, scope, &[id]).await?;
+    let contributed = contributed.get(&id).cloned().unwrap_or_default();
+    for (_, definition) in crate::field_contributions::definitions().map_err(|_| Error::Internal)? {
+        let value = contributed
+            .get(definition.id)
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let id_attr = format!("company-{}", definition.id.replace('_', "-"));
+        let value_html = if masked.contains(definition.id) {
+            restricted(&id_attr)?
+        } else {
+            let (input_type, display_value) = match definition.kind {
+                crate::CompanyFieldKind::Text { .. } => ("text", None),
+                crate::CompanyFieldKind::Date => (
+                    "date",
+                    (!value.is_empty()).then(|| {
+                        value
+                            .parse::<jiff::civil::Date>()
+                            .ok()
+                            .map(|date| display.render_date(date))
+                            .unwrap_or_else(|| value.to_owned())
+                    }),
+                ),
+            };
+            let mut field = InlineField::new(
+                id_attr,
+                definition.id,
+                format!("Edit {}", definition.label),
+                value,
+            )
+            .version(company.version)
+            .allow_empty()
+            .status(statuses.get(definition.id))
+            .input_type(input_type);
+            if let Some(display_value) = display_value {
+                field = field.display_value(display_value);
+            }
+            field.id_value = id.to_string();
+            field.editable = editable;
+            render(&InlineEdit { field })?
+        };
+        facts.push(Fact {
+            title: definition.label,
+            id: definition.id,
+            value: value_html,
         });
     }
     facts.push(Fact {
@@ -854,7 +991,7 @@ pub(super) async fn detail(
         let detail = match pending.operation {
             crate::lifecycle::Operation::Archive => "Its records are kept. Archiving is final: an archived company cannot be reactivated.",
             crate::lifecycle::Operation::Suspend => "Its records are kept. Reactivating the company lifts the suspension.",
-            crate::lifecycle::Operation::Activate => "It becomes a working company of this workspace. It can be suspended later.",
+            crate::lifecycle::Operation::Activate => "The company becomes active. It can be suspended later.",
             crate::lifecycle::Operation::Reactivate => "The suspension is lifted and the company is active again.",
         };
         let mut reason = Field::named("reason")
@@ -1022,7 +1159,7 @@ pub(super) async fn create(
         reason,
     } = state;
     bilibi_authz::authorize_key(client, scope, crate::CREATE).await?;
-    let masked = bilibi_authz::restrictions(client, scope).await?;
+    let masked = crate::field_contributions::effective_restrictions(client, scope).await?;
     let opts = options(client, scope, None, true).await?;
     let mut fields = Vec::new();
     for (name, label, kind, placeholder) in [
@@ -1096,7 +1233,52 @@ pub(super) async fn create(
             fields.push(render(&field)?);
         }
     }
-
+    let custom_definitions =
+        crate::field_contributions::definitions().map_err(|_| Error::Internal)?;
+    let mut extension_fields = Vec::new();
+    for (_, definition) in custom_definitions {
+        if masked.contains(definition.id) {
+            extension_fields.push(render(&RestrictedField::new(
+                format!("company-{}", definition.id),
+                definition.label,
+            ))?);
+            continue;
+        }
+        let mut field = Field::named(definition.id)
+            .id(format!("company-{}", definition.id))
+            .label(definition.label)
+            .value(values.get(definition.id).cloned().unwrap_or_default())
+            .errors(
+                errors
+                    .iter()
+                    .filter(|error| error.field == definition.id)
+                    .map(|error| error.message.clone())
+                    .collect(),
+            );
+        match definition.kind {
+            crate::CompanyFieldKind::Text { max_length } => {
+                field = field.kind(InputKind::Text).attr(
+                    "maxlength",
+                    &max_length
+                        .min(crate::field_contributions::MAX_TEXT_FIELD_LENGTH)
+                        .to_string(),
+                );
+            }
+            crate::CompanyFieldKind::Date => field = field.kind(InputKind::Date),
+        }
+        extension_fields.push(render(&field)?);
+    }
+    let mut additional_fields = Html::EMPTY;
+    if !extension_fields.is_empty() {
+        additional_fields.push(&render(&SectionHeading {
+            title: "Additional fields",
+            description: "Fields provided by installed Extensions.",
+            ..SectionHeading::default()
+        })?);
+        for field in &extension_fields {
+            additional_fields.push(field);
+        }
+    }
     let context = [
         ("scope_activities", "Business Activities (JSON)"),
         ("metadata", "Metadata (JSON)"),
@@ -1139,7 +1321,11 @@ pub(super) async fn create(
         ..Button::default()
     })?;
     let mut body = Html::EMPTY;
-    for field in fields.into_iter().chain(context) {
+    for field in fields
+        .into_iter()
+        .chain(std::iter::once(additional_fields))
+        .chain(context)
+    {
         body.push(&field);
     }
     let mut actions = submit;
@@ -1287,7 +1473,13 @@ pub(super) async fn create(
 
 pub(super) fn new_company(
     values: &HashMap<String, String>,
-) -> (NewCompany, Option<Value>, Option<Value>, Vec<FieldError>) {
+) -> (
+    NewCompany,
+    crate::CompanyFieldValues,
+    Option<Value>,
+    Option<Value>,
+    Vec<FieldError>,
+) {
     let text = |name| values.get(name).filter(|s| !s.trim().is_empty()).cloned();
     let mut errors = Vec::new();
     let mut id = |name: &'static str| match text(name) {
@@ -1314,6 +1506,14 @@ pub(super) fn new_company(
         website: text("website"),
         ..NewCompany::default()
     };
+    let mut company_fields = crate::CompanyFieldValues::new();
+    if let Ok(definitions) = crate::field_contributions::definitions() {
+        for (_, definition) in definitions {
+            if let Some(value) = text(definition.id) {
+                company_fields.insert(definition.id.into(), Value::String(value));
+            }
+        }
+    }
     let mut object = |name: &'static str| {
         text(name).and_then(|value| match serde_json::from_str::<Value>(&value) {
             Ok(v) if v.is_object() => Some(v),
@@ -1325,7 +1525,7 @@ pub(super) fn new_company(
     };
     let activities = object("scope_activities");
     let metadata = object("metadata");
-    (new, activities, metadata, errors)
+    (new, company_fields, activities, metadata, errors)
 }
 
 #[derive(Template)]

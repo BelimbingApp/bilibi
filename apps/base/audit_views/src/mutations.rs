@@ -97,7 +97,9 @@ pub(crate) struct Pages {
 }
 
 /// What the last read returned, kept so a column-arrangement press or a
-/// details toggle redraws without another query.
+/// details toggle redraws without another query. The entries are as stored:
+/// the reader's withheld fields are read again on every redraw, so a field
+/// restricted after the read is withheld from the next diff that opens.
 struct Shown {
     page: MutationPage,
     display: DisplayContext,
@@ -195,7 +197,6 @@ impl Mutations {
         {
             page = bilibi_audit::list_mutations(&**client, scope, &self.query()).await?;
         }
-        withhold(&**client, scope, &mut page.entries).await?;
         // The rows changed: ListColumns forgets an unfinished add box, and an
         // open diff belongs to a row no longer shown.
         self.columns
@@ -211,6 +212,11 @@ impl Mutations {
             self.load(scope).await?;
         }
         let shown = self.shown.as_ref().ok_or(Error::Internal)?;
+        let mut entries = shown.page.entries.clone();
+        {
+            let client = self.pages.db.get().await?;
+            withhold(&**client, scope, &mut entries).await?;
+        }
         let form = self.list.filters_form();
         let toolbar = render(FilterToolbar::new(
             "mutations-filters",
@@ -237,7 +243,7 @@ impl Mutations {
             ],
         ))?;
         let mut rows = Vec::new();
-        for mutation in &shown.page.entries {
+        for mutation in &entries {
             rows.push(row(
                 &shown.display,
                 self.open.contains(&mutation.id),
@@ -539,9 +545,10 @@ impl LiveState<Scope, Error> for Mutations {
                 LiveInput::Event(event) => {
                     let get = |key: &str| event.get(key).and_then(Value::as_str);
                     match get("type") {
-                        Some("filters") => self
-                            .list
-                            .apply_filters(&params::form_values(event, FILTERS_FORM)),
+                        Some("filters") => self.list.apply_filters(
+                            &params::form_values_checked(event, FILTERS_FORM, params::FIELD_LIMIT)
+                                .map_err(Error::refused)?,
+                        ),
                         Some("page") => self.list.put_page(get("page")),
                         Some("grid") => {
                             let values: HashMap<String, String> = event

@@ -18,10 +18,7 @@ Depend on `base/grid`, submit one `GridContribution` to `TABLES`
   `capability` that reads any of its rows, a `Source`, the `key` field, optional
   `label_field` and `time_field` (a date/datetime), `fields`, and `record_types`
   (the audit `auditable_type` values its rows use, so a restriction reaches their
-  audit views; one table claims a type), and optional `page`, the record's own
-  page with `{key}` for the row's key (`/companies/{key}`), which a report row
-  links to (`Table::page_for`; boot refuses one that is not a local path with
-  one `{key}`).
+  audit views; one table claims a type).
 - a `Source`: static SQL for **the rows a scope may read**, with the owner's own
   tenant, soft-delete and company filters applied. A tenant source takes bigint
   `$1` (tenant) and may take `$2` (user); a `Source::global` takes none. The grid
@@ -51,8 +48,9 @@ For example, Contacts calls its email **Personal email** in both places. Work em
 
 - Declare the vocabulary once with `bilibi_ui::record_fields!`. Use its named fields or `get` for detail labels and `RecordField::fact` for a complete fact.
 - Add `RecordFields { table, fields: fields::ALL }` to the owning `GridContribution.record_fields`. A panel may contribute fields to the table at its link's start. `PageColumns` collects them automatically.
+- An Extension that owns a scalar Company field contributes its own Grid table and a `One` link starting at `companies`, then contributes `RecordFields` on `companies` with a path through that link. Company reads the value through the Extension facade for its own page slots; Grid resolves the path for optional list columns. The Extension remains the only owner of its table and tenant predicate.
 - Use `.path("parent.name")` for a related readable value. Grid resolves the path against the reader's fresh catalog before offering or loading it.
-- For a list whose owner already returns all values, use `ListColumns::with_record_fields` or `PageColumns::with_record_slots`. Fill its slots from the same authorized read model. Refresh restrictions with `ListColumns::set_available`, including on empty pages.
+- For a list whose owner already returns all values, use `ListColumns::with_record_fields` or `PageColumns::with_record_slots`. `with_record_slots` returns `Result<PageColumns, SpecError>`; callers must propagate or map that result because invalid or duplicate slot IDs are refused. Fill its slots from the same authorized read model. `RecordField::slot_id` uses an explicit slot when supplied and otherwise maps `.` and `:` in a Grid path to `-`. Refresh restrictions with `ListColumns::set_available`, including on empty pages.
 - Keep existing default columns. Fields added to this vocabulary appear in the picker; they do not change the default arrangement. New projected columns are display-only.
 - Exclude long text, files, structured documents and nested collections with `.excluded("reason")`. Short work-contact values may roll up across current affiliations. Existing default columns remain available even when they contain longer text.
 
@@ -196,6 +194,9 @@ BILIBI_GRID_DEMO=disposable cargo run -p bilibi-web --example g5-grid-summary
 Both specs carry `bounds` (`Bounds { statement_ms, max_cost }`), and `project_within` is `project` under a caller's `Bounds`, so a page of keys is filled under the bounds it was read under: `Default` is the interactive bound every other Grid read uses (2 s, `MAX_ESTIMATED_COST`); a background caller may pass a larger pair, up to `MAX_STATEMENT_MS` and `MAX_COST_BOUND`. A statement stopped by its timeout is refused as `QueryError::Limit`, like the cost bound, not reported as a database fault.
 
 Equals and one-of compare typed values: each value is checked against the column's type (a number for a number column, yes/no, text, a `YYYY-MM-DD` date, or a date-time with its offset) and refused as `Unsupported` otherwise, so a wrong type is an answer in words rather than an empty result, and `…+00:00` and `…Z` name the same instant. A float compares in its column's own type (`real` or `double precision`; the value is bound as text with no cast, as a literal would be), never through `numeric` or a wider float, so a stored value matches itself and not a near neighbour. An operand a `real` cannot hold (`1e100`, `1e-100`) compares as `float8`, so it matches no `real` value and orders correctly as a range bound, rather than failing in PostgreSQL. Days and instants before year 1, which PostgreSQL cannot read, are refused the same way. The owner's source SQL is copied into each statement untouched.
+## Record references
+
+A table that claims an audit kind in `record_types` and names a `label_field` can be registered as a record kind with Base Records, so other modules name, link and pick its rows with the reader's permissions: [`../records/README.md`](../records/README.md).
 
 ## Searching related text
 

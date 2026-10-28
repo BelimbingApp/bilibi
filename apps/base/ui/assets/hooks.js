@@ -300,6 +300,7 @@
       this.noMatches = this.el.querySelector('[id$="-no-matches"]')
       this.clearButton = this.el.querySelector('[id$="-clear"]')
       this.open = false
+      this.editing = false
       this.activeIndex = -1
       this.selectedValue = this.valueInput?.value || ""
       this.selectedLabel = this.input?.value || ""
@@ -366,11 +367,36 @@
         this.applyFilter()
       }
 
+      // The box shows the name with its code muted and italic through a
+      // display layer over the plain input, which stays the accessible value,
+      // until the person edits (`data-editing`). Write only on change: a hook child-list write reports `updated`.
+      this.setEditing = editing => {
+        this.editing = editing
+        if (this.el.hasAttribute("data-editing") !== editing) {
+          this.el.toggleAttribute("data-editing", editing)
+        }
+      }
+
+      this.renderDisplay = option => {
+        this.setEditing(false)
+        const display = this.el.querySelector("[data-combobox-display]")
+        if (!display) return
+        const [name, detail] = display.children
+        const nextName = option?.dataset.name || ""
+        const nextDetail = option?.dataset.detail || ""
+        if (name.textContent !== nextName) name.textContent = nextName
+        if (detail.textContent !== nextDetail) detail.textContent = nextDetail
+        if (this.el.hasAttribute("data-detailed") !== (nextDetail !== "")) {
+          this.el.toggleAttribute("data-detailed", nextDetail !== "")
+        }
+      }
+
       this.restore = () => {
         this.selectedValue = this.valueInput?.value || ""
         const selected = this.options().find(option => option.dataset.value === this.selectedValue)
         this.selectedLabel = selected?.dataset.label || ""
         this.input.value = this.selectedLabel
+        this.renderDisplay(selected)
       }
 
       this.close = () => {
@@ -385,6 +411,7 @@
         this.selectedLabel = option.dataset.label
         this.input.value = this.selectedLabel
         this.valueInput.value = this.selectedValue
+        this.renderDisplay(option)
         this.setOpen(false)
         this.valueInput.dispatchEvent(new Event("input", {bubbles: true}))
         this.valueInput.dispatchEvent(new Event("change", {bubbles: true}))
@@ -401,6 +428,7 @@
 
       this.onInput = event => {
         event.stopPropagation()
+        this.setEditing(true)
         if (!this.open) this.setOpen(true)
         this.activeIndex = 0
         this.applyFilter()
@@ -470,6 +498,7 @@
         this.selectedLabel = ""
         this.input.value = ""
         this.valueInput.value = ""
+        this.renderDisplay(null)
         this.valueInput.dispatchEvent(new Event("input", {bubbles: true}))
         this.valueInput.dispatchEvent(new Event("change", {bubbles: true}))
         this.input.focus()
@@ -494,6 +523,7 @@
       this.bindOptions()
       this.bindClear()
       if (!this.open) this.restore()
+      else this.setEditing(this.editing)
       this.setOpen(this.open)
       this.applyFilter()
     },

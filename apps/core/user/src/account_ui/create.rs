@@ -55,10 +55,19 @@ impl Create {
         }
     }
     fn errors_for(&self, field: &str) -> Vec<String> {
+        let label = match field {
+            "name" => "Name",
+            "email" => "Email",
+            "password" => "Password",
+            "person_id" => "Person",
+            "affiliation_id" => "Company",
+            "landing_menu_id" => "Landing page",
+            _ => "",
+        };
         self.errors
             .iter()
             .filter(|e| e.field == field)
-            .map(|e| e.message.clone())
+            .map(|e| bilibi_ui::error_sentence(label, &e.message))
             .collect()
     }
     async fn view(&mut self, scope: &Scope) -> Result<LiveBody> {
@@ -96,7 +105,7 @@ impl Create {
                                 .unwrap_or_default(),
                         )
                         .options(options)
-                        .hint("The person who uses this account; leave it empty if there is none."),
+                        .hint("Leave empty if this account is not linked to a person."),
                 )?
             }
             None => render(
@@ -104,7 +113,7 @@ impl Create {
                     .kind(InputKind::Select)
                     .prompt("No person")
                     .disabled()
-                    .hint("You cannot see the list of people; someone who can may link a person later."),
+                    .hint("You cannot view people. Someone with access can link a person later."),
             )?,
         };
         let affiliation = match (self.input.person, affiliations) {
@@ -114,7 +123,7 @@ impl Create {
                     .kind(InputKind::Select)
                     .prompt("No company")
                     .disabled()
-                    .hint("This person works for no company yet, so the account signs in without one."),
+                    .hint("This person has no company, so the account signs in without one."),
             )?,
             (Some(_), Some(choices)) => {
                 let mut options = Vec::with_capacity(choices.len());
@@ -132,7 +141,7 @@ impl Create {
                                 .unwrap_or_default(),
                         )
                         .options(options)
-                        .hint("Pick which of this person's companies the account signs in under."),
+                        .hint("Choose the company this account signs in under."),
                 )?
             }
             (Some(_), None) => render(
@@ -147,7 +156,7 @@ impl Create {
             &field("name", "Name")
                 .value(&self.input.name)
                 .autocomplete("name")
-                .placeholder("Enter user name")
+                .placeholder("e.g. Alex Lee")
                 .required(),
         )?;
         let email = render(
@@ -155,7 +164,7 @@ impl Create {
                 .kind(InputKind::Email)
                 .value(&self.input.email)
                 .autocomplete("email")
-                .placeholder("Enter email address")
+                .placeholder("e.g. alex@example.com")
                 .required(),
         )?;
         let mut password = SecretInput::in_form("user", "password", "password")
@@ -212,7 +221,7 @@ impl Create {
             redirect: self.created.map(|id| format!("/users/{id}")),
             flash: self
                 .created
-                .map(|_| (StatusKind::Success, "User created successfully.".into())),
+                .map(|_| (StatusKind::Success, "User created.".into())),
             ..LiveBody::default()
         })
     }
@@ -248,7 +257,12 @@ impl LiveState<Scope, Error> for Create {
                 if self.created.is_some() {
                     return self.view(request.scope).await;
                 }
-                let fields = bilibi_ui::params::form_values(value, "user");
+                let fields = bilibi_ui::params::form_values_checked(
+                    value,
+                    "user",
+                    bilibi_ui::params::FIELD_LIMIT,
+                )
+                .map_err(bilibi_database::Error::refused)?;
                 let person = optional_id(fields.get("person_id"), |id| PersonId::new(id).ok())?;
                 let affiliation = if person == self.input.person {
                     optional_id(fields.get("affiliation_id"), |id| {

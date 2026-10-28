@@ -1,6 +1,6 @@
 {% import "components.html" as ui %}
 {% import "inline.html" as inline %}
-{#- Built from shared components only, so the legacy compatibility sheet stops here. -#}
+{#- Mirrors Bilimbi Base UI inline facts; built from shared components only. -#}
 <div data-shared-ui>
 {% call ui::page(id="inline-reference", variant=bilibi_ui::PageVariant::Detail, class="p-6") %}
 {% call ui::header(subtitle="Click a value to edit it.") %}Inline editing specimen{% endcall %}
@@ -8,6 +8,7 @@
 {% call ui::card(inner_class="p-4") %}
 {% call ui::facts() %}
 {% call ui::fact(title="Name") %}{% call inline::inline_edit(field=name.field) %}{% endcall %}{% endcall %}
+{% call ui::fact(title="Renewal date") %}{% call inline::inline_edit(field=renewal_date.field) %}{% endcall %}{% endcall %}
 {% call ui::fact(title="Reference (optional)") %}{% call inline::inline_edit(field=optional.field) %}{% endcall %}{% endcall %}
 {% call ui::fact(title="Relationship") %}{% call inline::inline_choice(field=kind.field, display=kind.display, editor=kind.editor) %}{% endcall %}{% endcall %}
 {% call ui::fact(title="Region") %}{% call inline::inline_choice(field=region.field, display=region.display, editor=region.editor) %}{% endcall %}{% endcall %}

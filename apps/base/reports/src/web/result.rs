@@ -1,6 +1,6 @@
 //! A run drawn for the Result tab: a list report's page of rows in the
-//! shared flex table (each row opening its record's own page where the
-//! owner declares one, and an optional totals line), a summary's chart and
+//! shared flex table (each row opening its record's page where Base Records
+//! has a kind for it, and an optional totals line), a summary's chart and
 //! its lines with subtotals and the total, or a matrix (one grouping down,
 //! one across). A group, a total or a chart bar drills into the records
 //! behind it: the page names a line it drew, never a value from the browser.
@@ -119,7 +119,7 @@ pub(crate) struct RowsPage<'a> {
 }
 
 /// A list report's page, with its totals line and pager. The first cell of
-/// a row links to the record's own page when its module declares one.
+/// a row links to the record's page when Base Records names one for it.
 pub(crate) fn rows(host: &ListColumns, list: &RowsPage<'_>, sizes: &[u64]) -> Result<Html> {
     let mut flex = Vec::with_capacity(list.rows.len() + 1);
     for (n, (_, cells)) in list.rows.iter().enumerate() {

@@ -148,9 +148,9 @@ pub(crate) fn tab(
             (false, n) => format!("{n} role{}", if n == 1 { "" } else { "s" }),
         };
         let (pause_icon, pause_label, pause_value) = if subscription.paused {
-            ("hero-play", "Resume this schedule", format!("{key}:false"))
+            ("play", "Resume this schedule", format!("{key}:false"))
         } else {
-            ("hero-pause", "Pause this schedule", format!("{key}:true"))
+            ("pause", "Pause this schedule", format!("{key}:true"))
         };
         let mut actions = render(IconButton {
             id: &format!("report-schedule-pause-{id}"),

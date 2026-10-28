@@ -19,6 +19,7 @@ bilibi-locale.workspace = true
 bilibi-mail.workspace = true
 bilibi-menu.workspace = true
 bilibi-module-registry.workspace = true
+bilibi-records.workspace = true
 bilibi-notifications.workspace = true
 bilibi-party-ids.workspace = true
 bilibi-queue.workspace = true

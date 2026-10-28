@@ -260,7 +260,7 @@ impl Index {
             filter: PeriodFilter::new("exchange-period", period, &clock),
             browser_zone: None,
             columns: PageColumns::mount(views, "integration-exchanges", builtins())
-                .map(|columns| columns.with_record_slots(fields::ALL))
+                .and_then(|columns| columns.with_record_slots(fields::ALL))
                 .map_err(|_| Error::Internal)?,
             reload: true,
         })
@@ -502,8 +502,10 @@ impl Index {
         let kind = get("type").ok_or(Error::Invalid)?;
         match kind {
             "filters" => {
-                self.list
-                    .apply_filters(&params::form_values(value, FILTERS_FORM));
+                self.list.apply_filters(
+                    &params::form_values_checked(value, FILTERS_FORM, params::FIELD_LIMIT)
+                        .map_err(Error::refused)?,
+                );
                 self.reload = true;
             }
             "page" => {
@@ -516,7 +518,11 @@ impl Index {
                 // under it.
                 match self
                     .columns
-                    .handle(scope, &params::string_values(value))
+                    .handle(
+                        scope,
+                        &params::string_values_checked(value, params::FIELD_LIMIT)
+                            .map_err(Error::refused)?,
+                    )
                     .await?
                 {
                     GridOutcome::Patch => self.reload = true,
@@ -531,7 +537,11 @@ impl Index {
             }
             _ => {
                 let clock = self.clock(scope).await?;
-                match self.filter.event(kind, value, &clock) {
+                match self
+                    .filter
+                    .event_checked(kind, value, &clock)
+                    .map_err(Error::refused)?
+                {
                     Some(period::Outcome::Applied(period)) => {
                         self.period_params = period
                             .params()

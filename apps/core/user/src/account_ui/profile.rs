@@ -62,10 +62,19 @@ impl Profile {
         Ok(())
     }
     fn errors_for(&self, field: &str) -> Vec<String> {
+        let label = match field {
+            "name" => "Name",
+            "email" => "Email",
+            "password" => "Password",
+            "person_id" => "Person",
+            "affiliation_id" => "Company",
+            "landing_menu_id" => "Landing page",
+            _ => "",
+        };
         self.errors
             .iter()
             .filter(|e| e.field == field)
-            .map(|e| e.message.clone())
+            .map(|e| bilibi_ui::error_sentence(label, &e.message))
             .collect()
     }
     async fn view(&mut self, scope: &Scope) -> Result<LiveBody> {
@@ -91,7 +100,7 @@ impl Profile {
                 .label("Email")
                 .value(&self.email)
                 .autocomplete("email")
-                .hint("If you change it, you will need to verify it again.")
+                .hint("Verify your new email address after changing it.")
                 .errors(self.errors_for("email"))
                 .attr("data-debounce", "300"),
         )?;
@@ -123,7 +132,7 @@ impl Profile {
             })?,
             current: bilibi_ui::SettingsTab::Profile,
             heading: "Profile Information",
-            subheading: "Update your account's profile information and email address.",
+            subheading: "",
             name,
             email,
             landing,
@@ -193,13 +202,14 @@ impl Profile {
             Ok(saved) => {
                 self.load(request.scope).await?;
                 match self.pages.users.save_landing(request.scope, &landing).await {
-                    Ok(()) => self.flash.success(
-                        if saved.email_changed && self.email != previous {
-                            "Profile saved. Your new address is unverified until you confirm it."
-                        } else {
-                            "Profile saved."
-                        },
-                    ),
+                    Ok(()) => {
+                        self.flash
+                            .success(if saved.email_changed && self.email != previous {
+                                "Profile saved. Confirm your new email address to verify it."
+                            } else {
+                                "Profile saved."
+                            })
+                    }
                     Err(AccountError::Validation(errors)) => {
                         let message = errors
                             .first()
@@ -242,7 +252,12 @@ impl LiveState<Scope, Error> for Profile {
                         if !self.loaded {
                             self.load(request.scope).await?;
                         }
-                        let fields = bilibi_ui::params::form_values(value, "profile");
+                        let fields = bilibi_ui::params::form_values_checked(
+                            value,
+                            "profile",
+                            bilibi_ui::params::FIELD_LIMIT,
+                        )
+                        .map_err(bilibi_database::Error::refused)?;
                         self.name = fields.get("name").cloned().unwrap_or_default();
                         self.email = fields.get("email").cloned().unwrap_or_default();
                         self.landing = fields.get("landing_menu_id").cloned().unwrap_or_default();

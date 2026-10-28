@@ -48,7 +48,8 @@ requires the same captured Person/Organisation/Affiliation facets. Inactive,
 deleted, changed or denied actors cancel with `actor_refused`; transient DB
 failures retry. Arguments are validated again. The binding's capability is
 checked before invoking the handler. Use `Execution::begin` for owner database
-writes: it opens the audited boundary, preserves the enqueue trace ID, locks the
+writes (to write another module's records, call its contract through
+`bilibi_agent_api::job`, ADR 10): it opens the audited boundary, preserves the enqueue trace ID, locks the
 job's live matching lease and rechecks actor eligibility and capability in that
 transaction. Owners must also reauthorize each target-specific command. Keep
 transactions short and do external IO outside them. Cancellation waits for any
