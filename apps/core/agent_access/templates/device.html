@@ -28,7 +28,7 @@
 {% call ui::fact(title="Stated agent") %}{{ device.agent_id }}{% endcall %}
 {% endcall %}
 <p class="text-sm text-muted">
-  Approve only a code you asked for. The agent can read what you can read in your current company, and its name does not prove who runs it.
+  Approve only a code you asked for. The agent can read what you can read in the companies you may act in, names the company on every call, and never follows the company you choose in the top bar. Its name does not prove who runs it.
 </p>
 <p id="device-connection-end" class="text-sm text-muted">
   Connection ends {% if let Some(end) = expiry %}{% call time::datetime(instant=end) %}{% endcall %}{% endif %}.

@@ -14,8 +14,8 @@
 {#- Bilimbi writes these chips as raw buttons; the shared button has no chip variant. -#}
 {% call ui::card(id="add-widget-section", class="mb-3", inner_class="flex flex-wrap items-center gap-2 p-3") %}
 <span class="text-xs font-semibold text-ink-muted">Customize dashboard:</span>
-{% for w in spare_widgets %}<button id="add-widget-{{ w.id }}" type="button" data-event="add_widget" name="id" value="{{ w.id }}" class="rounded-md border border-line bg-surface-sunken px-2 py-1 text-xs font-medium text-ink transition hover:bg-surface hover:text-ink-strong">+ {{ w.label }}</button>{% endfor %}
-{% for section in spare_sections %}<button id="add-section-{{ section.id }}" type="button" data-event="add_section" name="id" value="{{ section.id }}" class="rounded-md border border-line bg-surface-sunken px-2 py-1 text-xs font-medium text-ink transition hover:bg-surface hover:text-ink-strong">+ {{ section.label }}</button>{% endfor %}
+{% for w in spare_widgets %}<button id="add-widget-{{ w.id }}" type="button" data-event="add_widget" name="id" value="{{ w.id }}" title="{{ w.label }}" class="max-w-full truncate rounded-md border border-line bg-surface-sunken px-2 py-1 text-xs font-medium text-ink transition hover:bg-surface hover:text-ink-strong">+ {{ w.label }}</button>{% endfor %}
+{% for section in spare_sections %}<button id="add-section-{{ section.id }}" type="button" data-event="add_section" name="id" value="{{ section.id }}" title="{{ section.label }}" class="max-w-full truncate rounded-md border border-line bg-surface-sunken px-2 py-1 text-xs font-medium text-ink transition hover:bg-surface hover:text-ink-strong">+ {{ section.label }}</button>{% endfor %}
 {% endcall %}
 {% endif %}
 

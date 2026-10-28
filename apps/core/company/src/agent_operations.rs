@@ -1,7 +1,9 @@
 //! The Company operations agents may call (Bilimbi
 //! `Bilimbi.Core.Company.AgentOperations`), each a thin adapter over this
 //! module's facade with the sealed scope the registry proved: `core.company.list`
-//! and `core.company.get` are reads under the list and view capabilities;
+//! and `core.company.get` are reads under the list and view capabilities,
+//! `core.company.reachable` lists the companies the caller may work in (the
+//! ones the shell's company switcher offers, under the view capability);
 //! `core.company.create` is a reviewed safe write (`admin.company.create`)
 //! whose preview shares create's defaults, validation and restricted-field
 //! refusal and whose commit writes through the plan's audited transaction.
@@ -19,7 +21,7 @@ use bilibi_agent_api::{
 };
 use bilibi_database::{Db, MutationTransaction};
 use bilibi_module_registry::{Contribution, Provenance};
-use bilibi_tenancy::Scope;
+use bilibi_tenancy::{OrganisationDirectory, Scope};
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, sync::OnceLock};
 
@@ -116,6 +118,41 @@ impl ReadHandler for List {
                 page_size: query.page_size.unsigned_abs(),
                 total: page.total.unsigned_abs(),
             }))
+        })
+    }
+}
+
+/// The companies the caller may work in, as the shell's switcher offers
+/// them: every operation that takes a `company_id` accepts one of these and
+/// proves it again. An agent carries no session choice, so `own` is the
+/// only default a Finance operation could fall back to.
+struct Reachable;
+impl ReadHandler for Reachable {
+    fn owner(&self) -> &'static str {
+        "core/company"
+    }
+    fn call<'a>(
+        &'a self,
+        _client: &'a dyn OperationClient,
+        scope: &'a Scope,
+        _input: &'a Value,
+    ) -> OperationFuture<'a> {
+        Box::pin(async move {
+            let client = db()?.get().await.map_err(bilibi_database::Error::from)?;
+            bilibi_authz::authorize_key(&**client, scope, VIEW).await?;
+            let own = scope.actor().organisation();
+            let companies = organisation::Directory
+                .reachable(&**client, scope)
+                .await?
+                .into_iter()
+                .map(|company| {
+                    Data::Json(json!({
+                        "id": company.id.get(), "name": company.name, "status": company.status,
+                        "own": Some(company.id) == own,
+                    }))
+                })
+                .collect();
+            Ok(Output::Data(Data::Array(companies)))
         })
     }
 }
@@ -325,9 +362,14 @@ fn create_schema() -> Value {
     }});
     if let Ok(fields) = crate::field_contributions::definitions() {
         for (_, field) in fields {
-            let crate::CompanyFieldKind::Text { max_length } = field.kind;
-            schema["properties"][field.id] =
-                json!({"type":"string","maxLength":max_length,"description":field.label});
+            schema["properties"][field.id] = match field.kind {
+                crate::CompanyFieldKind::Text { max_length } => {
+                    json!({"type":"string","maxLength":max_length,"description":field.label})
+                }
+                crate::CompanyFieldKind::Date => {
+                    json!({"type":"string","format":"date","description":field.label})
+                }
+            };
         }
     }
     schema
@@ -344,6 +386,12 @@ fn list_output() -> Value {
 fn get_output() -> Value {
     json!({"type":"object","description":"The company's identity, legal and contact facts. A field you may not see reads {\"restricted\": true}."})
 }
+fn empty_schema() -> Value {
+    json!({"type":"object","properties":{}})
+}
+fn reachable_output() -> Value {
+    json!({"type":"array","description":"Companies you may work in, each with id, name, status and own (true for the company your account is affiliated with). Pass one of these ids as company_id to an operation that acts on a company."})
+}
 fn create_output() -> Value {
     json!({"type":"object","description":"Created company and its Bilibi URL."})
 }
@@ -355,6 +403,7 @@ inventory::submit! { Contribution::new(DEFINITIONS, "core/company.agent", Proven
         Operation { key: "core.company.create", title: "Create a company", summary: "Create an organisation in your tenant after searching for an existing company.", keywords: &["add", "organisation", "business"], capability: CREATE, input: create_schema, output: create_output, handler: Handler::SafeWrite(&Create), channels: Channels::Every, step_up: &[] },
         Operation { key: "core.company.list", title: "List companies", summary: "Find companies of your tenant by name, code, legal name, email or jurisdiction, one page at a time, with the fields you may see.", keywords: &["find", "search", "browse", "organisation", "business", "firm"], capability: LIST, input: list_schema, output: list_output, handler: Handler::Read(&List), channels: Channels::Every, step_up: &[] },
         Operation { key: "core.company.get", title: "Read a company", summary: "One company of your tenant by id, with the fields you may see.", keywords: &["show", "detail", "organisation", "business", "firm"], capability: VIEW, input: get_schema, output: get_output, handler: Handler::Read(&Get), channels: Channels::Every, step_up: &[] },
+        Operation { key: "core.company.reachable", title: "List the companies you may work in", summary: "The companies you may act in: your own company, or every live company of your tenant when you hold tenant-wide reach. Use one of their ids as company_id.", keywords: &["current", "switch", "context", "my company", "organisation"], capability: VIEW, input: empty_schema, output: reachable_output, handler: Handler::Read(&Reachable), channels: Channels::Every, step_up: &[] },
     ],
-    guides: &[Guide { key: "core.company", title: "Companies", summary: "What a company is in this tenant, and how to find, read and create one.", keywords: &["organisation", "business", "firm", "status"], capability: LIST, body:"Postal addresses are saved and linked through core.address, not a scalar field here. Search address or read guide core.address. Use core.address.company.list or core.address.person.list to find existing addresses; create_and_attach or attach links an office, billing or other address to its company or contact. A namecard flow can create the contact first and then attach the office address in a separate reviewed write.\n\nA company is an organisation recorded in your tenant. A company may have a parent company, and one company is the tenant's primary company.\n\nBefore creating, call core.company.duplicates with the known name, website, email, phone or registration_number. It returns scored candidates and matched facts, including archived companies. Use an existing company or supply create_anyway with candidate_ids and a reason of 1–500 characters. The create transaction rechecks these facts. core.company.hierarchy returns the parent chain and descendants up to the configured depth and 1,000 nodes; truncated means more relatives exist. Reuse the existing company rather than making a duplicate. Company roles are relationships, never legal entity types or access grants: a related company assigned vendor supplies the source company, and a company may hold customer and vendor roles at once as separate links. Discover core.company.relationship.* and core.company.relationship_role.* for list, read and reviewed writes (guide core.company.relationship). Contacts use core.affiliation.contact.create, never an HR employee record. A person's employer must exist as a company first: reuse it, or create it before recording the person. Use core.company.create through a dry run, local review and plan-code commit. A missing code is generated from the name and shown in the preview. Do not invent legal identifiers or a jurisdiction from a phone number; ask when the source is unclear.\n\nA company's status is one of pending, active, suspended or archived. Status changes only through the lifecycle actions on the company's page, never through an edit of its fields.\n\nTo find companies, call core.company.list with search words. To read one, call core.company.get with its id. A field an administrator restricted reads as {\"restricted\": true}: the company has a value there, and you may not see it." }],
+    guides: &[Guide { key: "core.company", title: "Companies", summary: "What a company is in this tenant, and how to find, read and create one.", keywords: &["organisation", "business", "firm", "status"], capability: LIST, body:"Postal addresses are saved and linked through core.address, not a scalar field here. Search address or read guide core.address. Use core.address.company.list or core.address.person.list to find existing addresses; create_and_attach or attach links an office, billing or other address to its company or contact. A namecard flow can create the contact first and then attach the office address in a separate reviewed write.\n\nA company is an organisation recorded in your tenant. A company may have a parent company, and one company is the tenant's primary company.\n\nBefore creating, call core.company.duplicates with the known name, website, email, phone or registration_number. It returns scored candidates and matched facts, including archived companies. Use an existing company or supply create_anyway with candidate_ids and a reason of 1–500 characters. The create transaction rechecks these facts. core.company.hierarchy returns the parent chain and descendants up to the configured depth and 1,000 nodes; truncated means more relatives exist. Reuse the existing company rather than making a duplicate. Company roles are relationships, never legal entity types or access grants: a related company assigned vendor supplies the source company, and a company may hold customer and vendor roles at once as separate links. Discover core.company.relationship.* and core.company.relationship_role.* for list, read and reviewed writes (guide core.company.relationship). Contacts use core.affiliation.contact.create, never an HR employee record. A person's employer must exist as a company first: reuse it, or create it before recording the person. Use core.company.create through a dry run, local review and plan-code commit. A missing code is generated from the name and shown in the preview. Do not invent legal identifiers or a jurisdiction from a phone number; ask when the source is unclear.\n\nA company's status is one of pending, active, suspended or archived. Status changes only through the lifecycle actions on the company's page, never through an edit of its fields.\n\nTo find companies, call core.company.list with search words. To read one, call core.company.get with its id. To learn which companies you may act in, call core.company.reachable: an operation that takes a company_id accepts one of those ids and checks it again. A person's choice in the Bilibi top bar never applies to you; name the company on every call. A field an administrator restricted reads as {\"restricted\": true}: the company has a value there, and you may not see it." }],
 }) }

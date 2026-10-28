@@ -200,17 +200,38 @@
     box by hand), so every form section shares one compact padding and
     heading. labelledby names the region: with a heading it is the heading's
     id; without one (a Fold carries its own title) it points at that title. -#}
-{% macro section(labelledby, heading="") %}
-<section class="rounded-xl border border-line bg-surface p-panel" aria-labelledby="{{ labelledby }}">{% if !heading.is_empty() %}<h2 id="{{ labelledby }}" class="mb-3 text-sm font-semibold text-ink">{{ heading }}</h2>{% endif %}{{ caller() }}</section>
+{% macro section(labelledby, heading="", description="") %}
+<section class="rounded-xl border border-line bg-surface p-panel" aria-labelledby="{{ labelledby }}">{% if !heading.is_empty() %}<h2 id="{{ labelledby }}" class="mb-3 text-sm font-semibold text-ink">{{ heading }}</h2>{% endif %}{% if !description.is_empty() %}<p class="mb-3 text-sm text-ink-muted">{{ description }}</p>{% endif %}{{ caller() }}</section>
+{% endmacro %}
+
+{#- Fragments the shared models rendered (fields, an error summary, a
+    picker), one after another; no Bilimbi counterpart. A page that holds its
+    fields as a list lays them out here instead of embedding them itself. -#}
+{% macro fields(fields) %}
+{%- for field in fields %}{{ field|safe }}{% endfor -%}
+{% endmacro %}
+
+{#- Fields side by side from the small breakpoint, two a row, or three or
+    four from the large one (columns); no Bilimbi counterpart. The call body
+    is one more cell after them (a control_group, or nothing). -#}
+{% macro field_row(fields, columns=2, id="") %}
+<div{% if !id.is_empty() %} id="{{ id }}"{% endif %} class="grid gap-x-3 sm:grid-cols-2{% if columns == 3 %} lg:grid-cols-3{% elif columns == 4 %} lg:grid-cols-4{% endif %}">{% for field in fields %}{{ field|safe }}{% endfor %}{{ caller() }}</div>
+{% endmacro %}
+
+{#- Controls on one line, centred: a row's checkbox and its remove button.
+    No Bilimbi counterpart. -#}
+{% macro control_group(controls) %}
+<div class="flex items-center gap-2">{% for control in controls %}{{ control|safe }}{% endfor %}</div>
 {% endmacro %}
 
 {#- A live form (no Bilimbi counterpart; its pages write the tag by hand): it
     raises event on submit, spaces its fields one compact step apart and puts
     its actions (an Html fragment of buttons) on one wrapping row after them.
     The body is the fields. A form that must also react as values change adds
-    change=true (data-change). -#}
-{% macro form(id, event, change=false, class="", actions=bilibi_ui::Html::EMPTY) %}
-<form id="{{ id }}" data-event="{{ event }}"{% if change %} data-change{% endif %} class="space-y-3{% if !class.is_empty() %} {{ class }}{% endif %}">{{ caller() }}{% if !actions.is_empty() %}<div class="flex flex-wrap items-center gap-2">{{ actions|safe }}</div>{% endif %}</form>
+    change=true (data-change); then submit_event names the event Enter and a
+    submit button raise instead of one more change (data-submit-event). -#}
+{% macro form(id, event, change=false, class="", actions=bilibi_ui::Html::EMPTY, submit_event="") %}
+<form id="{{ id }}" data-event="{{ event }}"{% if change %} data-change{% endif %}{% if !submit_event.is_empty() %} data-submit-event="{{ submit_event }}"{% endif %} class="space-y-3{% if !class.is_empty() %} {{ class }}{% endif %}">{{ caller() }}{% if !actions.is_empty() %}<div class="flex flex-wrap items-center gap-2">{{ actions|safe }}</div>{% endif %}</form>
 {% endmacro %}
 
 {#- Shared enrollment-first proof and submit actions; no Bilimbi counterpart. -#}

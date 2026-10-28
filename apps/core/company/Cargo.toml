@@ -37,6 +37,7 @@ bilibi-artifacts = { path = "../../base/artifacts" }
 bilibi-picklists.workspace = true
 bilibi-settings.workspace = true
 bilibi-records.workspace = true
+jiff.workspace = true
 
 [dev-dependencies]
 bilibi-walkthrough-fixture = { path = "../../../fixtures/walkthrough" }

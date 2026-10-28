@@ -314,6 +314,10 @@ impl Table {
     pub fn label(&self) -> &'static str {
         self.decl.label
     }
+    /// The field that names a row to a person, when the owner declares one.
+    pub fn label_field(&self) -> Option<&'static str> {
+        self.decl.label_field
+    }
     pub fn key(&self) -> &'static str {
         self.decl.key
     }

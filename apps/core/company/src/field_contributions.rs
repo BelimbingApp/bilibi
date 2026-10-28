@@ -16,6 +16,7 @@ use tokio_postgres::{Client, Transaction};
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CompanyFieldKind {
     Text { max_length: usize },
+    Date,
 }
 
 /// Stable metadata supplied by the field's owning Extension.
@@ -142,12 +143,13 @@ pub fn validate(entries: &[Entry]) -> bilibi_module_registry::Result<()> {
                     field.id, entry.provenance.module
                 )));
             }
-            let CompanyFieldKind::Text { max_length } = field.kind;
-            if max_length > MAX_TEXT_FIELD_LENGTH {
-                return Err(RegistryError::Contribution(format!(
-                    "Company text field {} from {} exceeds the {MAX_TEXT_FIELD_LENGTH} character live-input bound",
-                    field.id, entry.provenance.module,
-                )));
+            if let CompanyFieldKind::Text { max_length } = field.kind {
+                if max_length > MAX_TEXT_FIELD_LENGTH {
+                    return Err(RegistryError::Contribution(format!(
+                        "Company text field {} from {} exceeds the {MAX_TEXT_FIELD_LENGTH} character live-input bound",
+                        field.id, entry.provenance.module,
+                    )));
+                }
             }
         }
     }
@@ -321,14 +323,18 @@ pub(crate) fn validate_grid() -> bilibi_module_registry::Result<()> {
                         field.id
                     ))
                 })?;
+        let expected = match field.kind {
+            CompanyFieldKind::Text { .. } => bilibi_grid::FieldType::String,
+            CompanyFieldKind::Date => bilibi_grid::FieldType::Date,
+        };
         if column.kind != bilibi_grid::ColumnKind::Field
             || column.many.is_some()
             || column.agg.is_some()
-            || column.ty != bilibi_grid::FieldType::String
+            || column.ty != expected
         {
             return Err(RegistryError::Contribution(format!(
-                "Company text field {} must resolve to a scalar Grid string field",
-                field.id
+                "Company field {} must resolve to a scalar Grid {:?} field",
+                field.id, expected
             )));
         }
         let target_owner = installed.table(column.table).ok_or_else(|| {
@@ -392,6 +398,7 @@ fn validate_values_for(values: &CompanyFieldValues) -> Vec<crate::FieldError> {
                 (_, Value::Null) => {}
                 (CompanyFieldKind::Text { max_length }, Value::String(text))
                     if text.chars().count() <= max_length => {}
+                (CompanyFieldKind::Date, Value::String(text)) if valid_date(text) => {}
                 _ => errors.push(crate::FieldError::new(field.id, "has an invalid value")),
             }
         }
@@ -400,6 +407,20 @@ fn validate_values_for(values: &CompanyFieldValues) -> Vec<crate::FieldError> {
         errors.push(crate::FieldError::new("name", "contains an unknown field"));
     }
     errors
+}
+
+fn valid_date(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() == 10
+        && bytes[4] == b'-'
+        && bytes[7] == b'-'
+        && bytes
+            .iter()
+            .enumerate()
+            .all(|(index, byte)| index == 4 || index == 7 || byte.is_ascii_digit())
+        && value
+            .parse::<jiff::civil::Date>()
+            .is_ok_and(|date| date.year() > 0)
 }
 
 pub(crate) async fn create(

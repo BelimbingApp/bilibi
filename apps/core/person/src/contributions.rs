@@ -8,7 +8,10 @@ pub const CREATE: &str = "admin.person.create";
 pub const UPDATE: &str = "admin.person.update";
 pub const RETIRE: &str = "admin.person.retire";
 pub const SYSTEM_MANAGE: &str = "admin.person.system.manage";
-pub const CAPS: &[&str] = &[LIST, VIEW, CREATE, UPDATE, RETIRE, SYSTEM_MANAGE];
+/// Import contacts from CSV (`base/bulk_data`); each row still needs the
+/// create, update and list capabilities its contracts check.
+pub const IMPORT: &str = "admin.person.import";
+pub const CAPS: &[&str] = &[LIST, VIEW, CREATE, UPDATE, RETIRE, SYSTEM_MANAGE, IMPORT];
 const fn role(
     code: &'static str,
     name: &'static str,
@@ -24,7 +27,7 @@ const fn role(
 }
 inventory::submit! { Contribution::new(VOCABULARY, "core/person", Provenance { module: "core/person", source: file!(), line: line!() }, &VocabularyContribution {
     domains: &[], verbs: &["retire"],
-    capabilities: &[C::tenant(LIST), C::tenant(VIEW), C::tenant(CREATE), C::tenant(UPDATE), C::tenant(RETIRE), C::platform(SYSTEM_MANAGE)],
+    capabilities: &[C::tenant(LIST), C::tenant(VIEW), C::tenant(CREATE), C::tenant(UPDATE), C::tenant(RETIRE), C::platform(SYSTEM_MANAGE), C::tenant(IMPORT)],
     roles: &[role("tenant_owner", "Tenant Owner", CAPS)],
     system_principals: &[],
 }) }
@@ -61,6 +64,17 @@ static SEARCH: bilibi_search::Searchable =
         .state("identity", &["retired"])
         .updated("updated_at");
 bilibi_search::contribute!("core/person", "person.search", &SEARCH);
+
+// Contacts import from CSV through the person contracts (issue 133). A row
+// matches an existing contact on its email or phone.
+inventory::submit! { Contribution::new(bilibi_bulk_data::RECORD_TYPES, "core/person.contacts", Provenance { module: "core/person", source: file!(), line: line!() }, &bilibi_bulk_data::RecordType {
+    label: "Contacts", table: "persons", path: Some("/contacts/{id}"),
+    import: bilibi_bulk_data::Import {
+        capability: IMPORT, create: "core.person.create", id: "id",
+        duplicates: Some(bilibi_bulk_data::Duplicates { read: "core.person.duplicates", fields: &["email", "phone"], update: "core.person.update", update_id: "person_id", update_version: "version", update_fields: "identity" }),
+        references: &[],
+    },
+}) }
 
 // Core has a contact directory, with no employee-type or employment controls.
 macro_rules! page {

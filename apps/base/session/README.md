@@ -39,6 +39,10 @@ secret; a session that no longer holds `from` is `Conflict`. A switch is not
 announced as a termination. `revoke` also ends the sessions a user
 holds as an impersonating operator.
 
+## Current company
+
+`sessions.company_id` (migration `004-company`; Core Company adds the scoped key) is the company the session chose to work in, `NULL` for the account's own company. `check`/`activity` pass it to Tenancy, which keeps it on the scope only while the account reaches it (`Scope::current_company`); `activity` then forgets a choice Tenancy dropped, so a revoked reach or an archived company does not come back unasked. `choose_company(sql, scope, company)` writes the choice inside the caller's transaction (Core User's `choose_company`, which proves the reach and audits the switch); it names the session by the sealed scope's CSRF proof, never a token, and a session that ended is `Conflict`. `switch` does not carry the choice: entering an impersonation starts from the viewed account's own default and parks the operator's choice in `sessions.held_company_id`, a choice made while impersonating belongs to that view alone, and leaving restores the operator's choice. `activity` forgets only the choice of the identity that holds the row, never the parked one. A company choice rotates nothing: the host's live sockets bind the company they were opened in and reload at their next event.
+
 ## Step-up
 
 The web proof of Base Step-up (`apps/base/step_up/README.md`) lives on the session row (migration `003-step-up`), so sign-out, termination and expiry end it, and `switch` clears it.

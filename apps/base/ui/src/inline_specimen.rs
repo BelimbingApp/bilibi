@@ -1,5 +1,6 @@
-//! Deterministic view for the `u5-inline` running-app specimen. All behavior is
-//! driven by its live server owner, rather than a browser-only imitation.
+//! Deterministic view for the `u5-inline` running-app specimen. The controls
+//! mirror Bilimbi Base UI's read-first inline facts. All behavior is driven by
+//! its live server owner, rather than a browser-only imitation.
 use crate::{
     choices, Combobox, CommitStates, CommitStatus, Field, Html, InlineChoice, InlineEdit,
     InlineField, InlineLongText, InputKind,
@@ -10,6 +11,7 @@ use std::collections::BTreeMap;
 pub fn inline_specimen_values() -> BTreeMap<String, String> {
     [
         ("name", "Northwind Trading"),
+        ("renewal_date", "2026-12-31"),
         ("optional", ""),
         ("notes", "Delivery instructions\nUse the north entrance."),
         ("kind", "customer"),
@@ -29,6 +31,7 @@ pub struct InlineSpecimen {
     pub commits: u64,
     pub readonly: bool,
     name: InlineEdit,
+    renewal_date: InlineEdit,
     optional: InlineEdit,
     notes: InlineLongText,
     kind: InlineChoice,
@@ -55,6 +58,15 @@ impl InlineSpecimen {
             .status(statuses.get(name));
             field.editable = !readonly;
             field
+        };
+        // The specimen's date display is day/month/year, derived from the
+        // saved `YYYY-MM-DD` value so an edit shows what was stored.
+        let renewal_display = match values.get("renewal_date").map(String::as_str) {
+            Some(date) => match date.split('-').collect::<Vec<_>>()[..] {
+                [year, month, day] => format!("{day}/{month}/{year}"),
+                _ => date.to_string(),
+            },
+            None => String::new(),
         };
         let kind_field = field("kind", "Edit relationship");
         let kind_editor = Field::named("kind")
@@ -95,6 +107,11 @@ impl InlineSpecimen {
             name: InlineEdit {
                 field: field("name", "Edit name"),
             },
+            renewal_date: InlineEdit {
+                field: field("renewal_date", "Edit renewal date")
+                    .input_type("date")
+                    .display_value(renewal_display),
+            },
             optional: InlineEdit {
                 field: field("optional", "Edit reference").allow_empty(),
             },
@@ -127,6 +144,7 @@ pub struct InlineSamples {
     pub form_read: Html,
     pub form_edit: Html,
     pub edit: Html,
+    pub date_read: Html,
     pub edit_saved: Html,
     pub edit_add: Html,
     pub edit_error: Html,
@@ -224,6 +242,11 @@ impl InlineSamples {
             form_edit: form_sample(true)?,
             edit: Html::render(&InlineEdit {
                 field: edit("", "name", "Edit company name", "Editable entity value"),
+            })?,
+            date_read: Html::render(&InlineEdit {
+                field: edit("-date", "renewal_date", "Edit renewal date", "2026-12-31")
+                    .input_type("date")
+                    .display_value("31/12/2026"),
             })?,
             edit_saved: Html::render(&InlineEdit {
                 field: edit("-saved", "name", "Edit company name", "Bilimbi Industries")

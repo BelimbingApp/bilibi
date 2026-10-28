@@ -61,6 +61,7 @@ bilibi-menu = { path = "apps/base/menu" }
 bilibi-principal-directory = { path = "apps/base/principal_directory" }
 bilibi-agent-api = { path = "apps/base/agent_api" }
 bilibi-artifacts = { path = "apps/base/artifacts" }
+bilibi-bulk-data = { path = "apps/base/bulk_data" }
 bilibi-audit-views = { path = "apps/base/audit_views" }
 bilibi-authz = { path = "apps/base/authz" }
 bilibi-dashboard = { path = "apps/base/dashboard" }
@@ -76,6 +77,7 @@ bilibi-party-ids = { path = "apps/base/party_ids" }
 bilibi-perf = { path = "apps/base/perf" }
 bilibi-ports = { path = "apps/base/ports" }
 bilibi-queue = { path = "apps/base/queue" }
+bilibi-reports = { path = "apps/base/reports" }
 bilibi-schedule = { path = "apps/base/schedule" }
 bilibi-search = { path = "apps/base/search" }
 bilibi-session = { path = "apps/base/session" }

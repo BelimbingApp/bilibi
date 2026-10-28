@@ -290,6 +290,7 @@ dependencies = [
  "askama",
  "bilibi-agent-api",
  "bilibi-authz",
+ "bilibi-bulk-data",
  "bilibi-company",
  "bilibi-database",
  "bilibi-datetime",
@@ -356,6 +357,7 @@ dependencies = [
  "bilibi-authz",
  "bilibi-database",
  "bilibi-module-registry",
+ "bilibi-queue",
  "bilibi-session",
  "bilibi-settings",
  "bilibi-step-up",
@@ -511,6 +513,7 @@ dependencies = [
  "bilibi-audit-views",
  "bilibi-authz",
  "bilibi-authz-agent",
+ "bilibi-bulk-data",
  "bilibi-dashboard",
  "bilibi-database",
  "bilibi-datetime",
@@ -531,6 +534,7 @@ dependencies = [
  "bilibi-principal-directory",
  "bilibi-queue",
  "bilibi-records",
+ "bilibi-reports",
  "bilibi-schedule",
  "bilibi-search",
  "bilibi-security",
@@ -544,6 +548,37 @@ dependencies = [
  "bilibi-tiling",
  "bilibi-ui",
  "bilibi-workflow",
+]
+
+[[package]]
+name = "bilibi-bulk-data"
+version = "0.1.1"
+dependencies = [
+ "askama",
+ "bilibi-agent-api",
+ "bilibi-artifacts",
+ "bilibi-authz",
+ "bilibi-base",
+ "bilibi-core",
+ "bilibi-database",
+ "bilibi-datetime",
+ "bilibi-locale",
+ "bilibi-menu",
+ "bilibi-module-registry",
+ "bilibi-notifications",
+ "bilibi-party-ids",
+ "bilibi-queue",
+ "bilibi-settings",
+ "bilibi-tenancy",
+ "bilibi-ui",
+ "bilibi-walkthrough-fixture",
+ "bilibi-web",
+ "inventory",
+ "jiff",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-postgres",
 ]
 
 [[package]]
@@ -580,6 +615,7 @@ dependencies = [
  "bilibi-walkthrough-fixture",
  "bilibi-web",
  "inventory",
+ "jiff",
  "serde",
  "serde_json",
  "thiserror",
@@ -980,6 +1016,7 @@ dependencies = [
  "bilibi-agent-api",
  "bilibi-artifacts",
  "bilibi-authz",
+ "bilibi-bulk-data",
  "bilibi-database",
  "bilibi-datetime",
  "bilibi-grid",
@@ -1088,6 +1125,33 @@ dependencies = [
  "inventory",
  "serde",
  "serde_json",
+ "tokio-postgres",
+]
+
+[[package]]
+name = "bilibi-reports"
+version = "0.1.1"
+dependencies = [
+ "askama",
+ "bilibi-agent-api",
+ "bilibi-audit",
+ "bilibi-authz",
+ "bilibi-dashboard",
+ "bilibi-database",
+ "bilibi-datetime",
+ "bilibi-grid",
+ "bilibi-locale",
+ "bilibi-menu",
+ "bilibi-module-registry",
+ "bilibi-records",
+ "bilibi-settings",
+ "bilibi-tenancy",
+ "bilibi-ui",
+ "inventory",
+ "jiff",
+ "serde",
+ "serde_json",
+ "thiserror",
  "tokio-postgres",
 ]
 

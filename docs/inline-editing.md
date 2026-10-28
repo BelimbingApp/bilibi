@@ -23,7 +23,7 @@ field's hint; the trigger and the editor are described by it.
 
 | Fact | Opens on | Commits on | Cancels on |
 | --- | --- | --- | --- |
-| `InlineEdit` | click, Enter, Space, F2 (caret at end), a typed character (replaces) | Enter, blur | Escape |
+| `InlineEdit` | click, Enter, Space, F2 (caret at end), a typed character (replaces text) | Enter, blur; native date inputs commit on change | Escape |
 | `InlineLongText` | click, Enter, Space, F2, a typed character (replaces) | blur (Enter adds a line) | Escape |
 | `InlineChoice` | click, Enter, Space, F2 | `change` of the editor control named by the field | Escape, focus leaving the editor |
 

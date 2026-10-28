@@ -96,6 +96,10 @@ pub struct InlineField {
     pub name: String,
     pub label: String,
     pub value: String,
+    /// Optional read text when the editor value has a native input format.
+    pub display_value: Option<String>,
+    /// Native input type, defaulting to text for Bilimbi-compatible facts.
+    pub input_type: &'static str,
     pub version: String,
     pub save_event: String,
     pub allow_empty: bool,
@@ -123,6 +127,8 @@ impl InlineField {
             name: name.into(),
             label: label.into(),
             value: value.into(),
+            display_value: None,
+            input_type: "text",
             version: String::new(),
             save_event: "save_field".into(),
             allow_empty: false,
@@ -138,6 +144,14 @@ impl InlineField {
     }
     pub fn version(mut self, version: impl ToString) -> Self {
         self.version = version.to_string();
+        self
+    }
+    pub fn display_value(mut self, value: impl Into<String>) -> Self {
+        self.display_value = Some(value.into());
+        self
+    }
+    pub fn input_type(mut self, input_type: &'static str) -> Self {
+        self.input_type = input_type;
         self
     }
     pub fn status(mut self, status: CommitStatus) -> Self {
@@ -174,6 +188,9 @@ impl InlineField {
         ids.join(" ")
     }
     pub fn display(&self) -> &str {
+        if let Some(value) = self.display_value.as_deref() {
+            return value;
+        }
         match (self.value.is_empty(), self.placeholder.is_empty()) {
             (false, _) => &self.value,
             (true, false) => &self.placeholder,
