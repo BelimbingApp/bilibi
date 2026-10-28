@@ -144,15 +144,18 @@ async fn context<'a>(
             bilibi_core::company::platform_operator_company(&**client).await,
             Ok(None)
         );
-    // A module contributes the bell through the `shell.notifications` embed
-    // and the search dialog's records through `shell.search.records`; an
-    // account an embed refuses has none.
+    // A module contributes the bell through the `shell.notifications` embed,
+    // the search dialog's records through `shell.search.records` and the
+    // status bar's AI tag through `shell.ai`; an account an embed refuses has
+    // none.
     let mut notifications = Html::default();
     let mut records = Html::default();
+    let mut ai = Html::default();
     for slot in embeds(app)? {
         let rendered = match slot.embed.slot {
             "shell.notifications" => &mut notifications,
             "shell.search.records" => &mut records,
+            "shell.ai" => &mut ai,
             _ => continue,
         };
         if permits(app, scope, slot.embed.access).await? {
@@ -215,6 +218,7 @@ async fn context<'a>(
         preferences,
         navigation: bilibi_ui::navigation(&nodes, true).map_err(|_| Error::Internal)?,
         notifications,
+        ai,
         home,
         served_routes: serde_json::to_string(&served).map_err(|_| Error::Internal)?,
         pins: serde_json::to_string(&pins).map_err(|_| Error::Internal)?,
@@ -348,9 +352,10 @@ fn menu_rows(
 }
 
 /// One `EmbedContext::Shell` contribution and the id of the element it
-/// renders: slot `shell.notifications` is `#app-notifications`, and
-/// `shell.search.records` is `#app-search-records`. The live socket mounts it
-/// as a panel under that id, outside framed pages.
+/// renders: slot `shell.notifications` is `#app-notifications`,
+/// `shell.search.records` is `#app-search-records` and `shell.ai` is
+/// `#app-ai`. The live socket mounts it as a panel under that id, outside
+/// framed pages.
 pub struct ShellEmbed {
     pub id: String,
     pub embed_id: &'static str,

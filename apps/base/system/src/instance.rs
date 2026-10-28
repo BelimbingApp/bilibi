@@ -204,6 +204,65 @@ impl Instance {
             slug.to_owned()
         }
     }
+    /// Whether an AI app on the internet (a chat website, a bot) can reach
+    /// this Bilibi at its configured address. Decided from what the server
+    /// knows, never from the browser: a Dev copy is never public, and an
+    /// address that is `localhost`, a loopback, private or link-local IP, a
+    /// bare host name, or a name under a local-only domain (`.localhost`,
+    /// `.local`, `.internal`, `.lan`, `.home.arpa`, `.test`) is reachable
+    /// only from the machine or network it runs on. A false `false` costs one
+    /// extra sentence in the connect panel; a false `true` would send a
+    /// person to a bot that cannot connect, so the doubt resolves to `false`.
+    pub fn public_address(&self) -> bool {
+        if self.role == Role::Dev {
+            return false;
+        }
+        let Some(host) = self
+            .origin
+            .split("://")
+            .nth(1)
+            .and_then(|rest| rest.split(['/', '?', '#']).next())
+            .map(|authority| authority.rsplit('@').next().unwrap_or(authority))
+        else {
+            return false;
+        };
+        // An IPv6 literal keeps its brackets; a port follows the host.
+        let host = if let Some(end) = host.strip_prefix('[').and_then(|h| h.find(']')) {
+            &host[1..=end]
+        } else {
+            host.rsplit_once(':').map_or(host, |(name, _)| name)
+        };
+        let host = host.trim_end_matches('.').to_ascii_lowercase();
+        if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+            return match ip {
+                std::net::IpAddr::V4(ip) => {
+                    !(ip.is_loopback()
+                        || ip.is_private()
+                        || ip.is_link_local()
+                        || ip.is_unspecified()
+                        || ip.is_broadcast()
+                        || ip.is_documentation())
+                }
+                std::net::IpAddr::V6(ip) => {
+                    !(ip.is_loopback()
+                        || ip.is_unspecified()
+                        || ip.is_unique_local()
+                        || ip.is_unicast_link_local())
+                }
+            };
+        }
+        const LOCAL_ONLY: [&str; 6] = [
+            ".localhost",
+            ".local",
+            ".internal",
+            ".lan",
+            ".home.arpa",
+            ".test",
+        ];
+        host != "localhost"
+            && host.contains('.')
+            && !LOCAL_ONLY.iter().any(|suffix| host.ends_with(suffix))
+    }
     /// The sentence an agent or a hover shows: "You are on Staging. This is a
     /// test copy. Changes here do not affect production."
     pub fn notice(&self) -> String {

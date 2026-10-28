@@ -3,6 +3,8 @@
 {% call ui::card(id="component-instance", title="Which Bilibi", inner_class="space-y-3 p-4") %}
 <p class="text-xs text-ink-muted">The status bar names the stored server role. Core Administrators can click it to open Instance settings. Staging keeps a top-bar badge; Dev and Staging show a sign-in badge. The banner opens every review or confirmation, production included. Label and colour are the operator's Instance settings.</p>
 <div class="flex flex-wrap items-center gap-2">{% for status in instance_statuses %}{% call fb::instance_status(status=status) %}{% endcall %}{% endfor %}</div>
+<p class="text-xs text-ink-muted">A status-bar tag reads the same in every state: a faint border means idle, the normal border means active, and the tooltip says which. The AI tag is Core Agent Access's.</p>
+<div class="flex flex-wrap items-center gap-2">{% for tag in statusbar_tags %}{% call fb::statusbar_tag(tag=tag) %}{% endcall %}{% endfor %}</div>
 <div class="flex flex-wrap items-center gap-2">{% for badge in instance_badges %}{% call fb::instance_badge(badge=badge) %}{% endcall %}{% endfor %}</div>
 <div class="grid gap-2">{% for banner in instance_banners %}{% call fb::instance_banner(banner=banner) %}{% endcall %}{% endfor %}</div>
 {% endcall %}

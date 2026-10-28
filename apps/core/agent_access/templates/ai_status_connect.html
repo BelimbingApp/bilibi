@@ -1,0 +1,25 @@
+{#- The connect steps inside the AI panel (ai_status.html): the prompt and the
+    address, each with its copy button, and the local-only note. One
+    ClipboardCopy hook covers both buttons; the server tells them apart by the
+    copied text. -#}
+<div id="app-ai-copy-values" data-hook="ClipboardCopy" data-copy-event="copied" class="space-y-3">
+<p class="text-ink-muted">Paste this prompt into your AI app's chat. It will ask you to sign in here and approve the connection.</p>
+<div class="space-y-1">
+{% call forms::input(field=field) %}{% endcall %}
+<span data-copy-text="{{ prompt_text }}">{% call ui::button(id="app-ai-copy-prompt", button_type="button") %}Copy prompt{% endcall %}</span>
+</div>
+<div class="space-y-1">
+<p class="text-ink-muted">Apps that ask for a connector or MCP address take this one:</p>
+<div class="flex flex-wrap items-center gap-2"><code id="app-ai-address" class="min-w-0 break-all rounded-sm bg-surface-muted px-1.5 py-0.5 text-ink">{{ address }}</code><span data-copy-text="{{ address }}">{% call ui::button(id="app-ai-copy-address", button_type="button") %}Copy address{% endcall %}</span></div>
+</div>
+{% if let Some((what, ok)) = copied %}
+{% if ok %}
+{% call fb::alert(kind=bilibi_ui::StatusKind::Success, id="app-ai-copied") %}Copied the {{ what }}. Paste it into your AI app.{% endcall %}
+{% else %}
+{% call fb::alert(kind=bilibi_ui::StatusKind::Error, id="app-ai-copy-failed") %}Your browser did not allow copying. Select the {{ what }} and copy it yourself.{% endcall %}
+{% endif %}
+{% endif %}
+{% if local_only %}
+{% call fb::alert(kind=bilibi_ui::StatusKind::Info, id="app-ai-local-only") %}This Bilibi cannot be reached from the internet, so AI websites and bots cannot connect to it. Use an AI program on this computer, such as Claude Code, Codex or Pi.{% endcall %}
+{% endif %}
+</div>

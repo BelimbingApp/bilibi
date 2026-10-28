@@ -63,6 +63,16 @@ Both consent forms submit no fields; approval with extra fields is refused. An a
 
 `/settings/ai-connections` lists the person's grants and revokes through the shared confirmation dialog. Its copyable prompt gives this instance's MCP address without client IDs. Impersonation and agent facets cannot set up connections. `/settings/agent-connections`, `/settings/mcp` and `/settings/chatgpt-plugin` redirect here. The page offers no plugin download.
 
+### The AI tag in the status bar
+
+The `shell.ai` embed (`src/ai_status.rs`, `templates/ai_status.html`, operation `ai_status` of `core/agent_access.pages`) is the AI tag every signed-in person sees in the status bar's centre and the panel it opens. Web renders it into the shell and mounts it as the shell panel `#app-ai` (`apps/web/README.md`). It shows the person their own AI and nothing else:
+
+- The tag reads AI in every state. A faint border means no live connection; the normal border means at least one. The tooltip names the connected apps and the last use ("Claude, ChatGPT · last used 5 min ago") or says "No AI app connected".
+- Not connected: the same prompt as this page (`setup_prompt`), the `{origin}/mcp` address, a Copy button for each, and the link to this page. When `Instance::public_address` is false (a Dev copy, or an address only this machine or network can reach), the panel says to use an AI program on this computer, because AI websites and bots cannot reach it.
+- Connected: each live connection (`list_connections`) with its last use and end date, a Manage link to this page, and the person's recent agent requests in words (`Integration::own_agent_activity`, `apps/base/integration/README.md`), newest first, with refusals named; the MCP handshake rows (initialize, ping, tool listing) are left out. Connecting another app sits in a fold.
+- The panel follows the person's own changes live through `AgentAccess::subscribe_connections` (approve, revoke) and `Integration::subscribe_agent_activity` (a recorded request).
+- An impersonating or agent session sees neither prompt nor connections, only that AI apps are connected from the person's own account.
+
 ## Connect a local agent
 
 Give your app this instance's MCP address and sign in through your browser.

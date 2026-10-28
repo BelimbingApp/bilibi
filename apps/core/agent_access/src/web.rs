@@ -48,6 +48,10 @@ pub struct Pages {
     /// `APP_ORIGIN`, the OAuth issuer; the MCP resource is `{origin}/mcp`.
     /// Never the request's Host header.
     pub origin: String,
+    /// The person's own agent requests, for the AI tag's activity and last use.
+    pub integration: Arc<bilibi_integration::Integration>,
+    /// Names a called operation in words ("Read a company") for that activity.
+    pub registry: Arc<bilibi_agent_api::Registry>,
 }
 impl Pages {
     async fn display(
@@ -94,6 +98,11 @@ impl Page<Scope, Error> for Pages {
                         .await?
                 }
                 "connections" => ConnectionsPage::new(self.clone())?.view(scope).await?,
+                "ai_status" => {
+                    crate::ai_status::AiStatus::new(self.clone())
+                        .view(scope)
+                        .await?
+                }
                 _ => return Err(Error::NotFound),
             };
             Ok(PageBody {
@@ -109,6 +118,7 @@ impl Page<Scope, Error> for Pages {
                 "device" => Box::new(DevicePage::new(self.clone(), request.query)?),
                 "authorize" => Box::new(AuthorizePage::new(self.clone(), request.query).await?),
                 "connections" => Box::new(ConnectionsPage::new(self.clone())?),
+                "ai_status" => Box::new(crate::ai_status::AiStatus::new(self.clone())),
                 _ => return Err(Error::NotFound),
             };
             Ok(Some(state))
@@ -165,7 +175,7 @@ fn clear_flash(flash: &mut Option<Flash>, key: &str) {
 }
 /// A storage failure stays an error for the host; every OAuth refusal becomes
 /// page copy.
-fn refusal(error: OAuthError) -> Result<OAuthError> {
+pub(crate) fn refusal(error: OAuthError) -> Result<OAuthError> {
     match error {
         OAuthError::Other(error) => Err(error),
         other => Ok(other),
@@ -176,7 +186,7 @@ fn refusal(error: OAuthError) -> Result<OAuthError> {
 fn submitted(fields: &BTreeMap<String, Value>) -> bool {
     fields.keys().any(|key| key != "type")
 }
-fn html<T: Template>(template: T) -> Result<String> {
+pub(crate) fn html<T: Template>(template: T) -> Result<String> {
     template.render().map_err(|_| Error::Internal)
 }
 fn only(query: &HashMap<String, String>, allowed: &[&str]) -> Result<()> {

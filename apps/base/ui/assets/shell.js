@@ -73,9 +73,11 @@
       document.removeEventListener('keydown', this.onKey);
     }
 
-    // The bell's dropdown is Core's `shell.notifications` embed; its contents
-    // follow the server while open/closed stays here, like the other panels.
-    panels() { return [...this.root.querySelectorAll('[data-account-panel], [data-timezone-panel], [data-notifications-panel]')]; }
+    // The bell's dropdown is Core's `shell.notifications` embed and a status
+    // bar tag's panel (`data-statusbar-panel`, Core's `shell.ai`) is another;
+    // their contents follow the server while open/closed stays here, like
+    // the other panels.
+    panels() { return [...this.root.querySelectorAll('[data-account-panel], [data-timezone-panel], [data-notifications-panel], [data-statusbar-panel]')]; }
     openPanel() { return this.panels().find((panel) => panel.id === this.openPanelId) || null; }
     trigger(panel) { return this.root.querySelector(`[aria-controls="${panel.id}"]`); }
     close(panel, restore = false) {
@@ -98,7 +100,7 @@
     click(event) {
       const button = event.target.closest('button');
       if (button && this.root.contains(button)) {
-        if (button.matches('[data-account-toggle], [data-timezone-toggle], [data-notifications-toggle]')) {
+        if (button.matches('[data-account-toggle], [data-timezone-toggle], [data-notifications-toggle], [data-statusbar-toggle]')) {
           this.toggle(button);
           return;
         }

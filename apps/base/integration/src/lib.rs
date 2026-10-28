@@ -26,7 +26,8 @@ use bilibi_database::{Change, Db, Error, MutationBoundary, Result};
 use bilibi_module_registry::{Module, Service};
 use bilibi_tenancy::Scope;
 use serde_json::{json, Value};
-use std::{sync::Arc, time::SystemTime};
+use std::{collections::HashMap, sync::Arc, time::SystemTime};
+use tokio::sync::broadcast;
 use tokio_postgres::{Client, GenericClient, Row};
 
 pub const SERVICE: &str = "base/integration.exchanges";
@@ -322,18 +323,78 @@ pub struct Integration {
     db: Db,
     boundary: Arc<MutationBoundary>,
     clients: transport::Clients,
+    /// Wakes the live panels that show a person their own agent activity (the
+    /// status bar's AI tag) once an agent request for their account is
+    /// recorded. A send with no live subscriber is not a failure.
+    agent_activity: broadcast::Sender<bilibi_ui::page::Change>,
 }
 impl Integration {
     pub fn new(db: Db, boundary: Arc<MutationBoundary>) -> Result<Self> {
+        let (agent_activity, _) = broadcast::channel(128);
         Ok(Self {
             db,
             boundary,
             clients: transport::Clients::new()?,
+            agent_activity,
         })
+    }
+    /// A live panel's subscription to the signed-in account's agent activity:
+    /// the wake carries the tenant and user, so the host wakes only their
+    /// panels (`docs/live-pages.md`).
+    pub fn subscribe_agent_activity(&self) -> bilibi_ui::page::Subscription {
+        bilibi_ui::page::Subscription {
+            receiver: self.agent_activity.subscribe(),
+        }
+    }
+    /// The newest incoming requests an AI app made for this very account under
+    /// one of its connections, newest first, at most `limit`: what the person's
+    /// own AI read and did. Bound by the scope's tenant and user, so it needs
+    /// no capability; an operator's wider view is `list`.
+    pub async fn own_agent_activity(
+        &self,
+        client: &(impl GenericClient + Sync),
+        scope: &Scope,
+        limit: i64,
+    ) -> Result<Vec<Summary>> {
+        if !(1..=300).contains(&limit) {
+            return Err(Error::Invalid);
+        }
+        let rows = client
+            .query(
+                &format!("SELECT {SUMMARY} FROM base_integration_exchanges WHERE tenant_id=$1 AND user_id=$2 AND direction='incoming' AND connection_id IS NOT NULL ORDER BY occurred_at DESC,id DESC LIMIT $3"),
+                &[&scope.tenant(), &scope.user(), &limit],
+            )
+            .await?;
+        Ok(rows.iter().map(Summary::from_row).collect())
+    }
+    /// When each of this account's agent connections last made a request, by
+    /// connection id; a connection with no request yet has no entry.
+    pub async fn own_agent_last_use(
+        &self,
+        client: &(impl GenericClient + Sync),
+        scope: &Scope,
+    ) -> Result<HashMap<String, SystemTime>> {
+        let rows = client
+            .query(
+                "SELECT connection_id,max(occurred_at) FROM base_integration_exchanges WHERE tenant_id=$1 AND user_id=$2 AND direction='incoming' AND connection_id IS NOT NULL GROUP BY connection_id",
+                &[&scope.tenant(), &scope.user()],
+            )
+            .await?;
+        Ok(rows
+            .iter()
+            .map(|row| (row.get::<_, String>(0), row.get::<_, SystemTime>(1)))
+            .collect())
     }
 
     pub async fn record_incoming(&self, scope: &Scope, incoming: &Incoming) -> Result<String> {
-        self.incoming(Origin::User(scope), incoming).await
+        let id = self.incoming(Origin::User(scope), incoming).await?;
+        if incoming.connection_id.is_some() {
+            let _ = self.agent_activity.send(bilibi_ui::page::Change {
+                tenant: scope.tenant(),
+                user: Some(scope.user()),
+            });
+        }
+        Ok(id)
     }
     /// A call the API edge could not associate with a tenant, such as a refused
     /// or unknown credential: no tenant or person is asserted, and only the

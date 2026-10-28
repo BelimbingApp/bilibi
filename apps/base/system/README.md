@@ -74,6 +74,8 @@ The Banner colour field uses the shared `ColourInput`: Blue, Green, Amber and Re
 
 Base Step-up binds an `Enforcement` policy supplied by `Instances`. It reads the saved role on every check across processes: ordinary operations skip 2FA on Dev; `.always()` operations never skip it. The policy holds no process-local role cache. The server layout is in [`docs/server-install.md`](../../../docs/server-install.md).
 
+`Instance::public_address` says whether an AI app on the internet can reach this Bilibi: false for a Dev copy and for an origin that is `localhost`, a loopback, private or link-local IP, a bare host name, or a name under `.localhost`, `.local`, `.internal`, `.lan`, `.home.arpa` or `.test`. It is decided from the stored role and `APP_ORIGIN`, never from the browser; the status bar's AI panel uses it to say when only an AI program on this computer can connect.
+
 Agent connection identity also includes `APP_ORIGIN` (the canonical public address, with the host's default when unset). `Instance::agent_notice` names the label, role and address; `agent_json` includes `role` and `origin` alongside the existing fields, so discovery and plan/commit results identify the same destination even when an operator gives two environments the same label.
 
 ## Database Tables (`src/database_tables/`)

@@ -121,6 +121,9 @@ pub struct ShellContext<'a> {
     pub navigation: Html,
     /// Core owns the bell. This slot permits its later embedded live panel.
     pub notifications: Html,
+    /// The status bar's centre: the AI tag and its panel, Core Agent Access's
+    /// `shell.ai` embed (`StatusbarTag`), empty when no module contributes it.
+    pub ai: Html,
     pub home: &'a str,
     pub served_routes: String,
     /// The account's pins as JSON (`[{id,label,url,icon,sort_order}]`), already
