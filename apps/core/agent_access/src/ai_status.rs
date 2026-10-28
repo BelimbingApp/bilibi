@@ -22,7 +22,10 @@ use bilibi_ui::{
     ActionLink, Field, Html, InputKind, StatusbarTag,
 };
 use serde::Deserialize;
-use std::time::{Duration, SystemTime};
+use std::{
+    collections::HashMap,
+    time::{Duration, SystemTime},
+};
 
 /// The panel lists this many of the newest requests.
 const RECENT: usize = 10;
@@ -59,6 +62,9 @@ struct ActivityView {
     id: String,
     when: String,
     what: String,
+    /// The app that made the request, with "(disconnected)" once its
+    /// connection is revoked; empty when the connection is not the person's.
+    app: String,
     /// A refusal or failure, in words; empty when the request succeeded.
     outcome: &'static str,
 }
@@ -107,6 +113,15 @@ impl AiStatus {
                 (Vec::new(), false)
             }
         };
+        let apps: HashMap<String, (String, bool)> = connections
+            .iter()
+            .map(|row| {
+                (
+                    row.id.to_string(),
+                    (row.agent_id.clone(), row.revoked_at.is_some()),
+                )
+            })
+            .collect();
         let last_use = if own_account {
             self.pages
                 .integration
@@ -142,7 +157,7 @@ impl AiStatus {
                 .own_agent_activity(client, scope, FETCH)
                 .await?
                 .into_iter()
-                .filter_map(|row| activity(&row, &self.pages.registry, now))
+                .filter_map(|row| activity(&row, &self.pages.registry, &apps, now))
                 .take(RECENT)
                 .collect()
         } else {
@@ -304,10 +319,12 @@ fn ends(at: SystemTime, now: SystemTime) -> String {
 /// (initialize, ping, listing the tools), which say nothing about what the
 /// AI did for the person. A called operation is named by its registered
 /// title ("Read a company"); an operation the registry no longer knows keeps
-/// its key.
+/// its key. `apps` maps each of the person's connection ids to the app name
+/// and whether it was revoked.
 fn activity(
     row: &Summary,
     registry: &bilibi_agent_api::Registry,
+    apps: &HashMap<String, (String, bool)>,
     now: SystemTime,
 ) -> Option<ActivityView> {
     let operation = row.operation.as_str();
@@ -346,10 +363,16 @@ fn activity(
         Some(500..) => "Failed",
         _ => "",
     };
+    let app = match row.connection_id.as_ref().and_then(|id| apps.get(id)) {
+        Some((name, true)) => format!("{name} (disconnected)"),
+        Some((name, false)) => name.clone(),
+        None => String::new(),
+    };
     Some(ActivityView {
         id: row.id.clone(),
         when: ago(row.occurred_at, now),
         what,
+        app,
         outcome,
     })
 }

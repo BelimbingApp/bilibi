@@ -35,7 +35,7 @@
 {% else %}
 <ol class="divide-y divide-line" aria-label="What your AI did, newest first">
 {% for item in activity %}
-<li id="app-ai-activity-{{ item.id }}" class="flex items-baseline justify-between gap-3 py-1.5"><span class="min-w-0 text-ink">{{ item.what }}{% if !item.outcome.is_empty() %} <span class="text-danger">· {{ item.outcome }}</span>{% endif %}</span><span class="shrink-0 text-ink-subtle">{{ item.when }}</span></li>
+<li id="app-ai-activity-{{ item.id }}" class="flex items-baseline justify-between gap-3 py-1.5"><span class="min-w-0 text-ink">{{ item.what }}{% if !item.outcome.is_empty() %} <span class="text-danger">· {{ item.outcome }}</span>{% endif %}</span><span class="shrink-0 text-ink-subtle">{% if !item.app.is_empty() %}{{ item.app }} · {% endif %}{{ item.when }}</span></li>
 {% endfor %}
 </ol>
 {% endif %}

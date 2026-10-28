@@ -724,7 +724,8 @@ inventory::submit! {
         migrations: &[("base-integration-001", include_str!("../migrations/001-exchanges.sql")),
             ("base-integration-002", include_str!("../migrations/002-reference-webhook.sql")),
             ("base-integration-003-agent-self-report", include_str!("../migrations/003-agent-self-report.sql")),
-            ("base-integration-004-client-identity", include_str!("../migrations/004-client-identity.sql"))],
+            ("base-integration-004-client-identity", include_str!("../migrations/004-client-identity.sql")),
+            ("base-integration-005-agent-activity-index", include_str!("../migrations/005-agent-activity-index.sql"))],
         services: &[Service { id: SERVICE, factory: |services| {
             let db = services.get::<Db>("base/database.pool")?.as_ref().clone();
             let boundary = services.get::<MutationBoundary>("base/database.mutations")?;

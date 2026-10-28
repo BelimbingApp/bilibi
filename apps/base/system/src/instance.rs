@@ -207,10 +207,12 @@ impl Instance {
     /// Whether an AI app on the internet (a chat website, a bot) can reach
     /// this Bilibi at its configured address. Decided from what the server
     /// knows, never from the browser: a Dev copy is never public, and an
-    /// address that is `localhost`, a loopback, private or link-local IP, a
-    /// bare host name, or a name under a local-only domain (`.localhost`,
-    /// `.local`, `.internal`, `.lan`, `.home.arpa`, `.test`) is reachable
-    /// only from the machine or network it runs on. A false `false` costs one
+    /// address that is `localhost`, a loopback, private, carrier-grade NAT
+    /// (`100.64.0.0/10`) or link-local IP (an IPv4-mapped IPv6 literal counts
+    /// as its IPv4 address), a bare host name, or a name under a local-only
+    /// domain (`.localhost`, `.local`, `.internal`, `.lan`, `.home.arpa`,
+    /// `.test`, `.ts.net`) is reachable only from the machine or network it
+    /// runs on. A false `false` costs one
     /// extra sentence in the connect panel; a false `true` would send a
     /// person to a bot that cannot connect, so the doubt resolves to `false`.
     pub fn public_address(&self) -> bool {
@@ -234,10 +236,15 @@ impl Instance {
         };
         let host = host.trim_end_matches('.').to_ascii_lowercase();
         if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+            let ip = match ip {
+                std::net::IpAddr::V6(v6) => v6.to_ipv4_mapped().map_or(ip, std::net::IpAddr::V4),
+                v4 => v4,
+            };
             return match ip {
                 std::net::IpAddr::V4(ip) => {
                     !(ip.is_loopback()
                         || ip.is_private()
+                        || (ip.octets()[0] == 100 && (64..128).contains(&ip.octets()[1]))
                         || ip.is_link_local()
                         || ip.is_unspecified()
                         || ip.is_broadcast()
@@ -251,13 +258,14 @@ impl Instance {
                 }
             };
         }
-        const LOCAL_ONLY: [&str; 6] = [
+        const LOCAL_ONLY: [&str; 7] = [
             ".localhost",
             ".local",
             ".internal",
             ".lan",
             ".home.arpa",
             ".test",
+            ".ts.net",
         ];
         host != "localhost"
             && host.contains('.')
