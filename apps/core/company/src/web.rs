@@ -465,6 +465,7 @@ impl CompanyPage {
                     views::ExtensionListFields {
                         masked: &masked,
                         values: &extension_values,
+                        display: &display,
                     },
                 )
                 .await?
@@ -479,6 +480,11 @@ impl CompanyPage {
                         Err(error) => return Err(error),
                     };
                 let id = self.id.ok_or(Error::Invalid)?;
+                let locale = self.locales.resolve(&**client, scope, None).await?;
+                let display = self
+                    .datetime
+                    .display(&**client, scope, None, locale.locale)
+                    .await?;
                 self.active_panels = self.allowed_panels(&**client, scope, id).await?;
                 let anchors: Vec<String> =
                     self.active_panels.iter().map(|p| p.id.clone()).collect();
@@ -494,6 +500,7 @@ impl CompanyPage {
                         departments_columns: &mut self.departments_columns,
                         children_columns: &self.children_columns,
                         workspace: self.framed,
+                        display: &display,
                         panels: &anchors,
                     },
                 )

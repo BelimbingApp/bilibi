@@ -13,9 +13,7 @@
 //! are column specs resolved against that catalog, so a column the reader
 //! cannot see is refused like an unknown one and cannot be used to infer a
 //! hidden value. Only catalog identifiers enter SQL; every value is bound.
-use crate::query::{
-    cell, field, source, QueryError, BOUNDS, MAX_ESTIMATED_COST, MAX_HOPS, MAX_ROWS,
-};
+use crate::query::{cell, field, source, QueryError, MAX_ESTIMATED_COST, MAX_HOPS, MAX_ROWS};
 use crate::{Agg, Catalog, Column, FieldType, Table};
 use bilibi_database::{Db, Error};
 use bilibi_tenancy::Scope;
@@ -181,6 +179,47 @@ pub struct Measure {
     pub agg: Agg,
 }
 
+/// The bounds one grouped read or row page runs under: its statement
+/// timeout and the planner cost it is admitted up to. `Default` is Grid's
+/// interactive bound (2 s, [`MAX_ESTIMATED_COST`]); a background caller (a
+/// prepared export) may pass a larger pair, within [`MAX_STATEMENT_MS`] and
+/// [`MAX_COST_BOUND`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Bounds {
+    pub statement_ms: u32,
+    pub max_cost: f64,
+}
+impl Default for Bounds {
+    fn default() -> Self {
+        Self {
+            statement_ms: 2_000,
+            max_cost: MAX_ESTIMATED_COST,
+        }
+    }
+}
+/// The longest statement timeout a caller may ask for.
+pub const MAX_STATEMENT_MS: u32 = 300_000;
+/// The largest planner cost a caller may admit.
+pub const MAX_COST_BOUND: f64 = 100_000_000.0;
+impl Bounds {
+    pub(crate) fn check(&self) -> Result<(), QueryError> {
+        if !(100..=MAX_STATEMENT_MS).contains(&self.statement_ms)
+            || !self.max_cost.is_finite()
+            || !(1.0..=MAX_COST_BOUND).contains(&self.max_cost)
+        {
+            return Err(QueryError::Limit("bounds out of range"));
+        }
+        Ok(())
+    }
+    /// The transaction settings: the timeout is a validated number.
+    pub(crate) fn sql(&self) -> String {
+        format!(
+            "SET LOCAL statement_timeout = '{}ms'; SET LOCAL lock_timeout = '500ms'; SET LOCAL TimeZone = 'UTC'",
+            self.statement_ms
+        )
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct SummarySpec {
     pub filters: Vec<Filter>,
@@ -190,6 +229,7 @@ pub struct SummarySpec {
     pub timezone: String,
     /// The most groups the caller will show, at most [`MAX_RESULT_GROUPS`].
     pub max_groups: usize,
+    pub bounds: Bounds,
 }
 
 /// One result line. `keys` holds one JSON value per grouping (a bucket is its
@@ -232,6 +272,7 @@ pub struct PageSpec {
     pub offset: usize,
     /// At most [`MAX_ROWS`], the page [`crate::project`] takes.
     pub limit: usize,
+    pub bounds: Bounds,
 }
 
 #[derive(Debug)]
@@ -268,7 +309,8 @@ pub async fn summarize(
         .isolation_level(tokio_postgres::IsolationLevel::RepeatableRead)
         .start()
         .await?;
-    tx.batch_execute(BOUNDS).await?;
+    spec.bounds.check()?;
+    tx.batch_execute(&spec.bounds.sql()).await?;
     let catalog = Catalog::for_scope(&*tx, scope).await?;
     let root = catalog.table(root).ok_or(QueryError::ForbiddenRoot)?;
     let mut binds = Binds::new(scope, &spec.timezone);
@@ -355,7 +397,7 @@ pub async fn summarize(
         source(root),
         columns.join(", ")
     );
-    let estimated_cost = admit(&tx, &sql, &binds).await?;
+    let estimated_cost = admit(&tx, &sql, &binds, spec.bounds.max_cost).await?;
     let fetched = tx.query(&sql, &binds.refs()).await?;
     let width = groupings.len();
     let mut lines = Vec::new();
@@ -430,7 +472,8 @@ pub async fn page_keys(
         .isolation_level(tokio_postgres::IsolationLevel::RepeatableRead)
         .start()
         .await?;
-    tx.batch_execute(BOUNDS).await?;
+    spec.bounds.check()?;
+    tx.batch_execute(&spec.bounds.sql()).await?;
     let catalog = Catalog::for_scope(&*tx, scope).await?;
     let root = catalog.table(root).ok_or(QueryError::ForbiddenRoot)?;
     let mut binds = Binds::new(scope, &spec.timezone);
@@ -461,9 +504,9 @@ pub async fn page_keys(
         spec.offset
     );
     let count = format!("{head} SELECT count(*) {tail}");
-    let estimated_cost = admit(&tx, &page, &binds)
+    let estimated_cost = admit(&tx, &page, &binds, spec.bounds.max_cost)
         .await?
-        .max(admit(&tx, &count, &binds).await?);
+        .max(admit(&tx, &count, &binds, spec.bounds.max_cost).await?);
     let keys = tx
         .query(&page, &binds.refs())
         .await?
@@ -503,11 +546,12 @@ impl Binds {
     }
 }
 
-/// The planner's estimate, refused above [`MAX_ESTIMATED_COST`].
+/// The planner's estimate, refused above the caller's `max_cost`.
 async fn admit(
     tx: &tokio_postgres::Transaction<'_>,
     sql: &str,
     binds: &Binds,
+    max_cost: f64,
 ) -> Result<f64, QueryError> {
     let explain: Value = tx
         .query_one(&format!("EXPLAIN (FORMAT JSON) {sql}"), &binds.refs())
@@ -517,8 +561,10 @@ async fn admit(
         .as_f64()
         .filter(|cost| cost.is_finite())
         .ok_or(Error::Internal)?;
-    if cost > MAX_ESTIMATED_COST {
-        return Err(QueryError::Limit("estimated query cost exceeds 100000"));
+    if cost > max_cost {
+        return Err(QueryError::Limit(
+            "the estimated cost of the read exceeds its bound",
+        ));
     }
     Ok(cost)
 }

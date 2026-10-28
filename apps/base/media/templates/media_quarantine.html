@@ -1,0 +1,15 @@
+{#- The tenant's quarantined files. The header, notice, toolbar, table, pager
+    and dialog are rendered by src/web.rs through the shared models; this file
+    lays them out. -#}
+{%- import "components.html" as ui -%}
+{%- import "feedback.html" as feedback -%}
+<div data-shared-ui>
+{% call feedback::flash_group(messages=flash) %}{% endcall %}
+{% call ui::page(id="media-quarantine-index") %}
+{{ header|safe }}
+{{ notice|safe }}
+{{ toolbar|safe }}
+{{ card|safe }}
+{{ dialog|safe }}
+{% endcall %}
+</div>

@@ -90,7 +90,7 @@ Use `InlineForm` when a read-first table cell needs a complete form, including s
 - Save and Enter submit the form. Cancel and Escape discard the draft. The shared hook focuses the editor on opening and returns focus to the value on closing.
 - Keep secret plaintext out of the read value, hint and status. Use `SecretInput::stored` in the form.
 
-Source: [`src/inline.rs`](src/inline.rs), [`templates/inline.html`](templates/inline.html), and the `InlineForm` hook in [`assets/hooks.js`](assets/hooks.js). The Design Library includes reading and refused-editor states; `/system/settings` exercises the live lifecycle.
+Source: [`src/inline.rs`](src/inline.rs), [`templates/inline.html`](templates/inline.html), and the hooks in [`assets/inline.js`](assets/inline.js). `InlineField` supports native text and date inputs; use `.input_type("date")` with `.display_value(...)` to keep the canonical editor value separate from read text. Date facts commit when the date changes. The Design Library includes reading and refused-editor states; `/system/settings` exercises the live lifecycle.
 
 ## 2FA proof input
 

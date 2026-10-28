@@ -20,7 +20,7 @@ use bilibi_module_registry::{
     Contribution, Layer, Module, Provenance, Service, Services,
 };
 use bilibi_records::{Holder, Records, Reference, Resolved, SERVICE};
-use bilibi_tenancy::Scope;
+use bilibi_tenancy::{ReadClient, Scope};
 use bilibi_ui::{
     page::{
         LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, MountFuture, Page, PageBody,
@@ -127,10 +127,11 @@ fn reference(input: &Value) -> Reference {
         input["record"]["id"].as_str().unwrap_or_default(),
     )
 }
-/// The body and the checked reference, or every field's refusal at once.
+/// The body and the checked reference, or every field's refusal at once, on
+/// the connection the caller already holds.
 async fn checked(
     records: &Records,
-    client: &(impl tokio_postgres::GenericClient + Sync),
+    client: &dyn ReadClient,
     scope: &Scope,
     input: &Value,
 ) -> bilibi_agent_api::Result<(String, Reference)> {
@@ -167,12 +168,17 @@ impl WriteHandler for Write {
         input: &'a Value,
     ) -> OperationFuture<'a> {
         Box::pin(async move {
-            let _ = client;
-            let (db, records) = bound()?;
-            let client = db.get().await.map_err(Error::from)?;
-            let (body, checked) = checked(records, &**client, scope, input).await?;
-            let named = records.resolve(scope, &[checked]).await?;
-            Ok(json!({"summary": format!("Add the note “{body}”"), "record": resolved_json(&named[0])}).into())
+            let (_, records) = bound()?;
+            // The plan holds one pooled transaction while it previews: check
+            // on the client it hands us and take no other connection, so
+            // concurrent plans cannot exhaust the pool. Naming goes through
+            // Grid's own read-only transaction, so the review shows the
+            // checked record and its page; base.records.resolve names it.
+            let (body, checked) = checked(records, client, scope, input).await?;
+            let path = records
+                .kind(&checked.kind)
+                .and_then(|kind| kind.path_of(&checked.id));
+            Ok(json!({"summary": format!("Add the note “{body}”"), "record": {"kind": checked.kind, "id": checked.id, "path": path}}).into())
         })
     }
     fn commit<'a>(

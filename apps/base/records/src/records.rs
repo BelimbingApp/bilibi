@@ -13,14 +13,13 @@ use bilibi_grid::{
     query::text_search_sql, FieldType, Filter, QueryError, SummarySpec, Test, BOUNDS, MAX_CHOICES,
 };
 use bilibi_settings::{Settings, Target};
-use bilibi_tenancy::Scope;
+use bilibi_tenancy::{ReadClient, Scope};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     sync::Arc,
 };
-use tokio_postgres::GenericClient;
 
 /// The most ids named for one kind in one Grid projection.
 pub const MAX_PER_KIND: usize = 100;
@@ -183,7 +182,7 @@ impl Records {
 
     /// The survivors of merged records, by stored id.
     async fn redirected(
-        client: &impl GenericClient,
+        client: &dyn ReadClient,
         tenant: i64,
         kind: &str,
         ids: &[String],
@@ -204,14 +203,17 @@ impl Records {
 
     /// Whether a holder may store a reference to `(kind, id)`: the kind must
     /// be mounted, the id well formed, and the owner must answer `Readable`
-    /// for this reader. When writing, pass the holder's own transaction
-    /// (`tx.sql()`); a preview may pass any client. The returned reference is
-    /// what the holder stores: the id's one spelling (`01` is `1`), and for a
-    /// merged record its survivor, which is what is checked. The owner is not
-    /// written to and is not told.
+    /// for this reader. Pass the connection the caller already holds: the
+    /// holder's own transaction when writing (`tx.sql()`), and in a preview
+    /// the client the plan hands it (`OperationClient`). A plan holds a
+    /// pooled transaction while it previews, so taking another connection
+    /// there can exhaust the pool. The returned reference is what the holder
+    /// stores: the id's one spelling (`01` is `1`), and for a merged record
+    /// its survivor, which is what is checked. The owner is not written to
+    /// and is not told.
     pub async fn check(
         &self,
-        client: &(impl GenericClient + Sync),
+        client: &dyn ReadClient,
         scope: &Scope,
         kind: &str,
         id: &str,
@@ -593,6 +595,7 @@ impl Records {
             let mut count = 0;
             for chunk in ids.chunks(MAX_CHOICES) {
                 let spec = SummarySpec {
+                    bounds: bilibi_grid::Bounds::default(),
                     filters: vec![
                         Filter {
                             column: holder.kind_field.into(),

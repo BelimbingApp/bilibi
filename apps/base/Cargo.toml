@@ -13,6 +13,7 @@ bilibi-audit = { path = "audit" }
 bilibi-audit-views = { path = "audit_views" }
 bilibi-authz = { path = "authz" }
 bilibi-authz-agent = { path = "authz_agent" }
+bilibi-bulk-data = { path = "bulk_data" }
 bilibi-dashboard = { path = "dashboard" }
 bilibi-database = { path = "database" }
 bilibi-datetime = { path = "datetime" }
@@ -33,6 +34,7 @@ bilibi-ports = { path = "ports" }
 bilibi-principal-directory = { path = "principal_directory" }
 bilibi-queue = { path = "queue" }
 bilibi-records = { path = "records" }
+bilibi-reports = { path = "reports" }
 bilibi-schedule = { path = "schedule" }
 bilibi-search = { path = "search" }
 bilibi-security = { path = "security" }

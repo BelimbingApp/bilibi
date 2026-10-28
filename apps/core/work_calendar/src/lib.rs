@@ -1,4 +1,4 @@
-//! Work calendars (issue 135, ADR 09): one answer, for every module, to "is
+//! Work calendars (issue 135, ADR 13): one answer, for every module, to "is
 //! this business time?" and "when is N business hours from now?". Core master
 //! data beside Company and Address, so Domains share one calendar. No Bilimbi
 //! counterpart; the day types follow Belimbing's attendance calendar. Read

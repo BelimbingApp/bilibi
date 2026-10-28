@@ -1,0 +1,6 @@
+{#- A report on the dashboard (src/web/panel.rs): one card with the panel's
+    id holding its parts, each rendered by a shared model: why it cannot be
+    drawn, the chart (its title names the report), what is left out, and the
+    link to the report, withheld while the dashboard is being customized. -#}
+{%- import "components.html" as ui -%}
+{% call ui::card(id=id) %}{% call ui::stack(parts=parts) %}{% endcall %}{% endcall %}

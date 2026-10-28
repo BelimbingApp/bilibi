@@ -17,7 +17,7 @@ mod web;
 use bilibi_database::{Error, Result};
 use bilibi_tenancy::{Authentication, ProofClient, ProofFuture, Scope};
 pub use effective::{
-    effective_capabilities, effective_capabilities_of, effective_system, Effective,
+    effective_capabilities, effective_capabilities_of, effective_system, holders, Effective,
 };
 use std::{
     collections::HashSet,
@@ -25,8 +25,8 @@ use std::{
 };
 use tokio_postgres::{types::ToSql, GenericClient, Row};
 pub use vocabulary::{
-    CapabilityDefinition, RoleDefinition, SystemPrincipalDefinition, Vocabulary,
-    VocabularyContribution, VOCABULARY,
+    CapabilityDefinition, RoleDefinition, StandingGrant, SystemPrincipalDefinition, Vocabulary,
+    VocabularyContribution, STANDING_GRANTS, VOCABULARY,
 };
 
 /// Immutable deployment snapshot. Database grants/restrictions are never cached.
@@ -138,7 +138,45 @@ pub async fn decide_proof(client: &dyn ProofClient, scope: &Scope, key: &str) ->
     if let Some(principal) = scope.principal() {
         return system_decision(&Proof(client), scope.tenant(), Some(principal), key).await;
     }
-    let decision = match vocabulary()?.capabilities.get(key) {
+    let decision = user_decision_proof(client, scope, key).await?;
+    let kind = "user";
+    let principal: Option<&str> = None;
+    client
+        .query_opt(
+            LOG_RETURNING_SQL,
+            &[
+                &scope.tenant(),
+                &scope.user(),
+                &key,
+                &decision.allowed,
+                &decision.reason,
+                &kind,
+                &principal,
+            ],
+        )
+        .await?;
+    Ok(decision)
+}
+/// Whether an account holds `key`, decided as `decide_proof` does but never
+/// logged: for display and for the reach checks that run on every page and
+/// every authentication, where a logged row per call would flood the decision
+/// log. An operation still decides with `decide_proof` or `authorize_proof`. A
+/// named principal's scope is not decided here and holds nothing.
+pub async fn holds_proof(client: &dyn ProofClient, scope: &Scope, key: &str) -> Result<bool> {
+    if key.is_empty() || key.len() > 200 {
+        return Err(Error::Invalid);
+    }
+    if scope.principal().is_some() {
+        return Ok(false);
+    }
+    Ok(user_decision_proof(client, scope, key).await?.allowed)
+}
+async fn user_decision_proof(
+    client: &dyn ProofClient,
+    scope: &Scope,
+    key: &str,
+) -> Result<Decision> {
+    Ok(match vocabulary()?.capabilities.get(key) {
         None => Decision::deny("denied_unknown_capability"),
         Some(cap) => {
             let live = client
@@ -162,24 +200,7 @@ pub async fn decide_proof(client: &dyn ProofClient, scope: &Scope, key: &str) ->
                 judge(&row)
             }
         }
-    };
-    let kind = "user";
-    let principal: Option<&str> = None;
-    client
-        .query_opt(
-            LOG_RETURNING_SQL,
-            &[
-                &scope.tenant(),
-                &scope.user(),
-                &key,
-                &decision.allowed,
-                &decision.reason,
-                &kind,
-                &principal,
-            ],
-        )
-        .await?;
-    Ok(decision)
+    })
 }
 /// `authorize_key` on a sealed proof connection.
 pub async fn authorize_proof(client: &dyn ProofClient, scope: &Scope, key: &str) -> Result<()> {
@@ -347,6 +368,9 @@ async fn system_decision(
                 {
                     Some(true) => Decision::allow("system_principal_grant"),
                     Some(false) => Decision::deny("denied_explicitly"),
+                    None if vocab.standing(name, key) => {
+                        Decision::allow("system_principal_standing")
+                    }
                     None => Decision::deny("denied_missing_capability"),
                 }
             }

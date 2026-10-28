@@ -1,4 +1,4 @@
-# ADR 09: Work calendars are Core master data with four fixed day types
+# ADR 13: Work calendars are Core master data with four fixed day types
 
 **Document Type:** Architecture Decision Record
 **Status:** Proposed

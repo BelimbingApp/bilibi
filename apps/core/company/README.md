@@ -57,6 +57,22 @@ capability in the tenant it reaches every live company of that tenant, in
 `.list` and `.view`; field saves and lifecycle commands use `.update` plus
 company reach. The generic field editor never accepts `status`.
 
+## The current company
+
+**A person who may act in several companies chooses which one to work in from the top bar; the choice grants nothing.** `Scope::current_company()` is that company: the session's choice while the account still reaches it, else the affiliation's company (`Scope::actor().organisation()`). A page or report that operates on "the current company" reads `current_company()`; an owner that decides reach, or binds a record to the person's employer, keeps reading the affiliation. Every read and write still proves its target with `authorize_target` and its own capability, so a chosen company the person may not act in is refused exactly as before. Decision and rejected options: [ADR 09](../../../docs/architecture/decisions/09-current-company-is-a-session-choice.md).
+
+| Piece | Owner | Contract |
+| --- | --- | --- |
+| `bilibi_company::reachable(client, scope, id)` | Company | `true` for a live, unarchived company of the tenant the account reaches: its own company, any company with `admin.company.tenant-wide.manage`, or every company for a granted system principal. Never an error for a missing, archived or other-tenant id |
+| `Directory::reachable` (`OrganisationDirectory`) | Company | The same reach, listed: what the top bar's switcher offers. No capability is asked, because the list is the reach alone |
+| `sessions.company_id` and `Sessions::choose_company` | Base Session | The stored choice (`NULL` is the account's own company); migration `009-session-company` adds the scoped key |
+| `ActorVerifier::reaches_company` | Core User, through `reachable` | Proves the stored choice on every authentication; a choice the account no longer reaches is dropped from the scope and the session edge forgets it |
+| `UserService::choose_company` | Core User | The switch: proves the reach, writes the row and records `user.company.switched` in one transaction (a refused one records `user.company.switch_refused`) ([Core User README](../user/README.md#current-company)) |
+| `POST /session/company` | Web | The top bar's form ([Web README](../../web/README.md)) |
+| `core.company.reachable` | Company | The same list for an agent, under `admin.company.view`; an agent carries no session choice and names `company_id` on every call |
+
+The dashboard's Companies strip and Current company card follow `current_company()`. The switcher lists every reachable company of the tenant by name, with a type-to-find box past eight. Viewing as another account starts from that account's own default, and leaving restores the operator's choice. Archived companies are never offered, and switching companies never crosses a tenant.
+
 ## Public company summaries
 
 `organisation::Directory` returns `bilibi_tenancy::NamedOrganisation` with the company's `id`, display `name`, full `status` and existing `archived` flag.
@@ -122,7 +138,9 @@ edits are rejected in the domain too.
 ## Agent operations
 
 `agent_operations.rs` registers `core.company.list`, `core.company.get`,
-`core.company.duplicates` and `core.company.hierarchy` (reads; see
+`core.company.reachable` (the companies the caller may work in, see [The
+current company](#the-current-company)), `core.company.duplicates` and
+`core.company.hierarchy` (reads; see
 [Duplicate candidates](#duplicate-candidates) and
 [Company hierarchies](#company-hierarchies)) and `core.company.create`
 (a reviewed safe write: preview shares
@@ -137,9 +155,7 @@ Company accepts build-time `CompanyFieldContribution` entries on
 `core/company.company_fields`. An Extension depends on Company and contributes
 stable, globally unique lowercase field IDs and labels; Company never depends
 on the Extension. Discovery rejects duplicate IDs, built-in collisions and
-unsupported lengths before the app starts. This first slice supports optional
-text fields up to 10,000 characters so JSON-escaped values fit in a Company
-live-form event frame.
+unsupported lengths before the app starts. The contract supports optional text fields up to 10,000 characters so JSON-escaped values fit in a Company live-form event frame, and optional calendar dates stored by the contributing Extension as PostgreSQL `DATE` values and passed as canonical `YYYY-MM-DD` strings.
 
 The Extension owns its field table and migration. Its Grid contribution declares
 the tenant-scoped source and a `One` link from `companies`; its
@@ -162,13 +178,16 @@ either record identity, including when the target field is protected from new
 restrictions. Grid prunes the corresponding dotted path from each fresh scoped
 catalog.
 
-The same fields appear in the reviewed `core.company.create` schema and are
-accepted by its preview and commit handlers. List and detail agent output uses
+The same fields appear in the reviewed `core.company.create` schema (`format: date` for dates) and are accepted by its preview and commit handlers. Date fields use native date controls on create and detail; detail displays dates as `DD/MM/YYYY` while the editor and agent API use canonical `YYYY-MM-DD`. List and detail agent output uses
 the same field IDs, with restricted values replaced by the shared restricted
 marker. Runtime tenant-defined fields, JSON storage, reference fields and
 governed choices are not part of this static contract.
 
 ### Upgrade notes for field contributors
+
+`CompanyFieldKind` now includes `Date`; update exhaustive matches and declare
+date values as canonical `YYYY-MM-DD` calendar dates backed by PostgreSQL
+`DATE` columns.
 
 Existing callers of `CompanyService::create_with_context` must pass the new
 `CompanyFieldValues` argument between `new` and `activities` (use an empty map
@@ -179,7 +198,9 @@ paths, resolve the path instead of treating its first segment as a table ID.
 Write callbacks must return exactly the values supplied by Company; callbacks
 that normalize a reviewed value are refused and rolled back. Callers of Grid's
 `PageColumns::with_record_slots` must handle its `Result` and propagate or map
-invalid and duplicate slot errors. Contributed field IDs must not use Company
+invalid and duplicate slot errors. Callers that construct `InlineField` with a
+struct literal must initialize `display_value` and `input_type`; prefer
+`InlineField::new` with its builder methods. Contributed field IDs must not use Company
 form transport keys or Company agent request/response envelope keys; discovery
 rejects those names before the app starts.
 
@@ -216,8 +237,12 @@ primary company.
 `src/web/dashboard.rs` draws the `dashboard.companies` widget
 (`base-dashboard-company-stats`: total, active, the current company's code)
 and the `dashboard.company` section (`current-company`: name, code, status and
-Open company). The current company is the one the account signs in under
-through its affiliation, else the tenant's first live company. Neither needs a
+Open company). The current company is the one the session works in
+(`Scope::current_company`: the chosen company, else the affiliation's); an
+account that reaches companies but has chosen none sees "No current company"
+and the top bar's prompt to choose one; one that reaches none sees "No
+company" and is told to ask an administrator. No account is shown a guessed
+company. The widget and section need no
 capability to read, as in Bilimbi; the links show only to a reader holding
 `admin.company.list` / `admin.company.view`.
 

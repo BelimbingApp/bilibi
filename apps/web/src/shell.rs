@@ -19,8 +19,10 @@ use bilibi_module_registry::contributions::{
 };
 use bilibi_security::Scope;
 use bilibi_ui::page::{PageRequest, PageService};
-use bilibi_ui::{AppShell, DisplayPreferences, Framed, Html, NavNode, SearchPage, ShellContext};
-use bilibi_user::{PreferenceError, Presentation};
+use bilibi_ui::{
+    AppShell, CompanyChoice, DisplayPreferences, Framed, Html, NavNode, SearchPage, ShellContext,
+};
+use bilibi_user::{ChoiceRefusal, PreferenceError, Presentation};
 use serde::Deserialize;
 use serde_json::json;
 use std::{collections::HashMap, sync::Arc};
@@ -56,6 +58,7 @@ pub async fn render(
             live,
             tenant_id: scope.map_or(0, Scope::tenant),
             user_id: scope.map_or(0, Scope::user),
+            company_id: scope.and_then(|scope| scope.current_company().map(|id| id.get())),
             preferences: &preferences,
         }
         .render()
@@ -120,23 +123,40 @@ async fn context<'a>(
         Err(Error::Forbidden) => false,
         Err(error) => return Err(error),
     };
-    if platform_operator {
-        adopt_installation_locale(app, scope).await;
-    }
-    // The company the account signs in under, through its affiliation
-    // (Bilimbi `company_name_for`): display only, so a company the directory
-    // cannot name never blocks an otherwise proven session.
-    let company = match scope.actor().organisation() {
-        Some(id) => app
-            .services
-            .get::<tenancy::PartyProofs>("base/tenancy.parties")?
-            .organisation_name(&**client, scope, id)
-            .await
-            .ok()
-            .flatten()
-            .map(|organisation| organisation.name),
+    // The company the session works in (`Scope::current_company`: the chosen one,
+    // else the affiliation's, Bilimbi `company_name_for`) and the companies
+    // the person may switch to, both display only: a company the directory
+    // cannot name never blocks an otherwise proven session, and the switch
+    // proves its target again (`bilibi_user::choose_company`).
+    let parties = app
+        .services
+        .get::<tenancy::PartyProofs>("base/tenancy.parties")?;
+    let current_company = match scope.current_company() {
+        Some(id) => company_name(&parties, &**client, scope, id).await,
+
         None => None,
     };
+    let own_company = match scope.actor().organisation() {
+        Some(own) if Some(own) != scope.current_company() => {
+            company_name(&parties, &**client, scope, own).await
+        }
+        _ => None,
+    };
+    let companies: Vec<CompanyChoice> = parties
+        .reachable_organisations(&**client, scope)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|organisation| CompanyChoice {
+            id: organisation.id.get(),
+            current: Some(organisation.id) == scope.current_company(),
+            own: Some(organisation.id) == scope.actor().organisation(),
+            name: organisation.name,
+        })
+        .collect();
+    let company_bar =
+        bilibi_ui::company_bar(current_company.as_deref(), &companies, &scope.csrf, path)
+            .map_err(|_| Error::Internal)?;
     // Bilimbi warns only on the operator tenant, and only while it stands on
     // no primary company; a failed lookup paints no warning.
     let operator_company_missing = platform_operator
@@ -144,6 +164,15 @@ async fn context<'a>(
             bilibi_core::company::platform_operator_company(&**client).await,
             Ok(None)
         );
+    let pins = bilibi_user::list_pins(&**client, scope).await?;
+    // Everything below takes connections of its own. Holding this one across
+    // them would let as many simultaneous renders as the pool holds take every
+    // connection and wait on each other for good (every live reply renders
+    // the shell), so it goes back to the pool first.
+    drop(client);
+    if platform_operator {
+        adopt_installation_locale(app, scope).await;
+    }
     // A module contributes the bell through the `shell.notifications` embed,
     // the search dialog's records through `shell.search.records` and the
     // status bar's AI tag through `shell.ai`; an account an embed refuses has
@@ -194,8 +223,7 @@ async fn context<'a>(
         may_open(route.access) && (route.path != OPERATOR_SETUP || operator_company_missing)
     });
     let served = served_routes(app);
-    let pins: Vec<_> = bilibi_user::list_pins(&**client, scope)
-        .await?
+    let pins: Vec<_> = pins
         .into_iter()
         .filter(|pin| is_served(&served, &pin.url))
         .collect();
@@ -217,7 +245,10 @@ async fn context<'a>(
         tenant: &scope.tenant_name,
         tenant_id: scope.tenant(),
         user_id: scope.user(),
-        company,
+        current_company,
+        company_id: scope.current_company().map(|id| id.get()),
+        own_company,
+        company_bar,
         platform_operator,
         operator_company_missing,
         impersonator: scope.impersonator().map(|operator| operator.name()),
@@ -248,6 +279,22 @@ async fn context<'a>(
         topbar_actions,
         page_search: bilibi_ui::page_search(&pages, records).map_err(|_| Error::Internal)?,
     })
+}
+
+/// A company's display name for the shell, or `None` when the directory
+/// cannot name it (display only, never a refusal).
+async fn company_name(
+    parties: &tenancy::PartyProofs,
+    client: &(impl tokio_postgres::GenericClient + Sync),
+    scope: &Scope,
+    id: bilibi_base::party_ids::OrganisationId,
+) -> Option<String> {
+    parties
+        .organisation_name(client, scope, id)
+        .await
+        .ok()
+        .flatten()
+        .map(|organisation| organisation.name)
 }
 
 /// The address of Company's operator setup page, which the status bar links to
@@ -561,6 +608,74 @@ pub async fn save(
     ))
 }
 
+/// The top bar's company switcher posts here (`templates/company_bar.html`):
+/// an ordinary form with the session's CSRF secret, the chosen company (an
+/// empty value is the account's own company) and the address to return to.
+/// Core User proves the company is one the account reaches and records the
+/// switch; the browser then reloads that address under the new company, and
+/// every other live page of the session reloads at its next event
+/// (`live::Identity`). A company the person does not reach answers with a
+/// flash at the same address.
+#[derive(Deserialize)]
+pub struct CompanyForm {
+    csrf: String,
+    #[serde(default)]
+    company: String,
+    #[serde(default, rename = "return")]
+    back: String,
+}
+pub const COMPANY_PATH: &str = "/session/company";
+pub async fn choose_company(
+    State(app): State<App>,
+    headers: HeaderMap,
+    peer: Option<axum::extract::Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
+    axum::Form(form): axum::Form<CompanyForm>,
+) -> std::result::Result<Response, HttpError> {
+    use axum::response::Redirect;
+    origin(&app, &headers)?;
+    let credential = match token(&headers) {
+        Ok(credential) => credential,
+        Err(Error::Unauthorized) => return Ok(crate::auth::sign_in_redirect(&app, true)),
+        Err(error) => return Err(error.into()),
+    };
+    let company = match form.company.trim() {
+        "" => None,
+        id => Some(
+            id.parse::<i64>()
+                .ok()
+                .filter(|id| *id > 0)
+                .ok_or(Error::Invalid)?,
+        ),
+    };
+    let back = crate::landing::local_path(&form.back).unwrap_or("/");
+    let info = bilibi_base::audit::RequestInfo {
+        ip: crate::api::client_address(
+            peer.map(|axum::extract::Extension(axum::extract::ConnectInfo(peer))| peer),
+            &headers,
+        ),
+        url: Some(COMPANY_PATH.to_owned()),
+        user_agent: headers
+            .get(header::USER_AGENT)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned),
+    };
+    match app
+        .user
+        .choose_company(&credential, &form.csrf, company, &info)
+        .await
+    {
+        Ok(_) => Ok(Redirect::to(back).into_response()),
+        Err(ChoiceRefusal::Unavailable) => {
+            let mut response = Redirect::to(back).into_response();
+            crate::auth::set_flash(&app, &mut response, crate::auth::COMPANY_UNAVAILABLE);
+            Ok(response)
+        }
+        Err(ChoiceRefusal::Other(Error::Unauthorized)) => {
+            Ok(crate::auth::sign_in_redirect(&app, true))
+        }
+        Err(ChoiceRefusal::Other(error)) => Err(error.into()),
+    }
+}
 /// The account's pins for a client that must refresh: the shell renders the
 /// same list into `data-pins`.
 pub async fn pins(
@@ -701,14 +816,17 @@ async fn adopt_installation_locale(app: &App, scope: &Scope) {
         let locales = app
             .services
             .get::<bilibi_base::locale::Locales>("base/locale.locales")?;
-        let mut client = app.db.get().await?;
-        if locales
-            .resolve_global(&**client, scope, None)
-            .await?
-            .persisted
-        {
+        let persisted = {
+            let client = app.db.get().await?;
+            locales
+                .resolve_global(&**client, scope, None)
+                .await?
+                .persisted
+        };
+        if persisted {
             return Ok::<bool, Error>(true);
         }
+        // Address takes a connection of its own: hold none across it.
         let Some(facts) = app
             .services
             .get::<bilibi_core::address::AddressService>(bilibi_core::address::SERVICE)?
@@ -717,6 +835,7 @@ async fn adopt_installation_locale(app: &App, scope: &Scope) {
         else {
             return Ok(false);
         };
+        let mut client = app.db.get().await?;
         let mut tx = app
             .services
             .get::<bilibi_database::MutationBoundary>("base/database.mutations")?

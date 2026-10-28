@@ -51,7 +51,7 @@ pub use lifecycle::{
 };
 // A company as another owner reads, authorizes or writes into it.
 pub use organisation::{
-    authorize_target, identity, list_tenant_company_ids, require_live, require_writable,
+    authorize_target, identity, list_tenant_company_ids, reachable, require_live, require_writable,
     require_writable_in, search, CreateOutcome, Directory, Entry as SearchEntry, Identity,
     NewCompany, SearchPage, SearchQuery, ValidCompany, RESTRICTABLE,
 };
@@ -101,6 +101,12 @@ pub const MIGRATION_ROLE_OWNER: (&str, &str) = (
 pub const MIGRATION_SEARCH: (&str, &str) = (
     "core-company-007-search",
     include_str!("../migrations/007-search.sql"),
+);
+/// The scoped foreign key behind Base Session's `sessions.company_id`, the
+/// company a session chose to work in (`Scope::current_company`).
+pub const MIGRATION_SESSION_COMPANY: (&str, &str) = (
+    "core-company-009-session-company",
+    include_str!("../migrations/009-session-company.sql"),
 );
 pub const MASK: &str = "••••";
 /// The registry service id of the Companies facade.
@@ -743,8 +749,8 @@ async fn finish(tx: bilibi_database::MutationTransaction<'_>, saved: bool) -> Re
 inventory::submit! {
     bilibi_module_registry::Module {
         id:"core/company",layer:bilibi_module_registry::Layer::Core,
-        dependencies:&["base/database","base/security","base/ui","base/notifications","base/party_ids","base/session","base/menu","base/grid","base/search","base/dashboard","base/authz","base/tenancy","base/audit","base/agent_api","base/datetime","base/locale","base/principal_directory","base/media","base/artifacts","base/picklists","base/settings","base/records","core/party","core/geonames","core/person"],
-        migrations:&[MIGRATION, MIGRATION_ORGANISATION, MIGRATION_RELATIONSHIPS, MIGRATION_ROLE_OWNER, MIGRATION_SEARCH, ("core-company-008-match-keys", include_str!("../migrations/008-match-keys.sql"))],
+        dependencies:&["base/database","base/security","base/ui","base/notifications","base/party_ids","base/session","base/menu","base/grid","base/search","base/dashboard","base/reports","base/authz","base/tenancy","base/audit","base/agent_api","base/datetime","base/locale","base/principal_directory","base/media","base/artifacts","base/picklists","base/settings","base/records","core/party","core/geonames","core/person"],
+        migrations:&[MIGRATION, MIGRATION_ORGANISATION, MIGRATION_RELATIONSHIPS, MIGRATION_ROLE_OWNER, MIGRATION_SEARCH, ("core-company-008-match-keys", include_str!("../migrations/008-match-keys.sql")), MIGRATION_SESSION_COMPANY],
         services: &[
             bilibi_module_registry::Service { id: SERVICE, factory: |services| {
                 let db = services.get::<Db>("base/database.pool")?.as_ref().clone();

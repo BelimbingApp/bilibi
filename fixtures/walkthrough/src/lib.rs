@@ -20,7 +20,7 @@
 //! [`walkthrough_vocabulary!`] (the `companies.view`/`companies.update` keys
 //! and the four roles holding them) and, when it links the whole app, also
 //! [`walkthrough_module_roles!`] (what those roles hold in the Core modules,
-//! Grid's reference tables and Workflow delivery). Reconciling system roles
+//! imports, Grid's reference tables and Workflow delivery). Reconciling system roles
 //! rewrites each role to its contributed set, so an example that reconciles
 //! needs both.
 use bilibi_database::{Db, Error, Result};
@@ -104,8 +104,8 @@ macro_rules! walkthrough_vocabulary {
     };
 }
 
-/// What the fixture roles hold in Company, Person, Affiliation, Address, User, Grid's
-/// reference tables and Workflow delivery: the manager administers any
+/// What the fixture roles hold in Company, Person, Affiliation, Address, User,
+/// imports, Grid's reference tables and Workflow delivery: the manager administers any
 /// company of the tenant, staff edits, the viewer reads. Only for an example
 /// that links the whole app, since every key must be declared; expand
 /// [`walkthrough_vocabulary!`] beside it.
@@ -123,6 +123,7 @@ macro_rules! walkthrough_module_roles {
                     "admin.affiliation.list", "admin.affiliation.view", "admin.affiliation.create", "admin.affiliation.update", "admin.affiliation.unlink", "admin.affiliation.prove",
                     "admin.address.view", "admin.address.list", "admin.address.create", "admin.address.update", "admin.address.delete",
                     "admin.user.list", "admin.user.view", "admin.user.create", "admin.user.update", "admin.user.delete",
+                    "admin.import.view", "admin.import.create", "admin.person.import", "admin.affiliation.import",
                     "grid.reference.view", "workflow.transition.deliver",
                 ] },
                 $crate::authz::RoleDefinition { code: "staff", name: "staff", description: "Walkthrough fixture role", grant_all: false, capabilities: &[

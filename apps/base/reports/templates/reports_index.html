@@ -1,0 +1,14 @@
+{#- The reports list (src/web/index.rs). The header, toolbar, table, pager
+    and dialog are rendered through the shared models; this file lays them
+    out. -#}
+{%- import "components.html" as ui -%}
+{%- import "feedback.html" as feedback -%}
+<div data-shared-ui>
+{% call feedback::flash_group(messages=flash) %}{% endcall %}
+{% call ui::page(id="reports-index") %}
+{{ header|safe }}
+{{ toolbar|safe }}
+{{ card|safe }}
+{{ dialog|safe }}
+{% endcall %}
+</div>

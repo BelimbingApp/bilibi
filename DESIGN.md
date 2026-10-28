@@ -52,15 +52,16 @@ Reuse the shared macros and typed models. Do not hand-write markup or copy class
 
 | Need | Use | Source |
 | --- | --- | --- |
-| Page, card, section, button, badge, icon | `templates/components.html` and `src/components.rs` | `apps/base/ui` |
+| Page, card, section, stack, cluster, narrowing, removable, button, badge, icon | `templates/components.html` and `src/components.rs` | `apps/base/ui` |
 | Form control | `templates/forms.html` and `src/forms.rs` | `apps/base/ui` |
+| Form layout (`form`, `section`, `fields`, `field_row`, `control_group`) | `templates/forms.html` | `apps/base/ui` |
 | Flash, alert, panel notice | `templates/feedback.html` and `src/feedback.rs` | `apps/base/ui` |
 | Which Bilibi this is (badge, banner) | `templates/feedback.html` and `src/instance.rs`, through `bilibi_system::Instance` | `apps/base/ui`, `apps/base/system` |
 | Modal, confirmation | `templates/dialog.html` | `apps/base/ui` |
 | Tabs | `templates/tabs.html` | `apps/base/ui` |
 | Inline edit | `templates/inline.html` and `src/inline.rs` | `apps/base/ui` |
 | List and table | `templates/lists.html`, `flex_table.html` | `apps/base/ui` |
-| Chart (KPI, bar, stacked bar, line, pie, donut) | `templates/chart.html` and `src/chart.rs` (`Chart`, `ChartKind`, `Series`) | `apps/base/ui` |
+| Chart (KPI, bar, stacked bar, line, pie, donut); `Chart::drill` makes bars and slices raise a page event, with the Data table as the keyboard route | `templates/chart.html` and `src/chart.rs` (`Chart`, `ChartKind`, `Series`) | `apps/base/ui` |
 
 - Name variants through the enums (`ButtonVariant`, `BadgeKind`, `PageVariant`), not class strings.
 - Icons use bare names from `base/ui` (`edit`, `pencil`, `bookmark-solid`), rendered as inline SVG. Use the Belimbing equivalent for a familiar action; see `apps/base/ui/README.md` for names and missing-icon behaviour.
@@ -187,7 +188,8 @@ Width is a shared decision. Every page uses `PageVariant`. All three share one c
 
 - **Credential layout:** a centered card for sign-in and password recovery. No navigation. When the sign-in policy requires 2FA, a second card shows enrolled methods, explicit start/resend, code entry and Cancel before opening the workspace. Reading it sends no challenge.
 - **Workspace shell:** `h-7` top bar, sidebar menu, status bar.
-  - Top bar: sidebar toggle, brand mark, search, notification bell, timezone and clock selector, theme selector.
+  - Top bar: sidebar toggle, brand mark, the current company, search, notification bell, timezone and clock selector, theme selector.
+  - The company label is always visible, so the reader knows whose records a page shows. A person who may work in more than one company gets a switcher there: the list of their companies, marking the current one and their own, with a type-to-find box past eight. Choosing one reloads the page in that company; other open tabs reload at their next action. A person with one company, or none, sees a plain label. The account menu names the current company and, when different, the person's own company. *built* (`templates/company_bar.html`)
   - Sidebar: the menu, pinned items, account entry at the bottom.
   - Status bar: the Platform version, then each mounted Domain's version (`finance 0.1.0`), with commits in the tooltip (`docs/versions.md`). It also shows the server role and instance label in the configured colour, plus the listen address when the role is Dev. The role comes from `instance.role`, never the build mode.
   - In the status bar's centre, the AI tag: the text AI in a bordered box, drawn like the role tag. A faint border means no AI app is connected; the normal border means one is. The tooltip says which ("Claude, ChatGPT · last used 5 min ago" or "No AI app connected"), so colour is never the only cue. It stays visible at phone width. Clicking it opens a panel upward: when nothing is connected, the prompt to paste into an AI app and the Bilibi address, each with a Copy button, plus a note to use an AI program on this computer when the server is a Dev copy or not reachable from the internet; when connected, the connected apps with last use and end date, a Manage link, and what the AI read and did, newest first. The panel follows new requests and connection changes live. Approvals, bot notifications and an in-app assistant are later stages.

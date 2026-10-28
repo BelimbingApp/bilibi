@@ -1,4 +1,4 @@
--- Work calendars (issue 135, ADR 09): when a tenant does business. Each date
+-- Work calendars (issue 135, ADR 13): when a tenant does business. Each date
 -- resolves to one of four day types (working, rest, off, holiday) from the
 -- calendar's exceptions, then the holiday sets it includes, then the weekly
 -- rule version in force; `src/resolve.rs` is the one definition. Opening

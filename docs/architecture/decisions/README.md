@@ -48,6 +48,7 @@ Every record carries these header lines: Document Type, Status, Agents, Scope, L
 | Record | Status |
 | --- | --- |
 | [01 Agent-first operations: one contract, four doors](./01-agent-first-operations.md) | Accepted |
+| [10 Queued jobs call operation contracts, and modules opt in to CSV import](./10-queued-jobs-call-contracts.md) | Proposed |
 
 ### Software delivery
 
@@ -61,6 +62,7 @@ Every record carries these header lines: Document Type, Status, Agents, Scope, L
 | Record | Status |
 | --- | --- |
 | [04 Provider-neutral single sign-on](./04-provider-neutral-single-sign-on.md) | Accepted; implemented |
+| [09 The current company is a session choice, never a grant](./09-current-company-is-a-session-choice.md) | Proposed |
 
 ### Personal data
 
@@ -86,4 +88,10 @@ Every record carries these header lines: Document Type, Status, Agents, Scope, L
 
 | Record | Status |
 | --- | --- |
-| [09 Work calendars are Core master data with four fixed day types](./09-work-calendars-in-core.md) | Proposed |
+| [13 Work calendars are Core master data with four fixed day types](./13-work-calendars-in-core.md) | Proposed |
+
+### Files
+
+| Record | Status |
+| --- | --- |
+| [12 Malware scanning fails closed, through one Extension seam](./12-malware-scanning-fails-closed.md) | Proposed |

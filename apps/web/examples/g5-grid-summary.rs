@@ -74,6 +74,7 @@ impl Report {
 
 fn spec(filters: Vec<Filter>, groupings: Vec<Grouping>, measures: Vec<Measure>) -> SummarySpec {
     SummarySpec {
+        bounds: grid::Bounds::default(),
         filters,
         groupings,
         measures,
@@ -342,6 +343,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         &manager,
         "reference_items",
         &PageSpec {
+            bounds: grid::Bounds::default(),
             filters: vec![filter("category", Test::Equals(json!("tools")))],
             sorts: vec![
                 Sort {
@@ -585,6 +587,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             sorts: vec![],
             timezone: ZONE.into(),
             offset: 0,
+            bounds: grid::Bounds::default(),
             limit: 10,
         },
     )
@@ -683,6 +686,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 sorts: vec![],
                 timezone: ZONE.into(),
                 offset: 0,
+                bounds: grid::Bounds::default(),
                 limit: 100,
             },
         )
@@ -701,6 +705,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         timezone: ZONE.into(),
         offset: 0,
         limit: 10,
+        bounds: grid::Bounds::default(),
     };
     let float_cases = [
         (

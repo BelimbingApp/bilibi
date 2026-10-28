@@ -49,8 +49,8 @@ mod statusbar;
 pub mod upload;
 pub mod workspace;
 pub use shell::{
-    navigation, navigation_unpinned, version_badges, AppShell, DisplayPreferences, Framed, NavNode,
-    ShellContext, VersionBadge,
+    company_bar, navigation, navigation_unpinned, version_badges, AppShell, CompanyChoice,
+    DisplayPreferences, Framed, NavNode, ShellContext, VersionBadge,
 };
 
 pub use auth::{
