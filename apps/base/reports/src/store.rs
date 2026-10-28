@@ -12,8 +12,6 @@ use tokio_postgres::{GenericClient, Row};
 /// `$1` tenant, `$2` reader; the report row is `r`.
 const VISIBLE: &str = "r.tenant_id=$1 AND (r.owner_id=$2 OR r.shared_with_everyone OR EXISTS (SELECT 1 FROM base_report_shares s JOIN effective_principal_roles p ON p.tenant_id=s.tenant_id AND p.role_id=s.role_id WHERE s.tenant_id=r.tenant_id AND s.report_id=r.id AND p.user_id=$2))";
 const COLUMNS: &str = "r.id, r.owner_id, r.name, r.description, r.record_type, r.kind, r.definition, r.shared_with_everyone, r.version, to_char(r.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), COALESCE((SELECT array_agg(s.role_id ORDER BY s.role_id) FROM base_report_shares s WHERE s.tenant_id=r.tenant_id AND s.report_id=r.id), '{}')";
-/// Reports one list returns at most.
-pub const MAX_LIST: i64 = 500;
 
 /// A stored report as its reader sees it.
 #[derive(Clone, Debug, Serialize)]
@@ -54,17 +52,6 @@ fn report(row: &Row, reader: i64) -> Result<Report> {
         role_ids: row.get(10),
         builtin: None,
     })
-}
-
-/// The reports the reader may run, by name.
-pub async fn list(sql: &impl GenericClient, tenant: i64, reader: i64) -> Result<Vec<Report>> {
-    let rows = sql
-        .query(
-            &format!("SELECT {COLUMNS} FROM base_reports r WHERE {VISIBLE} ORDER BY lower(r.name), r.id LIMIT {MAX_LIST}"),
-            &[&tenant, &reader],
-        )
-        .await?;
-    rows.iter().map(|row| report(row, reader)).collect()
 }
 
 /// One page of the reports the reader may run, by name, whose name or

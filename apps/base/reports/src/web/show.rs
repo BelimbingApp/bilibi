@@ -31,6 +31,30 @@ const TABS: [(&str, &str); 4] = [
 const DENIED_AUTHOR: &str = "You do not have permission to change this report.";
 const DENIED_SHARE: &str = "You do not have permission to share reports.";
 const STALE_DRAFT: &str = "Someone saved this report while you were editing it, so your changes were not saved. They are still in the form; Discard changes loads the saved report.";
+const STALE_SHARING: &str = "Someone saved this report while you were changing who it is shared with, so your sharing was not saved. Your choices are still in the form; Discard changes loads the saved sharing.";
+
+/// Who the Sharing form shares with, at the version it was opened at, so a
+/// save from an older form is refused as a conflict, never applied over a
+/// newer one.
+#[derive(Clone)]
+struct Sharing {
+    version: i64,
+    everyone: bool,
+    roles: Vec<i64>,
+    /// Refused as stale: the reader's choices, kept until saved or discarded.
+    dirty: bool,
+}
+
+impl Sharing {
+    fn from_report(report: &Report) -> Self {
+        Self {
+            version: report.version,
+            everyone: report.shared_with_everyone,
+            roles: report.role_ids.clone(),
+            dirty: false,
+        }
+    }
+}
 
 #[derive(Clone, Copy, PartialEq)]
 enum Confirm {
@@ -104,6 +128,7 @@ pub(crate) struct Show {
     drill: Vec<Drill>,
     report: Option<Report>,
     builder: Option<Builder>,
+    sharing: Option<Sharing>,
     hosts: BTreeMap<&'static str, (Vec<String>, ListColumns)>,
     drillable: Vec<result::Drillable>,
     /// The drawn summary's groupings, as `(spec, label, bucket)`.
@@ -228,6 +253,7 @@ impl Show {
             drill: Vec::new(),
             report: None,
             builder: None,
+            sharing: None,
             hosts: BTreeMap::new(),
             drillable: Vec::new(),
             grouped: Vec::new(),
@@ -255,6 +281,9 @@ impl Show {
         if tab == "definition" && self.tab != tab && !self.builder.as_ref().is_some_and(|b| b.dirty)
         {
             self.builder = None;
+        }
+        if tab == "sharing" && self.tab != tab && !self.sharing.as_ref().is_some_and(|s| s.dirty) {
+            self.sharing = None;
         }
         self.tab = tab;
         self.page = params::positive_integer(query.get("page").map(String::as_str))
@@ -313,6 +342,11 @@ impl Show {
         let drafting = self.tab == "definition" || self.builder.as_ref().is_some_and(|b| b.dirty);
         if self.builder.is_none() || (fresh && !drafting) {
             self.builder = Some(Builder::from_report(&report));
+        }
+        // The Sharing form keeps the version it was drawn at the same way.
+        let sharing = self.tab == "sharing" || self.sharing.as_ref().is_some_and(|s| s.dirty);
+        if self.sharing.is_none() || (fresh && !sharing) {
+            self.sharing = Some(Sharing::from_report(&report));
         }
         self.report = Some(report.clone());
         Ok(report)
@@ -535,9 +569,8 @@ impl Show {
                     )?),
                 }
             }
-            "save_sharing" if report.owned => {
-                self.save_sharing(scope, credential, &report, value).await?
-            }
+            "save_sharing" if report.owned => self.save_sharing(scope, credential, value).await?,
+            "reset_sharing" => self.sharing = Some(Sharing::from_report(&report)),
             "request_copy" => self.confirm = Some(Confirm::Copy),
             "request_delete" if report.owned => self.confirm = Some(Confirm::Delete),
             "cancel_confirm" => self.confirm = None,
@@ -708,15 +741,11 @@ impl Show {
         Ok(())
     }
 
-    async fn save_sharing(
-        &mut self,
-        scope: &Scope,
-        credential: &str,
-        report: &Report,
-        value: &Value,
-    ) -> Result<()> {
-        let fields = params::form_values(value, "share");
-        let everyone = fields.get("everyone").map(String::as_str) == Some("true");
+    async fn save_sharing(&mut self, scope: &Scope, credential: &str, value: &Value) -> Result<()> {
+        let Some(sharing) = self.sharing.as_mut() else {
+            return Ok(());
+        };
+        let everyone = value.get("share[everyone]").and_then(Value::as_str) == Some("true");
         let roles: Vec<i64> = value
             .get("share[roles][]")
             .and_then(Value::as_array)
@@ -728,7 +757,9 @@ impl Show {
                     .collect()
             })
             .unwrap_or_default();
-        let input = json!({"id": report.id, "version": report.version, "everyone": everyone, "roles": roles});
+        let input = json!({"id": self.id, "version": sharing.version, "everyone": everyone, "roles": roles});
+        sharing.everyone = everyone;
+        sharing.roles = roles;
         match self
             .pages
             .submit(
@@ -741,12 +772,22 @@ impl Show {
             .await
         {
             Ok(_) => {
+                self.report = None;
+                self.sharing = None;
                 self.flash = Some((
                     StatusKind::Success,
                     "Sharing saved. People run it with their own access.".into(),
                 ))
             }
-            Err(error) => self.refused(refusal(error, DENIED_SHARE)?),
+            Err(error) => match refusal(error, DENIED_SHARE)? {
+                Refusal::Message(message) if message == ReportError::Conflict.to_string() => {
+                    if let Some(sharing) = self.sharing.as_mut() {
+                        sharing.dirty = true;
+                    }
+                    self.flash = Some((StatusKind::Error, STALE_SHARING.into()))
+                }
+                refusal => self.refused(refusal),
+            },
         }
         Ok(())
     }
@@ -1443,12 +1484,16 @@ impl Show {
             .share_roles(scope)
             .await
             .map_err(page_error)?;
+        let sharing = self
+            .sharing
+            .get_or_insert_with(|| Sharing::from_report(report))
+            .clone();
         let mut body = render(
             Field::in_form("share", "everyone")
                 .id("report-share-everyone")
                 .label("Everyone who can run reports")
                 .kind(InputKind::Checkbox)
-                .checked(report.shared_with_everyone)
+                .checked(sharing.everyone)
                 .hint("Each person runs it with their own access, so they see only the records and fields they may see."),
         )?;
         let mut picker = MultiSelect::new("report-share-roles", "share[roles]")
@@ -1460,13 +1505,13 @@ impl Show {
                     .collect(),
             )
             .hint("People holding any of these roles can run it.");
-        picker.values = report.role_ids.iter().map(i64::to_string).collect();
+        picker.values = sharing.roles.iter().map(i64::to_string).collect();
         picker.selection_label = ":count role|:count roles".into();
         picker.placeholder = "No roles".into();
         picker.chips = true;
         picker.wrap_chips = true;
         body.push(&render(picker)?);
-        let actions = render(Button {
+        let mut actions = render(Button {
             id: "report-share-save",
             button_type: "submit",
             variant: ButtonVariant::Primary,
@@ -1474,6 +1519,15 @@ impl Show {
             body: Html::text("Save sharing"),
             ..Button::default()
         })?;
+        if sharing.dirty {
+            actions.push(&render(Button {
+                id: "report-share-reset",
+                button_type: "button",
+                event: "reset_sharing",
+                body: Html::text("Discard changes"),
+                ..Button::default()
+            })?);
+        }
         render(Card {
             id: "report-sharing",
             body: render(bilibi_ui::Form {

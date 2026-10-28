@@ -332,13 +332,6 @@ impl Reports {
         })
     }
 
-    /// The reports the reader may run. Needs `reports.view`.
-    pub async fn list(&self, scope: &Scope) -> Outcome<Vec<Report>> {
-        let client = self.db.get().await.map_err(Error::from)?;
-        authorize(&**client, scope, VIEW).await?;
-        Ok(store::list(&**client, scope.tenant(), scope.user()).await?)
-    }
-
     /// One page of the reports the reader may run, searched by name and
     /// description, with the number that match. Needs `reports.view`.
     pub async fn page(
