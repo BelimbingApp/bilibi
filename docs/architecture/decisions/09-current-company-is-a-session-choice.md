@@ -1,4 +1,4 @@
-# ADR 08: The current company is a session choice, never a grant
+# ADR 09: The current company is a session choice, never a grant
 
 **Document Type:** Architecture Decision Record
 **Status:** Proposed

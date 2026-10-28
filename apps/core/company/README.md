@@ -59,7 +59,7 @@ company reach. The generic field editor never accepts `status`.
 
 ## The current company
 
-**A person who may act in several companies chooses which one to work in from the top bar; the choice grants nothing.** `Scope::current_company()` is that company: the session's choice while the account still reaches it, else the affiliation's company (`Scope::actor().organisation()`). A page or report that operates on "the current company" reads `current_company()`; an owner that decides reach, or binds a record to the person's employer, keeps reading the affiliation. Every read and write still proves its target with `authorize_target` and its own capability, so a chosen company the person may not act in is refused exactly as before. Decision and rejected options: [ADR 08](../../../docs/architecture/decisions/08-current-company-is-a-session-choice.md).
+**A person who may act in several companies chooses which one to work in from the top bar; the choice grants nothing.** `Scope::current_company()` is that company: the session's choice while the account still reaches it, else the affiliation's company (`Scope::actor().organisation()`). A page or report that operates on "the current company" reads `current_company()`; an owner that decides reach, or binds a record to the person's employer, keeps reading the affiliation. Every read and write still proves its target with `authorize_target` and its own capability, so a chosen company the person may not act in is refused exactly as before. Decision and rejected options: [ADR 09](../../../docs/architecture/decisions/09-current-company-is-a-session-choice.md).
 
 | Piece | Owner | Contract |
 | --- | --- | --- |

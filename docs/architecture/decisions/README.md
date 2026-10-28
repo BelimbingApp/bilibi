@@ -61,7 +61,7 @@ Every record carries these header lines: Document Type, Status, Agents, Scope, L
 | Record | Status |
 | --- | --- |
 | [04 Provider-neutral single sign-on](./04-provider-neutral-single-sign-on.md) | Accepted; implemented |
-| [08 The current company is a session choice, never a grant](./08-current-company-is-a-session-choice.md) | Proposed |
+| [09 The current company is a session choice, never a grant](./09-current-company-is-a-session-choice.md) | Proposed |
 
 ### Personal data
 
