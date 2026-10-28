@@ -196,7 +196,11 @@ async fn context<'a>(
         .into_iter()
         .filter(|pin| is_served(&served, &pin.url))
         .collect();
-    let mut pin_icons: Vec<String> = pins.iter().filter_map(|pin| pin.icon.clone()).collect();
+    let mut pin_icons: Vec<String> = pins
+        .iter()
+        .filter_map(|pin| pin.icon.clone())
+        .filter(|icon| bilibi_ui::Icons::is_known(icon))
+        .collect();
     pin_icons.sort();
     pin_icons.dedup();
     let home = if served.contains(&"/dashboard") {
