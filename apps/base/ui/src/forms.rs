@@ -48,7 +48,7 @@ pub fn translate_error(template: &str, bindings: &[(&str, &str)]) -> String {
 /// horizontal padding; the list toolbar's search box makes room for its icon.
 pub fn field_base_class(readonly: bool, padding: &str) -> String {
     format!(
-        "ui-field block min-h-control w-full rounded-md border {padding} py-1.5 text-base leading-5 max-sm:text-[1rem] text-ink shadow-xs \
+        "ui-field block min-h-control w-full rounded-md border {padding} py-1.5 text-base leading-5 text-ink shadow-xs \
          transition placeholder:text-ink-faint focus:border-brand-strong focus:outline-none \
          focus:ring-2 focus:ring-brand-strong/30 disabled:cursor-not-allowed \
          disabled:bg-surface-sunken disabled:text-ink-subtle {}",
@@ -98,7 +98,7 @@ pub fn field_class(class: &str, errors: &[String], extra: &str, readonly: bool) 
 pub fn field_inset_class(readonly: bool, textarea: bool, prompt: bool) -> String {
     format!(
         "peer block w-full rounded-md border px-3 text-base leading-5 text-ink \
-         shadow-xs transition max-sm:text-[1rem] {} focus:border-brand-strong focus:outline-none \
+         shadow-xs transition {} focus:border-brand-strong focus:outline-none \
          focus:ring-2 focus:ring-brand-strong/30 disabled:cursor-not-allowed \
          disabled:bg-surface-sunken disabled:text-ink-subtle {} {}",
         if prompt {

@@ -52,7 +52,7 @@ use bilibi_ui::flex_table::{step_zoom, Cost, FlexColumn, FlexRow, FlexTable, Row
 use bilibi_ui::list_columns::{flex_column, BuiltinColumn};
 use bilibi_ui::list_state::SpecError;
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 /// Characters of the add box's text that are read.
@@ -157,12 +157,36 @@ impl PageColumns {
     /// Scalar facts already supplied by the owner's authorized read model.
     /// Keep the original defaults; add every other fact as an optional slot.
     /// Use contributed Grid record fields when the owner has a catalog table.
-    pub fn with_record_slots(mut self, fields: &[bilibi_ui::RecordField]) -> Self {
+    pub fn with_record_slots(
+        mut self,
+        fields: &[bilibi_ui::RecordField],
+    ) -> std::result::Result<Self, SpecError> {
         self.record_fields = fields.to_vec();
+        let mut slots = BTreeMap::new();
+        for builtin in &self.builtins {
+            let path = fields
+                .iter()
+                .find(|field| field.slot_id().as_deref() == Some(builtin.id.as_str()))
+                .map(|field| field.column.unwrap_or(field.id).to_owned())
+                .unwrap_or_else(|| format!("builtin:{}", builtin.id));
+            slots.insert(builtin.id.clone(), path);
+        }
         for field in fields {
             let Some(column) = field.builtin() else {
                 continue;
             };
+            let path = field.column.unwrap_or(field.id);
+            if column.id.is_empty()
+                || !column
+                    .id
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+                || slots
+                    .insert(column.id.clone(), path.to_owned())
+                    .is_some_and(|previous| previous != path)
+            {
+                return Err(SpecError("record field slots must be unique DOM-safe ids"));
+            }
             if let Some(builtin) = self.builtins.iter_mut().find(|b| b.id == column.id) {
                 builtin.label = column.label;
                 builtin.short_label = column.short_label;
@@ -170,7 +194,7 @@ impl PageColumns {
                 self.builtins.push(column);
             }
         }
-        self
+        Ok(self)
     }
 
     fn label_record_columns(&mut self) {
@@ -244,9 +268,11 @@ impl PageColumns {
         if let Some(root) = catalog.table(&self.table) {
             self.record_fields = root.record_fields.clone();
             for builtin in &mut self.builtins {
-                if let Some(field) = self.record_fields.iter().find(|f| {
-                    f.column == Some(builtin.id.as_str()) || f.slot == Some(builtin.id.as_str())
-                }) {
+                if let Some(field) = self
+                    .record_fields
+                    .iter()
+                    .find(|field| field.slot_id().as_deref() == Some(builtin.id.as_str()))
+                {
                     builtin.label = field.label.into();
                     builtin.short_label = field.label.into();
                 }
@@ -416,7 +442,7 @@ impl PageColumns {
     fn builtin_field(&self, builtin: &BuiltinColumn) -> Option<&bilibi_ui::RecordField> {
         self.record_fields
             .iter()
-            .find(|field| field.slot.or(field.column) == Some(builtin.id.as_str()))
+            .find(|field| field.slot_id().as_deref() == Some(builtin.id.as_str()))
     }
 
     fn builtin_allowed(&self, catalog: &Catalog, builtin: &BuiltinColumn) -> bool {

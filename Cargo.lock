@@ -363,6 +363,7 @@ dependencies = [
  "bilibi-tenancy",
  "bilibi-walkthrough-fixture",
  "bilibi-web",
+ "deadpool-postgres",
  "inventory",
  "jiff",
  "serde",
@@ -529,6 +530,7 @@ dependencies = [
  "bilibi-ports",
  "bilibi-principal-directory",
  "bilibi-queue",
+ "bilibi-records",
  "bilibi-schedule",
  "bilibi-search",
  "bilibi-security",
@@ -569,6 +571,7 @@ dependencies = [
  "bilibi-person",
  "bilibi-picklists",
  "bilibi-principal-directory",
+ "bilibi-records",
  "bilibi-search",
  "bilibi-security",
  "bilibi-settings",
@@ -979,6 +982,7 @@ dependencies = [
  "bilibi-party",
  "bilibi-party-ids",
  "bilibi-principal-directory",
+ "bilibi-records",
  "bilibi-search",
  "bilibi-step-up",
  "bilibi-tenancy",
@@ -1059,6 +1063,24 @@ dependencies = [
  "tokio",
  "tokio-postgres",
  "uuid",
+]
+
+[[package]]
+name = "bilibi-records"
+version = "0.1.1"
+dependencies = [
+ "bilibi-agent-api",
+ "bilibi-authz",
+ "bilibi-database",
+ "bilibi-grid",
+ "bilibi-module-registry",
+ "bilibi-settings",
+ "bilibi-tenancy",
+ "bilibi-ui",
+ "inventory",
+ "serde",
+ "serde_json",
+ "tokio-postgres",
 ]
 
 [[package]]
@@ -1419,6 +1441,7 @@ version = "0.1.1"
 dependencies = [
  "askama",
  "axum",
+ "bilibi-agent-api",
  "bilibi-authz",
  "bilibi-base",
  "bilibi-company",
@@ -1426,8 +1449,10 @@ dependencies = [
  "bilibi-database",
  "bilibi-domains",
  "bilibi-extensions",
+ "bilibi-grid",
  "bilibi-module-registry",
  "bilibi-ports",
+ "bilibi-records",
  "bilibi-security",
  "bilibi-tenancy",
  "bilibi-ui",

@@ -36,4 +36,7 @@ bilibi-walkthrough-fixture = { path = "../../fixtures/walkthrough" }
 bilibi-ports.workspace = true
 inventory.workspace = true
 bilibi-workflow = { path = "../base/workflow" }
+bilibi-records = { path = "../base/records" }
+bilibi-grid = { path = "../base/grid" }
+bilibi-agent-api = { path = "../base/agent_api" }
 jiff = "0.2.38"

@@ -1,5 +1,7 @@
 # Authorization owner contract
 
+The field restriction catalog combines owner contributions for the same table. Sources must agree on the table label and audit record types, and field IDs must be unique across the composition. This lets a record owner expose restrictions for an Extension-owned field without Authz depending on that Extension.
+
 Authz owns capability vocabulary, decisions, grants and field withholding.
 Party relationship roles are unrelated to authorization roles. Base never queries
 Core account/company tables: Tenancy's account verifier supplies live account
@@ -97,6 +99,14 @@ principal holds no roles, so it fails closed: every restriction in its tenant
 applies to it, and it never sees or writes a role-restricted field. P8 owns the
 protected-field catalog contract and restriction administration; Grid supplies
 that catalog as data, with no Authz→Grid dependency.
+
+A `CatalogField` may declare alternate restriction identities for the same
+record value. Each alias names its target table, field and that table's audit
+record types. `withheld_by_record_type` maps a restriction on either identity
+to both field names under both owners' audit record types, including a
+protected target field that cannot itself receive a new restriction. The
+record owner still resolves those aliases for its own reads and writes; Authz
+does not depend on Grid or the record owner.
 
 ## Step-up on grant changes
 
