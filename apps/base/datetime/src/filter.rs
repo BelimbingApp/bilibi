@@ -8,13 +8,14 @@
 //!
 //! Wire it like this: build one with [`PeriodFilter::new`] from the URL's
 //! period and the request clock, render it beside the filter toolbar, and
-//! hand every live event to [`PeriodFilter::event`] (a filter ignores another
+//! hand every live event to [`PeriodFilter::event_checked`] (a filter ignores another
 //! filter's events); an [`Outcome::Applied`] replaces the URL period and
 //! resets the page, an [`Outcome::Update`] only re-renders.
 use crate::{Clock, Period, Preset};
 use askama::Template;
 use bilibi_ui::{params, Choice, Field, InputKind};
 use serde_json::Value;
+use std::collections::HashMap;
 
 const SELECT: &str = "period_select";
 const APPLY: &str = "period_apply";
@@ -98,18 +99,49 @@ impl PeriodFilter {
     }
 
     /// Handles one of this component's events; `None` is someone else's event.
+    ///
+    /// Deprecated: a posted value over 1 KiB is silently read as blank. Use
+    /// [`PeriodFilter::event_checked`], which refuses it.
     pub fn event(&mut self, kind: &str, payload: &Value, clock: &Clock) -> Option<Outcome> {
-        let (name, id) = kind.split_once(':')?;
+        self.handle(kind, payload, clock, |payload, form| {
+            Ok(params::form_values(payload, form))
+        })
+        .unwrap_or(None)
+    }
+
+    /// Like [`PeriodFilter::event`], but a posted value over the form limit is
+    /// refused, not read as blank.
+    pub fn event_checked(
+        &mut self,
+        kind: &str,
+        payload: &Value,
+        clock: &Clock,
+    ) -> Result<Option<Outcome>, params::TooLong> {
+        self.handle(kind, payload, clock, |payload, form| {
+            params::form_values_checked(payload, form, params::FIELD_LIMIT)
+        })
+    }
+
+    fn handle(
+        &mut self,
+        kind: &str,
+        payload: &Value,
+        clock: &Clock,
+        read: impl Fn(&Value, &str) -> Result<HashMap<String, String>, params::TooLong>,
+    ) -> Result<Option<Outcome>, params::TooLong> {
+        let Some((name, id)) = kind.split_once(':') else {
+            return Ok(None);
+        };
         if id != self.id {
-            return None;
+            return Ok(None);
         }
-        match name {
+        Ok(match name {
             SELECT => {
-                let posted = params::form_values(payload, SELECTION_FORM);
+                let posted = read(payload, SELECTION_FORM)?;
                 let period = posted.get("period").map(String::as_str).unwrap_or("");
                 if period == Preset::Custom.as_str() || period == CHANGE_CUSTOM {
                     self.open();
-                    return Some(Outcome::Update);
+                    return Ok(Some(Outcome::Update));
                 }
                 let period = period.to_owned();
                 let applied =
@@ -122,7 +154,7 @@ impl PeriodFilter {
                 Some(Outcome::Update)
             }
             APPLY => {
-                let posted = params::form_values(payload, RANGE_FORM);
+                let posted = read(payload, RANGE_FORM)?;
                 let from = posted.get("from").cloned().unwrap_or_default();
                 let to = posted.get("to").cloned().unwrap_or_default();
                 match Period::custom(&from, &to) {
@@ -140,7 +172,7 @@ impl PeriodFilter {
                 }
             }
             _ => None,
-        }
+        })
     }
 
     fn open(&mut self) {

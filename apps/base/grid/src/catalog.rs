@@ -127,6 +127,36 @@ impl Catalog {
         let installed = crate::installed().map_err(|_| Error::Internal)?;
         let allowed = bilibi_authz::effective_capabilities(client, scope).await?;
         let restricted = bilibi_authz::fields::restricted(client, scope).await?;
+        // A record owner can expose a field stored in a linked Extension table.
+        // Apply that record-level restriction to the resolved Grid field too,
+        // so the alternate path cannot bypass the Company's field identity
+        // (Bilimbi `Bilimbi.Base.Grid`).
+        let mut contributed_hidden: BTreeMap<&'static str, BTreeSet<&'static str>> =
+            BTreeMap::new();
+        for (root_id, root) in installed.map() {
+            let denied: BTreeSet<&str> = restricted
+                .get(*root_id)
+                .into_iter()
+                .flatten()
+                .map(String::as_str)
+                .collect();
+            for field in root
+                .record_fields()
+                .iter()
+                .filter(|field| denied.contains(field.id))
+            {
+                let Some(path) = field.column else { continue };
+                let Ok(column) = column::resolve(path, root, &|id| installed.table(id)) else {
+                    continue;
+                };
+                if let Some(field) = column.field {
+                    contributed_hidden
+                        .entry(column.table)
+                        .or_default()
+                        .insert(field.id);
+                }
+            }
+        }
         let mut tables = BTreeMap::new();
         for (id, table) in installed.map() {
             if !allowed.contains(table.capability()) {
@@ -134,13 +164,14 @@ impl Catalog {
             }
             // Protected fields are never offered for restriction, so a stale row
             // naming one is inert here (record pages still mask by name).
-            let hidden: BTreeSet<&str> = restricted
+            let mut hidden: BTreeSet<&str> = restricted
                 .get(*id)
                 .into_iter()
                 .flatten()
                 .map(String::as_str)
                 .filter(|field| !table.is_protected(field))
                 .collect();
+            hidden.extend(contributed_hidden.get(*id).into_iter().flatten().copied());
             tables.insert(*id, table.without(&hidden));
         }
         let visible: BTreeSet<&str> = tables.keys().copied().collect();

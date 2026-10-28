@@ -209,8 +209,7 @@
   --font-sans: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
 
   /* Compact scale, based on Bilimbi's sidebar rhythm. Floating fields keep
-   * their 40px box and 14px values; ordinary content follows the 12px menu.
-   * Keep phone input text at an explicit 1rem to prevent browser zoom. */
+   * their 40px box and 14px values; ordinary content follows the 12px menu. */
   --text-xs: 0.6875rem;
   --text-xs--line-height: calc(14 / 11);
   --text-sm: 0.75rem;
@@ -498,19 +497,8 @@ body {
     min-width: var(--spacing-control);
   }
 
-  .ui-compact-controls .ui-field {
-    font-size: 1rem;
-    line-height: 1.25rem;
-  }
-
   .ui-field-reveal {
     margin-left: -2.75rem;
-  }
-}
-
-@media (width < 40rem) {
-  [data-shared-ui] :is(input, select, textarea) {
-    font-size: 1rem;
   }
 }
 
@@ -774,12 +762,6 @@ body:has(dialog:modal) #flash-group > #connection-server-error {
       line-height: calc(var(--spacing) * 5);
     }
   }
-
-  @media (width < 40rem) {
-    & > dd > [data-hook] :is([data-role="input"], [data-role="editor"] select, [data-role="editor"] input[role="combobox"]) {
-      font-size: 1rem;
-    }
-  }
 }
 
 /* The top right corner of a tile belongs to its floating controls
@@ -883,6 +865,62 @@ body:has(dialog:modal) #flash-group > #connection-server-error {
     position-try-fallbacks: flip-block, flip-inline, flip-block flip-inline;
     position-visibility: anchors-visible;
   }
+}
+
+/* A combobox choice with a code (`Choice::detail`) draws name and code over the
+ * plain input, whose text goes transparent until the person edits it. The
+ * Combobox hook sets `data-editing` on the wrapper from the first input until
+ * the choice is committed, restored or cancelled. The input keeps the
+ * accessible value; the layer is `aria-hidden`. The layer sits where the
+ * input draws its text, inside the input's 1px border. */
+.ui-combobox-display {
+  display: none;
+  pointer-events: none;
+  position: absolute;
+  inset: 1px 2.25rem 1px calc(0.75rem + 1px);
+  align-items: center;
+  /* The size of the input's own text (`text-base`, 1rem on a phone). */
+  font-size: var(--text-base);
+  line-height: 1.25rem;
+  color: var(--color-ink);
+}
+
+@media (width < 40rem) {
+  .ui-combobox-display {
+    font-size: 1rem;
+  }
+}
+
+.ui-combobox-display.ui-combobox-display-inset {
+  top: 0;
+  align-items: flex-start;
+  padding-top: calc(0.875rem + 1px);
+}
+
+.ui-combobox-display > span {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.ui-combobox-display > span + span {
+  flex-shrink: 0;
+  margin-left: 0.35em;
+}
+
+[data-hook="Combobox"][data-detailed]:not([data-editing]) [data-combobox-display] {
+  display: flex;
+}
+
+[data-hook="Combobox"][data-detailed]:not([data-editing]) input[role="combobox"] {
+  color: transparent;
+}
+
+/* Focus selects the whole value; keep that selection from painting over the display layer. */
+[data-hook="Combobox"][data-detailed]:not([data-editing]) input[role="combobox"]::selection {
+  background: transparent;
+  color: transparent;
 }
 
 /* Menu typography & font colors matching Belimbing */

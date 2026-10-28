@@ -11,7 +11,7 @@
 {% call settings::layout(header=header, current=bilibi_ui::SettingsTab::AiConnections, heading="Connect Bilibi to AI", description_html=intro) %}
 {{ table }}
 {% if pending.is_some() %}
-{% call dialog::confirm_dialog(id="revoke-connection-dialog", consequence="Revoke connection?", detail="Access ends immediately. Connect again and approve a new connection to grant access again.", confirm="Revoke", working="Revoking…", confirm_event="confirm_revoke", cancel_event="cancel_revoke") %}{% endcall %}
+{% call dialog::confirm_dialog(id="revoke-connection-dialog", consequence="Revoke connection?", detail="Access ends immediately. To restore it, approve a new connection.", confirm="Revoke", working="Revoking…", confirm_event="confirm_revoke", cancel_event="cancel_revoke") %}{% endcall %}
 {% endif %}
 {% if show_setup %}
 <div id="ai-setup" class="mt-6 space-y-3">

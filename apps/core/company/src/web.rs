@@ -155,7 +155,7 @@ impl Pages {
             _ => return Err(Error::NotFound),
         };
         let client = self.db.get().await?;
-        let masked = bilibi_authz::restrictions(&**client, scope).await?;
+        let masked = crate::field_contributions::effective_restrictions(&**client, scope).await?;
         let mut columns = views::columns(self.views.clone(), &masked)?;
         columns.from_params(scope, request.query).await?;
         Ok(CompanyPage {
@@ -399,7 +399,7 @@ impl CompanyPage {
     }
     async fn draw(&mut self, scope: &Scope) -> Result<LiveBody> {
         let client = self.db.get().await?;
-        let masked = bilibi_authz::restrictions(&**client, scope).await?;
+        let masked = crate::field_contributions::effective_restrictions(&**client, scope).await?;
         let html = match self.operation {
             "list" => {
                 if self
@@ -441,6 +441,20 @@ impl CompanyPage {
                         &display,
                     )
                     .await?;
+                let loaded_columns = std::mem::replace(
+                    &mut self.columns,
+                    views::columns(self.views.clone(), &masked)?,
+                );
+                self.columns = loaded_columns
+                    .with_record_slots(&views::record_slots(&masked)?)
+                    .map_err(|_| Error::Internal)?;
+                let company_ids = page
+                    .rows
+                    .iter()
+                    .map(|company| company.id)
+                    .collect::<Vec<_>>();
+                let extension_values =
+                    crate::field_contributions::read(&client, scope, &company_ids).await?;
                 views::list(
                     &**client,
                     scope,
@@ -448,7 +462,11 @@ impl CompanyPage {
                     &query_params(&self.params),
                     &self.columns,
                     self.framed,
-                    &masked,
+                    views::ExtensionListFields {
+                        masked: &masked,
+                        values: &extension_values,
+                        display: &display,
+                    },
                 )
                 .await?
             }
@@ -462,11 +480,16 @@ impl CompanyPage {
                         Err(error) => return Err(error),
                     };
                 let id = self.id.ok_or(Error::Invalid)?;
+                let locale = self.locales.resolve(&**client, scope, None).await?;
+                let display = self
+                    .datetime
+                    .display(&**client, scope, None, locale.locale)
+                    .await?;
                 self.active_panels = self.allowed_panels(&**client, scope, id).await?;
                 let anchors: Vec<String> =
                     self.active_panels.iter().map(|p| p.id.clone()).collect();
                 views::detail(
-                    &**client,
+                    &client,
                     scope,
                     id,
                     views::DetailState {
@@ -477,6 +500,7 @@ impl CompanyPage {
                         departments_columns: &mut self.departments_columns,
                         children_columns: &self.children_columns,
                         workspace: self.framed,
+                        display: &display,
                         panels: &anchors,
                     },
                 )
@@ -540,12 +564,22 @@ impl CompanyPage {
                 }
             }
             "departments_grid" if self.operation == "detail" => {
-                self.departments_columns
-                    .handle(&bilibi_ui::params::string_values(value));
+                self.departments_columns.handle(
+                    &bilibi_ui::params::string_values_checked(
+                        value,
+                        bilibi_ui::params::FIELD_LIMIT,
+                    )
+                    .map_err(Error::refused)?,
+                );
             }
             "children_grid" if self.operation == "detail" => {
-                self.children_columns
-                    .handle(&bilibi_ui::params::string_values(value));
+                self.children_columns.handle(
+                    &bilibi_ui::params::string_values_checked(
+                        value,
+                        bilibi_ui::params::FIELD_LIMIT,
+                    )
+                    .map_err(Error::refused)?,
+                );
             }
             "sort" => self.sort(if get("sort").is_empty() {
                 get("field")
@@ -719,8 +753,13 @@ impl CompanyPage {
                 }
             }
             "duplicate_grid" if self.operation == "create" => {
-                self.duplicate_columns
-                    .handle(&bilibi_ui::params::string_values(value));
+                self.duplicate_columns.handle(
+                    &bilibi_ui::params::string_values_checked(
+                        value,
+                        bilibi_ui::params::FIELD_LIMIT,
+                    )
+                    .map_err(Error::refused)?,
+                );
             }
             "cancel_duplicate_create" => self.confirming_duplicate = false,
             "duplicate_reason" if self.operation == "create" => {
@@ -743,11 +782,17 @@ impl CompanyPage {
                     self.duplicate_candidates.clear();
                     self.duplicate_likely = false;
                 }
-                let (mut new, activities, metadata, errors) = views::new_company(&self.form);
+                let (mut new, company_fields, activities, metadata, errors) =
+                    views::new_company(&self.form);
                 self.errors = errors;
                 if self.errors.is_empty() {
-                    if let Err(errors) =
-                        crate::organisation::preview(&**client, scope, &new).await?
+                    if let Err(errors) = crate::organisation::preview_with_fields(
+                        &**client,
+                        scope,
+                        &new,
+                        &company_fields,
+                    )
+                    .await?
                     {
                         self.errors = errors;
                     }
@@ -765,12 +810,11 @@ impl CompanyPage {
                     if anyway || !matches.likely {
                         match self
                             .company
-                            .create_with_context(scope, &new, activities, metadata)
+                            .create_with_context(scope, &new, &company_fields, activities, metadata)
                             .await?
                         {
                             CreateOutcome::Created(company) => {
-                                self.landing
-                                    .put(StatusKind::Success, "Company created successfully.");
+                                self.landing.put(StatusKind::Success, "Company created.");
                                 return Ok(Some(format!("/companies/{}", company.id)));
                             }
                             CreateOutcome::Refused(errors) => self.errors = errors,

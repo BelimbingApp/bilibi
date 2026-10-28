@@ -34,6 +34,8 @@ service, with the host supplying a per-request `Session`. System scopes cannot
 enter this API. Never deserialize a scope, infer an actor from operation input,
 or cache reach across requests.
 
+**Doors hold no connection while a read runs.** The `/api/v1`, MCP and page doors call `Registry::read(db, scope, key, input)`: it checks the capability on a pooled connection and returns it before the read handler runs. The handler's `OperationClient` takes one connection on its first query and keeps it until the read ends; a handler that only calls its facade (Base Search, Base Records) takes none. So a facade that takes connections of its own, such as Grid's reads, never waits on a pool filled by its own callers. MCP's `Session` carries the pool (`db`), and `search`, `describe` and `guide` each take a connection for that call only. `Registry::call(client, scope, key, input)` runs the same checks and handler on a connection the caller already holds, for walkthroughs and fixtures; a door never uses it.
+
 Search uses one fresh capability snapshot without per-candidate decision logs.
 Direct deny wins over grants and `grant_all`; platform capabilities additionally
 need explicit operator identity. Tenancy reproofs read the actor and agent grant live; owner standing additionally re-reads the installation bootstrap receipt and refuses impersonation. An agent holds only its own person's standing, and an owner-only write still requires its declared step-up policy. An agent reaches every capability its person
@@ -188,7 +190,7 @@ An MCP App (specification 2026-01-26, which ChatGPT implements) is an HTML docum
 | Boot check | `Registry::validate_apps`, `from_catalog` | the tool name is lower-case with underscores and not a generic tool; the URI is unique and `ui://`; the operation exists, is a read and belongs to the registering module |
 | `initialize` | `src/mcp.rs` | declares the `resources` capability beside `tools` |
 | `tools/list` | `src/mcp.rs` | one tool per app after the six generic ones, with `_meta.ui.resourceUri` and the older `openai/outputTemplate` alias, `readOnlyHint`, and the instance in its description |
-| `tools/call` of an app tool | `src/mcp.rs` | `Registry::call` of the app's operation: schema, channel and capability checks as for `read` |
+| `tools/call` of an app tool | `src/mcp.rs` | `Registry::read` of the app's operation: schema, channel and capability checks as for `read` |
 | `resources/list`, `resources/read` | `src/mcp.rs`, public like `tools/list` | the card as `text/html;profile=mcp-app` with `_meta.ui.csp` (and the `openai/widgetCSP` alias) from the declared domains; an unknown URI is JSON-RPC `-32002` |
 
 The card calls `read`, `plan` and `commit` through the host's `tools/call` bridge, so it adds no permission path: a person who cannot reach an operation is refused inside the card exactly as an agent is. Every tool carries `openai/widgetAccessible: true` for that reason. The card tells the model what happened with `ui/update-model-context` and can post into the chat with `ui/message`; the host decides whether to pass either on. A card never frames a Bilibi page (sign-in cookies do not travel into the host's frame) and never loads a script or style from elsewhere.
@@ -203,11 +205,27 @@ A page's write event calls the contract the agent doors call, through `base/agen
 |---|---|---|
 | `submit(call, input)` | A form the person just reviewed (inline edit, create, a dialog that collects input) | `Plans::submit`: the owner's preview, then its commit, in one transaction; no code |
 | `preview(call, input)` then `commit(call, code, input)` | A confirmation dialog (Core Person's retire) | The plan service with a code bound to the browser session; keep the code in the mounted state |
-| `read(scope, key, input)` | A direct read | `Registry::call` |
+| `read(scope, key, input)` | A direct read | `Registry::read` |
 
 - `Call` names the live request's scope and credential (`LiveRequest::credential`), the page service, the event and the contract. The browser session is the plan's credential: proved and held (key-share lock) on the plan's own transaction, so a sign-out cannot race the write.
 - Owner refusals come back typed: `InvalidInput(fields)`, `Forbidden`, `NotFound`, `Backend(Conflict)`, … Return `Backend(Unauthorized)` and `Backend(StepUpRequired { .. })` from the page unchanged: the host signs the browser in again or sends it to confirm and back.
 - Core Person, Core Affiliation, Core Company's relationship screens, Core Tenant Administration and Base Events' replay page are the running examples.
+
+## Queued jobs as callers
+
+A job a person started calls a write contract as that person through `base/agent_api.jobs` ([src/job.rs](src/job.rs), `JobContracts`, ADR 10): the fifth door, under the same rules.
+
+| Call | Does |
+|---|---|
+| `writable(key)`, `readable(key)` | Whether a job may call the contract: a registered reviewed write (or a read), open to `Channel::Job`, with no step-up. Owners check theirs at boot |
+| `preview(client, execution, key, input)` | Schema, live capability, the owner's preview; writes nothing (a dry run) |
+| `commit(tx, execution, key, input)` | The owner's preview, then its commit on `tx`, which must come from `Execution::begin`: the lease, the person and the enqueue's trace ID hold. Record your own result in the same `tx`, then commit it |
+| `read(client, execution, key, input)` | A read contract, as `Registry::call` |
+
+- The scope is the job's person, re-sealed by Queue and marked `Scope::in_job` (`Channel::Job`). A system principal's job is refused, as system scopes are at the other doors.
+- No plan code: the person reviewed the job when they started it. A contract that declares step-up is refused, since no one is present to give a code.
+- Owner refusals come back typed as at the other doors; a database failure comes back as `Backend` so the job retries.
+- `base/bulk_data` (CSV import) is the first caller.
 
 ## Page writes declaration and check
 
@@ -234,6 +252,7 @@ Each gap is a `Pending` declaration in the owning module, with its reason. Remov
 | Service | Why it is pending |
 |---|---|
 | `base/audit_views.pages` | Action-log export writes through the Audit Views facade |
+| `base/bulk_data.pages` (`receive` only) | Receiving a CSV stores it as a private artifact and opens its run; Artifacts takes bytes outside a contract, whose input is bounded at 1 MiB |
 | `base/authz.pages` | Roles, field restrictions and two-factor policy; `base/authz_agent`'s grant contracts serve agents only |
 | `base/integration.pages` | Exchange actions |
 | `base/schedule.pages` | The schedule board |

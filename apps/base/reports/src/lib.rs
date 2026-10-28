@@ -171,6 +171,7 @@ pub struct Reports {
     db: Db,
     settings: Arc<Settings>,
     display: Arc<DisplayPolicy>,
+    records: Arc<bilibi_records::Records>,
     queue: Arc<bilibi_queue::Queue>,
     artifacts: Arc<bilibi_artifacts::Artifacts>,
     notifications: Arc<bilibi_notifications::NotificationBoundary>,
@@ -563,6 +564,25 @@ impl Reports {
         Ok(format!("{}:{seen}", report.version))
     }
 
+    /// Each row's own page, through Base Records: a kind its owner registers
+    /// for this table names the record only when the reader may open it.
+    async fn record_pages(
+        &self,
+        scope: &Scope,
+        table: &bilibi_grid::Table,
+        rows: &[(Value, Vec<Value>)],
+    ) -> Outcome<Vec<Option<String>>> {
+        let Some(kind) = self.records.kinds().find(|k| k.table == table.id()) else {
+            return Ok(vec![None; rows.len()]);
+        };
+        let references: Vec<_> = rows
+            .iter()
+            .map(|(key, _)| bilibi_records::Reference::new(kind.key, cell(key)))
+            .collect();
+        let resolved = self.records.resolve(scope, &references).await?;
+        Ok(resolved.into_iter().map(|r| r.path).collect())
+    }
+
     /// Runs a report as the reader: their catalog, grants and time zone.
     /// Columns, groupings, measures and sorts the reader cannot see are left
     /// out and listed; a filter on one refuses the run, so it cannot be used
@@ -738,7 +758,7 @@ impl Reports {
                         (row.key, cells)
                     })
                     .collect();
-                let pages = rows.iter().map(|(key, _)| root.page_for(key)).collect();
+                let pages = self.record_pages(scope, root, &rows).await?;
                 let totals = if totals_of.iter().any(Option::is_some) {
                     // Grid totals up to 8 measures a read; a wider list
                     // (up to 32 columns) takes one read per eight.
@@ -870,7 +890,7 @@ impl Reports {
                         definition: &draft.definition,
                     };
                     let id = store::insert(sql, tenant, owner, &write).await?;
-                    Ok((id, vec![change(id, Value::Null, after(&draft))]))
+                    Ok((id, vec![change(id, json!({}), after(&draft))]))
                 })
             })
             .await?)
@@ -983,7 +1003,7 @@ impl Reports {
                     if !store::delete(sql, tenant, id, version).await? {
                         return Err(Error::Conflict);
                     }
-                    Ok(((), vec![change(id, snapshot(&before), Value::Null)]))
+                    Ok(((), vec![change(id, snapshot(&before), json!({}))]))
                 })
             })
             .await;
@@ -1135,13 +1155,14 @@ fn line(out: &mut String, fields: impl IntoIterator<Item = String>) {
 inventory::submit! {
     bilibi_module_registry::Module {
         id: "base/reports", layer: bilibi_module_registry::Layer::Base,
-        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/audit", "base/settings", "base/datetime", "base/grid", "base/agent_api", "base/ui", "base/menu", "base/locale", "base/dashboard", "base/artifacts", "base/queue", "base/notifications", "base/party_ids", "base/schedule", "base/mail"],
+        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/audit", "base/settings", "base/datetime", "base/grid", "base/agent_api", "base/ui", "base/menu", "base/locale", "base/dashboard", "base/artifacts", "base/queue", "base/notifications", "base/party_ids", "base/schedule", "base/mail", "base/records"],
         migrations: &MIGRATIONS,
         services: &[bilibi_module_registry::Service { id: SERVICE, factory: |services| {
             let reports = Arc::new(Reports {
                 db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
                 settings: services.get("base/settings.store")?,
                 display: services.get("base/datetime.display")?,
+                records: services.get(bilibi_records::SERVICE)?,
                 queue: services.get("base/queue.store")?,
                 artifacts: services.get("base/artifacts.store")?,
                 notifications: services.get("base/notifications.sink")?,

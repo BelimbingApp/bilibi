@@ -159,22 +159,17 @@ async fn handle(State(app): State<App>, request: Request) -> Response {
         trace,
     } = agent;
     let scope = scope.over_mcp();
-    let outcome = match app.db.get().await {
-        Ok(client) => {
-            let authority = Grant {
-                access: &edge.access,
-                claims: &claims,
-                trace: &trace,
-            };
-            let session = Session {
-                client: &client,
-                scope: &scope,
-                authority: &authority,
-            };
-            protocol::dispatch(&edge.registry, &edge.plans, Some(session), &message).await
-        }
-        Err(error) => Outcome::Unavailable(error.into()),
+    let authority = Grant {
+        access: &edge.access,
+        claims: &claims,
+        trace: &trace,
     };
+    let session = Session {
+        db: &app.db,
+        scope: &scope,
+        authority: &authority,
+    };
+    let outcome = protocol::dispatch(&edge.registry, &edge.plans, Some(session), &message).await;
     answer(&app, outcome, Some(scope), operation, &trace.reported)
 }
 
@@ -228,18 +223,24 @@ fn answer(
 }
 
 /// Absolute result links belong to the host; domain operations return paths.
+/// Search results carry a `path`, and record references their `kind`, `id`
+/// and `path` (`api::record_urls`).
 fn record_urls(app: &App, mut reply: Value) -> Value {
-    let Some(results) = reply
-        .pointer_mut("/result/structuredContent/results")
-        .and_then(Value::as_array_mut)
-    else {
+    let Some(structured) = reply.pointer_mut("/result/structuredContent") else {
         return reply;
     };
-    for item in results.iter_mut() {
-        if let Some(path) = item.get("path").and_then(Value::as_str) {
-            let url = format!("{}{path}", api::origin(app));
-            item["url"] = json!(url);
+    let before = structured.clone();
+    api::record_urls(api::origin(app), structured);
+    if let Some(results) = structured.get_mut("results").and_then(Value::as_array_mut) {
+        for item in results.iter_mut() {
+            if let Some(path) = item.get("path").and_then(Value::as_str) {
+                let url = format!("{}{path}", api::origin(app));
+                item["url"] = json!(url);
+            }
         }
+    }
+    if *structured == before {
+        return reply;
     }
     let content = reply["result"]["structuredContent"].clone();
     reply["result"]["content"] = json!([{"type": "text", "text": content.to_string()}]);

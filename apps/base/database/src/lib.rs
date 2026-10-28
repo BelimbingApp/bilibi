@@ -26,6 +26,10 @@ pub enum Error {
     NotFound,
     #[error("Invalid input")]
     Invalid,
+    /// The request was understood and refused for a reason the person can act
+    /// on (a form value over its limit). The message is shown as it stands.
+    #[error("{0}")]
+    Refused(String),
     #[error("The record changed. Reload before saving")]
     Conflict,
     #[error("Database unavailable")]
@@ -108,6 +112,10 @@ impl From<deadpool_postgres::PoolError> for Error {
 }
 
 impl Error {
+    /// A refusal the person can act on; see [`Error::Refused`].
+    pub fn refused(reason: impl std::fmt::Display) -> Self {
+        Self::Refused(reason.to_string())
+    }
     /// Where a database failure first surfaced; `None` in release builds and
     /// for errors that did not come from the database.
     pub fn origin(&self) -> Option<&std::backtrace::Backtrace> {

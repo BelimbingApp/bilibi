@@ -1,9 +1,21 @@
+# Cargo build output is generated locally.
 /target/
+# Local launcher settings may contain secrets.
 .env
+# This checkout's private database, keys, mailbox and dev state (see README.md).
 /.local/
+# Local runtime data is not source.
 /data/
+# Python bytecode caches are generated locally.
 __pycache__/
+# Local Amp portals are not source.
 /.amp/portals/
+
+# Scratch for people and agents is never committed. Where the format allows a
+# comment, each file says who made it and why at the top. Any file may be
+# deleted; a subfolder belongs to its creator (for example, lavish/ for drafts).
+/.scratchpad/
+
 # Mounted Domain and Extension containers are their own Git checkouts; only the
 # composition roots belong to the Platform (see apps/domains/AGENTS.md).
 /apps/domains/*
@@ -14,4 +26,5 @@ __pycache__/
 !/apps/extensions/Cargo.toml
 !/apps/extensions/src/
 !/apps/extensions/AGENTS.md
+# CSS for mounted components is local build output.
 /apps/base/ui/assets/css/.mounted-*.css

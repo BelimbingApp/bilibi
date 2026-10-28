@@ -254,24 +254,11 @@ fn event(value: &Value) -> Result<&str> {
         .and_then(Value::as_str)
         .ok_or(Error::Invalid)
 }
-/// The posted fields of one form namespace (`address[label]` → `label`).
-/// Raw input may be long, so values are bounded at the model's 10 000
-/// characters rather than the shared 1 KiB.
-fn form(value: &Value, namespace: &str) -> HashMap<String, String> {
-    value
-        .as_object()
-        .into_iter()
-        .flatten()
-        .filter_map(|(key, value)| {
-            let key = key
-                .strip_prefix(namespace)?
-                .strip_prefix('[')?
-                .strip_suffix(']')?;
-            let value = value.as_str().filter(|v| v.chars().count() <= 10_000)?;
-            Some((key.to_owned(), value.to_owned()))
-        })
-        .take(64)
-        .collect()
+/// The posted fields of one form namespace (`address[label]` → `label`). Raw
+/// input may hold up to 10 000 characters, so every field reads to that limit;
+/// the model then refuses each field at its own, shorter one.
+fn form(value: &Value, namespace: &str) -> Result<HashMap<String, String>> {
+    bilibi_ui::params::form_values_checked(value, namespace, 10_000).map_err(Error::refused)
 }
 /// `Some(label)` in quotes, or "This address" (Bilimbi `address_name/1`).
 fn address_name(label: Option<&str>) -> String {

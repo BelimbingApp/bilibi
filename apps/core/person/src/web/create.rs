@@ -56,7 +56,9 @@ impl Draft {
 
     /// Reads the posted form. An unknown kind is a tampered event.
     pub fn read(&mut self, value: &Value) -> Result<()> {
-        let fields = bilibi_ui::params::form_values(value, "person");
+        let fields =
+            bilibi_ui::params::form_values_checked(value, "person", bilibi_ui::params::FIELD_LIMIT)
+                .map_err(bilibi_database::Error::refused)?;
         self.input = PersonInput {
             name: fields.get("name").cloned().unwrap_or_default(),
             kind: match fields.get("kind").map(String::as_str) {
