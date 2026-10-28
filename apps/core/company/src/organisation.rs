@@ -8,7 +8,7 @@ use crate::{
     contributions::{CREATE, TENANT_WIDE},
     Company, FieldError, WriteError, MASK,
 };
-use bilibi_authz::{authorize_key, authorize_proof, decide_proof, restrictions};
+use bilibi_authz::{authorize_key, authorize_proof, decide_proof, holds_proof, restrictions};
 use bilibi_database::{Change, Error, MutationTransaction, Result};
 use bilibi_party_ids::OrganisationId;
 use bilibi_tenancy::{
@@ -270,21 +270,25 @@ pub async fn reachable(
     if !live {
         return Ok(false);
     }
-    reaches(client, scope, id.get()).await
+    Ok(reaches_without_tenant_wide(scope, id.get())
+        || holds_proof(client, scope, TENANT_WIDE).await?)
 }
 
 /// Own company, or the whole tenant with the tenant-wide reach; a granted
 /// system principal reaches every company of its tenant (`authorize_target`).
+/// The tenant-wide decision is logged: this is the proof an operation relies on.
 async fn reaches(client: &dyn ProofClient, scope: &Scope, id: i64) -> Result<bool> {
-    if scope.principal().is_some()
+    if reaches_without_tenant_wide(scope, id) {
+        return Ok(true);
+    }
+    Ok(decide_proof(client, scope, TENANT_WIDE).await?.allowed)
+}
+fn reaches_without_tenant_wide(scope: &Scope, id: i64) -> bool {
+    scope.principal().is_some()
         || scope
             .actor()
             .organisation()
             .is_some_and(|organisation| organisation.get() == id)
-    {
-        return Ok(true);
-    }
-    Ok(decide_proof(client, scope, TENANT_WIDE).await?.allowed)
 }
 impl OrganisationDirectory for Directory {
     fn in_scope<'a>(
@@ -362,8 +366,8 @@ impl OrganisationDirectory for Directory {
             // The same reach as `reaches`, listed: everyone with the
             // tenant-wide grant (or a granted principal) sees every unarchived
             // company; anyone else sees their own company alone.
-            let tenant_wide = scope.principal().is_some()
-                || decide_proof(client, scope, TENANT_WIDE).await?.allowed;
+            let tenant_wide =
+                scope.principal().is_some() || holds_proof(client, scope, TENANT_WIDE).await?;
             let own = scope.actor().organisation();
             Ok(named_in_scope(client, scope)
                 .await?
