@@ -4,7 +4,8 @@
 //! follows the Events page, which follows Bilimbi `Session.Web.IndexLive`.
 //!
 //! Rescan and purge are the `base.media.quarantine.*` contracts (ADR 01), as
-//! agents call them. Purge confirms through the shared dialog: the request
+//! agents call them. Purge confirms through the shared dialog, with the
+//! instance banner (`bilibi_system::Instance::banner`): the request
 //! holds the row's file id, and `purge` acts on that held request, never on a
 //! client value. Media rechecks `admin.media.quarantine.manage` in its own
 //! transaction; a refusal is a flash.
@@ -22,6 +23,7 @@ use bilibi_module_registry::{
     contributions::{Access, Method, PageWrites, Pending, Route, PAGE_WRITES, ROUTES},
     Contribution, Provenance,
 };
+use bilibi_system::Instance;
 use bilibi_tenancy::{ReadClient, Scope};
 use bilibi_ui::{
     choices,
@@ -31,9 +33,9 @@ use bilibi_ui::{
         PageFuture, PageRequest,
     },
     params, Alert, Badge, BadgeKind, BuiltinColumn, Card, ColumnType, ColumnsOutcome,
-    ConfirmDialog, FilterToolbar, FlashMap, FlexRow, FlexTable, Header, Html, IconButton,
-    IconContext, IconKind, Instant, ListColumns, ListSpec, ListState, PageCounts, Pagination,
-    RowMode, StatusKind, TableEmpty, ToolbarControl, NO_FLASH,
+    FilterToolbar, FlashMap, FlexRow, FlexTable, Header, Html, IconButton, IconContext, IconKind,
+    Instant, ListColumns, ListSpec, ListState, PageCounts, Pagination, RowMode, StatusKind,
+    TableEmpty, ToolbarControl, NO_FLASH,
 };
 use jiff::Timestamp;
 use serde_json::{json, Value};
@@ -118,6 +120,17 @@ struct TwoLines<'a> {
 struct When<'a> {
     id: &'a str,
     i: Instant,
+}
+
+/// The purge confirmation, opening with the installation it purges on.
+#[derive(Template)]
+#[template(
+    source = r#"{% import "dialog.html" as dialog %}{% call dialog::confirm_dialog(id="media-quarantine-purge-confirm", consequence=consequence, detail="The file's contents are removed for good. Its record, its scan verdict and the audit trail stay as evidence.", confirm="Purge", working="Purging…", confirm_event="purge", cancel_event="cancel_purge", body=banner) %}{% endcall %}"#,
+    ext = "html"
+)]
+struct PurgeConfirm<'a> {
+    consequence: &'a str,
+    banner: Html,
 }
 
 #[derive(Template)]
@@ -522,14 +535,12 @@ impl Index {
         let dialog = match &self.request {
             Some(request) => {
                 let consequence = format!("Purge the contents of {}?", request.name);
-                render(ConfirmDialog {
-                    id: "media-quarantine-purge-confirm",
+                let instance = Instance::resolve(&pages.media.settings, &**client).await?;
+                render(PurgeConfirm {
                     consequence: &consequence,
-                    detail: "The file's contents are removed for good. Its record, its scan verdict and the audit trail stay as evidence.",
-                    confirm: "Purge",
-                    working: "Purging…",
-                    confirm_event: "purge",
-                    cancel_event: "cancel_purge",
+                    banner: instance
+                        .banner("media-quarantine-purge-instance", "mt-3")
+                        .map_err(|_| Error::Internal)?,
                 })?
             }
             None => Html::EMPTY,

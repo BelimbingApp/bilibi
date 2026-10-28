@@ -128,6 +128,8 @@ Before a database update committed, a restarted install ends interrupted and res
 
 Install a published GitHub asset or upload a saved archive. Both paths use the same installer checks, backup, switch-back and Undo.
 
+The upload is resumable: while Media has a staging disk (`media.upload.staging_disk`), a dropped connection or a restarted server carries on from the bytes already sent, and choosing the same file again within `media.upload.staging_hours` does too. It is still at most 64 MiB.
+
 A gzip-compressed tar carries `bilibi-web`, `SHA256SUMS` and optionally `manifest.txt`, `Cargo.lock`, `release.json`, `bundle.json` and `plugins/`. The application repository created by `./bilibi new <name>` builds and packages the complete composition on GitHub; see [application workspaces](../../../docs/application-workspaces.md). A local build can use the archive commands in [server installation](../../../docs/server-install.md). Archive parsing, safe paths and compatibility checks live in private `src/transport.rs`.
 
 ### Install from GitHub

@@ -71,7 +71,8 @@ pub struct State {
     pub dismissed: Vec<String>,
     pub toolbar: HashMap<String, String>,
     /// The file input specimen's live uploads (Bilimbi `allow_upload`): up
-    /// to two files of 256 KiB, any kind, so a larger file shows the refusal.
+    /// to two files of 256 KiB, any kind, so a larger file shows the refusal,
+    /// and one resumable file as large as the installation allows.
     pub uploads: Uploads,
     /// The files the specimen's Keep event received, in this page's memory.
     pub kept: Vec<KeptFile>,
@@ -90,6 +91,8 @@ pub struct KeptFile {
 const PERIOD_FILTERS: [&str; 2] = ["example-period-filter", "design-library-filter-period"];
 pub const SAMPLE_UPLOAD: &str = "sample_file";
 pub const SAMPLE_UPLOAD_BYTES: u64 = 256 * 1024;
+/// The resumable specimen: one file, staged on Media's disk while it arrives.
+pub const LARGE_UPLOAD: &str = "large_file";
 impl State {
     pub fn new(area: &str, query: &HashMap<String, String>) -> Result<Self> {
         let sample =
@@ -156,13 +159,37 @@ impl State {
             dismissed: Vec::new(),
             toolbar: HashMap::new(),
             uploads: Uploads::new([
-                UploadSpec::new(SAMPLE_UPLOAD, SAMPLE_UPLOAD_BYTES).max_entries(2)
+                UploadSpec::new(SAMPLE_UPLOAD, SAMPLE_UPLOAD_BYTES).max_entries(2),
+                UploadSpec::resumable(LARGE_UPLOAD, bilibi_ui::upload::MAX_RESUMABLE_FILE_SIZE),
             ]),
             kept: Vec::new(),
             location: None,
         };
         result.params(query)?;
         Ok(result)
+    }
+    /// Takes one input's completed files and keeps their facts only.
+    fn keep(&mut self, upload: &str) {
+        let files = self.uploads.consume(upload);
+        if files.is_empty() {
+            self.notice = "Choose a file first.".into();
+            return;
+        }
+        self.notice = format!(
+            "{} file{} kept in this page's memory.",
+            files.len(),
+            if files.len() == 1 { "" } else { "s" }
+        );
+        for file in files {
+            let digest = Sha256::digest(&file.bytes);
+            self.kept.push(KeptFile {
+                name: file.name,
+                content_type: file.content_type,
+                size: file.bytes.len(),
+                sha256: digest.iter().map(|byte| format!("{byte:02x}")).collect(),
+            });
+        }
+        self.kept.truncate(20);
     }
     pub fn params(&mut self, query: &HashMap<String, String>) -> Result<()> {
         self.list = ListState::parse(query, SPEC.clone()).map_err(|_| Error::Invalid)?;
@@ -408,31 +435,12 @@ impl State {
             }
             // Bilimbi's `consume_uploaded_entries` in the submit handler: the
             // completed files are taken once, here, and only their facts stay.
-            "keep-files" => {
-                let files = self.uploads.consume(SAMPLE_UPLOAD);
-                if files.is_empty() {
-                    self.notice = "Choose a file first.".into();
-                } else {
-                    self.notice = format!(
-                        "{} file{} kept in this page's memory.",
-                        files.len(),
-                        if files.len() == 1 { "" } else { "s" }
-                    );
-                    for file in files {
-                        let digest = Sha256::digest(&file.bytes);
-                        self.kept.push(KeptFile {
-                            name: file.name,
-                            content_type: file.content_type,
-                            size: file.bytes.len(),
-                            sha256: digest.iter().map(|byte| format!("{byte:02x}")).collect(),
-                        });
-                    }
-                    self.kept.truncate(20);
-                }
-            }
+            "keep-files" => self.keep(SAMPLE_UPLOAD),
+            "keep-large-file" => self.keep(LARGE_UPLOAD),
             "forget-files" => {
                 self.kept.clear();
                 self.uploads.clear(SAMPLE_UPLOAD);
+                self.uploads.clear(LARGE_UPLOAD);
             }
             // The location action's one event: a position or an outcome the
             // card answers in words; a payload that is neither is invalid.

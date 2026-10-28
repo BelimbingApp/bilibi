@@ -23,7 +23,8 @@
 //     URL into the existing DOM and then sends the intents raised meanwhile.
 //     Intents that were in flight when the socket dropped cannot be confirmed;
 //     the status region says how many, so nothing is discarded silently. In
-//     development the reconnect reloads fresh assets only when no draft is held.
+//     development the reconnect reloads fresh assets only when no draft is held,
+//     nor a resumable upload waiting to carry on (BilibiLive.hold).
 //
 // Back within a page marked `data-history="params"` is a params update in
 // place; inside a workspace tile no address change adds a history entry.
@@ -54,6 +55,7 @@
   let reloadOnReconnect = false;
   let stopped = false; // the server cleared the page: no reconnect
   let unconfirmed = 0; // in-flight intents lost to a dropped socket
+  const holders = new Set(); // hooks holding work a reload would lose (BilibiLive.hold)
   let retryDelay = 500;
   let retryTimer = null;
   let lastHTML = null;
@@ -96,6 +98,9 @@
     // was open (or while it was down) follow it in the order they were raised.
     const held = queued.splice(0);
     enqueue(mountIntent(), {loading: true, navigation: !resumed});
+    // Hooks that carry work across the drop (resumable uploads) send it now,
+    // right behind the remount, which the server answers first.
+    if (resumed) window.dispatchEvent(new CustomEvent('bilibi:remounted'));
     for (const entry of held) { queued.push(entry); }
     if (resumed) {
       feedback.textContent = unconfirmed
@@ -117,7 +122,8 @@
       const sent = [...inflight.values()].filter((entry) => entry.ownerForm === form).map((entry) => entry.id);
       preserve(form, Math.max(0, ...sent));
     }
-    const hasDraft = drafts.length || [...inflight.values()].some((entry) => entry.form);
+    const hasDraft = drafts.length || [...inflight.values()].some((entry) => entry.form)
+      || [...holders].some((holds) => holds());
     reloadOnReconnect = devReload && !hasDraft;
     for (const entry of inflight.values()) {
       settle(entry);
@@ -786,6 +792,13 @@
       if (!socket || socket.readyState !== WebSocket.OPEN) return false;
       socket.send(bytes);
       return true;
+    },
+    // A hook that holds work only this page can carry on (files waiting to
+    // resume) registers whether it does; a development reconnect then keeps
+    // the page instead of reloading it. Returns the release.
+    hold(holds) {
+      holders.add(holds);
+      return () => holders.delete(holds);
     },
   };
 

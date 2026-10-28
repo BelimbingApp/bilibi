@@ -13,6 +13,15 @@
                     {% if !self.state.kept.is_empty() %}{% call ui::button(id="design-library-file-forget", button_type="button", event="forget-files") %}Forget kept files{% endcall %}{% endif %}
                   </div>
                 </form>
+                <p class="mt-6 text-sm text-ink-muted">
+                  A resumable input keeps its chunks in a private staging file on the server instead of the page, so a dropped connection, or a server restart, carries on from the bytes already there. The browser announces the file's SHA-256 first, and the page receives the bytes only once they match it.
+                </p>
+                <form id="design-library-large-file-form" data-event="keep-large-file" class="mt-4 space-y-3">
+                  {{ self.large_file_input()? }}
+                  <div class="flex flex-wrap items-center gap-2">
+                    {% call ui::button(id="design-library-large-file-keep", button_type="submit", variant=bilibi_ui::ButtonVariant::Primary, working="Keeping…") %}Keep file{% endcall %}
+                  </div>
+                </form>
                 {% if self.state.kept.is_empty() %}
                 <p id="design-library-file-kept-empty" class="mt-4 text-sm text-ink-muted">No files kept yet.</p>
                 {% else %}

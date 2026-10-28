@@ -3,6 +3,7 @@
 use crate::{
     quarantine::{MANAGE as QUARANTINE_MANAGE, PURGER, REMOVE, VIEW as QUARANTINE_VIEW},
     scan::{POLICY, PRINCIPAL, SCAN, TIMEOUT},
+    staging::{DISK as STAGING_DISK, HOURS as STAGING_HOURS},
 };
 use bilibi_authz::{
     CapabilityDefinition, StandingGrant, SystemPrincipalDefinition, VocabularyContribution,
@@ -72,7 +73,7 @@ inventory::submit! { Contribution::new(DEFINITIONS, "media.attachment_disk", pro
 })) }
 inventory::submit! { Contribution::new(DEFINITIONS, "media.max_bytes", provenance!(), &Setting::Definition(Definition {
     value_type: ValueType::Integer, scopes: GLOBAL, default: || json!(10_485_760), nullable: false, encrypted: false, minimum: Some(1.0), maximum: Some(536_870_912.0), validator: None,
-    editor: Some(Editor { group: "Media", label: "Maximum upload bytes", help: "Maximum size of new media uploads and attachments.", capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
+    editor: Some(Editor { group: "Media", label: "Maximum upload bytes", help: "Maximum size of new media uploads and attachments, and of a resumable upload, which may always reach 64 MiB.", capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
 })) }
 inventory::submit! { Contribution::new(DEFINITIONS, "media.attachment_allowed_types", provenance!(), &Setting::Definition(Definition {
     value_type: ValueType::Array, scopes: GLOBAL, default: || Value::from(ALLOWED.to_vec()), nullable: false, encrypted: false, minimum: None, maximum: None,
@@ -91,4 +92,13 @@ inventory::submit! { Contribution::new(DEFINITIONS, POLICY, provenance!(), &Sett
 inventory::submit! { Contribution::new(DEFINITIONS, TIMEOUT, provenance!(), &Setting::Definition(Definition {
     value_type: ValueType::Integer, scopes: GLOBAL, default: || json!(60), nullable: false, encrypted: false, minimum: Some(5.0), maximum: Some(600.0), validator: None,
     editor: Some(Editor { group: "Media", label: "Malware scan time limit", help: "Seconds one scan may take before it is retried; after eight tries the file is marked failed.", capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
+})) }
+inventory::submit! { Contribution::new(DEFINITIONS, STAGING_DISK, provenance!(), &Setting::Definition(Definition {
+    value_type: ValueType::String, scopes: GLOBAL, default: || json!("local"), nullable: false, encrypted: false, minimum: None, maximum: None,
+    validator: Some(Validator { accepts: |value| value.as_str().is_some_and(|disk| !disk.is_empty() && disk.len() <= 255 && disk != "external"), message: "Name a configured disk" }),
+    editor: Some(Editor { group: "Media", label: "Resumable upload disk", help: "The disk where large uploads wait while they arrive, so a dropped connection carries on where it stopped. While it names no configured disk, such uploads are held in memory and limited to 64 MiB.", capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
+})) }
+inventory::submit! { Contribution::new(DEFINITIONS, STAGING_HOURS, provenance!(), &Setting::Definition(Definition {
+    value_type: ValueType::Integer, scopes: GLOBAL, default: || json!(24), nullable: false, encrypted: false, minimum: Some(1.0), maximum: Some(720.0), validator: None,
+    editor: Some(Editor { group: "Media", label: "Unfinished upload lifetime (hours)", help: "Hours an unfinished upload is kept for the person to carry on; the hourly staging sweep then removes it.", capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
 })) }

@@ -134,6 +134,16 @@ impl View<'_> {
                 )),
         )
     }
+    /// The resumable file input specimen: one file, staged while it arrives.
+    fn large_file_input(&self) -> askama::Result<Html> {
+        render(
+            self.state
+                .uploads
+                .input(state::LARGE_UPLOAD, "design-library-large-file")
+                .label("Large file")
+                .hint("One file, as large as this installation accepts. It carries on after a dropped connection."),
+        )
+    }
     /// The browser location specimen: one control whose event the state keeps.
     fn location_action(&self) -> askama::Result<Html> {
         render(
@@ -150,8 +160,10 @@ impl View<'_> {
     fn kept_size(&self, size: &usize) -> String {
         if *size < 1024 {
             format!("{size} B")
-        } else {
+        } else if *size < 1024 * 1024 {
             format!("{:.1} KiB", *size as f64 / 1024.0)
+        } else {
+            format!("{:.1} MiB", *size as f64 / (1024.0 * 1024.0))
         }
     }
     fn dismissed(&self, id: &str) -> bool {

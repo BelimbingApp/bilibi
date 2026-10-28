@@ -179,7 +179,7 @@ The host owns the stream. A chosen file is announced as an `upload` intent
 queued and acknowledged like any other; the host registers each entry under
 the target's spec or refuses it (`too_large`, `not_accepted`, and
 `too_many_files` for the surplus over `max_entries`, which stays an
-input-level error), answers `{"type":"upload", "entries":[{"ref":"1","id":7,"chunk":65536,"done":false}, …]}`
+input-level error), answers `{"type":"upload", "entries":[{"ref":"1","id":7,"chunk":65536,"received":0,"done":false}, …]}`
 with the id to stream each accepted entry under, and re-renders the target so
 the rows appear. A single-entry input replaces its entry on a new choice, as
 the browser control does. The browser then sends binary frames of
@@ -194,6 +194,20 @@ Ids are unique per socket, so a frame never reaches another state's entry,
 and a dropped socket ends every stream: the remounted state holds no bytes.
 The `FileUpload` hook (`apps/base/ui/assets/upload.js`) does the browser's
 part and holds a form's submit until every file of its input has arrived.
+
+### Resumable uploads
+
+A spec declared with `UploadSpec::resumable(name, max_file_size)` (issue 141, no Bilimbi counterpart) survives a dropped connection, a restarted server and a reloaded page.
+
+- The input carries `data-resumable`. The hook hashes each chosen file (SHA-256, in 4 MiB slices), and the `upload` intent carries the hashes by entry ref: `"sha256":{"1":"<64 lowercase hex>"}`. Entries are announced as for any input.
+- The host registers the entries as usual, then places each accepted one (`Uploads::place`). While Media has a staging disk (`media.upload.staging_disk`, `apps/base/media/README.md`), an entry with a hash is staged in a private file bound to the tenant, the account (and impersonating operator), the page service, the input, the size and that hash. Every reply entry carries `received`, the offset to stream from: for a staged entry, the bytes a dropped connection already left there; otherwise 0.
+- The size limit is the spec's own, at most `MAX_RESUMABLE_FILE_SIZE` (512 MiB) and `media.max_bytes`, never below `MAX_FILE_SIZE` (64 MiB). Without a staging disk the spec acts as `UploadSpec::new`: bytes in the state, at most 64 MiB.
+- When the last byte arrives the host checks the hash, then hands the bytes to the entry, which holds them in memory until the owner consumes them with `Uploads::consume`, like any other. A first mismatch empties the file and answers `received: 0`, so the browser sends it again; a second marks the entry `interrupted`.
+- A submit raised while files are being hashed, or while resumable files wait for the remount, is held like one raised mid-stream. A one-file input announces only its latest choice, and a file over the input's limit is not hashed.
+- After a drop, the hook keeps the files the server still listed. Once the page is remounted, `live.js` raises `bilibi:remounted` right behind the mount intent, and the hook announces them again, which picks up their staged bytes. Choosing the same file again later finds them too, until `media.upload.staging_hours` passes.
+- The staging file goes when its entry does (consumed, removed, replaced, or its state dropped on this socket) and stays when the socket closes. An account keeps at most 20, and its files nobody wrote to within `media.upload.staging_hours` are removed when it stages another and by the `base/media-staging-sweep` schedule.
+- A development reconnect normally reloads fresh assets when no draft is held; files waiting to resume count as a draft (`BilibiLive.hold`).
+- A resumable input in a panel resumes only when that panel is mounted with the page; otherwise the person chooses the file again, which still continues from the staged bytes.
 
 ## Browser location
 

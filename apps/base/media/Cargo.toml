@@ -16,7 +16,9 @@ bilibi-menu.workspace = true
 bilibi-module-registry.workspace = true
 bilibi-notifications.workspace = true
 bilibi-queue.workspace = true
+bilibi-schedule.workspace = true
 bilibi-settings = { path = "../settings" }
+bilibi-system.workspace = true
 bilibi-tenancy = { path = "../tenancy" }
 bilibi-ui.workspace = true
 jiff.workspace = true
