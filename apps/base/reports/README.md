@@ -15,7 +15,7 @@ Operator-built reports: a saved question over one Grid table, run as each reader
 | Call | Needs | Does |
 |---|---|---|
 | `page`, `get` | `reports.view` | Reports the reader may run: their own, shared with everyone, or shared with one of their roles. `page` answers one page by name, searched by name and description in the same query, with the number that match. |
-| `run` | `reports.view` | One page of rows (each with its record's own page where the owner declares one, and the totals line), or a grouped summary with subtotals and a total. Answers ask-when-run filters by position; `as_rows` with drill filters lists the records behind a group; agents drill as the page does (`equals`, `empty`, or a date bucket's `range` of days). |
+| `run` | `reports.view` | One page of rows (each linking to its record's page where the owner registers a Base Records kind for the table and the reader may open it, and the totals line), or a grouped summary with subtotals and a total. Answers ask-when-run filters by position; `as_rows` with drill filters lists the records behind a group; agents drill as the page does (`equals`, `empty`, or a date bucket's `range` of days). |
 | `csv` | `reports.export` | The whole result as CSV, up to the export cap, for the same `RunInput` as the page (answers, drill-downs, records view). Audited as `base.reports.exported` with report id and row count, never the data. Leading `=`, `+`, `-`, `@` are neutralised. |
 | `record_types`, `columns` | `reports.view` | What a builder may offer: readable record types, and a type's own fields plus fields one link away. |
 | `check` | — | Shape bounds, every column against the author's catalog, then a bounded dry run. A dry run refused only by size or cost still saves. |

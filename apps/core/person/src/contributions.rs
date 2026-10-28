@@ -50,7 +50,7 @@ static GRID: GridContribution = GridContribution {
             Field::new("created_at", "Created", FieldType::DateTime).protected(),
             Field::new("updated_at", "Updated", FieldType::DateTime).protected(),
             Field::new("search_vector", "Search terms", FieldType::String).hidden(),
-        ]).label_field("name").time_field("created_at").record_types(&["person"]).page("/contacts/{key}")],
+        ]).label_field("name").time_field("created_at").record_types(&["person"])],
     links: &[],
 };
 bilibi_grid::contribute!("core/person", "person.grid", &GRID);
