@@ -928,6 +928,12 @@ body:has(dialog:modal) #flash-group > #connection-server-error {
   caret-color: var(--color-ink);
 }
 
+/* Focus selects the whole value; keep that selection from painting over the display layer. */
+[data-hook="Combobox"][data-detailed]:not([data-editing]) input[role="combobox"]::selection {
+  background: transparent;
+  color: transparent;
+}
+
 /* Menu typography & font colors matching Belimbing */
 .app-nav-menu {
   font-family: var(--font-sans);
