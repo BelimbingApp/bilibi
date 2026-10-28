@@ -11,7 +11,8 @@ use bilibi_database::{pool, Error, MutationBoundary};
 use bilibi_party_ids::OrganisationId;
 use bilibi_settings::{Settings, Target};
 use bilibi_tenancy::{ProofFuture, Scope};
-use bilibi_work_calendar::{WorkCalendars, SERVICE};
+use bilibi_work_calendar::{Reason, WorkCalendars, SERVICE};
+use jiff::civil::{Date, Weekday};
 use serde_json::{json, Value};
 use tokio_postgres::Transaction;
 bilibi_walkthrough_fixture::walkthrough_vocabulary!();
@@ -46,27 +47,50 @@ struct Agent<'a> {
     scope: Scope,
     db: &'a bilibi_database::Db,
 }
+fn op(key: &str, input: Value) -> PlannedOperation {
+    PlannedOperation {
+        key: key.into(),
+        input,
+    }
+}
 impl Agent<'_> {
-    /// Preview, then commit, one reviewed write; prints the review summary.
-    async fn write(&self, key: &str, input: Value) -> Result<Value, String> {
-        let ops = [PlannedOperation {
-            key: key.into(),
-            input,
-        }];
+    /// Preview a plan; its code when every operation is valid, else the
+    /// first refusal.
+    async fn plan(&self, ops: &[PlannedOperation]) -> Result<String, String> {
         let plan = self
             .plans
-            .preview(&self.browser, &ops)
+            .preview(&self.browser, ops)
             .await
             .map_err(|error| error.to_string())?;
         if plan["valid"] != json!(true) {
-            return Err(plan["results"][0]["error"].to_string());
+            let results = plan["results"].as_array().cloned().unwrap_or_default();
+            let refused = results.iter().find(|r| !r["error"].is_null());
+            return Err(refused
+                .map_or(Value::Null, |r| r["error"].clone())
+                .to_string());
         }
-        let code = plan["plan_code"].as_str().ok_or("no plan code")?;
+        Ok(plan["plan_code"].as_str().ok_or("no plan code")?.to_owned())
+    }
+    /// Commit a previewed plan; each operation's result.
+    async fn commit(&self, code: &str, ops: &[PlannedOperation]) -> Result<Vec<Value>, String> {
         self.plans
-            .commit(&self.scope, &self.browser, code, &ops)
+            .commit(&self.scope, &self.browser, code, ops)
             .await
-            .map(|result| result["results"][0]["result"]["result"].clone())
+            .map(|result| {
+                result["results"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|r| r["result"]["result"].clone())
+                    .collect()
+            })
             .map_err(|error| error.to_string())
+    }
+    /// Preview, then commit, one reviewed write.
+    async fn write(&self, key: &str, input: Value) -> Result<Value, String> {
+        let ops = [op(key, input)];
+        let code = self.plan(&ops).await?;
+        Ok(self.commit(&code, &ops).await?.remove(0))
     }
     async fn read(&self, key: &str, input: Value) -> Result<Value, String> {
         let client = self.db.get().await.map_err(|error| error.to_string())?;
@@ -160,10 +184,12 @@ async fn main() -> Result<(), Failure> {
     let registry = app.services.get::<Registry>("base/agent_api.registry")?;
     let password = bilibi_walkthrough_fixture::PASSWORD;
     let mut agents = Vec::new();
+    // The agent signs in twice, so two of its writes can commit at once.
     for email in [
         "ai@agent.my",
         "viewer@example.test",
         "manager@other.example.test",
+        "ai@agent.my",
     ] {
         let login = app.user.login(email, password).await?;
         agents.push((login.token.clone(), app.security.guard(&login.token).await?));
@@ -178,7 +204,7 @@ async fn main() -> Result<(), Failure> {
         scope: agents[index].1.clone(),
         db: &db,
     };
-    let (admin, viewer, other) = (agent(0), agent(1), agent(2));
+    let (admin, viewer, other, second) = (agent(0), agent(1), agent(2), agent(3));
 
     println!("== a calendar: Monday-Friday with a lunch break, Saturday off, Sunday rest");
     let office = week(
@@ -572,7 +598,7 @@ async fn main() -> Result<(), Failure> {
     println!(
         "choices: {:?}",
         calendars
-            .choices(&admin.scope)
+            .choices(&admin.scope, "")
             .await?
             .iter()
             .map(|c| c.code.as_str())
@@ -603,6 +629,345 @@ async fn main() -> Result<(), Failure> {
     tx.rollback().await?;
     admin.ask("retired gulf still computes", json!({"code": "gulf", "operation": "add_working_days", "date": "2026-12-03", "days": 1})).await;
 
+    println!("== substitutes chain: a date resolves the same whatever window asks");
+    // Monday is the only working day and every Sunday from August is a
+    // holiday, each moving to the next Monday. One extra Saturday holiday at
+    // the start pushes every substitute a week later, months on.
+    let rest = json!({"type": "rest"});
+    let mondays = json!({"monday": {"type": "working", "periods": ["09:00-17:00"]}, "tuesday": rest, "wednesday": rest, "thursday": rest, "friday": rest, "saturday": rest, "sunday": rest});
+    show("create chain", admin.write("core.work_calendar.create", json!({"code": "chain", "name": "Chain", "timezone": "UTC", "substitute": "rest", "effective_from": "2026-01-01", "week": mondays})).await);
+    show(
+        "create set sundays",
+        admin
+            .write(
+                "core.work_calendar.holiday_set.create",
+                json!({"code": "sundays", "name": "Sunday festivals"}),
+            )
+            .await,
+    );
+    let mut festivals = vec![json!({"date": "2026-08-01", "name": "Opening Saturday"})];
+    let mut day: Date = "2026-08-02".parse()?;
+    while day <= "2026-11-29".parse()? {
+        if day.weekday() == Weekday::Sunday {
+            festivals.push(
+                json!({"date": day.to_string(), "name": format!("Festival {}", festivals.len())}),
+            );
+        }
+        day = day.tomorrow()?;
+    }
+    let version = admin
+        .version("core.work_calendar.holiday_set.get", "sundays")
+        .await;
+    show(
+        "festivals",
+        admin
+            .write(
+                "core.work_calendar.holiday_set.holidays",
+                json!({"code": "sundays", "version": version, "add": festivals}),
+            )
+            .await
+            .map(|r| r["added_or_renamed"].clone()),
+    );
+    let version = admin.version("core.work_calendar.get", "chain").await;
+    show(
+        "include sundays in chain",
+        admin
+            .write(
+                "core.work_calendar.include",
+                json!({"code": "chain", "version": version, "holiday_set": "sundays"}),
+            )
+            .await
+            .map(|r| r["included"].clone()),
+    );
+    let whole = calendars
+        .days(
+            &admin.scope,
+            "chain",
+            "2026-08-01".parse()?,
+            "2026-12-31".parse()?,
+        )
+        .await?;
+    println!(
+        "substitutes August to December: {}",
+        whole
+            .iter()
+            .filter(|d| matches!(d.reason, Reason::Substitute { .. }))
+            .count()
+    );
+    let mut differ = 0;
+    for day in whole
+        .iter()
+        .filter(|d| d.date >= Date::constant(2026, 10, 1))
+    {
+        let alone = calendars.day(&admin.scope, "chain", day.date).await?;
+        if alone != *day {
+            differ += 1;
+            println!(
+                "  {}: {} in the whole window, {} alone",
+                day.date,
+                day.day_type.as_str(),
+                alone.day_type.as_str()
+            );
+        }
+    }
+    println!("dates from October on resolving differently alone: {differ}");
+    print_days(
+        &admin
+            .read(
+                "core.work_calendar.days",
+                json!({"code": "chain", "from": "2026-12-07", "to": "2026-12-07"}),
+            )
+            .await?,
+    );
+    admin
+        .ask(
+            "is_open 2026-12-07 09:30Z (a substitute Monday)",
+            json!({"code": "chain", "operation": "is_open", "at": "2026-12-07T09:30:00Z"}),
+        )
+        .await;
+
+    println!("== one reviewed plan edits two holiday sets one calendar includes");
+    show("create twin", admin.write("core.work_calendar.create", json!({"code": "twin", "name": "Twin", "timezone": "UTC", "effective_from": "2026-01-01", "week": office})).await);
+    for set in ["plan-a", "plan-b"] {
+        show(
+            &format!("create {set}"),
+            admin
+                .write(
+                    "core.work_calendar.holiday_set.create",
+                    json!({"code": set, "name": set}),
+                )
+                .await,
+        );
+        let version = admin.version("core.work_calendar.get", "twin").await;
+        show(
+            &format!("include {set}"),
+            admin
+                .write(
+                    "core.work_calendar.include",
+                    json!({"code": "twin", "version": version, "holiday_set": set}),
+                )
+                .await
+                .map(|r| r["included"].clone()),
+        );
+    }
+    let both = [
+        op(
+            "core.work_calendar.holiday_set.holidays",
+            json!({"code": "plan-a", "version": admin.version("core.work_calendar.holiday_set.get", "plan-a").await, "add": [{"date": "2027-03-01", "name": "A day"}]}),
+        ),
+        op(
+            "core.work_calendar.holiday_set.holidays",
+            json!({"code": "plan-b", "version": admin.version("core.work_calendar.holiday_set.get", "plan-b").await, "add": [{"date": "2027-04-01", "name": "B day"}]}),
+        ),
+    ];
+    match admin.plan(&both).await {
+        Ok(code) => show(
+            "preview valid; commit",
+            admin.commit(&code, &both).await.map(Value::from),
+        ),
+        Err(error) => println!("preview: refused — {error}"),
+    }
+    for row in client.query("SELECT payload::text FROM base_events WHERE name='core/work_calendar.changed' AND subject='twin' ORDER BY id", &[]).await? {
+        println!("  twin changed {}", row.get::<_, String>(0));
+    }
+
+    println!("== a holiday write and an inclusion commit at once: whichever commits second records changed");
+    show("create race", admin.write("core.work_calendar.create", json!({"code": "race", "name": "Race", "timezone": "UTC", "effective_from": "2026-01-01", "week": office})).await);
+    show(
+        "create race-set (empty)",
+        admin
+            .write(
+                "core.work_calendar.holiday_set.create",
+                json!({"code": "race-set", "name": "Race set"}),
+            )
+            .await,
+    );
+    let first = [op(
+        "core.work_calendar.holiday_set.holidays",
+        json!({"code": "race-set", "version": admin.version("core.work_calendar.holiday_set.get", "race-set").await, "add": [{"date": "2027-05-03", "name": "First holiday"}]}),
+    )];
+    let second_ops = [op(
+        "core.work_calendar.include",
+        json!({"code": "race", "version": admin.version("core.work_calendar.get", "race").await, "holiday_set": "race-set"}),
+    )];
+    let (first_code, second_code) = (admin.plan(&first).await?, second.plan(&second_ops).await?);
+    // Demonstration only: a gate holds each write at its insert, after it has
+    // read what it needs, as two busy requests overlapping would.
+    client.batch_execute("CREATE OR REPLACE FUNCTION walkthrough_gate() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_advisory_xact_lock_shared(4242); RETURN NEW; END $$; CREATE TRIGGER walkthrough_gate BEFORE INSERT ON core_work_calendar_holidays FOR EACH ROW EXECUTE FUNCTION walkthrough_gate(); CREATE TRIGGER walkthrough_gate BEFORE INSERT ON core_work_calendar_includes FOR EACH ROW EXECUTE FUNCTION walkthrough_gate()").await?;
+    let gate = db.get().await?;
+    gate.execute("SELECT pg_advisory_lock(4242)", &[]).await?;
+    let (holiday, include, opened) = tokio::join!(
+        admin.commit(&first_code, &first),
+        second.commit(&second_code, &second_ops),
+        async {
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            gate.execute("SELECT pg_advisory_unlock(4242)", &[]).await
+        }
+    );
+    opened?;
+    client.batch_execute("DROP TRIGGER walkthrough_gate ON core_work_calendar_holidays; DROP TRIGGER walkthrough_gate ON core_work_calendar_includes; DROP FUNCTION walkthrough_gate()").await?;
+    show("first holiday", holiday.map(Value::from));
+    show("include", include.map(Value::from));
+    print_days(
+        &admin
+            .read(
+                "core.work_calendar.days",
+                json!({"code": "race", "from": "2027-05-03", "to": "2027-05-03"}),
+            )
+            .await?,
+    );
+    let events: i64 = client.query_one("SELECT count(*) FROM base_events WHERE name='core/work_calendar.changed' AND subject='race'", &[]).await?.get(0);
+    println!("changed events for race: {events}");
+
+    println!("== replacing the first rule moves the dates before it too");
+    show("create early (from 2026-01-01, 09:00-18:00)", admin.write("core.work_calendar.create", json!({"code": "early", "name": "Early", "timezone": "UTC", "effective_from": "2026-01-01", "week": week(&["09:00-18:00"], json!({"type": "off"}), json!({"type": "rest"}))})).await);
+    print_days(
+        &admin
+            .read(
+                "core.work_calendar.days",
+                json!({"code": "early", "from": "2025-12-01", "to": "2025-12-01"}),
+            )
+            .await?,
+    );
+    let version = admin.version("core.work_calendar.get", "early").await;
+    show("replace the 2026-01-01 week with 08:00-16:00", admin.write("core.work_calendar.rule.set", json!({"code": "early", "version": version, "effective_from": "2026-01-01", "week": week(&["08:00-16:00"], json!({"type": "off"}), json!({"type": "rest"}))})).await.map(|r| r["effective_from"].clone()));
+    print_days(
+        &admin
+            .read(
+                "core.work_calendar.days",
+                json!({"code": "early", "from": "2025-12-01", "to": "2025-12-01"}),
+            )
+            .await?,
+    );
+    let version = admin.version("core.work_calendar.get", "early").await;
+    show("a later version from 2026-06-01", admin.write("core.work_calendar.rule.set", json!({"code": "early", "version": version, "effective_from": "2026-06-01", "week": week(&["10:00-14:00"], json!({"type": "off"}), json!({"type": "rest"}))})).await.map(|r| r["effective_from"].clone()));
+    for row in client.query("SELECT payload::text FROM base_events WHERE name='core/work_calendar.changed' AND subject='early' ORDER BY id", &[]).await? {
+        println!("  early changed {}", row.get::<_, String>(0));
+    }
+
+    println!("== removing an exception keeps its hours in the evidence");
+    let version = admin.version("core.work_calendar.get", "office").await;
+    let added = admin.write("core.work_calendar.exception.add", json!({"code": "office", "version": version, "starts_on": "2027-03-10", "name": "Training morning", "type": "working", "periods": ["09:00-12:00"]})).await?;
+    let version = admin.version("core.work_calendar.get", "office").await;
+    show(
+        "remove it",
+        admin
+            .write(
+                "core.work_calendar.exception.remove",
+                json!({"code": "office", "version": version, "exception_id": added["id"]}),
+            )
+            .await,
+    );
+    let evidence: Option<String> = client.query_opt("SELECT old_values::text FROM base_audit_mutations WHERE auditable_type='core/work_calendar.exception' AND auditable_id=$1 AND new_values='{}'::jsonb", &[&added["id"].to_string()]).await?.map(|row| row.get(0));
+    println!("deletion old_values: {}", evidence.unwrap_or_default());
+
+    println!("== lists page; nested rows carry their totals");
+    let codes = |rows: &Value, key: &str| -> Value {
+        json!(rows[key]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|row| row["code"].clone())
+            .collect::<Vec<_>>())
+    };
+    for (label, input) in [
+        ("calendars, page 1 of 2 a page", json!({"page_size": 2})),
+        ("calendars, page 2", json!({"page_size": 2, "page": 2})),
+        ("calendars matching \"ra\"", json!({"search": "ra"})),
+        ("a page size over 100", json!({"page_size": 101})),
+    ] {
+        show(
+            label,
+            admin
+                .read("core.work_calendar.list", input)
+                .await
+                .map(|v| json!({"codes": codes(&v, "calendars"), "total": v["total"]})),
+        );
+    }
+    show(
+        "holiday sets matching \"plan\"",
+        admin
+            .read(
+                "core.work_calendar.holiday_set.list",
+                json!({"search": "plan"}),
+            )
+            .await
+            .map(|v| json!({"codes": codes(&v, "holiday_sets"), "total": v["total"]})),
+    );
+    println!(
+        "picker for \"tw\": {:?}",
+        calendars
+            .choices(&admin.scope, "tw")
+            .await?
+            .iter()
+            .map(|c| c.code.as_str())
+            .collect::<Vec<_>>()
+    );
+    show(
+        "create bulk",
+        admin
+            .write(
+                "core.work_calendar.holiday_set.create",
+                json!({"code": "bulk", "name": "Bulk"}),
+            )
+            .await,
+    );
+    let start: Date = "2030-01-01".parse()?;
+    for (from, count) in [(0, 400), (400, 50)] {
+        let add: Vec<Value> = (from..from + count)
+            .map(|n| -> Result<Value, Failure> {
+                let day = start.checked_add(jiff::Span::new().days(n))?;
+                Ok(json!({"date": day.to_string(), "name": format!("Day {n}")}))
+            })
+            .collect::<Result<_, _>>()?;
+        let version = admin
+            .version("core.work_calendar.holiday_set.get", "bulk")
+            .await;
+        show(
+            &format!("add {count}"),
+            admin
+                .write(
+                    "core.work_calendar.holiday_set.holidays",
+                    json!({"code": "bulk", "version": version, "add": add}),
+                )
+                .await
+                .map(|r| r["added_or_renamed"].clone()),
+        );
+    }
+    for page in [1, 2] {
+        show(&format!("bulk holidays page {page}"), admin.read("core.work_calendar.holiday_set.get", json!({"code": "bulk", "page": page})).await.map(|v| json!({"rows": v["holidays"]["rows"].as_array().map_or(0, Vec::len), "total": v["holidays"]["total"]})));
+    }
+
+    println!("== removing a date the set does not hold");
+    let version = admin
+        .version("core.work_calendar.holiday_set.get", "bulk")
+        .await;
+    for (label, remove) in [
+        ("a date bulk does not hold", json!(["2029-12-31"])),
+        ("one held, one not", json!(["2030-01-01", "2029-12-31"])),
+        ("the same date twice", json!(["2030-01-01", "2030-01-01"])),
+    ] {
+        show(
+            label,
+            admin
+                .plan(&[op(
+                    "core.work_calendar.holiday_set.holidays",
+                    json!({"code": "bulk", "version": version, "remove": remove}),
+                )])
+                .await
+                .map(|_| json!("valid")),
+        );
+    }
+    show(
+        "a held date",
+        admin
+            .write(
+                "core.work_calendar.holiday_set.holidays",
+                json!({"code": "bulk", "version": version, "remove": ["2030-01-01"]}),
+            )
+            .await,
+    );
+
     println!("== changed events (no stored result elsewhere is rewritten)");
     for row in client.query("SELECT subject,payload::text FROM base_events WHERE name='core/work_calendar.changed' ORDER BY id", &[]).await? {
         println!("  {} {}", row.get::<_, String>(0), row.get::<_, String>(1));
@@ -618,6 +983,36 @@ async fn main() -> Result<(), Failure> {
     show(
         "tenant 2 lists calendars with the capability",
         other.read("core.work_calendar.list", json!({})).await,
+    );
+    println!("== a tenant owner keeps its tenant's calendars");
+    let held: Vec<String> = client.query("SELECT rc.capability FROM role_capabilities rc JOIN roles r ON r.tenant_id=rc.tenant_id AND r.id=rc.role_id WHERE r.tenant_id=2 AND r.code='tenant_owner' AND rc.capability LIKE 'admin.work-calendar.%' ORDER BY 1", &[]).await?.iter().map(|row| row.get(0)).collect();
+    println!("tenant 2's tenant_owner holds: {held:?}");
+    show(
+        "tenant 2's manager creates a calendar",
+        other
+            .write(
+                "core.work_calendar.create",
+                json!({"code": "branch", "name": "Branch", "timezone": "UTC", "week": office}),
+            )
+            .await,
+    );
+    // Demonstration only: tenant 2's manager is made its tenant owner.
+    client.execute("INSERT INTO principal_roles(tenant_id,user_id,role_id) SELECT 2,5,id FROM roles WHERE tenant_id=2 AND code='tenant_owner' ON CONFLICT DO NOTHING", &[]).await?;
+    show(
+        "as tenant owner, it creates one",
+        other
+            .write(
+                "core.work_calendar.create",
+                json!({"code": "branch", "name": "Branch", "timezone": "UTC", "week": office}),
+            )
+            .await,
+    );
+    show(
+        "and lists its tenant's",
+        other
+            .read("core.work_calendar.list", json!({}))
+            .await
+            .map(|v| json!({"total": v["total"], "first": v["calendars"][0]["code"]})),
     );
     println!(
         "tenant 2 loads tenant 1's office: {:?}",
@@ -644,6 +1039,17 @@ async fn main() -> Result<(), Failure> {
             )
             .await,
     );
+
+    println!("== migration");
+    for row in client
+        .query(
+            "SELECT version FROM bilibi_migrations WHERE module_id='core/work_calendar' ORDER BY 1",
+            &[],
+        )
+        .await?
+    {
+        println!("  {}", row.get::<_, String>(0));
+    }
 
     println!("== audit");
     for row in client.query("SELECT auditable_type,event,count(*) FROM base_audit_mutations WHERE auditable_type LIKE 'core/work_calendar.%' GROUP BY 1,2 ORDER BY 1,2", &[]).await? {

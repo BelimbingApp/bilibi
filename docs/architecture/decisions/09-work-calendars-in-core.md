@@ -4,7 +4,7 @@
 **Status:** Proposed
 **Agents:** claude-code/opus-5.5 (author)
 **Scope:** Where business calendars live, which day types exist, and what a calendar decides (`core/work_calendar`)
-**Last Updated:** 2026-10-27
+**Last Updated:** 2026-10-28
 
 > Source: [issue 135](https://github.com/BelimbingApp/bilibi/issues/135). Bilimbi has no calendar module. Belimbing keeps work calendars in People Settings and resolves dates to Normal, Rest, Off or Holiday (`AttendanceCalendarResolver`), and expects "a future cross-cutting Calendar service … once a second module needs it".
 
@@ -20,7 +20,7 @@
 
 **3. Calendars decide business time, Domains decide who works.** A calendar answers whether an instant is business time and does business-time arithmetic. Shifts, rosters, attendance and per-person calendars stay in Domains.
 
-**4. Resolution has one order:** the calendar's exception, then a holiday or substitute from an included set, then the week of the rule version in force. Weeks are effective-dated, so a change never rewrites earlier dates, and a change rewrites no stored result elsewhere: it records `core/work_calendar.changed` and consumers recompute.
+**4. Resolution has one order:** the calendar's exception, then a holiday or substitute from an included set, then the week of the rule version in force. Weeks are effective-dated, so a change never rewrites earlier dates, except that the first version also governs every date before it. Substitutes are resolved from where no earlier holiday's chain can reach, so a date resolves the same in any window. A change rewrites no stored result elsewhere: it records `core/work_calendar.changed` and consumers recompute.
 
 **5. Arithmetic is bounded and explicit.** A `Timetable` loads a window of at most 731 days and searches at most 366 days ahead, returning `Beyond` rather than looping. No calendar is the caller's choice: the facade never substitutes clock time, and `Timetable::clock()` is the explicit fallback.
 
@@ -34,5 +34,5 @@
 
 ## Consequences
 
-- Installation-wide holiday sets (kept by the platform operator, read-only to tenants) are deferred: a change to one cannot record `changed` in other tenants from the operator's transaction, so they need a cross-tenant fan-out designed on its own.
-- Pages, the month view and a day-type tile in `base/ui` follow in a separate change; the contracts they will call exist now.
+- Installation-wide holiday sets (kept by the platform operator, read-only to tenants) are deferred to [#210](https://github.com/BelimbingApp/bilibi/issues/210): a change to one cannot record `changed` in other tenants from the operator's transaction, so they need a cross-tenant fan-out designed on its own.
+- Pages, the month view and a day-type tile in `base/ui` follow in [#209](https://github.com/BelimbingApp/bilibi/issues/209); the contracts they will call exist now.

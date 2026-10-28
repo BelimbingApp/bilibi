@@ -6,55 +6,117 @@
 //! and a `core/work_calendar.changed` event per calendar whose dates moved.
 use crate::{
     model::{
-        date, day_entry, invalid, name, valid_code, Calendar, Choice, FieldError, Holiday,
-        HolidaySet, Rule, Substitute, Summary, Week, WeekDay, WriteError, WriteResult,
+        date, day_entry, invalid, name, valid_code, Calendar, CalendarEntry, Choice, Exception,
+        FieldError, Holiday, HolidaySet, HolidaySetEntry, Listing, Rows, Rule, Substitute, Week,
+        WeekDay, WriteError, WriteResult, MAX_CHOICES, MAX_ROWS,
     },
-    timetable::exception,
+    timetable::{exception, reach},
     WorkCalendars, CHANGED, MANAGE,
 };
 use bilibi_authz::authorize_key;
 use bilibi_database::{Change, Error, MutationTransaction, Result};
 use bilibi_events::NewEvent;
 use bilibi_tenancy::Scope;
-use jiff::{civil::Date, ToSpan};
+use jiff::civil::Date;
 use serde_json::{json, Value};
 use tokio_postgres::GenericClient;
 
 /// Most holidays one write adds or removes.
 const MAX_HOLIDAYS: usize = 400;
 
-pub(crate) async fn summary(client: &(impl GenericClient + Sync), tenant: i64) -> Result<Summary> {
-    let calendars = client
+/// `search` as an `ILIKE` pattern matching it anywhere, its wildcards escaped.
+fn pattern(search: &str) -> String {
+    let mut escaped = String::new();
+    for c in search.trim().chars() {
+        if matches!(c, '\\' | '%' | '_') {
+            escaped.push('\\');
+        }
+        escaped.push(c);
+    }
+    format!("%{escaped}%")
+}
+fn offset(page: i64, size: i64) -> i64 {
+    (page - 1) * size
+}
+fn parse_date(text: &str) -> Result<Date> {
+    text.parse().map_err(|_| Error::Internal)
+}
+
+pub(crate) async fn calendars(
+    client: &(impl GenericClient + Sync),
+    tenant: i64,
+    listing: &Listing,
+) -> Result<Rows<CalendarEntry>> {
+    if !listing.valid() {
+        return Err(Error::Invalid);
+    }
+    let pattern = pattern(&listing.search);
+    let total: i64 = client
+        .query_one(
+            "SELECT count(*) FROM core_work_calendars WHERE tenant_id=$1 AND (code ILIKE $2 OR name ILIKE $2)",
+            &[&tenant, &pattern],
+        )
+        .await?
+        .get(0);
+    let rows = client
         .query(
-            "SELECT code,name,status FROM core_work_calendars WHERE tenant_id=$1 ORDER BY code",
-            &[&tenant],
+            "SELECT code,name,status FROM core_work_calendars WHERE tenant_id=$1 AND (code ILIKE $2 OR name ILIKE $2) ORDER BY code LIMIT $3 OFFSET $4",
+            &[&tenant, &pattern, &listing.page_size, &offset(listing.page, listing.page_size)],
         )
         .await?
         .iter()
-        .map(|row| (row.get(0), row.get(1), row.get(2)))
+        .map(|row| CalendarEntry {
+            code: row.get(0),
+            name: row.get(1),
+            status: row.get(2),
+        })
         .collect();
-    let holiday_sets = client
+    Ok(Rows { rows, total })
+}
+pub(crate) async fn holiday_sets(
+    client: &(impl GenericClient + Sync),
+    tenant: i64,
+    listing: &Listing,
+) -> Result<Rows<HolidaySetEntry>> {
+    if !listing.valid() {
+        return Err(Error::Invalid);
+    }
+    let pattern = pattern(&listing.search);
+    let total: i64 = client
+        .query_one(
+            "SELECT count(*) FROM core_work_calendar_holiday_sets WHERE tenant_id=$1 AND (code ILIKE $2 OR name ILIKE $2)",
+            &[&tenant, &pattern],
+        )
+        .await?
+        .get(0);
+    let rows = client
         .query(
-            "SELECT code,name,country_iso,admin1_code FROM core_work_calendar_holiday_sets WHERE tenant_id=$1 ORDER BY code",
-            &[&tenant],
+            "SELECT code,name,country_iso,admin1_code FROM core_work_calendar_holiday_sets WHERE tenant_id=$1 AND (code ILIKE $2 OR name ILIKE $2) ORDER BY code LIMIT $3 OFFSET $4",
+            &[&tenant, &pattern, &listing.page_size, &offset(listing.page, listing.page_size)],
         )
         .await?
         .iter()
-        .map(|row| (row.get(0), row.get(1), row.get(2), row.get(3)))
+        .map(|row| HolidaySetEntry {
+            code: row.get(0),
+            name: row.get(1),
+            country_iso: row.get(2),
+            admin1_code: row.get(3),
+        })
         .collect();
-    Ok(Summary {
-        calendars,
-        holiday_sets,
-    })
+    Ok(Rows { rows, total })
 }
 pub(crate) async fn choices(
     client: &(impl GenericClient + Sync),
     tenant: i64,
+    search: &str,
 ) -> Result<Vec<Choice>> {
+    if search.chars().count() > 200 {
+        return Err(Error::Invalid);
+    }
     Ok(client
         .query(
-            "SELECT code,name FROM core_work_calendars WHERE tenant_id=$1 AND status='active' ORDER BY name,code",
-            &[&tenant],
+            "SELECT code,name FROM core_work_calendars WHERE tenant_id=$1 AND status='active' AND (code ILIKE $2 OR name ILIKE $2) ORDER BY name,code LIMIT $3",
+            &[&tenant, &pattern(search), &MAX_CHOICES],
         )
         .await?
         .iter()
@@ -65,29 +127,149 @@ pub(crate) async fn choices(
         .collect())
 }
 
-pub(crate) async fn calendar(
+/// A calendar's own row: what fences, previews and writes need.
+struct CalendarRow {
+    id: i64,
+    name: String,
+    status: String,
+    substitute: Substitute,
+    version: i64,
+}
+impl CalendarRow {
+    fn to_json(&self, code: &str) -> Value {
+        json!({"code": code, "name": self.name, "status": self.status, "substitute": self.substitute.as_str(), "version": self.version})
+    }
+}
+async fn calendar_row(
     client: &(impl GenericClient + Sync),
     tenant: i64,
     code: &str,
-) -> Result<(i64, Calendar)> {
+) -> Result<CalendarRow> {
     let row = client
         .query_opt(
-            "SELECT id,code,name,status,substitute,version FROM core_work_calendars WHERE tenant_id=$1 AND code=$2",
+            "SELECT id,name,status,substitute,version FROM core_work_calendars WHERE tenant_id=$1 AND code=$2",
             &[&tenant, &code],
         )
         .await?
         .ok_or(Error::NotFound)?;
-    let id: i64 = row.get(0);
+    Ok(CalendarRow {
+        id: row.get(0),
+        name: row.get(1),
+        status: row.get(2),
+        substitute: Substitute::parse(row.get(3)).ok_or(Error::Internal)?,
+        version: row.get(4),
+    })
+}
+/// A holiday set's own row.
+struct SetRow {
+    id: i64,
+    name: String,
+    country_iso: Option<String>,
+    admin1_code: Option<String>,
+    version: i64,
+}
+async fn set_row(client: &(impl GenericClient + Sync), tenant: i64, code: &str) -> Result<SetRow> {
+    let row = client
+        .query_opt(
+            "SELECT id,name,country_iso,admin1_code,version FROM core_work_calendar_holiday_sets WHERE tenant_id=$1 AND code=$2",
+            &[&tenant, &code],
+        )
+        .await?
+        .ok_or(Error::NotFound)?;
+    Ok(SetRow {
+        id: row.get(0),
+        name: row.get(1),
+        country_iso: row.get(2),
+        admin1_code: row.get(3),
+        version: row.get(4),
+    })
+}
+/// Codes of the calendars including a set, the first [`MAX_ROWS`].
+async fn including(
+    client: &(impl GenericClient + Sync),
+    tenant: i64,
+    set: i64,
+) -> Result<Rows<String>> {
+    let total: i64 = client
+        .query_one(
+            "SELECT count(*) FROM core_work_calendar_includes WHERE tenant_id=$1 AND holiday_set_id=$2",
+            &[&tenant, &set],
+        )
+        .await?
+        .get(0);
+    let rows = client
+        .query(
+            "SELECT c.code FROM core_work_calendar_includes i JOIN core_work_calendars c ON c.tenant_id=i.tenant_id AND c.id=i.calendar_id WHERE i.tenant_id=$1 AND i.holiday_set_id=$2 ORDER BY c.code LIMIT $3",
+            &[&tenant, &set, &MAX_ROWS],
+        )
+        .await?
+        .iter()
+        .map(|row| row.get(0))
+        .collect();
+    Ok(Rows { rows, total })
+}
+/// "a, b and 3 more", for a preview.
+fn named(rows: &Rows<String>) -> String {
+    if rows.total == 0 {
+        return "none".into();
+    }
+    let shown: Vec<&str> = rows.rows.iter().take(10).map(String::as_str).collect();
+    match rows.total - shown.len() as i64 {
+        0 => shown.join(", "),
+        more => format!("{} and {more} more", shown.join(", ")),
+    }
+}
+async fn exception_row(
+    client: &(impl GenericClient + Sync),
+    tenant: i64,
+    calendar: i64,
+    id: i64,
+) -> Result<Option<Exception>> {
+    client
+        .query_opt(
+            "SELECT id,starts_on::text,ends_on::text,name,day_type,periods FROM core_work_calendar_exceptions WHERE tenant_id=$1 AND calendar_id=$2 AND id=$3",
+            &[&tenant, &calendar, &id],
+        )
+        .await?
+        .as_ref()
+        .map(exception)
+        .transpose()
+}
+
+/// One calendar: its first [`MAX_ROWS`] rule versions and included sets, and
+/// page `page` of its exceptions.
+pub(crate) async fn calendar(
+    client: &(impl GenericClient + Sync),
+    tenant: i64,
+    code: &str,
+    page: i64,
+) -> Result<Calendar> {
+    if !(1..=100_000).contains(&page) {
+        return Err(Error::Invalid);
+    }
+    let row = calendar_row(client, tenant, code).await?;
+    let id = row.id;
+    let count = |table: &'static str| async move {
+        Ok::<i64, Error>(
+            client
+                .query_one(
+                    &format!("SELECT count(*) FROM {table} WHERE tenant_id=$1 AND calendar_id=$2"),
+                    &[&tenant, &id],
+                )
+                .await?
+                .get(0),
+        )
+    };
     let rules = client
         .query(
-            "SELECT effective_from::text,timezone,week FROM core_work_calendar_rules WHERE tenant_id=$1 AND calendar_id=$2 ORDER BY effective_from",
-            &[&tenant, &id],
+            "SELECT effective_from::text,timezone,week FROM core_work_calendar_rules WHERE tenant_id=$1 AND calendar_id=$2 ORDER BY effective_from LIMIT $3",
+            &[&tenant, &id, &MAX_ROWS],
         )
         .await?
         .iter()
         .map(|row| {
             Ok(Rule {
-                effective_from: row.get::<_, &str>(0).parse().map_err(|_| Error::Internal)?,
+                effective_from: parse_date(row.get(0))?,
                 timezone: row.get(1),
                 week: Week::from_stored(&row.get(2))?,
             })
@@ -95,8 +277,8 @@ pub(crate) async fn calendar(
         .collect::<Result<Vec<_>>>()?;
     let holiday_sets = client
         .query(
-            "SELECT s.code FROM core_work_calendar_includes i JOIN core_work_calendar_holiday_sets s ON s.tenant_id=i.tenant_id AND s.id=i.holiday_set_id WHERE i.tenant_id=$1 AND i.calendar_id=$2 ORDER BY s.code",
-            &[&tenant, &id],
+            "SELECT s.code FROM core_work_calendar_includes i JOIN core_work_calendar_holiday_sets s ON s.tenant_id=i.tenant_id AND s.id=i.holiday_set_id WHERE i.tenant_id=$1 AND i.calendar_id=$2 ORDER BY s.code LIMIT $3",
+            &[&tenant, &id, &MAX_ROWS],
         )
         .await?
         .iter()
@@ -104,84 +286,86 @@ pub(crate) async fn calendar(
         .collect();
     let exceptions = client
         .query(
-            "SELECT id,starts_on::text,ends_on::text,name,day_type,periods FROM core_work_calendar_exceptions WHERE tenant_id=$1 AND calendar_id=$2 ORDER BY starts_on",
-            &[&tenant, &id],
+            "SELECT id,starts_on::text,ends_on::text,name,day_type,periods FROM core_work_calendar_exceptions WHERE tenant_id=$1 AND calendar_id=$2 ORDER BY starts_on LIMIT $3 OFFSET $4",
+            &[&tenant, &id, &MAX_ROWS, &offset(page, MAX_ROWS)],
         )
         .await?
         .iter()
         .map(exception)
         .collect::<Result<Vec<_>>>()?;
-    Ok((
-        id,
-        Calendar {
-            code: row.get(1),
-            name: row.get(2),
-            status: row.get(3),
-            substitute: Substitute::parse(row.get(4)).ok_or(Error::Internal)?,
-            version: row.get(5),
-            rules,
-            holiday_sets,
-            exceptions,
+    Ok(Calendar {
+        code: code.to_owned(),
+        name: row.name,
+        status: row.status,
+        substitute: row.substitute,
+        version: row.version,
+        rules: Rows {
+            rows: rules,
+            total: count("core_work_calendar_rules").await?,
         },
-    ))
+        holiday_sets: Rows {
+            rows: holiday_sets,
+            total: count("core_work_calendar_includes").await?,
+        },
+        exceptions: Rows {
+            rows: exceptions,
+            total: count("core_work_calendar_exceptions").await?,
+        },
+    })
 }
-/// A holiday set and its holidays from `from` to `to` (all when omitted).
+/// A holiday set: page `page` of its holidays from `from` to `to` (all
+/// dates when omitted) and the first [`MAX_ROWS`] calendars including it.
 pub(crate) async fn holiday_set(
     client: &(impl GenericClient + Sync),
     tenant: i64,
     code: &str,
     from: Option<Date>,
     to: Option<Date>,
-) -> Result<(i64, HolidaySet)> {
-    let row = client
-        .query_opt(
-            "SELECT id,code,name,country_iso,admin1_code,version FROM core_work_calendar_holiday_sets WHERE tenant_id=$1 AND code=$2",
-            &[&tenant, &code],
-        )
-        .await?
-        .ok_or(Error::NotFound)?;
-    let id: i64 = row.get(0);
+    page: i64,
+) -> Result<HolidaySet> {
+    if !(1..=100_000).contains(&page) {
+        return Err(Error::Invalid);
+    }
+    let row = set_row(client, tenant, code).await?;
     let (from, to) = (
         from.map(|d| d.to_string())
             .unwrap_or_else(|| "-infinity".into()),
         to.map(|d| d.to_string())
             .unwrap_or_else(|| "infinity".into()),
     );
+    let total: i64 = client
+        .query_one(
+            "SELECT count(*) FROM core_work_calendar_holidays WHERE tenant_id=$1 AND holiday_set_id=$2 AND date BETWEEN $3::text::date AND $4::text::date",
+            &[&tenant, &row.id, &from, &to],
+        )
+        .await?
+        .get(0);
     let holidays = client
         .query(
-            "SELECT date::text,name FROM core_work_calendar_holidays WHERE tenant_id=$1 AND holiday_set_id=$2 AND date BETWEEN $3::text::date AND $4::text::date ORDER BY date",
-            &[&tenant, &id, &from, &to],
+            "SELECT date::text,name FROM core_work_calendar_holidays WHERE tenant_id=$1 AND holiday_set_id=$2 AND date BETWEEN $3::text::date AND $4::text::date ORDER BY date LIMIT $5 OFFSET $6",
+            &[&tenant, &row.id, &from, &to, &MAX_ROWS, &offset(page, MAX_ROWS)],
         )
         .await?
         .iter()
         .map(|row| {
             Ok(Holiday {
-                date: row.get::<_, &str>(0).parse().map_err(|_| Error::Internal)?,
+                date: parse_date(row.get(0))?,
                 name: row.get(1),
             })
         })
         .collect::<Result<Vec<_>>>()?;
-    let calendars = client
-        .query(
-            "SELECT c.code FROM core_work_calendar_includes i JOIN core_work_calendars c ON c.tenant_id=i.tenant_id AND c.id=i.calendar_id WHERE i.tenant_id=$1 AND i.holiday_set_id=$2 ORDER BY c.code",
-            &[&tenant, &id],
-        )
-        .await?
-        .iter()
-        .map(|row| row.get(0))
-        .collect();
-    Ok((
-        id,
-        HolidaySet {
-            code: row.get(1),
-            name: row.get(2),
-            country_iso: row.get(3),
-            admin1_code: row.get(4),
-            version: row.get(5),
-            calendars,
-            holidays,
+    Ok(HolidaySet {
+        code: code.to_owned(),
+        name: row.name,
+        country_iso: row.country_iso,
+        admin1_code: row.admin1_code,
+        version: row.version,
+        calendars: including(client, tenant, row.id).await?,
+        holidays: Rows {
+            rows: holidays,
+            total,
         },
-    ))
+    })
 }
 
 /// One reviewed write, as its contract names it.
@@ -525,6 +709,7 @@ impl WorkCalendars {
                         })
                     })
                     .collect();
+                let listed = remove.len();
                 let remove: Vec<Date> = remove
                     .iter()
                     .enumerate()
@@ -534,6 +719,25 @@ impl WorkCalendars {
                 dates.sort();
                 if dates.windows(2).any(|pair| pair[0] == pair[1]) {
                     errors.push(FieldError::new("add", "names each date once"));
+                }
+                // Positions match the input only when every date parsed.
+                let positioned = if remove.len() == listed {
+                    &remove[..]
+                } else {
+                    &[]
+                };
+                for (index, day) in positioned.iter().enumerate() {
+                    if remove[..index].contains(day) {
+                        errors.push(FieldError::new(
+                            &format!("remove.{index}"),
+                            "is already removed earlier in this list",
+                        ));
+                    } else if dates.binary_search(day).is_ok() {
+                        errors.push(FieldError::new(
+                            &format!("remove.{index}"),
+                            "is also in add: rename a holiday by adding it",
+                        ));
+                    }
                 }
                 if add.is_empty() && remove.is_empty() {
                     errors.push(FieldError::new("add", "add or remove at least one holiday"));
@@ -616,7 +820,7 @@ impl WorkCalendars {
     }
 
     /// Check a prepared write against stored state, as a preview shows it.
-    /// `apply` runs it again under the row lock.
+    /// `apply` runs it again under the row locks.
     pub(crate) async fn review(
         &self,
         client: &(impl GenericClient + Sync),
@@ -650,7 +854,7 @@ impl WorkCalendars {
                 substitute,
                 status,
             } => {
-                let (_, calendar) = known(calendar(client, tenant, code).await)?;
+                let calendar = known(calendar_row(client, tenant, code).await)?;
                 fenced(calendar.version, *version)?;
                 let mut changes = Vec::new();
                 if let Some(name) = name {
@@ -662,7 +866,7 @@ impl WorkCalendars {
                 if let Some(status) = status {
                     changes.push(format!("status {status}"));
                 }
-                json!({"summary": format!("Update calendar {code}: {}", if changes.is_empty() { "nothing".into() } else { changes.join(", ") }), "before": calendar.to_json()})
+                json!({"summary": format!("Update calendar {code}: {}", if changes.is_empty() { "nothing".into() } else { changes.join(", ") }), "before": calendar.to_json(code)})
             }
             Prepared::Rule {
                 code,
@@ -670,12 +874,15 @@ impl WorkCalendars {
                 effective_from,
                 ..
             } => {
-                let (_, calendar) = known(calendar(client, tenant, code).await)?;
+                let calendar = known(calendar_row(client, tenant, code).await)?;
                 fenced(calendar.version, *version)?;
-                let replaces = calendar
-                    .rules
-                    .iter()
-                    .any(|rule| rule.effective_from == *effective_from);
+                let replaces = client
+                    .query_opt(
+                        "SELECT 1 FROM core_work_calendar_rules WHERE tenant_id=$1 AND calendar_id=$2 AND effective_from=$3::text::date",
+                        &[&tenant, &calendar.id, &effective_from.to_string()],
+                    )
+                    .await?
+                    .is_some();
                 json!({"summary": format!("{} the week of calendar {code} from {effective_from}", if replaces { "Replace" } else { "Set" })})
             }
             Prepared::AddException {
@@ -686,27 +893,31 @@ impl WorkCalendars {
                 name,
                 day,
             } => {
-                let (_, calendar) = known(calendar(client, tenant, code).await)?;
+                let calendar = known(calendar_row(client, tenant, code).await)?;
                 fenced(calendar.version, *version)?;
-                if let Some(other) = calendar
-                    .exceptions
-                    .iter()
-                    .find(|e| e.starts_on <= *ends_on && e.ends_on >= *starts_on)
+                if let Some(other) = client
+                    .query_opt(
+                        "SELECT name,starts_on::text,ends_on::text FROM core_work_calendar_exceptions WHERE tenant_id=$1 AND calendar_id=$2 AND starts_on<=$4::text::date AND ends_on>=$3::text::date ORDER BY starts_on LIMIT 1",
+                        &[&tenant, &calendar.id, &starts_on.to_string(), &ends_on.to_string()],
+                    )
+                    .await?
                 {
                     return Err(invalid(
                         "starts_on",
                         format!(
                             "overlaps the exception {} ({} to {})",
-                            other.name, other.starts_on, other.ends_on
+                            other.get::<_, &str>(0),
+                            other.get::<_, &str>(1),
+                            other.get::<_, &str>(2)
                         ),
                     ));
                 }
                 json!({"summary": format!("Make {starts_on} to {ends_on} {} on calendar {code}: {name}", day.day_type.as_str())})
             }
             Prepared::RemoveException { code, version, id } => {
-                let (_, calendar) = known(calendar(client, tenant, code).await)?;
+                let calendar = known(calendar_row(client, tenant, code).await)?;
                 fenced(calendar.version, *version)?;
-                let Some(found) = calendar.exceptions.iter().find(|e| e.id == *id) else {
+                let Some(found) = exception_row(client, tenant, calendar.id, *id).await? else {
                     return Err(invalid(
                         "exception_id",
                         "is not an exception of this calendar",
@@ -721,9 +932,10 @@ impl WorkCalendars {
                 json!({"summary": format!("Create holiday set {name} ({code})")})
             }
             Prepared::UpdateSet { code, version, .. } => {
-                let (_, set) = known(holiday_set(client, tenant, code, None, None).await)?;
+                let set = known(set_row(client, tenant, code).await)?;
                 fenced(set.version, *version)?;
-                json!({"summary": format!("Update holiday set {code}"), "calendars": set.calendars})
+                let calendars = including(client, tenant, set.id).await?;
+                json!({"summary": format!("Update holiday set {code}"), "calendars": calendars.rows, "calendars_total": calendars.total})
             }
             Prepared::Holidays {
                 code,
@@ -731,9 +943,33 @@ impl WorkCalendars {
                 add,
                 remove,
             } => {
-                let (_, set) = known(holiday_set(client, tenant, code, None, None).await)?;
+                let set = known(set_row(client, tenant, code).await)?;
                 fenced(set.version, *version)?;
-                json!({"summary": format!("Holiday set {code}: {} added or renamed, {} removed; calendars that include it: {}", add.len(), remove.len(), if set.calendars.is_empty() { "none".into() } else { set.calendars.join(", ") }), "calendars": set.calendars})
+                // A removal names a date the set holds: one it does not would
+                // remove nothing.
+                let wanted: Vec<String> = remove.iter().map(Date::to_string).collect();
+                let held: Vec<String> = client
+                    .query(
+                        "SELECT date::text FROM core_work_calendar_holidays WHERE tenant_id=$1 AND holiday_set_id=$2 AND date=ANY($3::text[]::date[])",
+                        &[&tenant, &set.id, &wanted],
+                    )
+                    .await?
+                    .iter()
+                    .map(|row| row.get(0))
+                    .collect();
+                let absent: Vec<FieldError> = wanted
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, day)| !held.contains(day))
+                    .map(|(index, _)| {
+                        FieldError::new(&format!("remove.{index}"), "is not a holiday of this set")
+                    })
+                    .collect();
+                if !absent.is_empty() {
+                    return Err(WriteError::Invalid(absent));
+                }
+                let calendars = including(client, tenant, set.id).await?;
+                json!({"summary": format!("Holiday set {code}: {} added or renamed, {} removed; calendars that include it: {}", add.len(), remove.len(), named(&calendars)), "calendars": calendars.rows, "calendars_total": calendars.total})
             }
             Prepared::Include {
                 code,
@@ -741,7 +977,7 @@ impl WorkCalendars {
                 set,
                 included,
             } => {
-                let (_, calendar) = known(calendar(client, tenant, code).await)?;
+                let calendar = known(calendar_row(client, tenant, code).await)?;
                 fenced(calendar.version, *version)?;
                 if !exists(client, "core_work_calendar_holiday_sets", tenant, set).await? {
                     return Err(invalid(
@@ -763,7 +999,14 @@ impl WorkCalendars {
     ) -> WriteResult<Value> {
         authorize_key(tx.sql(), scope, MANAGE).await?;
         let tenant = scope.tenant();
-        // Serialize writers of one calendar or set before reviewing.
+        let lock_set =
+            "SELECT id FROM core_work_calendar_holiday_sets WHERE tenant_id=$1 AND code=$2";
+        let lock_calendar =
+            "SELECT id FROM core_work_calendars WHERE tenant_id=$1 AND code=$2 FOR UPDATE";
+        // Serialize writers of one calendar or set before reviewing. A
+        // holiday write locks its set, and an inclusion its calendar and then
+        // the set (shared), so whichever commits second reads the other's
+        // rows and records `changed` for the pair.
         match &prepared {
             Prepared::Create { .. } | Prepared::CreateSet { .. } => {
                 tx.sql()
@@ -775,17 +1018,20 @@ impl WorkCalendars {
             }
             Prepared::UpdateSet { code, .. } | Prepared::Holidays { code, .. } => {
                 tx.sql()
-                    .query_opt("SELECT id FROM core_work_calendar_holiday_sets WHERE tenant_id=$1 AND code=$2 FOR UPDATE", &[&tenant, code])
+                    .query_opt(&format!("{lock_set} FOR UPDATE"), &[&tenant, code])
+                    .await?;
+            }
+            Prepared::Include { code, set, .. } => {
+                tx.sql().query_opt(lock_calendar, &[&tenant, code]).await?;
+                tx.sql()
+                    .query_opt(&format!("{lock_set} FOR SHARE"), &[&tenant, set])
                     .await?;
             }
             Prepared::Update { code, .. }
             | Prepared::Rule { code, .. }
             | Prepared::AddException { code, .. }
-            | Prepared::RemoveException { code, .. }
-            | Prepared::Include { code, .. } => {
-                tx.sql()
-                    .query_opt("SELECT id FROM core_work_calendars WHERE tenant_id=$1 AND code=$2 FOR UPDATE", &[&tenant, code])
-                    .await?;
+            | Prepared::RemoveException { code, .. } => {
+                tx.sql().query_opt(lock_calendar, &[&tenant, code]).await?;
             }
         }
         self.review(tx.sql(), tenant, &prepared).await?;
@@ -818,7 +1064,8 @@ impl WorkCalendars {
                 status,
                 ..
             } => {
-                let (id, before) = known(calendar(tx.sql(), tenant, &code).await)?;
+                let before = known(calendar_row(tx.sql(), tenant, &code).await)?;
+                let id = before.id;
                 let old = json!({"name": before.name, "status": before.status, "substitute": before.substitute.as_str()});
                 let new = json!({
                     "name": name.clone().unwrap_or(before.name.clone()),
@@ -842,18 +1089,28 @@ impl WorkCalendars {
                 week,
                 ..
             } => {
-                let (id, before) = known(calendar(tx.sql(), tenant, &code).await)?;
-                let timezone = timezone.unwrap_or_else(|| {
-                    before
-                        .rules
-                        .iter()
-                        .rev()
-                        .find(|rule| rule.effective_from <= effective_from)
-                        .or(before.rules.first())
-                        .map_or("UTC".into(), |rule| rule.timezone.clone())
-                });
-                let (stored_week, from) = (week.to_stored(), effective_from.to_string());
-                changed.push((code.clone(), Some(effective_from), None));
+                let id = known(calendar_row(tx.sql(), tenant, &code).await)?.id;
+                let from = effective_from.to_string();
+                // The version in force on the date, else the first.
+                let (in_force, first) = {
+                    let row = tx.sql().query_one(
+                        "SELECT (SELECT timezone FROM core_work_calendar_rules WHERE tenant_id=$1 AND calendar_id=$2 ORDER BY effective_from<=$3::text::date DESC, CASE WHEN effective_from<=$3::text::date THEN effective_from END DESC NULLS LAST, effective_from LIMIT 1),(SELECT min(effective_from)::text FROM core_work_calendar_rules WHERE tenant_id=$1 AND calendar_id=$2)",
+                        &[&tenant, &id, &from],
+                    ).await?;
+                    let first: Option<&str> = row.get(1);
+                    (
+                        row.get::<_, Option<String>>(0),
+                        first.map(parse_date).transpose()?,
+                    )
+                };
+                let timezone = timezone.or(in_force).unwrap_or_else(|| "UTC".into());
+                // The first version also governs every earlier date, so
+                // setting or replacing it moves those dates too.
+                let lower = first
+                    .filter(|first| effective_from > *first)
+                    .map(|_| effective_from);
+                changed.push((code.clone(), lower, None));
+                let stored_week = week.to_stored();
                 let reply = json!({"code": code, "effective_from": from, "timezone": timezone, "week": week.to_json()});
                 tx.mutate(move |sql| Box::pin(async move {
                     let old = sql.query_opt("SELECT timezone,week FROM core_work_calendar_rules WHERE tenant_id=$1 AND calendar_id=$2 AND effective_from=$3::text::date", &[&tenant, &id, &from]).await?.map(|row| json!({"timezone": row.get::<_, String>(0), "week": row.get::<_, Value>(1)}));
@@ -871,7 +1128,7 @@ impl WorkCalendars {
                 day,
                 ..
             } => {
-                let (id, _) = known(calendar(tx.sql(), tenant, &code).await)?;
+                let id = known(calendar_row(tx.sql(), tenant, &code).await)?.id;
                 changed.push((code.clone(), Some(starts_on), Some(ends_on)));
                 let (from, until, periods) = (
                     starts_on.to_string(),
@@ -894,14 +1151,13 @@ impl WorkCalendars {
                 id: exception,
                 ..
             } => {
-                let (id, before) = known(calendar(tx.sql(), tenant, &code).await)?;
-                let found = before
-                    .exceptions
-                    .iter()
-                    .find(|e| e.id == exception)
+                let id = known(calendar_row(tx.sql(), tenant, &code).await)?.id;
+                let found = exception_row(tx.sql(), tenant, id, exception)
+                    .await?
                     .ok_or(WriteError::NotFound)?;
                 changed.push((code.clone(), Some(found.starts_on), Some(found.ends_on)));
-                let old = json!({"calendar": code, "starts_on": found.starts_on.to_string(), "ends_on": found.ends_on.to_string(), "name": found.name, "type": found.day.day_type.as_str()});
+                // The same facts the add path records, periods included.
+                let old = json!({"calendar": code, "starts_on": found.starts_on.to_string(), "ends_on": found.ends_on.to_string(), "name": found.name, "type": found.day.day_type.as_str(), "periods": crate::model::periods_json(&found.day.periods)});
                 tx.mutate(move |sql| Box::pin(async move {
                     sql.execute("DELETE FROM core_work_calendar_exceptions WHERE tenant_id=$1 AND calendar_id=$2 AND id=$3", &[&tenant, &id, &exception]).await?;
                     sql.execute("UPDATE core_work_calendars SET version=version+1,updated_at=now() WHERE tenant_id=$1 AND id=$2", &[&tenant, &id]).await?;
@@ -926,7 +1182,8 @@ impl WorkCalendars {
             Prepared::UpdateSet {
                 code, name, place, ..
             } => {
-                let (id, before) = known(holiday_set(tx.sql(), tenant, &code, None, None).await)?;
+                let before = known(set_row(tx.sql(), tenant, &code).await)?;
+                let id = before.id;
                 let old = json!({"name": before.name, "country_iso": before.country_iso, "admin1_code": before.admin1_code});
                 let (country_iso, admin1_code) =
                     place.unwrap_or((before.country_iso.clone(), before.admin1_code.clone()));
@@ -941,22 +1198,14 @@ impl WorkCalendars {
             Prepared::Holidays {
                 code, add, remove, ..
             } => {
-                let (id, before) = known(holiday_set(tx.sql(), tenant, &code, None, None).await)?;
+                let id = known(set_row(tx.sql(), tenant, &code).await)?.id;
                 let touched: Vec<Date> = add
                     .iter()
                     .map(|h| h.date)
                     .chain(remove.iter().copied())
                     .collect();
-                if let (Some(first), Some(last)) = (touched.iter().min(), touched.iter().max()) {
-                    let last = last
-                        .checked_add(crate::resolve::SUBSTITUTE_SEARCH.days())
-                        .unwrap_or(*last);
-                    for calendar in &before.calendars {
-                        changed.push((calendar.clone(), Some(*first), Some(last)));
-                    }
-                }
-                let (added, removed) = (add.len(), remove.len());
-                tx.mutate(move |sql| Box::pin(async move {
+                let added = add.len();
+                let removed: usize = tx.mutate(move |sql| Box::pin(async move {
                     let mut changes = Vec::new();
                     for holiday in &remove {
                         let day = holiday.to_string();
@@ -964,6 +1213,7 @@ impl WorkCalendars {
                             changes.push(Change { kind: "core/work_calendar.holiday".into(), id: row.get(0), old: json!({"set": code, "date": day, "name": row.get::<_, String>(1)}), new: json!({}) });
                         }
                     }
+                    let removed = changes.len();
                     for holiday in &add {
                         let day = holiday.date.to_string();
                         let old = sql.query_opt("SELECT name FROM core_work_calendar_holidays WHERE tenant_id=$1 AND holiday_set_id=$2 AND date=$3::text::date", &[&tenant, &id, &day]).await?.map(|row| json!({"set": code, "date": day, "name": row.get::<_, String>(0)}));
@@ -971,8 +1221,13 @@ impl WorkCalendars {
                         changes.push(Change { kind: "core/work_calendar.holiday".into(), id: row, old: old.unwrap_or(json!({})), new: json!({"set": code, "date": day, "name": holiday.name}) });
                     }
                     sql.execute("UPDATE core_work_calendar_holiday_sets SET version=version+1,updated_at=now() WHERE tenant_id=$1 AND id=$2", &[&tenant, &id]).await?;
-                    Ok(((), changes))
+                    Ok((removed, changes))
                 })).await?;
+                if let (Some(first), Some(last)) = (touched.iter().min(), touched.iter().max()) {
+                    for (calendar, to) in reach(tx.sql(), tenant, Some(id), None, *last).await? {
+                        changed.push((calendar, Some(*first), Some(to)));
+                    }
+                }
                 json!({"added_or_renamed": added, "removed": removed})
             }
             Prepared::Include {
@@ -981,20 +1236,29 @@ impl WorkCalendars {
                 included,
                 ..
             } => {
-                let (id, before) = known(calendar(tx.sql(), tenant, &code).await)?;
-                let (set_id, holidays) =
-                    known(holiday_set(tx.sql(), tenant, &set, None, None).await)?;
-                let already = before.holiday_sets.contains(&set);
+                let id = known(calendar_row(tx.sql(), tenant, &code).await)?.id;
+                let set_id = known(set_row(tx.sql(), tenant, &set).await)?.id;
+                let already = tx
+                    .sql()
+                    .query_opt(
+                        "SELECT 1 FROM core_work_calendar_includes WHERE tenant_id=$1 AND calendar_id=$2 AND holiday_set_id=$3",
+                        &[&tenant, &id, &set_id],
+                    )
+                    .await?
+                    .is_some();
                 if already != included {
-                    if let (Some(first), Some(last)) =
-                        (holidays.holidays.first(), holidays.holidays.last())
-                    {
-                        let last = last
-                            .date
-                            .checked_add(crate::resolve::SUBSTITUTE_SEARCH.days())
-                            .unwrap_or(last.date);
-                        changed.push((code.clone(), Some(first.date), Some(last)));
-                    }
+                    let span = tx
+                        .sql()
+                        .query_one(
+                            "SELECT min(date)::text,max(date)::text FROM core_work_calendar_holidays WHERE tenant_id=$1 AND holiday_set_id=$2",
+                            &[&tenant, &set_id],
+                        )
+                        .await?;
+                    let (first, last): (Option<&str>, Option<&str>) = (span.get(0), span.get(1));
+                    let (first, last) = (
+                        first.map(parse_date).transpose()?,
+                        last.map(parse_date).transpose()?,
+                    );
                     let facts = json!({"calendar": code, "holiday_set": set});
                     tx.mutate(move |sql| Box::pin(async move {
                         if included {
@@ -1006,13 +1270,22 @@ impl WorkCalendars {
                         let (old, new) = if included { (json!({}), facts) } else { (facts, json!({})) };
                         Ok(((), vec![Change { kind: "core/work_calendar.include".into(), id: set_id, old, new }]))
                     })).await?;
+                    if let (Some(first), Some(last)) = (first, last) {
+                        for (calendar, to) in reach(tx.sql(), tenant, None, Some(id), last).await? {
+                            changed.push((calendar, Some(first), Some(to)));
+                        }
+                    }
                 }
                 json!({"code": code, "holiday_set": set, "included": included})
             }
         };
+        // One event per logical change: a plan may change one calendar
+        // several times in its transaction, so the key names the range too;
+        // recording the very same change twice is a no-op.
         let trace = tx.context().trace_id.clone();
+        let day = |date: Option<Date>| date.map_or("-".to_owned(), |d| d.to_string());
         for (calendar, from, to) in changed {
-            let key = format!("{trace}:{calendar}");
+            let key = format!("{trace}:{calendar}:{}:{}", day(from), day(to));
             self.events
                 .record(
                     tx,

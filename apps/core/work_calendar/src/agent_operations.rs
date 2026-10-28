@@ -3,8 +3,8 @@
 //! reviewed writes build calendars, their weeks, exceptions and holiday sets
 //! (entering a year of holidays is one call). No Bilimbi counterpart.
 use crate::{
-    store::Action, Calendar, TimeError, Timetable, WorkCalendars, WriteError, LIST, MANAGE,
-    MAX_WINDOW_DAYS, SEARCH_DAYS, VIEW,
+    store::Action, Calendar, Listing, TimeError, Timetable, WorkCalendars, WriteError, LIST,
+    MANAGE, MAX_PAGE_SIZE, MAX_ROWS, MAX_WINDOW_DAYS, SEARCH_DAYS, VIEW,
 };
 use bilibi_agent_api::{
     json::{Data, Output},
@@ -78,6 +78,40 @@ fn shift(date: Date, days: i64) -> bilibi_agent_api::Result<Date> {
     date.checked_add(days.days())
         .map_err(|_| field("date", "is out of range"))
 }
+/// An optional whole number from `min` to `max`, `default` when omitted.
+fn number(
+    input: &Value,
+    name: &str,
+    min: i64,
+    max: i64,
+    default: i64,
+) -> bilibi_agent_api::Result<i64> {
+    match input.get(name) {
+        None | Some(Value::Null) => Ok(default),
+        Some(value) => value
+            .as_i64()
+            .filter(|n| (min..=max).contains(n))
+            .ok_or_else(|| field(name, &format!("must be a whole number from {min} to {max}"))),
+    }
+}
+fn page(input: &Value) -> bilibi_agent_api::Result<i64> {
+    number(input, "page", 1, 100_000, 1)
+}
+fn listing(input: &Value) -> bilibi_agent_api::Result<Listing> {
+    let search = match input.get("search") {
+        None | Some(Value::Null) => String::new(),
+        Some(value) => value
+            .as_str()
+            .filter(|text| text.chars().count() <= 200)
+            .ok_or_else(|| field("search", "must be text of at most 200 characters"))?
+            .to_owned(),
+    };
+    Ok(Listing {
+        search,
+        page: page(input)?,
+        page_size: number(input, "page_size", 1, MAX_PAGE_SIZE, MAX_PAGE_SIZE)?,
+    })
+}
 /// The UTC date of an instant: a window around it covers its civil date in
 /// any zone.
 fn utc_date(at: Timestamp) -> Date {
@@ -87,6 +121,7 @@ fn utc_date(at: Timestamp) -> Date {
 #[derive(Clone, Copy)]
 enum Read {
     List,
+    HolidaySets,
     Get,
     Days,
     BusinessTime,
@@ -107,14 +142,23 @@ impl ReadHandler for Read {
             let code = input["code"].as_str().unwrap_or_default();
             let data = match self {
                 Self::List => {
-                    let summary = calendars.summary(scope).await?;
+                    let listing = listing(input)?;
+                    let page = calendars.calendars(scope, &listing).await?;
                     json!({
-                        "calendars": summary.calendars.iter().map(|(code, name, status)| json!({"code": code, "name": name, "status": status})).collect::<Vec<_>>(),
-                        "holiday_sets": summary.holiday_sets.iter().map(|(code, name, country, admin1)| json!({"code": code, "name": name, "country_iso": country, "admin1_code": admin1})).collect::<Vec<_>>(),
+                        "calendars": page.rows.iter().map(|c| json!({"code": c.code, "name": c.name, "status": c.status})).collect::<Vec<_>>(),
+                        "total": page.total, "page": listing.page, "page_size": listing.page_size,
+                    })
+                }
+                Self::HolidaySets => {
+                    let listing = listing(input)?;
+                    let page = calendars.holiday_sets(scope, &listing).await?;
+                    json!({
+                        "holiday_sets": page.rows.iter().map(|s| json!({"code": s.code, "name": s.name, "country_iso": s.country_iso, "admin1_code": s.admin1_code})).collect::<Vec<_>>(),
+                        "total": page.total, "page": listing.page, "page_size": listing.page_size,
                     })
                 }
                 Self::Get => calendars
-                    .calendar(scope, code)
+                    .calendar(scope, code, page(input)?)
                     .await
                     .map(|calendar: Calendar| calendar.to_json())
                     .map_err(|error| read_refusal(error, "code"))?,
@@ -126,7 +170,13 @@ impl ReadHandler for Read {
                         }
                     };
                     calendars
-                        .holiday_set(scope, code, optional("from")?, optional("to")?)
+                        .holiday_set(
+                            scope,
+                            code,
+                            optional("from")?,
+                            optional("to")?,
+                            page(input)?,
+                        )
                         .await
                         .map_err(|error| read_refusal(error, "code"))?
                         .to_json()
@@ -293,14 +343,19 @@ fn code_schema(description: &str) -> Value {
     json!({"type":"string","maxLength":64,"description":description})
 }
 fn read_schema(operation: Read) -> Value {
+    let page = json!({"type":"integer","minimum":1,"maximum":100_000,"description":format!("Default 1; {MAX_ROWS} a page")});
     match operation {
-        Read::List => json!({"type":"object","properties":{}}),
+        Read::List | Read::HolidaySets => json!({"type":"object","properties":{
+            "search":{"type":"string","maxLength":200,"description":"Part of a code or name; default all"},
+            "page":{"type":"integer","minimum":1,"maximum":100_000,"description":"Default 1"},
+            "page_size":{"type":"integer","minimum":1,"maximum":MAX_PAGE_SIZE,"description":format!("Default {MAX_PAGE_SIZE}")}
+        }}),
         Read::Get => {
-            json!({"type":"object","required":["code"],"properties":{"code":code_schema("A calendar code from core.work_calendar.list")}})
+            json!({"type":"object","required":["code"],"properties":{"code":code_schema("A calendar code from core.work_calendar.list"),"page":page}})
         }
         Read::HolidaySet => json!({"type":"object","required":["code"],"properties":{
-            "code":code_schema("A holiday set code from core.work_calendar.list"),
-            "from":{"type":"string","format":"date"},"to":{"type":"string","format":"date"}
+            "code":code_schema("A holiday set code from core.work_calendar.holiday_set.list"),
+            "from":{"type":"string","format":"date"},"to":{"type":"string","format":"date"},"page":page
         }}),
         Read::Days => json!({"type":"object","required":["code","from","to"],"properties":{
             "code":code_schema("A calendar code"),
@@ -381,7 +436,7 @@ fn write_schema(action: Action) -> Value {
     }
 }
 fn read_output() -> Value {
-    json!({"type":"object","description":"Calendars and holiday sets as stored; days carry date, type (working, rest, off, holiday), weekly (the week's type underneath), periods, reason (week, holiday, substitute, exception) and timezone; business_time gives result and beyond (true when the answer lies past the 366-day search or the calendar has no working time)."})
+    json!({"type":"object","description":"Calendars and holiday sets as stored. Lists give one page and its total; a calendar's rules, holiday_sets and exceptions and a set's calendars and holidays are each {rows, total}, exceptions and holidays a page of 400 at a time. Days carry date, type (working, rest, off, holiday), weekly (the week's type underneath), periods, reason (week, holiday, substitute, exception) and timezone; business_time gives result and beyond (true when the answer lies past the 366-day search or the calendar has no working time)."})
 }
 fn write_output() -> Value {
     json!({"type":"object","description":"The stored facts after the write. Each write that moves dates records core/work_calendar.changed per affected calendar."})
@@ -421,6 +476,9 @@ macro_rules! write {
 }
 fn list_schema() -> Value {
     read_schema(Read::List)
+}
+fn sets_schema() -> Value {
+    read_schema(Read::HolidaySets)
 }
 fn get_schema() -> Value {
     read_schema(Read::Get)
@@ -463,6 +521,7 @@ fn include_schema() -> Value {
 }
 
 static LIST_OP: Read = Read::List;
+static SETS_OP: Read = Read::HolidaySets;
 static GET_OP: Read = Read::Get;
 static DAYS_OP: Read = Read::Days;
 static BUSINESS_OP: Read = Read::BusinessTime;
@@ -479,7 +538,8 @@ static INCLUDE: Write = Write(Action::Include);
 
 inventory::submit! { Contribution::new(DEFINITIONS, "core/work_calendar", crate::provenance!(), &Definitions {
     operations: &[
-        read!("core.work_calendar.list", "List work calendars", "This tenant's work calendars (code, name, status) and holiday sets.", LIST, LIST_OP, list_schema),
+        read!("core.work_calendar.list", "List work calendars", "This tenant's work calendars (code, name, status), a page at a time, with the total.", LIST, LIST_OP, list_schema),
+        read!("core.work_calendar.holiday_set.list", "List holiday sets", "This tenant's holiday sets (code, name, country, division), a page at a time, with the total.", LIST, SETS_OP, sets_schema),
         read!("core.work_calendar.get", "Get a work calendar", "One calendar: its weekly rule versions, included holiday sets and dated exceptions, with the version to write against.", VIEW, GET_OP, get_schema),
         read!("core.work_calendar.days", "Resolve calendar days", "Each date in a range (at most 731 days) as working, rest, off or holiday, with its opening periods and why.", VIEW, DAYS_OP, days_schema),
         read!("core.work_calendar.business_time", "Business-time arithmetic", "Ask a calendar: is it open at an instant, when does it next open, what instant is a duration of business time later, how much business time lies between two instants, which is the nth working day after a date.", VIEW, BUSINESS_OP, business_schema),

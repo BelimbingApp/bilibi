@@ -10,7 +10,7 @@ Declare a dependency on `core/work_calendar` and resolve `WorkCalendars` from se
 
 | Call | Answers |
 | --- | --- |
-| `choices(scope)` | Active calendars for a picker, by name |
+| `choices(scope, search)` | Active calendars whose code or name contains `search` (empty: any), by name, at most 50 |
 | `check(client, scope, code)` | Whether a record may be assigned `code` now: an active calendar, locked `FOR SHARE` in the caller's transaction. Retired or unknown is `Invalid` |
 | `default_for(scope, company)` | The company's default code (`work_calendar.default`, company over tenant), or `None` when unset, retired or missing |
 | `day(scope, code, date)`, `days(scope, code, from, to)` | Resolved dates |
@@ -30,8 +30,9 @@ Every date resolves to exactly one type, fixed in code (`DayType`): `working` (w
 
 A `Day` gives the date, its type, `weekly` (the week's type underneath, such as a holiday on a rest day), its periods, the `Reason` (week, holiday, substitute, exception) and the zone.
 
-- **Rule versions.** A version holds the zone and the full week from its `effective_from` until the next version; a changed weekend or new hours adds a version and earlier dates keep their rules. The first version also governs any earlier date. Setting a version on an existing date replaces it.
+- **Rule versions.** A version holds the zone and the full week from its `effective_from` until the next version; a changed weekend or new hours adds a version and earlier dates keep their rules. The first version also governs any earlier date, so setting or replacing it changes those too. Setting a version on an existing date replaces it.
 - **Substitutes** (`substitute` per calendar): `none` (default), `rest` (a holiday on a rest day moves) or `rest_and_off` (also on an off day). It moves to the next day the calendar's own week makes working that is not a holiday or another holiday's substitute, at most 14 days on. A gazetted replacement date is entered as an ordinary holiday instead.
+- **Substitutes chain.** Holidays are moved in date order, so one substitute can take the day a later holiday needed, however far back that runs. A load follows the chain back to a gap of more than 14 days without holidays, which no substitute crosses, so a date resolves the same in any window.
 - **Exceptions**: a date or range (at most 366 days) with its own type and, for `working`, periods. Ranges of one calendar never overlap.
 
 ## Periods and zones
@@ -62,15 +63,19 @@ A search looks at most 366 days ahead (`SEARCH_DAYS`) and never past the loaded 
 
 ## Administration
 
-Tenant capabilities `admin.work-calendar.view`, `.list` and `.manage`. Writes recheck `.manage` inside their transaction, are audited (`core/work_calendar.calendar`, `.rule`, `.exception`, `.holiday_set`, `.holiday`, `.include`) and carry a version fence on the calendar or set. Every statement carries the tenant predicate.
+Tenant capabilities `admin.work-calendar.view`, `.list` and `.manage`; the `tenant_owner` role holds all three. Writes recheck `.manage` inside their transaction, are audited (`core/work_calendar.calendar`, `.rule`, `.exception`, `.holiday_set`, `.holiday`, `.include`) and carry a version fence on the calendar or set. Every statement carries the tenant predicate.
+
+- **Locks.** A write locks its calendar or set before reading. A holiday write locks its set, and an inclusion its calendar and then the set (shared), so of a concurrent pair the second to commit sees the other and records `changed`.
+- **Bounded reads.** Lists page (`page`, `page_size` at most 100) with the total. A calendar's rule versions and included sets, and a set's including calendars, come as the first 400 with the total; exceptions and holidays page 400 at a time (`page`).
 
 Agents, and later the pages, use these contracts (ADR 01); writes are reviewed (plan, then commit):
 
 | Operation | Kind | Does |
 | --- | --- | --- |
-| `core.work_calendar.list` | read (list) | Calendars and holiday sets |
-| `core.work_calendar.get` | read | One calendar: versions, sets, exceptions, version |
-| `core.work_calendar.holiday_set.get` | read | One set with its holidays and the calendars including it |
+| `core.work_calendar.list` | read (list) | One page of calendars, by code, with the total; `search` matches code or name |
+| `core.work_calendar.holiday_set.list` | read (list) | One page of holiday sets, the same way |
+| `core.work_calendar.get` | read | One calendar: versions, sets, a page of exceptions, version |
+| `core.work_calendar.holiday_set.get` | read | One set with a page of its holidays (optionally from and to a date) and the calendars including it |
 | `core.work_calendar.days` | read | Resolved dates of a range |
 | `core.work_calendar.business_time` | read | `is_open`, `next_open`, `add`, `elapsed`, `add_working_days`; `beyond: true` is an answer |
 | `core.work_calendar.create` | write | A calendar with its zone (default the tenant's `localization.timezone`), first week and substitute rule |
@@ -78,7 +83,7 @@ Agents, and later the pages, use these contracts (ADR 01); writes are reviewed (
 | `core.work_calendar.rule.set` | write | A week from a date |
 | `core.work_calendar.exception.add` / `.remove` | write | Dated exceptions |
 | `core.work_calendar.holiday_set.create` / `.update` | write | Sets, with country and division |
-| `core.work_calendar.holiday_set.holidays` | write | Add (or rename) and remove up to 400 holidays: a year at a time |
+| `core.work_calendar.holiday_set.holidays` | write | Add (or rename) and remove up to 400 holidays: a year at a time. A removal names a date the set holds, once; the reply counts what was removed |
 | `core.work_calendar.include` | write | Include a set in a calendar, or leave it out |
 
 Setting `work_calendar.default` (tenant and company scopes, null by default) names a calendar code.
@@ -89,12 +94,15 @@ A retired calendar leaves `choices`, fails `check` for a new assignment, and sti
 
 ## Events
 
-Each write that moves dates records `core/work_calendar.changed` in its own transaction, once per affected calendar, with subject the calendar code and payload `{"calendar": code, "from": date | null, "to": date | null}` (null is open-ended; a holiday change extends `to` by 14 days for substitutes). No stored result elsewhere changes: a module with open items, such as SLA due times, subscribes and recomputes them itself.
+Each write that moves dates records `core/work_calendar.changed` in its own transaction, once per affected calendar, with subject the calendar code and payload `{"calendar": code, "from": date | null, "to": date | null}` (null is open-ended). No stored result elsewhere changes: a module with open items, such as SLA due times, subscribes and recomputes them itself.
+
+- **Ranges.** A holiday or inclusion change runs to 14 days past the chain of holidays (each within 14 days of the one before) that starts at its last date, since substitutes displace one another; a calendar that substitutes nothing changes only the holidays' dates. Setting or replacing the first rule version is `from: null`, since it governs every earlier date.
+- **One event per change.** A reviewed plan that changes one calendar twice records two events; recording the very same change again is a no-op.
 
 ## Not here
 
-Shifts, rosters and attendance; pay rates by day type and leave-day counting; SLA, voice-menu and routing logic; holiday feeds, file import and iCalendar; per-person calendars; meeting and booking calendars. Calendar pages, the month view and the day-type tile come in a later change.
+Shifts, rosters and attendance; pay rates by day type and leave-day counting; SLA, voice-menu and routing logic; holiday feeds, file import and iCalendar; per-person calendars; meeting and booking calendars. Calendar pages, the month view and the day-type tile come in a later change ([#209](https://github.com/BelimbingApp/bilibi/issues/209)), as do installation-wide holiday sets ([#210](https://github.com/BelimbingApp/bilibi/issues/210)).
 
 ## Walkthrough
 
-On a disposable database, set `DATABASE_URL`, `BILIBI_WORK_CALENDAR_DEMO=disposable`, `BILIBI_SETTINGS_KEY` and `BILIBI_USER_SIGNING_KEY`, then run `cargo run -p bilibi-work-calendar --example work-calendar-walkthrough`. It migrates, installs the walkthrough fixture and, through the reviewed contracts, builds a Monday–Friday calendar with a lunch break, national and state holiday sets, a shutdown, a special working Saturday and a half day; prints the resolved days with their reasons, substitutes under a Friday–Saturday weekend and a new rule version; answers each `business_time` operation across breaks, weekends, holidays, a close boundary, a closed start, a daylight-saving gap and fold and a period past midnight; and shows the company default, retirement, `changed` events, tenant isolation, refused writes and the audit trail.
+On a disposable database, set `DATABASE_URL`, `BILIBI_WORK_CALENDAR_DEMO=disposable`, `BILIBI_SETTINGS_KEY` and `BILIBI_USER_SIGNING_KEY`, then run `cargo run -p bilibi-work-calendar --example work-calendar-walkthrough`. It migrates, installs the walkthrough fixture and, through the reviewed contracts, builds a Monday–Friday calendar with a lunch break, national and state holiday sets, a shutdown, a special working Saturday and a half day; prints the resolved days with their reasons, substitutes under a Friday–Saturday weekend and a new rule version; answers each `business_time` operation across breaks, weekends, holidays, a close boundary, a closed start, a daylight-saving gap and fold and a period past midnight; and shows the company default, retirement, `changed` events, tenant isolation, refused writes and the audit trail. It also shows a substitute chain resolving the same in any window, one plan editing two sets of a calendar, a holiday write and an inclusion committing at once, replacing the first rule version, an exception's hours in its removal evidence, paged lists and holidays, removals of dates a set does not hold, a tenant owner managing calendars, and the migration ID.

@@ -15,12 +15,15 @@ mod store;
 mod timetable;
 
 pub use model::{
-    Calendar, Choice, Day, DayType, Exception, FieldError, Holiday, HolidaySet, Period, Reason,
-    Rule, Substitute, Summary, Week, WeekDay, WriteError, WriteResult,
+    Calendar, CalendarEntry, Choice, Day, DayType, Exception, FieldError, Holiday, HolidaySet,
+    HolidaySetEntry, Listing, Period, Reason, Rows, Rule, Substitute, Week, WeekDay, WriteError,
+    WriteResult, MAX_CHOICES, MAX_PAGE_SIZE, MAX_ROWS,
 };
 pub use timetable::{TimeError, Timetable, MAX_WINDOW_DAYS, SEARCH_DAYS};
 
-use bilibi_authz::{authorize_key, CapabilityDefinition, VocabularyContribution, VOCABULARY};
+use bilibi_authz::{
+    authorize_key, CapabilityDefinition, RoleDefinition, VocabularyContribution, VOCABULARY,
+};
 use bilibi_database::{Db, Error, Result};
 use bilibi_events::{EventType, Events, EVENTS};
 use bilibi_geonames::Geonames;
@@ -61,10 +64,11 @@ pub struct WorkCalendars {
     events: Arc<Events>,
 }
 impl WorkCalendars {
-    /// Active calendars for a picker, by name.
-    pub async fn choices(&self, scope: &Scope) -> Result<Vec<Choice>> {
+    /// Active calendars for a picker whose code or name contains `search`
+    /// (empty: any), by name, at most [`MAX_CHOICES`].
+    pub async fn choices(&self, scope: &Scope, search: &str) -> Result<Vec<Choice>> {
         let client = self.db.get().await?;
-        store::choices(&**client, scope.tenant()).await
+        store::choices(&**client, scope.tenant(), search).await
     }
     /// Prove `code` may be assigned to a record in the caller's transaction:
     /// an active calendar of the scope's tenant, locked `FOR SHARE` so it
@@ -136,38 +140,50 @@ impl WorkCalendars {
         Timetable::load(&**client, scope, code, from, to).await
     }
 
-    /// The tenant's calendars and holiday sets. Needs `admin.work-calendar.list`.
-    pub async fn summary(&self, scope: &Scope) -> Result<Summary> {
+    /// One page of the tenant's calendars by code, with the total. Needs
+    /// `admin.work-calendar.list`; a page out of range is `Invalid`.
+    pub async fn calendars(&self, scope: &Scope, listing: &Listing) -> Result<Rows<CalendarEntry>> {
         let client = self.db.get().await?;
         let scope = self.authentication.reprove(&**client, scope).await?;
         authorize_key(&**client, &scope, LIST).await?;
-        store::summary(&**client, scope.tenant()).await
+        store::calendars(&**client, scope.tenant(), listing).await
     }
-    /// One calendar with its rule versions, holiday sets and exceptions.
-    /// Needs `admin.work-calendar.view`.
-    pub async fn calendar(&self, scope: &Scope, code: &str) -> Result<Calendar> {
+    /// One page of the tenant's holiday sets by code, with the total. Needs
+    /// `admin.work-calendar.list`.
+    pub async fn holiday_sets(
+        &self,
+        scope: &Scope,
+        listing: &Listing,
+    ) -> Result<Rows<HolidaySetEntry>> {
+        let client = self.db.get().await?;
+        let scope = self.authentication.reprove(&**client, scope).await?;
+        authorize_key(&**client, &scope, LIST).await?;
+        store::holiday_sets(&**client, scope.tenant(), listing).await
+    }
+    /// One calendar with its rule versions and holiday sets (the first
+    /// [`MAX_ROWS`] of each) and page `page` of its exceptions, each with its
+    /// total. Needs `admin.work-calendar.view`.
+    pub async fn calendar(&self, scope: &Scope, code: &str, page: i64) -> Result<Calendar> {
         let client = self.db.get().await?;
         let scope = self.authentication.reprove(&**client, scope).await?;
         authorize_key(&**client, &scope, VIEW).await?;
-        Ok(store::calendar(&**client, scope.tenant(), code).await?.1)
+        store::calendar(&**client, scope.tenant(), code, page).await
     }
-    /// One holiday set with its holidays from `from` to `to` (all when
-    /// omitted). Needs `admin.work-calendar.view`.
+    /// One holiday set with page `page` of its holidays from `from` to `to`
+    /// (all dates when omitted) and the first [`MAX_ROWS`] calendars
+    /// including it, each with its total. Needs `admin.work-calendar.view`.
     pub async fn holiday_set(
         &self,
         scope: &Scope,
         code: &str,
         from: Option<Date>,
         to: Option<Date>,
+        page: i64,
     ) -> Result<HolidaySet> {
         let client = self.db.get().await?;
         let scope = self.authentication.reprove(&**client, scope).await?;
         authorize_key(&**client, &scope, VIEW).await?;
-        Ok(
-            store::holiday_set(&**client, scope.tenant(), code, from, to)
-                .await?
-                .1,
-        )
+        store::holiday_set(&**client, scope.tenant(), code, from, to, page).await
     }
 }
 
@@ -181,11 +197,12 @@ macro_rules! provenance {
     };
 }
 pub(crate) use provenance;
+// `tenant_owner` holds the whole set, as it holds Company's and Person's.
 inventory::submit! { Contribution::new(VOCABULARY, "core/work_calendar", provenance!(), &VocabularyContribution {
     domains: &[],
     verbs: &[],
     capabilities: &[CapabilityDefinition::tenant(VIEW), CapabilityDefinition::tenant(LIST), CapabilityDefinition::tenant(MANAGE)],
-    roles: &[],
+    roles: &[RoleDefinition { code: "tenant_owner", name: "Tenant Owner", description: "Contributed system role; reconciled explicitly", grant_all: false, capabilities: &[VIEW, LIST, MANAGE] }],
     system_principals: &[],
 }) }
 inventory::submit! { Contribution::new(EVENTS, CHANGED, provenance!(), &EventType { version: 1 }) }
@@ -198,8 +215,8 @@ inventory::submit! { Contribution::new(DEFINITIONS, DEFAULT, provenance!(), &Set
 inventory::submit! {
     bilibi_module_registry::Module {
         id: "core/work_calendar", layer: bilibi_module_registry::Layer::Core,
-        dependencies: &["base/agent_api", "base/authz", "base/database", "base/datetime", "base/events", "base/settings", "base/tenancy", "core/geonames"],
-        migrations: &[("core-work-calendar-001", include_str!("../migrations/001-work-calendar.sql"))],
+        dependencies: &["base/agent_api", "base/authz", "base/database", "base/datetime", "base/events", "base/party_ids", "base/settings", "base/tenancy", "core/geonames"],
+        migrations: &[("core-work-calendar-001-work-calendar", include_str!("../migrations/001-work-calendar.sql"))],
         services: &[Service { id: SERVICE, factory: |services| {
             let calendars = Arc::new(WorkCalendars {
                 db: services.get::<Db>("base/database.pool")?.as_ref().clone(),

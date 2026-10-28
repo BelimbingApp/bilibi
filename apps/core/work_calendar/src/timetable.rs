@@ -10,7 +10,7 @@
 //! across a clock change is an hour longer or shorter.
 use crate::{
     model::{periods_from_json, Day, DayType, Exception, Rule, Substitute, Week, WeekDay},
-    resolve::Source,
+    resolve::{Source, SUBSTITUTE_SEARCH},
 };
 use bilibi_database::{Error, Result};
 use bilibi_tenancy::Scope;
@@ -25,8 +25,6 @@ use tokio_postgres::GenericClient;
 pub const MAX_WINDOW_DAYS: i64 = 731;
 /// The furthest a search looks ahead.
 pub const SEARCH_DAYS: i64 = 366;
-/// Holidays before the window still move into it (substitutes chain).
-const LOOKBACK_DAYS: i64 = 45;
 
 /// Why an answer could not be given.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
@@ -328,10 +326,23 @@ async fn source(
             })
         })
         .collect::<Result<Vec<_>>>()?;
-    let (earliest, before) = (
-        shift(from, -LOOKBACK_DAYS)?.to_string(),
-        shift(from, -1)?.to_string(),
-    );
+    // Substitutes chain: an earlier holiday's substitute can take the day a
+    // later one would move to, however far back the chain runs. Allocation
+    // starts where no earlier holiday can reach the window, so a date
+    // resolves the same whatever window asks.
+    let earliest = match substitute {
+        Substitute::None => shift(from, -1)?,
+        _ => {
+            start(
+                client,
+                tenant,
+                calendar,
+                shift(from, -(SUBSTITUTE_SEARCH + 1))?,
+            )
+            .await?
+        }
+    };
+    let (earliest, before) = (earliest.to_string(), shift(from, -1)?.to_string());
     let last = to.to_string();
     let holidays = client
         .query(
@@ -363,6 +374,63 @@ async fn source(
         holidays,
         exceptions,
     })
+}
+/// Where substitute allocation may start for dates after `cut + 14`: the
+/// latest holiday on or before `cut` preceded by more than
+/// [`SUBSTITUTE_SEARCH`] days without a holiday, since no substitute moves
+/// further than that; `cut` when no holiday falls on or before it.
+async fn start(
+    client: &(impl GenericClient + Sync),
+    tenant: i64,
+    calendar: i64,
+    cut: Date,
+) -> Result<Date> {
+    let row = client
+        .query_one(
+            "SELECT max(date)::text FROM (SELECT date,lag(date) OVER (ORDER BY date) AS prev FROM (SELECT DISTINCT h.date FROM core_work_calendar_includes i JOIN core_work_calendar_holidays h ON h.tenant_id=i.tenant_id AND h.holiday_set_id=i.holiday_set_id WHERE i.tenant_id=$1 AND i.calendar_id=$2 AND h.date<=$3::text::date) d) g WHERE prev IS NULL OR date-prev>$4",
+            &[&tenant, &calendar, &cut.to_string(), &(SUBSTITUTE_SEARCH as i32)],
+        )
+        .await?;
+    match row.get::<_, Option<&str>>(0) {
+        Some(text) => Ok(text.parse::<Date>().map_err(|_| Error::Internal)?.min(cut)),
+        None => Ok(cut),
+    }
+}
+/// The last date a change to holidays on or before `last` can move, for
+/// each calendar including `set` (or the one `calendar`): a substitute moves
+/// at most [`SUBSTITUTE_SEARCH`] days, but each can displace the next
+/// holiday's, so the reach runs to that past the end of the chain of
+/// holidays (each within that many days of the one before) from `last`. A
+/// calendar that substitutes nothing moves only the holidays' own dates.
+pub(crate) async fn reach(
+    client: &(impl GenericClient + Sync),
+    tenant: i64,
+    set: Option<i64>,
+    calendar: Option<i64>,
+    last: Date,
+) -> Result<Vec<(String, Date)>> {
+    client
+        .query(
+            "WITH cal AS (SELECT id,code,substitute FROM core_work_calendars WHERE tenant_id=$1 AND (id=$3 OR id IN (SELECT calendar_id FROM core_work_calendar_includes WHERE tenant_id=$1 AND holiday_set_id=$2))), d AS (SELECT DISTINCT i.calendar_id,h.date FROM cal JOIN core_work_calendar_includes i ON i.tenant_id=$1 AND i.calendar_id=cal.id JOIN core_work_calendar_holidays h ON h.tenant_id=i.tenant_id AND h.holiday_set_id=i.holiday_set_id AND h.date>=$4::text::date), g AS (SELECT calendar_id,date,lead(date) OVER (PARTITION BY calendar_id ORDER BY date) AS next FROM d) SELECT cal.code,cal.substitute,(SELECT min(g.date)::text FROM g WHERE g.calendar_id=cal.id AND (g.next IS NULL OR g.next-g.date>$5)) FROM cal ORDER BY cal.code",
+            &[&tenant, &set, &calendar, &last.to_string(), &(SUBSTITUTE_SEARCH as i32)],
+        )
+        .await?
+        .iter()
+        .map(|row| {
+            let code: String = row.get(0);
+            let substitute = Substitute::parse(row.get(1)).ok_or(Error::Internal)?;
+            let end: Option<&str> = row.get(2);
+            let end = match end {
+                Some(text) => text.parse::<Date>().map_err(|_| Error::Internal)?.max(last),
+                None => last,
+            };
+            let to = match substitute {
+                Substitute::None => last,
+                _ => end.checked_add(SUBSTITUTE_SEARCH.days()).unwrap_or(end),
+            };
+            Ok((code, to))
+        })
+        .collect()
 }
 pub(crate) fn exception(row: &tokio_postgres::Row) -> Result<Exception> {
     Ok(Exception {

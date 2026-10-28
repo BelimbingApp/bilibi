@@ -391,6 +391,66 @@ pub struct Exception {
     pub name: String,
     pub day: WeekDay,
 }
+/// Most rows one read returns of a record's nested collection (exceptions,
+/// holidays, rule versions, included sets, including calendars); each comes
+/// with its total, and exceptions and holidays page.
+pub const MAX_ROWS: i64 = 400;
+/// Most rows one listing page holds.
+pub const MAX_PAGE_SIZE: i64 = 100;
+/// Most calendars a picker offers for one search.
+pub const MAX_CHOICES: i64 = 50;
+
+/// A nested collection: at most a page of rows, and how many there are.
+#[derive(Clone, Debug)]
+pub struct Rows<T> {
+    pub rows: Vec<T>,
+    pub total: i64,
+}
+impl<T> Rows<T> {
+    fn to_json(&self, row: impl Fn(&T) -> Value) -> Value {
+        json!({"rows": self.rows.iter().map(row).collect::<Vec<_>>(), "total": self.total})
+    }
+}
+
+/// Which page of a listing: `search` matches code or name, pages count from 1.
+#[derive(Clone, Debug)]
+pub struct Listing {
+    pub search: String,
+    pub page: i64,
+    pub page_size: i64,
+}
+impl Default for Listing {
+    fn default() -> Self {
+        Self {
+            search: String::new(),
+            page: 1,
+            page_size: MAX_PAGE_SIZE,
+        }
+    }
+}
+impl Listing {
+    pub(crate) fn valid(&self) -> bool {
+        (1..=100_000).contains(&self.page)
+            && (1..=MAX_PAGE_SIZE).contains(&self.page_size)
+            && self.search.chars().count() <= 200
+    }
+}
+/// A calendar as a listing shows it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CalendarEntry {
+    pub code: String,
+    pub name: String,
+    pub status: String,
+}
+/// A holiday set as a listing shows it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HolidaySetEntry {
+    pub code: String,
+    pub name: String,
+    pub country_iso: Option<String>,
+    pub admin1_code: Option<String>,
+}
+
 #[derive(Clone, Debug)]
 pub struct Calendar {
     pub code: String,
@@ -398,22 +458,24 @@ pub struct Calendar {
     pub status: String,
     pub substitute: Substitute,
     pub version: i64,
-    pub rules: Vec<Rule>,
-    /// Codes of the holiday sets it includes.
-    pub holiday_sets: Vec<String>,
-    pub exceptions: Vec<Exception>,
+    /// By `effective_from`, the first [`MAX_ROWS`].
+    pub rules: Rows<Rule>,
+    /// Codes of the holiday sets it includes, the first [`MAX_ROWS`].
+    pub holiday_sets: Rows<String>,
+    /// By `starts_on`, one page of [`MAX_ROWS`].
+    pub exceptions: Rows<Exception>,
 }
 impl Calendar {
     pub fn to_json(&self) -> Value {
         json!({
             "code": self.code, "name": self.name, "status": self.status,
             "substitute": self.substitute.as_str(), "version": self.version,
-            "rules": self.rules.iter().map(|rule| json!({"effective_from": rule.effective_from.to_string(), "timezone": rule.timezone, "week": rule.week.to_json()})).collect::<Vec<_>>(),
-            "holiday_sets": self.holiday_sets,
-            "exceptions": self.exceptions.iter().map(|e| json!({
+            "rules": self.rules.to_json(|rule| json!({"effective_from": rule.effective_from.to_string(), "timezone": rule.timezone, "week": rule.week.to_json()})),
+            "holiday_sets": self.holiday_sets.to_json(|code| json!(code)),
+            "exceptions": self.exceptions.to_json(|e| json!({
                 "id": e.id, "starts_on": e.starts_on.to_string(), "ends_on": e.ends_on.to_string(), "name": e.name,
                 "type": e.day.day_type.as_str(), "periods": e.day.periods.iter().map(|p| p.text()).collect::<Vec<_>>(),
-            })).collect::<Vec<_>>(),
+            })),
         })
     }
 }
@@ -429,24 +491,19 @@ pub struct HolidaySet {
     pub country_iso: Option<String>,
     pub admin1_code: Option<String>,
     pub version: i64,
-    /// Codes of the calendars that include it.
-    pub calendars: Vec<String>,
-    pub holidays: Vec<Holiday>,
+    /// Codes of the calendars that include it, the first [`MAX_ROWS`].
+    pub calendars: Rows<String>,
+    /// By date, one page of [`MAX_ROWS`].
+    pub holidays: Rows<Holiday>,
 }
 impl HolidaySet {
     pub fn to_json(&self) -> Value {
         json!({
             "code": self.code, "name": self.name, "country_iso": self.country_iso, "admin1_code": self.admin1_code,
-            "version": self.version, "calendars": self.calendars,
-            "holidays": self.holidays.iter().map(|h| json!({"date": h.date.to_string(), "name": h.name})).collect::<Vec<_>>(),
+            "version": self.version, "calendars": self.calendars.to_json(|code| json!(code)),
+            "holidays": self.holidays.to_json(|h| json!({"date": h.date.to_string(), "name": h.name})),
         })
     }
-}
-/// The tenant's calendars and holiday sets, for a list.
-#[derive(Clone, Debug)]
-pub struct Summary {
-    pub calendars: Vec<(String, String, String)>,
-    pub holiday_sets: Vec<(String, String, Option<String>, Option<String>)>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
