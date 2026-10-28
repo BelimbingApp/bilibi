@@ -78,7 +78,7 @@ Shared UI sizes follow the sidebar's 12 px text and tight row rhythm; pages do n
 | --- | --- |
 | Body and button text | 12 / 16 px (`text-sm`); sidebar remains 12 / 14 px |
 | Hints, badges and table headings | 11 / 14 px (`text-xs`) |
-| Field values and record facts | 14 / 20 px; input values stay 16 px on phones to prevent zoom |
+| Field values and record facts | 14 / 20 px |
 | Page title | 16 / 24 px; card and empty-state headings 12 / 16 px; dialog title 14 / 20 px |
 | Floating fields | 40 px minimum; toolbar and table fields 28 px (`.ui-compact-controls`) |
 | Buttons | 24 px with 8 px side padding, one size everywhere (`ui-button`); a caller's padding, height and text-size classes are discarded (`button_class`) |
@@ -112,7 +112,7 @@ Width is a shared decision. Every page uses `PageVariant`. All three share one c
 - **Multi-selects:** one box holds the inset label and `(N selected)` count, with removable selected chips beneath. The default keeps complete chips on one line and shows “…” for overflow; `wrap_chips` expands the box onto multiple lines. The chevron stays beside the label. Empty fields show the label, `(0 selected)` and a selection prompt. The dropdown always exposes every option.
 - **Choice chevrons:** selects and multi-selects use the same 16 px outline chevron, aligned 11 px inside the field's right edge.
 - **Colour choices use `ColourInput`.** Each named choice and the selected value are one chip: that status role's banner surface, border and text colour, with the name inside, including the default choice. Chips follow the light and dark themes. The pinned label, keyboard controls and native select keep it usable with assistive technology and without JavaScript.
-- **Compact.** A single-value inset box is 40 px with a 14 px value (`text-base`); the floated or pinned label is 11 px. A multi-select starts at 48 px to hold its label and chip row, and grows when wrapping is enabled. Inset fields sit 12 px apart. Phones get a 16 px input value so iOS does not zoom.
+- **Compact.** A single-value inset box is 40 px with a 14 px value (`text-base`); the floated or pinned label is 11 px. A multi-select starts at 48 px to hold its label and chip row, and grows when wrapping is enabled. Inset fields sit 12 px apart.
 - **2FA method choice:** Settings and Confirm access show each installed method’s own setup or prompt destination. A single authenticator retains its existing flow. Reading a choice never starts or sends a challenge.
 - **2FA before saving:** use `StepUp` (`base/ui`) for the protected submit actions, with `ProofInput` for a live method choice and code. Without 2FA, show a plain setup notice and link first. Keep unrelated changes available.
 - **Sections:** draw a bordered part of a form with `forms::section` (one shared 12 px box and heading), not page-owned box classes. Create Address uses it.
