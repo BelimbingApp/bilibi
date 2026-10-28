@@ -85,7 +85,7 @@ absence of a row); time-display mode and locale are the existing
 (`base/datetime`, `base/locale`). Pins are `user_pins`: one row per normalized
 URL per account (path with trailing slash, fragment and host dropped, query
 sorted; `url_hash` is md5 of it), at most 100, written under a lock on the
-account's row. A URL that would leave the site is refused. Pins to a page this
+account's row. A URL that would leave the site, or an icon name the UI catalogue does not know, is refused. Pins to a page this
 deployment no longer serves stay stored and are not drawn.
 
 Web adapters (`apps/web/src/shell.rs`): `POST /preferences` (`{kind,value}`), `GET /api/pins`, `POST /api/pins/toggle` (`{label,url,icon}`) and `POST /api/pins/reorder` (`{pins:[{id}]}`), each with Origin and CSRF checks and a 422 `{error}` for a refused value. The shell renders the account's theme (`<html data-theme>` on first paint), mode and pins (`data-pins`) itself, and `/settings/appearance` (`src/appearance.rs`) is the same three choices as a live form. It subscribes to committed theme and time zone display changes for the signed-in account and reloads the saved choices immediately, including changes from the top bar. An impersonated session reads the viewed account's choices but `PreferenceError::Impersonating` refuses every write (the shell answers 403 `{"error":"impersonating"}` and draws its controls locked), as Bilimbi does.
