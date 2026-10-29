@@ -72,6 +72,15 @@ impl Grants {
             Err(Error::Invalid)
         }
     }
+    /// These writes administer staff (ADR 16): a portal capability is never
+    /// granted to a staff account or a custom role, where it could only sit
+    /// inert. Clearing one stays possible.
+    fn staff_key(&self, key: &str) -> Result<()> {
+        match self.vocabulary.capabilities.get(key) {
+            Some(owned) if owned.definition.audience != crate::Audience::Portal => Ok(()),
+            _ => Err(Error::Invalid),
+        }
+    }
     /// Assign/remove an authorization role to a live principal of this tenant.
     /// Business relationship roles never enter this table.
     pub async fn assign_role(
@@ -118,6 +127,22 @@ impl Grants {
             .await?
             .map(|row| (row.get(0), row.get(1)))
             .ok_or(Error::Invalid)?;
+        // A portal role belongs to customers, whom these writes never reach.
+        if assigned {
+            let keys = tx
+                .sql()
+                .query(
+                    "SELECT capability FROM role_capabilities WHERE tenant_id=$1 AND role_id=$2",
+                    &[&tenant, &role],
+                )
+                .await?;
+            if keys
+                .iter()
+                .any(|row| self.staff_key(row.get::<_, &str>(0)).is_err())
+            {
+                return Err(Error::Invalid);
+            }
+        }
         let target = format!(
             "user:{user} role:{} {}",
             code.unwrap_or_else(|| role.to_string()),
@@ -174,6 +199,9 @@ impl Grants {
         allowed: Option<bool>,
     ) -> Result<()> {
         self.known(key)?;
+        if allowed.is_some() {
+            self.staff_key(key)?;
+        }
         self.verify_user(tx.sql(), actor, actor.user()).await?;
         authorize_key(tx.sql(), actor, "admin.authz.role.update").await?;
         self.verify_user(tx.sql(), actor, user).await?;
@@ -228,6 +256,9 @@ impl Grants {
         granted: bool,
     ) -> Result<()> {
         self.known(key)?;
+        if granted {
+            self.staff_key(key)?;
+        }
         self.verify_user(tx.sql(), actor, actor.user()).await?;
         authorize_key(tx.sql(), actor, "admin.authz.role.update").await?;
         self.step_up
@@ -392,10 +423,16 @@ impl Grants {
         if actor.principal().is_some() {
             return Err(Error::Forbidden);
         }
-        self.authentication
+        // Grants administer staff accounts; a customer's portal role is
+        // its owner's to assign (ADR 16).
+        let principal = self
+            .authentication
             .authenticate(client, actor.tenant(), user, String::new())
-            .await
-            .map(|_| ())
+            .await?;
+        if principal.actor().kind() != bilibi_tenancy::AccountKind::Staff {
+            return Err(Error::Unauthorized);
+        }
+        Ok(())
     }
     /// Explicit deployment/CLI operation. It extends the existing seed roles
     /// in place, preserves IDs/assignments/restrictions/direct overrides, and

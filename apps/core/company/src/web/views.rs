@@ -9,7 +9,7 @@ use bilibi_tenancy::Scope;
 use bilibi_ui::*;
 use serde_json::Value;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeSet, HashMap, HashSet},
     sync::Arc,
 };
 use tokio_postgres::{Client, GenericClient};
@@ -44,8 +44,13 @@ pub(super) fn columns(views: Arc<PageViews>, masked: &HashSet<String>) -> Result
     })
     .collect();
     let record_fields = record_slots(masked)?;
+    let scalar_sorts = crate::field_contributions::definitions()?
+        .into_iter()
+        .map(|(_, field)| (field.grid_column.into(), field.id.into()))
+        .collect();
     PageColumns::mount(views, "companies", columns)
         .and_then(|columns| columns.with_record_slots(&record_fields))
+        .map(|columns| columns.with_scalar_sorts(scalar_sorts))
         .map_err(|_| Error::Internal)
 }
 
@@ -201,7 +206,7 @@ pub(super) async fn list(
     } else {
         "Search by name, code, legal name, email, or jurisdiction..."
     };
-    let toolbar = render(&FilterToolbar::new(
+    let mut toolbar = render(&FilterToolbar::new(
         "companies-filters",
         vec![
             ToolbarControl::search(
@@ -226,7 +231,9 @@ pub(super) async fn list(
             ),
         ],
     ))?;
+    toolbar.push(&field_filter_controls(&extension_fields, data)?);
     let ids: Vec<i64> = data.rows.iter().map(|row| row.id).collect();
+    let choice_labels = extension_choice_labels(client, scope, &extension_fields).await?;
     let facts=client.query("SELECT c.id,p.name,(t.company_id IS NOT NULL) FROM companies c LEFT JOIN companies p ON p.id=c.parent_id AND p.tenant_id=c.tenant_id AND p.deleted_at IS NULL LEFT JOIN tenant_primary_companies t ON t.tenant_id=c.tenant_id AND t.company_id=c.id WHERE c.tenant_id=$1 AND c.id=ANY($2)",&[&scope.tenant(),&ids]).await?;
     let mut rows = columns.rows.clone();
     for row in &mut rows {
@@ -323,21 +330,15 @@ pub(super) async fn list(
                             })?
                         },
                     );
-                    if !extension_fields.masked.contains(definition.id) {
-                        if let (crate::CompanyFieldKind::Choice { picklist }, Some(code)) =
-                            (definition.kind, value)
-                        {
-                            if let Some(label) = extension_fields
-                                .picklists
-                                .label(client, scope, picklist, code)
-                                .await?
+                    if !extension_fields.masked.contains(definition.id)
+                        && matches!(definition.kind, crate::CompanyFieldKind::Choice { .. })
+                    {
+                        if let Some(code) = value {
+                            if let Some(label) = choice_labels
+                                .get(definition.id)
+                                .and_then(|labels| labels.get(code))
                             {
-                                let text = if label.retired {
-                                    format!("{} (Retired)", label.text)
-                                } else {
-                                    label.text
-                                };
-                                row.slots.insert(slot, Html::text(&text));
+                                row.slots.insert(slot, Html::text(label));
                             }
                         }
                     }
@@ -356,8 +357,11 @@ pub(super) async fn list(
     table.caption = "Companies";
     table.framed = false;
     table.actions = true;
-    let filtered = !params.q.is_empty() || !params.status.is_empty();
-    let title = if filtered {
+    let filtered =
+        !params.q.is_empty() || !params.status.is_empty() || !params.field_filters.is_empty();
+    let title = if data.limited {
+        "Company list limited".into()
+    } else if filtered {
         format!(
             "No {}companies{}",
             if params.status.is_empty() {
@@ -387,7 +391,9 @@ pub(super) async fn list(
     table.empty = Some(TableEmpty::State(
         EmptyState::missing(
             &title,
-            if filtered {
+            if data.limited {
+                &data.notice
+            } else if filtered {
                 "Clear the search and filter to see every company."
             } else {
                 "Create your first company."
@@ -417,7 +423,54 @@ pub(super) struct ExtensionListFields<'a> {
     pub values: &'a std::collections::BTreeMap<i64, crate::CompanyFieldValues>,
     pub display: &'a bilibi_datetime::DisplayContext,
     pub picklists: &'a bilibi_picklists::PickLists,
+    pub filters: &'a [crate::FieldFilter],
+    pub available: &'a [crate::list_fields::AvailableField],
+    pub filter_notice: &'a str,
 }
+
+async fn extension_choice_labels(
+    client: &(impl GenericClient + Sync),
+    scope: &Scope,
+    fields: &ExtensionListFields<'_>,
+) -> Result<HashMap<&'static str, HashMap<String, String>>> {
+    let mut labels = HashMap::new();
+    for available in fields.available {
+        let crate::CompanyFieldKind::Choice { picklist } = available.definition.kind else {
+            continue;
+        };
+        let codes = fields
+            .values
+            .values()
+            .filter_map(|values| values.get(available.definition.id))
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect::<BTreeSet<_>>();
+        for code in codes {
+            if let Some(choice) = available.choices.iter().find(|choice| choice.value == code) {
+                labels
+                    .entry(available.definition.id)
+                    .or_insert_with(HashMap::new)
+                    .insert(code, choice.label.clone());
+            } else if let Some(label) = fields
+                .picklists
+                .label(client, scope, picklist, &code)
+                .await?
+            {
+                let text = if label.retired {
+                    format!("{} (Retired)", label.text)
+                } else {
+                    label.text
+                };
+                labels
+                    .entry(available.definition.id)
+                    .or_insert_with(HashMap::new)
+                    .insert(code, text);
+            }
+        }
+    }
+    Ok(labels)
+}
+
 #[derive(Template)]
 #[template(
     source = "<code class=\"text-xs font-medium tabular-nums\">{{ text }}</code>",
@@ -1767,4 +1820,132 @@ async fn departments_section(
         })?,
         ..Card::default()
     })
+}
+
+// Bilimbi Core Company list filters use shared forms; each condition stays
+// together at narrow widths instead of being reordered as a search control.
+fn field_filter_controls(state: &ExtensionListFields<'_>, page: &crate::Page) -> Result<Html> {
+    let mut result = Html::EMPTY;
+    for (index, message) in [state.filter_notice, page.notice.as_str()]
+        .into_iter()
+        .enumerate()
+    {
+        if !message.is_empty() {
+            result.push(&render(&Alert {
+                id: &format!("company-field-filter-notice-{index}"),
+                kind: StatusKind::Warning,
+                body: Html::text(message),
+                ..Alert::default()
+            })?);
+        }
+    }
+    for (index, filter) in state.filters.iter().enumerate() {
+        let prefix = format!("company-field-filter-{index}");
+        let selected = state
+            .available
+            .iter()
+            .find(|field| field.definition.id == filter.field);
+        let mut choices = vec![Choice::new("Choose a field", "")];
+        choices.extend(
+            state
+                .available
+                .iter()
+                .map(|field| Choice::new(field.definition.label, field.definition.id)),
+        );
+        if selected.is_none() && !filter.field.is_empty() {
+            choices.push(Choice::new("Unavailable field", &filter.field));
+        }
+        let mut body = render(
+            &Field::in_form("condition", "index")
+                .id(format!("{prefix}-index"))
+                .kind(InputKind::Hidden)
+                .value(index.to_string()),
+        )?;
+        body.push(&render(
+            &Field::in_form("condition", "field")
+                .id(format!("{prefix}-field"))
+                .label("Field")
+                .kind(InputKind::Select)
+                .value(&filter.field)
+                .options(choices),
+        )?);
+        if let Some(field) = selected {
+            let ops = crate::list_fields::operators(field.definition.kind);
+            body.push(&render(
+                &Field::in_form("condition", "operator")
+                    .id(format!("{prefix}-operator"))
+                    .label("Condition")
+                    .kind(InputKind::Select)
+                    .value(&filter.operator)
+                    .options(
+                        ops.iter()
+                            .map(|(key, label)| Choice::new(*label, *key))
+                            .collect(),
+                    ),
+            )?);
+            let errors = page
+                .filter_errors
+                .get(index)
+                .and_then(Option::as_ref)
+                .cloned()
+                .into_iter()
+                .collect();
+            let mut value = Field::in_form("condition", "value")
+                .id(format!("{prefix}-value"))
+                .label("Value")
+                .value(&filter.value)
+                .errors(errors);
+            value = match field.definition.kind {
+                crate::CompanyFieldKind::Text { .. } => value.attr("maxlength", "256"),
+                crate::CompanyFieldKind::Date => {
+                    if filter.value.is_empty()
+                        || crate::field_contributions::valid_date(&filter.value)
+                    {
+                        value.kind(InputKind::Date)
+                    } else {
+                        // Native date controls erase malformed URL drafts; keep
+                        // those editable until the person corrects the value.
+                        value.kind(InputKind::Text)
+                    }
+                }
+                crate::CompanyFieldKind::Choice { .. } => {
+                    let mut choices = vec![Choice::new("Choose a value", "")];
+                    choices.extend(field.choices.clone());
+                    if !filter.value.is_empty() && !choices.iter().any(|c| c.value == filter.value)
+                    {
+                        choices.push(Choice::new("Unavailable value", &filter.value));
+                    }
+                    value.kind(InputKind::Select).options(choices)
+                }
+            };
+            body.push(&render(&value)?);
+        }
+        let remove = render(&Button {
+            event: "field_filter_remove",
+            name: "index",
+            value: &index.to_string(),
+            body: Html::text("Remove filter"),
+            ..Button::default()
+        })?;
+        result.push(&render(&Form {
+            id: &prefix,
+            event: "field_filter_change",
+            change: true,
+            class: "",
+            body: render(&Actions {
+                class: "grid grid-cols-1 gap-2 sm:grid-cols-3",
+                body,
+            })?,
+            actions: remove,
+        })?);
+    }
+    if !state.available.is_empty() && state.filters.len() < crate::list_fields::MAX_FILTERS {
+        result.push(&render(&Button {
+            id: "company-field-filter-add",
+            event: "field_filter_add",
+            body: Html::text("Add field filter"),
+            ..Button::default()
+        })?);
+    }
+    Ok(result)
 }

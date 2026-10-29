@@ -153,7 +153,7 @@ impl ReadHandler for Read {
                     let listing = listing(input)?;
                     let page = calendars.holiday_sets(scope, &listing).await?;
                     json!({
-                        "holiday_sets": page.rows.iter().map(|s| json!({"code": s.code, "name": s.name, "country_iso": s.country_iso, "admin1_code": s.admin1_code})).collect::<Vec<_>>(),
+                        "holiday_sets": page.rows.iter().map(|s| json!({"code": s.code, "name": s.name, "country_iso": s.country_iso, "admin1_code": s.admin1_code, "installation": s.installation})).collect::<Vec<_>>(),
                         "total": page.total, "page": listing.page, "page_size": listing.page_size,
                     })
                 }
@@ -298,7 +298,7 @@ impl WriteHandler for Write {
                 .await
                 .map_err(refusal)?;
             Ok(calendars
-                .review(&**client, scope.tenant(), &prepared, None)
+                .review(&**client, &scope, &prepared, None)
                 .await
                 .map_err(refusal)?
                 .into())
@@ -412,11 +412,21 @@ fn write_schema(action: Action) -> Value {
             }})
         }
         Action::CreateSet => json!({"type":"object","required":["code","name"],"properties":{
-            "code":code_schema("Stable key: lowercase letters, digits, _ and -"),
+            "code":code_schema("Stable key: lowercase letters, digits, _ and -; not one an installation-wide set uses"),
             "name":{"type":"string","maxLength":120},
             "country_iso":{"type":"string","maxLength":2,"description":"Optional ISO country, checked against imported countries"},
-            "admin1_code":{"type":"string","maxLength":20,"description":"Optional division (state), such as MY.14; needs country_iso"}
+            "admin1_code":{"type":"string","maxLength":20,"description":"Optional division (state), such as MY.14; needs country_iso"},
+            "installation":{"type":"boolean","description":"Default false. True: an installation-wide set every tenant may include and only the platform operator changes (needs admin.work-calendar.holiday-sets.manage in the operator's tenant); its code must be unused in every tenant"}
         }}),
+        Action::CopySet => {
+            json!({"type":"object","required":["code","name","source"],"properties":{
+                "code":code_schema("The new set's stable key"),
+                "name":{"type":"string","maxLength":120},
+                "source":code_schema("The set to copy: this tenant's or an installation-wide one (core.work_calendar.holiday_set.list)"),
+                "from":{"type":"string","format":"date","description":"Copy holidays from this date; default all"},
+                "to":{"type":"string","format":"date","description":"Copy holidays up to this date; default all. At most 400 holidays a copy"}
+            }})
+        }
         Action::UpdateSet => json!({"type":"object","required":["code","version"],"properties":{
             "code":code_schema("A holiday set code"),"version":version,"name":{"type":"string","maxLength":120},
             "country_iso":{"type":"string","maxLength":2,"description":"Give it to change the place; an empty string clears it"},
@@ -436,10 +446,10 @@ fn write_schema(action: Action) -> Value {
     }
 }
 fn read_output() -> Value {
-    json!({"type":"object","description":"Calendars and holiday sets as stored. Lists give one page and its total; a calendar's rules, holiday_sets and exceptions and a set's calendars and holidays are each {rows, total}, exceptions and holidays a page of 400 at a time. Days carry date, type (working, rest, off, holiday), weekly (the week's type underneath), periods, reason (week, holiday, substitute, exception) and timezone; business_time gives result and beyond (true when the answer lies past the 366-day search or the calendar has no working time)."})
+    json!({"type":"object","description":"Calendars and holiday sets as stored. Lists give one page and its total; a calendar's rules, holiday_sets and exceptions and a set's calendars and holidays are each {rows, total}, exceptions and holidays a page of 400 at a time. A set's installation is true when the platform operator keeps it for every tenant, and its calendars are only this tenant's. Days carry date, type (working, rest, off, holiday), weekly (the week's type underneath), periods, reason (week, holiday, substitute, exception) and timezone; business_time gives result and beyond (true when the answer lies past the 366-day search or the calendar has no working time)."})
 }
 fn write_output() -> Value {
-    json!({"type":"object","description":"The stored facts after the write. Each write that moves dates records core/work_calendar.changed per affected calendar."})
+    json!({"type":"object","description":"The stored facts after the write. Each write that moves dates records core/work_calendar.changed per affected calendar; a change to an installation-wide set records it in every other tenant including the set shortly after."})
 }
 
 macro_rules! read {
@@ -519,6 +529,9 @@ fn holidays_schema() -> Value {
 fn include_schema() -> Value {
     write_schema(Action::Include)
 }
+fn copy_set_schema() -> Value {
+    write_schema(Action::CopySet)
+}
 
 static LIST_OP: Read = Read::List;
 static SETS_OP: Read = Read::HolidaySets;
@@ -535,11 +548,12 @@ static CREATE_SET: Write = Write(Action::CreateSet);
 static UPDATE_SET: Write = Write(Action::UpdateSet);
 static HOLIDAYS: Write = Write(Action::Holidays);
 static INCLUDE: Write = Write(Action::Include);
+static COPY_SET: Write = Write(Action::CopySet);
 
 inventory::submit! { Contribution::new(DEFINITIONS, "core/work_calendar", crate::provenance!(), &Definitions {
     operations: &[
         read!("core.work_calendar.list", "List work calendars", "This tenant's work calendars (code, name, status, the zone in force today and the holiday sets each includes), a page at a time, with the total.", LIST, LIST_OP, list_schema),
-        read!("core.work_calendar.holiday_set.list", "List holiday sets", "This tenant's holiday sets (code, name, country, division), a page at a time, with the total.", LIST, SETS_OP, sets_schema),
+        read!("core.work_calendar.holiday_set.list", "List holiday sets", "This tenant's holiday sets and the installation-wide ones (code, name, country, division, installation), a page at a time, with the total.", LIST, SETS_OP, sets_schema),
         read!("core.work_calendar.get", "Get a work calendar", "One calendar: its weekly rule versions, included holiday sets and dated exceptions, with the version to write against.", VIEW, GET_OP, get_schema),
         read!("core.work_calendar.days", "Resolve calendar days", "Each date in a range (at most 731 days) as working, rest, off or holiday, with its opening periods and why.", VIEW, DAYS_OP, days_schema),
         read!("core.work_calendar.business_time", "Business-time arithmetic", "Ask a calendar: is it open at an instant, when does it next open, what instant is a duration of business time later, how much business time lies between two instants, which is the nth working day after a date.", VIEW, BUSINESS_OP, business_schema),
@@ -549,11 +563,12 @@ inventory::submit! { Contribution::new(DEFINITIONS, "core/work_calendar", crate:
         write!("core.work_calendar.rule.set", "Set a calendar's week from a date", "A new weekly rule (zone, day types and opening periods) from a date; earlier dates keep their rules.", RULE, rule_schema),
         write!("core.work_calendar.exception.add", "Add a calendar exception", "A date or range that closes, opens with its own hours, or shortens a day (a half day).", ADD_EXCEPTION, add_exception_schema),
         write!("core.work_calendar.exception.remove", "Remove a calendar exception", "Remove one dated exception from a calendar.", REMOVE_EXCEPTION, remove_exception_schema),
-        write!("core.work_calendar.holiday_set.create", "Create a holiday set", "A tenant holiday set, optionally for a country and division (state).", CREATE_SET, create_set_schema),
+        write!("core.work_calendar.holiday_set.create", "Create a holiday set", "A tenant holiday set, optionally for a country and division (state); the platform operator also creates installation-wide ones.", CREATE_SET, create_set_schema),
+        write!("core.work_calendar.holiday_set.copy", "Copy a holiday set", "A new tenant holiday set holding another set's holidays, such as an installation-wide one this tenant wants to change.", COPY_SET, copy_set_schema),
         write!("core.work_calendar.holiday_set.update", "Update a holiday set", "Rename a holiday set or change its country and division.", UPDATE_SET, update_set_schema),
         write!("core.work_calendar.holiday_set.holidays", "Add or remove holidays", "Add (or rename) and remove whole-day holidays of a set, up to 400 a call: a year at a time.", HOLIDAYS, holidays_schema),
         write!("core.work_calendar.include", "Include a holiday set in a calendar", "Include a holiday set in a calendar, or leave it out.", INCLUDE, include_schema),
     ],
     guides: &[Guide { key: "core.work_calendar", title: "Work calendars", summary: "Build a calendar, enter holidays and ask business-time questions.", keywords: &["calendar", "working hours", "holiday", "business time", "sla"], capability: VIEW,
-        body: "A work calendar says when a tenant does business. Every date resolves to working (with opening periods), rest (the weekly rest day), off (another non-working day) or holiday: a dated exception wins, then a holiday (or a substitute for one) from an included holiday set, then the weekly rule in force. Build one with core.work_calendar.create (code, name, week; the zone defaults to the tenant's). Change the week from a date with core.work_calendar.rule.set; earlier dates keep their rules. Create a holiday set per country or state with core.work_calendar.holiday_set.create, enter a year of holidays in one core.work_calendar.holiday_set.holidays call, and include it with core.work_calendar.include. A shutdown, a special working day or a half day is core.work_calendar.exception.add. Writes need the version from core.work_calendar.get or .holiday_set.get; plan, show the review, then commit. One plan may write a calendar or set several times: each of those writes names the version you read. Check the result with core.work_calendar.days, and answer due times with core.work_calendar.business_time: add PT8H from an instant gives the due time (a result at a closing time stays there), elapsed measures business time between two instants, add_working_days counts working days. beyond true means the answer lies more than 366 days ahead or the calendar has no working time." }],
+        body: "A work calendar says when a tenant does business. Every date resolves to working (with opening periods), rest (the weekly rest day), off (another non-working day) or holiday: a dated exception wins, then a holiday (or a substitute for one) from an included holiday set, then the weekly rule in force. Build one with core.work_calendar.create (code, name, week; the zone defaults to the tenant's). Change the week from a date with core.work_calendar.rule.set; earlier dates keep their rules. Create a holiday set per country or state with core.work_calendar.holiday_set.create, enter a year of holidays in one core.work_calendar.holiday_set.holidays call, and include it with core.work_calendar.include. Installation-wide sets (installation true in core.work_calendar.holiday_set.list) are kept by the platform operator for every tenant: include one like your own; it is read-only, so to change it copy it with core.work_calendar.holiday_set.copy and include the copy instead. A shutdown, a special working day or a half day is core.work_calendar.exception.add. Writes need the version from core.work_calendar.get or .holiday_set.get; plan, show the review, then commit. One plan may write a calendar or set several times: each of those writes names the version you read. Check the result with core.work_calendar.days, and answer due times with core.work_calendar.business_time: add PT8H from an instant gives the due time (a result at a closing time stays there), elapsed measures business time between two instants, add_working_days counts working days. beyond true means the answer lies more than 366 days ahead or the calendar has no working time." }],
 }) }

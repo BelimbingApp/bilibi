@@ -55,9 +55,12 @@ pub async fn capabilities(client: &impl GenericClient, scope: &Scope) -> Result<
         .iter()
         .filter(|(key, cap)| {
             !impersonation(key)
-                && (!cap.definition.platform || operator)
+                && cap.definition.admits(scope.actor().kind())
+                && (!cap.definition.is_platform() || operator)
                 && !deny.contains(**key)
-                && (all || allow.contains(**key))
+                // Grant-all never satisfies a portal capability (ADR 16).
+                && ((all && cap.definition.audience != bilibi_authz::Audience::Portal)
+                    || allow.contains(**key))
         })
         .map(|(key, _)| key.to_string())
         .collect())

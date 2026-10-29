@@ -163,7 +163,7 @@ pub fn validate_input(input: &AccountInput) -> Vec<FieldError> {
     errors
 }
 
-/// The login email is unique platform-wide (`users_login_email_global_idx`);
+/// A staff login email is unique platform-wide (`users_login_email_global_idx`);
 /// the check runs inside the transaction so the index refusal is the backstop.
 pub(crate) async fn email_taken(
     client: &impl GenericClient,
@@ -172,7 +172,7 @@ pub(crate) async fn email_taken(
 ) -> Result<bool> {
     Ok(client
         .query_opt(
-            "SELECT 1 FROM users WHERE lower(email)=$1 AND deleted_at IS NULL AND ($2::bigint IS NULL OR id<>$2)",
+            "SELECT 1 FROM users WHERE lower(email)=$1 AND kind='staff' AND deleted_at IS NULL AND ($2::bigint IS NULL OR id<>$2)",
             &[&email, &except],
         )
         .await?

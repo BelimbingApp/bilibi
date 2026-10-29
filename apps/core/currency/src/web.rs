@@ -464,7 +464,7 @@ impl CurrencyPage {
 
     async fn render(&mut self, scope: &Scope) -> Result<String> {
         let pages = self.pages.clone();
-        let client = pages.db.get().await?;
+        let mut client = pages.db.get().await?;
         let manage = effective_capabilities(&**client, scope)
             .await?
             .contains(MANAGE);
@@ -485,7 +485,7 @@ impl CurrencyPage {
         // Companies are read through their own owner; a person who may not
         // list them simply gets no per-company section.
         let companies = match bilibi_company::list(
-            &**client,
+            &mut client,
             scope,
             &bilibi_company::Params {
                 size: COMPANIES_SHOWN,
