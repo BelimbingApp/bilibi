@@ -26,6 +26,7 @@ use bilibi_queue::{
 };
 use bilibi_schedule::{worker, Definition, Misfire, Overlap, Schedule, DEFINITIONS, EXECUTE};
 use bilibi_tenancy::Scope;
+use bilibi_ui::upload::MAX_FILE_SIZE;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
@@ -45,6 +46,9 @@ const MAX_STAGED: usize = 20;
 pub(crate) const WORKER: &str = "base/media-staging-sweep";
 pub(crate) const HANDLER: &str = "base/media.staging_sweep";
 const ROOT: &str = "staging/tenants";
+// `Media::staging` clamps `media.max_bytes` between the two: crossed, they
+// fail the build rather than every announcement.
+const _: () = assert!(MAX_FILE_SIZE <= storage::MAX_READ);
 macro_rules! provenance {
     () => {
         Provenance {
@@ -127,7 +131,9 @@ impl Media {
             .ok_or(Error::InvalidRules)?;
         Ok(Some(Staging {
             root,
-            limit: max.min(storage::MAX_READ),
+            // Never below what an upload held in memory may reach, so a
+            // resumable input takes every file an ordinary one would.
+            limit: max.clamp(MAX_FILE_SIZE, storage::MAX_READ),
             keep: Duration::from_secs(hours * 3_600),
         }))
     }
@@ -161,7 +167,11 @@ impl Media {
 }
 
 impl Staging {
-    /// The most bytes one staged file may have: `media.max_bytes`.
+    /// The most bytes one staged file may have: `media.max_bytes`, never
+    /// below the 64 MiB of an upload held in memory ([`MAX_FILE_SIZE`]) and
+    /// never above the 512 MiB Media reads back. The host refuses a larger
+    /// file by this same figure (`UploadSpec::limit`), so a file it places
+    /// is never refused here for its size.
     pub fn limit(&self) -> u64 {
         self.limit
     }

@@ -25,7 +25,7 @@
 //! consumes a resumable file exactly as any other.
 //!
 //! Bounds: every size is clamped by [`MAX_FILE_SIZE`] (a staged resumable
-//! entry by [`MAX_RESUMABLE_FILE_SIZE`] and Media's `media.max_bytes`) and
+//! entry by [`MAX_RESUMABLE_FILE_SIZE`] and the largest file Media stages) and
 //! [`MAX_ENTRIES`], the host accepts at most [`MAX_UPLOADS`] specs per state,
 //! and a chunk must continue exactly where the last one ended. A frame is
 //! `u32 id, u32 offset, bytes` with `bytes` at most [`CHUNK_SIZE`].
@@ -76,9 +76,9 @@ impl UploadSpec {
     /// size and that hash, so a reconnect (or the person choosing the same
     /// file again within `media.upload.staging_hours`) continues from the
     /// bytes already there. `max_file_size` is clamped to
-    /// [`MAX_RESUMABLE_FILE_SIZE`], and the host lowers it to
-    /// `media.max_bytes` (never below [`MAX_FILE_SIZE`]). Without a staging
-    /// disk the spec acts as [`UploadSpec::new`]: bytes held here, at most
+    /// [`MAX_RESUMABLE_FILE_SIZE`], and the host lowers it to the largest
+    /// file Media stages ([`UploadSpec::limit`]). Without a staging disk the
+    /// spec acts as [`UploadSpec::new`]: bytes held here, at most
     /// [`MAX_FILE_SIZE`].
     pub fn resumable(name: impl Into<String>, max_file_size: u64) -> Self {
         Self::declare(
@@ -106,12 +106,14 @@ impl UploadSpec {
         }
     }
 
-    /// The most bytes one file may have here: a staged resumable entry
-    /// (`staging` is Media's `media.max_bytes`) up to the larger of that and
-    /// [`MAX_FILE_SIZE`], anything else up to [`MAX_FILE_SIZE`].
+    /// The most bytes one file may have here: a staged resumable entry up to
+    /// `staging`, the largest file Media stages (its `Staging::limit`:
+    /// `media.max_bytes`, never below [`MAX_FILE_SIZE`]), anything else up
+    /// to [`MAX_FILE_SIZE`]. Media refuses a staged file by that same
+    /// figure, so it is taken as it is.
     pub fn limit(&self, staging: Option<u64>) -> u64 {
         match staging {
-            Some(media) if self.resumable => self.max_file_size.min(media.max(MAX_FILE_SIZE)),
+            Some(staged) if self.resumable => self.max_file_size.min(staged),
             _ => self.max_file_size.min(MAX_FILE_SIZE),
         }
     }
@@ -489,11 +491,11 @@ impl Uploads {
     }
 
     /// Host side: decides where an accepted entry of a resumable input keeps
-    /// its bytes. With a staging disk (`staging` is Media's
-    /// `media.max_bytes`) and the file's SHA-256 the entry is staged, up to
-    /// [`UploadSpec::limit`]; otherwise its bytes are held here, up to
-    /// [`MAX_FILE_SIZE`]. Returns the refusal when the file is too large for
-    /// where it can go; any other entry is left as it is.
+    /// its bytes. With a staging disk (`staging` is the largest file Media
+    /// stages, its `Staging::limit`) and the file's SHA-256 the entry is
+    /// staged, up to [`UploadSpec::limit`]; otherwise its bytes are held
+    /// here, up to [`MAX_FILE_SIZE`]. Returns the refusal when the file is
+    /// too large for where it can go; any other entry is left as it is.
     pub fn place(
         &mut self,
         id: u64,
