@@ -131,7 +131,7 @@ pub async fn standing(client: &dyn ProofClient, tenant: i64, user: i64) -> Resul
             _ => return Ok(Standing::Frozen(Freeze::Identity)),
         }
         // A business customer stands only while its affiliation is in effect
-        // by its dates (ADR 15); staff keep the linked check above alone.
+        // by its dates (ADR 16); staff keep the linked check above alone.
         if kind == AccountKind::Customer
             && !bilibi_affiliation::identity::current(client, tenant, affiliation).await?
         {
@@ -204,7 +204,7 @@ impl ActorVerifier for AccountVerifier {
     }
 }
 
-/// Which sign-in form a password came through (ADR 15): the staff form finds
+/// Which sign-in form a password came through (ADR 16): the staff form finds
 /// staff accounts only, by an address unique across the installation; the
 /// portal form finds the customers of the one tenant whose portal address the
 /// customer opened. A customer's credentials at the staff form, or a staff
@@ -215,7 +215,7 @@ pub(crate) enum Audience {
     Customer { tenant: i64 },
 }
 impl Audience {
-    fn kind(self) -> AccountKind {
+    pub(crate) fn kind(self) -> AccountKind {
         match self {
             Self::Staff => AccountKind::Staff,
             Self::Customer { .. } => AccountKind::Customer,

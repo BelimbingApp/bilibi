@@ -1,6 +1,6 @@
 //! Names accounts for Base screens. Deleted accounts and other tenants resolve
 //! to no name, so the asking screen keeps its row and shows the durable ID.
-//! A customer account (ADR 15) keeps its name, so audit can label its writes,
+//! A customer account (ADR 16) keeps its name, so audit can label its writes,
 //! but staff pickers never find one.
 use bilibi_principal_directory::{
     DirectoryClient, DirectoryFuture, PrincipalKind, PrincipalProvider,

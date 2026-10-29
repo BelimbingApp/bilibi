@@ -392,10 +392,16 @@ impl Grants {
         if actor.principal().is_some() {
             return Err(Error::Forbidden);
         }
-        self.authentication
+        // Grants administer staff accounts; a customer's portal role is
+        // its owner's to assign (ADR 16).
+        let principal = self
+            .authentication
             .authenticate(client, actor.tenant(), user, String::new())
-            .await
-            .map(|_| ())
+            .await?;
+        if principal.actor().kind() != bilibi_tenancy::AccountKind::Staff {
+            return Err(Error::Unauthorized);
+        }
+        Ok(())
     }
     /// Explicit deployment/CLI operation. It extends the existing seed roles
     /// in place, preserves IDs/assignments/restrictions/direct overrides, and

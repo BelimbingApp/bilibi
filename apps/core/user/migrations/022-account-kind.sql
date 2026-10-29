@@ -1,4 +1,4 @@
--- Issue 137, ADR 15: an account is staff or a customer of its tenant. Every
+-- Issue 137, ADR 16: an account is staff or a customer of its tenant. Every
 -- existing account is staff. A customer always names a Person and names an
 -- affiliation (and so a company) only when it signs in for a business; a
 -- private individual has no company.
@@ -16,3 +16,10 @@ CREATE UNIQUE INDEX users_login_email_global_idx ON users(lower(email)) WHERE de
 CREATE UNIQUE INDEX users_customer_email_idx ON users(tenant_id, lower(email)) WHERE deleted_at IS NULL AND kind = 'customer';
 ALTER TABLE users DROP CONSTRAINT users_tenant_id_email_key;
 CREATE INDEX users_kind_idx ON users(tenant_id, kind) WHERE deleted_at IS NULL;
+
+-- A pending second-factor sign-in completes only on the form of its own
+-- audience, so the staff challenge never admits a customer's password into a
+-- staff session (`src/sign_in.rs`, `pending`). Every existing row is staff.
+ALTER TABLE user_sign_ins
+ ADD COLUMN audience text NOT NULL DEFAULT 'staff'
+  CONSTRAINT user_sign_ins_audience_check CHECK (audience IN ('staff', 'customer'));

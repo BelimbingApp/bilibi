@@ -62,7 +62,7 @@ fn field(message: &str) -> AgentError {
     AgentError::InvalidInput(BTreeMap::from([("user_id".into(), vec![message.into()])]))
 }
 
-/// Staff accounts only: a customer's factor is not a staff reset (ADR 15).
+/// Staff accounts only: a customer's factor is not a staff reset (ADR 16).
 const TARGET_SQL: &str =
     "SELECT u.id, u.tenant_id, u.name, u.email, u.status='active' FROM users u WHERE u.kind='staff'";
 

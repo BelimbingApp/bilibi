@@ -63,7 +63,7 @@ Every record carries these header lines: Document Type, Status, Agents, Scope, L
 | --- | --- |
 | [04 Provider-neutral single sign-on](./04-provider-neutral-single-sign-on.md) | Accepted; implemented |
 | [09 The current company is a session choice, never a grant](./09-current-company-is-a-session-choice.md) | Proposed |
-| [15 Customer accounts are a kind of account, kept out of the staff application by three barriers](./15-customer-accounts-and-portal.md) | Proposed |
+| [16 Customer accounts are a kind of account, kept out of the staff application by three barriers](./16-customer-accounts-and-portal.md) | Proposed |
 
 ### Personal data
 

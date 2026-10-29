@@ -299,7 +299,7 @@ pub async fn account_standing(
 
 /// Whether a linked affiliation is in effect today (UTC) by its
 /// `effective_from` and `effective_to` dates; an open end counts as current.
-/// A customer account stands only while this holds (ADR 15); staff accounts
+/// A customer account stands only while this holds (ADR 16); staff accounts
 /// keep [`account_standing`] alone.
 pub async fn current(client: &dyn ProofClient, tenant: i64, id: AffiliationId) -> Result<bool> {
     if tenant <= 0 {

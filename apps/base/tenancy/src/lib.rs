@@ -61,7 +61,7 @@ pub struct AccountIdentity {
     pub person: Option<PersonId>,
     pub organisation: Option<OrganisationId>,
     pub affiliation: Option<AffiliationId>,
-    /// Staff or a customer of the tenant (`users.kind`, ADR 15).
+    /// Staff or a customer of the tenant (`users.kind`, ADR 16).
     pub kind: AccountKind,
     /// Whether this account is the installation owner: the one account the
     /// installation's bootstrap receipt names (Core User `user_bootstrap`).
@@ -104,13 +104,12 @@ pub trait ActorVerifier: Send + Sync {
     }
 }
 
-/// Which audience an account belongs to (ADR 15). A customer signs in only to
+/// Which audience an account belongs to (ADR 16). A customer signs in only to
 /// its tenant's portal (`/portal/...`) and holds only portal capabilities; a
 /// staff account never reaches the portal. Sealed from the account at every
 /// authentication, never read from a request.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AccountKind {
-    #[default]
     Staff,
     Customer,
 }
@@ -488,7 +487,7 @@ impl Scope {
     }
 }
 
-/// A customer's proof on a portal request (ADR 15): the sealed `Scope` of a
+/// A customer's proof on a portal request (ADR 16): the sealed `Scope` of a
 /// customer account, with the Person it signs in as and, for a business
 /// customer, the affiliation and company. Portal facades take this and filter
 /// "my records" by `person()`, or by `organisation()` when it is present, so

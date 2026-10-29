@@ -253,7 +253,7 @@ impl UserService {
             .await
     }
     /// A customer's sign-in at the portal of `tenant`, which the caller
-    /// resolved from the portal address the customer opened (ADR 15). Same
+    /// resolved from the portal address the customer opened (ADR 16). Same
     /// proof as staff sign-in (hashing and its timing guard, the attempt
     /// lock, standing, the optional second factor through
     /// `core.user.portal_sign_in`), but it finds only that tenant's customer

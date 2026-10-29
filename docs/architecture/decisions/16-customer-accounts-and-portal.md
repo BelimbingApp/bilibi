@@ -1,4 +1,4 @@
-# ADR 15: Customer accounts are a kind of account, kept out of the staff application by three barriers
+# ADR 16: Customer accounts are a kind of account, kept out of the staff application by three barriers
 
 **Document Type:** Architecture Decision Record
 **Status:** Proposed

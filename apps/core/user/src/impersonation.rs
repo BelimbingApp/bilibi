@@ -116,7 +116,7 @@ impl UserService {
         }
         let tx = client.transaction().await.map_err(Error::from)?;
         match standing(&*tx, scope.tenant(), target).await? {
-            // A customer is never impersonated (ADR 15); it is not a staff
+            // A customer is never impersonated (ADR 16); it is not a staff
             // account, so it is not found here.
             Standing::Live(identity) if identity.kind != AccountKind::Staff => {
                 return Err(Refusal::NotFound)
