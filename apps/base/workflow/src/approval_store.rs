@@ -1665,7 +1665,8 @@ impl Engine {
             .and_then(|v| v.as_object().cloned())
             .unwrap_or_default();
         // Someone who already decided leaves the other seats' holders without any change in responsibility.
-        let distinct_stages = policy.distinct_stages || live_policy.distinct_stages || case.distinct_stages;
+        let distinct_stages =
+            policy.distinct_stages || live_policy.distinct_stages || case.distinct_stages;
         let mut decided = std::collections::BTreeSet::new();
         for row in tx.sql().query("SELECT identities FROM base_workflow_approval_decisions WHERE tenant_id=$1 AND request_id=$2 AND ($3 OR stage_key=$4)",&[&tenant,&id,&distinct_stages,&stage.key]).await? {
             decided.extend(serde_json::from_value::<ApprovalIdentities>(row.get(0)).map_err(|_|Error::Invalid)?.accounts);
