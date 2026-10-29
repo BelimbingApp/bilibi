@@ -260,9 +260,10 @@ impl State {
         self.exceptions.clear();
         self.detail = None;
         self.history = None;
+        let client = self.pages.db.get().await?;
+        bilibi_authz::authorize_key(&**client, scope, VIEW).await?;
         let company = scope.current_company().map(|c| c.get());
         self.cases.clear();
-        let client = self.pages.db.get().await?;
         self.companies = std::iter::once(Choice::from(("All companies", "")))
             .chain(
                 self.pages
