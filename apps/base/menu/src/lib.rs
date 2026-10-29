@@ -274,8 +274,17 @@ impl Menu {
                 current.item.requirement,
                 Requirement::Open | Requirement::Owner
             );
+            // A portal route is a plain path: no `.`/`..` segment, empty
+            // segment, query or fragment can lead it out of `/portal`.
+            let plain = current.item.route.is_none_or(|route| {
+                !route.contains(['?', '#'])
+                    && !route.contains("//")
+                    && !route
+                        .split('/')
+                        .any(|segment| segment == "." || segment == "..")
+            });
             let wrong = if portal {
-                current.item.route.is_some() && (!route_portal || open)
+                current.item.route.is_some() && (!route_portal || open || !plain)
             } else {
                 route_portal
             };

@@ -313,6 +313,14 @@ static MENU_OPEN_PORTAL: Contribution = Contribution::new(
     &MenuItem::page("portal.wrong-open", "Open portal page", "/portal/reference")
         .under(PORTAL_ROOT),
 );
+static MENU_ESCAPE: Contribution = Contribution::new(
+    ITEMS,
+    "portal.wrong-escape",
+    provenance!(),
+    &MenuItem::page("portal.wrong-escape", "Escape", "/portal/../companies")
+        .under(PORTAL_ROOT)
+        .requires(Requirement::Capability(VIEW)),
+);
 static MENU_STAFF_KEY: Contribution = Contribution::new(
     ITEMS,
     "portal.wrong-key",
@@ -344,7 +352,7 @@ fn refusals() -> std::process::ExitCode {
             failed = true;
         }
     }
-    let cases: [(&str, &'static Contribution); 18] = [
+    let cases: [(&str, &'static Contribution); 19] = [
         ("portal access outside /portal/", &OUTSIDE),
         ("other access under /portal", &STAFF_INSIDE),
         ("a host credential path", &HOST_PATH),
@@ -374,6 +382,10 @@ fn refusals() -> std::process::ExitCode {
         (
             "a portal menu item naming a staff capability",
             &MENU_STAFF_KEY,
+        ),
+        (
+            "a portal menu route leaving /portal through ..",
+            &MENU_ESCAPE,
         ),
     ];
     for (case, contribution) in cases {

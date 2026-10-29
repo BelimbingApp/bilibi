@@ -18,7 +18,9 @@ use bilibi_base::menu;
 use bilibi_database::{Error, Result};
 use bilibi_module_registry::contributions::{Access, Method};
 use bilibi_tenancy::PortalScope;
-use bilibi_ui::{download::DownloadRequest, page::PageRequest, Html, PortalLayout, PortalLink};
+use bilibi_ui::{
+    download::DownloadRequest, page::PageRequest, Html, PortalDocument, PortalLayout, PortalLink,
+};
 use std::collections::HashMap;
 
 /// The customer's session cookie. `Path=/portal`, so the browser never sends
@@ -143,7 +145,14 @@ pub async fn dispatch(
     // The portal has no live socket yet (`/portal/live` is reserved for it),
     // so a portal page renders static; the staff socket would refuse it.
     let html = layout(&app, &portal, uri.path(), false, &page.html).await?;
-    let mut response = crate::document_titled(title, &html)?.into_response();
+    let html = Html::render(&PortalDocument {
+        title,
+        site: &portal.scope().tenant_name,
+        logo: None,
+        body: &html,
+    })
+    .map_err(|_| Error::Internal)?;
+    let mut response = axum::response::Html(html.as_str().to_owned()).into_response();
     *response.status_mut() = StatusCode::OK;
     Ok(response)
 }
@@ -169,7 +178,23 @@ async fn layout(
         .menu
         .visible_portal_tree(&|key| capabilities.contains(key));
     let mut links = Vec::new();
-    flatten(&tree, path, &mut links);
+    flatten(&tree, &mut links);
+    // The longest route that is the page or an ancestor of it is current, so
+    // a record under a menu page keeps that page marked.
+    let current = links
+        .iter()
+        .enumerate()
+        .filter(|(_, link)| {
+            path == link.route
+                || path
+                    .strip_prefix(link.route.as_str())
+                    .is_some_and(|rest| rest.starts_with('/'))
+        })
+        .max_by_key(|(_, link)| link.route.len())
+        .map(|(index, _)| index);
+    if let Some(index) = current {
+        links[index].active = true;
+    }
     Html::render(&PortalLayout {
         title: &scope.tenant_name,
         logo: None,
@@ -184,8 +209,12 @@ async fn layout(
     .map_err(|_| Error::Internal)
 }
 
-/// Depth-first, the pages of the portal menu as one row of links.
-fn flatten(nodes: &[menu::Node], path: &str, links: &mut Vec<PortalLink>) {
+/// Depth-first, the pages of the portal menu as one row of links. A portal
+/// menu is a short list its owners arrange, so siblings follow their
+/// `order` (then label), not the staff menu's alphabetical rule.
+fn flatten(nodes: &[menu::Node], links: &mut Vec<PortalLink>) {
+    let mut nodes: Vec<&menu::Node> = nodes.iter().collect();
+    nodes.sort_by_key(|node| (node.item.item.order, node.item.item.label.to_lowercase()));
     for node in nodes {
         let item = node.item.item;
         if let Some(route) = item.route {
@@ -194,10 +223,10 @@ fn flatten(nodes: &[menu::Node], path: &str, links: &mut Vec<PortalLink>) {
                 label: item.label.to_owned(),
                 icon: item.icon.unwrap_or("document").to_owned(),
                 route: route.to_owned(),
-                active: route == path,
+                active: false,
             });
         }
-        flatten(&node.children, path, links);
+        flatten(&node.children, links);
     }
 }
 
@@ -207,14 +236,20 @@ pub struct SignOut {
 }
 /// `POST /portal/sign-out`: the customer ends its own portal session and the
 /// portal cookie is cleared. The staff `/logout` never ends a portal session.
+/// A session that already ended (another tab, expiry) counts as signed out:
+/// the cookie is cleared and the customer goes to the portal sign-in.
 pub async fn sign_out(
     State(app): State<App>,
     headers: HeaderMap,
     Form(form): Form<SignOut>,
 ) -> std::result::Result<Response, HttpError> {
     origin(&app, &headers)?;
-    let credential = token(&headers)?;
-    app.user.portal_logout(&credential, &form.csrf).await?;
+    if let Ok(credential) = token(&headers) {
+        match app.user.portal_logout(&credential, &form.csrf).await {
+            Ok(()) | Err(Error::Unauthorized) => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
     let mut response = sign_in();
     response.headers_mut().insert(
         header::SET_COOKIE,

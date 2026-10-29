@@ -45,6 +45,18 @@ impl PortalLayout<'_> {
     }
 }
 
+/// The HTML document around a portal page: the tab reads "page · portal
+/// title", its icon is the tenant's logo (none until one is set), and none of
+/// the staff shell's scripts load.
+#[derive(Template)]
+#[template(path = "portal_document.html")]
+pub struct PortalDocument<'a> {
+    pub title: &'a str,
+    pub site: &'a str,
+    pub logo: Option<&'a str>,
+    pub body: &'a str,
+}
+
 /// The portal's anonymous card (sign-in, password recovery, invitation,
 /// registration): the credential layout branded with the tenant's portal
 /// title and logo instead of Bilibi's.
