@@ -159,7 +159,7 @@ fn describe(app: &App, seen: &Seen) -> DebugReport {
                     params.push((name.to_owned(), actual.to_owned()));
                 }
             }
-            if let Some(bound) = app.routes.iter().find(|bound| {
+            if let Some(bound) = app.routes.staff.iter().find(|bound| {
                 bound.route.path == pattern
                     && format!("{:?}", bound.route.method)
                         .eq_ignore_ascii_case(seen.method.as_str())
@@ -170,6 +170,7 @@ fn describe(app: &App, seen: &Seen) -> DebugReport {
                 route.push(("Framed".into(), bound.route.framed.to_string()));
             } else if let Some(bound) = app
                 .downloads
+                .staff
                 .iter()
                 .find(|bound| bound.download.path == pattern && seen.method == Method::GET)
             {

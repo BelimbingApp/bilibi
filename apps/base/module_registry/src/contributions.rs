@@ -279,6 +279,31 @@ pub enum Access {
         operation: &'static str,
         inner: &'static Access,
     },
+    /// A signed-in customer on its tenant's portal holding this portal
+    /// capability (ADR 16). Only under `/portal/`, and nothing else is: the
+    /// host reads the portal cookie there and the owner's page service takes
+    /// a `PortalScope`. Boot refuses it elsewhere, any other access under
+    /// `/portal`, a framed portal route and a key that is not a portal
+    /// capability. May be wrapped in `StepUp`.
+    Portal(&'static str),
+}
+/// The customer portal's route space (ADR 16).
+pub const PORTAL: &str = "/portal";
+/// The host's own portal pages: its credential pages and the portal live
+/// socket (`apps/web`). No contribution claims a path under one of them.
+pub const PORTAL_HOST: [&str; 7] = [
+    "sign-in", "forgot", "reset", "accept", "register", "verify", "live",
+];
+/// The portal's owner, Core Customer Access, alone serves the portal home
+/// (`/portal`) and the customer's account (`/portal/account/...`).
+pub const PORTAL_OWNER: &str = "core/customer_access";
+const PORTAL_OWNED: [&str; 1] = ["account"];
+/// Whether `path` lies in the portal's route space.
+pub fn in_portal(path: &str) -> bool {
+    path == PORTAL
+        || path
+            .strip_prefix(PORTAL)
+            .is_some_and(|rest| rest.starts_with('/'))
 }
 impl Access {
     /// The access without its step-up wrapper: what menus and embeds check,
@@ -290,6 +315,10 @@ impl Access {
         }
     }
     /// The declared step-up operation of a wrapped access.
+    /// Whether this access opens a portal page (through a step-up wrapper).
+    pub fn portal(self) -> bool {
+        matches!(self.base(), Access::Portal(_))
+    }
     pub fn step_up(self) -> Option<&'static str> {
         match self {
             Access::StepUp { operation, .. } => Some(operation),
@@ -309,6 +338,7 @@ impl Access {
             Access::Operator => viewer.operator,
             Access::OperatorCapability(key) => viewer.operator && held(key),
             Access::Owner => viewer.owner,
+            Access::Portal(key) => held(key),
             // Boot refuses a step-up wrapped in another.
             Access::StepUp { .. } => false,
         }
@@ -361,7 +391,13 @@ pub struct Moved {
 pub enum EmbedContext {
     Shell,
     Dashboard,
-    Record { kind: &'static str },
+    Record {
+        kind: &'static str,
+    },
+    /// A portal page's slot (`portal.home`, `portal.account`), drawn only in
+    /// the portal layout. Its access must be `Access::Portal`, and no other
+    /// context may use that access (ADR 16).
+    Portal,
 }
 #[derive(Clone, Copy, Debug)]
 pub struct Embed {
@@ -396,7 +432,9 @@ pub struct Seed {
 }
 fn access_valid(access: Access) -> bool {
     match access {
-        Access::Capability(key) | Access::OperatorCapability(key) => !key.trim().is_empty(),
+        Access::Capability(key) | Access::OperatorCapability(key) | Access::Portal(key) => {
+            !key.trim().is_empty()
+        }
         Access::AnyOf(keys) => {
             !keys.is_empty()
                 && keys.iter().all(|key| !key.trim().is_empty())
@@ -425,6 +463,36 @@ fn normalized(path: &str) -> String {
         .collect::<Vec<_>>()
         .join("/")
 }
+/// The portal's route space fails closed (ADR 16): portal access only under
+/// `/portal`, nothing else there, never framed, and never a path the host or
+/// the portal's owner serves. A parameter as the section would capture
+/// those, so it is refused too.
+fn validate_portal(entry: &Entry, path: &str, access: Access, framed: bool) -> Result<()> {
+    let at = format!(
+        "{} at {}:{}",
+        entry.id, entry.provenance.source, entry.provenance.line
+    );
+    if in_portal(path) {
+        let section = path.split('/').nth(2);
+        let owned = section.is_none_or(|s| PORTAL_OWNED.contains(&s));
+        let host = section.is_some_and(|s| PORTAL_HOST.contains(&s) || s.starts_with('{'));
+        if host || (owned && entry.provenance.module != PORTAL_OWNER) {
+            return Err(invalid(format!(
+                "{at} claims the reserved portal path {path}"
+            )));
+        }
+    }
+    match (access.portal(), in_portal(path)) {
+        (true, false) => Err(invalid(format!(
+            "{at} declares portal access outside {PORTAL}/: {path}"
+        ))),
+        (false, true) => Err(invalid(format!(
+            "{at} declares non-portal access under {PORTAL}: {path}"
+        ))),
+        (true, true) if framed => Err(invalid(format!("{at} frames a portal route {path}"))),
+        _ => Ok(()),
+    }
+}
 fn validate_routes(entries: &[Entry]) -> Result<()> {
     let mut paths = BTreeSet::new();
     for entry in entries {
@@ -432,6 +500,7 @@ fn validate_routes(entries: &[Entry]) -> Result<()> {
         if !path_valid(route.path, route.operation, route.access) {
             return Err(invalid(format!("invalid route {}", entry.id)));
         }
+        validate_portal(entry, route.path, route.access, route.framed)?;
         if !paths.insert((route.method, normalized(route.path))) {
             return Err(invalid(format!("duplicate route {}", route.path)));
         }
@@ -449,6 +518,7 @@ fn validate_downloads(entries: &[Entry]) -> Result<()> {
         {
             return Err(invalid(format!("invalid download {}", entry.id)));
         }
+        validate_portal(entry, download.path, download.access, false)?;
         if !paths.insert(normalized(download.path)) {
             return Err(invalid(format!("duplicate download {}", download.path)));
         }
@@ -465,6 +535,12 @@ fn validate_embeds(entries: &[Entry]) -> Result<()> {
         {
             return Err(invalid(format!("invalid embed {}", entry.id)));
         }
+        if embed.access.portal() != matches!(embed.context, EmbedContext::Portal) {
+            return Err(invalid(format!(
+                "{} at {}:{} must pair portal access with the portal context",
+                entry.id, entry.provenance.source, entry.provenance.line
+            )));
+        }
     }
     Ok(())
 }
@@ -479,10 +555,16 @@ fn validate_moved(entries: &[Entry]) -> Result<()> {
         if !moved.from.starts_with('/')
             || !moved.to.starts_with('/')
             || moved.from == moved.to
+            // A redirect never crosses into or out of the portal (ADR 16).
+            || in_portal(moved.from)
+            || in_portal(moved.to)
             || !parameters(moved.to).all(|name| from.contains(name))
             || !paths.insert(moved.from)
         {
-            return Err(invalid(format!("invalid moved path {}", entry.id)));
+            return Err(invalid(format!(
+                "invalid moved path {} at {}:{}",
+                entry.id, entry.provenance.source, entry.provenance.line
+            )));
         }
     }
     Ok(())

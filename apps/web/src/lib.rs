@@ -12,6 +12,7 @@ mod mcp;
 mod media;
 mod pdf;
 mod perf;
+mod portal;
 mod routes;
 mod scim;
 mod shell;
@@ -36,8 +37,8 @@ pub use two_factor_reset::two_factor_reset;
 
 #[derive(Clone)]
 pub struct App {
-    routes: Arc<Vec<routes::BoundRoute>>,
-    downloads: Arc<Vec<routes::BoundDownload>>,
+    routes: Arc<routes::Pages>,
+    downloads: Arc<routes::Downloads>,
     moved: Arc<Vec<&'static bilibi_module_registry::contributions::Moved>>,
     pub db: Db,
     pub origin: Arc<str>,
