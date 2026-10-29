@@ -270,6 +270,17 @@ impl UserService {
         self.begin_sign_in(identity::Audience::Customer { tenant }, email, password)
             .await
     }
+    /// A customer ends its own portal session (ADR 16): the portal's
+    /// sign-out, through Session, so every other live page of the session is
+    /// signed out too.
+    pub async fn portal_logout(&self, token: &str, csrf: &str) -> Result<()> {
+        let client = self.db.get().await?;
+        let scope = self.sessions.check_portal(&**client, token).await?;
+        if scope.csrf != csrf {
+            return Err(Error::Forbidden);
+        }
+        self.sessions.delete(&**client, &scope, token).await
+    }
     pub async fn logout(&self, token: &str, csrf: &str) -> Result<()> {
         let scope = {
             let client = self.db.get().await?;

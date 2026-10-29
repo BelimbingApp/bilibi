@@ -340,6 +340,7 @@ pub fn router(app: App) -> Router {
             post(auth::sso_backchannel),
         )
         .route("/logout", post(logout))
+        .route("/portal/sign-out", post(portal::sign_out))
         .route(impersonation::LEAVE, post(impersonation::leave))
         .route(impersonation::ENTER, post(impersonation::enter))
         .route("/preferences", post(shell::save))

@@ -251,6 +251,9 @@ pub async fn pages(
             }
         }
         bilibi_ui::debug_document(&report)
+    } else if bilibi_module_registry::contributions::in_portal(seen.uri.path()) {
+        // A customer never sees the staff application's way back (ADR 16).
+        bilibi_ui::portal_error_document(status.as_u16())
     } else {
         bilibi_ui::error_document(status.as_u16())
     };

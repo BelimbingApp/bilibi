@@ -1,0 +1,6 @@
+{#- The portal's anonymous card (ADR 16, `src/portal.rs`): the credential
+    layout of `auth.html` branded with the tenant's portal title and logo, so
+    a customer never sees Bilibi's name on its tenant's sign-in. -#}
+{% import "feedback.html" as feedback %}
+<div data-shared-ui class="flex min-h-svh flex-col items-center justify-center gap-6 p-6"><div class="flex w-full max-w-sm flex-col gap-5"><div id="portal-card-brand" class="flex flex-col items-center gap-2.5">{% if let Some(logo) = logo %}<img src="{{ logo }}" alt="" class="shrink-0 object-contain size-9" width="36" height="36" decoding="async" loading="eager" aria-hidden="true" />{% endif %}<span class="text-base font-semibold tracking-tight text-ink-strong">{{ title }}</span></div><div id="auth-card" class="rounded-xl border border-line bg-surface shadow-sm shadow-ink/[0.04]"><div class="h-0.5 rounded-t-xl bg-brand" aria-hidden="true"></div><div class="px-7 py-6 sm:px-8">{{ body }}</div></div></div></div>
+{% call feedback::flash_group(messages=flash) %}{% endcall %}

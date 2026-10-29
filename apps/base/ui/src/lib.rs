@@ -41,6 +41,7 @@ mod record_fields;
 mod record_reference;
 pub use record_fields::RecordField;
 pub use record_reference::{PickerHit, RecordPicker, RecordState, RelatedRecord};
+mod portal;
 mod search_multi;
 pub use search_multi::{SearchMultiOption, SearchMultiSelect};
 mod section;
@@ -50,6 +51,7 @@ mod specimen;
 mod statusbar;
 pub mod upload;
 pub mod workspace;
+pub use portal::{PortalCard, PortalLayout, PortalLink};
 pub use shell::{
     company_bar, navigation, navigation_unpinned, version_badges, AppShell, CompanyChoice,
     DisplayPreferences, Framed, NavNode, ShellContext, VersionBadge,
@@ -69,7 +71,8 @@ pub use components::{
     NO_COUNT, WEEKDAYS,
 };
 pub use error_page::{
-    copy_for, debug_document, error_document, DebugFrame, DebugReport, ErrorCopy,
+    copy_for, debug_document, error_document, portal_copy_for, portal_error_document, DebugFrame,
+    DebugReport, ErrorCopy,
 };
 pub use feedback::{
     Alert, ConfirmDialog, ConnectionBanners, ErrorSummary, Flash, FlashGroup, FlashMap,

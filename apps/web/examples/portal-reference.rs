@@ -1,8 +1,9 @@
 //! Running specimen of the customer portal's route space (issue 137, ADR 16),
 //! separate from product routes. A small Extension contributes a portal
-//! capability, a portal role, a portal page, a portal download and a portal
-//! home embed; its owner takes a `PortalScope` and reads "my records" from the
-//! proof (the Person, and the company only when there is one).
+//! capability, a portal role, a portal page, a portal download, a portal
+//! home embed and a portal menu item; its owner takes a `PortalScope` and
+//! reads "my records" from the proof (the Person, and the company only when
+//! there is one).
 //!
 //! `--refusals` needs no database: it builds the catalog once with the valid
 //! contributions, then once more with each wrong one added, and prints the
@@ -17,6 +18,7 @@ use bilibi_authz::{
     authorize_key, CapabilityDefinition, RoleDefinition, Vocabulary, VocabularyContribution,
     VOCABULARY,
 };
+use bilibi_base::menu::{MenuItem, Requirement, ITEMS, PORTAL_ROOT};
 use bilibi_database::{Db, Error, Result};
 use bilibi_module_registry::{
     contributions::{
@@ -147,6 +149,8 @@ inventory::submit! { Contribution::new(DOWNLOADS, "portal_reference.statement", 
 inventory::submit! { Contribution::new(EMBEDS, "portal_reference.home", provenance!(), &Embed {
     slot: "portal.home", context: EmbedContext::Portal, service: PAGES, operation: "home", access: Access::Portal(VIEW),
 }) }
+inventory::submit! { Contribution::new(ITEMS, "portal.reference", provenance!(), &MenuItem::page("portal.reference", "Reference", "/portal/reference")
+.under(PORTAL_ROOT).icon("document").requires(Requirement::Capability(VIEW))) }
 
 // Each wrong contribution behaviour 2 of issue 137 refuses. They are statics,
 // never submitted, so only `--refusals` adds them, one at a time.
@@ -296,6 +300,27 @@ static GRANT_ALL_PORTAL: Contribution = Contribution::new(
         system_principals: &[],
     },
 );
+static MENU_STAFF_INTO_PORTAL: Contribution = Contribution::new(
+    ITEMS,
+    "wrong.menu-staff",
+    provenance!(),
+    &MenuItem::page("wrong.menu-staff", "Staff into portal", "/portal/reference"),
+);
+static MENU_OPEN_PORTAL: Contribution = Contribution::new(
+    ITEMS,
+    "portal.wrong-open",
+    provenance!(),
+    &MenuItem::page("portal.wrong-open", "Open portal page", "/portal/reference")
+        .under(PORTAL_ROOT),
+);
+static MENU_STAFF_KEY: Contribution = Contribution::new(
+    ITEMS,
+    "portal.wrong-key",
+    provenance!(),
+    &MenuItem::page("portal.wrong-key", "Staff key", "/portal/reference")
+        .under(PORTAL_ROOT)
+        .requires(Requirement::Capability("companies.view")),
+);
 
 /// The catalog the host would boot with, plus `extra`, then the vocabulary's
 /// reference checks, as `Vocabulary::from_inventory` runs them at boot.
@@ -313,13 +338,13 @@ fn boot(extra: Option<&'static Contribution>) -> bilibi_module_registry::Result<
 fn refusals() -> std::process::ExitCode {
     let mut failed = false;
     match boot(None) {
-        Ok(()) => println!("accepted: the valid portal page, download, embed and role"),
+        Ok(()) => println!("accepted: the valid portal page, download, embed, menu item and role"),
         Err(error) => {
             println!("UNEXPECTED refusal of the valid contributions: {error}");
             failed = true;
         }
     }
-    let cases: [(&str, &'static Contribution); 15] = [
+    let cases: [(&str, &'static Contribution); 18] = [
         ("portal access outside /portal/", &OUTSIDE),
         ("other access under /portal", &STAFF_INSIDE),
         ("a host credential path", &HOST_PATH),
@@ -338,6 +363,18 @@ fn refusals() -> std::process::ExitCode {
         ("a moved path into the portal", &MOVED_IN),
         ("a role mixing portal and staff keys", &MIXED_ROLE),
         ("a grant-all portal role", &GRANT_ALL_PORTAL),
+        (
+            "a staff menu item routing into /portal",
+            &MENU_STAFF_INTO_PORTAL,
+        ),
+        (
+            "a portal menu item that asks for nothing",
+            &MENU_OPEN_PORTAL,
+        ),
+        (
+            "a portal menu item naming a staff capability",
+            &MENU_STAFF_KEY,
+        ),
     ];
     for (case, contribution) in cases {
         match boot(Some(contribution)) {

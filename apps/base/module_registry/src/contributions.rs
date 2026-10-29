@@ -291,8 +291,8 @@ pub enum Access {
 pub const PORTAL: &str = "/portal";
 /// The host's own portal pages: its credential pages and the portal live
 /// socket (`apps/web`). No contribution claims a path under one of them.
-pub const PORTAL_HOST: [&str; 7] = [
-    "sign-in", "forgot", "reset", "accept", "register", "verify", "live",
+pub const PORTAL_HOST: [&str; 8] = [
+    "sign-in", "sign-out", "forgot", "reset", "accept", "register", "verify", "live",
 ];
 /// The portal's owner, Core Customer Access, alone serves the portal home
 /// (`/portal`) and the customer's account (`/portal/account/...`).

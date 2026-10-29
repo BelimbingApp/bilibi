@@ -364,9 +364,12 @@ impl Vocabulary {
         for entry in catalog.entries::<Download>(DOWNLOADS)? {
             access(entry, entry.get::<Download>()?.access)?;
         }
+        let menu = bilibi_menu::Menu::from_catalog(catalog)?;
         for entry in catalog.entries::<bilibi_menu::MenuItem>(bilibi_menu::ITEMS)? {
-            for key in entry.get::<bilibi_menu::MenuItem>()?.requirement.keys() {
-                check(key)?;
+            let item = entry.get::<bilibi_menu::MenuItem>()?;
+            let portal = menu.in_portal(item.id);
+            for key in item.requirement.keys() {
+                audience(entry, key, portal)?;
             }
         }
         for entry in catalog.entries::<bilibi_settings::Setting>(bilibi_settings::DEFINITIONS)? {

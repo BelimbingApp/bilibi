@@ -11,6 +11,10 @@ pub use bilibi_module_registry::{Contribution, Provenance};
 pub use inventory;
 
 pub const ITEMS: &str = "base/menu.items";
+/// The customer portal's menu root (ADR 16). Items under it make the portal
+/// layout's menu, route only to `/portal` pages and need a portal
+/// capability; the staff shell, its search and tile pickers never draw them.
+pub const PORTAL_ROOT: &str = "portal";
 
 /// What an item needs before it is shown. `AnyOf` opens a combined page; each
 /// section and write inside still enforces its own capability.
@@ -256,6 +260,36 @@ impl Menu {
                 at = by_id[id].item.parent;
             }
         }
+        // The portal menu and the staff menu never cross (ADR 16): a portal
+        // item routes only into `/portal` and asks for a capability (the
+        // audience of its key is Authz's check), a staff item never routes
+        // there.
+        for current in by_id.values() {
+            let portal = in_portal_tree(&by_id, current.item.id);
+            let route_portal = current
+                .item
+                .route
+                .is_some_and(bilibi_module_registry::contributions::in_portal);
+            let open = matches!(
+                current.item.requirement,
+                Requirement::Open | Requirement::Owner
+            );
+            let wrong = if portal {
+                current.item.route.is_some() && (!route_portal || open)
+            } else {
+                route_portal
+            };
+            if wrong {
+                return Err(invalid(format!(
+                    "menu item {} from {} at {}:{} crosses the portal menu (route {:?}, under {PORTAL_ROOT}: {portal})",
+                    current.item.id,
+                    current.provenance.module,
+                    current.provenance.source,
+                    current.provenance.line,
+                    current.item.route
+                )));
+            }
+        }
         let mut items: Vec<_> = by_id.into_values().collect();
         items.sort_by_key(|current| (current.item.order, current.item.id));
         Ok(Self { items, dropped })
@@ -285,16 +319,46 @@ impl Menu {
     }
     /// What the actor may see. `decide` answers one capability; Menu does not
     /// depend on Authz. A container with no visible child is hidden, so a
-    /// section never renders as an empty heading.
+    /// section never renders as an empty heading. The portal menu is never
+    /// part of it.
     pub fn visible_tree(&self, decide: &dyn Fn(&str) -> bool) -> Vec<Node> {
-        let permitted: Vec<_> = self
+        prune(build(&self.permitted(decide), None))
+            .into_iter()
+            .filter(|node| node.item.item.id != PORTAL_ROOT)
+            .collect()
+    }
+    /// The portal layout's menu: the items under [`PORTAL_ROOT`] a customer
+    /// may see, as [`Self::visible_tree`] decides them.
+    pub fn visible_portal_tree(&self, decide: &dyn Fn(&str) -> bool) -> Vec<Node> {
+        prune(build(&self.permitted(decide), Some(PORTAL_ROOT)))
+    }
+    /// Whether item `id` belongs to the portal menu.
+    pub fn in_portal(&self, id: &str) -> bool {
+        let by_id: BTreeMap<&str, Item> = self
             .items
+            .iter()
+            .map(|current| (current.item.id, *current))
+            .collect();
+        in_portal_tree(&by_id, id)
+    }
+    fn permitted(&self, decide: &dyn Fn(&str) -> bool) -> Vec<Item> {
+        self.items
             .iter()
             .filter(|current| current.item.requirement.allowed(decide))
             .copied()
-            .collect();
-        prune(build(&permitted, None))
+            .collect()
     }
+}
+/// Walks `id`'s ancestors; the parent graph is already proved acyclic.
+fn in_portal_tree(by_id: &BTreeMap<&str, Item>, id: &str) -> bool {
+    let mut at = Some(id);
+    while let Some(current) = at {
+        if current == PORTAL_ROOT {
+            return true;
+        }
+        at = by_id.get(current).and_then(|item| item.item.parent);
+    }
+    false
 }
 fn build(items: &[Item], parent: Option<&str>) -> Vec<Node> {
     let mut nodes: Vec<_> = items
@@ -362,6 +426,10 @@ contribute!(
 );
 // Bilimbi's "admin.system.software" is an empty container; Bilibi's Software
 // page (`apps/base/software`) contributes the item under that id itself.
+contribute!(
+    "base/menu",
+    MenuItem::container(PORTAL_ROOT, "Portal").order(1000)
+);
 contribute!(
     "base/menu",
     MenuItem::container("production", "Production").order(200)
