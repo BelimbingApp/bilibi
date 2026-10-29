@@ -228,7 +228,9 @@ pub(crate) fn register(
             })
         };
         match vocabulary.capabilities.get(record.import.capability) {
-            Some(owned) if owned.provenance.module == module && !owned.definition.platform => {}
+            Some(owned)
+                if owned.provenance.module == module
+                    && owned.definition.audience == bilibi_authz::Audience::Tenant => {}
             _ => {
                 return Err(invalid(
                     entry,
