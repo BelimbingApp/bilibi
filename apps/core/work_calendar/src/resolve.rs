@@ -3,7 +3,7 @@
 //! rule version in force. No Bilimbi counterpart; Belimbing's
 //! `AttendanceCalendarResolver` resolves the same four day types.
 use crate::model::{Day, DayType, Exception, Reason, Rule, Substitute, WeekDay};
-use jiff::{civil::Date, ToSpan};
+use jiff::{civil::Date, tz::TimeZone, Timestamp, ToSpan};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// The furthest a holiday on a rest day moves to find a working day.
@@ -18,6 +18,25 @@ pub(crate) fn in_force(rules: &[Rule], date: Date) -> Option<&Rule> {
         .rev()
         .find(|rule| rule.effective_from <= date)
         .or(rules.first())
+}
+
+/// The version of `rules` in force at `now`: the last whose first date has
+/// come in its own zone, so "today" is the calendar's date where it keeps
+/// its hours, never the database session's. The first version also governs
+/// before then. The calendars listing reads it the same way in SQL
+/// (`store::zone_in_force`).
+pub(crate) fn in_force_now(rules: &[Rule], now: Timestamp) -> Option<&Rule> {
+    rules
+        .iter()
+        .rev()
+        .find(|rule| rule.effective_from <= today(&rule.timezone, now))
+        .or(rules.first())
+}
+
+/// The date at `now` in `zone`; UTC for a zone this build does not know.
+pub(crate) fn today(zone: &str, now: Timestamp) -> Date {
+    let zone = TimeZone::get(zone).unwrap_or(TimeZone::UTC);
+    now.to_zoned(zone).date()
 }
 
 /// Everything one calendar's dates depend on, loaded for a window.

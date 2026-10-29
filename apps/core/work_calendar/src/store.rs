@@ -23,7 +23,7 @@ use bilibi_authz::{authorize_key, authorize_operator};
 use bilibi_database::{Change, Error, MutationTransaction, Result};
 use bilibi_events::NewEvent;
 use bilibi_tenancy::Scope;
-use jiff::civil::Date;
+use jiff::{civil::Date, Timestamp};
 use serde_json::{json, Value};
 use tokio_postgres::GenericClient;
 
@@ -55,13 +55,14 @@ fn bounds(from: Option<Date>, to: Option<Date>) -> (String, String) {
     )
 }
 
-/// The zone of calendar `c`'s rule version in force on the database's date
-/// (the first version's before it starts), as one SQL subquery: the
-/// calendars listing and their Grid table read it alike, and it matches
-/// [`crate::resolve::in_force`] on the same date.
+/// The zone of calendar `c`'s rule version in force now, each version's
+/// first date read in its own zone (the first version's before it starts),
+/// as one SQL subquery: the calendars listing and their Grid table read it
+/// alike, and it matches [`crate::resolve::in_force_now`]. Never the
+/// session's `CURRENT_DATE`, which follows the database's zone.
 macro_rules! zone_in_force {
     () => {
-        "(SELECT r.timezone FROM core_work_calendar_rules r WHERE r.tenant_id=c.tenant_id AND r.calendar_id=c.id ORDER BY r.effective_from<=CURRENT_DATE DESC, CASE WHEN r.effective_from<=CURRENT_DATE THEN r.effective_from END DESC NULLS LAST, r.effective_from LIMIT 1)"
+        "(SELECT r.timezone FROM core_work_calendar_rules r WHERE r.tenant_id=c.tenant_id AND r.calendar_id=c.id ORDER BY r.effective_from<=(now() AT TIME ZONE r.timezone)::date DESC, CASE WHEN r.effective_from<=(now() AT TIME ZONE r.timezone)::date THEN r.effective_from END DESC NULLS LAST, r.effective_from LIMIT 1)"
     };
 }
 pub(crate) use zone_in_force;
@@ -143,6 +144,26 @@ pub(crate) async fn holiday_sets(
         })
         .collect();
     Ok(Rows { rows, total })
+}
+/// The names of the holiday sets `codes` names that the tenant may read (its
+/// own and the installation-wide ones), by code; an unknown code is left out.
+pub(crate) async fn holiday_set_names(
+    client: &(impl GenericClient + Sync),
+    tenant: i64,
+    codes: &[String],
+) -> Result<Vec<(String, String)>> {
+    if codes.len() > MAX_ROWS as usize {
+        return Err(Error::Invalid);
+    }
+    Ok(client
+        .query(
+            "SELECT code,name FROM core_work_calendar_holiday_sets WHERE (tenant_id=$1 OR installation) AND code=ANY($2) ORDER BY code,tenant_id",
+            &[&tenant, &codes],
+        )
+        .await?
+        .iter()
+        .map(|row| (row.get(0), row.get(1)))
+        .collect())
 }
 pub(crate) async fn choices(
     client: &(impl GenericClient + Sync),
@@ -372,14 +393,15 @@ async fn exception_row(
 }
 
 /// One calendar: its first [`MAX_ROWS`] rule versions and included sets, and
-/// page `page` of its exceptions.
+/// page `page` of its exceptions, `page_size` a page.
 pub(crate) async fn calendar(
     client: &(impl GenericClient + Sync),
     tenant: i64,
     code: &str,
     page: i64,
+    page_size: i64,
 ) -> Result<Calendar> {
-    if !(1..=100_000).contains(&page) {
+    if !(1..=100_000).contains(&page) || !(1..=MAX_ROWS).contains(&page_size) {
         return Err(Error::Invalid);
     }
     let row = calendar_row(client, tenant, code).await?;
@@ -422,7 +444,7 @@ pub(crate) async fn calendar(
     let exceptions = client
         .query(
             "SELECT id,starts_on::text,ends_on::text,name,day_type,periods FROM core_work_calendar_exceptions WHERE tenant_id=$1 AND calendar_id=$2 ORDER BY starts_on LIMIT $3 OFFSET $4",
-            &[&tenant, &id, &MAX_ROWS, &offset(page, MAX_ROWS)],
+            &[&tenant, &id, &page_size, &offset(page, page_size)],
         )
         .await?
         .iter()
@@ -605,6 +627,26 @@ fn version(input: &Value, errors: &mut Vec<FieldError>) -> i64 {
         }
     }
 }
+/// Refuses a zone PostgreSQL does not know: the calendars listing reads a
+/// version's first date in its zone in SQL (`zone_in_force`), so a zone only
+/// this build's time zone data has would fail the whole listing.
+async fn database_zone(
+    client: &(impl GenericClient + Sync),
+    zone: &str,
+    errors: &mut Vec<FieldError>,
+) -> Result<()> {
+    let known = client
+        .query_opt("SELECT 1 FROM pg_timezone_names WHERE name=$1", &[&zone])
+        .await?
+        .is_some();
+    if !known {
+        errors.push(FieldError::new(
+            "timezone",
+            "is not a time zone the database knows yet",
+        ));
+    }
+    Ok(())
+}
 fn timezone(value: &Value, errors: &mut Vec<FieldError>) -> Option<String> {
     match value.as_str() {
         Some(zone) if bilibi_datetime::valid_timezone(zone) => Some(zone.to_owned()),
@@ -665,8 +707,11 @@ impl WorkCalendars {
                     Value::Null => Some(Substitute::None),
                     value => substitute(value, &mut errors),
                 };
+                if !timezone.is_empty() {
+                    database_zone(client, &timezone, &mut errors).await?;
+                }
                 let effective_from = match &input["effective_from"] {
-                    Value::Null => Some(today(client).await?),
+                    Value::Null => Some(crate::resolve::today(&timezone, Timestamp::now())),
                     value => date(value, "effective_from", &mut errors),
                 };
                 let week = Week::parse(&input["week"], &mut errors);
@@ -721,6 +766,9 @@ impl WorkCalendars {
                 let timezone = (!input["timezone"].is_null())
                     .then(|| timezone(&input["timezone"], &mut errors))
                     .flatten();
+                if let Some(zone) = &timezone {
+                    database_zone(client, zone, &mut errors).await?;
+                }
                 let week = Week::parse(&input["week"], &mut errors);
                 match (effective_from, week) {
                     (Some(effective_from), Some(week)) => Prepared::Rule {
@@ -747,7 +795,10 @@ impl WorkCalendars {
                 let day = day_entry(input, "exception", &mut errors);
                 if let (Some(starts_on), Some(ends_on)) = (starts_on, ends_on) {
                     if ends_on < starts_on {
-                        errors.push(FieldError::new("ends_on", "must not be before starts_on"));
+                        errors.push(FieldError::new(
+                            "ends_on",
+                            "must not be before the date it starts",
+                        ));
                     } else if starts_on
                         .until(ends_on)
                         .map_or(true, |span| span.get_days() >= 366)
@@ -822,7 +873,7 @@ impl WorkCalendars {
                 };
                 let (from, to) = (optional("from"), optional("to"));
                 if from.zip(to).is_some_and(|(from, to)| to < from) {
-                    errors.push(FieldError::new("to", "must not be before from"));
+                    errors.push(FieldError::new("to", "must not be before the start of the range"));
                 }
                 match name {
                     Some(name) => Prepared::CopySet {
@@ -1660,16 +1711,6 @@ async fn plan_read(
         )
         .await?;
     Ok(stored)
-}
-/// The database's date: what defaults a write's dates and picks the rule
-/// version "in force today" in listings.
-pub(crate) async fn today(client: &(impl GenericClient + Sync)) -> Result<Date> {
-    client
-        .query_one("SELECT CURRENT_DATE::text", &[])
-        .await?
-        .get::<_, &str>(0)
-        .parse()
-        .map_err(|_| Error::Internal)
 }
 fn known<T>(read: Result<T>) -> WriteResult<T> {
     match read {

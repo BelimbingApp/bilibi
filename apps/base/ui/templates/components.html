@@ -26,10 +26,10 @@
     line. No Bilimbi counterpart; Belimbing's x-ui.day-tile. description is
     the whole day in words, for the tooltip and for assistive technology, so
     the tint is never the only signal. outside dims a neighbouring month's
-    date that fills a month grid's first or last week. Rendered through the
-    typed DayTile. -#}
+    date that fills a month grid's first or last week (a phone's list of the
+    month leaves it out). Rendered through the typed DayTile. -#}
 {% macro day_tile(id, kind, date, description, outside, lines) %}
-<div{% if !id.is_empty() %} id="{{ id }}"{% endif %} data-day-tile data-day-type="{{ kind.name() }}" title="{{ description }}" class="flex h-full min-h-16 flex-col gap-0.5 rounded-sm border border-low-contrast-line px-1.5 py-1 text-xs {{ kind.class() }}{% if outside %} opacity-50{% endif %}">
+<div{% if !id.is_empty() %} id="{{ id }}"{% endif %} data-day-tile data-day-type="{{ kind.name() }}"{% if outside %} data-outside{% endif %} title="{{ description }}" class="flex h-full min-h-16 min-w-0 flex-1 flex-col gap-0.5 rounded-sm border border-low-contrast-line px-1.5 py-1 text-xs max-sm:min-h-0 {{ kind.class() }}{% if outside %} opacity-50{% endif %}">
 <div aria-hidden="true" class="flex items-baseline justify-between gap-1"><span class="text-sm font-medium tabular-nums">{{ date }}</span><span class="truncate font-medium">{{ kind.label() }}</span></div>
 <span class="sr-only">{{ description }}</span>
 {%- for line in lines %}
@@ -41,15 +41,17 @@
 {#- A month of day tiles under the weekday names, Monday first (ISO 8601). A
     table, so each date is read with its weekday; tiles is whole weeks, seven
     to a row, the neighbouring months' dates filling the first and last.
-    Narrower than seven readable tiles (a phone), the weeks scroll sideways
-    inside their card, as a chart does, instead of cutting every line short.
-    Rendered through the typed DayMonth. -#}
+    Between a phone and seven readable tiles, the weeks scroll sideways
+    inside their card, as a chart does. On a phone (below sm) the month is a
+    list instead: its own dates one under another, each after its weekday,
+    so no day waits off screen; each tile's description still names the
+    weekday. Rendered through the typed DayMonth. -#}
 {% macro day_month(id, caption, tiles) %}
-<div class="w-0 min-w-full overflow-x-auto" tabindex="0">
-<table{% if !id.is_empty() %} id="{{ id }}"{% endif %} data-day-month class="w-full min-w-[40rem] table-fixed border-separate border-spacing-1">
+<div class="w-0 min-w-full sm:overflow-x-auto" tabindex="0">
+<table{% if !id.is_empty() %} id="{{ id }}"{% endif %} data-day-month class="w-full table-fixed border-separate border-spacing-1 max-sm:block sm:min-w-[40rem]">
 <caption class="sr-only">{{ caption }}</caption>
-<thead><tr>{% for name in bilibi_ui::WEEKDAYS %}<th scope="col" class="px-1 text-left text-xs font-medium text-ink-muted">{{ name }}</th>{% endfor %}</tr></thead>
-<tbody>{% for week in tiles.chunks(7) %}<tr>{% for tile in week %}<td class="h-px p-0 align-top">{{ tile|safe }}</td>{% endfor %}</tr>{% endfor %}</tbody>
+<thead class="max-sm:hidden"><tr>{% for name in bilibi_ui::WEEKDAYS %}<th scope="col" class="px-1 text-left text-xs font-medium text-ink-muted">{{ name }}</th>{% endfor %}</tr></thead>
+<tbody class="max-sm:flex max-sm:flex-col max-sm:gap-1">{% for week in tiles.chunks(7) %}<tr class="max-sm:contents">{% for (tile, name) in week.iter().zip(bilibi_ui::WEEKDAYS) %}<td data-weekday="{{ name }}" class="h-px p-0 align-top max-sm:flex max-sm:h-auto max-sm:items-stretch max-sm:gap-2 max-sm:has-[[data-outside]]:hidden max-sm:before:w-8 max-sm:before:shrink-0 max-sm:before:pt-1 max-sm:before:text-xs max-sm:before:font-medium max-sm:before:text-ink-muted max-sm:before:content-[attr(data-weekday)_/_'']">{{ tile|safe }}</td>{% endfor %}</tr>{% endfor %}</tbody>
 </table>
 </div>
 {% endmacro %}

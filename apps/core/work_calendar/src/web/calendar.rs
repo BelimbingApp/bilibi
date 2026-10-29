@@ -2,12 +2,13 @@
 //! manage calendars renames it and changes its holiday substitution in place,
 //! retires it (confirmed) or reactivates it, sets the week from a date,
 //! includes or leaves out holiday sets, and adds or removes (confirmed) dated
-//! exceptions. Its exceptions page 400 at a time (`?page=`).
+//! exceptions. Its exceptions page 50 at a time (`?page=`), so each live
+//! update stays small; the include choice searches every set by code or name.
 use super::*;
 use crate::{
     contributions::{CALENDARS_PATH, SETS_PATH},
-    resolve::in_force,
-    Calendar, Exception, Listing, LIST, MANAGE, MAX_PAGE_SIZE, MAX_ROWS,
+    resolve::{in_force, in_force_now},
+    Calendar, Exception, Listing, LIST, MANAGE,
 };
 use bilibi_ui::{
     params, ActionLink, BackLink, BuiltinColumn, Button, ButtonVariant, Card, Choice,
@@ -18,6 +19,9 @@ use bilibi_ui::{
 use serde_json::json;
 
 const NOUN: &str = "calendar";
+/// Exceptions a page: every live update draws the page whole, and 400 rows
+/// made each one about a megabyte.
+const EXCEPTIONS_PAGE: i64 = 50;
 
 fn rule_columns() -> Vec<BuiltinColumn> {
     let mut columns = vec![
@@ -73,9 +77,14 @@ pub(super) struct Record {
     code: String,
     page: i64,
     calendar: Option<Calendar>,
-    /// The tenant's holiday sets by code (the first 400), for names and the
-    /// include choice; empty for a reader who may not list them.
+    /// The included sets' names by code, and how many sets the tenant may
+    /// include in all; none for a reader who may not list them.
     sets: Vec<(String, String)>,
+    sets_total: i64,
+    /// The include choice: the sets matching the dialog's search (the first
+    /// 100, by code) and how many match in all.
+    found: Vec<(String, String)>,
+    found_total: i64,
     /// The sets are read again on a full load and after a set-related
     /// event, not on every click.
     sets_stale: bool,
@@ -83,8 +92,9 @@ pub(super) struct Record {
     manage: bool,
     /// Today where people work: the default for a new date.
     today: Option<Date>,
-    /// The date "in force" is read on, as the calendars list reads it.
-    rule_date: Option<Date>,
+    /// The first date of the rule version in force now, as the calendars
+    /// list reads it (`in_force_now`).
+    in_force: Option<Date>,
     statuses: CommitStates,
     notice: String,
     flash: Flash,
@@ -103,10 +113,13 @@ impl Record {
             page: page(request.query),
             calendar: None,
             sets: Vec::new(),
+            sets_total: 0,
+            found: Vec::new(),
+            found_total: 0,
             sets_stale: true,
             manage: false,
             today: None,
-            rule_date: None,
+            in_force: None,
             statuses: CommitStates::default(),
             notice: String::new(),
             flash: Flash::default(),
@@ -127,40 +140,39 @@ impl Record {
         let mut calendar = self
             .pages
             .calendars
-            .calendar(scope, &self.code, self.page)
+            .calendar_page(scope, &self.code, self.page, EXCEPTIONS_PAGE)
             .await?;
         if calendar.exceptions.rows.is_empty() && self.page > 1 {
             self.page = 1;
-            calendar = self.pages.calendars.calendar(scope, &self.code, 1).await?;
+            calendar = self
+                .pages
+                .calendars
+                .calendar_page(scope, &self.code, 1, EXCEPTIONS_PAGE)
+                .await?;
         }
         // The record needs only `.view`; the sets' names and the include
-        // choice come from the listing, so only a reader who may list sets
-        // reads it. Another reader sees each included set by its code.
+        // choice need `.list`, so only a reader who may list sets reads them.
+        // Another reader sees each included set by its code.
         let capabilities = self.pages.capabilities(scope).await?;
         self.manage = capabilities.contains(MANAGE);
         if std::mem::take(&mut self.sets_stale) {
             self.sets.clear();
-            // A page of the listing at a time, as far as the module's bound
-            // for a nested collection.
-            for page in 1..=MAX_ROWS / MAX_PAGE_SIZE {
-                if !capabilities.contains(LIST) {
-                    break;
-                }
+            self.sets_total = 0;
+            if capabilities.contains(LIST) {
+                let calendars = &self.pages.calendars;
+                self.sets = calendars
+                    .holiday_set_names(scope, &calendar.holiday_sets.rows)
+                    .await?;
                 let listing = Listing {
-                    page,
+                    page_size: 1,
                     ..Listing::default()
                 };
-                let rows = self.pages.calendars.holiday_sets(scope, &listing).await?;
-                let done = rows.rows.len() < MAX_PAGE_SIZE as usize;
-                self.sets
-                    .extend(rows.rows.into_iter().map(|s| (s.code, s.name)));
-                if done {
-                    break;
-                }
+                self.sets_total = calendars.holiday_sets(scope, &listing).await?.total;
             }
         }
         self.today = Some(self.pages.today(scope).await?);
-        self.rule_date = Some(self.pages.rule_date().await?);
+        self.in_force = in_force_now(&calendar.rules.rows, jiff::Timestamp::now())
+            .map(|rule| rule.effective_from);
         if self.rows_changed {
             self.rules
                 .load(&calendar.rules.rows, |r| r.effective_from.to_string());
@@ -348,7 +360,18 @@ impl Record {
             }
             "new_include" => {
                 self.flash.clear();
+                self.find_sets(scope, "").await?;
                 self.dialog = Dialog::Include(Draft::default());
+            }
+            // The dialog's search changed: the choice follows it.
+            "include_draft" => {
+                let posted = form(value, "include")?;
+                let search = posted.get("search").map_or("", String::as_str);
+                self.find_sets(scope, search).await?;
+                self.dialog = Dialog::Include(Draft {
+                    values: posted,
+                    errors: BTreeMap::new(),
+                });
             }
             "include_set" => {
                 let posted = form(value, "include")?;
@@ -536,8 +559,26 @@ impl Record {
             }
         }
     }
+    /// The first page of sets whose code or name contains `search`; none for
+    /// a reader who may not list them. The search narrows the rest, so the
+    /// dialog never carries every set.
+    async fn find_sets(&mut self, scope: &Scope, search: &str) -> Result<()> {
+        self.found.clear();
+        self.found_total = 0;
+        if !self.pages.allowed(scope, LIST).await? {
+            return Ok(());
+        }
+        let listing = Listing {
+            search: search.trim().chars().take(200).collect(),
+            ..Listing::default()
+        };
+        let rows = self.pages.calendars.holiday_sets(scope, &listing).await?;
+        self.found_total = rows.total;
+        self.found = rows.rows.into_iter().map(|s| (s.code, s.name)).collect();
+        Ok(())
+    }
     fn set_name(&self, code: &str) -> String {
-        match self.sets.iter().find(|(c, _)| c == code) {
+        match self.sets.iter().chain(&self.found).find(|(c, _)| c == code) {
             Some((_, name)) => format!("{name} ({code})"),
             None => code.to_owned(),
         }
@@ -580,7 +621,11 @@ impl Record {
                 .value(substitute)
                 .options(options),
         )?;
-        let zone = in_force(&calendar.rules.rows, self.rule_date.ok_or(Error::Internal)?)
+        let zone = calendar
+            .rules
+            .rows
+            .iter()
+            .find(|rule| Some(rule.effective_from) == self.in_force)
             .map_or("—", |rule| rule.timezone.as_str());
         let facts = render(Facts {
             id: "work-calendar-facts",
@@ -653,8 +698,7 @@ impl Record {
         section(heading, cards)
     }
     fn rules_card(&self, calendar: &Calendar, manage: bool) -> Result<Html> {
-        let date = self.rule_date.ok_or(Error::Internal)?;
-        let current = in_force(&calendar.rules.rows, date).map(|rule| rule.effective_from);
+        let current = self.in_force;
         let mut rows = Vec::with_capacity(calendar.rules.rows.len());
         for rule in &calendar.rules.rows {
             let mut from = Html::text(&long_date(rule.effective_from));
@@ -755,7 +799,8 @@ impl Record {
                 "No holiday sets yet. Only the week and exceptions decide its days.",
             )));
         }
-        let actions = if manage && !self.choices(calendar).is_empty() {
+        // Offered while some set is not included yet, however many there are.
+        let actions = if manage && self.sets_total > calendar.holiday_sets.total {
             render(Button {
                 id: "work-calendar-new-include",
                 event: "new_include",
@@ -780,9 +825,9 @@ impl Record {
             Vec::new(),
         )
     }
-    /// The sets not yet included, name first and code after.
+    /// The sets found and not yet included, name first and code after.
     fn choices(&self, calendar: &Calendar) -> Vec<Choice> {
-        self.sets
+        self.found
             .iter()
             .filter(|(code, _)| !calendar.holiday_sets.rows.contains(code))
             .map(|(code, name)| Choice::new(name.clone(), code.clone()).detail(code))
@@ -852,8 +897,8 @@ impl Record {
         } else {
             Html::EMPTY
         };
-        // Exceptions page 400 at a time: plain links to the neighbours.
-        let shown = (self.page - 1) * MAX_ROWS + calendar.exceptions.rows.len() as i64;
+        // Exceptions page 50 at a time: plain links to the neighbours.
+        let shown = (self.page - 1) * EXCEPTIONS_PAGE + calendar.exceptions.rows.len() as i64;
         let mut links = Vec::new();
         if self.page > 1 {
             links.push(render(ActionLink {
@@ -991,16 +1036,37 @@ impl Record {
         })
     }
     fn include_dialog(&self, calendar: &Calendar, draft: &Draft) -> Result<Html> {
-        let combo = Combobox::new("work-calendar-include-set", "include[holiday_set]")
+        let value = |key: &str| draft.values.get(key).cloned().unwrap_or_default();
+        let search = Field::in_form("include", "search")
+            .id("work-calendar-include-search")
+            .label("Find a set")
+            .kind(InputKind::Search)
+            .value(value("search"))
+            .hint("Part of a code or name.")
+            .attr("maxlength", "200")
+            .attr("autocomplete", "off")
+            .attr("data-debounce", "300");
+        let mut combo = Combobox::new("work-calendar-include-set", "include[holiday_set]")
             .label("Holiday set")
             .options(self.choices(calendar))
-            .value(draft.values.get("holiday_set").cloned().unwrap_or_default())
+            .value(value("holiday_set"))
             .placeholder("Choose a holiday set")
             .errors(draft.errors.get("holiday_set").cloned().unwrap_or_default());
+        let listed = self.found.len() as i64;
+        if self.found_total > listed {
+            combo = combo.hint(format!(
+                "The first {listed} of {} sets that match. Find a set to narrow them.",
+                self.found_total
+            ));
+        } else if self.found_total == 0 {
+            combo = combo.hint("No holiday set matches.");
+        }
         let body = render(DialogForm {
             id: "work-calendar-include-form",
-            event: "include_set",
-            rows: vec![vec![render(combo)?]],
+            event: "include_draft",
+            change: true,
+            submit: "include_set",
+            rows: vec![vec![render(search)?], vec![render(combo)?]],
             actions: dialog_actions("Include", "Including…", "close_dialog")?,
             ..DialogForm::default()
         })?;
