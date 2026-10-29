@@ -91,9 +91,10 @@ impl Engine {
         }
         // Delivery still runs if one run's owner or definition is unavailable.
         let runs = self.sweep_processes(limit).await;
-        self.sweep_approvals(limit).await?;
+        let approvals = self.sweep_approvals(limit).await;
         let delivery = self.deliver_due_transitions(limit).await?;
         let (reconciled, skipped) = runs?;
+        approvals?;
         let client = self.db.get().await?;
         // Pending/leased/failed deliveries and append-only business facts are
         // never deleted. SKIP LOCKED avoids a concurrent dispatcher.

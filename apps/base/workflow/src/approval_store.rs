@@ -1390,12 +1390,22 @@ impl Engine {
                     Err(Error::Forbidden | Error::NotFound | Error::Unauthorized) => continue,
                     Err(e) => return Err(e),
                 }
-                check_facts(&case, &facts)?;
+                match check_facts(&case, &facts) {
+                    Ok(()) => {}
+                    Err(Error::Invalid) => continue,
+                    Err(e) => return Err(e),
+                }
                 if facts.company != row.get::<_, i64>("company_id") {
                     continue;
                 }
-                self.prove_subject_identities(&sql, &scope, &mut facts)
-                    .await?;
+                match self
+                    .prove_subject_identities(&sql, &scope, &mut facts)
+                    .await
+                {
+                    Ok(()) => {}
+                    Err(Error::Forbidden | Error::NotFound | Error::Unauthorized) => continue,
+                    Err(e) => return Err(e),
+                }
                 let mut participants: ApprovalIdentities =
                     serde_json::from_value(row.get("participants")).map_err(|_| Error::Invalid)?;
                 participants.extend(&facts.preparers);
@@ -1612,6 +1622,7 @@ impl Engine {
         live_policy.validate(&case)?;
         policy.validate(&case)?;
         let mut routed = Vec::new();
+        let mut seat_routes = serde_json::Map::new();
         for seat in &stage.seats {
             if tx.sql().query_one("SELECT EXISTS(SELECT 1 FROM base_workflow_approval_decisions WHERE tenant_id=$1 AND request_id=$2 AND stage_key=$3 AND seat_key=$4)",&[&tenant,&id,&stage.key,&seat.key]).await?.get::<_,bool>(0) {continue;}
             let escalated:bool=tx.sql().query_one("SELECT EXISTS(SELECT 1 FROM base_workflow_approval_notices WHERE tenant_id=$1 AND request_id=$2 AND stage_key=$3 AND seat_key=$4 AND notice_key='escalated')",&[&tenant,&id,&stage.key,&seat.key]).await?.get(0);
@@ -1620,8 +1631,8 @@ impl Engine {
             } else {
                 &seat.selector
             };
-            routed.extend(
-                self.approval_recipients(
+            let mut holders = self
+                .approval_recipients(
                     tx.sql(),
                     &scope,
                     RecipientContext {
@@ -1639,14 +1650,26 @@ impl Engine {
                             || case.distinct_stages,
                     },
                 )
-                .await?,
-            );
+                .await?;
+            holders.sort();
+            holders.dedup();
+            routed.extend(&holders);
+            seat_routes.insert(seat.key.clone(), json!(holders));
         }
         routed.sort();
         routed.dedup();
         routed.truncate(bilibi_notifications::MAX_RECIPIENTS);
-        let previous=tx.sql().query_opt("SELECT detail->'recipients' FROM base_workflow_approval_events WHERE tenant_id=$1 AND request_id=$2 AND event IN ('routed','reassigned') AND detail->>'stage'=$3 ORDER BY id DESC LIMIT 1",&[&tenant,&id,&stage.key]).await?.map(|r|r.get::<_,Value>(0));
-        if previous.as_ref() != Some(&json!(routed)) {
+        let previous=tx.sql().query_opt("SELECT detail->'seats' FROM base_workflow_approval_events WHERE tenant_id=$1 AND request_id=$2 AND event IN ('routed','reassigned') AND detail->>'stage'=$3 ORDER BY id DESC LIMIT 1",&[&tenant,&id,&stage.key]).await?.and_then(|r|r.get::<_,Option<Value>>(0));
+        let mut seats = previous
+            .clone()
+            .and_then(|v| v.as_object().cloned())
+            .unwrap_or_default();
+        if previous.is_none()
+            || seat_routes
+                .iter()
+                .any(|(key, now)| seats.get(key) != Some(now))
+        {
+            seats.extend(seat_routes);
             let route_scope = scope.clone();
             let stage_key = stage.key.clone();
             let old_route = saved.routing_version;
@@ -1654,7 +1677,7 @@ impl Engine {
             tx.mutate(move |sql|Box::pin(async move {
                 sql.execute("UPDATE base_workflow_approval_requests SET routing_version=routing_version+1,version=version+1 WHERE tenant_id=$1 AND id=$2",&[&tenant,&id]).await?;
                 let mut changes=vec![updated("workflow.approval_request",id,json!({"routing_version":old_route}),json!({"routing_version":old_route+1}))];
-                event(sql,&route_scope,id,"reassigned",json!({"stage":stage_key,"recipients":evidence,"reason":"Live approval responsibility changed."}),&mut changes).await?;
+                event(sql,&route_scope,id,"reassigned",json!({"stage":stage_key,"recipients":evidence,"seats":seats,"reason":"Live approval responsibility changed."}),&mut changes).await?;
                 Ok(((),changes))
             })).await?;
             if !routed.is_empty() {
@@ -1933,9 +1956,10 @@ impl Engine {
         let snapshot:ApprovalPolicy=serde_json::from_value(tx.sql().query_one("SELECT policy FROM base_workflow_approval_policies WHERE tenant_id=$1 AND id=$2",&[&scope.tenant(),&saved.policy_id]).await?.get(0)).map_err(|_|Error::Invalid)?;
         let case = saved.enforce(case)?;
         let mut recipients = Vec::new();
+        let mut seat_routes = serde_json::Map::new();
         for seat in &stage.seats {
-            recipients.extend(
-                self.approval_recipients(
+            let mut holders = self
+                .approval_recipients(
                     tx.sql(),
                     scope,
                     RecipientContext {
@@ -1953,8 +1977,11 @@ impl Engine {
                             || case.distinct_stages,
                     },
                 )
-                .await?,
-            );
+                .await?;
+            holders.sort();
+            holders.dedup();
+            recipients.extend(&holders);
+            seat_routes.insert(seat.key.clone(), json!(holders));
         }
         recipients.sort();
         recipients.dedup();
@@ -1964,9 +1991,10 @@ impl Engine {
         let routing = saved.routing_version;
         let route_scope = scope.clone();
         let route_recipients = recipients.clone();
+        let seat_routes = Value::Object(seat_routes);
         let receipt=tx.mutate(move |sql|Box::pin(async move{
             let row=sql.query_opt("INSERT INTO base_workflow_approval_notices(tenant_id,request_id,stage_key,seat_key,routing_version,notice_key) VALUES($1,$2,$3,'aggregate',$4,'activated') ON CONFLICT DO NOTHING RETURNING id",&[&tenant,&id,&stage,&routing]).await?;
-            if let Some(row)=row {let receipt:i64=row.get(0);let mut changes=vec![change("workflow.approval_notice",receipt,json!({"request":id,"stage":stage,"notice":"activated"}))];event(sql,&route_scope,id,"routed",json!({"stage":stage,"recipients":route_recipients}),&mut changes).await?;Ok((true,changes))}
+            if let Some(row)=row {let receipt:i64=row.get(0);let mut changes=vec![change("workflow.approval_notice",receipt,json!({"request":id,"stage":stage,"notice":"activated"}))];event(sql,&route_scope,id,"routed",json!({"stage":stage,"recipients":route_recipients,"seats":seat_routes}),&mut changes).await?;Ok((true,changes))}
             else{Ok((false,vec![change("workflow.approval_notice_replay",id,json!({"request":id,"stage":stage}))]))}
         })).await?;
         if receipt && !recipients.is_empty() {
