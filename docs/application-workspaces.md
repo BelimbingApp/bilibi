@@ -112,7 +112,7 @@ From a clean, published trial, run `./bilibi new <unused-sibling-name>`. For an 
 
 Use an independently created empty PostgreSQL 18 database and a separate unused development port. Supply its `DATABASE_URL` privately in the validation shell, set `BILIBI_DEV_PORT`, then run `./bilibi start` from the new application root. Do not reuse the old database or copy its settings into this validation database. Newly seeded media paths, key files, mail output and workspace state must resolve inside the parallel workspace or another dedicated disposable location. Verify any environment overrides before startup.
 
-Open the launcher's printed address, which must equal the actual `APP_ORIGIN`. Use sign-in and a mounted Domain page in the browser. Check `./bilibi status`, the development identity and saved-version differences. Run strict checks with another empty disposable database and verify release packaging with the pinned builder. Record proof under [runtime parity](runtime-parity.md). Stop only validation-owned processes by their recorded PID. Keep the original process and runtime data available throughout.
+Open the launcher's printed address, which must equal the actual `APP_ORIGIN`. Use sign-in and a mounted Domain page in the browser. Check `./bilibi status`, the development identity and saved-version differences. Run strict checks with another empty disposable database and verify release packaging with the maker's Docker builder. Record proof under [runtime parity](runtime-parity.md). Stop only validation-owned processes by their recorded PID. Keep the original process and runtime data available throughout.
 
 ## Adopt existing sources deliberately
 
