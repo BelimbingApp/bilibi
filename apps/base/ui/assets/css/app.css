@@ -661,25 +661,21 @@ body:has(dialog:modal) #flash-group > #connection-server-error {
   }
 }
 
-/* The notch of an unframed `flex_table/1` rises its own height (`h-3.5`) out
- * of the card it sits in, so that it stands on the page body rather than on
- * a strip of the card. When the table opens the card, the card leaves it that
- * height plus a gap above itself; the toolbar's `mb-2` collapses into this margin, so without it the
- * notch touched the search box. The component marks its frame
- * `data-unframed`; no page carries the notch's height. */
-[data-card]:has(> * > [data-table-frame][data-unframed]:nth-child(1 of :not(.sr-only))) {
+/* The notch of an unframed `flex_table/1` is placed its own height (`h-3.5`)
+ * above the table, out of flow, so that it stands on the page body rather
+ * than on a strip of a card. The table reserves that height plus a 12 px gap
+ * above the notch, whatever precedes it (the toolbar's `mb-2` collapses into
+ * this margin). When the table opens a card, the card carries the margin
+ * instead. Screen-reader-only headings take no room. The component marks its
+ * frame `data-unframed`; no page carries the notch's height. */
+[data-card]:has(> * > [data-table-frame][data-unframed]:nth-child(1 of :not(.sr-only))),
+[data-table-frame][data-unframed]:nth-child(n + 2 of :not(.sr-only)) {
   margin-top: calc(--spacing(3.5) + --spacing(3));
 }
 
-/* A table following visible content needs room for its raised notch. Ignore
- * screen-reader-only headings: the card already reserves space for those. */
-[data-table-frame][data-unframed]:nth-child(n + 2 of :not(.sr-only)) {
-  margin-top: calc(--spacing(3.5) + --spacing(2));
-}
-
-/* The shared header already leaves 12 px below its action row. A page's
- * stack spacing must not add a second gap before an adjacent list toolbar. */
-[data-page="list"] > [data-page-header]:has(+ [data-filter-toolbar]) {
+/* The shared header leaves 12 px below its action row. A list page's own
+ * stack spacing (`space-y-*`) must not add a second gap before the toolbar. */
+[data-page="list"] > [data-page-header] {
   margin-bottom: 0;
 }
 

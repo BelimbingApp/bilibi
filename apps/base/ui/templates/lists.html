@@ -9,19 +9,19 @@
 {%- import "components.html" as ui -%}
 {%- import "forms.html" as forms -%}
 
-{#- Summary, rows-per-page form and, with more than one page, the pager; p is a bilibi_ui::Pagination. -#}
+{#- Summary and, with more than one page, the rows-per-page form and the pager; nothing for an empty list. p is a bilibi_ui::Pagination. -#}
 {% macro pagination(p) %}
-<nav id="{{ p.id }}" aria-label="Pagination" data-pagination class="flex flex-col gap-2 border-t border-low-contrast-line px-2 py-2 sm:flex-row sm:items-center sm:justify-between"{% if !p.target.is_empty() %} data-target="{{ p.target }}"{% endif %}>
+{% if p.counts.total_pages > 0 %}<nav id="{{ p.id }}" aria-label="Pagination" data-pagination class="flex flex-col gap-2 border-t border-low-contrast-line px-2 py-2 sm:flex-row sm:items-center sm:justify-between"{% if !p.target.is_empty() %} data-target="{{ p.target }}"{% endif %}>
 <div class="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-{% if p.counts.total_pages > 0 %}<p id="{{ p.id }}-summary" class="text-xs tabular-nums text-ink-muted">{{ p.counts.summary() }}</p>{% endif %}
-<form id="{{ p.id }}-page-size-form" data-event="{{ p.filters_event }}" data-change class="flex items-center gap-1.5"><span class="text-xs text-ink-muted">Rows per page</span>{% let size = p.size_field() %}{% call forms::input(field=size) %}{% endcall %}</form>
+<p id="{{ p.id }}-summary" class="text-xs tabular-nums text-ink-muted">{{ p.counts.summary() }}</p>
+{% if p.counts.total_pages > 1 %}<form id="{{ p.id }}-page-size-form" data-event="{{ p.filters_event }}" data-change class="flex items-center gap-1.5"><span class="text-xs text-ink-muted">Rows per page</span>{% let size = p.size_field() %}{% call forms::input(field=size) %}{% endcall %}</form>{% endif %}
 </div>
 {% if p.counts.total_pages > 1 %}<div class="flex items-center gap-1" role="list" aria-label="Page navigation">
 <button id="{{ p.id }}-previous" type="button" data-event="{{ p.page_event }}" data-page="{{ p.previous() }}"{% if p.counts.page <= 1 %} disabled{% endif %} aria-label="Previous page" title="Previous page" class="grid size-7 place-items-center rounded-md border border-line bg-surface text-ink transition hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-strong/40 disabled:cursor-not-allowed disabled:opacity-50">{% call ui::icon(name="page-previous", class="size-3.5") %}{% endcall %}</button>
 {% for step in p.steps() %}{% if let Some(n) = step %}<button id="{{ p.id }}-page-{{ n }}" type="button" data-event="{{ p.page_event }}" data-page="{{ n }}"{% if *n == p.counts.page %} aria-current="page"{% endif %} aria-label="Page {{ n }}" class="grid size-7 place-items-center rounded-md border text-xs tabular-nums transition focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-strong/40 {% if *n == p.counts.page %}border-selection-line bg-brand-surface text-brand-ink{% else %}border-line bg-surface text-ink hover:bg-surface-sunken{% endif %}">{{ n }}</button>{% else %}<span class="px-1 text-xs text-ink-subtle" aria-hidden="true">…</span>{% endif %}
 {% endfor %}<button id="{{ p.id }}-next" type="button" data-event="{{ p.page_event }}" data-page="{{ p.next() }}"{% if !p.counts.has_next() %} disabled{% endif %} aria-label="Next page" title="Next page" class="grid size-7 place-items-center rounded-md border border-line bg-surface text-ink transition hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-strong/40 disabled:cursor-not-allowed disabled:opacity-50">{% call ui::icon(name="page-next", class="size-3.5") %}{% endcall %}</button>
 </div>{% endif %}
-</nav>
+</nav>{% endif %}
 {% endmacro %}
 
 {#- One toolbar label: always screen-reader only. -#}
@@ -30,7 +30,7 @@
 {#- The filter toolbar; toolbar is a bilibi_ui::FilterToolbar. The form raises
     its event on change and on submit, so Enter filters in place. -#}
 {% macro filter_toolbar(toolbar) %}
-<form id="{{ toolbar.id }}" data-filter-toolbar data-event="{{ toolbar.event }}" data-change class="ui-compact-controls mb-2 flex flex-wrap items-start gap-x-3 gap-y-2{% if !toolbar.class.is_empty() %} {{ toolbar.class }}{% endif %}"{% if !toolbar.target.is_empty() %} data-target="{{ toolbar.target }}"{% endif %}>
+<form id="{{ toolbar.id }}" data-event="{{ toolbar.event }}" data-change class="ui-compact-controls mb-2 flex flex-wrap items-start gap-x-3 gap-y-2{% if !toolbar.class.is_empty() %} {{ toolbar.class }}{% endif %}"{% if !toolbar.target.is_empty() %} data-target="{{ toolbar.target }}"{% endif %}>
 {% for control in toolbar.controls %}{% if control.is_search() %}<div class="min-w-52 flex-1 basis-64">{% call toolbar_label(id=control.id, label=control.label) %}{% endcall %}<div class="relative">{% call ui::icon(name="search", class="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-ink-faint") %}{% endcall %}{% call forms::input(field=control.field) %}{% endcall %}</div>{% if !control.hint.is_empty() %}<p class="mt-1.5 text-xs text-ink-subtle">{{ control.hint }}</p>{% endif %}</div>
 {% elif let Some(multi) = control.multi() %}<div class="w-full min-w-0 sm:w-auto sm:min-w-36">{% call forms::multi_select(control=multi) %}{% endcall %}</div>
 {% elif control.is_date() %}<div class="w-full min-w-0 sm:w-auto">{% call toolbar_label(id=control.id, label=control.label) %}{% endcall %}{% call forms::input(field=control.field) %}{% endcall %}</div>

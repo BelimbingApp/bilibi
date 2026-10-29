@@ -132,11 +132,11 @@ Width is a shared decision. Every page uses `PageVariant`. All three share one c
 *Every list is a `FlexTable`.* Never the plain `Table`.
 
 - **State:** `ListState` keeps page, search, filters, sort and page size in the URL. Reload and shared links reopen the same view.
-- **Toolbar:** search sits first, with filter boxes to its right, above the table in the open. Leave 12 px between the page header and an adjacent toolbar. On narrow screens filters wrap below search in the same order. No second card.
+- **Toolbar:** search sits first, with filter boxes to its right, above the table in the open. Leave 12 px between the page header and the toolbar. On narrow screens filters wrap below search in the same order. No second card.
 - **Rows:** `py-0.5`, `px-2`. Headers `py-1`, sunken background, `text-xs font-semibold`.
 - **Numbers:** tabular numerals for IDs, counts, dates and amounts.
 - **Corners:** table frames are square. A card is flat only where it frames the table.
-- **Pagination:** shown only when another page exists. The rows-per-page selector lives in the component.
+- **Pagination:** the results count shows whenever there are rows. The rows-per-page selector and pager show only when another page exists; an empty list shows none. They live in the component.
 - **Settings:** the operator and company settings table opens each Value cell as a form with Save and Cancel (`InlineForm`). Enter saves; Escape cancels. Protected values ask for 2FA in the row.
 - **Empty:** `EmptyState` says why and what to do next.
 
