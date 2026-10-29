@@ -647,6 +647,12 @@ body:has(dialog:modal) #flash-group > #connection-server-error {
   margin-top: calc(--spacing(3.5) + --spacing(3));
 }
 
+/* A table following visible content needs room for its raised notch. Ignore
+ * screen-reader-only headings: the card already reserves space for those. */
+[data-table-frame][data-unframed]:nth-child(n + 2 of :not(.sr-only)) {
+  margin-top: calc(--spacing(3.5) + --spacing(2));
+}
+
 /* The shared header already leaves 12 px below its action row. A page's
  * stack spacing must not add a second gap before an adjacent list toolbar. */
 [data-page="list"] > [data-page-header]:has(+ [data-filter-toolbar]) {

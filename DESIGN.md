@@ -140,7 +140,7 @@ Width is a shared decision. Every page uses `PageVariant`. All three share one c
 
 ### Flexible columns
 
-- A small "Customize table" notch on the table edge opens the column bar.
+- A small "Customize table" notch on the table edge opens the column bar. Leave at least 8 px between the notch and preceding content.
 - People add, remove and reorder columns, and pick a lens: value, bar, colour band, trend, change since a date.
 - Many-links become rollup cells that expand in place.
 - Row height has two named zooms: Compact and Normal. A compact row is one line.
