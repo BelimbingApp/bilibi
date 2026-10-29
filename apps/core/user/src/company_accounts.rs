@@ -55,7 +55,7 @@ const SELECT: &str = "SELECT u.id,u.name,u.email,u.email_verified_at,u.person_id
     FROM users u \
     JOIN person_affiliations a ON a.tenant_id=u.tenant_id AND a.id=u.affiliation_id AND a.person_id=u.person_id AND a.organisation_id=u.organisation_id AND a.unlinked_at IS NULL \
     JOIN persons p ON p.tenant_id=u.tenant_id AND p.id=u.person_id AND p.retired_at IS NULL AND p.system_key IS NULL \
-    WHERE u.tenant_id=$1 AND u.organisation_id=$2 AND u.deleted_at IS NULL AND u.status='active' AND NOT EXISTS(SELECT 1 FROM user_scim_users s WHERE s.tenant_id=u.tenant_id AND s.user_id=u.id AND NOT s.active)";
+    WHERE u.tenant_id=$1 AND u.organisation_id=$2 AND u.kind='staff' AND u.deleted_at IS NULL AND u.status='active' AND NOT EXISTS(SELECT 1 FROM user_scim_users s WHERE s.tenant_id=u.tenant_id AND s.user_id=u.id AND NOT s.active)";
 
 /// The accounts affiliated with one live company of the scope's tenant, by id.
 /// A missing, deleted or other-tenant company is `NotFound`.

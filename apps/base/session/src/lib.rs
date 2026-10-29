@@ -4,7 +4,7 @@
 //! prompt sign-out of every other live page of that session.
 use bilibi_database::{Change, Error, MutationTransaction, Result};
 use bilibi_settings::Settings;
-use bilibi_tenancy::{Authentication, Scope};
+use bilibi_tenancy::{AccountKind, Authentication, Scope};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
@@ -611,6 +611,11 @@ impl Sessions {
                 row.get(2),
             )
             .await?;
+        // Staff sessions only (ADR 16): a customer's session never opens a
+        // staff page, embed, socket or edge, whichever cookie carried it.
+        if scope.actor().kind() != AccountKind::Staff {
+            return Err(Error::Unauthorized);
+        }
         if activity {
             // A chosen company the account no longer reaches (grant revoked,
             // company archived) is forgotten, so it cannot come back unasked

@@ -32,6 +32,11 @@ bilibi_walkthrough_fixture::walkthrough_module_roles!();
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
+// Shared with requests-walkthrough, which also recalls a round.
+#[allow(dead_code)]
+#[path = "support/erasure.rs"]
+mod erasure_approval;
+
 fn now_step() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -344,6 +349,10 @@ async fn main() -> Result<()> {
         .services
         .get::<bilibi_base::search::Search>(bilibi_base::search::SERVICE)?;
     let mut client = db.get().await?;
+    println!(
+        "erasure approval rules published for company 1: policy {}",
+        erasure_approval::publish_rules(&app, &mut client, &admin.scope, 1).await?
+    );
     {
         let mut tx = boundary
             .begin(
@@ -665,14 +674,16 @@ async fn main() -> Result<()> {
         "ann-race@example.test",
     )
     .await?;
-    let erasure = privacy
-        .approve(
-            &mut client,
-            &admin.step_up().await,
-            erasure.id,
-            erasure.version,
-        )
-        .await?;
+    let erasure = erasure_approval::decide(
+        &app,
+        &privacy,
+        &mut client,
+        &second.scope,
+        &admin.step_up().await,
+        &erasure,
+        true,
+    )
+    .await?;
     let access = received(
         &privacy,
         &mut client,
@@ -753,14 +764,16 @@ async fn main() -> Result<()> {
         "ben-race@example.test",
     )
     .await?;
-    let erasure = privacy
-        .approve(
-            &mut client,
-            &second.step_up().await,
-            erasure.id,
-            erasure.version,
-        )
-        .await?;
+    let erasure = erasure_approval::decide(
+        &app,
+        &privacy,
+        &mut client,
+        &admin.scope,
+        &second.step_up().await,
+        &erasure,
+        true,
+    )
+    .await?;
     summary(&settle(&privacy, &client, &admin.scope, erasure.id, 180).await?);
     guard
         .execute(
@@ -803,9 +816,16 @@ async fn main() -> Result<()> {
         "ben-new@example.test",
     )
     .await?;
-    let again = privacy
-        .approve(&mut client, &admin.step_up().await, again.id, again.version)
-        .await?;
+    let again = erasure_approval::decide(
+        &app,
+        &privacy,
+        &mut client,
+        &second.scope,
+        &admin.step_up().await,
+        &again,
+        true,
+    )
+    .await?;
     summary(&settle(&privacy, &client, &admin.scope, again.id, 180).await?);
     person(&client, "after the repeat erasure", ben).await?;
 
@@ -835,14 +855,16 @@ async fn main() -> Result<()> {
         "cleo-minimum@example.test",
     )
     .await?;
-    let erasure = privacy
-        .approve(
-            &mut client,
-            &second.step_up().await,
-            erasure.id,
-            erasure.version,
-        )
-        .await?;
+    let erasure = erasure_approval::decide(
+        &app,
+        &privacy,
+        &mut client,
+        &admin.scope,
+        &second.step_up().await,
+        &erasure,
+        true,
+    )
+    .await?;
     summary(&settle(&privacy, &client, &admin.scope, erasure.id, 180).await?);
     rows(
         &client,
@@ -889,14 +911,16 @@ async fn main() -> Result<()> {
         "dee-due@example.test",
     )
     .await?;
-    let erasure = privacy
-        .approve(
-            &mut client,
-            &admin.step_up().await,
-            erasure.id,
-            erasure.version,
-        )
-        .await?;
+    let erasure = erasure_approval::decide(
+        &app,
+        &privacy,
+        &mut client,
+        &second.scope,
+        &admin.step_up().await,
+        &erasure,
+        true,
+    )
+    .await?;
     summary(&settle(&privacy, &client, &admin.scope, erasure.id, 180).await?);
     rows(
         &client,
@@ -959,14 +983,16 @@ async fn main() -> Result<()> {
         "eve-held@example.test",
     )
     .await?;
-    let erasure = privacy
-        .approve(
-            &mut client,
-            &second.step_up().await,
-            erasure.id,
-            erasure.version,
-        )
-        .await?;
+    let erasure = erasure_approval::decide(
+        &app,
+        &privacy,
+        &mut client,
+        &admin.scope,
+        &second.step_up().await,
+        &erasure,
+        true,
+    )
+    .await?;
     summary(&settle(&privacy, &client, &admin.scope, erasure.id, 180).await?);
     person(&client, "held person after erasure", eve).await?;
     rows(&client, "owed cleanup", &format!("SELECT 'request='||request_id||' runs='||runs||' done='||(done_at IS NOT NULL) FROM base_privacy_resumptions WHERE request_id={}", erasure.id)).await?;
@@ -1147,14 +1173,16 @@ async fn main() -> Result<()> {
         "rita-retained@example.test",
     )
     .await?;
-    let erasure = privacy
-        .approve(
-            &mut client,
-            &admin.step_up().await,
-            erasure.id,
-            erasure.version,
-        )
-        .await?;
+    let erasure = erasure_approval::decide(
+        &app,
+        &privacy,
+        &mut client,
+        &second.scope,
+        &admin.step_up().await,
+        &erasure,
+        true,
+    )
+    .await?;
     summary(&settle(&privacy, &client, &admin.scope, erasure.id, 180).await?);
     rows(
         &client,
@@ -1310,14 +1338,16 @@ async fn main() -> Result<()> {
             "edna-emptied@example.test",
         )
         .await?;
-        let erasure = privacy
-            .approve(
-                &mut client,
-                &admin.step_up().await,
-                erasure.id,
-                erasure.version,
-            )
-            .await?;
+        let erasure = erasure_approval::decide(
+            &app,
+            &privacy,
+            &mut client,
+            &second.scope,
+            &admin.step_up().await,
+            &erasure,
+            true,
+        )
+        .await?;
         summary(&settle(&privacy, &client, &admin.scope, erasure.id, 180).await?);
         rows(
         &client,
@@ -1353,9 +1383,16 @@ async fn main() -> Result<()> {
             "edna-emptied@example.test",
         )
         .await?;
-        let again = privacy
-            .approve(&mut client, &admin.step_up().await, again.id, again.version)
-            .await?;
+        let again = erasure_approval::decide(
+            &app,
+            &privacy,
+            &mut client,
+            &second.scope,
+            &admin.step_up().await,
+            &again,
+            true,
+        )
+        .await?;
         summary(&settle(&privacy, &client, &admin.scope, again.id, 180).await?);
         let after: i64 = client.query_one(&count_sql, &[]).await?.get(0);
         let now: String = client
@@ -1441,15 +1478,17 @@ async fn main() -> Result<()> {
         .await?;
         show(
             "company 1's manager approves the erasure",
-            privacy
-                .approve(
-                    &mut client,
-                    &manager.step_up().await,
-                    erasure.id,
-                    erasure.version,
-                )
-                .await
-                .map(|request| request.status),
+            erasure_approval::decide(
+                &app,
+                &privacy,
+                &mut client,
+                &second.scope,
+                &manager.step_up().await,
+                &erasure,
+                true,
+            )
+            .await
+            .map(|request| request.status),
         );
         summary(&settle(&privacy, &client, &admin.scope, erasure.id, 180).await?);
         rows(
@@ -1569,14 +1608,16 @@ async fn main() -> Result<()> {
         "gil-provisioned@example.test",
     )
     .await?;
-    let erasure = privacy
-        .approve(
-            &mut client,
-            &admin.step_up().await,
-            erasure.id,
-            erasure.version,
-        )
-        .await?;
+    let erasure = erasure_approval::decide(
+        &app,
+        &privacy,
+        &mut client,
+        &second.scope,
+        &admin.step_up().await,
+        &erasure,
+        true,
+    )
+    .await?;
     summary(&settle(&privacy, &client, &admin.scope, erasure.id, 180).await?);
     rows(
         &client,
@@ -1645,14 +1686,16 @@ async fn main() -> Result<()> {
         "hana-linked@example.test",
     )
     .await?;
-    let erasure = privacy
-        .approve(
-            &mut client,
-            &admin.step_up().await,
-            erasure.id,
-            erasure.version,
-        )
-        .await?;
+    let erasure = erasure_approval::decide(
+        &app,
+        &privacy,
+        &mut client,
+        &second.scope,
+        &admin.step_up().await,
+        &erasure,
+        true,
+    )
+    .await?;
     summary(&settle(&privacy, &client, &admin.scope, erasure.id, 180).await?);
     rows(
         &client,
@@ -1730,14 +1773,16 @@ async fn main() -> Result<()> {
             ],
         )
         .await?;
-    let request = privacy
-        .approve(
-            &mut client,
-            &admin.step_up().await,
-            request.id,
-            request.version,
-        )
-        .await?;
+    let request = erasure_approval::decide(
+        &app,
+        &privacy,
+        &mut client,
+        &second.scope,
+        &admin.step_up().await,
+        &request,
+        true,
+    )
+    .await?;
     summary(&settle(&privacy, &client, &admin.scope, request.id, 180).await?);
     rows(&client, "exchange", &format!("SELECT id||' endpoint='||endpoint||' operation='||operation||' path='||path FROM base_integration_exchanges WHERE id IN ({exchange},{outgoing}) ORDER BY id")).await?;
     println!(
@@ -1886,7 +1931,11 @@ async fn main() -> Result<()> {
         "hal-everytime@example.test",
     )
     .await?;
-    let target = format!("privacy.request:{}", erasure.id);
+    // Workflow asks each decision for Step-up on its approval round.
+    let erasure = privacy
+        .submit_erasure(&mut client, &second.scope, erasure.id, erasure.version)
+        .await?;
+    let target = format!("approval:{}", erasure.approval_request.unwrap_or_default());
     let method = step_up.enrolled_methods(&admin.scope).await?[0].id;
     let code = admin.code().await;
     show(
@@ -1905,12 +1954,16 @@ async fn main() -> Result<()> {
             .await
             .map(|spent| format!("{spent:?}")),
     );
+    let decided = erasure_approval::vote(&app, &admin.scope, &erasure, true).await;
     show(
         "approve with the session's proof (no code presented)",
-        privacy
-            .approve(&mut client, &admin.scope, erasure.id, erasure.version)
-            .await
-            .map(|request| request.status),
+        match decided {
+            Ok(()) => privacy
+                .request(&**client, &admin.scope, erasure.id)
+                .await
+                .map(|request| request.status),
+            Err(error) => Err(error),
+        },
     );
     rows(
         &client,

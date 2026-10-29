@@ -24,6 +24,9 @@ bilibi_walkthrough_fixture::walkthrough_module_roles!();
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
+#[path = "support/erasure.rs"]
+mod erasure_approval;
+
 /// The authenticator code for `key` (base32, as enrollment shows it) at
 /// `offset` 30-second steps from now: what the account holder's app shows.
 fn code(key: &str, offset: i64) -> String {
@@ -211,6 +214,10 @@ async fn main() -> Result<()> {
     let admin_key = enroll(&app, &admin).await?;
     let second_key = enroll(&app, &second).await?;
     println!("authenticator enrolled for accounts 4 and 6");
+    println!(
+        "erasure approval rules published for company 1: policy {}",
+        erasure_approval::publish_rules(&app, &mut client, &admin, 1).await?
+    );
     let one = OrganisationId::new(1)?;
     let ada = PersonId::new(1)?;
     let kim = PersonId::new(2)?;
@@ -612,30 +619,105 @@ async fn main() -> Result<()> {
         )
         .await?;
     println!("confirmed event {event_id}; left event {unrelated} unconfirmed");
+    let sent = privacy
+        .submit_erasure(&mut client, &admin, erasure.id, erasure.version)
+        .await?;
+    println!(
+        "sent for approval: awaiting {} in round {}",
+        sent.approval_awaiting,
+        sent.approval_request.is_some()
+    );
     show(
-        "approve with a code by whoever received it",
+        "approve the erasure outside its approval case",
         privacy
-            .approve(
-                &mut client,
-                &admin.clone().presenting_step_up(&code(&admin_key, 0)),
-                erasure.id,
-                erasure.version,
-            )
+            .approve(&mut client, &second, erasure.id, sent.version)
             .await
             .map(|r| r.status),
     );
-    let erasure = privacy
-        .approve(
-            &mut client,
-            &second.clone().presenting_step_up(&code(&second_key, 0)),
-            erasure.id,
-            erasure.version,
+    show(
+        "decide it with a code as whoever received and verified it",
+        erasure_approval::vote(
+            &app,
+            &admin.clone().presenting_step_up(&code(&admin_key, 0)),
+            &sent,
+            true,
         )
-        .await?;
+        .await,
+    );
+    erasure_approval::vote(
+        &app,
+        &second.clone().presenting_step_up(&code(&second_key, 0)),
+        &sent,
+        true,
+    )
+    .await?;
+    let erasure = privacy.request(&**client, &admin, erasure.id).await?;
     println!(
         "approved with a code by the second person: {}",
         erasure.status
     );
+    println!("== erasure approval: rejected, sent again, recalled");
+    let round = privacy
+        .receive(
+            &mut client,
+            &admin,
+            NewRequest {
+                kind: RequestKind::Erasure,
+                person: kim,
+                identifiers: vec![],
+                company: one,
+            },
+        )
+        .await?;
+    let round = privacy
+        .verify(&mut client, &admin, round.id, round.version, "Letter", &[])
+        .await?;
+    let first = privacy
+        .submit_erasure(&mut client, &admin, round.id, round.version)
+        .await?;
+    show(
+        "refuse it while its approval is open",
+        privacy
+            .refuse(&mut client, &admin, first.id, first.version, "Changed mind")
+            .await
+            .map(|r| r.status),
+    );
+    erasure_approval::vote(
+        &app,
+        &second.clone().presenting_step_up(&code(&second_key, 1)),
+        &first,
+        false,
+    )
+    .await?;
+    let back = privacy.request(&**client, &admin, round.id).await?;
+    println!(
+        "after rejection: status={} awaiting={} version {} -> {}",
+        back.status, back.approval_awaiting, first.version, back.version
+    );
+    let again = privacy
+        .submit_erasure(&mut client, &admin, back.id, back.version)
+        .await?;
+    println!(
+        "sent again: awaiting={} new round={}",
+        again.approval_awaiting,
+        again.approval_request != first.approval_request
+    );
+    erasure_approval::recall(&app, &mut client, &admin, &again).await?;
+    let recalled = privacy.request(&**client, &admin, round.id).await?;
+    println!(
+        "after recall: status={} awaiting={}",
+        recalled.status, recalled.approval_awaiting
+    );
+    let refused = privacy
+        .refuse(
+            &mut client,
+            &admin,
+            recalled.id,
+            recalled.version,
+            "Requester withdrew",
+        )
+        .await?;
+    println!("refused once no round is open: {}", refused.status);
     tokio::time::sleep(Duration::from_secs(8)).await;
     summary(&privacy.request(&**client, &admin, erasure.id).await?);
     client
@@ -738,14 +820,16 @@ async fn main() -> Result<()> {
             &[],
         )
         .await?;
-    let held = privacy
-        .approve(
-            &mut client,
-            &admin.clone().presenting_step_up(&code(&admin_key, 1)),
-            held.id,
-            held.version,
-        )
-        .await?;
+    let held = erasure_approval::decide(
+        &app,
+        &privacy,
+        &mut client,
+        &second,
+        &admin.clone().presenting_step_up(&code(&admin_key, 1)),
+        &held,
+        true,
+    )
+    .await?;
     let held = settle(&privacy, &client, &admin, held.id, 60).await?;
     summary(&held);
     certificate(&privacy, &mut client, &admin, held.id).await?;
@@ -784,14 +868,16 @@ async fn main() -> Result<()> {
         .await?;
     // A code is accepted once: wait for the authenticator's next step.
     tokio::time::sleep(Duration::from_secs(31)).await;
-    let again = privacy
-        .approve(
-            &mut client,
-            &admin.clone().presenting_step_up(&code(&admin_key, 1)),
-            again.id,
-            again.version,
-        )
-        .await?;
+    let again = erasure_approval::decide(
+        &app,
+        &privacy,
+        &mut client,
+        &second,
+        &admin.clone().presenting_step_up(&code(&admin_key, 1)),
+        &again,
+        true,
+    )
+    .await?;
     summary(&settle(&privacy, &client, &admin, again.id, 90).await?);
     rows(
         &client,
@@ -908,6 +994,75 @@ async fn main() -> Result<()> {
     )
     .await?;
 
+    println!("== erasure approval by an AI agent (ADR 01)");
+    // The viewer (account 2, linked to no person) gets the admin role, so
+    // approval rights and company reach, and an authenticator: independent of
+    // an erasure admin receives and verifies.
+    client
+        .batch_execute("INSERT INTO principal_roles(tenant_id,user_id,role_id) VALUES(1,2,4) ON CONFLICT DO NOTHING")
+        .await?;
+    let viewer = login(&app, "viewer@example.test").await?;
+    let viewer_key = enroll(&app, &viewer).await?;
+    let admin_agent = agent(&app, &db, &admin, "walkthrough-admin-agent").await?;
+    let viewer_agent = agent(&app, &db, &viewer, "walkthrough-viewer-agent").await?;
+    let by_agent = privacy
+        .receive(
+            &mut client,
+            &admin,
+            NewRequest {
+                kind: RequestKind::Erasure,
+                person: kim,
+                identifiers: vec![],
+                company: one,
+            },
+        )
+        .await?;
+    let by_agent = privacy
+        .verify(
+            &mut client,
+            &admin,
+            by_agent.id,
+            by_agent.version,
+            "Letter",
+            &[],
+        )
+        .await?;
+    let by_agent = privacy
+        .submit_erasure(&mut client, &admin, by_agent.id, by_agent.version)
+        .await?;
+    show(
+        "the agent of whoever received and verified it decides",
+        erasure_approval::vote(&app, &admin_agent, &by_agent, true).await,
+    );
+    show(
+        "a queued job for the independent person decides",
+        erasure_approval::vote(&app, &viewer.clone().in_job(), &by_agent, true).await,
+    );
+    show(
+        "the independent person's agent decides without their code",
+        erasure_approval::vote(&app, &viewer_agent, &by_agent, true).await,
+    );
+    erasure_approval::vote(
+        &app,
+        &viewer_agent
+            .clone()
+            .presenting_step_up(&code(&viewer_key, 0)),
+        &by_agent,
+        true,
+    )
+    .await?;
+    let by_agent = privacy.request(&**client, &admin, by_agent.id).await?;
+    println!(
+        "the independent person's agent decides with their code: {} (approved_by={:?})",
+        by_agent.status, by_agent.approved_by
+    );
+    rows(
+        &client,
+        "approval audit",
+        &format!("SELECT 'actor='||actor_id||' trace='||trace_id FROM base_audit_mutations WHERE auditable_type='base/privacy.request' AND auditable_id='{}' AND new_values->>'status'='approved'", by_agent.id),
+    )
+    .await?;
+
     stop.send(true)?;
     let _ = workers.await;
     Ok(())
@@ -939,6 +1094,49 @@ async fn certificate(privacy: &Privacy, client: &mut Client, scope: &Scope, id: 
         Err(error) => println!("certificate: refused — {error}"),
     }
     Ok(())
+}
+/// A genuine agent connection for `person`: the device grant they approve,
+/// redeemed and sealed as the API edge does.
+async fn agent(
+    app: &bilibi_web::App,
+    db: &bilibi_database::Db,
+    person: &Scope,
+    label: &str,
+) -> Result<Scope> {
+    use bilibi_core::agent_access::{AgentAccess, Decision, CLIENT_ID};
+    let access = app
+        .services
+        .get::<AgentAccess>("core/agent_access.grants")?;
+    let refused = |step: &'static str| move |error| format!("{label} {step}: {error:?}");
+    let start = access
+        .start_device(CLIENT_ID, label)
+        .await
+        .map_err(refused("start"))?;
+    let expiry = access.connection_expiry().await?;
+    access
+        .decide(person, &start.user_code, Decision::Approve, expiry)
+        .await
+        .map_err(refused("approve"))?;
+    // The device may poll now rather than after its interval.
+    db.get()
+        .await?
+        .execute(
+            "UPDATE core_agent_devices SET next_poll_at=now() WHERE status='approved'",
+            &[],
+        )
+        .await?;
+    let tokens = access
+        .exchange(CLIENT_ID, &start.device_code)
+        .await
+        .map_err(refused("redeem"))?;
+    let claims = access
+        .authenticate(&tokens.access_token, None)
+        .await
+        .map_err(refused("authenticate"))?;
+    Ok(access
+        .seal(&claims, label, None)
+        .await
+        .map_err(refused("seal"))?)
 }
 /// Counts files under `root` whose bytes still hold the attachment's text.
 fn walk(root: &std::path::Path) -> usize {
