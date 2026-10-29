@@ -62,8 +62,9 @@ fn field(message: &str) -> AgentError {
     AgentError::InvalidInput(BTreeMap::from([("user_id".into(), vec![message.into()])]))
 }
 
+/// Staff accounts only: a customer's factor is not a staff reset (ADR 15).
 const TARGET_SQL: &str =
-    "SELECT u.id, u.tenant_id, u.name, u.email, u.status='active' FROM users u";
+    "SELECT u.id, u.tenant_id, u.name, u.email, u.status='active' FROM users u WHERE u.kind='staff'";
 
 fn account_from(row: &tokio_postgres::Row) -> Account {
     Account {
@@ -82,7 +83,7 @@ async fn target_in(
 ) -> bilibi_agent_api::Result<Account> {
     let rows = client
         .query(
-            &format!("{TARGET_SQL} WHERE u.tenant_id=$1 AND u.id=$2 AND u.deleted_at IS NULL"),
+            &format!("{TARGET_SQL} AND u.tenant_id=$1 AND u.id=$2 AND u.deleted_at IS NULL"),
             &[&scope.tenant(), &user],
         )
         .await?;
@@ -278,7 +279,7 @@ impl UserService {
         let client = self.db.get().await.map_err(Error::from)?;
         let rows = client
             .query(
-                &format!("{TARGET_SQL} WHERE lower(u.email)=$1 AND u.deleted_at IS NULL"),
+                &format!("{TARGET_SQL} AND lower(u.email)=$1 AND u.deleted_at IS NULL"),
                 &[&email],
             )
             .await

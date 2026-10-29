@@ -4,6 +4,7 @@
 use crate::{
     accounts::AccountError,
     credential_attempts::{self, Kind, Limits},
+    identity::Audience,
     CredentialError, Login, UserService,
 };
 use bilibi_database::{Change, Context, Error, MutationTransaction, Result};
@@ -17,6 +18,8 @@ use std::time::SystemTime;
 use tokio_postgres::GenericClient;
 
 pub const SIGN_IN: &str = "core.user.sign_in";
+/// A customer's sign-in at its tenant's portal (ADR 15); off by default.
+pub const PORTAL_SIGN_IN: &str = "core.user.portal_sign_in";
 const LIFETIME: &str = "user.sign_in_minutes";
 pub(crate) const MIGRATION: (&str, &str) = (
     "core-user-015-sign-in",
@@ -25,6 +28,10 @@ pub(crate) const MIGRATION: (&str, &str) = (
 bilibi_step_up::declare!(
     "core/user",
     bilibi_step_up::Operation::new(SIGN_IN, "Sign in").off_by_default()
+);
+bilibi_step_up::declare!(
+    "core/user",
+    bilibi_step_up::Operation::new(PORTAL_SIGN_IN, "Customer portal sign-in").off_by_default()
 );
 inventory::submit! { Contribution::new(DEFINITIONS, LIFETIME, Provenance { module: "core/user", source: file!(), line: line!() }, &Setting::Definition(Definition {
     value_type: ValueType::Integer, scopes: &[ScopeKind::Global], default: || json!(5),
@@ -86,11 +93,16 @@ async fn admit(tx: &mut MutationTransaction<'_>, scope: &Scope, login: &Login) -
 impl UserService {
     pub(crate) async fn begin_sign_in(
         &self,
+        audience: Audience,
         email: &str,
         password: &str,
     ) -> std::result::Result<Login, CredentialError> {
         let (tenant, user, stored) =
-            crate::identity::password_identity(self, email, password).await?;
+            crate::identity::password_identity(self, audience, email, password).await?;
+        let operation = match audience {
+            Audience::Staff => SIGN_IN,
+            Audience::Customer { .. } => PORTAL_SIGN_IN,
+        };
         let pending = {
             let client = self.db.get().await.map_err(Error::from)?;
             let scope = self
@@ -98,7 +110,7 @@ impl UserService {
                 .authenticate(&**client, tenant, user, String::new())
                 .await?;
             drop(client);
-            self.step_up.required(&scope, SIGN_IN).await?
+            self.step_up.required(&scope, operation).await?
         };
         let mut client = self.db.get().await.map_err(Error::from)?;
         let mut tx = self
@@ -117,7 +129,8 @@ impl UserService {
             .authentication
             .authenticate(tx.sql(), tenant, user, String::new())
             .await?;
-        if !self.password_sso_allowed(tx.sql(), &scope).await? {
+        // Company sign-in governs staff; customers have no single sign-on yet.
+        if audience == Audience::Staff && !self.password_sso_allowed(tx.sql(), &scope).await? {
             return Err(CredentialError::CompanySignInRequired);
         }
         let login = credential(pending);

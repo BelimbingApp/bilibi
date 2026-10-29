@@ -1,5 +1,7 @@
 //! Names accounts for Base screens. Deleted accounts and other tenants resolve
 //! to no name, so the asking screen keeps its row and shows the durable ID.
+//! A customer account (ADR 15) keeps its name, so audit can label its writes,
+//! but staff pickers never find one.
 use bilibi_principal_directory::{
     DirectoryClient, DirectoryFuture, PrincipalKind, PrincipalProvider,
 };
@@ -40,7 +42,7 @@ impl PrincipalProvider for UserDirectory {
             let tenant = scope.tenant();
             let rows = client
                 .query(
-                    "SELECT id FROM users WHERE tenant_id=$1 AND id=ANY($2) AND deleted_at IS NULL AND position($3 in lower(email))>0",
+                    "SELECT id FROM users WHERE tenant_id=$1 AND id=ANY($2) AND deleted_at IS NULL AND kind='staff' AND position($3 in lower(email))>0",
                     &[&tenant, &ids, &needle],
                 )
                 .await?;

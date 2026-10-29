@@ -61,6 +61,8 @@ pub struct AccountIdentity {
     pub person: Option<PersonId>,
     pub organisation: Option<OrganisationId>,
     pub affiliation: Option<AffiliationId>,
+    /// Staff or a customer of the tenant (`users.kind`, ADR 15).
+    pub kind: AccountKind,
     /// Whether this account is the installation owner: the one account the
     /// installation's bootstrap receipt names (Core User `user_bootstrap`).
     /// Owner standing; never a grant, and read afresh on every proof.
@@ -102,11 +104,40 @@ pub trait ActorVerifier: Send + Sync {
     }
 }
 
+/// Which audience an account belongs to (ADR 15). A customer signs in only to
+/// its tenant's portal (`/portal/...`) and holds only portal capabilities; a
+/// staff account never reaches the portal. Sealed from the account at every
+/// authentication, never read from a request.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum AccountKind {
+    #[default]
+    Staff,
+    Customer,
+}
+impl AccountKind {
+    /// The stored value (`users.kind`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Staff => "staff",
+            Self::Customer => "customer",
+        }
+    }
+    /// `None` for a value the schema does not allow.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "staff" => Some(Self::Staff),
+            "customer" => Some(Self::Customer),
+            _ => None,
+        }
+    }
+}
+
 /// Who a sealed scope acts as: an account with its live party facets, or a
 /// named system principal (SP1) with none of them.
 #[derive(Clone, Debug)]
 pub struct Actor {
     user: i64,
+    kind: AccountKind,
     person: Option<PersonId>,
     organisation: Option<OrganisationId>,
     affiliation: Option<AffiliationId>,
@@ -133,6 +164,11 @@ impl Actor {
     }
     pub fn affiliation(&self) -> Option<AffiliationId> {
         self.affiliation
+    }
+    /// Staff or customer. A named system principal is staff: it is the
+    /// tenant's own unattended work, never a customer.
+    pub fn kind(&self) -> AccountKind {
+        self.kind
     }
 }
 /// The surface a request arrived through. Step-up (`base/step_up`) picks
@@ -452,6 +488,55 @@ impl Scope {
     }
 }
 
+/// A customer's proof on a portal request (ADR 15): the sealed `Scope` of a
+/// customer account, with the Person it signs in as and, for a business
+/// customer, the affiliation and company. Portal facades take this and filter
+/// "my records" by `person()`, or by `organisation()` when it is present, so
+/// the ids come from the proof, never from the request. A private individual
+/// has no company: `organisation()` and `affiliation()` are `None`, and code
+/// must then show only the Person's own records. It cannot be built from a
+/// staff scope, a system principal, an agent or an impersonated session.
+#[derive(Clone, Debug)]
+pub struct PortalScope {
+    scope: Scope,
+    person: PersonId,
+}
+impl PortalScope {
+    /// Seals a portal scope from a scope the host authenticated from a portal
+    /// session. Refuses anything that is not a customer acting in person.
+    pub fn seal(scope: Scope) -> Result<Self> {
+        if scope.actor.kind != AccountKind::Customer
+            || scope.principal().is_some()
+            || scope.agent().is_some()
+            || scope.impersonator().is_some()
+        {
+            return Err(Error::Unauthorized);
+        }
+        let person = scope.actor.person.ok_or(Error::Unauthorized)?;
+        Ok(Self { scope, person })
+    }
+    /// The Person the customer signs in as; always present.
+    pub fn person(&self) -> PersonId {
+        self.person
+    }
+    /// The customer's company, through its affiliation; `None` for a private
+    /// individual.
+    pub fn organisation(&self) -> Option<OrganisationId> {
+        self.scope.actor.organisation
+    }
+    /// The affiliation the customer signs in through; `None` for a private
+    /// individual.
+    pub fn affiliation(&self) -> Option<AffiliationId> {
+        self.scope.actor.affiliation
+    }
+    /// The underlying scope, for audit (`mutation_context`) and for portal
+    /// capability checks. A staff facade given it refuses: Authz never grants
+    /// a staff capability to a customer.
+    pub fn scope(&self) -> &Scope {
+        &self.scope
+    }
+}
+
 /// The credential owner rechecks an agent's live grant, bound by Core Agent
 /// Access. Missing bindings refuse agent reproofs, never confer standing.
 pub trait AgentVerifier: Send + Sync {
@@ -573,17 +658,31 @@ impl Authentication {
         {
             return Err(Error::Unauthorized);
         }
+        // A customer always stands on a Person (`users_customer_needs_person`).
+        if identity.kind == AccountKind::Customer && identity.person.is_none() {
+            return Err(Error::Unauthorized);
+        }
         let impersonator = match impersonator {
-            Some(operator) => Some(Impersonator {
-                user: operator,
-                name: verifier.verify(client, tenant, operator).await?.name,
-            }),
+            Some(operator) => {
+                // Only staff impersonate, and nobody impersonates a customer.
+                let operator_identity = verifier.verify(client, tenant, operator).await?;
+                if operator_identity.kind != AccountKind::Staff
+                    || identity.kind != AccountKind::Staff
+                {
+                    return Err(Error::Unauthorized);
+                }
+                Some(Impersonator {
+                    user: operator,
+                    name: operator_identity.name,
+                })
+            }
             None => None,
         };
         let mut scope = Scope {
             tenant,
             actor: Actor {
                 user,
+                kind: identity.kind,
                 person: identity.person,
                 organisation: identity.organisation,
                 affiliation: identity.affiliation,
@@ -602,6 +701,8 @@ impl Authentication {
         };
         // The chosen company is a request until its owner confirms the reach
         // on this connection; an id that is not even a company id is nothing.
+        // A customer has no company switcher: its company is its affiliation's.
+        let company = company.filter(|_| identity.kind == AccountKind::Staff);
         if let Some(company) = company.and_then(|id| OrganisationId::new(id).ok()) {
             if verifier.reaches_company(client, &scope, company).await? {
                 scope.company = Some(company);
@@ -638,6 +739,7 @@ impl Authentication {
             tenant,
             actor: Actor {
                 user: 0,
+                kind: AccountKind::Staff,
                 person: None,
                 organisation: None,
                 affiliation: None,

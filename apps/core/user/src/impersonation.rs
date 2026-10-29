@@ -21,7 +21,7 @@ use crate::{
 use bilibi_audit::{record_action, Attribution, RequestInfo};
 use bilibi_database::{Error, Result};
 use bilibi_security::Holder;
-use bilibi_tenancy::Scope;
+use bilibi_tenancy::{AccountKind, Scope};
 use serde_json::json;
 
 pub const IMPERSONATE: &str = "admin.user.impersonate";
@@ -116,6 +116,11 @@ impl UserService {
         }
         let tx = client.transaction().await.map_err(Error::from)?;
         match standing(&*tx, scope.tenant(), target).await? {
+            // A customer is never impersonated (ADR 15); it is not a staff
+            // account, so it is not found here.
+            Standing::Live(identity) if identity.kind != AccountKind::Staff => {
+                return Err(Refusal::NotFound)
+            }
             Standing::Live(_) => {}
             Standing::Frozen(Freeze::CompanyArchived) => return Err(Refusal::Unable),
             Standing::Frozen(Freeze::Identity) | Standing::Unknown => {

@@ -3,7 +3,7 @@
 **Document Type:** Index of architecture decision records
 **Status:** Active
 **Scope:** Decisions that shape Bilibi's architecture
-**Last Updated:** 2026-10-28
+**Last Updated:** 2026-10-29
 
 Each record states one decision, its context and its consequences. The format follows [Bilimbi's records](https://github.com/BelimbingApp/bilimbi/tree/main/docs/architecture/decisions). The architecture overview is [`../README.md`](../README.md).
 
@@ -63,6 +63,7 @@ Every record carries these header lines: Document Type, Status, Agents, Scope, L
 | --- | --- |
 | [04 Provider-neutral single sign-on](./04-provider-neutral-single-sign-on.md) | Accepted; implemented |
 | [09 The current company is a session choice, never a grant](./09-current-company-is-a-session-choice.md) | Proposed |
+| [15 Customer accounts are a kind of account, kept out of the staff application by three barriers](./15-customer-accounts-and-portal.md) | Proposed |
 
 ### Personal data
 
