@@ -107,7 +107,7 @@ Run commands from the clone's root. `./bilibi help` shows the same list. Your br
 | `./bilibi new <name>` | Turns what you have here into your own application, in a new folder next to this one | When you want to keep what you built as your own product |
 | `./bilibi help` | Shows the command list | Any time |
 
-`check`, `pin` and `build` work only in an application; here they say how to make one.
+`check`, `build` and `release` work only in an application; here they say how to make one.
 
 `new` copies the [app maker](https://github.com/BelimbingApp/bilibi-app-maker). The [application workspace guide](docs/application-workspaces.md) covers the next step, Git ownership and migration; [ADR 03](docs/architecture/decisions/03-application-workspaces-one-front-door.md) records the decision. `scripts/setup.sh` and `scripts/start-app.sh` remain available directly. Direct setup also installs the safeguard; after installing tools directly, load `$HOME/.cargo/env` before using the direct launcher.
 

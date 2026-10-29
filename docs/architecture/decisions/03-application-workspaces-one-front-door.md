@@ -34,7 +34,7 @@ The first version of this record sent everyone to `bilibi` and created the appli
 1. Clone `https://github.com/BelimbingApp/bilibi-app-maker`, enter the clone and run `./bilibi start`. No GitHub account is needed to try it.
 2. Add Domains and Extensions with `./bilibi add <name>`, then `./bilibi start` again.
 3. To keep it, make it yours: rename the maker remote to `upstream`, create your own repository, add it as `origin` and push. The clone is already the application; no `new` step is needed. Keeping the maker's history lets later maker updates merge.
-4. Save versions with `./bilibi pin`, check them with `./bilibi check`, and release as the maker README describes.
+4. Check and build with `./bilibi check` and `./bilibi build`, then publish with `./bilibi release`.
 
 **Clone the app maker.** A copy made without its history, such as through GitHub's "Use this template" button or a downloaded archive, can no longer merge maker updates. The maker repository is therefore not marked as a GitHub template.
 
@@ -66,13 +66,13 @@ Direct Domain and Extension clones remain supported for focused contributions. T
 | `./bilibi new <name>` | Create an application from the trial under the refusal rules above | Not applicable; the application already exists |
 | `./bilibi setup` | Check prerequisites and install repository safeguards | Also obtain missing sources; preserve existing work |
 | `./bilibi status` | Show component paths, branches and changes; say no saved application recipe exists and point to `new` | Also show differences from saved versions |
-| `./bilibi update` | Pull safe Platform changes, move clean official mounts detached at a release to a newer recommended one (never a downgrade), leave branches and other mounts alone, and regenerate composition | Pull the application and restore sources to saved commits; never advance pins |
+| `./bilibi update` | Pull safe Platform changes, move clean official mounts detached at a release to a newer recommended one (never a downgrade), leave branches and other mounts alone, and regenerate composition | Pull the application and restore sources to saved commits; never advance the saved record |
 | `./bilibi help` | Say which kind of repository this is, then list the commands grouped by when to use them, in plain words; no command and `-h` also work | Same |
-| `./bilibi check` | Refuse and point to `new` | Run strict composition and build checks against saved versions |
-| `./bilibi pin` | Refuse and point to `new` | Explicitly record selected component commits and resolved dependencies |
-| `./bilibi build` | Refuse and point to `new` | Produce a release through the pinned builder and verified composition |
+| `./bilibi check` | Refuse and point to `new` | Ask about new commits, save accepted versions and run strict checks |
+| `./bilibi build` | Refuse and point to `new` | Ask about new commits, save accepted versions and build the verified composition |
+| `./bilibi release` | Refuse and point to `new` | Commit the saved record and start the release workflow |
 
-Local startup permits branches and uncommitted edits. It must report those differences without rewriting the recipe or claiming stale pins identify the running code. Pin after component commits; review the recipe, manifest and lock together. Strict checks and release builds require recorded commits and clean source inputs, except recognised generated composition files, and must retain locked dependency resolution and remote-fetch validation.
+Local startup permits branches and uncommitted edits. It must report differences from the saved record without rewriting it or claiming stale versions identify the running code. Checks and builds ask about new commits; accepting saves the record, while declining uses saved versions. Uncommitted source changes stop the command. Strict checks and release builds require clean source inputs, except recognised generated composition files, and must retain locked dependency resolution and remote-fetch validation. Release commits the recipe, manifest and lock together; GitHub builds from that record.
 
 ### Git ownership
 
@@ -121,6 +121,6 @@ What changed with it:
 
 ## Current implementation
 
-**The common entry point and application workspace are implemented.** Platform supplies `start`, `setup`, `add`, `status`, `update`, `help` and `new`; the [app maker](https://github.com/BelimbingApp/bilibi-app-maker) is the product builder's front door and supplies the application wrapper, independent editable sources, saved recipes, commit safeguards and strict release commands. `new` pins the maker revision, independently fetches every selected source and validates the trial's resolved lock before saving it. `check`, `pin` and `build` in Platform explain how to create an application.
+**The common entry point and application workspace are implemented.** Platform supplies `start`, `setup`, `add`, `status`, `update`, `help` and `new`; the [app maker](https://github.com/BelimbingApp/bilibi-app-maker) is the product builder's front door and supplies the application wrapper, independent editable sources, saved recipes, commit safeguards and strict release commands. `new` pins the maker revision, independently fetches every selected source and validates the trial's resolved lock before saving it. `check`, `build` and `release` in Platform explain how to create an application.
 
 [Application workspaces](../../application-workspaces.md) documents Git ownership, deliberate tooling updates, parallel migration, manual adoption of ordinary clones and rollback. Setup never adopts or relocates an existing checkout automatically. Runtime data retains its existing paths; output conflicts require a deliberate preserved move. Server delivery remains under ADR 02.

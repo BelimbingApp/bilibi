@@ -79,7 +79,9 @@ To record the pair as tested before the next Platform release, run `Domains on t
 
 **Keep your application's saved composition in its own repository.** After trying a Platform clone, run `./bilibi new <name>` to create it. Domains and Extensions are optional. The [workspace guide](application-workspaces.md) explains Git ownership and migration; direct Platform, Domain and Extension clones remain supported for focused contributions.
 
-In the application root, commit and push component changes in their owning repositories, run `./bilibi pin`, then review and commit `setup.toml`, `composition/manifest.txt` and `composition/Cargo.lock` together. The application's `./bilibi check` and `./bilibi build` use its pinned builder, independently fetchable commits and saved lock. They refuse dirty source inputs outside generated composition; they do not resolve an unlocked replacement lock. Checks need their own empty disposable database.
+In the application root, commit and push component changes in their owning repositories, then run `./bilibi check` and `./bilibi build`. Each asks whether to use new commits since the saved record: yes uses them and saves the record; no uses the saved versions. Uncommitted source changes stop the command. Scripts can use `--yes` to accept new commits; without it, a command with no keyboard stops rather than guessing. Checks and builds use independently fetchable commits and the saved dependency lock. Checks need their own empty disposable database.
+
+Run `./bilibi release` to commit `setup.toml`, `composition/manifest.txt` and `composition/Cargo.lock` and start the release workflow. GitHub builds only from that record.
 
 Follow the generated application's README and release workflow to publish its verified archive. Validate it on Staging and promote that same archive to Production under ADR 02. This does not replace the Platform release workflow above or the server installer's backup and rollback rules.
 

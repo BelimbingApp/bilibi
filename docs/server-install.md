@@ -227,7 +227,7 @@ The page is rendered once per instance from `scripts/waiting-page.html` into `si
 
 [ADR 02](architecture/decisions/02-build-in-development-keep-everything-in-step.md) records why builds stay in development, servers only install tested releases, and official software is kept in step.
 
-**Prepare application releases from the outer application repository.** Create it from your trial with `./bilibi new <name>`. Commit and push component changes in their own repositories, run `./bilibi pin`, then review and commit the saved recipe and composition together. Run `./bilibi check` with a separate empty disposable database, then `./bilibi build`. The pinned builder restores the saved lock and verifies the exact source selection; the application's README describes publication. See [application workspaces](application-workspaces.md) for the directory layout and migration.
+**Prepare application releases from the outer application repository.** Create it from your trial with `./bilibi new <name>`. Commit and push component changes in their own repositories. Run `./bilibi check` with a separate empty disposable database, then `./bilibi build`. Each asks whether to use new commits and saves the record when you accept. Run `./bilibi release` to commit the record and start the release workflow; GitHub builds from that record. The builder verifies the source selection and saved lock; the application's README describes publication. See [application workspaces](application-workspaces.md) for the directory layout and migration.
 
 ### Focused component builds
 

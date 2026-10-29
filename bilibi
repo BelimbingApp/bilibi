@@ -43,7 +43,7 @@ case ${1:-help} in
         python3 -c 'import tomllib' 2>/dev/null || { echo 'Python 3.11+ is required. See README.md.' >&2; exit 1; }
         exec python3 "$root/scripts/new-application.py" "${@:2}"
         ;;
-    check|pin|build)
+    check|build|release)
         echo "./bilibi $1 works in an application, not here."
         echo 'This is the Bilibi Platform: Bilibi'"'"'s own source code.'
         echo 'To make your own application from what you have here, run: ./bilibi new <name>'
