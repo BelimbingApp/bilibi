@@ -1854,8 +1854,12 @@ impl Engine {
                     .account_identity(sql, scope, *account)
                     .await
                 {
-                    Ok(i) => i,
-                    Err(Error::Unauthorized | Error::NotFound | Error::Forbidden) => continue,
+                    // Approvals go to staff only: a customer never holds a
+                    // staff capability, whatever its grants say (ADR 16).
+                    Ok(i) if i.kind == bilibi_tenancy::AccountKind::Staff => i,
+                    Ok(_) | Err(Error::Unauthorized | Error::NotFound | Error::Forbidden) => {
+                        continue
+                    }
                     Err(e) => return Err(e),
                 };
                 if !adapter

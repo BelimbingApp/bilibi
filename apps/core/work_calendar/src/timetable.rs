@@ -297,7 +297,9 @@ impl Timetable {
 /// holidays, a state that never existed. It answers the substitute rule and,
 /// as JSON arrays, the rule versions, the holidays of included sets from
 /// `earliest` to the window's last day ($5), and the exceptions meeting the
-/// day before the window ($4) to its last day.
+/// day before the window ($4) to its last day. An included set's holidays are
+/// read from the tenant keeping it (`set_tenant_id`): the calendar's own, or
+/// the platform operator's for an installation-wide set.
 ///
 /// Substitutes chain: an earlier holiday's substitute can take the day a
 /// later one would move to, however far back the chain runs. Allocation
@@ -307,12 +309,12 @@ impl Timetable {
 /// without one, since no substitute moves further, or $3 when none falls on
 /// or before it. A calendar that substitutes nothing starts at $4.
 const SOURCE: &str = "WITH c AS (SELECT id,substitute FROM core_work_calendars WHERE tenant_id=$1 AND code=$2), \
-dates AS (SELECT DISTINCT h.date FROM c JOIN core_work_calendar_includes i ON i.tenant_id=$1 AND i.calendar_id=c.id JOIN core_work_calendar_holidays h ON h.tenant_id=i.tenant_id AND h.holiday_set_id=i.holiday_set_id WHERE c.substitute<>'none' AND h.date<=$3::text::date), \
+dates AS (SELECT DISTINCT h.date FROM c JOIN core_work_calendar_includes i ON i.tenant_id=$1 AND i.calendar_id=c.id JOIN core_work_calendar_holidays h ON h.tenant_id=i.set_tenant_id AND h.holiday_set_id=i.holiday_set_id WHERE c.substitute<>'none' AND h.date<=$3::text::date), \
 gaps AS (SELECT date,lag(date) OVER (ORDER BY date) AS prev FROM dates), \
 w AS (SELECT CASE WHEN c.substitute='none' THEN $4::text::date ELSE coalesce((SELECT max(date) FROM gaps WHERE prev IS NULL OR date-prev>$6),$3::text::date) END AS earliest FROM c) \
 SELECT c.substitute, \
 (SELECT json_agg(json_build_array(r.effective_from,r.timezone,r.week) ORDER BY r.effective_from) FROM core_work_calendar_rules r WHERE r.tenant_id=$1 AND r.calendar_id=c.id), \
-(SELECT json_agg(json_build_array(h.date,s.code,h.name) ORDER BY h.date,s.code) FROM core_work_calendar_includes i JOIN core_work_calendar_holiday_sets s ON s.tenant_id=i.tenant_id AND s.id=i.holiday_set_id JOIN core_work_calendar_holidays h ON h.tenant_id=i.tenant_id AND h.holiday_set_id=i.holiday_set_id WHERE i.tenant_id=$1 AND i.calendar_id=c.id AND h.date BETWEEN w.earliest AND $5::text::date), \
+(SELECT json_agg(json_build_array(h.date,s.code,h.name) ORDER BY h.date,s.code) FROM core_work_calendar_includes i JOIN core_work_calendar_holiday_sets s ON s.tenant_id=i.set_tenant_id AND s.id=i.holiday_set_id JOIN core_work_calendar_holidays h ON h.tenant_id=i.set_tenant_id AND h.holiday_set_id=i.holiday_set_id WHERE i.tenant_id=$1 AND i.calendar_id=c.id AND h.date BETWEEN w.earliest AND $5::text::date), \
 (SELECT json_agg(json_build_array(e.id,e.starts_on,e.ends_on,e.name,e.day_type,e.periods) ORDER BY e.starts_on) FROM core_work_calendar_exceptions e WHERE e.tenant_id=$1 AND e.calendar_id=c.id AND e.starts_on<=$5::text::date AND e.ends_on>=$4::text::date) \
 FROM c,w";
 
@@ -416,7 +418,7 @@ pub(crate) async fn reach(
 ) -> Result<Vec<(String, Date)>> {
     client
         .query(
-            "WITH cal AS (SELECT id,code,substitute FROM core_work_calendars WHERE tenant_id=$1 AND (id=$3 OR id IN (SELECT calendar_id FROM core_work_calendar_includes WHERE tenant_id=$1 AND holiday_set_id=$2))), d AS (SELECT DISTINCT i.calendar_id,h.date FROM cal JOIN core_work_calendar_includes i ON i.tenant_id=$1 AND i.calendar_id=cal.id JOIN core_work_calendar_holidays h ON h.tenant_id=i.tenant_id AND h.holiday_set_id=i.holiday_set_id AND h.date>=$4::text::date), g AS (SELECT calendar_id,date,lead(date) OVER (PARTITION BY calendar_id ORDER BY date) AS next FROM d) SELECT cal.code,cal.substitute,(SELECT min(g.date)::text FROM g WHERE g.calendar_id=cal.id AND (g.next IS NULL OR g.next-g.date>$5)) FROM cal ORDER BY cal.code",
+            "WITH cal AS (SELECT id,code,substitute FROM core_work_calendars WHERE tenant_id=$1 AND (id=$3 OR id IN (SELECT calendar_id FROM core_work_calendar_includes WHERE tenant_id=$1 AND holiday_set_id=$2))), d AS (SELECT DISTINCT i.calendar_id,h.date FROM cal JOIN core_work_calendar_includes i ON i.tenant_id=$1 AND i.calendar_id=cal.id JOIN core_work_calendar_holidays h ON h.tenant_id=i.set_tenant_id AND h.holiday_set_id=i.holiday_set_id AND h.date>=$4::text::date), g AS (SELECT calendar_id,date,lead(date) OVER (PARTITION BY calendar_id ORDER BY date) AS next FROM d) SELECT cal.code,cal.substitute,(SELECT min(g.date)::text FROM g WHERE g.calendar_id=cal.id AND (g.next IS NULL OR g.next-g.date>$5)) FROM cal ORDER BY cal.code",
             &[&tenant, &set, &calendar, &last.to_string(), &(SUBSTITUTE_SEARCH as i32)],
         )
         .await?

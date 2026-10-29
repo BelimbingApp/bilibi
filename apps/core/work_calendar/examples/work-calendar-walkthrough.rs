@@ -1,19 +1,22 @@
-//! Manual walkthrough of work calendars (issue 135) against an explicitly
-//! supplied disposable DB. No test harness or assertions; it prints outcomes
-//! to inspect. Writes go through the real reviewed-plan service and the
-//! arithmetic through `core.work_calendar.business_time`, as an agent calls
-//! them.
+//! Manual walkthrough of work calendars (issue 135) and installation-wide
+//! holiday sets (issue 210) against an explicitly supplied disposable DB. No
+//! test harness or assertions; it prints outcomes to inspect. Writes go
+//! through the real reviewed-plan service, the arithmetic through
+//! `core.work_calendar.business_time`, as an agent calls them, and the
+//! publish job through the real Queue executor.
 use bilibi_agent_api::{
     plans::{PlanAuthority, PlanIdentity, PlannedOperation, Plans},
     Registry,
 };
 use bilibi_database::{pool, Error, MutationBoundary};
 use bilibi_party_ids::OrganisationId;
+use bilibi_queue::execution::{Config, Executor};
 use bilibi_settings::{Settings, Target};
 use bilibi_tenancy::{ProofFuture, Scope};
 use bilibi_work_calendar::{Reason, WorkCalendars, SERVICE};
 use jiff::civil::{Date, Weekday};
 use serde_json::{json, Value};
+use std::time::Duration;
 use tokio_postgres::Transaction;
 bilibi_walkthrough_fixture::walkthrough_vocabulary!();
 bilibi_walkthrough_fixture::walkthrough_module_roles!();
@@ -85,6 +88,15 @@ impl Agent<'_> {
                     .collect()
             })
             .map_err(|error| error.to_string())
+    }
+    /// What a plan's preview says of its one write.
+    async fn preview(&self, key: &str, input: Value) -> Result<Value, String> {
+        let plan = self
+            .plans
+            .preview(&self.browser, &[op(key, input)])
+            .await
+            .map_err(|error| error.to_string())?;
+        Ok(plan["results"][0].clone())
     }
     /// Preview, then commit, one reviewed write.
     async fn write(&self, key: &str, input: Value) -> Result<Value, String> {
@@ -162,6 +174,44 @@ fn print_days(days: &Value) {
     }
 }
 
+/// Run the Queue executor until no publish job is left open (about 20 s at
+/// most), then print each publish job's outcome.
+async fn run_publish_jobs(
+    app: &bilibi_web::App,
+    client: &tokio_postgres::Client,
+) -> Result<(), Failure> {
+    let executor = Executor::from_services(
+        &app.services,
+        Config {
+            concurrency: 2,
+            poll_interval: Duration::from_millis(200),
+            ..Config::default()
+        },
+    )?;
+    let (stop, stopped) = tokio::sync::watch::channel(false);
+    let running = tokio::spawn(executor.run(stopped));
+    for _ in 0..100 {
+        let open: i64 = client.query_one("SELECT count(*) FROM base_queue_jobs WHERE worker_id='core/work-calendar-publish' AND state NOT IN ('completed','cancelled','discarded')", &[]).await?.get(0);
+        if open == 0 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    let _ = stop.send(true);
+    let _ = running.await;
+    for row in client.query("SELECT tenant_id,state,attempt,system_principal,coalesce(failure_code,'-') FROM base_queue_jobs WHERE worker_id='core/work-calendar-publish' ORDER BY id", &[]).await? {
+        println!(
+            "  publish job in tenant {}: {} after {} attempt(s) as {} (failure {})",
+            row.get::<_, i64>(0),
+            row.get::<_, String>(1),
+            row.get::<_, i32>(2),
+            row.get::<_, Option<String>>(3).unwrap_or_default(),
+            row.get::<_, String>(4)
+        );
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Failure> {
     if std::env::var("BILIBI_WORK_CALENDAR_DEMO").as_deref() != Ok("disposable") {
@@ -190,6 +240,7 @@ async fn main() -> Result<(), Failure> {
         "viewer@example.test",
         "manager@other.example.test",
         "ai@agent.my",
+        "manager@example.test",
     ] {
         let login = app.user.login(email, password).await?;
         agents.push((login.token.clone(), app.security.guard(&login.token).await?));
@@ -205,6 +256,7 @@ async fn main() -> Result<(), Failure> {
         db: &db,
     };
     let (admin, viewer, other, second) = (agent(0), agent(1), agent(2), agent(3));
+    let manager = agent(4);
 
     println!("== a calendar: Monday-Friday with a lunch break, Saturday off, Sunday rest");
     let office = week(
@@ -1209,6 +1261,401 @@ async fn main() -> Result<(), Failure> {
                 json!({"code": "forged", "name": "Forged", "week": office}),
             )
             .await,
+    );
+
+    println!("== installation-wide holiday sets (issue 210)");
+    show(
+        "the platform operator creates an installation-wide set",
+        admin
+            .write(
+                "core.work_calendar.holiday_set.create",
+                json!({"code": "my-federal", "name": "Malaysia federal", "country_iso": "MY", "installation": true}),
+            )
+            .await,
+    );
+    // Demonstration only: tenant 1's manager keeps its tenant's calendars
+    // but holds no platform capability.
+    client.execute("INSERT INTO principal_capabilities(tenant_id,user_id,capability,is_allowed) VALUES(1,1,'admin.work-calendar.manage',true) ON CONFLICT DO NOTHING", &[]).await?;
+    show(
+        "the operator tenant's manager, without the platform capability",
+        manager
+            .write(
+                "core.work_calendar.holiday_set.create",
+                json!({"code": "my-other", "name": "Other", "installation": true}),
+            )
+            .await,
+    );
+    show(
+        "tenant 2's owner",
+        other
+            .write(
+                "core.work_calendar.holiday_set.create",
+                json!({"code": "my-other", "name": "Other", "installation": true}),
+            )
+            .await,
+    );
+    show(
+        "tenant 2 takes the installation-wide code for a set of its own",
+        other
+            .write(
+                "core.work_calendar.holiday_set.create",
+                json!({"code": "my-federal", "name": "Mine"}),
+            )
+            .await,
+    );
+    show(
+        "tenant 2 keeps a set of its own",
+        other
+            .write(
+                "core.work_calendar.holiday_set.create",
+                json!({"code": "branch-local", "name": "Branch local"}),
+            )
+            .await,
+    );
+    show(
+        "the operator takes a code tenant 2 uses",
+        admin
+            .write(
+                "core.work_calendar.holiday_set.create",
+                json!({"code": "branch-local", "name": "Clash", "installation": true}),
+            )
+            .await,
+    );
+    let version = admin
+        .version("core.work_calendar.holiday_set.get", "my-federal")
+        .await;
+    show("the operator enters two holidays", admin.write("core.work_calendar.holiday_set.holidays", json!({"code": "my-federal", "version": version, "add": [{"date": "2026-08-31", "name": "National Day"}, {"date": "2026-09-16", "name": "Malaysia Day"}]})).await);
+    show(
+        "tenant 2 lists holiday sets",
+        other
+            .read("core.work_calendar.holiday_set.list", json!({}))
+            .await
+            .map(|v| v["holiday_sets"].clone()),
+    );
+    show(
+        "the operator lists holiday sets (tenant 2's are not there)",
+        admin
+            .read(
+                "core.work_calendar.holiday_set.list",
+                json!({"search": "branch"}),
+            )
+            .await
+            .map(|v| v["holiday_sets"].clone()),
+    );
+    show("the operator's hq calendar", admin.write("core.work_calendar.create", json!({"code": "hq", "name": "Headquarters", "timezone": "Asia/Kuala_Lumpur", "substitute": "rest", "effective_from": "2026-01-01", "week": office})).await);
+    let version = admin.version("core.work_calendar.get", "hq").await;
+    show(
+        "hq includes it",
+        admin
+            .write(
+                "core.work_calendar.include",
+                json!({"code": "hq", "version": version, "holiday_set": "my-federal"}),
+            )
+            .await,
+    );
+    let version = other.version("core.work_calendar.get", "branch").await;
+    show(
+        "tenant 2's branch includes it",
+        other
+            .write(
+                "core.work_calendar.include",
+                json!({"code": "branch", "version": version, "holiday_set": "my-federal"}),
+            )
+            .await,
+    );
+    println!("tenant 2's branch:");
+    print_days(
+        &other
+            .read(
+                "core.work_calendar.days",
+                json!({"code": "branch", "from": "2026-08-31", "to": "2026-08-31"}),
+            )
+            .await?,
+    );
+    show(
+        "tenant 2 reads the set: its own calendars only",
+        other
+            .read("core.work_calendar.holiday_set.get", json!({"code": "my-federal"}))
+            .await
+            .map(|v| json!({"installation": v["installation"], "calendars": v["calendars"], "holidays": v["holidays"]["total"]})),
+    );
+    let version = other
+        .version("core.work_calendar.holiday_set.get", "my-federal")
+        .await;
+    show(
+        "tenant 2 adds a holiday to it",
+        other
+            .write(
+                "core.work_calendar.holiday_set.holidays",
+                json!({"code": "my-federal", "version": version, "add": [{"date": "2026-10-01", "name": "Ours"}]}),
+            )
+            .await,
+    );
+    show(
+        "tenant 2 renames it",
+        other
+            .write(
+                "core.work_calendar.holiday_set.update",
+                json!({"code": "my-federal", "version": version, "name": "Ours"}),
+            )
+            .await,
+    );
+
+    println!("== an installation-wide change reaches every tenant including the set");
+    let told = "SELECT e.tenant_id,e.subject,e.payload::text,coalesce(a.system_principal,a.actor_type) FROM base_events e LEFT JOIN base_audit_mutations a ON a.auditable_type='base/events.event' AND a.auditable_id=e.id::text WHERE e.name='core/work_calendar.changed' AND e.id>$1 ORDER BY e.id";
+    let mark: i64 = client
+        .query_one("SELECT coalesce(max(id),0) FROM base_events", &[])
+        .await?
+        .get(0);
+    let version = admin
+        .version("core.work_calendar.holiday_set.get", "my-federal")
+        .await;
+    let deepavali = json!({"code": "my-federal", "version": version, "add": [{"date": "2026-11-08", "name": "Deepavali"}]});
+    show(
+        "the operator's preview",
+        admin
+            .preview("core.work_calendar.holiday_set.holidays", deepavali.clone())
+            .await
+            .map(|r| r["preview"]["result"]["summary"].clone()),
+    );
+    show(
+        "the operator adds Deepavali (a Sunday)",
+        admin
+            .write("core.work_calendar.holiday_set.holidays", deepavali)
+            .await,
+    );
+    println!("tenant 2's branch reads it at once, before any event:");
+    print_days(
+        &other
+            .read(
+                "core.work_calendar.days",
+                json!({"code": "branch", "from": "2026-11-08", "to": "2026-11-09"}),
+            )
+            .await?,
+    );
+    println!("changed events before the publish job runs:");
+    for row in client.query(told, &[&mark]).await? {
+        println!(
+            "  tenant {} {} {} recorded by {}",
+            row.get::<_, i64>(0),
+            row.get::<_, String>(1),
+            row.get::<_, String>(2),
+            row.get::<_, Option<String>>(3).unwrap_or_default()
+        );
+    }
+    run_publish_jobs(&app, &client).await?;
+    println!("changed events after it ran:");
+    for row in client.query(told, &[&mark]).await? {
+        println!(
+            "  tenant {} {} {} recorded by {}",
+            row.get::<_, i64>(0),
+            row.get::<_, String>(1),
+            row.get::<_, String>(2),
+            row.get::<_, Option<String>>(3).unwrap_or_default()
+        );
+    }
+
+    println!("== a tenant copies the set and diverges");
+    show(
+        "tenant 2 copies it",
+        other
+            .write(
+                "core.work_calendar.holiday_set.copy",
+                json!({"code": "branch-holidays", "name": "Branch holidays", "source": "my-federal"}),
+            )
+            .await,
+    );
+    show(
+        "a copy taking a used code",
+        other
+            .write(
+                "core.work_calendar.holiday_set.copy",
+                json!({"code": "branch-local", "name": "Again", "source": "my-federal"}),
+            )
+            .await,
+    );
+    let version = other
+        .version("core.work_calendar.holiday_set.get", "branch-holidays")
+        .await;
+    show("tenant 2 changes its copy", other.write("core.work_calendar.holiday_set.holidays", json!({"code": "branch-holidays", "version": version, "add": [{"date": "2026-12-24", "name": "Branch day"}], "remove": ["2026-09-16"]})).await);
+    let version = other.version("core.work_calendar.get", "branch").await;
+    let swap = [
+        op(
+            "core.work_calendar.include",
+            json!({"code": "branch", "version": version, "holiday_set": "my-federal", "included": false}),
+        ),
+        op(
+            "core.work_calendar.include",
+            json!({"code": "branch", "version": version, "holiday_set": "branch-holidays"}),
+        ),
+    ];
+    let swapped = match other.plan(&swap).await {
+        Ok(code) => other
+            .commit(&code, &swap)
+            .await
+            .map(|results| json!(results)),
+        Err(error) => Err(error),
+    };
+    show(
+        "branch swaps the installation-wide set for its copy",
+        swapped,
+    );
+    let version = admin
+        .version("core.work_calendar.holiday_set.get", "my-federal")
+        .await;
+    show(
+        "the operator adds Christmas",
+        admin
+            .write(
+                "core.work_calendar.holiday_set.holidays",
+                json!({"code": "my-federal", "version": version, "add": [{"date": "2026-12-25", "name": "Christmas"}]}),
+            )
+            .await,
+    );
+    let dates = |set: Value| {
+        set["holidays"]["rows"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|h| {
+                format!(
+                    "{} {}",
+                    h["date"].as_str().unwrap_or(""),
+                    h["name"].as_str().unwrap_or("")
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    show(
+        "the installation-wide set",
+        admin
+            .read(
+                "core.work_calendar.holiday_set.get",
+                json!({"code": "my-federal"}),
+            )
+            .await
+            .map(|set| json!(dates(set))),
+    );
+    show(
+        "tenant 2's copy",
+        other
+            .read(
+                "core.work_calendar.holiday_set.get",
+                json!({"code": "branch-holidays"}),
+            )
+            .await
+            .map(|set| json!(dates(set))),
+    );
+    let jobs: i64 = client
+        .query_one(
+            "SELECT count(*) FROM base_queue_jobs WHERE worker_id='core/work-calendar-publish'",
+            &[],
+        )
+        .await?
+        .get(0);
+    println!("publish jobs so far: {jobs} (Christmas reached no other tenant's calendar)");
+
+    println!("== a tenant that denies the publisher is told nothing");
+    // Demonstration only: what Grants::set_system stores when tenant 2's
+    // administrator denies the principal (it asks for a step-up).
+    client.execute("INSERT INTO authz_system_grants(tenant_id,principal,capability,is_allowed) VALUES(2,'work-calendar-publisher','admin.work-calendar.publish',false) ON CONFLICT (tenant_id,principal,capability) DO UPDATE SET is_allowed=false", &[]).await?;
+    let version = other.version("core.work_calendar.get", "branch").await;
+    show(
+        "branch includes the installation-wide set again",
+        other
+            .write(
+                "core.work_calendar.include",
+                json!({"code": "branch", "version": version, "holiday_set": "my-federal"}),
+            )
+            .await,
+    );
+    let mark: i64 = client
+        .query_one("SELECT coalesce(max(id),0) FROM base_events", &[])
+        .await?
+        .get(0);
+    let version = admin
+        .version("core.work_calendar.holiday_set.get", "my-federal")
+        .await;
+    show(
+        "the operator adds a holiday",
+        admin
+            .write(
+                "core.work_calendar.holiday_set.holidays",
+                json!({"code": "my-federal", "version": version, "add": [{"date": "2026-12-31", "name": "Year end"}]}),
+            )
+            .await,
+    );
+    run_publish_jobs(&app, &client).await?;
+    for row in client.query(told, &[&mark]).await? {
+        println!(
+            "  tenant {} {} {} recorded by {}",
+            row.get::<_, i64>(0),
+            row.get::<_, String>(1),
+            row.get::<_, String>(2),
+            row.get::<_, Option<String>>(3).unwrap_or_default()
+        );
+    }
+    if let Some(row) = client.query_opt("SELECT allowed,reason FROM authz_decision_log WHERE tenant_id=2 AND system_principal='work-calendar-publisher' ORDER BY id DESC LIMIT 1", &[]).await? {
+        println!(
+            "tenant 2's decision log: allowed {} ({})",
+            row.get::<_, bool>(0),
+            row.get::<_, String>(1)
+        );
+    }
+    println!("tenant 2's branch still reads the holiday:");
+    print_days(
+        &other
+            .read(
+                "core.work_calendar.days",
+                json!({"code": "branch", "from": "2026-12-31", "to": "2026-12-31"}),
+            )
+            .await?,
+    );
+
+    println!("== the operator's tenant denies the publisher: no tenant is told");
+    // Demonstration only: tenant 2 allows the principal again, and the
+    // operator's administrator denies it in the tenant the job runs in.
+    client
+        .execute(
+            "DELETE FROM authz_system_grants WHERE tenant_id=2 AND principal='work-calendar-publisher'",
+            &[],
+        )
+        .await?;
+    client.execute("INSERT INTO authz_system_grants(tenant_id,principal,capability,is_allowed) VALUES(1,'work-calendar-publisher','admin.work-calendar.publish',false) ON CONFLICT (tenant_id,principal,capability) DO UPDATE SET is_allowed=false", &[]).await?;
+    let mark: i64 = client
+        .query_one("SELECT coalesce(max(id),0) FROM base_events", &[])
+        .await?
+        .get(0);
+    let version = admin
+        .version("core.work_calendar.holiday_set.get", "my-federal")
+        .await;
+    show(
+        "the operator adds a holiday",
+        admin
+            .write(
+                "core.work_calendar.holiday_set.holidays",
+                json!({"code": "my-federal", "version": version, "add": [{"date": "2026-12-30", "name": "Year end eve"}]}),
+            )
+            .await,
+    );
+    run_publish_jobs(&app, &client).await?;
+    for row in client.query(told, &[&mark]).await? {
+        println!(
+            "  tenant {} {} {} recorded by {}",
+            row.get::<_, i64>(0),
+            row.get::<_, String>(1),
+            row.get::<_, String>(2),
+            row.get::<_, Option<String>>(3).unwrap_or_default()
+        );
+    }
+    println!("tenant 2's branch still reads the holiday:");
+    print_days(
+        &other
+            .read(
+                "core.work_calendar.days",
+                json!({"code": "branch", "from": "2026-12-30", "to": "2026-12-30"}),
+            )
+            .await?,
     );
 
     println!("== migration");

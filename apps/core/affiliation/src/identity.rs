@@ -299,6 +299,23 @@ pub async fn account_standing(
     .transpose()
 }
 
+/// Whether a linked affiliation is in effect today (UTC) by its
+/// `effective_from` and `effective_to` dates; an open end counts as current.
+/// A customer account stands only while this holds (ADR 16); staff accounts
+/// keep [`account_standing`] alone.
+pub async fn current(client: &dyn ProofClient, tenant: i64, id: AffiliationId) -> Result<bool> {
+    if tenant <= 0 {
+        return Err(Error::Unauthorized);
+    }
+    Ok(client
+        .query_opt(
+            "SELECT 1 FROM person_affiliations, LATERAL (SELECT (clock_timestamp() AT TIME ZONE 'UTC')::date AS today) d WHERE tenant_id=$1 AND id=$2 AND unlinked_at IS NULL AND (effective_from IS NULL OR effective_from<=d.today) AND (effective_to IS NULL OR effective_to>=d.today)",
+            &[&tenant, &id.get()],
+        )
+        .await?
+        .is_some())
+}
+
 /// Sealed, non-serializable identity held only while its transaction is borrowed.
 /// A reference, DTO or matching integer cannot manufacture this value.
 #[derive(Debug)]

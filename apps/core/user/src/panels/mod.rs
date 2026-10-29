@@ -58,7 +58,7 @@ pub(crate) async fn company_accounts(
 ) -> Result<Vec<Listed>> {
     let rows = client
         .query(
-            &format!("SELECT {COLUMNS} {FROM} WHERE u.tenant_id = $1 AND u.organisation_id = $2 AND u.deleted_at IS NULL ORDER BY u.id"),
+            &format!("SELECT {COLUMNS} {FROM} WHERE u.tenant_id = $1 AND u.organisation_id = $2 AND u.kind = 'staff' AND u.deleted_at IS NULL ORDER BY u.id"),
             &[&scope.tenant(), &company],
         )
         .await?;
@@ -73,7 +73,7 @@ pub(crate) async fn person_accounts(
 ) -> Result<Vec<Listed>> {
     let rows = client
         .query(
-            &format!("SELECT {COLUMNS} {FROM} WHERE u.tenant_id = $1 AND u.person_id = $2 AND u.deleted_at IS NULL ORDER BY u.id"),
+            &format!("SELECT {COLUMNS} {FROM} WHERE u.tenant_id = $1 AND u.person_id = $2 AND u.kind = 'staff' AND u.deleted_at IS NULL ORDER BY u.id"),
             &[&scope.tenant(), &person],
         )
         .await?;
@@ -88,7 +88,7 @@ pub(crate) async fn unlinked_accounts(
 ) -> Result<Vec<Listed>> {
     let rows = client
         .query(
-            &format!("SELECT {COLUMNS} {FROM} WHERE u.tenant_id = $1 AND u.person_id IS NULL AND u.deleted_at IS NULL ORDER BY lower(u.name), u.id LIMIT 200"),
+            &format!("SELECT {COLUMNS} {FROM} WHERE u.tenant_id = $1 AND u.person_id IS NULL AND u.kind = 'staff' AND u.deleted_at IS NULL ORDER BY lower(u.name), u.id LIMIT 200"),
             &[&scope.tenant()],
         )
         .await?;
@@ -105,7 +105,7 @@ pub(crate) struct Summary {
 pub(crate) async fn summary(client: &impl GenericClient, scope: &Scope) -> Result<Summary> {
     let rows = client
         .query(
-            &format!("SELECT {COLUMNS}, count(*) OVER () AS total, count(u.email_verified_at) OVER () AS verified {FROM} WHERE u.tenant_id = $1 AND u.deleted_at IS NULL ORDER BY u.id LIMIT 5"),
+            &format!("SELECT {COLUMNS}, count(*) OVER () AS total, count(u.email_verified_at) OVER () AS verified {FROM} WHERE u.tenant_id = $1 AND u.kind = 'staff' AND u.deleted_at IS NULL ORDER BY u.id LIMIT 5"),
             &[&scope.tenant()],
         )
         .await?;
