@@ -38,6 +38,7 @@ impl ActorVerifier for OwnCompany {
                 person: None,
                 organisation: Some(self.0),
                 affiliation: None,
+                kind: bilibi_tenancy::AccountKind::Staff,
                 installation_owner: false,
             })
         })

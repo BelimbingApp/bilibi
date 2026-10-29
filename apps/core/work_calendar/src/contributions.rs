@@ -109,7 +109,7 @@ static GRID: GridContribution = GridContribution {
     record_fields: &[],
     tables: &[TableDecl::new("work_calendars", "Work calendars", LIST,
         Source::tenant(concat!("SELECT c.code,c.name,c.status,c.substitute,", zone_in_force!(), " AS timezone,\
-            (SELECT string_agg(s.code, ', ' ORDER BY s.code) FROM core_work_calendar_includes i JOIN core_work_calendar_holiday_sets s ON s.tenant_id=i.tenant_id AND s.id=i.holiday_set_id WHERE i.tenant_id=c.tenant_id AND i.calendar_id=c.id) AS holiday_sets \
+            (SELECT string_agg(s.code, ', ' ORDER BY s.code) FROM core_work_calendar_includes i JOIN core_work_calendar_holiday_sets s ON s.tenant_id=i.set_tenant_id AND s.id=i.holiday_set_id WHERE i.tenant_id=c.tenant_id AND i.calendar_id=c.id) AS holiday_sets \
             FROM core_work_calendars c WHERE c.tenant_id=$1")), "code", &[
             Field::new("code", "Code", FieldType::String).protected(),
             Field::new("name", "Name", FieldType::String).protected(),

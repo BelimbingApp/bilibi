@@ -26,7 +26,9 @@ use bilibi_database::{
 };
 use bilibi_party_ids::{OrganisationId, PersonId};
 use bilibi_settings::Settings;
-use bilibi_tenancy::{Authentication, ClientIdentity, PartyProofs, ProofClient, Scope, SelfReport};
+use bilibi_tenancy::{
+    AccountKind, Authentication, ClientIdentity, PartyProofs, ProofClient, Scope, SelfReport,
+};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, sync::Arc, time::SystemTime};
@@ -292,8 +294,13 @@ pub fn valid_label(label: &str) -> bool {
 /// Bilimbi refuses impersonated sessions and agent facets from managing
 /// connections: a bearer request carries the agent facet, an impersonated
 /// browser session its operator. Refused here once, not at each caller.
+/// Only staff connect agents: a customer account is never issued or proved
+/// a grant (ADR 16).
 fn self_service(scope: &Scope) -> std::result::Result<(), OAuthError> {
-    if scope.agent().is_some() || scope.impersonator().is_some() {
+    if scope.agent().is_some()
+        || scope.impersonator().is_some()
+        || scope.actor().kind() != AccountKind::Staff
+    {
         return Err(OAuthError::AccessDenied);
     }
     Ok(())
@@ -1092,7 +1099,8 @@ impl AgentAccess {
             .authenticate(client, connection.tenant, connection.user, String::new())
             .await
             .map_err(refused)?;
-        if scope.actor().organisation().map(OrganisationId::get) != connection.organisation
+        if scope.actor().kind() != AccountKind::Staff
+            || scope.actor().organisation().map(OrganisationId::get) != connection.organisation
             || scope.actor().person().map(PersonId::get) != connection.person
         {
             return Err(OAuthError::InvalidGrant);
@@ -1185,7 +1193,7 @@ impl bilibi_tenancy::AgentVerifier for GrantVerifier {
         scope: &'a Scope,
     ) -> bilibi_tenancy::ProofFuture<'a, ()> {
         Box::pin(async move {
-            if scope.impersonator().is_some() {
+            if scope.impersonator().is_some() || scope.actor().kind() != AccountKind::Staff {
                 return Err(Error::Unauthorized);
             }
             let agent = scope.agent().ok_or(Error::Unauthorized)?;

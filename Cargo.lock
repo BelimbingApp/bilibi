@@ -1574,6 +1574,7 @@ dependencies = [
  "bilibi-menu",
  "bilibi-module-registry",
  "bilibi-party-ids",
+ "bilibi-queue",
  "bilibi-settings",
  "bilibi-tenancy",
  "bilibi-ui",

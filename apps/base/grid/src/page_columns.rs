@@ -98,6 +98,7 @@ pub struct PageColumns {
     since: String,
     pub suggestions: Vec<FlexColumn>,
     pub add_query: String,
+    scalar_sorts: BTreeMap<String, String>,
 }
 
 impl PageColumns {
@@ -144,6 +145,7 @@ impl PageColumns {
             since: String::new(),
             suggestions: Vec::new(),
             add_query: String::new(),
+            scalar_sorts: BTreeMap::new(),
         })
     }
 
@@ -210,6 +212,13 @@ impl PageColumns {
 
     pub fn view(&self) -> &View {
         &self.view
+    }
+
+    /// Opt in only the scalar paths the owner can actually sort. Keys are
+    /// catalog paths, values are the owner's validated list sort keys.
+    pub fn with_scalar_sorts(mut self, sorts: BTreeMap<String, String>) -> Self {
+        self.scalar_sorts = sorts;
+        self
     }
 
     pub fn zoom(&self) -> u16 {
@@ -380,6 +389,22 @@ impl PageColumns {
             self.suggest(&query);
         }
         self.label_record_columns();
+        for column in &mut self.columns {
+            let path = self
+                .record_fields
+                .iter()
+                .find(|field| field.slot_id().as_deref() == Some(column.spec.as_str()))
+                .and_then(|field| field.column)
+                .unwrap_or(&column.spec);
+            if let Some(key) = self.scalar_sorts.get(path).filter(|_| {
+                self.catalog.as_ref().is_some_and(|catalog| {
+                    crate::scalar_expression(catalog, &self.table, path).is_ok()
+                })
+            }) {
+                column.sortable = true;
+                column.sort_key = Some(key.clone());
+            }
+        }
         Ok(())
     }
 
@@ -480,6 +505,31 @@ impl PageColumns {
         let get = |key: &str| params.get(key).map(String::as_str).unwrap_or("");
         let spec = get("spec");
         if get("op") == "sort" {
+            let catalog = {
+                let client = self.views.db().get().await?;
+                Catalog::for_scope(&**client, scope).await?
+            };
+            let requested = get("sort");
+            let path = self
+                .record_fields
+                .iter()
+                .find(|field| field.slot_id().as_deref() == Some(requested))
+                .and_then(|field| field.column)
+                .unwrap_or(requested);
+            if let Some((path, key)) = self
+                .scalar_sorts
+                .iter()
+                .find(|(candidate, key)| candidate.as_str() == path || key.as_str() == requested)
+            {
+                return Ok(
+                    if crate::scalar_expression(&catalog, &self.table, path).is_ok() {
+                        Outcome::Sort(key.clone())
+                    } else {
+                        Outcome::Noop
+                    },
+                );
+            }
+            self.catalog = Some(catalog);
             return Ok(self
                 .builtins
                 .iter()

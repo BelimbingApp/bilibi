@@ -459,14 +459,21 @@ impl Media {
         let limit = i64::try_from(MAX_RECIPIENTS).unwrap_or(500);
         let managers = bilibi_authz::holders(tx.sql(), tenant, MANAGE, limit).await?;
         for user in uploader.into_iter().chain(managers) {
-            if !live.contains(&user)
-                && self
-                    .authentication
-                    .authenticate(tx.sql(), tenant, user, String::new())
-                    .await
-                    .is_ok()
+            if live.contains(&user) {
+                continue;
+            }
+            // A manager is staff: a customer never holds `MANAGE` (ADR 16),
+            // whatever its grants say. The uploader is told whoever it is.
+            if let Ok(account) = self
+                .authentication
+                .authenticate(tx.sql(), tenant, user, String::new())
+                .await
             {
-                live.push(user);
+                if Some(user) == uploader
+                    || account.actor().kind() == bilibi_tenancy::AccountKind::Staff
+                {
+                    live.push(user);
+                }
             }
         }
         let name: String = row
