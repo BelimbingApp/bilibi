@@ -903,8 +903,9 @@ pub async fn prove_operator(
 ) -> Result<OperatorProof> {
     // Operator standing is an account's: a principal decides a platform
     // capability through Authz's own operator gate and never holds a proof
-    // that administers tenants or writes global settings.
-    if scope.principal().is_some() {
+    // that administers tenants or writes global settings. A customer is
+    // never the operator (ADR 16).
+    if scope.principal().is_some() || scope.actor.kind != AccountKind::Staff {
         return Err(Error::Forbidden);
     }
     require_operator_marker(client, scope.tenant()).await?;
@@ -931,8 +932,12 @@ pub async fn prove_owner(
     scope: &Scope,
 ) -> Result<OwnerProof> {
     // Owner standing belongs to a person; neither an operator behind an
-    // impersonated session nor a system principal holds it.
-    if scope.impersonator().is_some() || scope.principal().is_some() {
+    // impersonated session nor a system principal holds it, and a customer
+    // is never the owner (ADR 16).
+    if scope.impersonator().is_some()
+        || scope.principal().is_some()
+        || scope.actor.kind != AccountKind::Staff
+    {
         return Err(Error::Forbidden);
     }
     require_operator_marker(client, scope.tenant()).await?;

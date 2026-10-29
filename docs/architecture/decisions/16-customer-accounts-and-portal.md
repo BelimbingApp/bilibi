@@ -36,3 +36,15 @@ We rejected a separate customer account store because every credential rule (has
 - A Domain that adds portal pages declares portal capabilities, contributes `Access::Portal` routes and takes `&PortalScope` in its portal facade. Code must handle `organisation() == None`.
 - A customer stays signed in only while its Person is live and, for a business customer, while its affiliation is current by its dates and its company is not archived; standing is proved on every request.
 - Single sign-on for customers, staff viewing the portal as a customer, and agent access for customers are out of scope.
+
+## Delivery
+
+The decision is built in parts under issue 137; until all have landed, only what a part names is in force.
+
+| Part | Brings |
+| --- | --- |
+| 1 | `users.kind`, the staff-only reads, `portal_login`, `PortalScope`, customer standing, the audience of a pending sign-in, and the fail-closed staff edge: Session resolves staff sessions only, and Grants, `prove_operator` and `prove_owner` refuse a customer. |
+| 2 | Capability audiences in Authz (`denied_audience`, the boot refusals of mixed-audience and grant-all portal roles) and Core Agent Access refusing customers. |
+| 3 | The `/portal` route space, the portal cookie and the host's kind check per cookie. |
+| 4 | The portal layout, menu root and live socket. |
+| 5 | Core Customer Access: sites, invitations, registration, the staff screens and the portal credential pages. |
