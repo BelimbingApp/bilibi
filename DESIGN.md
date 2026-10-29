@@ -130,7 +130,7 @@ Width is a shared decision. Every page uses `PageVariant`. All three share one c
 *Every list is a `FlexTable`.* Never the plain `Table`.
 
 - **State:** `ListState` keeps page, search, filters, sort and page size in the URL. Reload and shared links reopen the same view.
-- **Toolbar:** search sits first, with filter boxes to its right, above the table in the open. On narrow screens filters wrap below search in the same order. No second card.
+- **Toolbar:** search sits first, with filter boxes to its right, above the table in the open. Leave 12 px between the page header and an adjacent toolbar. On narrow screens filters wrap below search in the same order. No second card.
 - **Rows:** `py-0.5`, `px-2`. Headers `py-1`, sunken background, `text-xs font-semibold`.
 - **Numbers:** tabular numerals for IDs, counts, dates and amounts.
 - **Corners:** table frames are square. A card is flat only where it frames the table.
@@ -140,7 +140,7 @@ Width is a shared decision. Every page uses `PageVariant`. All three share one c
 
 ### Flexible columns
 
-- A small "Customize table" notch on the table edge opens the column bar.
+- A small "Customize table" notch on the table edge opens the column bar. Leave at least 8 px between the notch and preceding content.
 - People add, remove and reorder columns, and pick a lens: value, bar, colour band, trend, change since a date.
 - Many-links become rollup cells that expand in place.
 - Row height has two named zooms: Compact and Normal. A compact row is one line.

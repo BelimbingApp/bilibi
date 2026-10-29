@@ -647,6 +647,22 @@ body:has(dialog:modal) #flash-group > #connection-server-error {
   margin-top: calc(--spacing(3.5) + --spacing(3));
 }
 
+/* When an unframed table follows content within the same container, reserve
+ * the notch's height and an 8 px gap. Its negative margin otherwise rises
+ * into the preceding toolbar or section heading. */
+[data-table-frame][data-unframed]:not(:first-child) {
+  margin-top: calc(--spacing(3.5) + --spacing(2));
+}
+[data-table-frame]:not([data-unframed]):not(:first-child) {
+  margin-top: --spacing(2);
+}
+
+/* The shared header already leaves 12 px below its action row. A page's
+ * stack spacing must not add a second gap before an adjacent list toolbar. */
+[data-page="list"] > [data-page-header]:has(+ [data-filter-toolbar]) {
+  margin-bottom: 0;
+}
+
 /* A compact row of `flex_table/1` is as short as eighteen pixels, so a badge
  * in one gives up its vertical padding: a twenty-pixel badge made every row
  * that held one twenty-one. The badge is `badge/1`, marked `data-badge`. */
