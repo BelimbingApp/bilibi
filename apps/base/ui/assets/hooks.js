@@ -1015,9 +1015,24 @@
       this.onClick = async (event) => {
         const tile = event.target.closest('[data-copy-text]');
         if (!tile || !this.el.contains(tile)) return;
+        const text = tile.dataset.copyText;
         let copied = false;
-        try { await navigator.clipboard.writeText(tile.dataset.copyText); copied = true; } catch { /* permission refusal is a visible server state */ }
-        this.emit(this.el.dataset.copyEvent || 'icon-copied', {text: tile.dataset.copyText, copied});
+        try { await navigator.clipboard.writeText(text); copied = true; } catch { /* a refusal changes nothing */ }
+        // A `copy_button` tile answers for itself: a check named "Copied" for
+        // a moment, and nothing at all when the browser refuses. Only the
+        // catalogue's tiles report to the server.
+        const button = tile.querySelector('[data-copy-button]');
+        if (!button) return this.emit(this.el.dataset.copyEvent || 'icon-copied', {text, copied});
+        if (!copied) return;
+        tile.setAttribute('data-copied', '');
+        button.setAttribute('aria-label', 'Copied');
+        button.setAttribute('title', 'Copied');
+        clearTimeout(tile.copyTimer);
+        tile.copyTimer = setTimeout(() => {
+          tile.removeAttribute('data-copied');
+          button.setAttribute('aria-label', button.dataset.copyLabel);
+          button.setAttribute('title', button.dataset.copyLabel);
+        }, 1500);
       };
       this.el.addEventListener('click', this.onClick);
     }

@@ -74,7 +74,7 @@ The builder, archive and exporter do not change.
 ## Download
 
 - AI connections (`/settings/ai-connections`) is owned by `core/agent_access`. This module does not serve a settings page.
-- The ChatGPT ZIP stays at `/settings/chatgpt-plugin/download` (a `Download` contribution). It is not linked from the page. It checks self-service access and the HTTPS origin on every request:
+- The ChatGPT ZIP stays at `/settings/chatgpt-plugin/download` (a `Download` contribution). AI connections and the AI status-bar panel link it with a Download plugin button, shown only when the person's own session and an HTTPS `APP_ORIGIN` would pass the checks below (`bilibi_agent_access::PLUGIN_DOWNLOAD`, `https_origin`). It checks self-service access and the HTTPS origin on every request:
 
 | Request | Answer |
 | --- | --- |
