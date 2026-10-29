@@ -647,13 +647,6 @@ body:has(dialog:modal) #flash-group > #connection-server-error {
   margin-top: calc(--spacing(3.5) + --spacing(3));
 }
 
-/* When an unframed table follows content within the same container, reserve
- * the notch's height and an 8 px gap. Its negative margin otherwise rises
- * into the preceding toolbar or section heading. */
-[data-table-frame][data-unframed]:not(:first-child) {
-  margin-top: calc(--spacing(3.5) + --spacing(2));
-}
-
 /* The shared header already leaves 12 px below its action row. A page's
  * stack spacing must not add a second gap before an adjacent list toolbar. */
 [data-page="list"] > [data-page-header]:has(+ [data-filter-toolbar]) {
