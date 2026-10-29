@@ -470,6 +470,100 @@ pub const BOUNDS: &str = "SET LOCAL statement_timeout = '2000ms'; SET LOCAL lock
 fn ident(name: &str) -> String {
     format!("\"{}\"", name.replace('"', "\"\""))
 }
+
+/// A scalar path resolved under the caller's fresh scoped catalog. The owner
+/// executes this expression with its root row aliased `r`, binding the same
+/// tenant/user to $1/$2 as every catalog source. No caller SQL is accepted.
+/// Mirrors Bilimbi Base Grid's scoped column expressions.
+pub fn scalar_expression(catalog: &Catalog, root: &str, path: &str) -> Result<String, QueryError> {
+    let root = catalog.table(root).ok_or(QueryError::ForbiddenRoot)?;
+    let column = catalog
+        .resolve(root, path)
+        .map_err(|error| QueryError::Column(path.into(), error))?;
+    if column.kind != crate::ColumnKind::Field || column.many.is_some() || column.agg.is_some() {
+        return Err(QueryError::Unsupported(
+            path.into(),
+            "a scalar field is required",
+        ));
+    }
+    Ok(cell(catalog, root, &column))
+}
+
+/// A declared scalar field reached through one Company-style `One` link,
+/// expressed as a single join rather than a correlated lookup per root row.
+#[derive(Clone, Debug)]
+pub struct ScalarJoin {
+    /// Stable catalog-derived alias, suitable for deduplicating fields on a link.
+    pub alias: String,
+    /// The joined scalar value, using only catalog-validated identifiers.
+    pub expression: String,
+    /// The `LEFT JOIN` clause for the alias. The caller binds the same `$1`/`$2`
+    /// tenant and user values used by the declared owner source.
+    pub clause: String,
+}
+
+/// Resolve a scalar field through exactly one declared `One` link with an
+/// `On` join and return its safe join clause and value expression. This is for
+/// owner list queries that need to sort or filter many root rows by fields
+/// contributed from another owner's table. The link declaration guarantees at
+/// most one target per root; other path shapes remain available through
+/// [`scalar_expression`].
+pub fn scalar_join(catalog: &Catalog, root: &str, path: &str) -> Result<ScalarJoin, QueryError> {
+    let root_table = catalog.table(root).ok_or(QueryError::ForbiddenRoot)?;
+    let column = catalog
+        .resolve(root_table, path)
+        .map_err(|error| QueryError::Column(path.into(), error))?;
+    if column.kind != crate::ColumnKind::Field
+        || column.many.is_some()
+        || column.agg.is_some()
+        || !column.tail.is_empty()
+        || column.hops.len() != 1
+    {
+        return Err(QueryError::Unsupported(
+            path.into(),
+            "a scalar field on one direct link is required",
+        ));
+    }
+    let link = &column.hops[0];
+    let target = catalog.table(link.to()).ok_or(QueryError::ForbiddenRoot)?;
+    let crate::Join::On {
+        from_field,
+        to_field,
+    } = link.decl.join
+    else {
+        return Err(QueryError::Unsupported(
+            path.into(),
+            "a direct field join is required",
+        ));
+    };
+    if link.kind() != crate::LinkKind::One {
+        return Err(QueryError::Unsupported(
+            path.into(),
+            "a one-to-one field link is required",
+        ));
+    }
+    let alias = format!("grid_{}", link.id());
+    let clause = format!(
+        "LEFT JOIN {} {alias} ON {} = {}",
+        source(target),
+        field("r", root_table, from_field),
+        field(&alias, target, to_field)
+    );
+    let expression = field(
+        &alias,
+        target,
+        column
+            .field
+            .ok_or_else(|| QueryError::Unsupported(path.into(), "a scalar field is required"))?
+            .id,
+    );
+    Ok(ScalarJoin {
+        alias,
+        expression,
+        clause,
+    })
+}
+
 pub(crate) fn field(alias: &str, table: &Table, id: &str) -> String {
     format!(
         "{alias}.{}",

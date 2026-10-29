@@ -104,6 +104,10 @@ const DATABASE_TABLE_PIN_ICONS_MIGRATION: (&str, &str) = (
     "core-user-021-database-table-pin-icons",
     include_str!("../migrations/021-database-table-pin-icons.sql"),
 );
+const ACCOUNT_KIND_MIGRATION: (&str, &str) = (
+    "core-user-022-account-kind",
+    include_str!("../migrations/022-account-kind.sql"),
+);
 pub const TWO_FACTOR_RECOVERY_DROP: (&str, &str) = (
     "core-user-013-drop-two-factor-recovery",
     include_str!("../migrations/013-drop-two-factor-recovery.sql"),
@@ -163,7 +167,7 @@ pub struct Login {
     pub csrf: String,
     pub pending: bool,
 }
-pub use sign_in::{PendingSignIn, SIGN_IN};
+pub use sign_in::{PendingSignIn, PORTAL_SIGN_IN, SIGN_IN};
 
 /// Bilimbi's global sign-in, continued through neutral admission policy.
 pub async fn login(
@@ -171,7 +175,9 @@ pub async fn login(
     email: &str,
     password: &str,
 ) -> std::result::Result<Login, CredentialError> {
-    users.begin_sign_in(email, password).await
+    users
+        .begin_sign_in(identity::Audience::Staff, email, password)
+        .await
 }
 
 pub async fn logout(db: &Db, token: &str, csrf: &str, sessions: &Sessions) -> Result<()> {
@@ -207,7 +213,7 @@ pub struct UserService {
 inventory::submit! {
     bilibi_module_registry::Module {
         id:"core/user",layer:bilibi_module_registry::Layer::Core,
-        dependencies:&["base/integration","base/agent_api","base/database","base/security","base/step_up","base/system","base/notifications","base/tenancy","base/session","base/principal_directory","base/mail","base/settings","base/datetime","base/locale","base/ui","base/audit","base/authz","base/menu","base/grid","base/dashboard","base/party_ids","core/company","core/person","core/affiliation"],migrations:&[MIGRATION,CREDENTIALS_MIGRATION,PINS_MIGRATION,NOTIFICATIONS_MIGRATION,database_queries::MIGRATION,database_queries::DROP_PROMPT,BOOTSTRAP_MIGRATION,IDENTITY_MIGRATION,ACCOUNTS_MIGRATION,IMPERSONATION_MIGRATION,BOOTSTRAP_AFFILIATION_MIGRATION,MOVED_PINS_MIGRATION,TWO_FACTOR_MIGRATION,TWO_FACTOR_RECOVERY_DROP,sign_in::MIGRATION,sso::MIGRATION,sso::RUNTIME_MIGRATION,CREDENTIAL_ATTEMPTS_MIGRATION,BARE_ICON_NAMES_MIGRATION,scim::MIGRATION,DATABASE_TABLE_PIN_ICONS_MIGRATION],
+        dependencies:&["base/integration","base/agent_api","base/database","base/security","base/step_up","base/system","base/notifications","base/tenancy","base/session","base/principal_directory","base/mail","base/settings","base/datetime","base/locale","base/ui","base/audit","base/authz","base/menu","base/grid","base/dashboard","base/party_ids","core/company","core/person","core/affiliation"],migrations:&[MIGRATION,CREDENTIALS_MIGRATION,PINS_MIGRATION,NOTIFICATIONS_MIGRATION,database_queries::MIGRATION,database_queries::DROP_PROMPT,BOOTSTRAP_MIGRATION,IDENTITY_MIGRATION,ACCOUNTS_MIGRATION,IMPERSONATION_MIGRATION,BOOTSTRAP_AFFILIATION_MIGRATION,MOVED_PINS_MIGRATION,TWO_FACTOR_MIGRATION,TWO_FACTOR_RECOVERY_DROP,sign_in::MIGRATION,sso::MIGRATION,sso::RUNTIME_MIGRATION,CREDENTIAL_ATTEMPTS_MIGRATION,BARE_ICON_NAMES_MIGRATION,scim::MIGRATION,DATABASE_TABLE_PIN_ICONS_MIGRATION,ACCOUNT_KIND_MIGRATION],
         services:&[bilibi_module_registry::Service {id:"core/user.database_queries",factory:|services| {
             Ok(std::sync::Arc::new(database_queries::QueryService::new(services.get::<Db>("base/database.pool")?.as_ref().clone(), services.get("base/database.mutations")?, services.get("base/tenancy.authentication")?)))
         }},bilibi_module_registry::Service {id:"core/user.query-pages",factory:|services| {
@@ -243,7 +249,26 @@ impl UserService {
         email: &str,
         password: &str,
     ) -> std::result::Result<Login, CredentialError> {
-        self.begin_sign_in(email, password).await
+        self.begin_sign_in(identity::Audience::Staff, email, password)
+            .await
+    }
+    /// A customer's sign-in at the portal of `tenant`, which the caller
+    /// resolved from the portal address the customer opened (ADR 16). Same
+    /// proof as staff sign-in (hashing and its timing guard, the attempt
+    /// lock, standing, the optional second factor through
+    /// `core.user.portal_sign_in`), but it finds only that tenant's customer
+    /// accounts. The host keeps the resulting session in the portal cookie.
+    pub async fn portal_login(
+        &self,
+        tenant: i64,
+        email: &str,
+        password: &str,
+    ) -> std::result::Result<Login, CredentialError> {
+        if tenant <= 0 {
+            return Err(CredentialError::Rejected);
+        }
+        self.begin_sign_in(identity::Audience::Customer { tenant }, email, password)
+            .await
     }
     pub async fn logout(&self, token: &str, csrf: &str) -> Result<()> {
         let scope = {

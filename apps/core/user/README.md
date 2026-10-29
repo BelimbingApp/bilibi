@@ -136,10 +136,15 @@ affiliations, the Organisation it signs in under: `users.person_id`,
 `users.affiliation_id` and `users.organisation_id` (migration
 `006-identity.sql`), the last two held consistent by the scoped foreign key
 Affiliation published for this purpose, so a link can never name a Person or
-company other than the affiliation's. The login email is unique platform-wide
-(a partial unique index on `lower(email)` over live accounts); the migration
+company other than the affiliation's. A staff login email is unique platform-wide
+(a partial unique index on `lower(email)` over live staff accounts); the migration
 resolves the one duplicate the retired demo seed created explicitly and refuses
-any other.
+any other. A customer account (`users.kind = 'customer'`, migration
+`022-account-kind.sql`, [ADR 16](../../../docs/architecture/decisions/16-customer-accounts-and-portal.md))
+has an email unique among its tenant's customers only, always names a Person,
+and names an affiliation only for a business customer. Staff sign-in, reset,
+lists, panels, pickers, the Grid table and impersonation never find one, and a
+pending second-factor sign-in completes only on the form of its own audience.
 
 `standing(client, tenant, user)` is the authentication-edge read:
 the account row, then each stored link re-proved through its owner's public
