@@ -24,6 +24,9 @@ bilibi_walkthrough_fixture::walkthrough_module_roles!();
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
+#[path = "support/erasure.rs"]
+mod erasure_approval;
+
 /// The authenticator code for `key` (base32, as enrollment shows it) at
 /// `offset` 30-second steps from now: what the account holder's app shows.
 fn code(key: &str, offset: i64) -> String {
@@ -211,6 +214,10 @@ async fn main() -> Result<()> {
     let admin_key = enroll(&app, &admin).await?;
     let second_key = enroll(&app, &second).await?;
     println!("authenticator enrolled for accounts 4 and 6");
+    println!(
+        "erasure approval rules published for company 1: policy {}",
+        erasure_approval::publish_rules(&app, &mut client, &admin, 1).await?
+    );
     let one = OrganisationId::new(1)?;
     let ada = PersonId::new(1)?;
     let kim = PersonId::new(2)?;
@@ -612,30 +619,105 @@ async fn main() -> Result<()> {
         )
         .await?;
     println!("confirmed event {event_id}; left event {unrelated} unconfirmed");
+    let sent = privacy
+        .submit_erasure(&mut client, &admin, erasure.id, erasure.version)
+        .await?;
+    println!(
+        "sent for approval: awaiting {} in round {}",
+        sent.approval_awaiting,
+        sent.approval_request.is_some()
+    );
     show(
-        "approve with a code by whoever received it",
+        "approve the erasure outside its approval case",
         privacy
-            .approve(
-                &mut client,
-                &admin.clone().presenting_step_up(&code(&admin_key, 0)),
-                erasure.id,
-                erasure.version,
-            )
+            .approve(&mut client, &second, erasure.id, sent.version)
             .await
             .map(|r| r.status),
     );
-    let erasure = privacy
-        .approve(
-            &mut client,
-            &second.clone().presenting_step_up(&code(&second_key, 0)),
-            erasure.id,
-            erasure.version,
+    show(
+        "decide it with a code as whoever received and verified it",
+        erasure_approval::vote(
+            &app,
+            &admin.clone().presenting_step_up(&code(&admin_key, 0)),
+            &sent,
+            true,
         )
-        .await?;
+        .await,
+    );
+    erasure_approval::vote(
+        &app,
+        &second.clone().presenting_step_up(&code(&second_key, 0)),
+        &sent,
+        true,
+    )
+    .await?;
+    let erasure = privacy.request(&**client, &admin, erasure.id).await?;
     println!(
         "approved with a code by the second person: {}",
         erasure.status
     );
+    println!("== erasure approval: rejected, sent again, recalled");
+    let round = privacy
+        .receive(
+            &mut client,
+            &admin,
+            NewRequest {
+                kind: RequestKind::Erasure,
+                person: kim,
+                identifiers: vec![],
+                company: one,
+            },
+        )
+        .await?;
+    let round = privacy
+        .verify(&mut client, &admin, round.id, round.version, "Letter", &[])
+        .await?;
+    let first = privacy
+        .submit_erasure(&mut client, &admin, round.id, round.version)
+        .await?;
+    show(
+        "refuse it while its approval is open",
+        privacy
+            .refuse(&mut client, &admin, first.id, first.version, "Changed mind")
+            .await
+            .map(|r| r.status),
+    );
+    erasure_approval::vote(
+        &app,
+        &second.clone().presenting_step_up(&code(&second_key, 1)),
+        &first,
+        false,
+    )
+    .await?;
+    let back = privacy.request(&**client, &admin, round.id).await?;
+    println!(
+        "after rejection: status={} awaiting={} version {} -> {}",
+        back.status, back.approval_awaiting, first.version, back.version
+    );
+    let again = privacy
+        .submit_erasure(&mut client, &admin, back.id, back.version)
+        .await?;
+    println!(
+        "sent again: awaiting={} new round={}",
+        again.approval_awaiting,
+        again.approval_request != first.approval_request
+    );
+    erasure_approval::recall(&app, &mut client, &admin, &again).await?;
+    let recalled = privacy.request(&**client, &admin, round.id).await?;
+    println!(
+        "after recall: status={} awaiting={}",
+        recalled.status, recalled.approval_awaiting
+    );
+    let refused = privacy
+        .refuse(
+            &mut client,
+            &admin,
+            recalled.id,
+            recalled.version,
+            "Requester withdrew",
+        )
+        .await?;
+    println!("refused once no round is open: {}", refused.status);
     tokio::time::sleep(Duration::from_secs(8)).await;
     summary(&privacy.request(&**client, &admin, erasure.id).await?);
     client
@@ -738,14 +820,16 @@ async fn main() -> Result<()> {
             &[],
         )
         .await?;
-    let held = privacy
-        .approve(
-            &mut client,
-            &admin.clone().presenting_step_up(&code(&admin_key, 1)),
-            held.id,
-            held.version,
-        )
-        .await?;
+    let held = erasure_approval::decide(
+        &app,
+        &privacy,
+        &mut client,
+        &second,
+        &admin.clone().presenting_step_up(&code(&admin_key, 1)),
+        &held,
+        true,
+    )
+    .await?;
     let held = settle(&privacy, &client, &admin, held.id, 60).await?;
     summary(&held);
     certificate(&privacy, &mut client, &admin, held.id).await?;
@@ -784,14 +868,16 @@ async fn main() -> Result<()> {
         .await?;
     // A code is accepted once: wait for the authenticator's next step.
     tokio::time::sleep(Duration::from_secs(31)).await;
-    let again = privacy
-        .approve(
-            &mut client,
-            &admin.clone().presenting_step_up(&code(&admin_key, 1)),
-            again.id,
-            again.version,
-        )
-        .await?;
+    let again = erasure_approval::decide(
+        &app,
+        &privacy,
+        &mut client,
+        &second,
+        &admin.clone().presenting_step_up(&code(&admin_key, 1)),
+        &again,
+        true,
+    )
+    .await?;
     summary(&settle(&privacy, &client, &admin, again.id, 90).await?);
     rows(
         &client,
