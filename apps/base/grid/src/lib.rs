@@ -17,8 +17,8 @@ pub use lens::{Lens, Range};
 pub use page_columns::{Outcome, PageColumns};
 pub use page_views::{PageViews, PAGE_VIEWS};
 pub use query::{
-    project, project_lenses, project_within, stats, Lenses, Projection, QueryError, Row, Stats,
-    BOUNDS, MAX_ESTIMATED_COST,
+    project, project_lenses, project_within, scalar_expression, scalar_join, stats, Lenses,
+    Projection, QueryError, Row, ScalarJoin, Stats, BOUNDS, MAX_ESTIMATED_COST,
 };
 pub use summary::{
     page_keys, summarize, Bounds, Bucket, Filter, Grouping, KeyPage, Line, Measure, PageSpec,

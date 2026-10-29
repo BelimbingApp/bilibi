@@ -40,7 +40,7 @@ const STATEMENT: &str = "WITH tenant_companies AS (
          (c.id IS NOT NULL AND (c.deleted_at IS NOT NULL OR c.status = 'archived')) AS company_archived,
          (c.id IS NOT NULL AND c.deleted_at IS NOT NULL) AS company_deleted
   FROM users u LEFT JOIN tenant_companies c ON c.id = u.organisation_id
-  WHERE u.tenant_id = $1 AND u.deleted_at IS NULL
+  WHERE u.tenant_id = $1 AND u.kind = 'staff' AND u.deleted_at IS NULL
     AND ($2::text IS NULL OR u.name ILIKE $2 OR u.email ILIKE $2)
     AND (cardinality($3::bigint[]) = 0 OR EXISTS (
       SELECT 1 FROM effective_principal_roles pr WHERE pr.tenant_id = u.tenant_id AND pr.user_id = u.id AND pr.role_id = ANY($3)))

@@ -4,19 +4,22 @@
 use crate::{
     accounts::AccountError,
     credential_attempts::{self, Kind, Limits},
+    identity::Audience,
     CredentialError, Login, UserService,
 };
 use bilibi_database::{Change, Context, Error, MutationTransaction, Result};
 use bilibi_module_registry::{Contribution, Provenance};
 use bilibi_settings::{Definition, Editor, ScopeKind, Setting, ValueType, DEFINITIONS};
 use bilibi_step_up::{Availability, Challenge, Method, Purpose, Spent};
-use bilibi_tenancy::{Channel, Scope};
+use bilibi_tenancy::{AccountKind, Channel, Scope};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::time::SystemTime;
 use tokio_postgres::GenericClient;
 
 pub const SIGN_IN: &str = "core.user.sign_in";
+/// A customer's sign-in at its tenant's portal (ADR 16); off by default.
+pub const PORTAL_SIGN_IN: &str = "core.user.portal_sign_in";
 const LIFETIME: &str = "user.sign_in_minutes";
 pub(crate) const MIGRATION: (&str, &str) = (
     "core-user-015-sign-in",
@@ -25,6 +28,10 @@ pub(crate) const MIGRATION: (&str, &str) = (
 bilibi_step_up::declare!(
     "core/user",
     bilibi_step_up::Operation::new(SIGN_IN, "Sign in").off_by_default()
+);
+bilibi_step_up::declare!(
+    "core/user",
+    bilibi_step_up::Operation::new(PORTAL_SIGN_IN, "Customer portal sign-in").off_by_default()
 );
 inventory::submit! { Contribution::new(DEFINITIONS, LIFETIME, Provenance { module: "core/user", source: file!(), line: line!() }, &Setting::Definition(Definition {
     value_type: ValueType::Integer, scopes: &[ScopeKind::Global], default: || json!(5),
@@ -43,6 +50,8 @@ struct Pending {
     id: i64,
     scope: Scope,
     hash: Vec<u8>,
+    /// The step-up operation of the form the password came through.
+    operation: &'static str,
 }
 fn fingerprint(token: &str) -> Vec<u8> {
     Sha256::digest(token.as_bytes()).to_vec()
@@ -86,11 +95,16 @@ async fn admit(tx: &mut MutationTransaction<'_>, scope: &Scope, login: &Login) -
 impl UserService {
     pub(crate) async fn begin_sign_in(
         &self,
+        audience: Audience,
         email: &str,
         password: &str,
     ) -> std::result::Result<Login, CredentialError> {
         let (tenant, user, stored) =
-            crate::identity::password_identity(self, email, password).await?;
+            crate::identity::password_identity(self, audience, email, password).await?;
+        let operation = match audience {
+            Audience::Staff => SIGN_IN,
+            Audience::Customer { .. } => PORTAL_SIGN_IN,
+        };
         let pending = {
             let client = self.db.get().await.map_err(Error::from)?;
             let scope = self
@@ -98,7 +112,7 @@ impl UserService {
                 .authenticate(&**client, tenant, user, String::new())
                 .await?;
             drop(client);
-            self.step_up.required(&scope, SIGN_IN).await?
+            self.step_up.required(&scope, operation).await?
         };
         let mut client = self.db.get().await.map_err(Error::from)?;
         let mut tx = self
@@ -117,7 +131,8 @@ impl UserService {
             .authentication
             .authenticate(tx.sql(), tenant, user, String::new())
             .await?;
-        if !self.password_sso_allowed(tx.sql(), &scope).await? {
+        // Company sign-in governs staff; customers have no single sign-on yet.
+        if audience == Audience::Staff && !self.password_sso_allowed(tx.sql(), &scope).await? {
             return Err(CredentialError::CompanySignInRequired);
         }
         let login = credential(pending);
@@ -130,8 +145,9 @@ impl UserService {
                 .ok_or(Error::Internal)?;
             let (token_hash, csrf) = (fingerprint(&login.token), login.csrf.clone());
             let credential_hash = fingerprint(&stored);
+            let kind = audience.kind().as_str();
             tx.mutate(move |sql| Box::pin(async move {
-                let id = sql.query_one("INSERT INTO user_sign_ins(tenant_id,user_id,token_hash,csrf,credential_hash,state,expires_at) VALUES($1,$2,$3,$4,$5,'pending',now()+make_interval(mins => $6::int)) RETURNING id", &[&tenant,&user,&token_hash,&csrf,&credential_hash,&(minutes as i32)]).await?.get(0);
+                let id = sql.query_one("INSERT INTO user_sign_ins(tenant_id,user_id,token_hash,csrf,credential_hash,state,expires_at,audience) VALUES($1,$2,$3,$4,$5,'pending',now()+make_interval(mins => $6::int),$7) RETURNING id", &[&tenant,&user,&token_hash,&csrf,&credential_hash,&(minutes as i32),&kind]).await?.get(0);
                 Ok(((), vec![change(id, "password_verified", "pending")]))
             })).await?;
         } else {
@@ -195,13 +211,16 @@ impl UserService {
 
     // An opaque credential lookup is the same bootstrap exception as Session.
     // The resulting scope remains private and is re-proved for each action.
-    async fn pending(&self, token: &str) -> Result<Pending> {
+    // A pending sign-in completes only on the form of its own audience (ADR
+    // 15): the staff second-factor step never admits a customer's password
+    // into a staff session, nor the portal's a staff member's.
+    async fn pending(&self, token: &str, kind: AccountKind) -> Result<Pending> {
         if token.len() != 32 {
             return Err(Error::Unauthorized);
         }
         let hash = fingerprint(token);
         let mut client = self.db.get().await?;
-        let row = client.query_opt("SELECT id,tenant_id,user_id,csrf,credential_hash FROM user_sign_ins WHERE token_hash=$1 AND state='pending'", &[&hash]).await?.ok_or(Error::Unauthorized)?;
+        let row = client.query_opt("SELECT id,tenant_id,user_id,csrf,credential_hash FROM user_sign_ins WHERE token_hash=$1 AND state='pending' AND audience=$2", &[&hash,&kind.as_str()]).await?.ok_or(Error::Unauthorized)?;
         let (id, tenant, user, csrf, stored): (i64, i64, i64, String, Vec<u8>) =
             (row.get(0), row.get(1), row.get(2), row.get(3), row.get(4));
         let mut tx = self
@@ -232,6 +251,9 @@ impl UserService {
             .authentication
             .authenticate(&**client, tenant, user, csrf)
             .await?;
+        if scope.actor().kind() != kind {
+            return Err(Error::Unauthorized);
+        }
         let current = client
             .query_opt(
                 "SELECT password_hash FROM users WHERE tenant_id=$1 AND id=$2",
@@ -242,11 +264,22 @@ impl UserService {
             return Err(Error::Unauthorized);
         }
         self.external_pending_live(&**client, &scope, id).await?;
-        Ok(Pending { id, scope, hash })
+        let operation = match kind {
+            AccountKind::Staff => SIGN_IN,
+            AccountKind::Customer => PORTAL_SIGN_IN,
+        };
+        Ok(Pending {
+            id,
+            scope,
+            hash,
+            operation,
+        })
     }
 
+    /// The staff sign-in's second-factor step (`/login/challenge`); a
+    /// customer's pending sign-in is not found here.
     pub async fn pending_sign_in(&self, token: &str) -> Result<PendingSignIn> {
-        let pending = self.pending(token).await?;
+        let pending = self.pending(token, AccountKind::Staff).await?;
         Ok(PendingSignIn {
             csrf: pending.scope.csrf.clone(),
             methods: self.step_up.enrolled_methods(&pending.scope).await?,
@@ -282,7 +315,7 @@ impl UserService {
         csrf: &str,
         method: &str,
     ) -> Result<Challenge> {
-        let pending = self.pending(token).await?;
+        let pending = self.pending(token, AccountKind::Staff).await?;
         if csrf != pending.scope.csrf {
             return Err(Error::Forbidden);
         }
@@ -293,7 +326,7 @@ impl UserService {
                 &pending.scope,
                 method,
                 Purpose {
-                    operation: SIGN_IN,
+                    operation: pending.operation,
                     target: &target,
                     channel: Channel::Web,
                 },
@@ -313,7 +346,7 @@ impl UserService {
             tx.rollback().await?;
             drop(client);
             // Record an expiry observed while delivery/verification was in flight.
-            self.pending(token).await?;
+            self.pending(token, AccountKind::Staff).await?;
             return Err(error);
         }
         let id = pending.id;
@@ -350,7 +383,7 @@ impl UserService {
         method: &str,
         code: &str,
     ) -> Result<Option<Login>> {
-        let pending = self.pending(token).await?;
+        let pending = self.pending(token, AccountKind::Staff).await?;
         if csrf != pending.scope.csrf {
             return Err(Error::Forbidden);
         }
@@ -362,7 +395,7 @@ impl UserService {
                 method,
                 code,
                 Purpose {
-                    operation: SIGN_IN,
+                    operation: pending.operation,
                     target: &target,
                     channel: Channel::Web,
                 },
@@ -385,7 +418,7 @@ impl UserService {
             tx.rollback().await?;
             drop(client);
             // Record an expiry observed while delivery/verification was in flight.
-            self.pending(token).await?;
+            self.pending(token, AccountKind::Staff).await?;
             return Err(error);
         }
         // Delivery/verification can take time. Expiry and standing still win.
@@ -414,7 +447,7 @@ impl UserService {
     }
 
     pub async fn cancel_sign_in(&self, token: &str, csrf: &str) -> Result<()> {
-        let pending = self.pending(token).await?;
+        let pending = self.pending(token, AccountKind::Staff).await?;
         let mut client = self.db.get().await?;
         let mut tx = self
             .mutations
@@ -427,7 +460,7 @@ impl UserService {
             tx.rollback().await?;
             drop(client);
             // Record an expiry observed while delivery/verification was in flight.
-            self.pending(token).await?;
+            self.pending(token, AccountKind::Staff).await?;
             return Err(error);
         }
         transition(&mut tx, &pending.scope, pending.id, "cancelled").await?;
