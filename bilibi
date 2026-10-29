@@ -68,6 +68,8 @@ Run Bilibi on this computer
 Stay up to date
   update        Get the latest Bilibi changes, and move the Domains and
                 Extensions you added to their newest recommended versions.
+                A Domain or Extension from your own repository moves forward
+                too, once you say you trust that repository.
   status        List Bilibi and what you added, with each one's branch and
                 any changes you have not committed.
 

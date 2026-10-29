@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from urllib.parse import urlsplit
 
 import catalogue
 
@@ -20,6 +21,8 @@ spec = importlib.util.spec_from_file_location('discovery', ROOT / 'scripts/disco
 discovery = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(discovery)
 Refused = discovery.Refused
+# Repositories the user trusted for updates, one normalized address per line (ignored local state).
+TRUST_FILE = ROOT / '.local/update-trust.txt'
 
 
 def run(folder, *args, check=True, **kwargs):
@@ -184,6 +187,92 @@ def branch_plan(folder):
     return branch, upstream
 
 
+def trust_key(address):
+    """Normalize a remote address to host/owner/repo. Credentials, scheme and a .git suffix never reach the key."""
+    address = address.strip()
+    if '://' in address and not address.startswith('file://'):
+        parts = urlsplit(address)
+        host = (parts.hostname or '').lower() + (f':{parts.port}' if parts.port else '')
+        path = parts.path
+    elif '://' not in address and '@' in address.split('/')[0] and ':' in address:
+        host, path = address.split('@', 1)[1].split(':', 1)
+        host = host.lower()
+    else:
+        host, path = 'file:', address.removeprefix('file://')
+    path = path.strip('/').removesuffix('.git').rstrip('/')
+    if host == 'github.com':
+        path = path.lower()  # GitHub names ignore case
+    return f'{host}/{path}' if host and path else ''
+
+
+def trust_name(key):
+    """The owner/repo shown to people: the last two parts of the address."""
+    return '/'.join(key.split('/')[-2:])
+
+
+def trusted_repositories():
+    if not TRUST_FILE.is_file():
+        return set()
+    lines = (line.strip() for line in TRUST_FILE.read_text().splitlines())
+    return {line for line in lines if line and not line.startswith('#')}
+
+
+def trust(key):
+    TRUST_FILE.parent.mkdir(parents=True, exist_ok=True)
+    existing = TRUST_FILE.read_text() if TRUST_FILE.is_file() else (
+        '# Repositories ./bilibi update may move forward, one per line. Delete a line to stop trusting it.\n')
+    TRUST_FILE.write_text(existing + ('' if existing.endswith('\n') else '\n') + key + '\n')
+
+
+def ask_to_trust(name):
+    """True or False for a typed answer; None when nobody can answer."""
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        return None
+    while True:
+        try:
+            answer = input(f"{name} isn't in Bilibi's official list. Trust it for updates? (y/n) ").strip().lower()
+        except EOFError:
+            return None
+        if answer in ('y', 'yes'):
+            return True
+        if answer in ('n', 'no', ''):
+            return False
+
+
+def follow_branch(folder, branch):
+    before = git(folder, 'rev-parse', 'HEAD')
+    target_branch, upstream = branch_plan(folder)
+    dirty = changes(folder)
+    if dirty:
+        refuse_edits(folder, [path for _, path in dirty])
+    move_branch(folder, target_branch, upstream)
+    after = git(folder, 'rev-parse', 'HEAD')
+    return False, (f'{before[:12]} -> {after[:12]} on {target_branch}' if before != after or branch != target_branch
+                   else f'already up to date on {target_branch} ({after[:12]})')
+
+
+def trusted_branch(folder, branch):
+    """A branch of a repository outside the official list moves only after the user trusted that repository."""
+    remote = run(folder, 'git', 'config', '--get', f'branch.{branch}.remote', check=False).stdout.decode().strip() or 'origin'
+    address = run(folder, 'git', 'remote', 'get-url', remote, check=False)
+    key = trust_key(address.stdout.decode()) if address.returncode == 0 else ''
+    if not key:
+        return True, f'on branch {branch}, left as is; it follows no remote repository, so there is nothing to update from'
+    name = trust_name(key)
+    if key not in trusted_repositories():
+        answer = ask_to_trust(name)
+        if answer is None:
+            return True, (f"{name} isn't in Bilibi's official list and you haven't trusted it, so branch {branch} was left as is. "
+                          f'To trust it, run ./bilibi update in a terminal and answer y. '
+                          f'Or add the line {key} to {TRUST_FILE}')
+        if not answer:
+            return True, f"{name} isn't trusted, so branch {branch} was left as is. Run ./bilibi update again to be asked again"
+        trust(key)
+        print(f'Trusted {name}. It is recorded in {TRUST_FILE}; delete its line there to stop trusting it.', flush=True)
+    stopped, outcome = follow_branch(folder, branch)
+    return stopped, f'{outcome} (trusted {name}, following its own branch)'
+
+
 def component_update(folder, facts, platform_version, platform_head, tested):
     """Return the outcome and whether a mount was left alone."""
     if folder.is_symlink() or Path(git(folder, 'rev-parse', '--show-toplevel')).resolve() != folder:
@@ -191,24 +280,18 @@ def component_update(folder, facts, platform_version, platform_head, tested):
     branch = git(folder, 'branch', '--show-current')
     if changes(folder):
         return True, f'local changes; review {action(folder, "status", "--short")} and commit your work before retrying'
-    if not facts:
-        return True, (f'on branch {branch}, left as is; update it in its own repository' if branch else
+    if facts:
+        repository = facts['repository'].removesuffix('.git').rstrip('/')
+        origin = git(folder, 'remote', 'get-url', 'origin').removesuffix('.git').rstrip('/')
+    official = bool(facts) and repository.startswith('https://github.com/BelimbingApp/') and origin == repository
+    if not official:
+        if branch:
+            return trusted_branch(folder, branch)
+        return True, ('origin differs from the official catalogue; inspect '
+                      f'{action(folder, "remote", "-v")} and reconcile it deliberately' if facts else
                       'not listed in the official catalogue; update this repository deliberately with its owner')
-    repository = facts['repository'].removesuffix('.git').rstrip('/')
-    origin = git(folder, 'remote', 'get-url', 'origin').removesuffix('.git').rstrip('/')
-    if not repository.startswith('https://github.com/BelimbingApp/') or origin != repository:
-        return True, (f'on branch {branch}, left as is; update it in its own repository' if branch else
-                      f'origin differs from the official catalogue; inspect {action(folder, "remote", "-v")} and reconcile it deliberately')
     if branch:
-        before = git(folder, 'rev-parse', 'HEAD')
-        target_branch, upstream = branch_plan(folder)
-        dirty = changes(folder)
-        if dirty:
-            refuse_edits(folder, [path for _, path in dirty])
-        move_branch(folder, target_branch, upstream)
-        after = git(folder, 'rev-parse', 'HEAD')
-        return False, (f'{before[:12]} -> {after[:12]} on {target_branch}' if before != after or branch != target_branch
-                       else f'already up to date on {target_branch} ({after[:12]})')
+        return follow_branch(folder, branch)
     head = git(folder, 'rev-parse', 'HEAD')
     if head not in {release['commit'] for release in facts['versions'].values()}:
         return True, f'detached at {head[:12]}, which is not an official release commit; left as is'

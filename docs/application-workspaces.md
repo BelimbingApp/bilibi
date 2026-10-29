@@ -77,10 +77,21 @@ Run `./bilibi update`, then `./bilibi start`, from your workspace root. Use `./b
 
 | Workspace | What `update` does |
 | --- | --- |
-| Platform clone | Fast-forward the Platform and clean official Domain and Extension branches from their upstreams, move official components detached at a release to the catalogue's recommended compatible release, then regenerate composition and `Cargo.lock` |
+| Platform clone | Fast-forward the Platform and clean Domain and Extension branches from their upstreams (official ones, and ones you trust), move official components detached at a release to the catalogue's recommended compatible release, then regenerate composition and `Cargo.lock` |
 | Application repository | Pull the application repository and bring `sources/` to its saved commits; the saved record advances when you accept new commits during a check or build |
 
-A published branch whose changes already reached the default branch can return there safely, including an exact squash merge. Updates stop for source edits or commits that would be lost. Recognised generated composition files and a dependency lock reproduced from the committed lock may be regenerated. Updates never reset source work, silently stash edits or force a checkout. Update never downgrades a component. A dirty, symlinked, unlisted or off-origin component stays in place. A component with unpublished or diverged commits also stays in place. The command prints each outcome and a next step where needed, and continues with the other components. A branch is never detached. If the catalogue cannot be read, component updates are skipped and composition is still regenerated.
+A published branch whose changes already reached the default branch can return there safely, including an exact squash merge. Updates stop for source edits or commits that would be lost. Recognised generated composition files and a dependency lock reproduced from the committed lock may be regenerated. Updates never reset source work, silently stash edits or force a checkout. Update never downgrades a component. A dirty or symlinked component stays in place. A component with unpublished or diverged commits also stays in place. A component detached at a commit that is not an official release stays in place too. The command prints each outcome and a next step where needed, and continues with the other components. A branch is never detached. If the catalogue cannot be read, component updates are skipped and composition is still regenerated.
+
+Official components (the catalogue's repositories under BelimbingApp) are trusted automatically and are the only ones that move to a newer recommended release. A component from any other repository, such as your own or your company's, is a branch that follows its own upstream, and only after you trust the repository:
+
+| Situation | What `update` does |
+| --- | --- |
+| First time, at a keyboard | Asks `<owner>/<repo> isn't in Bilibi's official list. Trust it for updates? (y/n)`. Yes records the repository and moves the branch forward with the checks above; no leaves it as is, and the next update asks again |
+| Already trusted | Moves the branch forward without asking |
+| No keyboard (a script, CI, a pipe) | Never asks. Skips the component and prints how to trust it |
+| You delete the repository's line | Leaves the component alone again, and asks the next time you run `update` at a keyboard |
+
+The trust list is `.local/update-trust.txt` in your Platform clone. It is ignored by Git and never leaves the computer. Each line is a repository address as `host/owner/repo`; the scheme, `.git` and any user name or token in the address are left out, so no credential is stored. Trust is for the repository, not a particular branch or commit.
 
 An application created before `update` was available needs the deliberate tooling update below first. Its wrapper belongs to the application repository.
 
