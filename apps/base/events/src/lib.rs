@@ -15,6 +15,8 @@ mod agent;
 mod catalog;
 mod delivery;
 mod operator;
+mod privacy;
+pub use privacy::{PersonalEvent, PERSONAL_EVENTS};
 mod web;
 pub use operator::{Delivered, DeliveryState, Replay, ReplayFrom, SubscriberState};
 
@@ -303,7 +305,7 @@ inventory::submit! { Contribution::new(bilibi_module_registry::contributions::PA
 inventory::submit! {
     Module {
         id: "base/events", layer: Layer::Base,
-        dependencies: &["base/module_registry", "base/database", "base/audit", "base/tenancy", "base/authz", "base/queue", "base/step_up", "base/agent_api", "base/ui", "base/menu", "base/datetime", "base/locale"],
+        dependencies: &["base/module_registry", "base/database", "base/audit", "base/tenancy", "base/authz", "base/queue", "base/step_up", "base/agent_api", "base/ui", "base/menu", "base/datetime", "base/locale", "base/personal_data"],
         migrations: &[("base-events-001", include_str!("../migrations/001-events.sql"))],
         services: &[
             Service { id: SERVICE, factory: |services| Ok(Arc::new(build(services)?)) },
