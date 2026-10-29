@@ -536,6 +536,7 @@ dependencies = [
  "bilibi-picklists",
  "bilibi-ports",
  "bilibi-principal-directory",
+ "bilibi-privacy",
  "bilibi-queue",
  "bilibi-records",
  "bilibi-reports",
@@ -1114,6 +1115,47 @@ dependencies = [
  "inventory",
  "thiserror",
  "tokio-postgres",
+]
+
+[[package]]
+name = "bilibi-privacy"
+version = "0.1.1"
+dependencies = [
+ "askama",
+ "bilibi-agent-api",
+ "bilibi-artifacts",
+ "bilibi-audit",
+ "bilibi-authz",
+ "bilibi-base",
+ "bilibi-core",
+ "bilibi-database",
+ "bilibi-datetime",
+ "bilibi-grid",
+ "bilibi-locale",
+ "bilibi-menu",
+ "bilibi-module-registry",
+ "bilibi-notifications",
+ "bilibi-party-ids",
+ "bilibi-personal-data",
+ "bilibi-queue",
+ "bilibi-schedule",
+ "bilibi-settings",
+ "bilibi-step-up",
+ "bilibi-tenancy",
+ "bilibi-ui",
+ "bilibi-walkthrough-fixture",
+ "bilibi-web",
+ "bilibi-workflow",
+ "deadpool-postgres",
+ "hmac 0.13.0",
+ "inventory",
+ "jiff",
+ "serde",
+ "serde_json",
+ "sha1 0.11.0",
+ "tokio",
+ "tokio-postgres",
+ "zip",
 ]
 
 [[package]]
