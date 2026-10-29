@@ -23,13 +23,13 @@
 //! restriction on a table its module stopped contributing) stay
 //! listed with their ids, can be removed, and cannot be re-restricted.
 use crate::field_catalog::FieldCatalog;
-use crate::restrictions::{Removed, RestrictionSummary, RoleChoice};
+use crate::restrictions::{Mode, Removed, RestrictionSummary, RoleChoice};
 use crate::web::{render, Pages, TextCell, WhenCell};
 use askama::Template;
 use bilibi_database::{Error, Result};
 use bilibi_tenancy::Scope;
 use bilibi_ui::flex_table::key_id;
-use bilibi_ui::forms::Attrs;
+use bilibi_ui::forms::{Attrs, Field, InputKind};
 use bilibi_ui::page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState};
 use bilibi_ui::{
     params, BuiltinColumn, Button, ButtonVariant, Choice, ConfirmDialog, EmptyState, FlashMap,
@@ -55,6 +55,7 @@ fn builtins() -> Vec<BuiltinColumn> {
         BuiltinColumn::new("table", "Table"),
         BuiltinColumn::new("field", "Field"),
         BuiltinColumn::new("restricted_for", "Restricted for"),
+        BuiltinColumn::new("mode", "Readers see"),
         BuiltinColumn::new("since", "Since"),
     ]
 }
@@ -65,6 +66,8 @@ struct Selection {
     role_ids: Vec<String>,
     table_ids: Vec<String>,
     field_keys: Vec<String>,
+    /// `withhold` or `mask`; anything else withholds.
+    mode: String,
 }
 
 enum Dialog {
@@ -91,6 +94,7 @@ struct AddDialog<'a> {
     roles: Html,
     tables: Html,
     fields: Html,
+    mode: Html,
     outcome: String,
     ready: bool,
     submit_label: String,
@@ -102,6 +106,7 @@ struct EditDialog<'a> {
     flash: FlashMap<'a>,
     title: String,
     roles: Html,
+    mode: Html,
     outcome: String,
     ready: bool,
     key: &'a str,
@@ -273,7 +278,48 @@ impl Screen {
                 .into_iter()
                 .filter(|key| offered.contains(key))
                 .collect(),
+            mode: selection.mode,
         };
+    }
+
+    fn mode(&self) -> Mode {
+        Mode::parse(&self.selection.mode).unwrap_or_default()
+    }
+
+    /// Withhold, or mask: offered for every field chosen only when each is
+    /// marked personal, since the kind shapes what a masked reader sees.
+    fn mode_picker(&self, maskable: bool) -> Result<Html> {
+        let mut field = Field::in_form(FORM, "mode")
+            .id("field-restrictions-mode")
+            .label("What these roles see")
+            .kind(InputKind::Select)
+            .options(vec![
+                Choice::new("Nothing: the field is withheld", "withhold"),
+                Choice::new("A partial value they may reveal with a reason", "mask"),
+            ])
+            .value(self.mode().as_str());
+        field = if maskable {
+            field.hint("A partial value shows, for example, a•••@example.com or •••• 1234. Revealing the full value needs privacy.field.reveal and is recorded.")
+        } else {
+            field
+                .hint("Only fields that hold a person's data can show a partial value.")
+                .attrs(Attrs {
+                    disabled: true,
+                    ..Attrs::default()
+                })
+        };
+        render(field)
+    }
+
+    /// Whether every chosen field is marked personal.
+    fn chosen_maskable(&self) -> bool {
+        let fields = self.fields();
+        !fields.is_empty()
+            && fields.iter().all(|(table, field)| {
+                self.catalog
+                    .field(table, field)
+                    .is_some_and(|(_, f)| f.personal.is_some())
+            })
     }
 
     fn role_ids(&self) -> Vec<i64> {
@@ -309,6 +355,7 @@ impl Screen {
                         self.flash = None;
                         self.selection = Selection {
                             role_ids: restriction.role_ids.iter().map(i64::to_string).collect(),
+                            mode: restriction.mode.as_str().to_owned(),
                             ..Selection::default()
                         };
                         self.dialog = Dialog::Edit(restriction);
@@ -322,6 +369,7 @@ impl Screen {
                         role_ids: list(value, "role_ids"),
                         table_ids: list(value, "table_ids"),
                         field_keys: list(value, "field_keys"),
+                        mode: scalar(value, "mode"),
                     });
                 }
             }
@@ -373,10 +421,15 @@ impl Screen {
         if fields.is_empty() || roles.is_empty() {
             return Ok(());
         }
+        let mode = if self.chosen_maskable() {
+            self.mode()
+        } else {
+            Mode::Withhold
+        };
         match self
             .pages
             .restrictions
-            .put_many(scope, &fields, &roles)
+            .put_many_mode(scope, &fields, &roles, mode)
             .await
         {
             Ok(saved) => {
@@ -397,10 +450,15 @@ impl Screen {
             return Ok(());
         }
         let (table, field) = (restriction.table_id.clone(), restriction.field_id.clone());
+        let mode = if restriction.maskable {
+            self.mode()
+        } else {
+            Mode::Withhold
+        };
         match self
             .pages
             .restrictions
-            .put(scope, &table, &field, &roles)
+            .put_mode(scope, &table, &field, &roles, mode)
             .await
         {
             Ok(saved) => {
@@ -533,6 +591,16 @@ impl Screen {
                     })?,
                 )
                 .slot(
+                    "mode",
+                    render(TextCell {
+                        class: "whitespace-nowrap text-ink",
+                        text: match restriction.mode {
+                            Mode::Withhold => "Nothing",
+                            Mode::Mask => "A partial value",
+                        },
+                    })?,
+                )
+                .slot(
                     "since",
                     render(WhenCell {
                         id: format!("{dom}-since"),
@@ -648,6 +716,7 @@ impl Screen {
                     .values(self.selection.table_ids.clone()),
             )?,
             fields: render(fields)?,
+            mode: self.mode_picker(self.chosen_maskable())?,
             outcome: outcome_sentence(&chosen_fields, &chosen_roles),
             ready,
             submit_label: match chosen_fields.len() {
@@ -671,6 +740,7 @@ impl Screen {
             flash,
             title: format!("Restrict {subject}"),
             roles: self.roles_picker()?,
+            mode: self.mode_picker(restriction.maskable)?,
             outcome,
             ready: !chosen_roles.is_empty(),
             key: &key(restriction),
@@ -702,6 +772,15 @@ impl LiveState<Scope, Error> for Screen {
 
 /// The values of one posted picker: an array (every checked box) or one
 /// string; blanks dropped, duplicates collapsed, bounded before use.
+/// A single-value control (the mode select posts `restriction[mode]`).
+fn scalar(payload: &Value, key: &str) -> String {
+    payload
+        .get(format!("{FORM}[{key}]"))
+        .and_then(Value::as_str)
+        .filter(|text| text.len() <= 32)
+        .unwrap_or_default()
+        .to_owned()
+}
 fn list(payload: &Value, key: &str) -> Vec<String> {
     let mut values: Vec<String> = Vec::new();
     let mut keep = |value: &Value| {

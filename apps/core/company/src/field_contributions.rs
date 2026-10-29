@@ -195,6 +195,8 @@ pub(crate) fn catalog_snapshot() -> std::result::Result<Vec<CatalogTable>, Strin
             Ok(CatalogField {
                 id: field.id,
                 label: field.label,
+                // A company field contributed by an Extension is not marked personal.
+                personal: None,
                 restriction_aliases: vec![bilibi_authz::field_catalog::RestrictionAlias {
                     table,
                     field: target,

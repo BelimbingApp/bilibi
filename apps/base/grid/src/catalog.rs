@@ -115,6 +115,8 @@ pub struct Catalog {
     tenant: i64,
     user: i64,
     tables: BTreeMap<&'static str, Table>,
+    /// Fields this account sees masked (ADR 05), by table, with their kinds.
+    masks: BTreeMap<&'static str, BTreeMap<String, &'static str>>,
 }
 impl Catalog {
     /// The catalog this scope's actor may read, built from the installed snapshot
@@ -124,14 +126,35 @@ impl Catalog {
         client: &impl GenericClient,
         scope: &Scope,
     ) -> Result<Self, CatalogError> {
+        Self::build(client, scope, None).await
+    }
+    /// [`Catalog::for_scope`] with one masked field of one table unmasked, for
+    /// a reveal the caller has already authorized and recorded.
+    pub(crate) async fn revealing(
+        client: &impl GenericClient,
+        scope: &Scope,
+        table: &str,
+        field: &str,
+    ) -> Result<Self, CatalogError> {
+        Self::build(client, scope, Some((table, field))).await
+    }
+    async fn build(
+        client: &impl GenericClient,
+        scope: &Scope,
+        reveal: Option<(&str, &str)>,
+    ) -> Result<Self, CatalogError> {
         let installed = crate::installed().map_err(|_| Error::Internal)?;
         let allowed = bilibi_authz::effective_capabilities(client, scope).await?;
         let restricted = bilibi_authz::fields::restricted(client, scope).await?;
+        let masked = bilibi_authz::fields::masked(client, scope).await?;
         // A record owner can expose a field stored in a linked Extension table.
         // Apply that record-level restriction to the resolved Grid field too,
         // so the alternate path cannot bypass the Company's field identity
         // (Bilimbi `Bilimbi.Base.Grid`).
+        // A masked record field stays masked there (ADR 05), not withheld.
         let mut contributed_hidden: BTreeMap<&'static str, BTreeSet<&'static str>> =
+            BTreeMap::new();
+        let mut contributed_masks: BTreeMap<&'static str, BTreeMap<String, &'static str>> =
             BTreeMap::new();
         for (root_id, root) in installed.map() {
             let denied: BTreeSet<&str> = restricted
@@ -140,39 +163,69 @@ impl Catalog {
                 .flatten()
                 .map(String::as_str)
                 .collect();
-            for field in root
+            let root_masks = masked.get(*root_id);
+            for record_field in root
                 .record_fields()
                 .iter()
                 .filter(|field| denied.contains(field.id))
             {
-                let Some(path) = field.column else { continue };
+                let Some(path) = record_field.column else {
+                    continue;
+                };
                 let Ok(column) = column::resolve(path, root, &|id| installed.table(id)) else {
                     continue;
                 };
                 if let Some(field) = column.field {
-                    contributed_hidden
-                        .entry(column.table)
-                        .or_default()
-                        .insert(field.id);
+                    match root_masks.and_then(|m| m.get(record_field.id)) {
+                        Some(kind) => {
+                            contributed_masks
+                                .entry(column.table)
+                                .or_default()
+                                .insert(field.id.to_owned(), kind);
+                        }
+                        None => {
+                            contributed_hidden
+                                .entry(column.table)
+                                .or_default()
+                                .insert(field.id);
+                        }
+                    }
                 }
             }
         }
         let mut tables = BTreeMap::new();
+        let mut masks = BTreeMap::new();
         for (id, table) in installed.map() {
             if !allowed.contains(table.capability()) {
                 continue;
             }
+            let mut own = masked.get(*id).cloned().unwrap_or_default();
+            own.extend(
+                contributed_masks
+                    .get(*id)
+                    .into_iter()
+                    .flatten()
+                    .map(|(field, kind)| (field.clone(), *kind)),
+            );
+            if let Some((_, field)) = reveal.filter(|(table, _)| table == id) {
+                own.remove(field);
+            }
             // Protected fields are never offered for restriction, so a stale row
-            // naming one is inert here (record pages still mask by name).
+            // naming one is inert here (record pages still mask by name). A
+            // masked field stays, and its values are masked when projected.
             let mut hidden: BTreeSet<&str> = restricted
                 .get(*id)
                 .into_iter()
                 .flatten()
                 .map(String::as_str)
                 .filter(|field| !table.is_protected(field))
+                .filter(|field| !masked.get(*id).is_some_and(|m| m.contains_key(*field)))
                 .collect();
             hidden.extend(contributed_hidden.get(*id).into_iter().flatten().copied());
             tables.insert(*id, table.without(&hidden));
+            if !own.is_empty() {
+                masks.insert(*id, own);
+            }
         }
         let visible: BTreeSet<&str> = tables.keys().copied().collect();
         for table in tables.values_mut() {
@@ -182,6 +235,7 @@ impl Catalog {
             tenant: scope.tenant(),
             user: scope.user(),
             tables,
+            masks,
         };
         catalog.verify_sources(client).await?;
         Ok(catalog)
@@ -226,6 +280,27 @@ impl Catalog {
     }
     pub fn user(&self) -> i64 {
         self.user
+    }
+    /// The personal kind a column's values are masked by, when it reads a
+    /// masked field's value (a value, list, minimum or maximum). A count, sum
+    /// or average of it shows no value and is not masked.
+    pub fn mask(&self, column: &Column) -> Option<&'static str> {
+        if matches!(
+            column.agg,
+            Some(crate::column::Agg::Count | crate::column::Agg::Sum | crate::column::Agg::Avg)
+        ) {
+            return None;
+        }
+        let field = column.field.as_ref()?;
+        self.masks.get(column.table)?.get(field.id).copied()
+    }
+    /// The personal kind `field` of `table` is masked by for this account.
+    pub fn field_mask(&self, table: &str, field: &str) -> Option<&'static str> {
+        self.masks.get(table)?.get(field).copied()
+    }
+    /// Whether this account sees `field` of `table` masked.
+    pub fn masked(&self, table: &str, field: &str) -> bool {
+        self.masks.get(table).is_some_and(|m| m.contains_key(field))
     }
     pub fn tables(&self) -> impl Iterator<Item = &Table> {
         self.tables.values()
@@ -390,7 +465,8 @@ pub struct Restrictable {
     pub table: &'static str,
     pub label: &'static str,
     pub record_types: &'static [&'static str],
-    pub fields: Vec<(&'static str, &'static str)>,
+    /// Id, label and personal kind.
+    pub fields: Vec<(&'static str, &'static str, Option<&'static str>)>,
 }
 pub fn restriction_catalog(installed: &Installed) -> Vec<Restrictable> {
     installed
@@ -402,7 +478,7 @@ pub fn restriction_catalog(installed: &Installed) -> Vec<Restrictable> {
             fields: table
                 .visible_fields()
                 .filter(|field: &&Field| !table.is_protected(field.id))
-                .map(|field| (field.id, field.label))
+                .map(|field| (field.id, field.label, field.personal.map(|kind| kind.key())))
                 .collect(),
         })
         .filter(|entry| !entry.fields.is_empty())
