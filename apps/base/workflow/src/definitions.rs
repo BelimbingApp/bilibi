@@ -152,6 +152,7 @@ pub enum Contribution {
         adapter: &'static dyn Action,
     },
     Flow(Flow),
+    ApprovalCase(&'static crate::ApprovalCase),
     /// Versioned process graph; see `crate::process`.
     Process(Process),
     /// Human action on a subject this module owns; see `crate::runs::human`.
@@ -166,6 +167,7 @@ pub struct OwnedSubject {
 }
 #[derive(Default)]
 pub struct Registry {
+    pub(crate) approval_cases: BTreeMap<&'static str, (&'static str, crate::ApprovalCase)>,
     pub(crate) subjects: BTreeMap<&'static str, OwnedSubject>,
     pub(crate) flows: BTreeMap<&'static str, (&'static str, Flow)>,
     pub(crate) processes: BTreeMap<(&'static str, i32), ProcessDefinition>,
@@ -179,7 +181,7 @@ pub struct Registry {
 fn invalid(message: impl Into<String>) -> RegistryError {
     RegistryError::Contribution(message.into())
 }
-pub fn key(value: &str) -> bool {
+pub(crate) fn key(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 255
         && value.split('.').all(|part| {
@@ -218,6 +220,49 @@ impl Registry {
                     .any(|m| m.id == owner && m.dependencies.contains(&"base/workflow"))
             {
                 return Err(invalid(format!("{owner} must depend on base/workflow")));
+            }
+            if let Contribution::ApprovalCase(case) = entry {
+                crate::approval::validate_case(case)
+                    .map_err(|_| invalid("invalid approval case"))?;
+                if registry
+                    .approval_cases
+                    .insert(case.key, (owner, **case))
+                    .is_some()
+                {
+                    return Err(invalid("duplicate approval case"));
+                }
+                let process = Process {
+                    key: case.process,
+                    version: 1,
+                    subject: case.subject,
+                    adapter: &crate::approval::UNREACHABLE,
+                    steps: crate::approval::WAIT_STEPS,
+                };
+                if registry
+                    .processes
+                    .insert((case.process, 1), process::compile(owner, &process)?)
+                    .is_some()
+                {
+                    return Err(invalid("duplicate approval process"));
+                }
+                for decision in case.decisions {
+                    let action = HumanAction {
+                        key: decision.key,
+                        label: "Approval decision",
+                        subject: case.subject,
+                        capability: decision.capability,
+                        executor: None,
+                        handler: &crate::approval::UNREACHABLE,
+                    };
+                    if registry
+                        .human_actions
+                        .insert((case.subject, decision.key), (owner, action))
+                        .is_some()
+                    {
+                        return Err(invalid("duplicate approval action"));
+                    }
+                }
+                continue;
             }
             if let Contribution::Listener(listener) = entry {
                 if !key(listener.key)
@@ -306,7 +351,8 @@ impl Registry {
                     &[][..],
                     registry.flows.insert(flow.code, (owner, *flow)).is_some(),
                 ),
-                Contribution::Process(_)
+                Contribution::ApprovalCase(_)
+                | Contribution::Process(_)
                 | Contribution::HumanAction(_)
                 | Contribution::Listener(_) => {
                     unreachable!("handled above")
@@ -373,6 +419,27 @@ impl Registry {
                     "invalid human action {} on {}",
                     action.key, action.subject
                 )));
+            }
+        }
+        for &(owner, case) in registry.approval_cases.values() {
+            if !registry
+                .subjects
+                .get(case.subject)
+                .is_some_and(|s| s.owner == owner)
+                || [
+                    case.policy_capability,
+                    case.review_capability,
+                    case.recall_capability,
+                    case.delegation_capability,
+                ]
+                .iter()
+                .any(|key| {
+                    !self::key(key) || vocabulary.is_some_and(|v| !v.capabilities.contains_key(key))
+                })
+            {
+                return Err(invalid(
+                    "foreign approval subject or unknown control capability",
+                ));
             }
         }
         let mut bound = BTreeSet::new();

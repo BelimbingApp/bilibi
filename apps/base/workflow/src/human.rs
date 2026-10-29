@@ -59,7 +59,7 @@ impl ActionRequest {
         self.expected_work_version = entry.work_version;
         self
     }
-    fn validate(&self, action: &HumanAction) -> Result<()> {
+    pub(crate) fn validate(&self, action: &HumanAction) -> Result<()> {
         let binding = [
             self.process_run_id,
             self.work_item_id,
@@ -113,7 +113,7 @@ pub struct ActionResult {
     pub work_item_id: Option<i64>,
     pub replayed: bool,
 }
-struct Saved {
+pub(crate) struct Saved {
     id: i64,
     intent_hash: String,
     action_key: String,
@@ -124,7 +124,11 @@ struct Saved {
     result: Option<Value>,
     completed: bool,
 }
-async fn lock_request(sql: &Transaction<'_>, tenant: i64, key: &str) -> Result<Option<Saved>> {
+pub(crate) async fn lock_request(
+    sql: &Transaction<'_>,
+    tenant: i64,
+    key: &str,
+) -> Result<Option<Saved>> {
     Ok(sql.query_opt("SELECT id,intent_hash,action_key,subject_type,subject_id,process_run_id,work_item_id,result,completed_at IS NOT NULL FROM base_workflow_human_action_requests WHERE tenant_id=$1 AND idempotency_key=$2 FOR UPDATE", &[&tenant, &key]).await?.map(|row| Saved {
         id: row.get(0),
         intent_hash: row.get(1),
@@ -293,6 +297,19 @@ impl Engine {
         id: i64,
         request: ActionRequest,
     ) -> Result<ActionResult> {
+        let canonical = self
+            .registry
+            .owned_subject(kind)
+            .ok()
+            .map(|owner| owner.key);
+        if let Some((_, case)) = self.registry.approval_cases.values().find(|(_, case)| {
+            Some(case.subject) == canonical
+                && case.decisions.iter().any(|a| a.key == request.action_key)
+        }) {
+            return self
+                .execute_approval_in(tx, scope, *case, id, request)
+                .await;
+        }
         let context = tx.context().clone();
         let engine = self.clone();
         let scope = scope.clone();
@@ -456,7 +473,7 @@ impl Engine {
     /// The saved row answers only the same intent: same subject (its saved
     /// type resolved through the registry), action, actor, work binding and
     /// payload. A row without its result is refused, never executed again.
-    fn replay(
+    pub(crate) fn replay(
         &self,
         scope: &Scope,
         owner: OwnedSubject,

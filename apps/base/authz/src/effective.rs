@@ -109,6 +109,32 @@ pub async fn holders(
         .collect())
 }
 
+/// Bounded capability-holder enumeration for owner eligibility routing.
+pub async fn holder_page(
+    client: &impl GenericClient,
+    scope: &Scope,
+    after: i64,
+    key: &str,
+    limit: i64,
+) -> Result<Vec<i64>> {
+    let known = crate::vocabulary()?
+        .capabilities
+        .get(key)
+        .is_some_and(|capability| !capability.definition.platform);
+    if !known || !(1..=500).contains(&limit) || after < 0 {
+        return Ok(Vec::new());
+    }
+    Ok(client
+        .query(
+            "SELECT h.user_id FROM (SELECT user_id FROM principal_capabilities WHERE tenant_id=$1 AND capability=$2 AND is_allowed UNION SELECT p.user_id FROM effective_principal_roles p JOIN roles r ON r.tenant_id=p.tenant_id AND r.id=p.role_id WHERE p.tenant_id=$1 AND r.grant_all UNION SELECT p.user_id FROM effective_principal_roles p JOIN role_capabilities r ON r.tenant_id=p.tenant_id AND r.role_id=p.role_id WHERE p.tenant_id=$1 AND r.capability=$2) h WHERE h.user_id>$4 AND NOT EXISTS (SELECT 1 FROM principal_capabilities d WHERE d.tenant_id=$1 AND d.user_id=h.user_id AND d.capability=$2 AND NOT d.is_allowed) ORDER BY h.user_id LIMIT $3",
+            &[&scope.tenant(), &key, &limit, &after],
+        )
+        .await?
+        .iter()
+        .map(|row| row.get(0))
+        .collect())
+}
+
 /// What one account of the actor's tenant holds, as a screen that administers
 /// that account shows it (Bilimbi `Authz.effective_capabilities(actor)`):
 /// the allowed keys, the direct allow and deny overrides, and whether a
@@ -185,4 +211,48 @@ pub async fn effective_capabilities_of(
         direct_denied: denied,
         grant_all,
     })
+}
+
+/// Live named-role eligibility, including provider-managed effective roles.
+/// A grant-all capability never substitutes for membership in this role.
+pub async fn has_effective_role(
+    client: &impl GenericClient,
+    scope: &Scope,
+    role: i64,
+    account: i64,
+) -> Result<bool> {
+    if role <= 0 || account <= 0 {
+        return Ok(false);
+    }
+    Ok(client.query_one("SELECT EXISTS(SELECT 1 FROM effective_principal_roles WHERE tenant_id=$1 AND role_id=$2 AND user_id=$3)", &[&scope.tenant(),&role,&account]).await?.get(0))
+}
+
+/// Bounded role labels for an already-authorized owner policy editor. Reading
+/// this list grants neither role administration nor effective membership.
+#[derive(Clone, Debug)]
+pub struct RoleChoice {
+    pub id: i64,
+    pub name: String,
+}
+pub async fn role_page(
+    client: &impl GenericClient,
+    scope: &Scope,
+    after: i64,
+    limit: i64,
+) -> Result<Vec<RoleChoice>> {
+    if !(1..=100).contains(&limit) || after < 0 {
+        return Err(crate::Error::Invalid);
+    }
+    Ok(client
+        .query(
+            "SELECT id,name FROM roles WHERE tenant_id=$1 AND id>$2 ORDER BY id LIMIT $3",
+            &[&scope.tenant(), &after, &limit],
+        )
+        .await?
+        .iter()
+        .map(|r| RoleChoice {
+            id: r.get(0),
+            name: r.get(1),
+        })
+        .collect())
 }

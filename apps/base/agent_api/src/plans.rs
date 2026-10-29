@@ -1,6 +1,6 @@
 //! Single-use reviewed writes. Storage retains only SHA-256 digests. Owners
 //! validate/lock reference facts and write through the outer audit transaction.
-use crate::{Error, Handler, OperationClient, Registry, Result, CONTENT_NOTICE};
+use crate::{Error, Handler, Registry, Result, CONTENT_NOTICE};
 use bilibi_database::{Db, MutationBoundary};
 use bilibi_settings::Settings;
 use bilibi_system::Instance;
@@ -167,7 +167,7 @@ impl Plans {
         bilibi_authz::authorize_key(tx, scope, registered.definition.capability).await?;
         match registered.definition.handler {
             Handler::SafeWrite(owner) => Ok(owner
-                .preview(tx as &dyn OperationClient, scope, &op.input)
+                .preview(&crate::TransactionRead(tx), scope, &op.input)
                 .await?
                 .envelope(&op.key)),
             _ => Err(Error::WritesNotEnabled),

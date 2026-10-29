@@ -2,7 +2,7 @@
 pub mod capabilities;
 mod capabilities_web;
 pub mod decision_logs;
-pub mod effective;
+mod effective;
 pub mod field_catalog;
 pub mod fields;
 pub mod grants;
@@ -17,7 +17,8 @@ mod web;
 use bilibi_database::{Error, Result};
 use bilibi_tenancy::{Authentication, ProofClient, ProofFuture, Scope};
 pub use effective::{
-    effective_capabilities, effective_capabilities_of, effective_system, holders, Effective,
+    effective_capabilities, effective_capabilities_of, effective_system, has_effective_role,
+    holder_page, holders, role_page, Effective, RoleChoice,
 };
 use std::{
     collections::HashSet,

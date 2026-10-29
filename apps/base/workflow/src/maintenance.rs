@@ -91,6 +91,7 @@ impl Engine {
         }
         // Delivery still runs if one run's owner or definition is unavailable.
         let runs = self.sweep_processes(limit).await;
+        self.sweep_approvals(limit).await?;
         let delivery = self.deliver_due_transitions(limit).await?;
         let (reconciled, skipped) = runs?;
         let client = self.db.get().await?;

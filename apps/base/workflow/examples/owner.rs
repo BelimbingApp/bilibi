@@ -94,9 +94,9 @@ async fn main() -> Result<()> {
     bilibi_base::link();
     bilibi_core::link();
     let db = pool(&std::env::var("DATABASE_URL").map_err(|_| Error::Invalid)?)?;
-    bilibi_walkthrough_fixture::install(&db).await?;
     let modules = bilibi_module_registry::discover()?;
     bilibi_database::migrate(&db, &modules).await?;
+    bilibi_walkthrough_fixture::install(&db).await?;
     let mut services = Services::default();
     services.provide("bootstrap.database", Arc::new(db.clone()))?;
     services.provide(
@@ -106,13 +106,53 @@ async fn main() -> Result<()> {
     services.install(&modules)?;
     let args: Vec<_> = std::env::args().skip(1).collect();
     let command = args.first().map(String::as_str).unwrap_or("show");
-    let user = args.get(1).and_then(|s| s.parse::<i64>().ok()).unwrap_or(4);
+    let user = args
+        .get(1)
+        .and_then(|s| s.split('/').next())
+        .and_then(|s| s.parse::<i64>().ok())
+        .unwrap_or(4);
     let id = args.get(2).and_then(|s| s.parse::<i64>().ok()).unwrap_or(1);
     let client = db.get().await?;
-    let scope = services
-        .get::<Authentication>("base/tenancy.authentication")?
-        .authenticate(&**client, 1, user, String::new())
-        .await?;
+    // The specimen accepts user/mode/id to exercise the real sealed facets;
+    // e.g. 4/agent/1, 4/impersonator/1, 4/job, or system/principal-name.
+    let actor = args
+        .get(1)
+        .map(String::as_str)
+        .unwrap_or("4")
+        .split('/')
+        .collect::<Vec<_>>();
+    let authentication = services.get::<Authentication>("base/tenancy.authentication")?;
+    let scope = if actor.first() == Some(&"system") {
+        authentication
+            .for_principal(&**client, 1, actor.get(1).ok_or(Error::Invalid)?)
+            .await?
+    } else {
+        let operator = if actor.get(1) == Some(&"impersonator") {
+            Some(
+                actor
+                    .get(2)
+                    .and_then(|s| s.parse().ok())
+                    .ok_or(Error::Invalid)?,
+            )
+        } else {
+            None
+        };
+        let scope = authentication
+            .authenticate_session(&**client, 1, user, operator, None, String::new())
+            .await?;
+        match actor.get(1).copied() {
+            Some("agent") => scope.for_agent(
+                actor
+                    .get(2)
+                    .and_then(|s| s.parse().ok())
+                    .ok_or(Error::Invalid)?,
+                uuid::Uuid::new_v4().to_string(),
+                None,
+            ),
+            Some("job") => scope.in_job(),
+            _ => scope,
+        }
+    };
     drop(client);
     let engine = services.get::<Engine>("base/workflow.engine")?;
     match command {
@@ -180,6 +220,225 @@ async fn main() -> Result<()> {
             let _ = shutdown.send(true);
             task.await.map_err(|_| Error::Internal)??;
             println!("queue executor stopped");
+        }
+        "approval-init" => {
+            let client = db.get().await?;
+            client.execute("INSERT INTO workflow_reference_approval_facts(record_id,tenant_id,company_id,prepared_by) SELECT id,tenant_id,1,1 FROM workflow_reference_records WHERE tenant_id=1 ON CONFLICT DO NOTHING",&[]).await?;
+            client.execute("INSERT INTO principal_roles(tenant_id,user_id,role_id) SELECT 1,1,id FROM roles WHERE tenant_id=1 AND code='admin' ON CONFLICT DO NOTHING",&[]).await?;
+            drop(client);
+            let mut client = db.get().await?;
+            let boundary = services.get::<MutationBoundary>("base/database.mutations")?;
+            let mut tx = boundary
+                .begin(
+                    &mut client,
+                    scope.mutation_context("reference.approval.initialized"),
+                )
+                .await?;
+            let policy = reference::default_approval_policy(&reference::APPROVAL_CASE);
+            let expected = engine
+                .approval_policy(&scope, "reference.approval", 1)
+                .await
+                .ok()
+                .map(|(id, _)| id);
+            let policy_id = engine
+                .publish_approval_policy_in(
+                    &mut tx,
+                    &scope,
+                    bilibi_workflow::ApprovalPolicyChange {
+                        case: "reference.approval",
+                        company: 1,
+                        expected,
+                        policy,
+                        reason: "Reference approval controls",
+                    },
+                )
+                .await?;
+            tx.commit().await?;
+            println!("published policy={policy_id}");
+        }
+        "approval-policy" | "strict-policy" => {
+            let policy = serde_json::from_str(args.get(3).ok_or(Error::Invalid)?)
+                .map_err(|_| Error::Invalid)?;
+            let case = if command == "strict-policy" {
+                reference::STRICT_CASE.key
+            } else {
+                reference::APPROVAL_CASE.key
+            };
+            let expected = match engine.approval_policy(&scope, case, id).await {
+                Ok((id, _)) => Some(id),
+                Err(Error::NotFound) => None,
+                Err(e) => return Err(e),
+            };
+            let mut client = db.get().await?;
+            let boundary = services.get::<MutationBoundary>("base/database.mutations")?;
+            let mut tx = boundary
+                .begin(
+                    &mut client,
+                    scope.mutation_context("reference.approval.rules"),
+                )
+                .await?;
+            let id = engine
+                .publish_approval_policy_in(
+                    &mut tx,
+                    &scope,
+                    bilibi_workflow::ApprovalPolicyChange {
+                        case,
+                        company: id,
+                        expected,
+                        policy,
+                        reason: args.get(4).ok_or(Error::Invalid)?,
+                    },
+                )
+                .await?;
+            tx.commit().await?;
+            println!("policy={id}");
+        }
+        "approval-history" => println!(
+            "{}",
+            serde_json::to_string(&engine.approval_history(&scope, id, 0, 100).await?)
+                .map_err(|_| Error::Invalid)?
+        ),
+        "approval-recall" | "approval-review" | "approval-exception" => {
+            let mut client = db.get().await?;
+            let boundary = services.get::<MutationBoundary>("base/database.mutations")?;
+            let mut tx = boundary
+                .begin(
+                    &mut client,
+                    scope.mutation_context("reference.approval.control"),
+                )
+                .await?;
+            match command {
+                "approval-recall" => {
+                    engine
+                        .recall_approval_in(
+                            &mut tx,
+                            &scope,
+                            id,
+                            args.get(3)
+                                .and_then(|v| v.parse().ok())
+                                .ok_or(Error::Invalid)?,
+                            args.get(4).ok_or(Error::Invalid)?,
+                        )
+                        .await?
+                }
+                "approval-review" => {
+                    engine
+                        .review_approval_exception_in(
+                            &mut tx,
+                            &scope,
+                            id,
+                            args.get(3).ok_or(Error::Invalid)?,
+                        )
+                        .await?
+                }
+                _ => {
+                    let exception = engine
+                        .record_control_exception_in(
+                            &mut tx,
+                            &scope,
+                            bilibi_workflow::ControlException {
+                                case: reference::APPROVAL_CASE.key.into(),
+                                subject_id: id,
+                                revision: args.get(3).ok_or(Error::Invalid)?.clone(),
+                                kind: "reference_override".into(),
+                                control_reference: "reference.control".into(),
+                                reason: args.get(4).ok_or(Error::Invalid)?.clone(),
+                            },
+                        )
+                        .await?;
+                    println!("exception={exception}");
+                }
+            }
+            tx.commit().await?;
+            println!("control saved");
+        }
+        "approval-agent-read" => {
+            let registry = services.get::<bilibi_agent_api::Registry>("base/agent_api.registry")?;
+            let client = db.get().await?;
+            println!(
+                "{:?}",
+                registry
+                    .call(
+                        &**client,
+                        &scope,
+                        "base.workflow.approvals.list",
+                        &json!({"page_size":100})
+                    )
+                    .await
+            );
+        }
+        "approval-submit" | "strict-submit" => {
+            let mut client = db.get().await?;
+            let boundary = services.get::<MutationBoundary>("base/database.mutations")?;
+            let mut tx = boundary
+                .begin(
+                    &mut client,
+                    scope.mutation_context("reference.approval.submitted"),
+                )
+                .await?;
+            let request = engine
+                .submit_approval_in(
+                    &mut tx,
+                    &scope,
+                    if command == "strict-submit" {
+                        reference::STRICT_CASE.key
+                    } else {
+                        reference::APPROVAL_CASE.key
+                    },
+                    id,
+                    &format!(
+                        "reference:{id}:{}",
+                        args.get(3).map(String::as_str).unwrap_or("1")
+                    ),
+                    args.get(4).and_then(|v| v.parse().ok()),
+                )
+                .await?;
+            tx.commit().await?;
+            println!("approval_request={request}");
+        }
+        "approval-inbox" => {
+            let page = engine
+                .my_approvals(
+                    &scope,
+                    &bilibi_workflow::ApprovalQuery {
+                        limit: 100,
+                        ..Default::default()
+                    },
+                )
+                .await?;
+            println!(
+                "entries={} rows={}",
+                page.entries.len(),
+                serde_json::to_string(&page.entries).map_err(|_| Error::Invalid)?
+            );
+        }
+        "approval-detail" => println!(
+            "{}",
+            serde_json::to_string(&engine.approval_detail(&scope, id).await?)
+                .map_err(|_| Error::Invalid)?
+        ),
+        "approval-vote" | "strict-vote" => {
+            let payload: serde_json::Value =
+                serde_json::from_str(args.get(3).ok_or(Error::Invalid)?)
+                    .map_err(|_| Error::Invalid)?;
+            let mut request = ActionRequest::new(
+                if command == "strict-vote" {
+                    "reference.strict.decide"
+                } else {
+                    "reference.approval.decide"
+                },
+                args.get(4).ok_or(Error::Invalid)?,
+                args.get(5)
+                    .and_then(|v| v.parse().ok())
+                    .ok_or(Error::Invalid)?,
+            );
+            request.payload = payload;
+            print_result(
+                "approval",
+                engine
+                    .execute_action(&scope, "reference.record", id, request)
+                    .await,
+            );
         }
         "init" => {
             let client = db.get().await?;

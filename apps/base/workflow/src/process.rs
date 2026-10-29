@@ -298,7 +298,7 @@ fn acyclic(steps: &[StepDefinition]) -> bilibi_module_registry::Result<()> {
 }
 /// Canonical document: fixed field order for the definition and each step,
 /// sorted keys inside `input`/`metadata`, preserved list order.
-pub fn fingerprint(key: &str, version: i32, steps: &[StepDefinition]) -> String {
+pub(crate) fn fingerprint(key: &str, version: i32, steps: &[StepDefinition]) -> String {
     let mut out = String::new();
     out.push('{');
     member(&mut out, "key", &Value::from(key));

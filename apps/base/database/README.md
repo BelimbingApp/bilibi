@@ -109,3 +109,7 @@ drop, swallowed capture failure, action-capture failure, cancelled owner/capture
 deferred commit failure, system/impersonator attribution, failed seed rollback and
 retry, repeat seed skipping, definition drift refusal, SQL/service dependency
 ordering, concurrent seed serialization and exclusion of non-production contributions.
+
+## Transaction continuations
+
+Use `MutationTransaction::coordinate` when an owner operation must call several existing audited `_in` methods before returning one result. Each nested owner still uses `mutate` or `record`; its changes are captured once. An error or cancelled continuation permanently prevents the outer commit, even if a caller catches the error after an earlier nested write succeeded. Workflow uses this seam to keep the final approval decision and its owner's business effect together.

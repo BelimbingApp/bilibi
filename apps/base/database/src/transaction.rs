@@ -172,6 +172,7 @@ pub struct MutationTransaction<'a> {
     /// `&MutationTransaction` across an await (the Artifacts facade does) is `Send`.
     callbacks: std::sync::Mutex<Vec<Box<dyn FnOnce() + Send>>>,
     poisoned: bool,
+    continuation_failed: Arc<std::sync::atomic::AtomicBool>,
 }
 impl<'a> MutationTransaction<'a> {
     pub async fn begin_with(
@@ -187,6 +188,7 @@ impl<'a> MutationTransaction<'a> {
             capture,
             callbacks: std::sync::Mutex::new(Vec::new()),
             poisoned: false,
+            continuation_failed: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         })
     }
     pub fn context(&self) -> &Context {
@@ -197,8 +199,37 @@ impl<'a> MutationTransaction<'a> {
     pub fn sql(&self) -> &Transaction<'a> {
         &self.tx
     }
+    /// Compose several audited owner methods on this boundary. An error or
+    /// cancelled continuation permanently prevents commit, including when its
+    /// caller catches the refusal after an earlier successful owner write.
+    /// Nested writes still use `mutate`/`record`; changes are captured once.
+    pub async fn coordinate<T, F>(&mut self, continuation: F) -> Result<T>
+    where
+        F: for<'b> FnOnce(&'b mut Self) -> Pin<Box<dyn Future<Output = Result<T>> + Send + 'b>>,
+    {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        struct Guard(Arc<AtomicBool>, bool);
+        impl Drop for Guard {
+            fn drop(&mut self) {
+                if !self.1 {
+                    self.0.store(true, Ordering::Release);
+                }
+            }
+        }
+        if self.poisoned || self.continuation_failed.load(Ordering::Acquire) {
+            return Err(Error::Internal);
+        }
+        let mut guard = Guard(self.continuation_failed.clone(), false);
+        let result = continuation(self).await;
+        guard.1 = result.is_ok();
+        result
+    }
     pub async fn record(&mut self, change: Change) -> Result<()> {
-        if self.poisoned {
+        if self.poisoned
+            || self
+                .continuation_failed
+                .load(std::sync::atomic::Ordering::Acquire)
+        {
             return Err(Error::Internal);
         }
         if change.kind.is_empty() || change.id <= 0 {
@@ -223,7 +254,11 @@ impl<'a> MutationTransaction<'a> {
         )
             -> Pin<Box<dyn Future<Output = Result<(T, Vec<Change>)>> + Send + 'b>>,
     {
-        if self.poisoned {
+        if self.poisoned
+            || self
+                .continuation_failed
+                .load(std::sync::atomic::Ordering::Acquire)
+        {
             return Err(Error::Internal);
         }
         // A timed-out/cancelled owner future may already have performed SQL.
@@ -266,7 +301,11 @@ impl<'a> MutationTransaction<'a> {
         Ok(())
     }
     pub async fn commit(self) -> Result<()> {
-        if self.poisoned {
+        if self.poisoned
+            || self
+                .continuation_failed
+                .load(std::sync::atomic::Ordering::Acquire)
+        {
             self.tx.rollback().await?;
             return Err(Error::Internal);
         }

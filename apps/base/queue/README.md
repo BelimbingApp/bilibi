@@ -159,3 +159,5 @@ delayed write, change the specimen's `principal_capabilities` row for
 `companies.update` to false while `late-write` is executing. Both refuse the
 owner effect. All such manual database changes belong exclusively in the
 disposable specimen DB.
+
+User job scopes carry `Channel::Job` through `Execution::scope`, `Execution::identity` and live reproof. Passing a job scope directly to an owner facade keeps background restrictions, including Workflow's refusal to approve.

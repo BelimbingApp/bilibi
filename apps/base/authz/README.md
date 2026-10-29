@@ -165,3 +165,9 @@ Automatic memberships live in `authz_identity_roles`, while manual memberships r
 ## Restrictions on a caller's read connection
 
 `fields::restricted_read(client, scope)` reads the same live field restrictions as `fields::restricted`, using `&dyn bilibi_tenancy::ReadClient`. Use it when a reviewed preview or another owner's transaction supplies that connection. Any restricting role wins, including alongside a grant-all role; named principals receive every restriction in their tenant. The function acquires no pooled connection.
+
+## Approval eligibility reads
+
+`has_effective_role` checks named-role membership in the scoped tenant, including provider-managed memberships. A grant-all role never substitutes for membership in another named role. `holder_page` enumerates a bounded capability-holder page after an account ID, with direct denies applied; callers must still prove account eligibility, company reach and owner visibility. `role_page` returns bounded role labels for an owner-authorized policy editor and grants no administration permission.
+
+The `effective` implementation module is private. Import its public types and reads from the `bilibi_authz` crate root; no authorization rule changes with that path correction.

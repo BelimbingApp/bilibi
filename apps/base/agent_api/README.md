@@ -276,3 +276,11 @@ MCP initialization and generated plugin workflow skills use `BUSINESS_CONTEXT` f
 [Core Tenant Administration](../../core/tenant_administration/README.md) registers `core.tenant_administration.tenant.list`, `.get` and `.create`. The Tenants page uses `PageContracts` for its directory reads and create event, with no pending write allowance. Search and describe discover these contracts through the same registry as the ChatGPT plugin; the plugin contains no tenant-specific logic.
 
 The create input names the tenant, a `primary_company` and optional `additional_companies` names. One reviewed commit creates the tenant, companies and primary assignment on the plan transaction. Tenant-create permission requires the platform operator's standing and capability; its declared step-up policy applies to both doors. Company provisioning takes Tenancy's sealed receipt for a fresh insert, never an input tenant id or a retargeted scope. Creating a tenant does not switch the caller into it or grant access to its business data.
+
+### Shared pages with contributed owner contracts
+
+A shared page may opt into owner-contributed writes through `page::PAGE_FAMILIES` and `page::PAGE_BINDINGS`. It keeps a normal `PageWrites` declaration with no pending allowance. The page owner contributes a `PageFamily { service, event_prefix }`; an operation owner contributes `PageBinding { service, event, contract }` under its own provenance.
+
+Boot requires the family to belong to the page service's owner, the target service to serve a page, the event to match its opted-in prefix and the contract to be a registered reviewed write of the binding's owner. Duplicate events are refused. At runtime the ordinary page permit and `PageContracts` check the exact binding; a prefix grants no permission by itself. Workflow's shared approval page uses this to call statically authorized per-case operations contributed by mounted owners.
+
+Reviewed preview adapters expose the caller's existing transaction through `OperationClient::transaction()`. Approval uses it for live owner and routing proofs, avoiding a second pool connection while the write door holds its transaction. Ordinary read clients return `None`; a preview must use only read operations on the borrowed transaction.
