@@ -8,9 +8,13 @@
 //! in Domains. Day and arithmetic reads need only the sealed scope (the caller
 //! authorizes its own operation); administration needs the module's
 //! capabilities and is reached through the `core.work_calendar.*` contracts.
+//! Installation-wide holiday sets (issue 210) are the platform operator's:
+//! every tenant includes them, and the `publish` job tells each one of a
+//! change.
 mod agent_operations;
 mod contributions;
 mod model;
+mod publish;
 mod resolve;
 mod store;
 mod timetable;
@@ -21,16 +25,22 @@ pub use model::{
     HolidaySetEntry, Listing, Period, Reason, Rows, Rule, Substitute, Week, WeekDay, WriteError,
     WriteResult, MAX_CHOICES, MAX_PAGE_SIZE, MAX_ROWS,
 };
+pub use publish::{PUBLISH, PUBLISHER};
 pub use timetable::{TimeError, Timetable, MAX_WINDOW_DAYS, SEARCH_DAYS};
 
 use bilibi_authz::{
-    authorize_key, CapabilityDefinition, RoleDefinition, VocabularyContribution, VOCABULARY,
+    authorize_key, CapabilityDefinition, RoleDefinition, StandingGrant, SystemPrincipalDefinition,
+    VocabularyContribution, STANDING_GRANTS, VOCABULARY,
 };
-use bilibi_database::{Db, Error, Result};
+use bilibi_database::{Db, Error, MutationBoundary, Result};
 use bilibi_events::{EventType, Events, EVENTS};
 use bilibi_geonames::Geonames;
 use bilibi_module_registry::{Contribution, Service};
 use bilibi_party_ids::OrganisationId;
+use bilibi_queue::{
+    execution::{HandlerBinding, HandlerService, HANDLERS},
+    Queue, Worker, WORKERS,
+};
 use bilibi_settings::{
     Definition, Editor, ScopeKind, Setting, Settings, Target, Validator, ValueType, DEFINITIONS,
 };
@@ -43,6 +53,9 @@ pub const SERVICE: &str = "core/work_calendar.calendars";
 pub const VIEW: &str = "admin.work-calendar.view";
 pub const LIST: &str = "admin.work-calendar.list";
 pub const MANAGE: &str = "admin.work-calendar.manage";
+/// Keeping installation-wide holiday sets: a platform capability, held in the
+/// platform operator's tenant beside [`MANAGE`].
+pub const INSTALLATION_MANAGE: &str = "admin.work-calendar.holiday-sets.manage";
 /// The tenant's or a company's default calendar code (null: none).
 pub const DEFAULT: &str = "work_calendar.default";
 /// Recorded once per calendar whose dates a write changed, with payload
@@ -64,6 +77,8 @@ pub struct WorkCalendars {
     settings: Arc<Settings>,
     geonames: Arc<Geonames>,
     events: Arc<Events>,
+    queue: Arc<Queue>,
+    boundary: Arc<MutationBoundary>,
 }
 impl WorkCalendars {
     /// Active calendars for a picker whose code or name contains `search`
@@ -199,14 +214,21 @@ macro_rules! provenance {
     };
 }
 pub(crate) use provenance;
-// `tenant_owner` holds the whole set, as it holds Company's and Person's.
+// `tenant_owner` holds the tenant's set, as it holds Company's and Person's;
+// installation-wide sets are granted to the platform operator by name.
 inventory::submit! { Contribution::new(VOCABULARY, "core/work_calendar", provenance!(), &VocabularyContribution {
     domains: &[],
     verbs: &[],
-    capabilities: &[CapabilityDefinition::tenant(VIEW), CapabilityDefinition::tenant(LIST), CapabilityDefinition::tenant(MANAGE)],
+    capabilities: &[CapabilityDefinition::tenant(VIEW), CapabilityDefinition::tenant(LIST), CapabilityDefinition::tenant(MANAGE), CapabilityDefinition::platform(INSTALLATION_MANAGE), CapabilityDefinition::tenant(PUBLISH)],
     roles: &[RoleDefinition { code: "tenant_owner", name: "Tenant Owner", description: "Contributed system role; reconciled explicitly", grant_all: false, capabilities: &[VIEW, LIST, MANAGE] }],
-    system_principals: &[],
+    system_principals: &[SystemPrincipalDefinition { name: PUBLISHER, capabilities: &[PUBLISH] }],
 }) }
+// Telling a tenant of an installation-wide change is Platform work no tenant
+// should have to switch on; a tenant administrator may still deny it, and
+// that tenant then hears of no installation-wide change.
+inventory::submit! { Contribution::new(STANDING_GRANTS, PUBLISHER, provenance!(), &StandingGrant { principal: PUBLISHER, capabilities: &[PUBLISH] }) }
+inventory::submit! { Contribution::new(WORKERS, publish::WORKER, provenance!(), &Worker { max_attempts: publish::MAX_ATTEMPTS, validate: publish::arguments }) }
+inventory::submit! { Contribution::new(HANDLERS, publish::WORKER, provenance!(), &HandlerBinding { service: publish::HANDLER, capability: PUBLISH }) }
 inventory::submit! { Contribution::new(EVENTS, CHANGED, provenance!(), &EventType { version: 1 }) }
 inventory::submit! { Contribution::new(DEFINITIONS, DEFAULT, provenance!(), &Setting::Definition(Definition {
     value_type: ValueType::String, scopes: &[ScopeKind::Tenant, ScopeKind::Company], default: || serde_json::Value::Null, nullable: true, encrypted: false, minimum: None, maximum: None,
@@ -217,24 +239,35 @@ inventory::submit! { Contribution::new(DEFINITIONS, DEFAULT, provenance!(), &Set
 inventory::submit! {
     bilibi_module_registry::Module {
         id: "core/work_calendar", layer: bilibi_module_registry::Layer::Core,
-        dependencies: &["base/agent_api", "base/authz", "base/database", "base/datetime", "base/events", "base/grid", "base/menu", "base/party_ids", "base/settings", "base/tenancy", "base/ui", "core/geonames"],
-        migrations: &[("core-work-calendar-001-work-calendar", include_str!("../migrations/001-work-calendar.sql"))],
-        services: &[Service { id: SERVICE, factory: |services| {
-            let calendars = Arc::new(WorkCalendars {
+        dependencies: &["base/agent_api", "base/authz", "base/database", "base/datetime", "base/events", "base/grid", "base/menu", "base/party_ids", "base/queue", "base/settings", "base/tenancy", "base/ui", "core/geonames"],
+        migrations: &[
+            ("core-work-calendar-001-work-calendar", include_str!("../migrations/001-work-calendar.sql")),
+            ("core-work-calendar-002-installation-holiday-sets", include_str!("../migrations/002-installation-holiday-sets.sql")),
+        ],
+        services: &[
+            Service { id: SERVICE, factory: |services| {
+                let calendars = Arc::new(WorkCalendars {
+                    db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
+                    authentication: services.get("base/tenancy.authentication")?,
+                    settings: services.get("base/settings.store")?,
+                    geonames: services.get(bilibi_geonames::SERVICE)?,
+                    events: services.get(bilibi_events::SERVICE)?,
+                    queue: services.get("base/queue.store")?,
+                    boundary: services.get("base/database.mutations")?,
+                });
+                agent_operations::bind(calendars.clone())?;
+                Ok(calendars)
+            }},
+            Service { id: publish::HANDLER, factory: |services| {
+                Ok(Arc::new(HandlerService(Arc::new(publish::PublishJob { calendars: services.get(SERVICE)? }))))
+            }},
+            Service { id: web::SERVICE, factory: |services| Ok(Arc::new(bilibi_ui::page::PageService::<Scope, Error>(Arc::new(web::Pages {
                 db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
-                authentication: services.get("base/tenancy.authentication")?,
+                calendars: services.get(SERVICE)?,
                 settings: services.get("base/settings.store")?,
                 geonames: services.get(bilibi_geonames::SERVICE)?,
-                events: services.get(bilibi_events::SERVICE)?,
-            });
-            agent_operations::bind(calendars.clone())?;
-            Ok(calendars)
-        }}, Service { id: web::SERVICE, factory: |services| Ok(Arc::new(bilibi_ui::page::PageService::<Scope, Error>(Arc::new(web::Pages {
-            db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
-            calendars: services.get(SERVICE)?,
-            settings: services.get("base/settings.store")?,
-            geonames: services.get(bilibi_geonames::SERVICE)?,
-            contracts: services.get(bilibi_agent_api::page::SERVICE)?,
-        }))))}],
+                contracts: services.get(bilibi_agent_api::page::SERVICE)?,
+            }))))},
+        ],
     }
 }
