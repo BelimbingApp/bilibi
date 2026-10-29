@@ -155,7 +155,7 @@ async fn bootstrap(db: &Db, app: &crate::App) -> Result<Bootstrap> {
         // the administrator, and gets its receipt and grant this once.
         Some(tenant) => match tx
             .query_opt(
-                "SELECT id FROM users WHERE tenant_id=$1 AND email=$2",
+                "SELECT id FROM users WHERE tenant_id=$1 AND email=$2 AND kind='staff'",
                 &[&tenant, &ADMIN_EMAIL],
             )
             .await?
