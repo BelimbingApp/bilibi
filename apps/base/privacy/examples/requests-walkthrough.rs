@@ -994,6 +994,75 @@ async fn main() -> Result<()> {
     )
     .await?;
 
+    println!("== erasure approval by an AI agent (ADR 01)");
+    // The viewer (account 2, linked to no person) gets the admin role, so
+    // approval rights and company reach, and an authenticator: independent of
+    // an erasure admin receives and verifies.
+    client
+        .batch_execute("INSERT INTO principal_roles(tenant_id,user_id,role_id) VALUES(1,2,4) ON CONFLICT DO NOTHING")
+        .await?;
+    let viewer = login(&app, "viewer@example.test").await?;
+    let viewer_key = enroll(&app, &viewer).await?;
+    let admin_agent = agent(&app, &db, &admin, "walkthrough-admin-agent").await?;
+    let viewer_agent = agent(&app, &db, &viewer, "walkthrough-viewer-agent").await?;
+    let by_agent = privacy
+        .receive(
+            &mut client,
+            &admin,
+            NewRequest {
+                kind: RequestKind::Erasure,
+                person: kim,
+                identifiers: vec![],
+                company: one,
+            },
+        )
+        .await?;
+    let by_agent = privacy
+        .verify(
+            &mut client,
+            &admin,
+            by_agent.id,
+            by_agent.version,
+            "Letter",
+            &[],
+        )
+        .await?;
+    let by_agent = privacy
+        .submit_erasure(&mut client, &admin, by_agent.id, by_agent.version)
+        .await?;
+    show(
+        "the agent of whoever received and verified it decides",
+        erasure_approval::vote(&app, &admin_agent, &by_agent, true).await,
+    );
+    show(
+        "a queued job for the independent person decides",
+        erasure_approval::vote(&app, &viewer.clone().in_job(), &by_agent, true).await,
+    );
+    show(
+        "the independent person's agent decides without their code",
+        erasure_approval::vote(&app, &viewer_agent, &by_agent, true).await,
+    );
+    erasure_approval::vote(
+        &app,
+        &viewer_agent
+            .clone()
+            .presenting_step_up(&code(&viewer_key, 0)),
+        &by_agent,
+        true,
+    )
+    .await?;
+    let by_agent = privacy.request(&**client, &admin, by_agent.id).await?;
+    println!(
+        "the independent person's agent decides with their code: {} (approved_by={:?})",
+        by_agent.status, by_agent.approved_by
+    );
+    rows(
+        &client,
+        "approval audit",
+        &format!("SELECT 'actor='||actor_id||' trace='||trace_id FROM base_audit_mutations WHERE auditable_type='base/privacy.request' AND auditable_id='{}' AND new_values->>'status'='approved'", by_agent.id),
+    )
+    .await?;
+
     stop.send(true)?;
     let _ = workers.await;
     Ok(())
@@ -1025,6 +1094,49 @@ async fn certificate(privacy: &Privacy, client: &mut Client, scope: &Scope, id: 
         Err(error) => println!("certificate: refused — {error}"),
     }
     Ok(())
+}
+/// A genuine agent connection for `person`: the device grant they approve,
+/// redeemed and sealed as the API edge does.
+async fn agent(
+    app: &bilibi_web::App,
+    db: &bilibi_database::Db,
+    person: &Scope,
+    label: &str,
+) -> Result<Scope> {
+    use bilibi_core::agent_access::{AgentAccess, Decision, CLIENT_ID};
+    let access = app
+        .services
+        .get::<AgentAccess>("core/agent_access.grants")?;
+    let refused = |step: &'static str| move |error| format!("{label} {step}: {error:?}");
+    let start = access
+        .start_device(CLIENT_ID, label)
+        .await
+        .map_err(refused("start"))?;
+    let expiry = access.connection_expiry().await?;
+    access
+        .decide(person, &start.user_code, Decision::Approve, expiry)
+        .await
+        .map_err(refused("approve"))?;
+    // The device may poll now rather than after its interval.
+    db.get()
+        .await?
+        .execute(
+            "UPDATE core_agent_devices SET next_poll_at=now() WHERE status='approved'",
+            &[],
+        )
+        .await?;
+    let tokens = access
+        .exchange(CLIENT_ID, &start.device_code)
+        .await
+        .map_err(refused("redeem"))?;
+    let claims = access
+        .authenticate(&tokens.access_token, None)
+        .await
+        .map_err(refused("authenticate"))?;
+    Ok(access
+        .seal(&claims, label, None)
+        .await
+        .map_err(refused("seal"))?)
 }
 /// Counts files under `root` whose bytes still hold the attachment's text.
 fn walk(root: &std::path::Path) -> usize {
