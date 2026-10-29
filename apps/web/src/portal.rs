@@ -88,18 +88,21 @@ pub async fn dispatch(
 ) -> std::result::Result<Response, HttpError> {
     let credential = token(&headers).ok();
     let get = bound.route.method == Method::Get;
+    // A write from another site is refused before any authorization
+    // decision is made or logged.
+    if !get {
+        origin(&app, &headers)?;
+    }
     let portal = match admit(&app, bound.route.access, credential.as_deref(), uri.path()).await {
         Err(Error::Unauthorized) if get => return Ok(sign_in()),
         Ok(portal) => portal,
         Err(error) => return Err(error.into()),
     };
-    if !get {
-        origin(&app, &headers)?;
-        if headers.get("x-csrf-token").and_then(|h| h.to_str().ok())
+    if !get
+        && headers.get("x-csrf-token").and_then(|h| h.to_str().ok())
             != Some(portal.scope().csrf.as_str())
-        {
-            return Err(Error::Forbidden.into());
-        }
+    {
+        return Err(Error::Forbidden.into());
     }
     // Boot refuses a framed portal route; a framed request is refused too.
     if matches!(
