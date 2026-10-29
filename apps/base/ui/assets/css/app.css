@@ -639,8 +639,8 @@ body:has(dialog:modal) #flash-group > #connection-server-error {
 
 /* The notch of an unframed `flex_table/1` rises its own height (`h-3.5`) out
  * of the card it sits in, so that it stands on the page body rather than on
- * a strip of the card. The card leaves it that height plus a gap above
- * itself; the toolbar's `mb-2` collapses into this margin, so without it the
+ * a strip of the card. When the table opens the card, the card leaves it that
+ * height plus a gap above itself; the toolbar's `mb-2` collapses into this margin, so without it the
  * notch touched the search box. The component marks its frame
  * `data-unframed`; no page carries the notch's height. */
 [data-card]:has(> * > [data-table-frame][data-unframed]:nth-child(1 of :not(.sr-only))) {
