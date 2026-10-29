@@ -8,8 +8,8 @@ Core account/company tables: Tenancy's account verifier supplies live account
 eligibility at the authenticated edge and for grant targets.
 
 Register a `VocabularyContribution` through the registry's `VOCABULARY` consumer.
-Contribute domains, verbs, capability keys (with an explicit `platform` flag),
-role definitions/extensions, and named system-principal capability bounds.
+Contribute domains, verbs, capability keys (each with an audience: `CapabilityDefinition::tenant`,
+`platform` or `portal`), role definitions/extensions, and named system-principal capability bounds.
 `Vocabulary::from_catalog` validates the complete vocabulary. Installed Authz also
 validates route, embed, menu and settings capability references during boot.
 Duplicate capability/principal keys, conflicting role definitions, malformed keys,
@@ -62,6 +62,7 @@ enforcement for a combined page (`Access::AnyOf`): it opens for any one live key
 writes no denial row for the others while one opens it. Unknown keys deny even grant-all holders.
 A contributed platform capability requires the persistent `platform_operator`
 identity **and** a grant; tenant 1 and grant-all have no implicit operator power.
+**Audiences** ([ADR 16](../../../docs/architecture/decisions/16-customer-accounts-and-portal.md)). A customer account holds only portal capabilities and staff never hold one: `decide`, `decide_proof`, `holds_proof` and the effective sets deny a capability outside the actor's audience (`Actor::kind()`) with reason `denied_audience`, before any direct grant, role grant or grant-all. Boot refuses a contributed role that mixes portal and staff keys, a grant-all role with portal keys, and a system principal that declares a portal key. `holders` lists tenant capabilities only; its caller keeps only staff accounts. `effective_capabilities_of` reads another account as staff, since only staff administration screens read another account.
 Direct deny wins over direct allow, role grants and grant-all. Permission reads
 are fresh. Reauthenticate/revalidate a retained Scope at every request/event/job
 edge; the sealed scope is identity for one unit of work, not a permanent login.

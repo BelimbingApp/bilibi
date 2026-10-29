@@ -26,8 +26,8 @@ use std::{
 };
 use tokio_postgres::{types::ToSql, GenericClient, Row};
 pub use vocabulary::{
-    CapabilityDefinition, RoleDefinition, StandingGrant, SystemPrincipalDefinition, Vocabulary,
-    VocabularyContribution, STANDING_GRANTS, VOCABULARY,
+    Audience, CapabilityDefinition, RoleDefinition, StandingGrant, SystemPrincipalDefinition,
+    Vocabulary, VocabularyContribution, STANDING_GRANTS, VOCABULARY,
 };
 
 /// Immutable deployment snapshot. Database grants/restrictions are never cached.
@@ -94,8 +94,10 @@ pub async fn authorize_any(
     authorize_key(client, scope, keys[0]).await?;
     Err(Error::Forbidden)
 }
-/// Unknown keys, invalid live tenants, and non-operator platform requests deny
-/// before any grants (including grant_all) can take effect. Denials are logged.
+/// Unknown keys, invalid live tenants, a capability outside the actor's
+/// audience (ADR 16: a customer holds only portal capabilities, staff never
+/// one) and non-operator platform requests deny before any grants (including
+/// grant_all) can take effect. Denials are logged.
 pub async fn decide(client: &impl GenericClient, scope: &Scope, key: &str) -> Result<Decision> {
     if key.is_empty() || key.len() > 200 {
         return Err(Error::Invalid);
@@ -112,10 +114,11 @@ pub async fn decide(client: &impl GenericClient, scope: &Scope, key: &str) -> Re
                 .query_opt(LIVE_TENANT_SQL, &[&scope.tenant()])
                 .await?
                 .is_some();
-            let operator = !cap.definition.platform || is_operator(client, scope.tenant()).await?;
             if !live {
                 Decision::deny("denied_invalid_actor_context")
-            } else if !operator {
+            } else if !cap.definition.admits(scope.actor().kind()) {
+                Decision::deny("denied_audience")
+            } else if cap.definition.is_platform() && !is_operator(client, scope.tenant()).await? {
                 Decision::deny("denied_platform_scope")
             } else {
                 let row = client
@@ -184,13 +187,15 @@ async fn user_decision_proof(
                 .query_opt(LIVE_TENANT_SQL, &[&scope.tenant()])
                 .await?
                 .is_some();
-            let operator = !cap.definition.platform
+            let operator = !cap.definition.is_platform()
                 || client
                     .query_opt(OPERATOR_SQL, &[&scope.tenant()])
                     .await?
                     .is_some();
             if !live {
                 Decision::deny("denied_invalid_actor_context")
+            } else if !cap.definition.admits(scope.actor().kind()) {
+                Decision::deny("denied_audience")
             } else if !operator {
                 Decision::deny("denied_platform_scope")
             } else {
@@ -352,8 +357,13 @@ async fn system_decision(
         _ if !vocab.capabilities.contains_key(key) => Decision::deny("denied_unknown_capability"),
         None => Decision::deny("denied_no_principal"),
         Some(name) => {
-            let platform = vocab.capabilities[key].definition.platform;
-            if platform && client.one(OPERATOR_SQL, &[&tenant]).await?.is_none() {
+            let definition = vocab.capabilities[key].definition;
+            // A named principal is the tenant's own work: staff, never a customer.
+            if definition.audience == vocabulary::Audience::Portal {
+                Decision::deny("denied_audience")
+            } else if definition.is_platform()
+                && client.one(OPERATOR_SQL, &[&tenant]).await?.is_none()
+            {
                 Decision::deny("denied_platform_scope")
             } else if !vocab
                 .system_principals

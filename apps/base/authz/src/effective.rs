@@ -1,11 +1,12 @@
 //! The capabilities an actor holds right now, in one fresh read, for filtering
 //! catalogs and navigation. It applies the same rules as `decide` (live tenant,
-//! direct deny wins, then direct allow, grant-all, role grants; a platform
+//! direct deny wins, then direct allow, grant-all, role grants; a capability
+//! outside the account's audience never counts (ADR 16); a platform
 //! capability also needs the operator identity) but writes no decision-log row:
 //! a hidden table is not an access attempt. Enforcement of an action still calls
 //! `authorize_key`.
 use bilibi_database::Result;
-use bilibi_tenancy::Scope;
+use bilibi_tenancy::{AccountKind, Scope};
 use std::collections::BTreeSet;
 use tokio_postgres::GenericClient;
 
@@ -69,11 +70,10 @@ pub async fn effective_system(
         .filter(|key| {
             (effective.direct_allowed.contains(*key) || vocabulary.standing(principal, key))
                 && !effective.direct_denied.contains(*key)
-                && (operator
-                    || !vocabulary
-                        .capabilities
-                        .get(key)
-                        .is_some_and(|capability| capability.definition.platform))
+                && vocabulary.capabilities.get(key).is_some_and(|capability| {
+                    capability.definition.admits(AccountKind::Staff)
+                        && (operator || !capability.definition.is_platform())
+                })
         })
         .collect();
     Ok(effective)
@@ -83,8 +83,9 @@ pub async fn effective_system(
 /// direct allow, a grant-all role or a role grant, with no direct deny, in
 /// id order and at most `limit` of them: the people a Base owner tells about
 /// work only they may act on (Media's quarantine notices). A read, not a
-/// decision: nothing is logged, a platform key holds nobody, and the owner
-/// proves each account live before it writes to it.
+/// decision: nothing is logged, a platform or portal key holds nobody, and the
+/// owner proves each account live and staff before it writes to it (a
+/// customer never holds a tenant capability, whatever its grants say).
 pub async fn holders(
     client: &impl GenericClient,
     tenant: i64,
@@ -94,7 +95,7 @@ pub async fn holders(
     let known = crate::vocabulary()?
         .capabilities
         .get(key)
-        .is_some_and(|capability| !capability.definition.platform);
+        .is_some_and(|capability| capability.definition.audience == crate::Audience::Tenant);
     if !known || limit <= 0 {
         return Ok(Vec::new());
     }
@@ -109,7 +110,9 @@ pub async fn holders(
         .collect())
 }
 
-/// Bounded capability-holder enumeration for owner eligibility routing.
+/// Bounded capability-holder enumeration for owner eligibility routing. As
+/// for [`holders`], a platform or portal key holds nobody, and the caller
+/// keeps only live staff accounts (ADR 16).
 pub async fn holder_page(
     client: &impl GenericClient,
     scope: &Scope,
@@ -120,7 +123,7 @@ pub async fn holder_page(
     let known = crate::vocabulary()?
         .capabilities
         .get(key)
-        .is_some_and(|capability| !capability.definition.platform);
+        .is_some_and(|capability| capability.definition.audience == crate::Audience::Tenant);
     if !known || !(1..=500).contains(&limit) || after < 0 {
         return Ok(Vec::new());
     }
@@ -139,7 +142,10 @@ pub async fn holder_page(
 /// that account shows it (Bilimbi `Authz.effective_capabilities(actor)`):
 /// the allowed keys, the direct allow and deny overrides, and whether a
 /// grant-all role is assigned. A read, not a decision: nothing is logged and
-/// the caller still authorizes the screen that asks.
+/// the caller still authorizes the screen that asks. The actor's own set
+/// follows its kind; another account is read as staff, because only staff
+/// administration screens read another account and they reach staff
+/// accounts only (ADR 16).
 #[derive(Clone, Debug, Default)]
 pub struct Effective {
     pub allowed: BTreeSet<&'static str>,
@@ -184,6 +190,11 @@ pub async fn effective_capabilities_of(
         .await?
         .get(0);
     let operator = crate::is_operator(client, scope.tenant()).await?;
+    let kind = if user == scope.user() {
+        scope.actor().kind()
+    } else {
+        AccountKind::Staff
+    };
     let denied: BTreeSet<String> = direct
         .iter()
         .filter(|row| !row.get::<_, bool>(1))
@@ -199,7 +210,8 @@ pub async fn effective_capabilities_of(
         .capabilities
         .iter()
         .filter(|(key, owned)| {
-            (operator || !owned.definition.platform)
+            owned.definition.admits(kind)
+                && (operator || !owned.definition.is_platform())
                 && !denied.contains(**key)
                 && (grant_all || allowed.contains(**key) || roles.contains(**key))
         })
