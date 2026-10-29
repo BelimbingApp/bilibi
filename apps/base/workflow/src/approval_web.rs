@@ -326,7 +326,9 @@ impl State {
                                 .authentication
                                 .account_identity(&**client, scope, *id)
                                 .await
-                                .is_ok()
+                                .is_ok_and(|identity| {
+                                    identity.kind == bilibi_tenancy::AccountKind::Staff
+                                })
                             {
                                 accounts.push(*id);
                             }

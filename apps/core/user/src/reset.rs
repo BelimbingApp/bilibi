@@ -161,7 +161,7 @@ impl UserService {
         let client = self.db.get().await.map_err(Error::from)?;
         let candidates = client
             .query(
-                "SELECT u.id,u.tenant_id,u.name,u.email FROM users u JOIN tenants t ON t.id=u.tenant_id WHERE lower(u.email)=$1 AND u.deleted_at IS NULL AND u.status='active' AND t.deleted_at IS NULL AND t.status='active' LIMIT 2",
+                "SELECT u.id,u.tenant_id,u.name,u.email FROM users u JOIN tenants t ON t.id=u.tenant_id WHERE lower(u.email)=$1 AND u.kind='staff' AND u.deleted_at IS NULL AND u.status='active' AND t.deleted_at IS NULL AND t.status='active' LIMIT 2",
                 &[&email],
             )
             .await
@@ -295,7 +295,7 @@ impl UserService {
         let mut client = self.db.get().await.map_err(Error::from)?;
         let account = client
             .query(
-                "SELECT u.id,u.tenant_id,r.token_hash FROM users u JOIN tenants t ON t.id=u.tenant_id LEFT JOIN password_reset_tokens r ON r.tenant_id=u.tenant_id AND r.user_id=u.id AND r.expires_at>now() WHERE lower(u.email)=$1 AND u.deleted_at IS NULL AND u.status='active' AND t.deleted_at IS NULL AND t.status='active' LIMIT 2",
+                "SELECT u.id,u.tenant_id,r.token_hash FROM users u JOIN tenants t ON t.id=u.tenant_id LEFT JOIN password_reset_tokens r ON r.tenant_id=u.tenant_id AND r.user_id=u.id AND r.expires_at>now() WHERE lower(u.email)=$1 AND u.kind='staff' AND u.deleted_at IS NULL AND u.status='active' AND t.deleted_at IS NULL AND t.status='active' LIMIT 2",
                 &[&email],
             )
             .await

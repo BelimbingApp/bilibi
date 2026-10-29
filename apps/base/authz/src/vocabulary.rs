@@ -7,23 +7,50 @@ pub const VOCABULARY: &str = "base/authz.vocabulary";
 /// capabilities in: `Contribution::new(STANDING_GRANTS, "<principal>",
 /// provenance, &StandingGrant { principal, capabilities })`.
 pub const STANDING_GRANTS: &str = "base/authz.standing_grants";
+/// Who may ever hold a capability (ADR 16). `decide` denies a capability
+/// outside the actor's audience before any grant, grant-all included.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Audience {
+    /// Staff of the tenant.
+    Tenant,
+    /// Staff of the operator tenant only (the `platform_operator` identity).
+    Platform,
+    /// Customer accounts on the tenant's portal; never staff.
+    Portal,
+}
 #[derive(Clone, Copy, Debug)]
 pub struct CapabilityDefinition {
     pub key: &'static str,
-    pub platform: bool,
+    pub audience: Audience,
 }
 impl CapabilityDefinition {
     pub const fn tenant(key: &'static str) -> Self {
         Self {
             key,
-            platform: false,
+            audience: Audience::Tenant,
         }
     }
     pub const fn platform(key: &'static str) -> Self {
         Self {
             key,
-            platform: true,
+            audience: Audience::Platform,
         }
+    }
+    /// A capability only a customer account may hold, on portal routes,
+    /// downloads and embeds (`Access::Portal`).
+    pub const fn portal(key: &'static str) -> Self {
+        Self {
+            key,
+            audience: Audience::Portal,
+        }
+    }
+    pub fn is_platform(&self) -> bool {
+        self.audience == Audience::Platform
+    }
+    /// Whether an account of `kind` may ever hold this capability: a
+    /// customer only portal ones, staff never a portal one.
+    pub fn admits(&self, kind: bilibi_tenancy::AccountKind) -> bool {
+        (self.audience == Audience::Portal) == (kind == bilibi_tenancy::AccountKind::Customer)
     }
 }
 #[derive(Clone, Copy, Debug)]
@@ -194,7 +221,35 @@ impl Vocabulary {
                 return Err(invalid(format!("undeclared grant {key}")));
             }
         }
+        result.check_audiences()?;
         Ok(result)
+    }
+    /// A role serves one audience (ADR 16): its keys are all portal or none
+    /// are, and a portal role is never grant-all, so no assignment can hand a
+    /// customer a staff capability or staff a portal one. A system principal
+    /// is the tenant's own work and declares no portal capability.
+    fn check_audiences(&self) -> Result<()> {
+        let portal = |key: &str| self.capabilities[key].definition.audience == Audience::Portal;
+        for role in self.roles.values() {
+            let portal_keys = role.capabilities.iter().filter(|key| portal(key)).count();
+            if (portal_keys > 0 && portal_keys < role.capabilities.len())
+                || (portal_keys > 0 && role.definition.grant_all)
+            {
+                return Err(invalid(format!(
+                    "system role {} mixes portal and staff audiences",
+                    role.definition.code
+                )));
+            }
+        }
+        for principal in self.system_principals.values() {
+            if principal.capabilities.iter().any(|key| portal(key)) {
+                return Err(invalid(format!(
+                    "system principal {} declares a portal capability",
+                    principal.name
+                )));
+            }
+        }
+        Ok(())
     }
     pub fn from_catalog(catalog: &bilibi_module_registry::Catalog) -> Result<Self> {
         let mut vocabulary =
@@ -212,10 +267,9 @@ impl Vocabulary {
                 && declared.is_some_and(|declared| {
                     grant.capabilities.iter().all(|key| {
                         declared.capabilities.contains(key)
-                            && self
-                                .capabilities
-                                .get(key)
-                                .is_some_and(|capability| !capability.definition.platform)
+                            && self.capabilities.get(key).is_some_and(|capability| {
+                                capability.definition.audience == Audience::Tenant
+                            })
                     })
                 });
             if !valid
