@@ -327,6 +327,85 @@ impl Badge<'_> {
     }
 }
 
+/// What a date is, as a day tile shows it: Belimbing's day-type vocabulary
+/// (Normal, Rest, Off, Holiday). Base UI keeps the four kinds itself so it
+/// imports no calendar module; a calendar maps its own type onto one.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DayKind {
+    #[default]
+    Working,
+    /// The weekly rest day.
+    Rest,
+    /// Another non-working day, such as Saturday in a five-day week.
+    Off,
+    Holiday,
+}
+
+impl DayKind {
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Working => "working",
+            Self::Rest => "rest",
+            Self::Off => "off",
+            Self::Holiday => "holiday",
+        }
+    }
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Working => "Working",
+            Self::Rest => "Rest",
+            Self::Off => "Off",
+            Self::Holiday => "Holiday",
+        }
+    }
+    /// The day-type tint and ink (`--color-day-*`); a working day keeps the
+    /// plain surface.
+    pub fn class(&self) -> &'static str {
+        match self {
+            Self::Working => "bg-surface text-ink",
+            Self::Rest => "bg-day-rest text-day-rest-ink",
+            Self::Off => "bg-day-off text-day-off-ink",
+            Self::Holiday => "bg-day-holiday text-day-holiday-ink",
+        }
+    }
+}
+
+/// The column names of a month grid, Monday first (ISO 8601).
+pub const WEEKDAYS: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+/// One resolved day (Belimbing `x-ui.day-tile`): `date` as shown ("31",
+/// "Mon 31"), the kind as a tint and a word, and the owner's `lines` of plain
+/// text (opening hours, a holiday's name). `description` is the whole day in
+/// words for the tooltip and assistive technology, so it repeats what the
+/// lines say; `outside` dims a neighbouring month's date in a month grid.
+#[derive(Template, Debug, Default)]
+#[template(
+    source = r#"{% import "components.html" as ui %}{% call ui::day_tile(id=id, kind=kind, date=date, description=description, outside=outside, lines=lines) %}{% endcall %}"#,
+    ext = "html"
+)]
+pub struct DayTile<'a> {
+    pub id: &'a str,
+    pub kind: DayKind,
+    pub date: &'a str,
+    pub description: &'a str,
+    pub outside: bool,
+    pub lines: Vec<String>,
+}
+
+/// A month of rendered [`DayTile`]s under [`WEEKDAYS`]: whole weeks, Monday
+/// to Sunday, the neighbouring months' dates (`outside`) filling the first
+/// and last. `caption` names the month for assistive technology.
+#[derive(Template, Debug, Default)]
+#[template(
+    source = r#"{% import "components.html" as ui %}{% call ui::day_month(id=id, caption=caption, tiles=tiles) %}{% endcall %}"#,
+    ext = "html"
+)]
+pub struct DayMonth<'a> {
+    pub id: &'a str,
+    pub caption: &'a str,
+    pub tiles: Vec<Html>,
+}
+
 /// A button, or the same control as a link when `href` is set. `busy` renders
 /// `aria-busy` and disables the control; a link ignores it. `event` is the
 /// browser adapter's `data-event` name; `working` is the label the browser

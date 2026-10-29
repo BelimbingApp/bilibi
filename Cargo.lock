@@ -1558,6 +1558,7 @@ dependencies = [
 name = "bilibi-work-calendar"
 version = "0.1.1"
 dependencies = [
+ "askama",
  "bilibi-agent-api",
  "bilibi-authz",
  "bilibi-base",
@@ -1566,10 +1567,13 @@ dependencies = [
  "bilibi-datetime",
  "bilibi-events",
  "bilibi-geonames",
+ "bilibi-grid",
+ "bilibi-menu",
  "bilibi-module-registry",
  "bilibi-party-ids",
  "bilibi-settings",
  "bilibi-tenancy",
+ "bilibi-ui",
  "bilibi-walkthrough-fixture",
  "bilibi-web",
  "inventory",

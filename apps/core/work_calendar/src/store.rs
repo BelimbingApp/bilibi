@@ -43,6 +43,17 @@ fn parse_date(text: &str) -> Result<Date> {
     text.parse().map_err(|_| Error::Internal)
 }
 
+/// The zone of calendar `c`'s rule version in force on the database's date
+/// (the first version's before it starts), as one SQL subquery: the
+/// calendars listing and their Grid table read it alike, and it matches
+/// [`crate::resolve::in_force`] on the same date.
+macro_rules! zone_in_force {
+    () => {
+        "(SELECT r.timezone FROM core_work_calendar_rules r WHERE r.tenant_id=c.tenant_id AND r.calendar_id=c.id ORDER BY r.effective_from<=CURRENT_DATE DESC, CASE WHEN r.effective_from<=CURRENT_DATE THEN r.effective_from END DESC NULLS LAST, r.effective_from LIMIT 1)"
+    };
+}
+pub(crate) use zone_in_force;
+
 pub(crate) async fn calendars(
     client: &(impl GenericClient + Sync),
     tenant: i64,
@@ -61,8 +72,15 @@ pub(crate) async fn calendars(
         .get(0);
     let rows = client
         .query(
-            "SELECT code,name,status FROM core_work_calendars WHERE tenant_id=$1 AND (code ILIKE $2 OR name ILIKE $2) ORDER BY code LIMIT $3 OFFSET $4",
-            &[&tenant, &pattern, &listing.page_size, &offset(listing.page, listing.page_size)],
+            concat!(
+                "SELECT c.code,c.name,c.status,",
+                zone_in_force!(),
+                ",\
+             ARRAY(SELECT s.code FROM core_work_calendar_includes i JOIN core_work_calendar_holiday_sets s ON s.tenant_id=i.tenant_id AND s.id=i.holiday_set_id WHERE i.tenant_id=c.tenant_id AND i.calendar_id=c.id ORDER BY s.code LIMIT $5),\
+             (SELECT count(*) FROM core_work_calendar_includes i WHERE i.tenant_id=c.tenant_id AND i.calendar_id=c.id) \
+             FROM core_work_calendars c WHERE c.tenant_id=$1 AND (c.code ILIKE $2 OR c.name ILIKE $2) ORDER BY c.code LIMIT $3 OFFSET $4"
+            ),
+            &[&tenant, &pattern, &listing.page_size, &offset(listing.page, listing.page_size), &MAX_ROWS],
         )
         .await?
         .iter()
@@ -70,6 +88,11 @@ pub(crate) async fn calendars(
             code: row.get(0),
             name: row.get(1),
             status: row.get(2),
+            timezone: row.get::<_, Option<String>>(3).unwrap_or_default(),
+            holiday_sets: Rows {
+                rows: row.get(4),
+                total: row.get(5),
+            },
         })
         .collect();
     Ok(Rows { rows, total })
@@ -1361,7 +1384,9 @@ async fn plan_read(
         .await?;
     Ok(stored)
 }
-async fn today(client: &(impl GenericClient + Sync)) -> Result<Date> {
+/// The database's date: what defaults a write's dates and picks the rule
+/// version "in force today" in listings.
+pub(crate) async fn today(client: &(impl GenericClient + Sync)) -> Result<Date> {
     client
         .query_one("SELECT CURRENT_DATE::text", &[])
         .await?

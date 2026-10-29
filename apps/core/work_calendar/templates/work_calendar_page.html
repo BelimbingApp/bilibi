@@ -1,0 +1,15 @@
+{#- Every work calendar page (src/web): the header, its sections and the
+    open dialog, each rendered through the shared models. A calendar's pages
+    announce it to the workspace. -#}
+{%- import "components.html" as ui -%}
+{%- import "feedback.html" as feedback -%}
+{%- import "workspace.html" as workspace -%}
+<div data-shared-ui>
+{% call feedback::flash_group(messages=flash) %}{% endcall %}
+{% call ui::page(id=id, variant=variant) %}
+{%- if !record_kind.is_empty() %}{% call workspace::announce(kind=record_kind, record_id=record_id) %}{% endcall %}{% endif %}
+{{ header }}
+{% call ui::stack(parts=sections, wide=true) %}{% endcall %}
+{{ dialog }}
+{% endcall %}
+</div>

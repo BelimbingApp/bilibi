@@ -9,10 +9,12 @@
 //! authorizes its own operation); administration needs the module's
 //! capabilities and is reached through the `core.work_calendar.*` contracts.
 mod agent_operations;
+mod contributions;
 mod model;
 mod resolve;
 mod store;
 mod timetable;
+mod web;
 
 pub use model::{
     Calendar, CalendarEntry, Choice, Day, DayType, Exception, FieldError, Holiday, HolidaySet,
@@ -215,7 +217,7 @@ inventory::submit! { Contribution::new(DEFINITIONS, DEFAULT, provenance!(), &Set
 inventory::submit! {
     bilibi_module_registry::Module {
         id: "core/work_calendar", layer: bilibi_module_registry::Layer::Core,
-        dependencies: &["base/agent_api", "base/authz", "base/database", "base/datetime", "base/events", "base/party_ids", "base/settings", "base/tenancy", "core/geonames"],
+        dependencies: &["base/agent_api", "base/authz", "base/database", "base/datetime", "base/events", "base/grid", "base/menu", "base/party_ids", "base/settings", "base/tenancy", "base/ui", "core/geonames"],
         migrations: &[("core-work-calendar-001-work-calendar", include_str!("../migrations/001-work-calendar.sql"))],
         services: &[Service { id: SERVICE, factory: |services| {
             let calendars = Arc::new(WorkCalendars {
@@ -227,6 +229,12 @@ inventory::submit! {
             });
             agent_operations::bind(calendars.clone())?;
             Ok(calendars)
-        }}],
+        }}, Service { id: web::SERVICE, factory: |services| Ok(Arc::new(bilibi_ui::page::PageService::<Scope, Error>(Arc::new(web::Pages {
+            db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
+            calendars: services.get(SERVICE)?,
+            settings: services.get("base/settings.store")?,
+            geonames: services.get(bilibi_geonames::SERVICE)?,
+            contracts: services.get(bilibi_agent_api::page::SERVICE)?,
+        }))))}],
     }
 }

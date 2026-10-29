@@ -1,0 +1,9 @@
+{#- A form of the pages (src/web `DialogForm`): its fields, side by side in pairs where the
+    page gives a row, then its actions. `change` re-renders it as values
+    change (a set's divisions follow its country); `submit` is what Enter and
+    the primary button raise. -#}
+{%- import "forms.html" as forms -%}
+{% call forms::form(id=id, event=event, change=change, submit_event=submit, actions=actions) %}
+{%- for row in rows %}{% if row.len() == 1 %}{% for field in row %}{{ field }}{% endfor %}{% else %}{% call forms::field_row(fields=row) %}{% endcall %}{% endif %}{% endfor %}
+{%- if !week.is_empty() %}{% call forms::section(labelledby=week_heading, heading="Week", description="Opening hours as HH:MM-HH:MM, several separated by commas. Only a working day has hours.") %}{{ week }}{% endcall %}{% endif %}
+{% endcall %}

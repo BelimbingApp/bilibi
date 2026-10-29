@@ -9,6 +9,17 @@ use std::collections::{BTreeMap, BTreeSet};
 /// The furthest a holiday on a rest day moves to find a working day.
 pub(crate) const SUBSTITUTE_SEARCH: i64 = 14;
 
+/// The version of `rules` (sorted by `effective_from`) in force on `date`:
+/// the last that starts by then. The first version also governs any earlier
+/// date, so a calendar always answers; `None` only without versions.
+pub(crate) fn in_force(rules: &[Rule], date: Date) -> Option<&Rule> {
+    rules
+        .iter()
+        .rev()
+        .find(|rule| rule.effective_from <= date)
+        .or(rules.first())
+}
+
 /// Everything one calendar's dates depend on, loaded for a window.
 pub(crate) struct Source {
     pub substitute: Substitute,
@@ -19,14 +30,9 @@ pub(crate) struct Source {
     pub exceptions: Vec<Exception>,
 }
 impl Source {
-    /// The version in force on `date`; the first version also governs any
-    /// earlier date, so a calendar always answers.
+    /// The version in force on `date` (see [`in_force`]).
     pub fn rule(&self, date: Date) -> &Rule {
-        self.rules
-            .iter()
-            .rev()
-            .find(|rule| rule.effective_from <= date)
-            .unwrap_or(&self.rules[0])
+        in_force(&self.rules, date).unwrap_or(&self.rules[0])
     }
     fn weekly(&self, date: Date) -> &WeekDay {
         self.rule(date).week.day(date)

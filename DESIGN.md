@@ -42,6 +42,7 @@ Use semantic roles. Never use arbitrary colors. Values live in `apps/base/ui/ass
 | `brand`, `brand-strong`, `brand-surface`, `brand-ink` | Orientation accent |
 | `success`, `info`, `warning`, `danger` | Honest status, each with `-surface`, `-line`, `-ink` |
 | `scale-1..5`, `cat-1..8` | Data colour for ordered and categorical values. Never read as status. Charts take `cat-1..8` in series order |
+| `day-rest`, `day-off`, `day-holiday`, each with `-ink` | A work calendar's non-working days, as quiet tints. A working day stays on `surface`. Never read as status |
 
 - Light and dark themes share the same roles.
 - Success and info announce politely. Warning and error announce as an alert.
@@ -62,6 +63,7 @@ Reuse the shared macros and typed models. Do not hand-write markup or copy class
 | Inline edit | `templates/inline.html` and `src/inline.rs` | `apps/base/ui` |
 | List and table | `templates/lists.html`, `flex_table.html` | `apps/base/ui` |
 | Chart (KPI, bar, stacked bar, line, pie, donut); `Chart::drill` makes bars and slices raise a page event, with the Data table as the keyboard route | `templates/chart.html` and `src/chart.rs` (`Chart`, `ChartKind`, `Series`) | `apps/base/ui` |
+| A resolved day (working, rest, off, holiday) and a month of them, Monday first | `day_tile` and `day_month` in `templates/components.html`, through `DayTile`, `DayMonth` and `DayKind` in `src/components.rs` | `apps/base/ui` |
 
 - Name variants through the enums (`ButtonVariant`, `BadgeKind`, `PageVariant`), not class strings.
 - Icons use bare names from `base/ui` (`edit`, `pencil`, `bookmark-solid`), rendered as inline SVG. Use the Belimbing equivalent for a familiar action; see `apps/base/ui/README.md` for names and missing-icon behaviour.

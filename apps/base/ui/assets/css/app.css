@@ -308,6 +308,18 @@
   --color-cat-6: var(--color-lime-500);
   --color-cat-7: var(--color-indigo-500);
   --color-cat-8: var(--color-rose-400);
+
+  /* Day types: a work calendar's rest, off and holiday dates (Belimbing's
+     day-type tints), shared by every calendar surface so a month view, a
+     roster and a leave calendar mark non-working days alike. Quiet tints and
+     never a status colour: a holiday is not a warning. A working day stays
+     on the plain surface. */
+  --color-day-rest: var(--color-stone-100);
+  --color-day-rest-ink: var(--color-stone-600);
+  --color-day-off: var(--color-stone-200);
+  --color-day-off-ink: var(--color-stone-600);
+  --color-day-holiday: var(--color-orange-100);
+  --color-day-holiday-ink: var(--color-orange-800);
 }
 
 /*
@@ -378,6 +390,12 @@
     --color-cat-6: var(--color-lime-400);
     --color-cat-7: var(--color-indigo-400);
     --color-cat-8: var(--color-rose-400);
+    --color-day-rest: color-mix(in srgb, var(--color-stone-50) 6%, transparent);
+    --color-day-rest-ink: var(--color-stone-400);
+    --color-day-off: color-mix(in srgb, var(--color-stone-50) 10%, transparent);
+    --color-day-off-ink: var(--color-stone-400);
+    --color-day-holiday: color-mix(in srgb, var(--color-orange-600) 14%, transparent);
+    --color-day-holiday-ink: var(--color-orange-300);
   }
 }
 
@@ -438,6 +456,12 @@
   --color-cat-6: var(--color-lime-400);
   --color-cat-7: var(--color-indigo-400);
   --color-cat-8: var(--color-rose-400);
+  --color-day-rest: color-mix(in srgb, var(--color-stone-50) 6%, transparent);
+  --color-day-rest-ink: var(--color-stone-400);
+  --color-day-off: color-mix(in srgb, var(--color-stone-50) 10%, transparent);
+  --color-day-off-ink: var(--color-stone-400);
+  --color-day-holiday: color-mix(in srgb, var(--color-orange-600) 14%, transparent);
+  --color-day-holiday-ink: var(--color-orange-300);
 }
 
 [data-phx-session],
