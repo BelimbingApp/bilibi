@@ -168,6 +168,8 @@ impl Pages {
             operation: request.operation,
             id,
             params: list_state(request.query)?,
+            field_filters: filter_drafts(request.query),
+            filter_notice: filter_notice(request.query),
             columns,
             framed: request.framed,
             statuses: CommitStates::default(),
@@ -265,7 +267,7 @@ impl Page<Scope, Error> for Pages {
 }
 
 static LIST_SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
-    ListSpec {
+    let mut spec = ListSpec {
         sortable: BTreeMap::from([
             ("name".into(), SortDir::Asc),
             ("status".into(), SortDir::Asc),
@@ -287,9 +289,13 @@ static LIST_SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
         )]),
         omit_defaults: true,
         ..ListSpec::default()
+    };
+    if let Ok(fields) = crate::field_contributions::definitions() {
+        for (_, field) in fields {
+            spec.sortable.insert(field.id.into(), SortDir::Asc);
+        }
     }
-    .shared()
-    .expect("company list specification")
+    spec.shared().expect("company list specification")
 });
 fn list_state(values: &HashMap<String, String>) -> Result<ListState> {
     let mut values = values.clone();
@@ -305,6 +311,42 @@ fn list_state(values: &HashMap<String, String>) -> Result<ListState> {
     }
     ListState::parse(&values, LIST_SPEC.clone()).map_err(|_| Error::Internal)
 }
+fn bounded_filter(value: &str, max: usize) -> String {
+    let mut end = value.len().min(max);
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value[..end].to_owned()
+}
+fn parse_filters(values: &HashMap<String, String>) -> Option<Vec<crate::FieldFilter>> {
+    let Some(raw) = values.get("field_filters") else {
+        return Some(Vec::new());
+    };
+    if raw.len() > crate::list_fields::MAX_FILTER_BYTES {
+        return None;
+    }
+    let filters: Vec<crate::FieldFilter> = serde_json::from_str(raw).ok()?;
+    if filters.len() > crate::list_fields::MAX_FILTERS
+        || filters.iter().any(|f| {
+            f.field.len() > 160
+                || f.operator.len() > 20
+                || f.value.len() > crate::list_fields::MAX_FILTER_DRAFT_BYTES
+        })
+    {
+        return None;
+    }
+    Some(filters)
+}
+fn filter_drafts(values: &HashMap<String, String>) -> Vec<crate::FieldFilter> {
+    parse_filters(values).unwrap_or_default()
+}
+fn filter_notice(values: &HashMap<String, String>) -> String {
+    if parse_filters(values).is_none() {
+        "The filter link is invalid or exceeds the supported limit. Re-enter the filters.".into()
+    } else {
+        String::new()
+    }
+}
 fn query_params(state: &ListState) -> Params {
     Params {
         page: state.page as i64,
@@ -313,6 +355,7 @@ fn query_params(state: &ListState) -> Params {
         dir: state.sort_dir.unwrap_or_default().key().into(),
         q: state.search.clone(),
         status: state.filters.get("status").cloned().unwrap_or_default(),
+        field_filters: Vec::new(),
     }
 }
 struct Pending {
@@ -330,6 +373,8 @@ struct CompanyPage {
     operation: &'static str,
     id: Option<i64>,
     params: ListState,
+    field_filters: Vec<crate::FieldFilter>,
+    filter_notice: String,
     columns: PageColumns,
     framed: bool,
     statuses: CommitStates,
@@ -398,27 +443,36 @@ impl CompanyPage {
     fn query(&self) -> HashMap<String, String> {
         let mut values = self.params.to_params();
         values.extend(self.columns.params());
+        if !self.field_filters.is_empty() {
+            values.insert(
+                "field_filters".into(),
+                serde_json::to_string(&self.field_filters).unwrap_or_default(),
+            );
+        }
         values
     }
     async fn draw(&mut self, scope: &Scope) -> Result<LiveBody> {
-        let client = self.db.get().await?;
+        let mut client = self.db.get().await?;
         let masked = crate::field_contributions::effective_restrictions(&**client, scope).await?;
         let html = match self.operation {
             "list" => {
-                if self
-                    .params
-                    .sort_by
-                    .as_ref()
-                    .is_some_and(|key| masked.contains(key))
-                {
-                    self.params.sort_by = Some("name".into());
+                let mut query = query_params(&self.params);
+                query.field_filters = self.field_filters.clone();
+                let mut page = crate::list(&mut client, scope, &query).await?;
+                if !page.sort.is_empty() && page.sort != query.sort {
+                    self.params.sort_by = Some(page.sort.clone());
                     self.params.sort_dir = Some(SortDir::Asc);
+                    query.sort = page.sort.clone();
+                    query.dir = "asc".into();
                 }
-                let mut page = crate::list(&**client, scope, &query_params(&self.params)).await?;
+                let catalog = bilibi_grid::Catalog::for_scope(&**client, scope).await?;
+                let available =
+                    crate::list_fields::available(&**client, scope, &catalog, &masked).await?;
                 let last = ((page.total + self.params.page_size as i64 - 1)
                     / self.params.page_size as i64) as u64;
-                if self.params.clamp_to_last_page(last, true) {
-                    page = crate::list(&**client, scope, &query_params(&self.params)).await?;
+                if !page.limited && self.params.clamp_to_last_page(last, true) {
+                    query.page = self.params.page as i64;
+                    page = crate::list(&mut client, scope, &query).await?;
                 }
                 // Rebuild built-ins under the fresh restrictions too: a retained
                 // built-in must never outlive its reader's field access.
@@ -462,7 +516,7 @@ impl CompanyPage {
                     &**client,
                     scope,
                     &page,
-                    &query_params(&self.params),
+                    &query,
                     &self.columns,
                     self.framed,
                     views::ExtensionListFields {
@@ -470,6 +524,9 @@ impl CompanyPage {
                         values: &extension_values,
                         display: &display,
                         picklists: &self.picklists,
+                        filters: &self.field_filters,
+                        available: &available,
+                        filter_notice: &self.filter_notice,
                     },
                 )
                 .await?
@@ -606,7 +663,52 @@ impl CompanyPage {
                 self.params.apply_filters(&posted);
             }
             "page" if self.operation == "list" => self.params.put_page(Some(get("page"))),
+            "field_filter_add" if self.operation == "list" => {
+                if self.field_filters.len() < crate::list_fields::MAX_FILTERS {
+                    self.field_filters.push(crate::FieldFilter::default());
+                    self.params.page = 1;
+                }
+            }
+            "field_filter_remove" if self.operation == "list" => {
+                if let Ok(index) = get("index").parse::<usize>() {
+                    if index < self.field_filters.len() {
+                        self.field_filters.remove(index);
+                    }
+                }
+                self.params.page = 1;
+            }
+            "field_filter_change" if self.operation == "list" => {
+                let index = get("condition[index]")
+                    .parse::<usize>()
+                    .map_err(|_| Error::Invalid)?;
+                let too_long = get("condition[value]").len()
+                    > crate::list_fields::MAX_FILTER_DRAFT_BYTES
+                    || get("condition[field]").len() > 160
+                    || get("condition[operator]").len() > 20;
+                if let Some(filter) = self.field_filters.get_mut(index) {
+                    let field = bounded_filter(get("condition[field]"), 160);
+                    if field != filter.field {
+                        filter.value.clear();
+                        filter.operator = "eq".into();
+                    } else {
+                        filter.operator = bounded_filter(get("condition[operator]"), 20);
+                        filter.value = bounded_filter(
+                            get("condition[value]"),
+                            crate::list_fields::MAX_FILTER_DRAFT_BYTES,
+                        );
+                    }
+                    filter.field = field;
+                }
+                self.filter_notice = if too_long {
+                    "This filter draft is too long and was shortened; it was not applied.".into()
+                } else {
+                    String::new()
+                };
+                self.params.page = 1;
+            }
             "clear_filters" if self.operation == "list" => {
+                self.field_filters.clear();
+                self.filter_notice.clear();
                 self.params.apply_filters(&HashMap::from([
                     ("search".into(), "".into()),
                     ("status".into(), "".into()),
@@ -845,6 +947,8 @@ impl LiveState<Scope, Error> for CompanyPage {
                 LiveInput::Refresh => {}
                 LiveInput::Params(values) => {
                     self.params = list_state(values)?;
+                    self.field_filters = filter_drafts(values);
+                    self.filter_notice = filter_notice(values);
                     self.columns.from_params(request.scope, values).await?;
                 }
                 LiveInput::Event(value) => {
