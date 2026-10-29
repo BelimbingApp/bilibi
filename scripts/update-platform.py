@@ -137,71 +137,81 @@ def integrated(folder, head, default):
                    '--unidiff-zero', input=patch, env=env, check=False).returncode == 0
 
 
-def branch_plan():
-    branch = git(ROOT, 'branch', '--show-current')
+def branch_plan(folder):
+    branch = git(folder, 'branch', '--show-current')
     if not branch:
-        raise Refused(f'{ROOT}: HEAD is detached. Run {action(ROOT, "switch", "<your-branch>")} and retry.')
-    remote = run(ROOT, 'git', 'config', '--get', f'branch.{branch}.remote', check=False).stdout.decode().strip() or 'origin'
+        raise Refused(f'{folder}: HEAD is detached. Run {action(folder, "switch", "<your-branch>")} and retry.')
+    remote = run(folder, 'git', 'config', '--get', f'branch.{branch}.remote', check=False).stdout.decode().strip() or 'origin'
     if remote == '.':
-        raise Refused(f'{ROOT}: {branch} tracks a local branch. Set its published upstream with '
-                      f'{action(ROOT, "branch", "--set-upstream-to=origin/" + branch)} and retry.')
-    previous = git(ROOT, 'for-each-ref', '--format=%(upstream)', f'refs/heads/{branch}')
-    published_before = bool(previous) and run(ROOT, 'git', 'rev-parse', '--verify', previous, check=False).returncode == 0
-    published_before = published_before and ancestor(ROOT, 'HEAD', previous)
+        raise Refused(f'{folder}: {branch} tracks a local branch. Set its published upstream with '
+                      f'{action(folder, "branch", "--set-upstream-to=origin/" + branch)} and retry.')
+    previous = git(folder, 'for-each-ref', '--format=%(upstream)', f'refs/heads/{branch}')
+    published_before = bool(previous) and run(folder, 'git', 'rev-parse', '--verify', previous, check=False).returncode == 0
+    published_before = published_before and ancestor(folder, 'HEAD', previous)
     # Fetch only changes refs; it leaves all source files and the index alone.
-    git(ROOT, 'fetch', '--prune', '--', remote)
-    default_reply = git(ROOT, 'ls-remote', '--symref', remote, 'HEAD')
+    git(folder, 'fetch', '--prune', '--', remote)
+    default_reply = git(folder, 'ls-remote', '--symref', remote, 'HEAD')
     defaults = [line.split()[1].removeprefix('refs/heads/') for line in default_reply.splitlines()
                 if line.startswith('ref: refs/heads/') and line.endswith('\tHEAD')]
     if len(defaults) != 1:
-        raise Refused(f'{ROOT}: cannot find the remote default branch. Run {action(ROOT, "remote", "show", remote)} and check its HEAD branch.')
+        raise Refused(f'{folder}: cannot find the remote default branch. Run {action(folder, "remote", "show", remote)} and check its HEAD branch.')
     default = defaults[0]
     default_ref = f'refs/remotes/{remote}/{default}'
-    git(ROOT, 'rev-parse', '--verify', default_ref)
-    upstream = git(ROOT, 'for-each-ref', '--format=%(upstream)', f'refs/heads/{branch}')
-    exists = bool(upstream) and run(ROOT, 'git', 'rev-parse', '--verify', upstream, check=False).returncode == 0
-    covered = branch != default and integrated(ROOT, 'HEAD', default_ref)
+    git(folder, 'rev-parse', '--verify', default_ref)
+    upstream = git(folder, 'for-each-ref', '--format=%(upstream)', f'refs/heads/{branch}')
+    exists = bool(upstream) and run(folder, 'git', 'rev-parse', '--verify', upstream, check=False).returncode == 0
+    covered = branch != default and integrated(folder, 'HEAD', default_ref)
     if covered:
-        if not (ancestor(ROOT, 'HEAD', default_ref) or published_before
-                or (exists and ancestor(ROOT, 'HEAD', upstream))):
-            raise Refused(f'{ROOT}: cannot prove {branch} has no unpublished commits. '
-                          f'Run {action(ROOT, "push", "-u", remote, branch)}, then retry.')
+        if not (ancestor(folder, 'HEAD', default_ref) or published_before
+                or (exists and ancestor(folder, 'HEAD', upstream))):
+            raise Refused(f'{folder}: cannot prove {branch} has no unpublished commits. '
+                          f'Run {action(folder, "push", "-u", remote, branch)}, then retry.')
         local = f'refs/heads/{default}'
-        if run(ROOT, 'git', 'rev-parse', '--verify', local, check=False).returncode == 0:
-            if not ancestor(ROOT, local, default_ref):
-                raise Refused(f'{ROOT}: local {default} has commits absent from its remote. '
-                              f'Run {action(ROOT, "log", "--oneline", default_ref + ".." + local)}; publish or reconcile them before retrying.')
+        if run(folder, 'git', 'rev-parse', '--verify', local, check=False).returncode == 0:
+            if not ancestor(folder, local, default_ref):
+                raise Refused(f'{folder}: local {default} has commits absent from its remote. '
+                              f'Run {action(folder, "log", "--oneline", default_ref + ".." + local)}; publish or reconcile them before retrying.')
         reason = 'its upstream is gone and its changes are already in' if not exists else 'its changes are already in'
         print(f'{branch}: {reason} {default}. Switching safely to {default}.', flush=True)
         return default, default_ref
     if not exists:
-        raise Refused(f'{ROOT}: {branch} has no available upstream and has work absent from {default}. '
-                      f'Publish it with {action(ROOT, "push", "-u", remote, branch)}, then retry. No branch was switched.')
-    if not ancestor(ROOT, 'HEAD', upstream):
-        raise Refused(f'{ROOT}: {branch} has local commits or has diverged from its upstream. '
-                      f'Run {action(ROOT, "log", "--oneline", upstream + "..HEAD")}; '
-                      f'publish with {action(ROOT, "push", remote, branch)} or reconcile the branch before retrying.')
+        raise Refused(f'{folder}: {branch} has no available upstream and has work absent from {default}. '
+                      f'Publish it with {action(folder, "push", "-u", remote, branch)}, then retry. No branch was switched.')
+    if not ancestor(folder, 'HEAD', upstream):
+        raise Refused(f'{folder}: {branch} has local commits or has diverged from its upstream. '
+                      f'Run {action(folder, "log", "--oneline", upstream + "..HEAD")}; '
+                      f'publish with {action(folder, "push", remote, branch)} or reconcile the branch before retrying.')
     return branch, upstream
 
 
 def component_update(folder, facts, platform_version, platform_head, tested):
-    """Return a plain reason when a mount is left alone; move only a clean release checkout."""
+    """Return the outcome and whether a mount was left alone."""
     if folder.is_symlink() or Path(git(folder, 'rev-parse', '--show-toplevel')).resolve() != folder:
-        return 'not an independent real checkout; preserve it and follow its mounting guide'
+        return True, 'not an independent real checkout; preserve it and follow its mounting guide'
     branch = git(folder, 'branch', '--show-current')
-    if branch:
-        return f'on branch {branch}, left as is; update it in its own repository'
     if changes(folder):
-        return f'local changes; review {action(folder, "status", "--short")} and commit your work before retrying'
+        return True, f'local changes; review {action(folder, "status", "--short")} and commit your work before retrying'
     if not facts:
-        return 'not listed in the official catalogue; update this repository deliberately with its owner'
+        return True, (f'on branch {branch}, left as is; update it in its own repository' if branch else
+                      'not listed in the official catalogue; update this repository deliberately with its owner')
     repository = facts['repository'].removesuffix('.git').rstrip('/')
     origin = git(folder, 'remote', 'get-url', 'origin').removesuffix('.git').rstrip('/')
     if not repository.startswith('https://github.com/BelimbingApp/') or origin != repository:
-        return f'origin differs from the official catalogue; inspect {action(folder, "remote", "-v")} and reconcile it deliberately'
+        return True, (f'on branch {branch}, left as is; update it in its own repository' if branch else
+                      f'origin differs from the official catalogue; inspect {action(folder, "remote", "-v")} and reconcile it deliberately')
+    if branch:
+        before = git(folder, 'rev-parse', 'HEAD')
+        target_branch, upstream = branch_plan(folder)
+        dirty = changes(folder)
+        if dirty:
+            refuse_edits(folder, [path for _, path in dirty])
+        move_branch(folder, target_branch, upstream)
+        after = git(folder, 'rev-parse', 'HEAD')
+        return False, (f'{before[:12]} -> {after[:12]} on {target_branch}' if before != after or branch != target_branch
+                       else f'already up to date on {target_branch} ({after[:12]})')
     head = git(folder, 'rev-parse', 'HEAD')
     if head not in {release['commit'] for release in facts['versions'].values()}:
-        return f'detached at {head[:12]}, which is not an official release commit; left as is'
+        return True, f'detached at {head[:12]}, which is not an official release commit; left as is'
     choices = []
     for version, release in facts['versions'].items():
         if catalogue.satisfies(platform_version, catalogue.parse_requirement(release['platform'], str(folder))):
@@ -212,20 +222,18 @@ def component_update(folder, facts, platform_version, platform_head, tested):
                           and item['domain']['version'] == version for item in tested)
             choices.append((checked, catalogue.version_tuple(version), version, release['commit']))
     if not choices:
-        return f'no release supports Platform {platform_version}; ask the component owner to publish a compatible release'
+        return True, f'no release supports Platform {platform_version}; ask the component owner to publish a compatible release'
     _, _, version, target = max(choices)
     if head == target:
-        print(f'{folder}: already at recommended {version} ({head[:12]}).', flush=True)
-        return None
+        return False, f'already at recommended {version} ({head[:12]})'
     installed = max((v for v, release in facts['versions'].items() if release['commit'] == head), key=catalogue.version_tuple)
     if catalogue.version_tuple(version) < catalogue.version_tuple(installed):
-        return f'recommended {version} is older than installed {installed}; update never downgrades'
+        return True, f'recommended {version} is older than installed {installed}; update never downgrades'
     git(folder, 'fetch', '--prune', '--tags', 'origin')
     if run(folder, 'git', 'cat-file', '-e', f'{target}^{{commit}}', check=False).returncode:
-        return f'recommended commit {target} is unavailable; ask the component owner to publish it'
+        return True, f'recommended commit {target} is unavailable; ask the component owner to publish it'
     git(folder, 'checkout', '--no-overwrite-ignore', '--detach', target)
-    print(f'{folder}: {head[:12]} -> recommended {version} ({target[:12]}).', flush=True)
-    return None
+    return False, f'{head[:12]} -> recommended {version} ({target[:12]})'
 
 
 def update_components(remote):
@@ -244,22 +252,35 @@ def update_components(remote):
             return
     version = discovery.workspace_version(ROOT)
     head = git(ROOT, 'rev-parse', 'HEAD')
+    outcomes = []
     for layer in ('domains', 'extensions'):
         for folder in sorted((ROOT / 'apps' / layer).iterdir()):
             if not (folder.is_dir() or folder.is_symlink()) or folder.name == 'src' or folder.name.startswith('.'):
                 continue
             try:
-                reason = component_update(folder, data.get(layer, {}).get(folder.name), version, head,
+                stopped, reason = component_update(folder, data.get(layer, {}).get(folder.name), version, head,
                                           data['tested'] if layer == 'domains' else [])
-            except (Refused, catalogue.Refused) as error:
-                reason = str(error)
-            if reason:
-                print(f'Left alone: {folder}: {reason}.', flush=True)
+            except (Refused, catalogue.Refused, OSError) as error:
+                stopped, reason = True, str(error)
+            prefix = f'{folder}: '
+            if reason.startswith(prefix):
+                reason = reason[len(prefix):]
+            outcomes.append((folder, stopped, reason))
+    return outcomes
+
+
+def move_branch(folder, branch, upstream):
+    if git(folder, 'branch', '--show-current') != branch:
+        if run(folder, 'git', 'show-ref', '--verify', f'refs/heads/{branch}', check=False).returncode:
+            git(folder, 'switch', '--no-overwrite-ignore', '--track', '-c', branch, upstream)
+        else:
+            git(folder, 'switch', '--no-overwrite-ignore', branch)
+    git(folder, 'merge', '--ff-only', '--no-overwrite-ignore', upstream)
 
 
 def update():
     generated_changes()
-    branch, upstream = branch_plan()
+    branch, upstream = branch_plan(ROOT)
     before = git(ROOT, 'rev-parse', 'HEAD')
     remote = upstream.removeprefix('refs/remotes/').split('/', 1)[0]
     # Fetches can take time. Recheck before setting anything aside, so edits
@@ -271,12 +292,7 @@ def update():
         if paths:
             print('Regenerating local composition: ' + ', '.join(paths), flush=True)
             git(ROOT, 'restore', '--source=HEAD', '--staged', '--worktree', '--', *paths)
-        if git(ROOT, 'branch', '--show-current') != branch:
-            if run(ROOT, 'git', 'show-ref', '--verify', f'refs/heads/{branch}', check=False).returncode:
-                git(ROOT, 'switch', '--no-overwrite-ignore', '--track', '-c', branch, upstream)
-            else:
-                git(ROOT, 'switch', '--no-overwrite-ignore', branch)
-        git(ROOT, 'merge', '--ff-only', '--no-overwrite-ignore', upstream)
+        move_branch(ROOT, branch, upstream)
     except Refused:
         # A failed switch/fast-forward must not consume generated work either.
         for path, (working, staged) in saved.items():
@@ -290,13 +306,18 @@ def update():
           else f'Platform: already up to date on {branch} ({after[:12]}).', flush=True)
     if before != after:
         print(git(ROOT, 'diff', '--stat', before, after), flush=True)
-    update_components(remote)
+    outcomes = update_components(remote)
     subprocess.run([sys.executable, str(ROOT / 'scripts/discover-modules.py')], cwd=ROOT, check=True)
     resolved = subprocess.run(['cargo', 'metadata', '--format-version', '1'], cwd=ROOT, stdout=subprocess.DEVNULL)
     if resolved.returncode:
         raise Refused(f'{ROOT}: Platform updated, but Cargo could not resolve the mounted composition. '
                       'Resolve the diagnostics above, run cargo metadata --format-version 1, then ./bilibi start.')
-    print('Composition regenerated for the mounted components.\nNext: ./bilibi start', flush=True)
+    print('Composition regenerated for the mounted components.', flush=True)
+    if outcomes:
+        print('Component update summary:', flush=True)
+        for folder, stopped, reason in outcomes:
+            print(f'{"Left alone" if stopped else "Updated"}: {folder}: {reason.rstrip(chr(46))}.', flush=True)
+    print('Next: ./bilibi start', flush=True)
 
 
 if __name__ == '__main__':
