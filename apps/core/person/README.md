@@ -97,6 +97,15 @@ tables directly; the providers contain the owning queries.
 
 `bilibi_person::read_person(client, scope, id)` accepts `&dyn bilibi_tenancy::ReadClient`. Composed reads, including billing-address owner checks, keep the caller's connection and the same `admin.person.view` check and contact masks. Retired Persons remain readable.
 
+## Personal data
+
+**Erasure anonymises the person to a stub that keeps its ID, kind and links, and marks it erased (`erased_at`).** Store `core/person.people` under [`base/personal_data`](../../base/personal_data/README.md), [ADR 05](../../../docs/architecture/decisions/05-personal-data-registry.md).
+
+- Declares kind `person` (name, email, phone; the record is a person) and erases `person`, `base/media/attachment` and `base/media/asset` evidence.
+- Files are read and removed only through the grant-checked Media and Artifacts paths: a retired person's documents and those filed under another company are reached; no capability opens them otherwise. Each document deletion is recorded as it happens.
+- Other people sharing an email or phone are counted, never touched.
+- **Masking.** A masked `email` or `phone` holds its partial value, named in `masked`. The record page offers Reveal (the page contract `base.privacy.field.reveal`) to readers holding `privacy.field.reveal`; the full value stays only in that view while the record is unchanged and the reader may still reveal. Embedded contact panels show no Reveal. Saving another field leaves a masked contact as stored.
+
 ## Runtime walkthrough without unit tests
 
 Use a freshly migrated disposable database, then run:
