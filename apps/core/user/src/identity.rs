@@ -20,6 +20,7 @@ use bilibi_database::{Change, Error, MutationTransaction, Result};
 use bilibi_party_ids::{AffiliationId, OrganisationId, PersonId};
 use bilibi_person::account_standing as person_standing;
 use bilibi_security::{AccountIdentity, ActorVerifier, ProofClient, ProofFuture, Scope};
+use bilibi_tenancy::AccountKind;
 use serde::Serialize;
 use serde_json::json;
 use tokio_postgres::{GenericClient, Row};
@@ -105,7 +106,7 @@ pub async fn standing(client: &dyn ProofClient, tenant: i64, user: i64) -> Resul
     }
     let Some(row) = client
         .query_opt(
-            "SELECT name,email,person_id,affiliation_id,organisation_id,EXISTS(SELECT 1 FROM user_bootstrap b WHERE b.tenant_id=users.tenant_id AND b.user_id=users.id) FROM users WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL AND status='active' AND NOT EXISTS(SELECT 1 FROM user_scim_users s WHERE s.tenant_id=users.tenant_id AND s.user_id=users.id AND NOT s.active)",
+            "SELECT name,email,person_id,affiliation_id,organisation_id,EXISTS(SELECT 1 FROM user_bootstrap b WHERE b.tenant_id=users.tenant_id AND b.user_id=users.id),kind FROM users WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL AND status='active' AND NOT EXISTS(SELECT 1 FROM user_scim_users s WHERE s.tenant_id=users.tenant_id AND s.user_id=users.id AND NOT s.active)",
             &[&tenant, &user],
         )
         .await?
@@ -113,6 +114,7 @@ pub async fn standing(client: &dyn ProofClient, tenant: i64, user: i64) -> Resul
         return Ok(Standing::Unknown);
     };
     let links = AccountLinks::from_row(&row, 2)?;
+    let kind = AccountKind::parse(row.get(6)).ok_or(Error::Internal)?;
     if let Some(organisation) = links.organisation {
         match account_eligibility(client, tenant, organisation).await? {
             AccountEligibility::Eligible => {}
@@ -128,6 +130,13 @@ pub async fn standing(client: &dyn ProofClient, tenant: i64, user: i64) -> Resul
                 if Some(person) == links.person && Some(organisation) == links.organisation => {}
             _ => return Ok(Standing::Frozen(Freeze::Identity)),
         }
+        // A business customer stands only while its affiliation is in effect
+        // by its dates (ADR 16); staff keep the linked check above alone.
+        if kind == AccountKind::Customer
+            && !bilibi_affiliation::identity::current(client, tenant, affiliation).await?
+        {
+            return Ok(Standing::Frozen(Freeze::Identity));
+        }
     }
     if let Some(person) = links.person {
         if !person_standing(client, tenant, person).await? {
@@ -140,6 +149,7 @@ pub async fn standing(client: &dyn ProofClient, tenant: i64, user: i64) -> Resul
         person: links.person,
         organisation: links.organisation,
         affiliation: links.affiliation,
+        kind,
         // The bootstrap receipt names the installation's owner; Tenancy adds
         // the operator proof (`bilibi_tenancy::prove_owner`).
         installation_owner: row.get(5),
@@ -194,15 +204,36 @@ impl ActorVerifier for AccountVerifier {
     }
 }
 
-/// Bilimbi's sign-in: the email is unique platform-wide, so no tenant is
-/// asked. The password is verified first, at the same cost for an unknown
-/// address, and only then is the account's standing judged, so a frozen
-/// account is named only to someone holding its credential. A locked account
+/// Which sign-in form a password came through (ADR 16): the staff form finds
+/// staff accounts only, by an address unique across the installation; the
+/// portal form finds the customers of the one tenant whose portal address the
+/// customer opened. A customer's credentials at the staff form, or a staff
+/// member's at the portal, are refused as a wrong password is.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Audience {
+    Staff,
+    Customer { tenant: i64 },
+}
+impl Audience {
+    pub(crate) fn kind(self) -> AccountKind {
+        match self {
+            Self::Staff => AccountKind::Staff,
+            Self::Customer { .. } => AccountKind::Customer,
+        }
+    }
+}
+
+/// Bilimbi's sign-in: a staff email is unique platform-wide, so no tenant is
+/// asked; a customer names its tenant through the portal address instead.
+/// The password is verified first, at the same cost for an unknown address,
+/// and only then is the account's standing judged, so a frozen account is
+/// named only to someone holding its credential. A locked account
 /// (`sign_in`) is refused like a wrong password, even with the right one, and
 /// a wrong password while locked is not counted: this is the password step,
 /// before any second-factor challenge.
 pub(crate) async fn password_identity(
     users: &UserService,
+    audience: Audience,
     email: &str,
     password: &str,
 ) -> std::result::Result<(i64, i64, String), CredentialError> {
@@ -211,10 +242,14 @@ pub(crate) async fn password_identity(
         return Err(CredentialError::Rejected);
     }
     let client = users.db.get().await.map_err(Error::from)?;
+    let tenant = match audience {
+        Audience::Staff => None,
+        Audience::Customer { tenant } => Some(tenant),
+    };
     let row = client
         .query_opt(
-            "SELECT u.id,u.tenant_id,u.password_hash,t.status='active' AND t.deleted_at IS NULL FROM users u JOIN tenants t ON t.id=u.tenant_id WHERE lower(u.email)=$1 AND u.deleted_at IS NULL AND u.status='active'",
-            &[&email],
+            "SELECT u.id,u.tenant_id,u.password_hash,t.status='active' AND t.deleted_at IS NULL FROM users u JOIN tenants t ON t.id=u.tenant_id WHERE lower(u.email)=$1 AND u.deleted_at IS NULL AND u.status='active' AND u.kind=$2 AND ($3::bigint IS NULL OR u.tenant_id=$3)",
+            &[&email, &audience.kind().as_str(), &tenant],
         )
         .await
         .map_err(Error::from)?;
@@ -283,7 +318,7 @@ pub(crate) async fn read_account(
     lock: bool,
 ) -> Result<Option<Account>> {
     let sql = format!(
-        "SELECT id,name,email,status,email_verified_at,person_id,affiliation_id,organisation_id,version,created_at,updated_at FROM users WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL{}",
+        "SELECT id,name,email,status,email_verified_at,person_id,affiliation_id,organisation_id,version,created_at,updated_at FROM users WHERE tenant_id=$1 AND id=$2 AND kind='staff' AND deleted_at IS NULL{}",
         if lock { " FOR UPDATE" } else { "" }
     );
     client

@@ -9,6 +9,8 @@ mod departments;
 mod duplicates;
 mod eligibility;
 mod field_contributions;
+mod list_fields;
+pub use list_fields::FieldFilter;
 mod files;
 mod hierarchy;
 mod lifecycle;
@@ -84,7 +86,7 @@ use bilibi_security::{guard, restrictions, Scope, Sessions};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{collections::HashSet, sync::Arc};
-use tokio_postgres::{GenericClient, Row};
+use tokio_postgres::Row;
 
 /// Frozen original migration; `004` is K1's additive organisation schema.
 pub const MIGRATION: (&str, &str) = ("003-company", include_str!("../migrations/003.sql"));
@@ -164,6 +166,7 @@ pub struct Params {
     pub dir: String,
     pub q: String,
     pub status: String,
+    pub field_filters: Vec<FieldFilter>,
 }
 impl Default for Params {
     fn default() -> Self {
@@ -174,6 +177,7 @@ impl Default for Params {
             dir: "asc".into(),
             q: String::new(),
             status: String::new(),
+            field_filters: Vec::new(),
         }
     }
 }
@@ -181,7 +185,13 @@ impl Params {
     pub fn validate(&self) -> Result<()> {
         if !(1..=1_000_000).contains(&self.page)
             || ![25, 50, 100, 300].contains(&self.size)
-            || !["name", "status", "jurisdiction", "created_at"].contains(&self.sort.as_str())
+            || self.sort.len() > 160
+            || self.field_filters.len() > list_fields::MAX_FILTERS
+            || self.field_filters.iter().any(|filter| {
+                filter.field.len() > 160
+                    || filter.operator.len() > 20
+                    || filter.value.len() > list_fields::MAX_FILTER_DRAFT_BYTES
+            })
             || !["asc", "desc"].contains(&self.dir.as_str())
             || self.q.chars().count() > 255
             || !["", "active", "suspended", "pending", "archived"].contains(&self.status.as_str())
@@ -264,58 +274,32 @@ impl Company {
 pub struct Page {
     pub rows: Vec<Company>,
     pub total: i64,
+    pub filter_errors: Vec<Option<String>>,
+    pub notice: String,
+    pub sort: String,
+    pub limited: bool,
+}
+impl Page {
+    fn limited() -> Self {
+        Self {
+            rows: Vec::new(),
+            total: 0,
+            filter_errors: Vec::new(),
+            notice: "This list query exceeds its cost or time limit. Try a simpler sort or filter."
+                .into(),
+            sort: String::new(),
+            limited: true,
+        }
+    }
 }
 use organisation::COLUMNS;
 
-pub async fn list(client: &impl GenericClient, scope: &Scope, params: &Params) -> Result<Page> {
-    params.validate()?;
-    bilibi_authz::authorize_key(client, scope, LIST).await?;
-    let masked = field_contributions::effective_restrictions(client, scope).await?;
-    let query = format!("%{}%", organisation::escape_like(&params.q));
-    let searchable = ["name", "code", "legal_name", "email", "jurisdiction"]
-        .into_iter()
-        .filter(|field| !masked.contains(*field))
-        .map(|field| format!("{field} ILIKE $3"))
-        .collect::<Vec<_>>()
-        .join(" OR ");
-    let filter =
-        format!("tenant_id=$1 AND deleted_at IS NULL AND ($2='' OR status=$2) AND ({searchable})");
-    let sort = if masked.contains(&params.sort) {
-        "name"
-    } else {
-        &params.sort
-    };
-    let args: &[&(dyn tokio_postgres::types::ToSql + Sync)] =
-        &[&scope.tenant(), &params.status, &query];
-    let total = client
-        .query_one(
-            &format!("SELECT count(*) FROM companies WHERE {filter}"),
-            args,
-        )
-        .await?
-        .get(0);
-    // Only validated enum values reach the two SQL identifiers below.
-    let sql = format!(
-        "SELECT {COLUMNS} FROM companies WHERE {filter} ORDER BY {} {}, id {} LIMIT $4 OFFSET $5",
-        sort, params.dir, params.dir
-    );
-    let offset = (params.page - 1) * params.size;
-    let rows = client
-        .query(
-            &sql,
-            &[
-                &scope.tenant(),
-                &params.status,
-                &query,
-                &params.size,
-                &offset,
-            ],
-        )
-        .await?
-        .iter()
-        .map(|row| Company::from_row(row, &masked))
-        .collect();
-    Ok(Page { rows, total })
+pub async fn list(
+    client: &mut tokio_postgres::Client,
+    scope: &Scope,
+    params: &Params,
+) -> Result<Page> {
+    list_fields::list(client, scope, params).await
 }
 
 pub async fn detail(
