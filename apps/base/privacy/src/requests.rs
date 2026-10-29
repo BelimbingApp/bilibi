@@ -2,13 +2,14 @@
 //! through the contributed Workflow flow `privacy.request` (received →
 //! verified → approved → running → completed, or refused). Approval starts one
 //! idempotent Queue job per mounted store; `runner` answers them and finishes
-//! the request with an export bundle or a completion certificate.
-use crate::{Privacy, REQUEST_APPROVE, REQUEST_RECEIVE, REQUEST_VIEW, STEP_UP_ERASURE};
+//! the request with an export bundle or a completion certificate. An erasure
+//! is approved only through Workflow's shared approval case (`crate::approval`).
+use crate::{Privacy, REQUEST_APPROVE, REQUEST_RECEIVE, REQUEST_VIEW};
 use bilibi_database::{Change, Error, MutationTransaction, Result};
 use bilibi_module_registry::{Contribution, Provenance};
 use bilibi_party_ids::{OrganisationId, PersonId};
 use bilibi_personal_data::{Confirmed, Identifier, Located, Subject, MAX_CANDIDATES};
-use bilibi_tenancy::Scope;
+use bilibi_tenancy::{Channel, Scope};
 use bilibi_workflow::{
     Contribution as Flowing, Edge, Flow, Guard, Load, Operation, OwnerFuture, Request as Move,
     Status, Subject as Proven, SubjectAdapter, Transition, CONTRIBUTIONS,
@@ -103,6 +104,13 @@ pub struct RequestView {
     pub due_at: String,
     pub verification: Option<String>,
     pub verified_by: Option<i64>,
+    /// The operator who impersonated the receiver or the verifier, if any:
+    /// excluded from approving an erasure like them.
+    pub received_impersonator: Option<i64>,
+    pub verified_impersonator: Option<i64>,
+    /// An erasure's latest Workflow approval request, and whether it is open.
+    pub approval_request: Option<i64>,
+    pub approval_awaiting: bool,
     pub approved_by: Option<i64>,
     pub approved_at: Option<String>,
     pub refused_reason: Option<String>,
@@ -133,7 +141,8 @@ fn columns() -> String {
     format!(
         "id,kind,person_id,identifiers,company_id,status,version,received_by,\
          to_char(received_at AT TIME ZONE 'UTC',{TIME}) AS received_at,\
-         to_char(due_at AT TIME ZONE 'UTC',{TIME}) AS due_at,verification,verified_by,approved_by,\
+         to_char(due_at AT TIME ZONE 'UTC',{TIME}) AS due_at,verification,verified_by,\
+         received_impersonator,verified_impersonator,approval_request,approval_awaiting,approved_by,\
          to_char(approved_at AT TIME ZONE 'UTC',{TIME}) AS approved_at,refused_reason,\
          to_char(completed_at AT TIME ZONE 'UTC',{TIME}) AS completed_at,export_artifact,certificate_artifact,\
          finish_attempts,finish_error,erased_at IS NOT NULL AS erased,\
@@ -156,6 +165,10 @@ fn view(row: &Row) -> Result<RequestView> {
         due_at: row.get("due_at"),
         verification: row.get("verification"),
         verified_by: row.get("verified_by"),
+        received_impersonator: row.get("received_impersonator"),
+        verified_impersonator: row.get("verified_impersonator"),
+        approval_request: row.get("approval_request"),
+        approval_awaiting: row.get("approval_awaiting"),
         approved_by: row.get("approved_by"),
         approved_at: row.get("approved_at"),
         refused_reason: row.get("refused_reason"),
@@ -177,6 +190,7 @@ pub(crate) fn evidence(request: &RequestView) -> Value {
         "identifiers": request.identifiers.len(), "company_id": request.company.get(),
         "status": request.status, "version": request.version,
         "verified_by": request.verified_by, "approved_by": request.approved_by,
+        "approval_request": request.approval_request, "approval_awaiting": request.approval_awaiting,
         "export_artifact": request.export_artifact, "certificate_artifact": request.certificate_artifact,
     })
 }
@@ -245,13 +259,16 @@ pub(crate) async fn eligible(
     scope: &Scope,
     company: OrganisationId,
 ) -> Result<()> {
-    eligible_with(&privacy.parties, client, scope, company).await
+    eligible_with(&privacy.parties, client, scope, company, REQUEST_APPROVE).await
 }
-async fn eligible_with(
+/// [`eligible`] for `capability` at the company: also the erasure approval
+/// case's company rule, for every kind of approval access.
+pub(crate) async fn eligible_with(
     parties: &bilibi_tenancy::PartyProofs,
     client: &(impl GenericClient + Sync),
     scope: &Scope,
     company: OrganisationId,
+    capability: &str,
 ) -> Result<()> {
     if scope
         .actor()
@@ -261,7 +278,7 @@ async fn eligible_with(
         return Err(Error::Forbidden);
     }
     parties
-        .organisation_target(client, scope, company, REQUEST_APPROVE)
+        .organisation_target(client, scope, company, capability)
         .await
         .map(|_| ())
 }
@@ -313,7 +330,6 @@ fn identifiers(list: &[Identifier]) -> Result<Vec<Identifier>> {
 
 /// The services the Workflow adapter and guards need, bound once at boot.
 pub(crate) struct Bound {
-    pub(crate) step_up: Arc<bilibi_step_up::StepUp>,
     pub(crate) parties: Arc<bilibi_tenancy::PartyProofs>,
 }
 pub(crate) static BOUND: OnceLock<Bound> = OnceLock::new();
@@ -341,7 +357,7 @@ impl SubjectAdapter for Requests {
                 tenant: scope.tenant(),
                 status: request.status.clone(),
                 version: request.version,
-                facts: json!({"kind": request.kind.as_str(), "received_by": request.received_by}),
+                facts: json!({"kind": request.kind.as_str()}),
             })
         })
     }
@@ -354,7 +370,16 @@ impl SubjectAdapter for Requests {
     ) -> OwnerFuture<'a, ()> {
         Box::pin(async move {
             match operation {
-                Operation::Read | Operation::Transition => {
+                // An erasure's approval round: Workflow submits and decides
+                // it (`crate::approval` proves each access at the company)
+                // and runs its fixed wait; nothing else drives a run here.
+                Operation::Read
+                | Operation::Transition
+                | Operation::ExecuteAction
+                | Operation::StartRun
+                | Operation::ReadRun
+                | Operation::ReconcileRun
+                | Operation::CompleteWork => {
                     bilibi_authz::authorize_key(tx, scope, REQUEST_VIEW).await
                 }
                 // Workflow history is permanent; a comment could hold what an
@@ -378,6 +403,7 @@ impl SubjectAdapter for Requests {
                 return Err(Error::Conflict);
             }
             let user = scope.user();
+            let impersonator = scope.impersonator().map(|operator| operator.user());
             let (tenant, id) = (scope.tenant(), subject.id);
             match to {
                 "verified" => {
@@ -387,26 +413,14 @@ impl SubjectAdapter for Requests {
                         .and_then(Value::as_str)
                         .ok_or(Error::Invalid)
                         .and_then(text)?;
-                    tx.execute("UPDATE base_privacy_requests SET status='verified',version=version+1,verification=$3,verified_by=$4,verified_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2", &[&tenant, &id, &note, &user]).await?;
+                    tx.execute("UPDATE base_privacy_requests SET status='verified',version=version+1,verification=$3,verified_by=$4,verified_impersonator=$5,verified_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2", &[&tenant, &id, &note, &user, &impersonator]).await?;
                 }
                 "approved" => {
                     // The owner's rules, whoever drives the Workflow engine.
-                    if scope.agent().is_some() || scope.principal().is_some() {
-                        return Err(Error::Forbidden);
-                    }
+                    approvable(scope, &before)?;
                     let bound = BOUND.get().ok_or(Error::Internal)?;
-                    eligible_with(&bound.parties, tx, scope, before.company).await?;
-                    if before.kind == RequestKind::Erasure {
-                        if before.received_by == user
-                            || scope.actor().person() == Some(before.person)
-                        {
-                            return Err(Error::Forbidden);
-                        }
-                        bound
-                            .step_up
-                            .require(scope, STEP_UP_ERASURE, &format!("privacy.request:{id}"))
-                            .await?;
-                    }
+                    eligible_with(&bound.parties, tx, scope, before.company, REQUEST_APPROVE)
+                        .await?;
                     tx.execute("UPDATE base_privacy_requests SET status='approved',version=version+1,approved_by=$3,approved_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2", &[&tenant, &id, &user]).await?;
                 }
                 "running" => {
@@ -452,9 +466,13 @@ impl SubjectAdapter for Requests {
                 }
                 "refused" => {
                     // From the input, never a Workflow comment: history is
-                    // permanent, and the reason may quote personal data.
+                    // permanent, and the reason may quote personal data. An
+                    // erasure waiting for approval is recalled first.
                     if request.comment.is_some() {
                         return Err(Error::Invalid);
+                    }
+                    if before.approval_awaiting {
+                        return Err(Error::Conflict);
                     }
                     let reason = request
                         .input
@@ -499,8 +517,8 @@ impl Guard for Verified {
         })
     }
 }
-/// `verified → approved`: an erasure needs a second person (not whoever entered
-/// it, and not the data subject) and a fresh Step-up check.
+/// `verified → approved`: an erasure only as its approval case applies the
+/// final decision; access and portability by a person or their agent.
 struct Approved;
 impl Guard for Approved {
     fn check<'a>(
@@ -512,17 +530,27 @@ impl Guard for Approved {
         _request: &'a Move,
     ) -> OwnerFuture<'a, ()> {
         Box::pin(async move {
-            if subject.facts.get("kind").and_then(Value::as_str) != Some("erasure") {
-                return Ok(());
-            }
-            let received_by = subject.facts.get("received_by").and_then(Value::as_i64);
-            if received_by == Some(scope.user()) {
+            let erasure = subject.facts.get("kind").and_then(Value::as_str) == Some("erasure");
+            if erasure && !crate::approval::applying(scope.tenant(), subject.id) {
                 return Err(Error::Forbidden);
             }
-            // Step-up is checked once, by the owner as it records `approved`:
-            // in "every time" mode a second check would find the proof spent.
             Ok(())
         })
+    }
+}
+/// Who may record `approved`: an erasure only while its approval case applies
+/// the final decision (Workflow has proved the approver, their independence
+/// and Step-up); access and portability a person or their AI agent (ADR 01),
+/// never a system principal or a queued job.
+fn approvable(scope: &Scope, request: &RequestView) -> Result<()> {
+    let allowed = match request.kind {
+        RequestKind::Erasure => crate::approval::applying(scope.tenant(), request.id),
+        _ => scope.principal().is_none() && scope.channel() != Channel::Job,
+    };
+    if allowed {
+        Ok(())
+    } else {
+        Err(Error::Forbidden)
     }
 }
 static VERIFIED: Verified = Verified;
@@ -639,15 +667,16 @@ impl Privacy {
             .filter(|days| (1..=365).contains(days))
             .unwrap_or(DUE_DEFAULT);
         let (tenant, user) = (scope.tenant(), scope.user());
+        let impersonator = scope.impersonator().map(|operator| operator.user());
         let list = serde_json::to_value(&identifiers).map_err(|_| Error::Internal)?;
         let (kind, person, company) = (new.kind.as_str(), new.person.get(), new.company.get());
         tx.mutate(move |sql| {
             Box::pin(async move {
                 let id: i64 = sql
                     .query_one(
-                        "INSERT INTO base_privacy_requests(tenant_id,kind,person_id,identifiers,company_id,received_by,due_at) \
-                         VALUES($1,$2,$3,$4,$5,$6,clock_timestamp()+make_interval(days => $7::int)) RETURNING id",
-                        &[&tenant, &kind, &person, &list, &company, &user, &(days as i32)],
+                        "INSERT INTO base_privacy_requests(tenant_id,kind,person_id,identifiers,company_id,received_by,received_impersonator,due_at) \
+                         VALUES($1,$2,$3,$4,$5,$6,$7,clock_timestamp()+make_interval(days => $8::int)) RETURNING id",
+                        &[&tenant, &kind, &person, &list, &company, &user, &impersonator, &(days as i32)],
                     )
                     .await?
                     .get(0);
@@ -786,10 +815,11 @@ impl Privacy {
         load(tx.sql(), tenant, id, false).await
     }
 
-    /// `verified → approved → running`, then one job per mounted store. Only a
-    /// person approves (never an agent facet), and only someone who can file
-    /// under the request's company; an erasure also needs a second person and
-    /// Step-up (`base.privacy.erasure.approve`).
+    /// `verified → approved → running` for an access or portability request,
+    /// then one job per mounted store: a person or their AI agent who can file
+    /// under the request's company, never a system principal or a queued job.
+    /// An erasure is refused here: it is sent for approval
+    /// ([`Privacy::submit_erasure`]) and runs when Workflow approves it.
     pub async fn approve(
         &self,
         client: &mut Client,
@@ -815,22 +845,35 @@ impl Privacy {
         id: i64,
         expected_version: i64,
     ) -> Result<RequestView> {
-        if scope.agent().is_some() || scope.principal().is_some() {
-            return Err(Error::Forbidden);
-        }
         let subject = load(tx.sql(), scope.tenant(), id, false).await?;
         // Before any write and before any store runs.
+        approvable(scope, &subject)?;
         eligible(self, tx.sql(), scope, subject.company).await?;
-        if subject.kind == RequestKind::Erasure {
-            // Waits for an access export of the person being published, and
-            // makes any later one start again.
-            person_guard(tx.sql(), scope.tenant(), subject.person, true).await?;
-            if scope.actor().person() == Some(subject.person) {
-                return Err(Error::Forbidden);
-            }
-            // Step-up is checked once, by the owner as it records `approved`
-            // below; a refusal there rolls this whole transaction back.
-        }
+        self.run_in(tx, scope, id, expected_version).await
+    }
+    /// The erasure's approval case applying its final approval: Workflow has
+    /// proved the approver, so this only starts the run.
+    pub(crate) async fn run_erasure_in(
+        &self,
+        tx: &mut MutationTransaction<'_>,
+        scope: &Scope,
+        id: i64,
+    ) -> Result<RequestView> {
+        let subject = load(tx.sql(), scope.tenant(), id, true).await?;
+        // Waits for an access export of the person being published, and
+        // makes any later one start again.
+        person_guard(tx.sql(), scope.tenant(), subject.person, true).await?;
+        self.run_in(tx, scope, id, subject.version).await
+    }
+    /// `approved`, the store rows and jobs, then `running`, in the caller's
+    /// transaction.
+    async fn run_in(
+        &self,
+        tx: &mut MutationTransaction<'_>,
+        scope: &Scope,
+        id: i64,
+        expected_version: i64,
+    ) -> Result<RequestView> {
         let approve = Move {
             expected_version: Some(expected_version),
             ..Move::default()
@@ -895,6 +938,75 @@ impl Privacy {
                 .await?;
         }
         Ok(())
+    }
+
+    /// Sends a verified erasure for approval: a new round of Workflow's shared
+    /// approval case `privacy.erasure`, linked to the last one once that was
+    /// recalled or rejected. Whoever approves it starts the run.
+    pub async fn submit_erasure(
+        &self,
+        client: &mut Client,
+        scope: &Scope,
+        id: i64,
+        expected_version: i64,
+    ) -> Result<RequestView> {
+        let mut tx = self
+            .boundary
+            .begin(client, scope.mutation_context("privacy.erasure.submit"))
+            .await?;
+        let done = self
+            .submit_erasure_in(&mut tx, scope, id, expected_version)
+            .await?;
+        tx.commit().await?;
+        Ok(done)
+    }
+    /// [`Privacy::submit_erasure`] in the caller's transaction (the agent contract).
+    pub async fn submit_erasure_in(
+        &self,
+        tx: &mut MutationTransaction<'_>,
+        scope: &Scope,
+        id: i64,
+        expected_version: i64,
+    ) -> Result<RequestView> {
+        let tenant = scope.tenant();
+        let before = load(tx.sql(), tenant, id, true).await?;
+        if before.kind != RequestKind::Erasure
+            || before.status != "verified"
+            || before.approval_awaiting
+            || before.version != expected_version
+        {
+            return Err(Error::Conflict);
+        }
+        // One round per version: a retry returns the same round.
+        let round = self
+            .engine
+            .submit_approval_in(
+                tx,
+                scope,
+                crate::approval::ERASURE_CASE,
+                id,
+                &format!("privacy.erasure:{id}:v{}", before.version),
+                before.approval_request,
+            )
+            .await?;
+        tx.mutate(move |sql| {
+            Box::pin(async move {
+                sql.execute(
+                    "UPDATE base_privacy_requests SET approval_request=$3,approval_awaiting=true WHERE tenant_id=$1 AND id=$2",
+                    &[&tenant, &id, &round],
+                )
+                .await?;
+                let after = load(sql, tenant, id, false).await?;
+                let change = Change {
+                    kind: REQUEST_KIND.into(),
+                    id,
+                    old: evidence(&before),
+                    new: evidence(&after),
+                };
+                Ok((after, vec![change]))
+            })
+        })
+        .await
     }
 
     /// `received|verified → refused`, with the reason.
