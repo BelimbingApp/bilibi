@@ -124,7 +124,7 @@ pub async fn decide(client: &impl GenericClient, scope: &Scope, key: &str) -> Re
                 let row = client
                     .query_one(GRANTS_SQL, &[&scope.tenant(), &scope.user(), &key])
                     .await?;
-                judge(&row)
+                judge(&row, cap.definition.audience == Audience::Portal)
             }
         }
     };
@@ -203,7 +203,7 @@ async fn user_decision_proof(
                     .query_opt(GRANTS_SQL, &[&scope.tenant(), &scope.user(), &key])
                     .await?
                     .ok_or(Error::Internal)?;
-                judge(&row)
+                judge(&row, cap.definition.audience == Audience::Portal)
             }
         }
     })
@@ -220,12 +220,14 @@ const SYSTEM_GRANT_SQL: &str = "SELECT is_allowed FROM authz_system_grants WHERE
 const LOG_SQL: &str = "INSERT INTO authz_decision_log(tenant_id,user_id,capability,allowed,reason,principal_type,system_principal) VALUES($1,$2,$3,$4,$5,$6,$7)";
 const LOG_RETURNING_SQL: &str = "INSERT INTO authz_decision_log(tenant_id,user_id,capability,allowed,reason,principal_type,system_principal) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id";
 /// Deny wins over every allow; an allow names the grant that carried it.
-fn judge(row: &tokio_postgres::Row) -> Decision {
+/// Grant-all is a staff role: it never satisfies a portal capability, which
+/// needs a direct allow or a role that lists it (ADR 16).
+fn judge(row: &tokio_postgres::Row, portal: bool) -> Decision {
     if row.get::<_, bool>(0) {
         Decision::deny("denied_explicitly")
     } else if row.get::<_, bool>(1) {
         Decision::allow("direct_capability")
-    } else if row.get::<_, bool>(2) {
+    } else if row.get::<_, bool>(2) && !portal {
         Decision::allow("grant_all")
     } else if row.get::<_, bool>(3) {
         Decision::allow("role_capability")

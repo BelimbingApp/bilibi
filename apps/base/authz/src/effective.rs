@@ -213,7 +213,9 @@ pub async fn effective_capabilities_of(
             owned.definition.admits(kind)
                 && (operator || !owned.definition.is_platform())
                 && !denied.contains(**key)
-                && (grant_all || allowed.contains(**key) || roles.contains(**key))
+                && ((grant_all && owned.definition.audience != crate::Audience::Portal)
+                    || allowed.contains(**key)
+                    || roles.contains(**key))
         })
         .map(|(key, _)| *key)
         .collect();
