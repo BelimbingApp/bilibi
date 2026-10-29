@@ -3,8 +3,10 @@
 # passes without compiling, but still checks CSS compilation and
 # reproducibility from source.
 # Mounted Domain checks are domains.yml: those pull requests lint and boot a
-# debug build, so this release build is the one a pull request still does.
-# main keeps both.
+# debug build. Clippy already compiles every target, so a pull request does not
+# also do the optimized release build; main and tags do (CI protects main, the
+# release build protects production). The Release workflow gets its own locked
+# release build of the exact commit from domains.yml.
 # A new push to a pull request cancels its older pull-request run. Branch
 # pushes, main and tags are never cancelled.
 name: Rust
@@ -57,5 +59,8 @@ jobs:
         run: cargo fmt --all -- --check
       - if: steps.decide.outputs.affected == 'true'
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - if: steps.decide.outputs.affected == 'true'
+      - name: Release build (main and tags only)
+        if: >-
+          steps.decide.outputs.affected == 'true' &&
+          (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
         run: cargo build --workspace --release --locked

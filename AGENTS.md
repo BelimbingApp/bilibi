@@ -68,7 +68,7 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 - Stop only a server you started, by its process ID; never by name (`pkill`, `killall`, `pgrep -x`), which also kills the developer's running app.
 - `APP_ORIGIN` must equal the exact address you browse, or sign-in loops.
 - A change to a page, template or live behaviour is done only after you have used it in the browser at the exact `APP_ORIGIN`. Proof from rendered HTML alone is not done; if the browser cannot be used, report that you are blocked. A docs-only or non-UI change needs only the three checks above, with no app run.
-- CI also runs `./scripts/build-assets.sh --check` and `cargo build --workspace --release --locked`. A pull request that cannot affect the build still runs the CSS check and passes the rest without compiling; see `docs/domain-ci/README.md`.
+- CI also runs `./scripts/build-assets.sh --check`; a push to `main` and a tag add `cargo build --workspace --release --locked`, which a pull request skips because clippy already compiles every target. A pull request that cannot affect the build still runs the CSS check and passes the rest without compiling; see `docs/domain-ci/README.md`.
 
 ## Docs
 
