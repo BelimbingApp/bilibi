@@ -653,9 +653,6 @@ body:has(dialog:modal) #flash-group > #connection-server-error {
 [data-table-frame][data-unframed]:not(:first-child) {
   margin-top: calc(--spacing(3.5) + --spacing(2));
 }
-[data-table-frame]:not([data-unframed]):not(:first-child) {
-  margin-top: --spacing(2);
-}
 
 /* The shared header already leaves 12 px below its action row. A page's
  * stack spacing must not add a second gap before an adjacent list toolbar. */
