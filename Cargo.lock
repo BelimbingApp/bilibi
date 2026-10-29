@@ -1568,6 +1568,7 @@ dependencies = [
  "bilibi-geonames",
  "bilibi-module-registry",
  "bilibi-party-ids",
+ "bilibi-queue",
  "bilibi-settings",
  "bilibi-tenancy",
  "bilibi-walkthrough-fixture",

@@ -449,6 +449,8 @@ pub struct HolidaySetEntry {
     pub name: String,
     pub country_iso: Option<String>,
     pub admin1_code: Option<String>,
+    /// Kept by the platform operator for every tenant, read-only to the rest.
+    pub installation: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -490,8 +492,11 @@ pub struct HolidaySet {
     pub name: String,
     pub country_iso: Option<String>,
     pub admin1_code: Option<String>,
+    /// Kept by the platform operator for every tenant, read-only to the rest.
+    pub installation: bool,
     pub version: i64,
-    /// Codes of the calendars that include it, the first [`MAX_ROWS`].
+    /// Codes of the reader's calendars that include it, the first
+    /// [`MAX_ROWS`]: never another tenant's.
     pub calendars: Rows<String>,
     /// By date, one page of [`MAX_ROWS`].
     pub holidays: Rows<Holiday>,
@@ -500,7 +505,7 @@ impl HolidaySet {
     pub fn to_json(&self) -> Value {
         json!({
             "code": self.code, "name": self.name, "country_iso": self.country_iso, "admin1_code": self.admin1_code,
-            "version": self.version, "calendars": self.calendars.to_json(|code| json!(code)),
+            "installation": self.installation, "version": self.version, "calendars": self.calendars.to_json(|code| json!(code)),
             "holidays": self.holidays.to_json(|h| json!({"date": h.date.to_string(), "name": h.name})),
         })
     }

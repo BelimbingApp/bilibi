@@ -5,6 +5,11 @@
 //! `apply` locks the row, reviews again against the version its plan read
 //! and writes, recording each `Change` and a `core/work_calendar.changed`
 //! event per calendar whose dates moved.
+//!
+//! Installation-wide holiday sets (issue 210) are rows of the platform
+//! operator's tenant marked `installation`: every tenant reads and includes
+//! them, only the operator writes them, and a change to one is told to the
+//! other tenants by the `publish` job.
 use crate::{
     model::{
         date, day_entry, invalid, name, valid_code, Calendar, CalendarEntry, Choice, Exception,
@@ -12,9 +17,9 @@ use crate::{
         WeekDay, WriteError, WriteResult, MAX_CHOICES, MAX_ROWS,
     },
     timetable::{exception, reach},
-    WorkCalendars, CHANGED, MANAGE,
+    WorkCalendars, CHANGED, INSTALLATION_MANAGE, MANAGE,
 };
-use bilibi_authz::authorize_key;
+use bilibi_authz::{authorize_key, authorize_operator};
 use bilibi_database::{Change, Error, MutationTransaction, Result};
 use bilibi_events::NewEvent;
 use bilibi_tenancy::Scope;
@@ -41,6 +46,13 @@ fn offset(page: i64, size: i64) -> i64 {
 }
 fn parse_date(text: &str) -> Result<Date> {
     text.parse().map_err(|_| Error::Internal)
+}
+/// A range of dates as SQL bounds; an open end is infinite.
+fn bounds(from: Option<Date>, to: Option<Date>) -> (String, String) {
+    (
+        from.map_or_else(|| "-infinity".into(), |d| d.to_string()),
+        to.map_or_else(|| "infinity".into(), |d| d.to_string()),
+    )
 }
 
 pub(crate) async fn calendars(
@@ -74,6 +86,8 @@ pub(crate) async fn calendars(
         .collect();
     Ok(Rows { rows, total })
 }
+/// The tenant's own holiday sets and the installation-wide ones, whose codes
+/// never collide (`claim`).
 pub(crate) async fn holiday_sets(
     client: &(impl GenericClient + Sync),
     tenant: i64,
@@ -85,14 +99,14 @@ pub(crate) async fn holiday_sets(
     let pattern = pattern(&listing.search);
     let total: i64 = client
         .query_one(
-            "SELECT count(*) FROM core_work_calendar_holiday_sets WHERE tenant_id=$1 AND (code ILIKE $2 OR name ILIKE $2)",
+            "SELECT count(*) FROM core_work_calendar_holiday_sets WHERE (tenant_id=$1 OR installation) AND (code ILIKE $2 OR name ILIKE $2)",
             &[&tenant, &pattern],
         )
         .await?
         .get(0);
     let rows = client
         .query(
-            "SELECT code,name,country_iso,admin1_code FROM core_work_calendar_holiday_sets WHERE tenant_id=$1 AND (code ILIKE $2 OR name ILIKE $2) ORDER BY code LIMIT $3 OFFSET $4",
+            "SELECT code,name,country_iso,admin1_code,installation FROM core_work_calendar_holiday_sets WHERE (tenant_id=$1 OR installation) AND (code ILIKE $2 OR name ILIKE $2) ORDER BY code,tenant_id LIMIT $3 OFFSET $4",
             &[&tenant, &pattern, &listing.page_size, &offset(listing.page, listing.page_size)],
         )
         .await?
@@ -102,6 +116,7 @@ pub(crate) async fn holiday_sets(
             name: row.get(1),
             country_iso: row.get(2),
             admin1_code: row.get(3),
+            installation: row.get(4),
         })
         .collect();
     Ok(Rows { rows, total })
@@ -161,18 +176,23 @@ async fn calendar_row(
         version: row.get(4),
     })
 }
-/// A holiday set's own row.
+/// A holiday set's own row: the tenant's, or an installation-wide one kept by
+/// the platform operator (`tenant` is the tenant keeping it).
 struct SetRow {
     id: i64,
+    tenant: i64,
+    installation: bool,
     name: String,
     country_iso: Option<String>,
     admin1_code: Option<String>,
     version: i64,
 }
+/// The set `code` names for `tenant`: its own, else an installation-wide one.
+/// A tenant's codes and the installation-wide codes never collide (`claim`).
 async fn set_row(client: &(impl GenericClient + Sync), tenant: i64, code: &str) -> Result<SetRow> {
     let row = client
         .query_opt(
-            "SELECT id,name,country_iso,admin1_code,version FROM core_work_calendar_holiday_sets WHERE tenant_id=$1 AND code=$2",
+            "SELECT id,name,country_iso,admin1_code,version,tenant_id,installation FROM core_work_calendar_holiday_sets WHERE code=$2 AND (tenant_id=$1 OR installation) ORDER BY tenant_id=$1 DESC LIMIT 1",
             &[&tenant, &code],
         )
         .await?
@@ -183,9 +203,100 @@ async fn set_row(client: &(impl GenericClient + Sync), tenant: i64, code: &str) 
         country_iso: row.get(2),
         admin1_code: row.get(3),
         version: row.get(4),
+        tenant: row.get(5),
+        installation: row.get(6),
     })
 }
-/// Codes of the calendars including a set, the first [`MAX_ROWS`].
+/// The set a write names: `NotFound` becomes a refusal on `field`.
+async fn named_set(
+    client: &(impl GenericClient + Sync),
+    tenant: i64,
+    code: &str,
+    field: &str,
+) -> WriteResult<SetRow> {
+    match set_row(client, tenant, code).await {
+        Err(Error::NotFound) => Err(invalid(
+            field,
+            "is not a holiday set of this tenant or an installation-wide one",
+        )),
+        read => Ok(read?),
+    }
+}
+/// Whether `code` is free for a new holiday set. A tenant's set may not take
+/// a code its own sets or an installation-wide set hold; an installation-wide
+/// set may not take one any tenant holds, so a code names one set for every
+/// reader. That check reads every tenant's codes on purpose, for the
+/// platform operator alone.
+async fn claim(
+    client: &(impl GenericClient + Sync),
+    tenant: i64,
+    code: &str,
+    installation: bool,
+) -> WriteResult<()> {
+    let taken = if installation {
+        client
+            .query_opt(
+                "SELECT 1 FROM core_work_calendar_holiday_sets WHERE code=$1 LIMIT 1",
+                &[&code],
+            )
+            .await?
+    } else {
+        client
+            .query_opt(
+                "SELECT 1 FROM core_work_calendar_holiday_sets WHERE code=$2 AND (tenant_id=$1 OR installation) LIMIT 1",
+                &[&tenant, &code],
+            )
+            .await?
+    };
+    match taken {
+        None => Ok(()),
+        Some(_) if installation => Err(invalid(
+            "code",
+            "is already used by a holiday set of this or another tenant",
+        )),
+        Some(_) => Err(invalid(
+            "code",
+            "is already used by another holiday set, of this tenant or installation-wide",
+        )),
+    }
+}
+/// Proves `scope` may change `set`. Its own tenant's set needs only the
+/// write's `admin.work-calendar.manage`. An installation-wide set is the
+/// platform operator's alone, with `admin.work-calendar.holiday-sets.manage`
+/// as well; every other tenant reads it and may copy it.
+async fn keep(
+    client: &(impl GenericClient + Sync),
+    scope: &Scope,
+    set: &SetRow,
+) -> WriteResult<()> {
+    if set.tenant != scope.tenant() {
+        return Err(invalid(
+            "code",
+            "is an installation-wide holiday set the platform operator keeps: copy it into a set of your own (core.work_calendar.holiday_set.copy) to change it",
+        ));
+    }
+    if set.installation {
+        authorize_operator(client, scope, INSTALLATION_MANAGE).await?;
+    }
+    Ok(())
+}
+/// How many calendars of other tenants include an installation-wide set
+/// `tenant` keeps, and in how many tenants: those a holiday change is told
+/// to. Counts only, so the keeper never reads another tenant's codes.
+pub(crate) async fn elsewhere(
+    client: &(impl GenericClient + Sync),
+    tenant: i64,
+    set: i64,
+) -> Result<(i64, i64)> {
+    let row = client
+        .query_one(
+            "SELECT count(*),count(DISTINCT tenant_id) FROM core_work_calendar_includes WHERE set_tenant_id=$1 AND holiday_set_id=$2 AND tenant_id<>$1",
+            &[&tenant, &set],
+        )
+        .await?;
+    Ok((row.get(0), row.get(1)))
+}
+/// Codes of the tenant's calendars including a set, the first [`MAX_ROWS`].
 async fn including(
     client: &(impl GenericClient + Sync),
     tenant: i64,
@@ -278,7 +389,7 @@ pub(crate) async fn calendar(
         .collect::<Result<Vec<_>>>()?;
     let holiday_sets = client
         .query(
-            "SELECT s.code FROM core_work_calendar_includes i JOIN core_work_calendar_holiday_sets s ON s.tenant_id=i.tenant_id AND s.id=i.holiday_set_id WHERE i.tenant_id=$1 AND i.calendar_id=$2 ORDER BY s.code LIMIT $3",
+            "SELECT s.code FROM core_work_calendar_includes i JOIN core_work_calendar_holiday_sets s ON s.tenant_id=i.set_tenant_id AND s.id=i.holiday_set_id WHERE i.tenant_id=$1 AND i.calendar_id=$2 ORDER BY s.code LIMIT $3",
             &[&tenant, &id, &MAX_ROWS],
         )
         .await?
@@ -314,8 +425,9 @@ pub(crate) async fn calendar(
         },
     })
 }
-/// A holiday set: page `page` of its holidays from `from` to `to` (all
-/// dates when omitted) and the first [`MAX_ROWS`] calendars including it.
+/// A holiday set, the tenant's or an installation-wide one: page `page` of
+/// its holidays from `from` to `to` (all dates when omitted) and the first
+/// [`MAX_ROWS`] of the tenant's calendars including it.
 pub(crate) async fn holiday_set(
     client: &(impl GenericClient + Sync),
     tenant: i64,
@@ -328,23 +440,18 @@ pub(crate) async fn holiday_set(
         return Err(Error::Invalid);
     }
     let row = set_row(client, tenant, code).await?;
-    let (from, to) = (
-        from.map(|d| d.to_string())
-            .unwrap_or_else(|| "-infinity".into()),
-        to.map(|d| d.to_string())
-            .unwrap_or_else(|| "infinity".into()),
-    );
+    let (from, to) = bounds(from, to);
     let total: i64 = client
         .query_one(
             "SELECT count(*) FROM core_work_calendar_holidays WHERE tenant_id=$1 AND holiday_set_id=$2 AND date BETWEEN $3::text::date AND $4::text::date",
-            &[&tenant, &row.id, &from, &to],
+            &[&row.tenant, &row.id, &from, &to],
         )
         .await?
         .get(0);
     let holidays = client
         .query(
             "SELECT date::text,name FROM core_work_calendar_holidays WHERE tenant_id=$1 AND holiday_set_id=$2 AND date BETWEEN $3::text::date AND $4::text::date ORDER BY date LIMIT $5 OFFSET $6",
-            &[&tenant, &row.id, &from, &to, &MAX_ROWS, &offset(page, MAX_ROWS)],
+            &[&row.tenant, &row.id, &from, &to, &MAX_ROWS, &offset(page, MAX_ROWS)],
         )
         .await?
         .iter()
@@ -360,6 +467,7 @@ pub(crate) async fn holiday_set(
         name: row.name,
         country_iso: row.country_iso,
         admin1_code: row.admin1_code,
+        installation: row.installation,
         version: row.version,
         calendars: including(client, tenant, row.id).await?,
         holidays: Rows {
@@ -381,6 +489,7 @@ pub(crate) enum Action {
     UpdateSet,
     Holidays,
     Include,
+    CopySet,
 }
 /// A write's validated input.
 pub(crate) enum Prepared {
@@ -424,6 +533,7 @@ pub(crate) enum Prepared {
         name: String,
         country_iso: Option<String>,
         admin1_code: Option<String>,
+        installation: bool,
     },
     UpdateSet {
         code: String,
@@ -442,6 +552,14 @@ pub(crate) enum Prepared {
         version: i64,
         set: String,
         included: bool,
+    },
+    /// A new tenant set holding `source`'s holidays from `from` to `to`.
+    CopySet {
+        code: String,
+        name: String,
+        source: String,
+        from: Option<Date>,
+        to: Option<Date>,
     },
 }
 
@@ -652,12 +770,44 @@ impl WorkCalendars {
                 let (country_iso, admin1_code) = place(input, &mut errors);
                 self.check_place(country_iso.as_deref(), admin1_code.as_deref(), &mut errors)
                     .await?;
+                let installation = match &input["installation"] {
+                    Value::Null => false,
+                    Value::Bool(installation) => *installation,
+                    _ => {
+                        errors.push(FieldError::new("installation", "must be true or false"));
+                        false
+                    }
+                };
                 match name {
                     Some(name) => Prepared::CreateSet {
                         code,
                         name,
                         country_iso,
                         admin1_code,
+                        installation,
+                    },
+                    None => return Err(WriteError::Invalid(errors)),
+                }
+            }
+            Action::CopySet => {
+                let code = code(input, "code", &mut errors);
+                let name = name(&input["name"], "name", &mut errors);
+                let source = self::code(input, "source", &mut errors);
+                let mut optional = |field: &str| match &input[field] {
+                    Value::Null => None,
+                    value => date(value, field, &mut errors),
+                };
+                let (from, to) = (optional("from"), optional("to"));
+                if from.zip(to).is_some_and(|(from, to)| to < from) {
+                    errors.push(FieldError::new("to", "must not be before from"));
+                }
+                match name {
+                    Some(name) => Prepared::CopySet {
+                        code,
+                        name,
+                        source,
+                        from,
+                        to,
                     },
                     None => return Err(WriteError::Invalid(errors)),
                 }
@@ -826,10 +976,11 @@ impl WorkCalendars {
     pub(crate) async fn review(
         &self,
         client: &(impl GenericClient + Sync),
-        tenant: i64,
+        scope: &Scope,
         prepared: &Prepared,
         read: Option<i64>,
     ) -> WriteResult<Value> {
+        let tenant = scope.tenant();
         let fenced = |stored: i64, version: i64| {
             if read.unwrap_or(stored) == version {
                 Ok(())
@@ -845,7 +996,14 @@ impl WorkCalendars {
                 effective_from,
                 ..
             } => {
-                if exists(client, "core_work_calendars", tenant, code).await? {
+                if client
+                    .query_opt(
+                        "SELECT 1 FROM core_work_calendars WHERE tenant_id=$1 AND code=$2",
+                        &[&tenant, &code],
+                    )
+                    .await?
+                    .is_some()
+                {
                     return Err(invalid("code", "is already used by another calendar"));
                 }
                 json!({"summary": format!("Create calendar {name} ({code}) in {timezone}, from {effective_from}")})
@@ -928,14 +1086,21 @@ impl WorkCalendars {
                 };
                 json!({"summary": format!("Remove the exception {} ({} to {}) from calendar {code}", found.name, found.starts_on, found.ends_on)})
             }
-            Prepared::CreateSet { code, name, .. } => {
-                if exists(client, "core_work_calendar_holiday_sets", tenant, code).await? {
-                    return Err(invalid("code", "is already used by another holiday set"));
+            Prepared::CreateSet {
+                code,
+                name,
+                installation,
+                ..
+            } => {
+                if *installation {
+                    authorize_operator(client, scope, INSTALLATION_MANAGE).await?;
                 }
-                json!({"summary": format!("Create holiday set {name} ({code})")})
+                claim(client, tenant, code, *installation).await?;
+                json!({"summary": format!("Create {}holiday set {name} ({code})", if *installation { "installation-wide " } else { "" })})
             }
             Prepared::UpdateSet { code, version, .. } => {
                 let set = known(set_row(client, tenant, code).await)?;
+                keep(client, scope, &set).await?;
                 fenced(set.version, *version)?;
                 let calendars = including(client, tenant, set.id).await?;
                 json!({"summary": format!("Update holiday set {code}"), "calendars": calendars.rows, "calendars_total": calendars.total})
@@ -947,6 +1112,7 @@ impl WorkCalendars {
                 remove,
             } => {
                 let set = known(set_row(client, tenant, code).await)?;
+                keep(client, scope, &set).await?;
                 fenced(set.version, *version)?;
                 // A removal names a date the set holds: one it does not would
                 // remove nothing.
@@ -972,7 +1138,20 @@ impl WorkCalendars {
                     return Err(WriteError::Invalid(absent));
                 }
                 let calendars = including(client, tenant, set.id).await?;
-                json!({"summary": format!("Holiday set {code}: {} added or renamed, {} removed; calendars that include it: {}", add.len(), remove.len(), named(&calendars)), "calendars": calendars.rows, "calendars_total": calendars.total})
+                let mut summary = format!(
+                    "Holiday set {code}: {} added or renamed, {} removed; calendars that include it: {}",
+                    add.len(),
+                    remove.len(),
+                    named(&calendars)
+                );
+                let (others, tenants) = match set.installation {
+                    true => elsewhere(client, tenant, set.id).await?,
+                    false => (0, 0),
+                };
+                if others > 0 {
+                    summary.push_str(&format!("; and {others} calendars in {tenants} other tenants, told through core/work_calendar.changed"));
+                }
+                json!({"summary": summary, "calendars": calendars.rows, "calendars_total": calendars.total, "other_tenant_calendars": others, "other_tenants": tenants})
             }
             Prepared::Include {
                 code,
@@ -982,13 +1161,38 @@ impl WorkCalendars {
             } => {
                 let calendar = known(calendar_row(client, tenant, code).await)?;
                 fenced(calendar.version, *version)?;
-                if !exists(client, "core_work_calendar_holiday_sets", tenant, set).await? {
+                let found = named_set(client, tenant, set, "holiday_set").await?;
+                let kind = if found.installation {
+                    "installation-wide holiday set"
+                } else {
+                    "holiday set"
+                };
+                json!({"summary": format!("{} {kind} {set} {} calendar {code}", if *included { "Include" } else { "Leave out" }, if *included { "in" } else { "of" })})
+            }
+            Prepared::CopySet {
+                code,
+                name,
+                source,
+                from,
+                to,
+            } => {
+                claim(client, tenant, code, false).await?;
+                let origin = named_set(client, tenant, source, "source").await?;
+                let (first, last) = bounds(*from, *to);
+                let count: i64 = client
+                    .query_one(
+                        "SELECT count(*) FROM core_work_calendar_holidays WHERE tenant_id=$1 AND holiday_set_id=$2 AND date BETWEEN $3::text::date AND $4::text::date",
+                        &[&origin.tenant, &origin.id, &first, &last],
+                    )
+                    .await?
+                    .get(0);
+                if count > MAX_HOLIDAYS as i64 {
                     return Err(invalid(
-                        "holiday_set",
-                        "is not a holiday set of this tenant",
+                        "to",
+                        format!("covers {count} holidays; a copy takes at most {MAX_HOLIDAYS}: narrow from and to, then add the rest with core.work_calendar.holiday_set.holidays"),
                     ));
                 }
-                json!({"summary": format!("{} holiday set {set} {} calendar {code}", if *included { "Include" } else { "Leave out" }, if *included { "in" } else { "of" })})
+                json!({"summary": format!("Copy {count} holidays of {}holiday set {source} into a new holiday set {name} ({code})", if origin.installation { "installation-wide " } else { "" }), "holidays": count})
             }
         })
     }
@@ -1002,8 +1206,11 @@ impl WorkCalendars {
     ) -> WriteResult<Value> {
         authorize_key(tx.sql(), scope, MANAGE).await?;
         let tenant = scope.tenant();
+        // Only the tenant keeping a set writes it; one it reads (its own or
+        // an installation-wide one) is locked shared.
         let lock_set =
-            "SELECT id,version FROM core_work_calendar_holiday_sets WHERE tenant_id=$1 AND code=$2";
+            "SELECT id,version FROM core_work_calendar_holiday_sets WHERE tenant_id=$1 AND code=$2 FOR UPDATE";
+        let share_set = "SELECT id FROM core_work_calendar_holiday_sets WHERE code=$2 AND (tenant_id=$1 OR installation) ORDER BY tenant_id=$1 DESC LIMIT 1 FOR SHARE";
         let lock_calendar =
             "SELECT id,version FROM core_work_calendars WHERE tenant_id=$1 AND code=$2 FOR UPDATE";
         // Serialize writers of one calendar or set before reviewing. A
@@ -1012,25 +1219,45 @@ impl WorkCalendars {
         // rows and records `changed` for the pair. The row the write is
         // fenced on comes back with its version.
         let locked = match &prepared {
-            Prepared::Create { .. } | Prepared::CreateSet { .. } => {
+            Prepared::Create { .. } | Prepared::CreateSet { .. } | Prepared::CopySet { .. } => {
                 tx.sql()
                     .execute(
                         "SELECT pg_advisory_xact_lock(91351,$1::integer)",
                         &[&i32::try_from(tenant).map_err(|_| Error::Invalid)?],
                     )
                     .await?;
+                // A code names one set for every reader (`claim`): a new
+                // installation-wide set holds its code's lock alone, while
+                // tenants' new sets share it, so tenants never wait on (or
+                // deadlock with) each other.
+                let code_lock = match &prepared {
+                    Prepared::CreateSet {
+                        code,
+                        installation: true,
+                        ..
+                    } => Some(("SELECT pg_advisory_xact_lock(91352,hashtext($1))", code)),
+                    Prepared::CreateSet { code, .. } | Prepared::CopySet { code, .. } => Some((
+                        "SELECT pg_advisory_xact_lock_shared(91352,hashtext($1))",
+                        code,
+                    )),
+                    _ => None,
+                };
+                if let Some((statement, code)) = code_lock {
+                    tx.sql().execute(statement, &[code]).await?;
+                }
+                if let Prepared::CopySet { source, .. } = &prepared {
+                    tx.sql().query_opt(share_set, &[&tenant, source]).await?;
+                }
                 None
             }
             Prepared::UpdateSet { code, .. } | Prepared::Holidays { code, .. } => tx
                 .sql()
-                .query_opt(&format!("{lock_set} FOR UPDATE"), &[&tenant, code])
+                .query_opt(lock_set, &[&tenant, code])
                 .await?
                 .map(|row| ("set", row)),
             Prepared::Include { code, set, .. } => {
                 let calendar = tx.sql().query_opt(lock_calendar, &[&tenant, code]).await?;
-                tx.sql()
-                    .query_opt(&format!("{lock_set} FOR SHARE"), &[&tenant, set])
-                    .await?;
+                tx.sql().query_opt(share_set, &[&tenant, set]).await?;
                 calendar.map(|row| ("calendar", row))
             }
             Prepared::Update { code, .. }
@@ -1046,7 +1273,7 @@ impl WorkCalendars {
             Some((kind, row)) => Some(plan_read(tx.sql(), kind, row.get(0), row.get(1)).await?),
             None => None,
         };
-        self.review(tx.sql(), tenant, &prepared, read).await?;
+        self.review(tx.sql(), scope, &prepared, read).await?;
         let mut changed: Vec<(String, Option<Date>, Option<Date>)> = Vec::new();
         let result = match prepared {
             Prepared::Create {
@@ -1182,11 +1409,12 @@ impl WorkCalendars {
                 name,
                 country_iso,
                 admin1_code,
+                installation,
             } => {
-                let reply = json!({"code": code, "name": name, "country_iso": country_iso, "admin1_code": admin1_code});
+                let reply = json!({"code": code, "name": name, "country_iso": country_iso, "admin1_code": admin1_code, "installation": installation});
                 let new = reply.clone();
                 tx.mutate(move |sql| Box::pin(async move {
-                    let id: i64 = sql.query_one("INSERT INTO core_work_calendar_holiday_sets(tenant_id,code,name,country_iso,admin1_code) VALUES($1,$2,$3,$4,$5) RETURNING id", &[&tenant, &code, &name, &country_iso, &admin1_code]).await?.get(0);
+                    let id: i64 = sql.query_one("INSERT INTO core_work_calendar_holiday_sets(tenant_id,code,name,country_iso,admin1_code,installation) VALUES($1,$2,$3,$4,$5,$6) RETURNING id", &[&tenant, &code, &name, &country_iso, &admin1_code, &installation]).await?.get(0);
                     Ok(((), vec![Change { kind: "core/work_calendar.holiday_set".into(), id, old: json!({}), new }]))
                 })).await?;
                 reply
@@ -1210,7 +1438,8 @@ impl WorkCalendars {
             Prepared::Holidays {
                 code, add, remove, ..
             } => {
-                let id = known(set_row(tx.sql(), tenant, &code).await)?.id;
+                let set = known(set_row(tx.sql(), tenant, &code).await)?;
+                let id = set.id;
                 let touched: Vec<Date> = add
                     .iter()
                     .map(|h| h.date)
@@ -1239,6 +1468,13 @@ impl WorkCalendars {
                     for (calendar, to) in reach(tx.sql(), tenant, Some(id), None, *last).await? {
                         changed.push((calendar, Some(*first), Some(to)));
                     }
+                    // Other tenants' calendars hear of an installation-wide
+                    // change from the `publish` job, queued with it. Under
+                    // the set's lock no inclusion can slip in unseen: one
+                    // waiting on it reads these holidays and tells itself.
+                    if set.installation && elsewhere(tx.sql(), tenant, id).await?.0 > 0 {
+                        self.enqueue_publish(tx, id, *first, *last).await?;
+                    }
                 }
                 json!({"added_or_renamed": added, "removed": removed})
             }
@@ -1249,7 +1485,8 @@ impl WorkCalendars {
                 ..
             } => {
                 let id = known(calendar_row(tx.sql(), tenant, &code).await)?.id;
-                let set_id = known(set_row(tx.sql(), tenant, &set).await)?.id;
+                let found = known(set_row(tx.sql(), tenant, &set).await)?;
+                let (set_id, keeper, installation) = (found.id, found.tenant, found.installation);
                 let already = tx
                     .sql()
                     .query_opt(
@@ -1263,7 +1500,7 @@ impl WorkCalendars {
                         .sql()
                         .query_one(
                             "SELECT min(date)::text,max(date)::text FROM core_work_calendar_holidays WHERE tenant_id=$1 AND holiday_set_id=$2",
-                            &[&tenant, &set_id],
+                            &[&keeper, &set_id],
                         )
                         .await?;
                     let (first, last): (Option<&str>, Option<&str>) = (span.get(0), span.get(1));
@@ -1271,10 +1508,11 @@ impl WorkCalendars {
                         first.map(parse_date).transpose()?,
                         last.map(parse_date).transpose()?,
                     );
-                    let facts = json!({"calendar": code, "holiday_set": set});
+                    let facts =
+                        json!({"calendar": code, "holiday_set": set, "installation": installation});
                     tx.mutate(move |sql| Box::pin(async move {
                         if included {
-                            sql.execute("INSERT INTO core_work_calendar_includes(tenant_id,calendar_id,holiday_set_id) VALUES($1,$2,$3)", &[&tenant, &id, &set_id]).await?;
+                            sql.execute("INSERT INTO core_work_calendar_includes(tenant_id,calendar_id,holiday_set_id,set_tenant_id,set_installation) VALUES($1,$2,$3,$4,$5)", &[&tenant, &id, &set_id, &keeper, &installation]).await?;
                         } else {
                             sql.execute("DELETE FROM core_work_calendar_includes WHERE tenant_id=$1 AND calendar_id=$2 AND holiday_set_id=$3", &[&tenant, &id, &set_id]).await?;
                         }
@@ -1290,27 +1528,66 @@ impl WorkCalendars {
                 }
                 json!({"code": code, "holiday_set": set, "included": included})
             }
+            Prepared::CopySet {
+                code,
+                name,
+                source,
+                from,
+                to,
+            } => {
+                let origin = known(set_row(tx.sql(), tenant, &source).await)?;
+                let (first, last) = bounds(from, to);
+                let reply = json!({"code": code, "name": name, "source": source, "country_iso": origin.country_iso, "admin1_code": origin.admin1_code});
+                let new = reply.clone();
+                // No calendar includes the new set yet, so no date moves.
+                let copied: usize = tx.mutate(move |sql| Box::pin(async move {
+                    let id: i64 = sql.query_one("INSERT INTO core_work_calendar_holiday_sets(tenant_id,code,name,country_iso,admin1_code) VALUES($1,$2,$3,$4,$5) RETURNING id", &[&tenant, &code, &name, &origin.country_iso, &origin.admin1_code]).await?.get(0);
+                    let mut changes = vec![Change { kind: "core/work_calendar.holiday_set".into(), id, old: json!({}), new }];
+                    for row in sql.query("INSERT INTO core_work_calendar_holidays(tenant_id,holiday_set_id,date,name) SELECT $1,$2,date,name FROM core_work_calendar_holidays WHERE tenant_id=$3 AND holiday_set_id=$4 AND date BETWEEN $5::text::date AND $6::text::date ORDER BY date RETURNING id,date::text,name", &[&tenant, &id, &origin.tenant, &origin.id, &first, &last]).await? {
+                        changes.push(Change { kind: "core/work_calendar.holiday".into(), id: row.get(0), old: json!({}), new: json!({"set": code, "date": row.get::<_, String>(1), "name": row.get::<_, String>(2)}) });
+                    }
+                    Ok((changes.len() - 1, changes))
+                })).await?;
+                let mut reply = reply;
+                reply["copied"] = json!(copied);
+                reply
+            }
         };
-        // One event per logical change: a plan may change one calendar
-        // several times in its transaction, so the key names the range too;
-        // recording the very same change twice is a no-op.
-        let trace = tx.context().trace_id.clone();
-        let day = |date: Option<Date>| date.map_or("-".to_owned(), |d| d.to_string());
         for (calendar, from, to) in changed {
-            let key = format!("{trace}:{calendar}:{}:{}", day(from), day(to));
-            self.events
-                .record(
-                    tx,
-                    NewEvent {
-                        name: CHANGED,
-                        subject: &calendar,
-                        key: &key,
-                        payload: json!({"calendar": calendar, "from": from.map(|d| d.to_string()), "to": to.map(|d| d.to_string())}),
-                    },
-                )
+            self.record_changed(tx, &calendar, from, to, (from, to))
                 .await?;
         }
         Ok(result)
+    }
+
+    /// Records `core/work_calendar.changed` for `calendar` in the transaction's
+    /// tenant. One event per logical change: a plan may change one calendar
+    /// several times in its transaction, so the key names the change's range
+    /// (`keyed`) too; recording the very same change twice is a no-op, and
+    /// the same key with another range is `Conflict`.
+    pub(crate) async fn record_changed(
+        &self,
+        tx: &mut MutationTransaction<'_>,
+        calendar: &str,
+        from: Option<Date>,
+        to: Option<Date>,
+        keyed: (Option<Date>, Option<Date>),
+    ) -> Result<()> {
+        let trace = tx.context().trace_id.clone();
+        let day = |date: Option<Date>| date.map_or("-".to_owned(), |d| d.to_string());
+        let key = format!("{trace}:{calendar}:{}:{}", day(keyed.0), day(keyed.1));
+        self.events
+            .record(
+                tx,
+                NewEvent {
+                    name: CHANGED,
+                    subject: calendar,
+                    key: &key,
+                    payload: json!({"calendar": calendar, "from": from.map(|d| d.to_string()), "to": to.map(|d| d.to_string())}),
+                },
+            )
+            .await?;
+        Ok(())
     }
 }
 
@@ -1368,20 +1645,6 @@ async fn today(client: &(impl GenericClient + Sync)) -> Result<Date> {
         .get::<_, &str>(0)
         .parse()
         .map_err(|_| Error::Internal)
-}
-async fn exists(
-    client: &(impl GenericClient + Sync),
-    table: &'static str,
-    tenant: i64,
-    code: &str,
-) -> Result<bool> {
-    Ok(client
-        .query_opt(
-            &format!("SELECT 1 FROM {table} WHERE tenant_id=$1 AND code=$2"),
-            &[&tenant, &code],
-        )
-        .await?
-        .is_some())
 }
 fn known<T>(read: Result<T>) -> WriteResult<T> {
     match read {
