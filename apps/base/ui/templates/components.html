@@ -102,8 +102,8 @@ ui-icon-button grid shrink-0 place-items-center transition focus-visible:outline
 
 {#- A copy icon for a text the person pastes elsewhere. It must sit inside an
     element with data-hook="ClipboardCopy" (assets/hooks.js): the hook writes
-    the clipboard, turns the glyph into a check named "Copied" for a moment
-    and reports the result with the element's data-copy-event. -#}
+    the clipboard and turns the glyph into a check named "Copied" for a
+    moment. A refused copy changes nothing and nothing goes to the server. -#}
 {% macro copy_button(id, text, label="Copy") %}
 <span data-copy-text="{{ text }}" class="group inline-flex"><button type="button" id="{{ id }}" data-copy-button data-copy-label="{{ label }}" aria-label="{{ label }}" title="{{ label }}" class="{% call icon_button_class(context=bilibi_ui::IconContext::Inline, kind=bilibi_ui::IconKind::Neutral, chrome=bilibi_ui::Chrome::Utilities, busy=false, class="") %}{% endcall %}"><span class="group-data-[copied]:hidden">{% call icon(name="document-duplicate", class="size-3.5") %}{% endcall %}</span><span class="hidden text-success group-data-[copied]:inline">{% call icon(name="check", class="size-3.5") %}{% endcall %}</span></button></span>
 {% endmacro %}
