@@ -873,7 +873,10 @@ impl WorkCalendars {
                 };
                 let (from, to) = (optional("from"), optional("to"));
                 if from.zip(to).is_some_and(|(from, to)| to < from) {
-                    errors.push(FieldError::new("to", "must not be before the start of the range"));
+                    errors.push(FieldError::new(
+                        "to",
+                        "must not be before the start of the range",
+                    ));
                 }
                 match name {
                     Some(name) => Prepared::CopySet {

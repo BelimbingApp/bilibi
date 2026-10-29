@@ -8,7 +8,7 @@ use super::*;
 use crate::{
     contributions::{CALENDARS_PATH, SETS_PATH},
     resolve::{in_force, in_force_now},
-    Calendar, Exception, Listing, LIST, MANAGE,
+    Calendar, Exception, Listing, LIST, MANAGE, MAX_PAGE_SIZE, MAX_ROWS,
 };
 use bilibi_ui::{
     params, ActionLink, BackLink, BuiltinColumn, Button, ButtonVariant, Card, Choice,
@@ -81,10 +81,10 @@ pub(super) struct Record {
     /// include in all; none for a reader who may not list them.
     sets: Vec<(String, String)>,
     sets_total: i64,
-    /// The include choice: the sets matching the dialog's search (the first
-    /// 100, by code) and how many match in all.
+    /// The include choice: up to 100 sets matching the dialog's search that
+    /// are not included yet, by code, and whether more match.
     found: Vec<(String, String)>,
-    found_total: i64,
+    more_found: bool,
     /// The sets are read again on a full load and after a set-related
     /// event, not on every click.
     sets_stale: bool,
@@ -115,7 +115,7 @@ impl Record {
             sets: Vec::new(),
             sets_total: 0,
             found: Vec::new(),
-            found_total: 0,
+            more_found: false,
             sets_stale: true,
             manage: false,
             today: None,
@@ -365,9 +365,17 @@ impl Record {
             }
             // The dialog's search changed: the choice follows it.
             "include_draft" => {
-                let posted = form(value, "include")?;
-                let search = posted.get("search").map_or("", String::as_str);
-                self.find_sets(scope, search).await?;
+                let mut posted = form(value, "include")?;
+                let search = posted.get("search").cloned().unwrap_or_default();
+                self.find_sets(scope, &search).await?;
+                // A set chosen before that the search no longer lists is no
+                // longer chosen: Include never takes a set out of sight.
+                if posted
+                    .get("holiday_set")
+                    .is_some_and(|set| !self.found.iter().any(|(code, _)| code == set))
+                {
+                    posted.remove("holiday_set");
+                }
                 self.dialog = Dialog::Include(Draft {
                     values: posted,
                     errors: BTreeMap::new(),
@@ -376,6 +384,16 @@ impl Record {
             "include_set" => {
                 let posted = form(value, "include")?;
                 let set = posted.get("holiday_set").cloned().unwrap_or_default();
+                // Enter in the search with no set chosen searches.
+                let search = posted.get("search").cloned().unwrap_or_default();
+                if set.is_empty() && !search.trim().is_empty() {
+                    self.find_sets(scope, &search).await?;
+                    self.dialog = Dialog::Include(Draft {
+                        values: posted,
+                        errors: BTreeMap::new(),
+                    });
+                    return Ok(());
+                }
                 let result = self
                     .pages
                     .submit(
@@ -559,22 +577,44 @@ impl Record {
             }
         }
     }
-    /// The first page of sets whose code or name contains `search`; none for
-    /// a reader who may not list them. The search narrows the rest, so the
-    /// dialog never carries every set.
+    /// Up to a listing page of sets whose code or name contains `search`
+    /// and that the calendar does not include yet; none for a reader who may
+    /// not list them. The search narrows the rest, so the dialog never
+    /// carries every set.
     async fn find_sets(&mut self, scope: &Scope, search: &str) -> Result<()> {
         self.found.clear();
-        self.found_total = 0;
+        self.more_found = false;
         if !self.pages.allowed(scope, LIST).await? {
             return Ok(());
         }
-        let listing = Listing {
-            search: search.trim().chars().take(200).collect(),
-            ..Listing::default()
-        };
-        let rows = self.pages.calendars.holiday_sets(scope, &listing).await?;
-        self.found_total = rows.total;
-        self.found = rows.rows.into_iter().map(|s| (s.code, s.name)).collect();
+        let included = self.calendar()?.holiday_sets.rows.clone();
+        let search: String = search.trim().chars().take(200).collect();
+        // The included sets (the first MAX_ROWS) fill at most that many
+        // pages ahead of the choices.
+        for page in 1..=MAX_ROWS / MAX_PAGE_SIZE + 1 {
+            let listing = Listing {
+                page,
+                search: search.clone(),
+                ..Listing::default()
+            };
+            let rows = self.pages.calendars.holiday_sets(scope, &listing).await?;
+            let read = (page - 1) * MAX_PAGE_SIZE + rows.rows.len() as i64;
+            for set in rows.rows {
+                if included.contains(&set.code) {
+                    continue;
+                }
+                if self.found.len() == MAX_PAGE_SIZE as usize {
+                    self.more_found = true;
+                    break;
+                }
+                self.found.push((set.code, set.name));
+            }
+            if self.more_found || read >= rows.total {
+                return Ok(());
+            }
+        }
+        // Past the pages read, more sets match.
+        self.more_found = true;
         Ok(())
     }
     fn set_name(&self, code: &str) -> String {
@@ -826,10 +866,9 @@ impl Record {
         )
     }
     /// The sets found and not yet included, name first and code after.
-    fn choices(&self, calendar: &Calendar) -> Vec<Choice> {
+    fn choices(&self) -> Vec<Choice> {
         self.found
             .iter()
-            .filter(|(code, _)| !calendar.holiday_sets.rows.contains(code))
             .map(|(code, name)| Choice::new(name.clone(), code.clone()).detail(code))
             .collect()
     }
@@ -1035,7 +1074,7 @@ impl Record {
             ..Modal::default()
         })
     }
-    fn include_dialog(&self, calendar: &Calendar, draft: &Draft) -> Result<Html> {
+    fn include_dialog(&self, draft: &Draft) -> Result<Html> {
         let value = |key: &str| draft.values.get(key).cloned().unwrap_or_default();
         let search = Field::in_form("include", "search")
             .id("work-calendar-include-search")
@@ -1048,18 +1087,17 @@ impl Record {
             .attr("data-debounce", "300");
         let mut combo = Combobox::new("work-calendar-include-set", "include[holiday_set]")
             .label("Holiday set")
-            .options(self.choices(calendar))
+            .options(self.choices())
             .value(value("holiday_set"))
             .placeholder("Choose a holiday set")
             .errors(draft.errors.get("holiday_set").cloned().unwrap_or_default());
-        let listed = self.found.len() as i64;
-        if self.found_total > listed {
+        if self.more_found {
             combo = combo.hint(format!(
-                "The first {listed} of {} sets that match. Find a set to narrow them.",
-                self.found_total
+                "The first {} sets that match; more do. Find a set to narrow them.",
+                self.found.len()
             ));
-        } else if self.found_total == 0 {
-            combo = combo.hint("No holiday set matches.");
+        } else if self.found.is_empty() {
+            combo = combo.hint("No other holiday set matches.");
         }
         let body = render(DialogForm {
             id: "work-calendar-include-form",
@@ -1085,7 +1123,7 @@ impl Record {
             Dialog::None => Ok(Html::EMPTY),
             Dialog::Rule(draft) => self.rule_dialog(draft),
             Dialog::Exception(draft) => self.exception_dialog(draft),
-            Dialog::Include(draft) => self.include_dialog(calendar, draft),
+            Dialog::Include(draft) => self.include_dialog(draft),
             Dialog::Retire { .. } => render(bilibi_ui::ConfirmDialog {
                 id: "work-calendar-retire-confirm",
                 consequence: &format!("Retire {}?", calendar.name),
