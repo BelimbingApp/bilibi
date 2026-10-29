@@ -1,12 +1,14 @@
 //! Agent operations (ADR 01) over the privacy facade: the same calls the
 //! Personal data pages make through their contracts. Agents may enter, verify
-//! and refuse requests and manage holds; `approve` refuses an agent facet, so
-//! approval needs a person, and an erasure approval also asks for that
-//! person's Step-up code. No Bilimbi counterpart.
+//! and refuse requests and manage holds, and approve access requests for their
+//! person. An erasure is sent for approval (`base.privacy.erasure.submit`) and
+//! decided through Workflow's approval case contract
+//! `base.privacy.erasure.decide`, which an independent person's agent may call
+//! with that person's Step-up code. No Bilimbi counterpart.
 use crate::{
     ConfirmedRecord, HoldTarget, NewRequest, Privacy, RequestKind, RequestView, FIELD_REVEAL,
     HOLD_MANAGE, HOLD_VIEW, REQUEST_APPROVE, REQUEST_RECEIVE, REQUEST_VIEW, RETENTION_VIEW,
-    STEP_UP_ERASURE, STEP_UP_REVEAL,
+    STEP_UP_REVEAL,
 };
 use bilibi_agent_api::{
     json::{Data, Output},
@@ -56,6 +58,7 @@ pub(crate) fn request_json(request: &RequestView) -> Value {
         "company_id": request.company.get(), "status": request.status, "version": request.version,
         "received_by": request.received_by, "received_at": request.received_at, "due_at": request.due_at,
         "verified_by": request.verified_by, "approved_by": request.approved_by, "approved_at": request.approved_at,
+        "approval_request": request.approval_request, "approval_awaiting": request.approval_awaiting,
         "refused_reason": request.refused_reason, "completed_at": request.completed_at, "late": request.late,
         "finish_attempts": request.finish_attempts, "finish_error": request.finish_error, "erased": request.erased,
         "confirmed": request.confirmed,
@@ -207,6 +210,7 @@ enum Write {
     Receive,
     Verify,
     Approve,
+    Submit,
     Refuse,
     PlaceHold,
     ReleaseHold,
@@ -244,18 +248,15 @@ impl WriteHandler for Write {
                     let new = new_request(input)?;
                     json!({"summary": format!("Record a {} request for person {}, filed under company {}", new.kind.as_str(), new.person.get(), new.company.get())})
                 }
-                Self::Verify | Self::Approve | Self::Refuse => {
+                Self::Verify | Self::Approve | Self::Submit | Self::Refuse => {
                     let request = privacy.request(&**client, scope, id(input, "id")?).await?;
                     let verb = match self {
                         Self::Verify => "Verify",
                         Self::Approve => "Approve and run",
+                        Self::Submit => "Send for approval",
                         _ => "Refuse",
                     };
-                    let mut facts = json!({"summary": format!("{verb} {} request {} for person {} (now {})", request.kind.as_str(), request.id, request.person.get(), request.status), "request": request_json(&request)});
-                    if matches!(self, Self::Approve) && request.kind == RequestKind::Erasure {
-                        facts["step_up"] = json!([STEP_UP_ERASURE]);
-                    }
-                    facts
+                    json!({"summary": format!("{verb} {} request {} for person {} (now {})", request.kind.as_str(), request.id, request.person.get(), request.status), "request": request_json(&request)})
                 }
                 Self::PlaceHold => {
                     let target = hold_target(input)?;
@@ -313,6 +314,12 @@ impl WriteHandler for Write {
                 Self::Approve => request_json(
                     &privacy
                         .approve_in(tx, scope, id(input, "id")?, version()?)
+                        .await
+                        .map_err(refusal)?,
+                ),
+                Self::Submit => request_json(
+                    &privacy
+                        .submit_erasure_in(tx, scope, id(input, "id")?, version()?)
                         .await
                         .map_err(refusal)?,
                 ),
@@ -483,11 +490,12 @@ inventory::submit! { Contribution::new(DEFINITIONS, "base/privacy", Provenance {
         read!("base.privacy.retention.list", "List retention rules", "Every record class with one company's retention settings and the last sweep.", RETENTION_VIEW, retention_list_schema, retention_output, &Read::Retention),
         write!("base.privacy.request.receive", "Record a data-subject request", "Record an access, portability or erasure request for a person; it is due after privacy.request.due_days.", REQUEST_RECEIVE, receive_schema, &Write::Receive, &[]),
         write!("base.privacy.request.verify", "Verify a requester's identity", "Record how the requester's identity was checked and confirm which records found only by email or phone are the person's.", REQUEST_RECEIVE, verify_schema, &Write::Verify, &[]),
-        write!("base.privacy.request.approve", "Approve a data-subject request", "Approve and run a verified request in every store. A person must approve; an erasure needs someone other than whoever entered it, and Step-up: base.privacy.erasure.approve.", REQUEST_APPROVE, approve_schema, &Write::Approve, &[STEP_UP_ERASURE]),
+        write!("base.privacy.request.approve", "Approve a data-subject request", "Approve and run a verified access or portability request in every store, for a person who can file under its company. An erasure is sent with base.privacy.erasure.submit instead.", REQUEST_APPROVE, approve_schema, &Write::Approve, &[]),
+        write!("base.privacy.erasure.submit", "Send an erasure for approval", "Send a verified erasure request to Workflow's approval case privacy.erasure; someone independent of it decides with base.privacy.erasure.decide, and the erasure runs when it is approved.", REQUEST_RECEIVE, approve_schema, &Write::Submit, &[]),
         write!("base.privacy.request.refuse", "Refuse a data-subject request", "Refuse a request that is not yet approved, with the reason.", REQUEST_RECEIVE, refuse_schema, &Write::Refuse, &[]),
         write!("base.privacy.hold.place", "Place a legal hold", "Stop erasure and retention sweeps for a person or one record.", HOLD_MANAGE, place_schema, &Write::PlaceHold, &[]),
         write!("base.privacy.hold.release", "Release a legal hold", "Release an active legal hold; the next erasure or sweep acts on what it kept.", HOLD_MANAGE, release_schema, &Write::ReleaseHold, &[]),
     ],
     guides: &[Guide { key: "base.privacy", title: "Data-subject requests", summary: "Answer a person's access or erasure request in every store.", keywords: &["privacy", "pdpa", "gdpr", "erasure", "access request", "legal hold"], capability: REQUEST_VIEW,
-        body: "Record the request with base.privacy.request.receive (kind, person_id, company_id, and the emails or phones the person gave). Read base.privacy.request.locate to see what every store holds; records found only by email or phone are listed as candidates. Record how the person's identity was checked with base.privacy.request.verify, passing in confirm only the candidates that are this person's; nothing else found only by an identifier is touched. A person with privacy.request.approve then approves; an agent cannot approve, and an erasure needs someone other than whoever entered it plus that person's Step-up code. Running answers each store in the background; read base.privacy.request.get until status is completed. A store that fails stays pending and the request shows late. Legal holds (base.privacy.hold.place) keep what they name through erasure; the certificate lists every store, what was kept and why." }],
+        body: "Record the request with base.privacy.request.receive (kind, person_id, company_id, and the emails or phones the person gave). Read base.privacy.request.locate to see what every store holds; records found only by email or phone are listed as candidates. Record how the person's identity was checked with base.privacy.request.verify, passing in confirm only the candidates that are this person's; nothing else found only by an identifier is touched. A person with privacy.request.approve, or you as their agent, then approves an access or portability request with base.privacy.request.approve. An erasure is sent for approval with base.privacy.erasure.submit and decided on Waiting for my approval or with base.privacy.erasure.decide, by someone independent of it: not the data subject or any account linked to them, not whoever received or verified it, and never while impersonating. Each decision asks for that person's Step-up code: when a commit answers step_up_required, ask them for their current authenticator code. A rejected or recalled erasure returns to whoever received it, to send again or refuse. Running answers each store in the background; read base.privacy.request.get until status is completed. A store that fails stays pending and the request shows late. Legal holds (base.privacy.hold.place) keep what they name through erasure; the certificate lists every store, what was kept and why." }],
 }) }

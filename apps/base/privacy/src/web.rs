@@ -780,7 +780,15 @@ impl RequestPage {
                 {
                     Ok(_) => {
                         self.dialog = None;
-                        self.flash = Some((StatusKind::Success, if verify { "Identity verified. A person with approval rights can now approve it." } else { "Request refused." }.into()));
+                        let erasure = self
+                            .request
+                            .as_ref()
+                            .is_some_and(|r| r.kind == RequestKind::Erasure);
+                        self.flash = Some((StatusKind::Success, match (verify, erasure) {
+                            (true, true) => "Identity verified. Send the erasure for approval when it is ready.",
+                            (true, false) => "Identity verified. A person with approval rights can now approve it.",
+                            _ => "Request refused.",
+                        }.into()));
                     }
                     Err(error) => {
                         let mut errors = field_errors(&error);
@@ -813,13 +821,39 @@ impl RequestPage {
                     return Ok(());
                 }
                 let input = json!({"id": id, "version": self.version()});
-                match self.pages.contracts.submit(&call(scope, credential, "approve", "base.privacy.request.approve"), input).await {
-                    Ok(_) => self.flash = Some((StatusKind::Success, "Approved. Every store is being answered in the background.".into())),
+                match self
+                    .pages
+                    .contracts
+                    .submit(
+                        &call(scope, credential, "approve", "base.privacy.request.approve"),
+                        input,
+                    )
+                    .await
+                {
+                    Ok(_) => {
+                        self.flash = Some((
+                            StatusKind::Success,
+                            "Approved. Every store is being answered in the background.".into(),
+                        ))
+                    }
                     Err(error) => {
                         self.flash = Some(refusal(
                             error,
-                            "You cannot approve this request. An erasure needs someone other than whoever entered it, with approval rights.",
+                            "You cannot approve this request.",
                             "The request could not be approved.",
+                        )?)
+                    }
+                }
+            }
+            "submit" => {
+                let input = json!({"id": id, "version": self.version()});
+                match self.pages.contracts.submit(&call(scope, credential, "submit", "base.privacy.erasure.submit"), input).await {
+                    Ok(_) => self.flash = Some((StatusKind::Success, "Sent for approval. Someone independent of this request decides on Waiting for my approval.".into())),
+                    Err(error) => {
+                        self.flash = Some(refusal(
+                            error,
+                            "You cannot send this erasure for approval.",
+                            "The erasure could not be sent. Check that its approval rules are published on Approval rules.",
                         )?)
                     }
                 }
@@ -865,7 +899,10 @@ impl RequestPage {
                 .collect::<Vec<_>>()
                 .join(", ")
         };
-        let open = matches!(request.status.as_str(), "received" | "verified");
+        // An erasure waiting for approval is recalled or decided first.
+        let open = matches!(request.status.as_str(), "received" | "verified")
+            && !request.approval_awaiting;
+        let erasure = request.kind == RequestKind::Erasure;
         let located = if open {
             pages.privacy.locate(&client, scope, self.id).await?
         } else {
@@ -931,12 +968,34 @@ impl RequestPage {
                 ..Button::default()
             })?);
         }
-        if can_approve && request.status == "verified" {
+        if can_approve && request.status == "verified" && !erasure {
             actions.push(&render(Button {
                 variant: ButtonVariant::Primary,
                 event: "request_approve",
                 id: "privacy-approve",
                 body: Html::text("Approve"),
+                ..Button::default()
+            })?);
+        }
+        if can_receive && erasure && open && request.status == "verified" {
+            actions.push(&render(Button {
+                variant: ButtonVariant::Primary,
+                event: "submit",
+                id: "privacy-submit",
+                body: Html::text("Send for approval"),
+                ..Button::default()
+            })?);
+        }
+        let approval = request
+            .approval_request
+            .filter(|_| request.approval_awaiting)
+            .map(|round| format!("/workflow/approvals/{round}"));
+        if let Some(href) = &approval {
+            actions.push(&render(Button {
+                variant: ButtonVariant::Primary,
+                href,
+                id: "privacy-approval",
+                body: Html::text("Open approval"),
                 ..Button::default()
             })?);
         }
@@ -1043,7 +1102,13 @@ impl RequestPage {
                     title: "Approved",
                     id: "privacy-request-approved",
                     value: Html::text(&request.approved_by.map_or_else(
-                        || "Not yet approved".into(),
+                        || {
+                            if request.approval_awaiting {
+                                "Waiting for approval".into()
+                            } else {
+                                "Not yet approved".into()
+                            }
+                        },
                         |by| {
                             format!(
                                 "{} by user {by}",

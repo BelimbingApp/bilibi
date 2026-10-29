@@ -3,10 +3,12 @@
 //! every module that keeps a person's data answers for it. Data-subject
 //! requests (access, portability, erasure) reach every store through one
 //! approved, audited Workflow flow and end with an export bundle or a
-//! completion certificate. Base never reads another module's tables; it asks
+//! completion certificate; an erasure is approved through Workflow's shared
+//! approval case (`approval`, ADR 15). Base never reads another module's tables; it asks
 //! each store's handler, with a sealed grant only this module issues. No
 //! Bilimbi counterpart: Bilimbi keeps per-store retention workers only.
 mod agent;
+mod approval;
 mod documents;
 mod due;
 mod holds;
@@ -16,11 +18,12 @@ mod requests;
 mod retention;
 mod runner;
 mod web;
+pub use approval::{erasure_rules, DECIDE as ERASURE_DECIDE, ERASURE_CASE};
 pub use documents::{RequestDocuments, ARTIFACT_OWNER, CERTIFICATE_YEARS, DOCUMENTS, EXPORT_DAYS};
 pub use due::{DUE_SCHEDULE, DUE_WORKER, NOTICE_DAYS};
 pub use holds::{Hold, HoldEvent, HoldPage, HoldTarget};
 pub use requests::{
-    ConfirmedRecord, NewRequest, RequestKind, RequestView, StoreProgress, DUE_DAYS,
+    ConfirmedRecord, NewRequest, RequestKind, RequestView, StoreProgress, DUE_DAYS, SUBJECT,
 };
 pub use retention::{
     period_accepts, setting_keys, ClassView, Companies, RecordClass, RetentionAction, SweepView,
@@ -67,8 +70,11 @@ pub const HOLD_MANAGE: &str = "privacy.hold.manage";
 pub const REQUEST_VIEW: &str = "privacy.request.view";
 /// Enter, verify and refuse requests.
 pub const REQUEST_RECEIVE: &str = "privacy.request.receive";
-/// Approve requests; the request jobs run as the approver.
+/// Approve requests; the request jobs run as the approver. An erasure is
+/// decided through its approval case, by someone independent of it.
 pub const REQUEST_APPROVE: &str = "privacy.request.approve";
+/// Publish the erasure approval rules and review their exceptions.
+pub const APPROVAL_MANAGE: &str = "privacy.approval.manage";
 /// Read record classes, the tenant's retention periods and sweep results.
 pub const RETENTION_VIEW: &str = "privacy.retention.view";
 /// Set the tenant's retention periods.
@@ -77,7 +83,8 @@ pub const RETENTION_MANAGE: &str = "privacy.retention.manage";
 pub const FIELD_REVEAL: &str = "privacy.field.reveal";
 /// The Step-up operation a reveal asks for once the tenant turns it on.
 pub const STEP_UP_REVEAL: &str = "base.privacy.field.reveal";
-/// The Step-up operation an erasure approval asks for; tenants cannot turn it off.
+/// The Step-up operation each erasure approval decision asks for; tenants
+/// cannot turn it off.
 pub const STEP_UP_ERASURE: &str = "base.privacy.erasure.approve";
 /// Company setting: days audit evidence keeps personal values after an
 /// erasure (its legal minimum); the retention sweep erases them after.
@@ -208,7 +215,7 @@ inventory::submit! { Contribution::new(VOCABULARY, "base/privacy.vocabulary", pr
     capabilities: &[
         CapabilityDefinition::tenant(HOLD_VIEW), CapabilityDefinition::tenant(HOLD_MANAGE),
         CapabilityDefinition::tenant(REQUEST_VIEW), CapabilityDefinition::tenant(REQUEST_RECEIVE),
-        CapabilityDefinition::tenant(REQUEST_APPROVE),
+        CapabilityDefinition::tenant(REQUEST_APPROVE), CapabilityDefinition::tenant(APPROVAL_MANAGE),
         CapabilityDefinition::tenant(RETENTION_VIEW), CapabilityDefinition::tenant(RETENTION_MANAGE),
         CapabilityDefinition::tenant(FIELD_REVEAL),
     ],
@@ -324,6 +331,7 @@ inventory::submit! { Contribution::new(PAGE_WRITES, web::SERVICE, provenance!(),
         ("create", "base.privacy.request.receive"),
         ("verify", "base.privacy.request.verify"),
         ("approve", "base.privacy.request.approve"),
+        ("submit", "base.privacy.erasure.submit"),
         ("refuse", "base.privacy.request.refuse"),
         ("place", "base.privacy.hold.place"),
         ("release", "base.privacy.hold.release"),
@@ -368,7 +376,6 @@ fn build(services: &bilibi_module_registry::Services) -> RegistryResult<Privacy>
     let step_up = services.get::<bilibi_step_up::StepUp>(bilibi_step_up::SERVICE)?;
     let parties = services.get::<bilibi_tenancy::PartyProofs>("base/tenancy.parties")?;
     requests::bind(requests::Bound {
-        step_up: step_up.clone(),
         parties: parties.clone(),
     })?;
     let issuer = Issuer::claim().ok_or_else(|| {
@@ -404,6 +411,7 @@ inventory::submit! {
             ("base-privacy-003-due-notices", include_str!("../migrations/003-due-notices.sql")),
             ("base-privacy-004-retention", include_str!("../migrations/004-retention.sql")),
             ("base-privacy-005-erasure-authority", include_str!("../migrations/005-erasure-authority.sql")),
+            ("base-privacy-006-erasure-approval", include_str!("../migrations/006-erasure-approval.sql")),
         ],
         services: &[
             Service { id: SERVICE, factory: |services| Ok(Arc::new(build(services)?)) },
@@ -411,6 +419,10 @@ inventory::submit! {
                 if !agent::bind(services.get(SERVICE)?) {
                     return Err(bilibi_module_registry::RegistryError::Service("duplicate privacy agent binding".into()));
                 }
+                Ok(Arc::new(()))
+            } },
+            Service { id: "base/privacy.approvals", factory: |services| {
+                approval::bind(services.get(bilibi_workflow::SERVICE)?, services.get(SERVICE)?, services.get("base/tenancy.authentication")?)?;
                 Ok(Arc::new(()))
             } },
             Service { id: web::SERVICE, factory: |services| {
