@@ -91,7 +91,7 @@ async fn directory_chain(path: &Path) -> Result<()> {
 }
 
 /// Create missing directories below `path` with 0700, checking each component.
-async fn make_directories(path: &Path) -> Result<()> {
+pub async fn make_directories(path: &Path) -> Result<()> {
     let mut current = PathBuf::new();
     for part in path.components() {
         current.push(part);

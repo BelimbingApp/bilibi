@@ -2,9 +2,10 @@
 
 `base/media` owns private asset storage: operator-mapped disks, asset metadata
 (`base_media_assets`), content-checked uploads, malware scanning with
-quarantine, signed single-asset streams, the trusted subject-owner seam and
-private subject attachments (`base_media_attachments`: draft/submitted state,
-ULID public ids, owner-checked downloads and draft cleanup).
+quarantine, the staging of resumable uploads, signed single-asset streams, the
+trusted subject-owner seam and private subject attachments
+(`base_media_attachments`: draft/submitted state, ULID public ids,
+owner-checked downloads and draft cleanup).
 
 Owners call `base/media.store` (`Media`) **after** authorizing their own
 workflow. Nothing here is a browser endpoint except the signed stream route the
@@ -18,7 +19,9 @@ absolute directories with mode `0700`, not under a `static`, `public` or
 `assets` path and with no symlink anywhere in the path. `media.max_bytes`
 (default 10 MiB, at most 512 MiB), `media.attachment_allowed_types`,
 `media.attachment_disk`, `media.stream_ttl_seconds` (default 300),
-`media.scan.policy` and `media.scan.timeout_seconds` (see Malware scanning).
+`media.scan.policy` and `media.scan.timeout_seconds` (see Malware scanning),
+`media.upload.staging_disk` and `media.upload.staging_hours` (see Resumable
+uploads).
 Keep disk roots stable while assets reference them; `external` is a reserved
 sentinel for linked (not stored) assets and cannot be a disk name.
 
@@ -118,7 +121,24 @@ Purge never deletes bytes inside the manager's transaction:
 
 An impersonated session cannot rescan or purge: Queue refuses to enqueue for an impersonator.
 
-The Quarantined Files page (`/system/media/quarantine`, Administration › System) lists them by status (Needs attention, Quarantined, Scan failed, Being checked, Not scanned, and Purging or Purged once purged), with Scan again and Purge contents for managers. Purge confirms first. A database trigger keeps a purged file's verdict fixed and both purge times final.
+The Quarantined Files page (`/system/media/quarantine`, Administration › System) lists them by status (Needs attention, Quarantined, Scan failed, Being checked, Not scanned, and Purging or Purged once purged), with Scan again and Purge contents for managers. Purge confirms first, in a dialog that opens with the shared instance banner. A database trigger keeps a purged file's verdict fixed and both purge times final.
+
+## Resumable uploads
+
+A live file input declared with `UploadSpec::resumable` keeps its chunks in a staging file here while they arrive, so a dropped connection, a restarted server or a reloaded page carries on from the bytes already there. Once every byte is there and checked, the file is held in the page's memory until the page takes it, as any upload is. The browser contract is [`docs/live-pages.md`](../../../docs/live-pages.md) (Resumable uploads); the decision is [ADR 14](../../../docs/architecture/decisions/14-resumable-uploads-stage-on-a-media-disk.md).
+
+| Setting (global) | Default | Meaning |
+| --- | --- | --- |
+| `media.upload.staging_disk` | `local` | The disk staging files live on. While it names no configured, safe disk, resumable inputs hold their bytes in memory, at most 64 MiB |
+| `media.upload.staging_hours` | 24 (1–720) | Hours an unfinished upload is kept for the person to carry on |
+| `media.max_bytes` | 10 MiB | Also the largest resumable file, though never below 64 MiB |
+
+- The Web host is the only caller. `staging(client)` resolves the disk, the size limit (`Staging::limit`: `media.max_bytes` clamped to 64–512 MiB, the same figure the host's `UploadSpec::limit` refuses a larger file by) and the lifetime once per announcement (`None` without a safe staging disk); the connection then goes back to the pool. `Staging::stage(scope, StagingRequest)` opens a `StagedUpload` without one, which writes chunks in order (`write`), hands over the bytes once all of them hash to the announced SHA-256 (`finish`), and `remove`s the file.
+- A file lives at `staging/tenants/{tenant}/accounts/{account}/{key}` with mode `0600`. The key is the SHA-256 of the impersonating operator, the page service, the input, the size and the file's SHA-256, so only the same person choosing the same file in the same input finds it. Its length is the offset to resume from; reopening it hashes the bytes already there again.
+- The first hash mismatch empties the file and the browser sends it again from the start; a second refuses.
+- An account keeps at most 20 staging files: opening another removes the account's files nobody wrote to within `media.upload.staging_hours`, then its least recently written.
+- The `base/media-staging-sweep` schedule runs hourly once an operator enables it on the Schedule board (and grants `scheduler` its `EXECUTE`, `apps/base/schedule/README.md`). It removes every staging file nobody wrote to within `media.upload.staging_hours`, in every tenant. Files on a disk the setting no longer names are left for the operator.
+- Staging files are transport, not records: nothing about them is audited, and they are never scanned. The bytes reach an owner only through `Uploads::consume`, and whatever the owner stores goes through the usual checks and scan.
 
 ## Signed streams
 

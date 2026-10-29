@@ -151,7 +151,10 @@ impl Catalog {
         // Apply that record-level restriction to the resolved Grid field too,
         // so the alternate path cannot bypass the Company's field identity
         // (Bilimbi `Bilimbi.Base.Grid`).
+        // A masked record field stays masked there (ADR 05), not withheld.
         let mut contributed_hidden: BTreeMap<&'static str, BTreeSet<&'static str>> =
+            BTreeMap::new();
+        let mut contributed_masks: BTreeMap<&'static str, BTreeMap<String, &'static str>> =
             BTreeMap::new();
         for (root_id, root) in installed.map() {
             let denied: BTreeSet<&str> = restricted
@@ -160,20 +163,33 @@ impl Catalog {
                 .flatten()
                 .map(String::as_str)
                 .collect();
-            for field in root
+            let root_masks = masked.get(*root_id);
+            for record_field in root
                 .record_fields()
                 .iter()
                 .filter(|field| denied.contains(field.id))
             {
-                let Some(path) = field.column else { continue };
+                let Some(path) = record_field.column else {
+                    continue;
+                };
                 let Ok(column) = column::resolve(path, root, &|id| installed.table(id)) else {
                     continue;
                 };
                 if let Some(field) = column.field {
-                    contributed_hidden
-                        .entry(column.table)
-                        .or_default()
-                        .insert(field.id);
+                    match root_masks.and_then(|m| m.get(record_field.id)) {
+                        Some(kind) => {
+                            contributed_masks
+                                .entry(column.table)
+                                .or_default()
+                                .insert(field.id.to_owned(), kind);
+                        }
+                        None => {
+                            contributed_hidden
+                                .entry(column.table)
+                                .or_default()
+                                .insert(field.id);
+                        }
+                    }
                 }
             }
         }
@@ -184,6 +200,13 @@ impl Catalog {
                 continue;
             }
             let mut own = masked.get(*id).cloned().unwrap_or_default();
+            own.extend(
+                contributed_masks
+                    .get(*id)
+                    .into_iter()
+                    .flatten()
+                    .map(|(field, kind)| (field.clone(), *kind)),
+            );
             if let Some((_, field)) = reveal.filter(|(table, _)| table == id) {
                 own.remove(field);
             }

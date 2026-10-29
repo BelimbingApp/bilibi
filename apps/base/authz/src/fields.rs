@@ -1,7 +1,8 @@
 //! Generalized field withholding, independent of Grid and presentation. Never
 //! serialize an original value beside a restricted placeholder.
+//! Mirrors Bilimbi `Base.Authz` field withholding.
 use bilibi_database::{Error, Result};
-use bilibi_tenancy::Scope;
+use bilibi_tenancy::{ReadClient, Scope};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashSet};
 use tokio_postgres::GenericClient;
@@ -13,25 +14,44 @@ pub async fn restricted(
     client: &impl GenericClient,
     scope: &Scope,
 ) -> Result<BTreeMap<String, HashSet<String>>> {
-    if scope.principal().is_some() {
-        let rows = client
-            .query(
-                "SELECT DISTINCT table_id,field_id FROM field_restrictions WHERE tenant_id=$1",
-                &[&scope.tenant()],
-            )
-            .await?;
-        let mut result: BTreeMap<String, HashSet<String>> = BTreeMap::new();
-        for row in rows {
-            result.entry(row.get(0)).or_default().insert(row.get(1));
-        }
-        return Ok(result);
-    }
-    let rows=client.query("SELECT DISTINCT f.table_id,f.field_id FROM field_restrictions f JOIN effective_principal_roles p ON p.tenant_id=f.tenant_id AND p.role_id=f.role_id WHERE f.tenant_id=$1 AND p.user_id=$2",&[&scope.tenant(),&scope.user()]).await?;
+    let rows = if scope.principal().is_some() {
+        client
+            .query(SYSTEM_RESTRICTIONS, &[&scope.tenant()])
+            .await?
+    } else {
+        client
+            .query(USER_RESTRICTIONS, &[&scope.tenant(), &scope.user()])
+            .await?
+    };
+    Ok(restriction_rows(rows))
+}
+/// The same live restrictions on a reviewed operation's read connection.
+/// Queries stay on the caller's connection, including an uncommitted transaction.
+pub async fn restricted_read(
+    client: &dyn ReadClient,
+    scope: &Scope,
+) -> Result<BTreeMap<String, HashSet<String>>> {
+    let rows = if scope.principal().is_some() {
+        client
+            .query(SYSTEM_RESTRICTIONS, &[&scope.tenant()])
+            .await?
+    } else {
+        client
+            .query(USER_RESTRICTIONS, &[&scope.tenant(), &scope.user()])
+            .await?
+    };
+    Ok(restriction_rows(rows))
+}
+
+const SYSTEM_RESTRICTIONS: &str =
+    "SELECT DISTINCT table_id,field_id FROM field_restrictions WHERE tenant_id=$1";
+const USER_RESTRICTIONS: &str = "SELECT DISTINCT f.table_id,f.field_id FROM field_restrictions f JOIN effective_principal_roles p ON p.tenant_id=f.tenant_id AND p.role_id=f.role_id WHERE f.tenant_id=$1 AND p.user_id=$2";
+fn restriction_rows(rows: Vec<tokio_postgres::Row>) -> BTreeMap<String, HashSet<String>> {
     let mut result: BTreeMap<String, HashSet<String>> = BTreeMap::new();
     for row in rows {
         result.entry(row.get(0)).or_default().insert(row.get(1));
     }
-    Ok(result)
+    result
 }
 /// The fields of each audit record type the scope may not see, keyed by the
 /// names a recorded value uses (Bilimbi `Authz.withheld_fields_by_type/2`). A
@@ -213,13 +233,31 @@ pub async fn masked(
     client: &impl GenericClient,
     scope: &Scope,
 ) -> Result<BTreeMap<String, BTreeMap<String, &'static str>>> {
-    let rows = client
-        .query(
-            "SELECT f.table_id,f.field_id FROM field_restrictions f JOIN effective_principal_roles p ON p.tenant_id=f.tenant_id AND p.role_id=f.role_id \
-             WHERE f.tenant_id=$1 AND p.user_id=$2 GROUP BY f.table_id,f.field_id HAVING bool_and(f.mode='mask')",
-            &[&scope.tenant(), &scope.user()],
-        )
-        .await?;
+    masked_rows(
+        client
+            .query(MASKED, &[&scope.tenant(), &scope.user()])
+            .await?,
+    )
+}
+/// [`masks_for`] on a caller's read connection.
+pub async fn masks_for_read(
+    client: &dyn ReadClient,
+    scope: &Scope,
+    table: &str,
+) -> Result<BTreeMap<String, &'static str>> {
+    Ok(masked_rows(
+        client
+            .query(MASKED, &[&scope.tenant(), &scope.user()])
+            .await?,
+    )?
+    .remove(table)
+    .unwrap_or_default())
+}
+const MASKED: &str = "SELECT f.table_id,f.field_id FROM field_restrictions f JOIN effective_principal_roles p ON p.tenant_id=f.tenant_id AND p.role_id=f.role_id \
+     WHERE f.tenant_id=$1 AND p.user_id=$2 GROUP BY f.table_id,f.field_id HAVING bool_and(f.mode='mask')";
+fn masked_rows(
+    rows: Vec<tokio_postgres::Row>,
+) -> Result<BTreeMap<String, BTreeMap<String, &'static str>>> {
     let catalog = crate::field_catalog::field_catalog()?;
     let mut result: BTreeMap<String, BTreeMap<String, &'static str>> = BTreeMap::new();
     for row in rows {

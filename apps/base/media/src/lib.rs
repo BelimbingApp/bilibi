@@ -18,6 +18,7 @@ mod quarantine;
 mod response;
 mod scan;
 mod signing;
+mod staging;
 mod storage;
 mod upload;
 mod web;
@@ -34,6 +35,7 @@ pub use quarantine::{
 pub use response::{Delivery, StreamFile};
 pub use scan::{ScanFacts, ScanFuture, ScanState, Scanner, Verdict, PRINCIPAL, SCAN};
 pub use signing::Signer;
+pub use staging::{StagedUpload, Staging, StagingRequest};
 pub use storage::EXTERNAL;
 pub use upload::{Rules, Upload};
 
@@ -799,7 +801,7 @@ pub const SERVICE: &str = "base/media.store";
 inventory::submit! {
     bilibi_module_registry::Module {
         id: "base/media", layer: bilibi_module_registry::Layer::Base,
-        dependencies: &["base/agent_api", "base/audit", "base/authz", "base/database", "base/datetime", "base/locale", "base/menu", "base/notifications", "base/personal_data", "base/queue", "base/settings", "base/tenancy", "base/ui"],
+        dependencies: &["base/agent_api", "base/audit", "base/authz", "base/database", "base/datetime", "base/locale", "base/menu", "base/notifications", "base/personal_data", "base/queue", "base/schedule", "base/settings", "base/system", "base/tenancy", "base/ui"],
         migrations: &[
             ("base-media-001", include_str!("../migrations/001-media.sql")),
             ("base-media-002", include_str!("../migrations/002-attachments.sql")),
@@ -827,6 +829,13 @@ inventory::submit! {
             }},
             Service { id: quarantine::HANDLER, factory: |services| {
                 Ok(Arc::new(HandlerService(Arc::new(quarantine::PurgeJob { media: services.get(SERVICE)? }))))
+            }},
+            Service { id: staging::HANDLER, factory: |services| {
+                Ok(Arc::new(HandlerService(Arc::new(staging::Sweep {
+                    schedule: services.get("base/schedule.store")?,
+                    media: services.get(SERVICE)?,
+                    db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
+                }))))
             }},
             Service { id: "base/media.agent", factory: |services| {
                 if !agent::bind(services.get(SERVICE)?) {

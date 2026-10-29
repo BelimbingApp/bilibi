@@ -247,6 +247,19 @@ pub(crate) async fn effective_restrictions(
     scope: &Scope,
 ) -> Result<std::collections::HashSet<String>> {
     let restrictions = bilibi_authz::fields::restricted(client, scope).await?;
+    resolve_restrictions(restrictions)
+}
+
+pub(crate) async fn effective_restrictions_read(
+    client: &dyn bilibi_tenancy::ReadClient,
+    scope: &Scope,
+) -> Result<std::collections::HashSet<String>> {
+    resolve_restrictions(bilibi_authz::fields::restricted_read(client, scope).await?)
+}
+
+fn resolve_restrictions(
+    restrictions: BTreeMap<String, std::collections::HashSet<String>>,
+) -> Result<std::collections::HashSet<String>> {
     let mut company = restrictions.get("companies").cloned().unwrap_or_default();
     for (_, field) in definitions()? {
         let (table, target, _) =
@@ -462,7 +475,7 @@ pub(crate) async fn validate_choices(
 }
 
 pub(crate) async fn validate_choice_snapshot(
-    client: &(impl tokio_postgres::GenericClient + Sync),
+    client: &dyn bilibi_tenancy::ReadClient,
     scope: &Scope,
     values: &CompanyFieldValues,
 ) -> Vec<crate::FieldError> {
@@ -480,8 +493,11 @@ pub(crate) async fn validate_choice_snapshot(
         let Some(code) = values.get(field.id).and_then(Value::as_str) else {
             continue;
         };
-        match lists.choices(client, scope, picklist, None).await {
-            Ok(options) if options.iter().any(|option| option.value == code) => {}
+        match lists
+            .contains_choice(client, scope, picklist, code, None)
+            .await
+        {
+            Ok(true) => {}
             Ok(_) => errors.push(crate::FieldError::new(field.id, "is not an active choice")),
             Err(_) => errors.push(crate::FieldError::new(
                 field.id,

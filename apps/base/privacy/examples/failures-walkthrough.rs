@@ -979,12 +979,50 @@ async fn main() -> Result<()> {
     .await?;
     person(&client, "still held", eve).await?;
     rows(&client, "owed cleanup", &format!("SELECT 'runs='||runs||' done='||(done_at IS NOT NULL) FROM base_privacy_resumptions WHERE request_id={}", erasure.id)).await?;
+    // While the hold keeps her data, an access request discloses it.
+    let access = received(
+        &privacy,
+        &mut client,
+        &second.scope,
+        RequestKind::Access,
+        eve,
+        "eve-held@example.test",
+    )
+    .await?;
+    let access = privacy
+        .approve(&mut client, &admin.scope, access.id, access.version)
+        .await?;
+    let access = settle(&privacy, &client, &admin.scope, access.id, 180).await?;
+    summary(&access);
+    let held_export = access.export_artifact.clone().unwrap_or_default();
+    println!(
+        "export while held holds her email: {}",
+        export_text(&privacy, &mut client, &admin.scope, access.id)
+            .await
+            .contains("eve-held@example.test")
+    );
     privacy
         .release_hold(&mut client, &admin.scope, hold.id, "Litigation settled")
         .await?;
     sweep(&app, &mut client, &admin.scope, "sweep after release").await?;
     person(&client, "after release", eve).await?;
     rows(&client, "owed cleanup", &format!("SELECT 'runs='||runs||' done='||(done_at IS NOT NULL)||' '||coalesce(last_result::text,'') FROM base_privacy_resumptions WHERE request_id={}", erasure.id)).await?;
+    rows(
+        &client,
+        "the export made while held",
+        &format!("SELECT 'deleted='||(deleted_at IS NOT NULL)||' purged='||(purged_at IS NOT NULL) FROM base_artifacts WHERE public_id='{held_export}'"),
+    )
+    .await?;
+    rows(
+        &client,
+        "her access request after the cleanup",
+        &format!("SELECT 'identifiers='||identifiers::text||' export='||coalesce(export_artifact,'none') FROM base_privacy_requests WHERE id={}", access.id),
+    )
+    .await?;
+    println!(
+        "download after the cleanup: {}",
+        export_text(&privacy, &mut client, &admin.scope, access.id).await
+    );
 
     println!("== S1: Search neither matches nor shows a masked field");
     let probe = new_person(&client, "Search Probe", "probe-unique@example.test").await?;
@@ -1192,6 +1230,40 @@ async fn main() -> Result<()> {
         "request owing cleanup, its own record changed inside a savepoint of this transaction (rolled back)",
         in_savepoint,
     );
+    // Another person's record this transaction wrote is still not the
+    // request's to clear (probed, then rolled back).
+    let other_person = {
+        let tx = client.transaction().await?;
+        evidence(&*tx, dee, 1, "0 seconds", "dee@example.test").await?;
+        let outcome = tx
+            .execute(&probe_sql(erasure.id, rita.get(), dee.get()), &[])
+            .await;
+        tx.rollback().await?;
+        outcome
+    };
+    sql_outcome(
+        "request owing cleanup, another person's record this transaction wrote (rolled back)",
+        other_person,
+    );
+    sql_outcome(
+        "widen a kind's declared fields after touching an existing migration ledger row",
+        client
+            .batch_execute(
+                "BEGIN; \
+                 UPDATE bilibi_migrations SET applied_at=applied_at WHERE version=(SELECT version FROM bilibi_migrations ORDER BY applied_at,version LIMIT 1); \
+                 UPDATE base_personal_data_kinds SET fields = array_append(fields, 'amount') WHERE kind='person'; \
+                 COMMIT;",
+            )
+            .await
+            .map(|()| 0),
+    );
+    client.batch_execute("ROLLBACK").await.ok();
+    rows(
+        &client,
+        "person kind's declared fields",
+        "SELECT array_to_string(fields, ',') FROM base_personal_data_kinds WHERE kind='person'",
+    )
+    .await?;
     sql_outcome(
         "widen a kind's declared fields outside a migration",
         client

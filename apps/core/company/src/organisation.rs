@@ -12,7 +12,8 @@ use bilibi_authz::{authorize_key, authorize_proof, decide_proof, holds_proof, re
 use bilibi_database::{Change, Error, MutationTransaction, Result};
 use bilibi_party_ids::OrganisationId;
 use bilibi_tenancy::{
-    NamedOrganisation, OrganisationDirectory, OrganisationProvider, ProofClient, ProofFuture, Scope,
+    NamedOrganisation, OrganisationDirectory, OrganisationProvider, ProofClient, ProofFuture,
+    ReadClient, Scope,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -671,7 +672,7 @@ pub fn email_shaped(email: &str) -> bool {
 /// reference (Bilimbi validates through `Geonames.get_country/1`); an empty
 /// Geonames install knows no country, so a jurisdiction cannot be recorded
 /// until countries are imported.
-pub async fn known_country(client: &impl GenericClient, iso: &str) -> Result<bool> {
+pub async fn known_country(client: &dyn ReadClient, iso: &str) -> Result<bool> {
     Ok(client
         .query_opt("SELECT 1 FROM geonames_countries WHERE iso=$1", &[&iso])
         .await?
@@ -683,7 +684,7 @@ pub async fn known_country(client: &impl GenericClient, iso: &str) -> Result<boo
 /// legal entity type, a known jurisdiction and a code no live or deleted
 /// company of the tenant already carries. Returns the field errors found.
 pub async fn check_references(
-    client: &impl GenericClient,
+    client: &dyn ReadClient,
     tenant: i64,
     company: &ValidCompany,
     except_id: Option<i64>,
@@ -853,17 +854,37 @@ pub async fn create_with_fields(
     Ok(CreateOutcome::Created(Box::new(created)))
 }
 
-/// Validates the Company and contributed Extension fields for a reviewed
-/// create without writing or reserving generated values (Bilimbi
-/// `preview_create_company/2`).
-pub async fn preview_with_fields(
-    client: &(impl GenericClient + Sync),
+/// A reviewed create's normalized company and duplicate suggestions. Preview
+/// reserves nothing; `create` rechecks authority, references and duplicate policy.
+#[derive(Clone, Debug)]
+pub struct CreatePreview {
+    pub company: ValidCompany,
+    pub matches: crate::CreateMatches,
+}
+
+/// Validates and matches a create on the caller's read connection or transaction
+/// (Bilimbi `preview_create_company/2`). Never acquires a pooled connection,
+/// writes a company or commits the caller's transaction. Invalid fields are an
+/// inner refusal; access and database failures are outer errors. Matching is
+/// advisory: `create` enforces the configured duplicate-review policy at save.
+pub async fn preview_create(
+    client: &dyn ReadClient,
+    scope: &Scope,
+    new: &NewCompany,
+) -> Result<std::result::Result<CreatePreview, Vec<FieldError>>> {
+    preview_create_with_fields(client, scope, new, &crate::CompanyFieldValues::new()).await
+}
+
+/// The same preview including contributed Extension fields, with their current
+/// restrictions and active pick-list choices on the caller's connection.
+pub async fn preview_create_with_fields(
+    client: &dyn ReadClient,
     scope: &Scope,
     new: &NewCompany,
     fields: &crate::CompanyFieldValues,
-) -> Result<std::result::Result<ValidCompany, Vec<FieldError>>> {
-    authorize_key(client, scope, CREATE).await?;
-    let restricted = crate::field_contributions::effective_restrictions(client, scope).await?;
+) -> Result<std::result::Result<CreatePreview, Vec<FieldError>>> {
+    authorize_proof(client, scope, CREATE).await?;
+    let restricted = crate::field_contributions::effective_restrictions_read(client, scope).await?;
     let mut field_errors = crate::field_contributions::validate_create(fields);
     field_errors
         .extend(crate::field_contributions::validate_choice_snapshot(client, scope, fields).await);
@@ -880,11 +901,11 @@ pub async fn preview_with_fields(
     };
     let mut errors = check_references(client, scope.tenant(), &company, None).await?;
     errors.extend(crate::hierarchy::check_parent(client, scope, None, company.parent_id).await?);
-    Ok(if errors.is_empty() {
-        Ok(company)
-    } else {
-        Err(errors)
-    })
+    if !errors.is_empty() {
+        return Ok(Err(errors));
+    }
+    let matches = crate::duplicates::create_matches(client, scope, new).await?;
+    Ok(Ok(CreatePreview { company, matches }))
 }
 
 /// One bounded page of the administration index (Bilimbi

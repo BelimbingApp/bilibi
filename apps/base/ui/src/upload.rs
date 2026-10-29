@@ -16,15 +16,28 @@
 //! [`Uploads::consume`]. Bytes never leave this buffer any other way, and
 //! they go with the mounted state when it is dropped.
 //!
-//! Bounds: every size is clamped by [`MAX_FILE_SIZE`] and [`MAX_ENTRIES`],
-//! the host accepts at most [`MAX_UPLOADS`] specs per state, and a chunk
-//! must continue exactly where the last one ended. A frame is
+//! A resumable spec ([`UploadSpec::resumable`], issue 141's second phase)
+//! has no Bilimbi counterpart: while the installation has a staging disk, its
+//! chunks wait in Media's private staging file instead of this buffer, so a
+//! dropped connection or a restarted server carries on where it stopped. The
+//! browser announces the file's SHA-256 with it; the host stages the bytes,
+//! and hands them to the entry here only once they hash to it, so the owner
+//! consumes a resumable file exactly as any other.
+//!
+//! Bounds: every size is clamped by [`MAX_FILE_SIZE`] (a staged resumable
+//! entry by [`MAX_RESUMABLE_FILE_SIZE`] and the largest file Media stages) and
+//! [`MAX_ENTRIES`], the host accepts at most [`MAX_UPLOADS`] specs per state,
+//! and a chunk must continue exactly where the last one ended. A frame is
 //! `u32 id, u32 offset, bytes` with `bytes` at most [`CHUNK_SIZE`].
 use askama::Template;
 use serde::{Deserialize, Serialize};
 
 /// The largest file a spec may accept, however large it asks for.
 pub const MAX_FILE_SIZE: u64 = 64 * 1024 * 1024;
+/// The largest file a resumable spec may accept while its bytes are staged:
+/// Media's own ceiling. The installation's `media.max_bytes` lowers it, but
+/// never below [`MAX_FILE_SIZE`].
+pub const MAX_RESUMABLE_FILE_SIZE: u64 = 512 * 1024 * 1024;
 /// The most entries a spec may hold at once.
 pub const MAX_ENTRIES: usize = 20;
 /// The most file inputs one mounted state may declare.
@@ -43,6 +56,9 @@ pub struct UploadSpec {
     pub accept: Vec<String>,
     pub max_entries: usize,
     pub max_file_size: u64,
+    /// Chunks are staged on Media's private disk and survive a dropped
+    /// connection ([`UploadSpec::resumable`]).
+    pub resumable: bool,
 }
 
 impl UploadSpec {
@@ -51,7 +67,28 @@ impl UploadSpec {
     /// `name` and the key the owner consumes by: lowercase letters, digits,
     /// `_` and `-`, a module constant, so anything else panics.
     pub fn new(name: impl Into<String>, max_file_size: u64) -> Self {
-        let name = name.into();
+        Self::declare(name.into(), max_file_size.clamp(1, MAX_FILE_SIZE), false)
+    }
+
+    /// A spec whose file survives a dropped connection: the browser
+    /// announces each file's SHA-256, and the host stages the chunks on
+    /// Media's private disk, keyed to the person, this page, this input, the
+    /// size and that hash, so a reconnect (or the person choosing the same
+    /// file again within `media.upload.staging_hours`) continues from the
+    /// bytes already there. `max_file_size` is clamped to
+    /// [`MAX_RESUMABLE_FILE_SIZE`], and the host lowers it to the largest
+    /// file Media stages ([`UploadSpec::limit`]). Without a staging disk the
+    /// spec acts as [`UploadSpec::new`]: bytes held here, at most
+    /// [`MAX_FILE_SIZE`].
+    pub fn resumable(name: impl Into<String>, max_file_size: u64) -> Self {
+        Self::declare(
+            name.into(),
+            max_file_size.clamp(1, MAX_RESUMABLE_FILE_SIZE),
+            true,
+        )
+    }
+
+    fn declare(name: String, max_file_size: u64, resumable: bool) -> Self {
         assert!(
             !name.is_empty()
                 && name.len() <= 64
@@ -64,7 +101,20 @@ impl UploadSpec {
             name,
             accept: Vec::new(),
             max_entries: 1,
-            max_file_size: max_file_size.clamp(1, MAX_FILE_SIZE),
+            max_file_size,
+            resumable,
+        }
+    }
+
+    /// The most bytes one file may have here: a staged resumable entry up to
+    /// `staging`, the largest file Media stages (its `Staging::limit`:
+    /// `media.max_bytes`, never below [`MAX_FILE_SIZE`]), anything else up
+    /// to [`MAX_FILE_SIZE`]. Media refuses a staged file by that same
+    /// figure, so it is taken as it is.
+    pub fn limit(&self, staging: Option<u64>) -> u64 {
+        match staging {
+            Some(staged) if self.resumable => self.max_file_size.min(staged),
+            _ => self.max_file_size.min(MAX_FILE_SIZE),
         }
     }
 
@@ -163,12 +213,18 @@ pub struct UploadEntry {
     pub size: u64,
     pub content_type: String,
     bytes: Vec<u8>,
+    /// A resumable entry's SHA-256 and the bytes staged so far, while they
+    /// wait on Media's disk; `None` once they are held in `bytes`.
+    staged: Option<([u8; 32], u64)>,
     pub error: Option<UploadError>,
 }
 
 impl UploadEntry {
     pub fn received(&self) -> u64 {
-        self.bytes.len() as u64
+        match self.staged {
+            Some((_, received)) => received,
+            None => self.bytes.len() as u64,
+        }
     }
 
     /// Whole percent of the bytes received; an empty file is complete.
@@ -182,9 +238,10 @@ impl UploadEntry {
         self.error.is_none()
     }
 
-    /// Every byte has arrived and nothing refused the entry.
+    /// Every byte has arrived and nothing refused the entry. A staged entry
+    /// is done once the host has checked its bytes and handed them over.
     pub fn done(&self) -> bool {
-        self.valid() && self.received() == self.size
+        self.valid() && self.staged.is_none() && self.received() == self.size
     }
 }
 
@@ -208,8 +265,25 @@ pub struct ClientEntry {
     pub content_type: String,
 }
 
-/// The host's answer per announced entry: the id to stream it under, or
-/// the error it was refused with.
+/// A SHA-256 as the browser announces it: 64 lowercase hex characters.
+fn digest(hex: &str) -> Option<[u8; 32]> {
+    if hex.len() != 64
+        || !hex
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+    {
+        return None;
+    }
+    let mut digest = [0; 32];
+    for (index, byte) in digest.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&hex[index * 2..index * 2 + 2], 16).ok()?;
+    }
+    Some(digest)
+}
+
+/// The host's answer per announced entry: the id to stream it under and
+/// the offset to start at (a staged resumable entry's bytes already there),
+/// or the error it was refused with.
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[serde(untagged)]
 pub enum Registration {
@@ -218,6 +292,7 @@ pub enum Registration {
         client_ref: String,
         id: u64,
         chunk: usize,
+        received: u64,
         done: bool,
     },
     Refused {
@@ -347,7 +422,9 @@ impl Uploads {
     /// single-entry input replaces its entry; a multiple one adds, refusing
     /// the surplus. Each entry is checked against the spec's size and
     /// `accept`; a refused entry stays listed with its error so the person
-    /// sees which file it was. `None` means the input is not declared.
+    /// sees which file it was. A resumable input's accepted entries are then
+    /// placed by the host ([`Uploads::place`]). `None` means the input is
+    /// not declared.
     pub fn register(
         &mut self,
         name: &str,
@@ -387,6 +464,7 @@ impl Uploads {
                 size: client.size,
                 content_type: client.content_type,
                 bytes: Vec::new(),
+                staged: None,
                 error,
             };
             registrations.push(match error {
@@ -398,6 +476,7 @@ impl Uploads {
                     client_ref: client.client_ref,
                     id,
                     chunk: CHUNK_SIZE,
+                    received: 0,
                     done: entry.done(),
                 },
             });
@@ -411,10 +490,92 @@ impl Uploads {
         self.entries.iter().any(|entry| entry.id == id)
     }
 
-    /// Host side: appends one chunk. The chunk must start where the bytes
-    /// held end and stay within the announced size; otherwise the entry is
-    /// marked interrupted and the error returned. `Err(None)` is an unknown
-    /// or already refused entry.
+    /// Host side: decides where an accepted entry of a resumable input keeps
+    /// its bytes. With a staging disk (`staging` is the largest file Media
+    /// stages, its `Staging::limit`) and the file's SHA-256 the entry is
+    /// staged, up to [`UploadSpec::limit`]; otherwise its bytes are held
+    /// here, up to [`MAX_FILE_SIZE`]. Returns the refusal when the file is
+    /// too large for where it can go; any other entry is left as it is.
+    pub fn place(
+        &mut self,
+        id: u64,
+        sha256: Option<&str>,
+        staging: Option<u64>,
+    ) -> Option<UploadError> {
+        let index = self.entries.iter().position(|entry| entry.id == id)?;
+        let spec = self.spec(&self.entries[index].upload)?;
+        if !spec.resumable || self.entries[index].error.is_some() {
+            return None;
+        }
+        let digest = sha256.and_then(digest).filter(|_| staging.is_some());
+        let limit = spec.limit(staging.filter(|_| digest.is_some()));
+        let entry = &mut self.entries[index];
+        if entry.size > limit {
+            entry.error = Some(UploadError::TooLarge);
+            return entry.error;
+        }
+        entry.staged = digest.map(|digest| (digest, 0));
+        None
+    }
+
+    /// Host side: the staging of a staged entry still arriving: its input,
+    /// announced size and SHA-256. `None` for an entry whose bytes are held
+    /// here (stream them with [`Uploads::append`]) or one refused.
+    pub fn staging(&self, id: u64) -> Option<(&str, u64, [u8; 32])> {
+        self.entries
+            .iter()
+            .find(|entry| entry.id == id && entry.error.is_none())
+            .and_then(|entry| {
+                entry
+                    .staged
+                    .map(|(sha256, _)| (entry.upload.as_str(), entry.size, sha256))
+            })
+    }
+
+    /// Host side: a staged entry now has `received` bytes on Media's disk,
+    /// written by a chunk or found there by a reconnect.
+    pub fn staged(&mut self, id: u64, received: u64) -> Option<ChunkOutcome> {
+        let entry = self.entries.iter_mut().find(|entry| entry.id == id)?;
+        let (_, staged) = entry.staged.as_mut()?;
+        *staged = received.min(entry.size);
+        Some(ChunkOutcome {
+            received: entry.received(),
+            size: entry.size,
+            done: false,
+        })
+    }
+
+    /// Host side: a staged entry's bytes, all there and hashed as announced,
+    /// now held here for [`Uploads::consume`].
+    pub fn complete(&mut self, id: u64, bytes: Vec<u8>) -> Option<ChunkOutcome> {
+        let entry = self.entries.iter_mut().find(|entry| entry.id == id)?;
+        if entry.error.is_some() || entry.staged.is_none() || bytes.len() as u64 != entry.size {
+            return None;
+        }
+        entry.staged = None;
+        entry.bytes = bytes;
+        Some(ChunkOutcome {
+            received: entry.received(),
+            size: entry.size,
+            done: entry.done(),
+        })
+    }
+
+    /// Host side: the entry's stream broke off (its staging refused a chunk
+    /// or could not be written); the row says so.
+    pub fn interrupt(&mut self, id: u64) {
+        if let Some(entry) = self.entries.iter_mut().find(|entry| entry.id == id) {
+            entry.error = Some(UploadError::Interrupted);
+            entry.bytes = Vec::new();
+            entry.staged = None;
+        }
+    }
+
+    /// Host side: appends one chunk to an entry whose bytes are held here.
+    /// The chunk must start where the bytes held end and stay within the
+    /// announced size; otherwise the entry is marked interrupted and the
+    /// error returned. `Err(None)` is an unknown, staged or already refused
+    /// entry.
     pub fn append(
         &mut self,
         id: u64,
@@ -426,7 +587,7 @@ impl Uploads {
             .iter_mut()
             .find(|entry| entry.id == id)
             .ok_or(None)?;
-        if entry.error.is_some() {
+        if entry.error.is_some() || entry.staged.is_some() {
             return Err(None);
         }
         if bytes.len() > CHUNK_SIZE

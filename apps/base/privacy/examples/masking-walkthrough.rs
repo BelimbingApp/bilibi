@@ -433,6 +433,49 @@ async fn main() -> Result<()> {
         .get(0);
     println!("reveal actions holding the revealed value: {values}");
 
+    println!("== overlapping reveals do not exhaust the pool");
+    // Twice the pool's 16 connections at once, while this walkthrough holds
+    // one, as a page does.
+    let started = std::time::Instant::now();
+    let calls: Vec<_> = (0..32)
+        .map(|_| {
+            let privacy = privacy.clone();
+            let viewer = viewer.clone();
+            tokio::spawn(async move {
+                privacy
+                    .reveal_field(&viewer, "persons", "email", &json!(1), "Ticket CONC-32")
+                    .await
+            })
+        })
+        .collect();
+    let finished = tokio::time::timeout(std::time::Duration::from_secs(20), async {
+        let (mut ok, mut refused) = (0, std::collections::BTreeMap::<String, i32>::new());
+        for call in calls {
+            match call.await {
+                Ok(Ok(Some(_))) => ok += 1,
+                Ok(other) => *refused.entry(format!("{other:?}")).or_default() += 1,
+                Err(error) => *refused.entry(error.to_string()).or_default() += 1,
+            }
+        }
+        (ok, refused)
+    })
+    .await;
+    match finished {
+        Ok((ok, refused)) => println!(
+            "32 overlapping reveals: {ok} returned the value in {} ms; others: {refused:?}",
+            started.elapsed().as_millis()
+        ),
+        Err(_) => println!("32 overlapping reveals: not finished within 20 s"),
+    }
+    let recorded: i64 = client
+        .query_one(
+            "SELECT count(*) FROM base_audit_actions WHERE event='privacy.field.revealed' AND payload->>'reason'='Ticket CONC-32'",
+            &[],
+        )
+        .await?
+        .get(0);
+    println!("reveal records for them: {recorded}");
+
     println!("== restrictions page lists the modes");
     for summary in restrictions.list(&admin).await? {
         println!(

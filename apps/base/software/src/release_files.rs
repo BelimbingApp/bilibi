@@ -18,7 +18,8 @@ use serde_json::{json, Value};
 pub const PATH: &str = "/system/software/releases";
 /// The file input's name: the key the owner consumes by.
 const UPLOAD: &str = "release_file";
-/// A release file is a compressed program: tens of megabytes.
+/// A release file is a compressed program: tens of megabytes, so the input
+/// is resumable and a dropped connection carries on where it stopped.
 const UPLOAD_BYTES: u64 = bilibi_ui::upload::MAX_FILE_SIZE;
 
 fn render(template: impl Template) -> Result<Html> {
@@ -63,7 +64,7 @@ impl ReleaseFiles {
     pub(super) fn new(pages: crate::web::Pages) -> Result<Self> {
         Ok(Self {
             pages,
-            uploads: Uploads::new([UploadSpec::new(UPLOAD, UPLOAD_BYTES).accept([
+            uploads: Uploads::new([UploadSpec::resumable(UPLOAD, UPLOAD_BYTES).accept([
                 ".tar.gz",
                 ".tgz",
                 "application/gzip",

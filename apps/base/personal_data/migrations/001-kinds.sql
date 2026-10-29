@@ -31,11 +31,14 @@ CREATE TRIGGER base_personal_data_kinds_guard BEFORE UPDATE OR DELETE ON base_pe
 CREATE TRIGGER base_personal_data_kinds_truncate_guard BEFORE TRUNCATE ON base_personal_data_kinds
     FOR EACH STATEMENT EXECUTE FUNCTION base_personal_data_kinds_guard();
 
--- Checked at commit: the same transaction wrote a migration ledger row.
--- Shared with other declaration tables that only migrations may change.
+-- Checked at commit: the same transaction recorded a migration in the ledger,
+-- applied now (a migration's row is inserted with the transaction's time, so
+-- touching an older row does not count). Shared with other declaration tables
+-- that only migrations may change.
 CREATE FUNCTION base_personal_data_in_migration() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM bilibi_migrations WHERE xmin = pg_current_xact_id()::xid) THEN
+  IF NOT EXISTS (SELECT 1 FROM bilibi_migrations
+                  WHERE xmin = pg_current_xact_id()::xid AND applied_at = transaction_timestamp()) THEN
     RAISE EXCEPTION '% changes only in a migration', TG_TABLE_NAME USING ERRCODE = '42501';
   END IF;
   RETURN NULL;

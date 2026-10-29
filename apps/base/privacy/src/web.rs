@@ -21,6 +21,7 @@ use bilibi_authz::effective_capabilities;
 use bilibi_database::{Db, Error, Result};
 use bilibi_datetime::{DisplayContext, DisplayPolicy, Format, Precision};
 use bilibi_locale::Locales;
+use bilibi_personal_data::Identifier;
 use bilibi_tenancy::{PartyProofs, Scope};
 use bilibi_ui::{
     download::{Download, DownloadFuture, DownloadRequest, FileBody},
@@ -839,10 +840,31 @@ impl RequestPage {
         let request = pages.privacy.request(&**client, scope, self.id).await?;
         // The version every write from this page sends: the one shown.
         self.request = Some(request.clone());
-        let restricted = !bilibi_authz::fields::restricted(&**client, scope)
-            .await?
-            .values()
-            .all(|fields| fields.is_empty());
+        let restrictions = bilibi_authz::fields::restricted(&**client, scope).await?;
+        let restricted = !restrictions.values().all(|fields| fields.is_empty());
+        // The emails and phones given are a person's contacts: shown as the
+        // reader sees a Contact's email and phone (partial when masked, not at
+        // all when withheld), never in full past a mask.
+        let contact_masks = bilibi_authz::fields::masks_for(&**client, scope, "persons").await?;
+        let contact_restricted = restrictions.get("persons").cloned().unwrap_or_default();
+        let shown = |field: &str, value: &str| match contact_masks.get(field) {
+            Some(kind) => bilibi_authz::fields::partial(kind, value),
+            None if contact_restricted.contains(field) => "restricted".to_owned(),
+            None => value.to_owned(),
+        };
+        let identifiers = if request.identifiers.is_empty() {
+            "None given".to_owned()
+        } else {
+            request
+                .identifiers
+                .iter()
+                .map(|i| match i {
+                    Identifier::Email(value) => shown("email", value),
+                    Identifier::Phone(value) => shown("phone", value),
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
         let open = matches!(request.status.as_str(), "received" | "verified");
         let located = if open {
             pages.privacy.locate(&client, scope, self.id).await?
@@ -961,16 +983,6 @@ impl RequestPage {
             actions,
             ..Header::default()
         })?;
-        let identifiers = if request.identifiers.is_empty() {
-            "None given".to_owned()
-        } else {
-            request
-                .identifiers
-                .iter()
-                .map(|i| i.value().to_owned())
-                .collect::<Vec<_>>()
-                .join(", ")
-        };
         let facts = render(Facts {
             id: "privacy-request-facts",
             items: vec![

@@ -36,7 +36,7 @@ pub async fn lock(client: &impl GenericClient, scope: &Scope) -> Result<()> {
 }
 /// The caller holds the tenant lock before any company locks on a write.
 pub async fn check_parent(
-    client: &(impl GenericClient + Sync),
+    client: &dyn bilibi_tenancy::ReadClient,
     scope: &Scope,
     id: Option<i64>,
     parent: Option<i64>,
@@ -45,7 +45,7 @@ pub async fn check_parent(
         return Ok(Vec::new());
     };
     let limit = policy::depth(client, scope).await?;
-    let chain = client.query_one("WITH RECURSIVE chain AS (SELECT id,parent_id,ARRAY[id] AS path FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL UNION ALL SELECT c.id,c.parent_id,a.path||c.id FROM companies c JOIN chain a ON c.id=a.parent_id WHERE c.tenant_id=$1 AND c.deleted_at IS NULL AND NOT c.id=ANY(a.path)) SELECT COALESCE(bool_or(id=$3),false),COALESCE(max(cardinality(path)),0) FROM chain", &[&scope.tenant(), &parent, &id]).await?;
+    let chain = client.query_opt("WITH RECURSIVE chain AS (SELECT id,parent_id,ARRAY[id] AS path FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL UNION ALL SELECT c.id,c.parent_id,a.path||c.id FROM companies c JOIN chain a ON c.id=a.parent_id WHERE c.tenant_id=$1 AND c.deleted_at IS NULL AND NOT c.id=ANY(a.path)) SELECT COALESCE(bool_or(id=$3),false),COALESCE(max(cardinality(path)),0) FROM chain", &[&scope.tenant(), &parent, &id]).await?.ok_or(bilibi_database::Error::Internal)?;
     if chain.get::<_, bool>(0) {
         return Ok(vec![FieldError::new(
             "parent_id",
@@ -54,7 +54,7 @@ pub async fn check_parent(
     }
     let parent_depth: i32 = chain.get(1);
     let (height, old_depth) = if let Some(id) = id {
-        let row = client.query_one("WITH RECURSIVE subtree AS (SELECT id,ARRAY[id] AS path FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL UNION ALL SELECT c.id,s.path||c.id FROM companies c JOIN subtree s ON c.parent_id=s.id WHERE c.tenant_id=$1 AND c.deleted_at IS NULL AND NOT c.id=ANY(s.path)), ancestors AS (SELECT id,parent_id,ARRAY[id] AS path FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL UNION ALL SELECT c.id,c.parent_id,a.path||c.id FROM companies c JOIN ancestors a ON c.id=a.parent_id WHERE c.tenant_id=$1 AND c.deleted_at IS NULL AND NOT c.id=ANY(a.path)) SELECT (SELECT max(cardinality(path)) FROM subtree),(SELECT max(cardinality(path))-1 FROM ancestors)", &[&scope.tenant(), &id]).await?;
+        let row = client.query_opt("WITH RECURSIVE subtree AS (SELECT id,ARRAY[id] AS path FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL UNION ALL SELECT c.id,s.path||c.id FROM companies c JOIN subtree s ON c.parent_id=s.id WHERE c.tenant_id=$1 AND c.deleted_at IS NULL AND NOT c.id=ANY(s.path)), ancestors AS (SELECT id,parent_id,ARRAY[id] AS path FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL UNION ALL SELECT c.id,c.parent_id,a.path||c.id FROM companies c JOIN ancestors a ON c.id=a.parent_id WHERE c.tenant_id=$1 AND c.deleted_at IS NULL AND NOT c.id=ANY(a.path)) SELECT (SELECT max(cardinality(path)) FROM subtree),(SELECT max(cardinality(path))-1 FROM ancestors)", &[&scope.tenant(), &id]).await?.ok_or(bilibi_database::Error::Internal)?;
         (row.get::<_, i32>(0), row.get::<_, i32>(1))
     } else {
         (1, 0)

@@ -13,6 +13,7 @@ use crate::{
 };
 use bilibi_audit::Minimums;
 use bilibi_database::{Change, Db, Error, MutationTransaction, Result};
+use bilibi_party_ids::PersonId;
 use bilibi_personal_data::{
     Cause, Deferral, Erased, Erasure, HandlerFuture, Holds, Kept, KeptReason, KindAction, Progress,
 };
@@ -892,11 +893,7 @@ async fn complete(
             }
             if erasure {
                 changes.extend(requests::forget_person(sql, tenant, person).await?);
-                sql.execute(
-                    "UPDATE base_privacy_requests SET export_artifact=NULL WHERE tenant_id=$1 AND person_id=$2 AND export_artifact IS NOT NULL",
-                    &[&tenant, &person.get()],
-                )
-                .await?;
+                changes.extend(forget_exports(sql, tenant, person).await?);
                 // A hold or a retention date kept records, or a store deferred:
                 // the cleanup they owe is persisted and retried by the daily
                 // retention run, from the earliest date one ends (at once
@@ -929,6 +926,29 @@ async fn complete(
     .await
 }
 
+/// Drops every request's reference to a deleted export of `person`, one
+/// `Change` per request.
+async fn forget_exports(
+    sql: &tokio_postgres::Transaction<'_>,
+    tenant: i64,
+    person: PersonId,
+) -> Result<Vec<Change>> {
+    Ok(sql
+        .query(
+            "UPDATE base_privacy_requests SET export_artifact=NULL WHERE tenant_id=$1 AND person_id=$2 AND export_artifact IS NOT NULL RETURNING id",
+            &[&tenant, &person.get()],
+        )
+        .await?
+        .iter()
+        .map(|row| Change {
+            kind: requests::REQUEST_KIND.into(),
+            id: row.get(0),
+            old: json!({"export": true}),
+            new: json!({"export": null}),
+        })
+        .collect())
+}
+
 /// A request store (`s`) whose erasure answer owes cleanup, in SQL; the same
 /// rule as [`owes`].
 const OWING: &str = "(s.state='deferred' OR EXISTS (SELECT 1 FROM jsonb_array_elements(coalesce(s.result->'kept','[]'::jsonb)) k \
@@ -944,7 +964,8 @@ fn owes(answer: &Answer) -> bool {
             .any(|k| matches!(k.reason, KeptReason::LegalHold | KeptReason::RetainedUntil))
 }
 
-/// Due owed cleanups per retention run, oldest first.
+/// Due owed cleanups per retention run, least recently run first, so held
+/// ones never keep the rest from their turn.
 const RESUME_BATCH: i64 = 200;
 
 impl Privacy {
@@ -966,7 +987,7 @@ impl Privacy {
         let open: Vec<(i64, i64)> = client
             .query(
                 "SELECT id,request_id FROM base_privacy_resumptions WHERE tenant_id=$1 AND done_at IS NULL \
-                 AND (not_before IS NULL OR not_before <= clock_timestamp()) ORDER BY id LIMIT $2",
+                 AND (not_before IS NULL OR not_before <= clock_timestamp()) ORDER BY last_run_at NULLS FIRST,id LIMIT $2",
                 &[&scope.tenant(), &RESUME_BATCH],
             )
             .await?
@@ -1081,6 +1102,26 @@ impl Privacy {
                 .await?;
             holds.release().await?;
         }
+        // As at the request's completion: what an access request disclosed
+        // or staged while records were kept goes too. The person's exports
+        // are deleted and every request about them forgets its personal text
+        // (a staged export is then read again).
+        documents::delete_exports(self, client, scope, &grant, request.person).await?;
+        let mut tx = self
+            .boundary
+            .begin(client, scope.mutation_context("privacy.request.resume"))
+            .await?;
+        requests::person_guard(tx.sql(), tenant, request.person, true).await?;
+        let person = request.person;
+        tx.mutate(move |sql| {
+            Box::pin(async move {
+                let mut changes = requests::forget_person(sql, tenant, person).await?;
+                changes.extend(forget_exports(sql, tenant, person).await?);
+                Ok(((), changes))
+            })
+        })
+        .await?;
+        tx.commit().await?;
         answer.into_inner().map_err(|_| Error::Internal)
     }
 }

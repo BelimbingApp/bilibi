@@ -225,9 +225,10 @@ $$;
 
 -- Erases one record's evidence for one cause. Refused unless the record
 -- kind's row in base_personal_data_kinds declares every field passed (and the
--- subject identifier, when asked), the cause's registered checker confirms it
--- in the tenant for p_person (a request names its own person), and the target
--- is bound to the cause: the calling transaction itself wrote the record's
+-- subject identifier, when asked), a record that is a person is p_person
+-- itself, the cause's registered checker confirms it in the tenant for
+-- p_person (a request names its own person), and the target is bound to the
+-- cause: the calling transaction itself wrote the record's
 -- change (the store's erasure, captured in the same transaction), or the
 -- retention sweep is finishing that record's own due deferral. Legal minimums are per company: a row of a company in
 -- p_keep_companies stays while newer than that company's p_keep_days; a row of
@@ -257,10 +258,16 @@ BEGIN
      OR (p_keep_default IS NOT NULL AND p_keep_default NOT BETWEEN 1 AND 36500) THEN
     RAISE EXCEPTION 'invalid audit erasure' USING ERRCODE = '22023';
   END IF;
-  SELECT fields, subject_identifier INTO declared FROM base_personal_data_kinds WHERE kind = p_type;
+  SELECT fields, subject_identifier, person INTO declared FROM base_personal_data_kinds WHERE kind = p_type;
   IF NOT FOUND OR NOT (p_fields <@ declared.fields)
      OR (p_subject_identifier AND NOT declared.subject_identifier) THEN
     RAISE EXCEPTION 'audit erasure of fields its record kind does not declare' USING ERRCODE = '42501';
+  END IF;
+  -- A record that is a person is only ever its own person's: a request for
+  -- one person never clears another person's record, even one the same
+  -- transaction wrote.
+  IF declared.person AND p_person IS NOT NULL AND p_id <> p_person::text THEN
+    RAISE EXCEPTION 'audit erasure of another person' USING ERRCODE = '42501';
   END IF;
   SELECT c.checker INTO checker FROM base_audit_erasure_causes c
    WHERE c.cause = CASE WHEN p_request IS NOT NULL THEN 'request' ELSE 'sweep' END;

@@ -7,7 +7,7 @@ primary company and the provisioning commands. The public API is the
 `core/company.companies` service (`CompanyService`) and what the crate root
 exports: the functions other owners call on their own connection or
 transaction (`authorize_target`, `require_writable`, `lock_account_company`,
-`create_department`, `apply_lifecycle`, `assign_relationship`, the primary-company
+`create`, `create_department`, `apply_lifecycle`, `assign_relationship`, the primary-company
 functions, ...) and the types they take and return. Every module is private, so
 table layout and SQL stay private too. The module-owned pages (`web.rs`, `web/views.rs`) serve
 `/companies`, `/companies/create` and `/companies/{id}`, and
@@ -87,6 +87,35 @@ All four directory methods (`in_scope`, `selectable`, `target`, `lookup`) carry 
 Domains that need an active-company chooser can carry `summary.status` through their own summary and filter with `summary.status == "active"`. Keep authorization at the existing directory or owner boundary; do not query Company's tables. This Platform change supplies the status only; each Domain owns its chooser policy.
 
 Existing readers can keep using `archived`. A custom `OrganisationDirectory` implementation that constructs `NamedOrganisation` must also set `status` from its company lifecycle state and keep `archived` consistent. Exhaustive destructuring must include `status` or `..`.
+
+## Reads in another module's transaction
+
+**Pass your existing connection to Company when previewing or saving a Finance customer.** These reads take `&dyn bilibi_tenancy::ReadClient`, so an operation preview and a mutation transaction use the same API. They never acquire a pooled connection or commit the caller's transaction.
+
+| Function | Result and access |
+| --- | --- |
+| `preview_create(client, scope, new)` | Normalized company fields and `CreateMatches` under `admin.company.create`, using the create page's validation, references, restrictions and matching rules. Returns `Ok(Ok(CreatePreview))`, `Ok(Err(Vec<FieldError>))` for invalid fields, or an outer access/database error |
+| `preview_create_with_fields(client, scope, new, fields)` | The same preview with Extension fields, including their restrictions and current active pick-list choices |
+| `create_matches(client, scope, new)` | Duplicate suggestions under `admin.company.create`: `likely` remains available without list access; `candidates` is `None` unless the caller also holds `admin.company.list` |
+| `duplicates(client, scope, query)` | Scored duplicate candidates under `admin.company.list`, with the same bounds and matching settings as the create page |
+| `detail(client, scope, company_id)` | Company facts and restricted field names under `admin.company.view`; masks match the ordinary detail page, including Extension field aliases. A missing, deleted or other-tenant company is `NotFound` |
+| `relationship_role_by_code(client, scope, code)` | `Option<RelationshipRole>` under `admin.company.view`. The tenant comes only from `scope`. Retired entries remain visible with `retired_on`; this read never installs defaults |
+| `current_relationship(client, scope, source, target, role)` | `Option<Relationship>` for that directed pair and role under `admin.company.view`. Both dates include their endpoints; null dates are unbounded. Future, ended and unlinked intervals do not qualify. Overlaps choose the latest start, then highest id. Role retirement keeps existing links effective |
+
+A relationship grants no access. Company facts and relationship reads retain the existing view capability and tenant boundaries; writes still require company reach. Use [`bilibi_address::billing_address`](../address/README.md#billing-address-in-another-modules-transaction) to freeze an address for a document date.
+
+**Preview on the connection you already hold, then pass the reviewed input to `create` in your mutation transaction.** `CreatePreview::company` contains trimmed values, the generated code and initial status; `CreatePreview::matches` contains duplicate suggestions. The Core create page and `core.company.create` agent preview call this same implementation. Uncommitted companies, reference changes, restrictions and settings are visible through the caller's transaction.
+
+Preview does not reserve a code, lock a choice or approve a duplicate override. Duplicate suggestions are advisory, including when `company.duplicates.on_create` is `require_reason`; the page can show candidates before asking for a reason. At save, `create` rechecks authorization, references, code uniqueness and duplicate review under its existing locks. Supply the reviewed candidate ids and reason through `NewCompany::create_anyway` when creating despite matches. A caller without list access supplies a reason without candidate ids. `CompanyService::create_matches` and `CompanyService::duplicates` remain convenient when the caller holds no connection; use the crate-root functions when you already hold one.
+
+`bilibi_company::create(tx, scope, new)` composes company creation in the caller's `MutationTransaction`. It keeps validation, duplicate review (`NewCompany::create_anyway`), field restrictions, reference checks, locks and audit capture. The caller commits or rolls back the whole operation. There is no second transaction.
+
+To inspect uncommitted reads, rollback, dates, masking, direct denies and reads with every pool connection held, use a freshly migrated disposable database. Initialize its Dev instance role through the production seeds before running the walkthrough; ordinary grant changes otherwise require an enrolled second factor:
+
+```sh
+BILIBI_ENV=development cargo run -p bilibi-web --locked -- seed-production
+BILIBI_CALLER_READS=disposable cargo run -p bilibi-company --example caller-reads-walkthrough --locked
+```
 
 ## Writes
 

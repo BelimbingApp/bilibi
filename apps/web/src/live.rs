@@ -4,6 +4,7 @@
 use crate::{routes, App};
 use axum::extract::ws::{Message, WebSocket};
 use bilibi_base::agent_api::page::PageContracts;
+use bilibi_base::media::{Media, StagedUpload, Staging, StagingRequest};
 use bilibi_base::perf::{Finish, Kind, Outcome};
 use bilibi_database::{page_write, Error, Result};
 use bilibi_module_registry::contributions::{Access, Embed, EMBEDS};
@@ -12,7 +13,7 @@ use bilibi_ui::page::{
     Change, LiveBody, LiveInput, LiveRequest, LiveState, PageRequest, PanelSpec,
 };
 use bilibi_ui::params;
-use bilibi_ui::upload::{ClientEntry, CHUNK_SIZE, MAX_ENTRIES};
+use bilibi_ui::upload::{ClientEntry, Registration, UploadError, CHUNK_SIZE, MAX_ENTRIES};
 use bilibi_ui::{LIVE_EVENT_LIMIT, LIVE_EVENT_TOO_LARGE};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -66,6 +67,9 @@ enum Event {
         target: String,
         upload: String,
         entries: Vec<ClientEntry>,
+        /// A resumable input's files' SHA-256, by entry `ref`.
+        #[serde(default)]
+        sha256: HashMap<String, String>,
     },
     /// The person removed an entry before acting on it.
     UploadCancel {
@@ -266,6 +270,10 @@ struct Session {
     /// The last upload entry id handed out; ids are unique per socket, so a
     /// frame can never reach another state's entry.
     uploads: u64,
+    /// The open staging files of resumable entries, by entry id. A file goes
+    /// when its entry does (consumed, removed, replaced or its state
+    /// dropped), and stays when the socket does, so a reconnect resumes it.
+    staged: HashMap<u64, StagedUpload>,
 }
 impl Session {
     async fn scope(&mut self, app: &App, token: &str) -> Result<Scope> {
@@ -735,29 +743,193 @@ impl Session {
         target: &str,
         upload: &str,
         entries: Vec<ClientEntry>,
+        sha256: HashMap<String, String>,
     ) -> Result<Vec<Value>> {
         if entries.is_empty()
             || entries.len() > MAX_ENTRIES
             || entries.iter().any(|entry| {
                 entry.name.is_empty() || entry.name.len() > 255 || entry.content_type.len() > 255
             })
+            || sha256.len() > entries.len()
+            || sha256.values().any(|digest| digest.len() != 64)
         {
             return Err(Error::Invalid);
         }
-        self.scope(app, token).await?;
-        let mut next = self.uploads;
-        let mounted = self.mounted_mut(target)?;
-        let registrations = mounted
+        let scope = self.scope(app, token).await?;
+        let resumable = self
+            .mounted_mut(target)?
             .state
             .uploads()
-            .and_then(|uploads| uploads.register(upload, entries, &mut next))
+            .and_then(|uploads| uploads.spec(upload))
+            .is_some_and(|spec| spec.resumable);
+        // Resolved once, and the connection is back in the pool before any
+        // staging file is opened or hashed.
+        let staging = if resumable {
+            let media = app.services.get::<Media>(bilibi_base::media::SERVICE)?;
+            let client = app.db.get().await?;
+            media.staging(&**client).await.ok().flatten()
+        } else {
+            None
+        };
+        let mut next = self.uploads;
+        let uploads = self
+            .mounted_mut(target)?
+            .state
+            .uploads()
             .ok_or(Error::Invalid)?;
+        let mut registrations = uploads
+            .register(upload, entries, &mut next)
+            .ok_or(Error::Invalid)?;
+        // A resumable input's files are staged when the installation can and
+        // the browser named their SHA-256; a refusal replaces the acceptance.
+        if resumable {
+            for registration in &mut registrations {
+                if let Registration::Accepted { client_ref, id, .. } = registration {
+                    let digest = sha256.get(client_ref.as_str()).map(String::as_str);
+                    if let Some(error) =
+                        uploads.place(*id, digest, staging.as_ref().map(Staging::limit))
+                    {
+                        *registration = Registration::Refused {
+                            client_ref: std::mem::take(client_ref),
+                            error,
+                        };
+                    }
+                }
+            }
+        }
         self.uploads = next;
+        if let Some(staging) = &staging {
+            for registration in &mut registrations {
+                self.stage(staging, &scope, target, registration).await?;
+            }
+        }
         let mut messages = vec![
             json!({"type":"upload", "target":target, "upload":upload, "entries":registrations}),
         ];
         messages.extend(self.update(app, token, target, LiveInput::Refresh).await?);
         Ok(messages)
+    }
+    /// Opens the staging file of a staged entry the browser just announced
+    /// and answers where to continue: the bytes a dropped connection left
+    /// there, or, when every byte is there and hashes as announced, nothing.
+    async fn stage(
+        &mut self,
+        staging: &Staging,
+        scope: &Scope,
+        target: &str,
+        registration: &mut Registration,
+    ) -> Result<()> {
+        let Registration::Accepted {
+            client_ref,
+            id,
+            received,
+            done,
+            ..
+        } = registration
+        else {
+            return Ok(());
+        };
+        let mounted = self.mounted_mut(target)?;
+        let service = mounted.service;
+        let Some((upload, size, sha256)) = mounted
+            .state
+            .uploads()
+            .and_then(|uploads| uploads.staging(*id))
+            .map(|(upload, size, sha256)| (upload.to_owned(), size, sha256))
+        else {
+            return Ok(());
+        };
+        let request = StagingRequest {
+            owner: service,
+            upload: &upload,
+            size,
+            sha256,
+        };
+        let outcome = match staging.stage(scope, request).await {
+            Ok(mut file) => {
+                let outcome = self.settle_staged(target, *id, &mut file).await?;
+                if outcome.is_some() {
+                    self.staged.insert(*id, file);
+                } else if let Some(file) = self.unshared(file) {
+                    file.remove().await;
+                }
+                outcome
+            }
+            Err(error) => {
+                eprintln!("error: an upload could not be staged: {error:?}");
+                None
+            }
+        };
+        match outcome {
+            Some(outcome) => {
+                *received = outcome.received;
+                *done = outcome.done;
+            }
+            None => {
+                if let Some(uploads) = self.mounted_mut(target)?.state.uploads() {
+                    uploads.interrupt(*id);
+                }
+                *registration = Registration::Refused {
+                    client_ref: std::mem::take(client_ref),
+                    error: UploadError::Interrupted,
+                };
+            }
+        }
+        Ok(())
+    }
+    /// Records what a staging file holds on its entry: the bytes staged so
+    /// far, or, once all of them are there, the checked bytes themselves (a
+    /// first hash mismatch empties the file and starts again from zero).
+    /// `None` interrupts the entry.
+    async fn settle_staged(
+        &mut self,
+        target: &str,
+        id: u64,
+        file: &mut StagedUpload,
+    ) -> Result<Option<bilibi_ui::ChunkOutcome>> {
+        let size = self
+            .mounted_mut(target)?
+            .state
+            .uploads()
+            .and_then(|uploads| uploads.staging(id))
+            .map(|(_, size, _)| size);
+        let Some(size) = size else {
+            return Ok(None);
+        };
+        let finished = if file.received() == size {
+            match file.finish().await {
+                Ok(bytes) => bytes,
+                Err(_) => return Ok(None),
+            }
+        } else {
+            None
+        };
+        let uploads = self
+            .mounted_mut(target)?
+            .state
+            .uploads()
+            .ok_or(Error::Invalid)?;
+        Ok(match finished {
+            Some(bytes) => uploads.complete(id, bytes),
+            None => uploads.staged(id, file.received()),
+        })
+    }
+    /// Removes the staging files whose entries are gone from every state.
+    async fn prune_staged(&mut self) {
+        let ids: Vec<u64> = self.staged.keys().copied().collect();
+        for id in ids {
+            if self.upload_owner(id).is_none() {
+                if let Some(file) = self.staged.remove(&id).and_then(|file| self.unshared(file)) {
+                    file.remove().await;
+                }
+            }
+        }
+    }
+    /// A staging file whose entry is done with it, to remove: none while
+    /// another entry on this socket still stages into it (the same file
+    /// chosen again), and dropping it then only closes it.
+    fn unshared(&self, file: StagedUpload) -> Option<StagedUpload> {
+        (!self.staged.values().any(|other| other.same_file(&file))).then_some(file)
     }
     async fn upload_cancel(
         &mut self,
@@ -790,12 +962,17 @@ impl Session {
             // Removed or consumed meanwhile; the hook stops streaming it.
             return Ok(vec![json!({"type":"chunk", "id":id, "error":"unknown"})]);
         };
-        let outcome = self
+        let uploads = self
             .mounted_mut(&target)?
             .state
             .uploads()
-            .ok_or(Error::Invalid)?
-            .append(id, offset, &frame[CHUNK_HEADER..]);
+            .ok_or(Error::Invalid)?;
+        let outcome = if uploads.staging(id).is_some() {
+            self.stage_chunk(&target, id, offset, &frame[CHUNK_HEADER..])
+                .await?
+        } else {
+            uploads.append(id, offset, &frame[CHUNK_HEADER..])
+        };
         match outcome {
             Ok(outcome) => {
                 let mut messages = vec![
@@ -815,6 +992,47 @@ impl Session {
                 Ok(messages)
             }
         }
+    }
+    /// Writes one chunk of a staged entry to its staging file; a refused or
+    /// failed write interrupts the entry and removes the file.
+    async fn stage_chunk(
+        &mut self,
+        target: &str,
+        id: u64,
+        offset: u64,
+        bytes: &[u8],
+    ) -> Result<std::result::Result<bilibi_ui::ChunkOutcome, Option<UploadError>>> {
+        let settled = match self.staged.remove(&id) {
+            Some(mut file) => match file.write(offset, bytes.to_vec()).await {
+                Ok(_) => match self.settle_staged(target, id, &mut file).await? {
+                    Some(outcome) => {
+                        self.staged.insert(id, file);
+                        Some(outcome)
+                    }
+                    None => {
+                        if let Some(file) = self.unshared(file) {
+                            file.remove().await;
+                        }
+                        None
+                    }
+                },
+                Err(_) => {
+                    if let Some(file) = self.unshared(file) {
+                        file.remove().await;
+                    }
+                    None
+                }
+            },
+            None => None,
+        };
+        Ok(settled.ok_or_else(|| {
+            if let Ok(mounted) = self.mounted_mut(target) {
+                if let Some(uploads) = mounted.state.uploads() {
+                    uploads.interrupt(id);
+                }
+            }
+            Some(UploadError::Interrupted)
+        }))
     }
     /// Perf identity for an accepted event: the page it mounts, or the page it
     /// acts on. No identity (an unroutable path, nothing mounted) is not recorded.
@@ -874,7 +1092,11 @@ impl Session {
                 target,
                 upload,
                 entries,
-            } => self.upload(app, token, &target, &upload, entries).await?,
+                sha256,
+            } => {
+                self.upload(app, token, &target, &upload, entries, sha256)
+                    .await?
+            }
             Event::UploadCancel { target, id } => {
                 self.upload_cancel(app, token, &target, id).await?
             }
@@ -939,6 +1161,7 @@ pub async fn run(app: App, token: String, identity: Identity, mut socket: WebSoc
         query: HashMap::new(),
         address: None,
         uploads: 0,
+        staged: HashMap::new(),
     };
     // A termination of this socket's session (logout elsewhere, an operator,
     // a credential change) signs this page out at once: the browser is sent
@@ -1082,6 +1305,8 @@ pub async fn run(app: App, token: String, identity: Identity, mut socket: WebSoc
                 )
             }
         };
+        // After a failed panel is gone, so its entries' staging goes too.
+        session.prune_staged().await;
         for message in &mut messages {
             message["request_id"] = json!(request_id);
             if message["type"] == "page" || message["type"] == "fragment" {
