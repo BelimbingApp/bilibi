@@ -13,8 +13,8 @@ use crate::list_state::{PageCounts, SortDir, FILTERS_FORM};
 use crate::Html;
 use askama::Template;
 
-/// Pagination controls under a list: the summary, the rows-per-page select
-/// (always offered) and, with more than one page, previous/numbers/next.
+/// Pagination controls under a list: the summary and, with more than one page,
+/// the rows-per-page select and previous/numbers/next. An empty list shows none.
 #[derive(Template, Clone, Debug)]
 #[template(
     source = r#"{% import "lists.html" as lists %}{% call lists::pagination(p=self) %}{% endcall %}"#,

@@ -9,9 +9,7 @@
 {% call ui::header(subtitle="See what people and systems did, newest first.") %}Audit Actions{% endcall %}
 {{ toolbar|safe }}
 {% if hide_diagnostics %}<p class="mt-2 text-xs text-ink-muted">Routine background traffic is hidden, but failures still show; choose Show Diagnostics to see everything.</p>{% endif %}
-<div class="mt-4">
 {{ table|safe }}
 {{ pagination|safe }}
-</div>
 {% endcall %}
 </div>

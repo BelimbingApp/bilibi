@@ -113,6 +113,10 @@ let clock_in = LocationAction::new("clock-in", "clock", "Clock in")
 
 Render with `Html::render(&clock_in)` or `forms::location_action(control=clock_in)`. On click the button shows "Finding your location…" while the browser locates, then raises `clock` with `clock_type`, `latitude`, `longitude` and `accuracy`, or with `outcome` `permission_denied`, `unavailable` or `insecure_context`. Decode the event with `LocationReport::from_event` and show `LocationReport::refusal` for a report without a position, adding what the person can do instead on that page. The contract is in [`docs/live-pages.md`](../../../docs/live-pages.md#browser-location); the Design Library's Browser location card is the running specimen.
 
+## Day tiles
+
+A work calendar's resolved day is a `DayTile` (Belimbing's `x-ui.day-tile`; no Bilimbi counterpart): the date as shown, its `DayKind` (`Working`, `Rest`, `Off`, `Holiday`) as a tint and as a word, and plain `lines` such as opening hours or a holiday's name. `description` is the whole day in words for the tooltip and for assistive technology, so the tint is never the only signal. `DayMonth` lays whole weeks of tiles under `WEEKDAYS`, Monday first, as a table that scrolls sideways inside its card on a phone; a neighbouring month's date is `outside` and dimmed. A Domain's roster or leave calendar maps its own day type onto `DayKind` and reuses both. The tints are the `day-*` colour roles (`DESIGN.md`); the running specimen is `/assets/ui-components.html#specimen-day-tiles`.
+
 ## Record references
 
 `RelatedRecord` (a named pill through `RecordLink`, or unavailable) and `RecordPicker` (a server-driven type-ahead inside the owner's live `Form`) show and choose a reference to another module's record. Base Records resolves names and hits with the reader's permissions; this crate only draws them: [`../records/README.md`](../records/README.md).

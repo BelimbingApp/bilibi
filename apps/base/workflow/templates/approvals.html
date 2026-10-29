@@ -1,0 +1,11 @@
+{# Shared approval views extend Bilimbi Workflow reference_live. #}
+{% import "components.html" as ui %}
+{% import "feedback.html" as feedback %}
+{% import "workspace.html" as workspace %}
+{% match record %}{% when Some with (record_id) %}{% call workspace::announce(kind="base/workflow",record_id=record_id) %}{% endcall %}{% when None %}{% endmatch %}
+{% call feedback::flash_group(messages=flash) %}{% endcall %}
+{% call ui::page(id="workflow-approval-page",variant=bilibi_ui::PageVariant::List) %}
+{% call ui::header() %}{{ title }}{% endcall %}
+{% call ui::stack(parts=parts,wide=true) %}{% endcall %}
+{{ dialog }}
+{% endcall %}

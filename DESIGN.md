@@ -42,6 +42,7 @@ Use semantic roles. Never use arbitrary colors. Values live in `apps/base/ui/ass
 | `brand`, `brand-strong`, `brand-surface`, `brand-ink` | Orientation accent |
 | `success`, `info`, `warning`, `danger` | Honest status, each with `-surface`, `-line`, `-ink` |
 | `scale-1..5`, `cat-1..8` | Data colour for ordered and categorical values. Never read as status. Charts take `cat-1..8` in series order |
+| `day-rest`, `day-off`, `day-holiday`, each with `-ink` | A work calendar's non-working days, as quiet tints. A working day stays on `surface`. Never read as status |
 
 - Light and dark themes share the same roles.
 - Success and info announce politely. Warning and error announce as an alert.
@@ -62,6 +63,7 @@ Reuse the shared macros and typed models. Do not hand-write markup or copy class
 | Inline edit | `templates/inline.html` and `src/inline.rs` | `apps/base/ui` |
 | List and table | `templates/lists.html`, `flex_table.html` | `apps/base/ui` |
 | Chart (KPI, bar, stacked bar, line, pie, donut); `Chart::drill` makes bars and slices raise a page event, with the Data table as the keyboard route | `templates/chart.html` and `src/chart.rs` (`Chart`, `ChartKind`, `Series`) | `apps/base/ui` |
+| A resolved day (working, rest, off, holiday) and a month of them, Monday first | `day_tile` and `day_month` in `templates/components.html`, through `DayTile`, `DayMonth` and `DayKind` in `src/components.rs` | `apps/base/ui` |
 
 - Name variants through the enums (`ButtonVariant`, `BadgeKind`, `PageVariant`), not class strings.
 - Icons use bare names from `base/ui` (`edit`, `pencil`, `bookmark-solid`), rendered as inline SVG. Use the Belimbing equivalent for a familiar action; see `apps/base/ui/README.md` for names and missing-icon behaviour.
@@ -130,17 +132,17 @@ Width is a shared decision. Every page uses `PageVariant`. All three share one c
 *Every list is a `FlexTable`.* Never the plain `Table`.
 
 - **State:** `ListState` keeps page, search, filters, sort and page size in the URL. Reload and shared links reopen the same view.
-- **Toolbar:** search sits first, with filter boxes to its right, above the table in the open. On narrow screens filters wrap below search in the same order. No second card.
+- **Toolbar:** search sits first, with filter boxes to its right, above the table in the open. Leave 12 px between the page header and the toolbar. On narrow screens filters wrap below search in the same order. No second card.
 - **Rows:** `py-0.5`, `px-2`. Headers `py-1`, sunken background, `text-xs font-semibold`.
 - **Numbers:** tabular numerals for IDs, counts, dates and amounts.
 - **Corners:** table frames are square. A card is flat only where it frames the table.
-- **Pagination:** shown only when another page exists. The rows-per-page selector lives in the component.
+- **Pagination:** the results count shows whenever there are rows. The rows-per-page selector and pager show only when another page exists; an empty list shows none. They live in the component.
 - **Settings:** the operator and company settings table opens each Value cell as a form with Save and Cancel (`InlineForm`). Enter saves; Escape cancels. Protected values ask for 2FA in the row.
 - **Empty:** `EmptyState` says why and what to do next.
 
 ### Flexible columns
 
-- A small "Customize table" notch on the table edge opens the column bar.
+- A small "Customize table" notch on the table edge opens the column bar. Leave at least 8 px between the notch and preceding content.
 - People add, remove and reorder columns, and pick a lens: value, bar, colour band, trend, change since a date.
 - Many-links become rollup cells that expand in place.
 - Row height has two named zooms: Compact and Normal. A compact row is one line.

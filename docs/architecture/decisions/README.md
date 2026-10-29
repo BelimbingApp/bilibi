@@ -96,3 +96,9 @@ Every record carries these header lines: Document Type, Status, Agents, Scope, L
 | --- | --- |
 | [12 Malware scanning fails closed, through one Extension seam](./12-malware-scanning-fails-closed.md) | Proposed |
 | [14 Resumable uploads stage on a Media disk, bound to the file's SHA-256](./14-resumable-uploads-stage-on-a-media-disk.md) | Proposed |
+
+### Approval
+
+| Record | Status |
+| --- | --- |
+| [15 Shared approval cases in Workflow](./15-shared-approval-cases-in-workflow.md) | Accepted; implementation in progress |

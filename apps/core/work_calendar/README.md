@@ -70,11 +70,11 @@ Tenant capabilities `admin.work-calendar.view`, `.list` and `.manage`; the `tena
 - **One plan, one version.** Each operation of a reviewed plan names the version read before the plan, and the commit fences each against it, so one plan may write a calendar or set several times. A change committed elsewhere since the review is still refused as stale.
 - **Bounded reads.** Lists page (`page`, `page_size` at most 100) with the total. A calendar's rule versions and included sets, and a set's including calendars, come as the first 400 with the total; exceptions and holidays page 400 at a time (`page`).
 
-Agents, and later the pages, use these contracts (ADR 01); writes are reviewed (plan, then commit):
+Agents and the [pages](#pages) use these contracts (ADR 01); writes are reviewed (plan, then commit):
 
 | Operation | Kind | Does |
 | --- | --- | --- |
-| `core.work_calendar.list` | read (list) | One page of calendars, by code, with the total; `search` matches code or name |
+| `core.work_calendar.list` | read (list) | One page of calendars, by code, with the total; each with the zone of the rule version in force today and its included sets (the first 400 and their total); `search` matches code or name |
 | `core.work_calendar.holiday_set.list` | read (list) | One page of holiday sets, the same way |
 | `core.work_calendar.get` | read | One calendar: versions, sets, a page of exceptions, version |
 | `core.work_calendar.holiday_set.get` | read | One set with a page of its holidays (optionally from and to a date) and the calendars including it |
@@ -90,6 +90,22 @@ Agents, and later the pages, use these contracts (ADR 01); writes are reviewed (
 
 Setting `work_calendar.default` (tenant and company scopes, null by default) names a calendar code. A company without its own value, or whose value is cleared, uses the tenant's.
 
+### Pages
+
+Under Administration, behind `admin.work-calendar.list` (menu and lists) and `.view` (records); every write is one of the contracts above, declared in `PAGE_WRITES` and asked again inside it.
+
+| Page | Path | What |
+| --- | --- | --- |
+| Work Calendars | `/work-calendars` | Code, name, status, zone today, included sets; search; New Calendar opens a dialog (code, name, zone, first date, substitution, week) and lands on the calendar |
+| Calendar | `/work-calendars/{code}` | Name and substitution edited in place; Retire (confirmed) or Reactivate; weekly hours by version with Set week from a date; included sets with Include and Leave out; exceptions with Add and Remove (confirmed), 400 a page (`?page=`) |
+| Month | `/work-calendars/{code}/month?month=YYYY-MM` | Each date of the month as a day tile (`base/ui` `DayTile`): type, opening periods, reason; previous and next month are links |
+| Holiday Sets | `/holiday-sets` | Code, name, country, division; search; New Holiday Set opens a dialog whose divisions follow the country |
+| Holiday Set | `/holiday-sets/{code}?year=YYYY` | Name, country and division edited in place; the calendars that include it; one year's holidays with Add, rename in the row and Remove (confirmed) |
+
+- A new calendar's zone starts as the current company's `localization.timezone` (else the tenant's); the default month, year and dates are today there.
+- A write against a version that moved on since the page read it says so and asks for a reload; nothing is overwritten.
+- Grid table `work_calendars` (keyed by code): code, name, status, substitution, zone today and included sets, behind `.list`.
+
 ### Retirement
 
 A retired calendar leaves `choices`, fails `check` for a new assignment, and still computes for records holding it.
@@ -103,7 +119,7 @@ Each write that moves dates records `core/work_calendar.changed` in its own tran
 
 ## Not here
 
-Shifts, rosters and attendance; pay rates by day type and leave-day counting; SLA, voice-menu and routing logic; holiday feeds, file import and iCalendar; per-person calendars; meeting and booking calendars. Calendar pages, the month view and the day-type tile come in a later change ([#209](https://github.com/BelimbingApp/bilibi/issues/209)), as do installation-wide holiday sets ([#210](https://github.com/BelimbingApp/bilibi/issues/210)).
+Shifts, rosters and attendance; pay rates by day type and leave-day counting; SLA, voice-menu and routing logic; holiday feeds, file import and iCalendar; per-person calendars; meeting and booking calendars. Installation-wide holiday sets come in a later change ([#210](https://github.com/BelimbingApp/bilibi/issues/210)).
 
 ## Walkthrough
 

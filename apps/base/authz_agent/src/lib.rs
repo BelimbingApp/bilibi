@@ -16,7 +16,7 @@ use bilibi_agent_api::{
     OperationFuture, ReadHandler, WriteHandler, DEFINITIONS,
 };
 use bilibi_authz::{
-    effective::effective_capabilities_of,
+    effective_capabilities_of,
     grants::Grants,
     roles::{self, RoleSummary},
 };

@@ -33,6 +33,51 @@ use tokio_postgres::Transaction;
 
 pub const SERVICE: &str = "base/agent_api.pages";
 
+/// A shared page explicitly accepts contributed owner operations. The page
+/// owner declares the family; each operation owner binds only its own write.
+pub const PAGE_FAMILIES: &str = "base/agent_api.page_families";
+pub const PAGE_BINDINGS: &str = "base/agent_api.page_bindings";
+pub struct PageFamily {
+    pub service: &'static str,
+    pub event_prefix: &'static str,
+}
+pub struct PageBinding {
+    pub service: &'static str,
+    pub event: &'static str,
+    pub contract: &'static str,
+}
+fn validate_families(entries: &[Entry]) -> bilibi_module_registry::Result<()> {
+    for entry in entries {
+        let family = entry.get::<PageFamily>()?;
+        if !family
+            .service
+            .starts_with(&format!("{}.", entry.provenance.module))
+            || family.event_prefix.is_empty()
+        {
+            return Err(invalid(
+                entry,
+                "has a foreign service or empty event prefix",
+            ));
+        }
+    }
+    Ok(())
+}
+fn validate_bindings(entries: &[Entry]) -> bilibi_module_registry::Result<()> {
+    for entry in entries {
+        let binding = entry.get::<PageBinding>()?;
+        if !binding
+            .contract
+            .starts_with(&format!("{}.", entry.provenance.module.replace('/', ".")))
+            || binding.event.is_empty()
+        {
+            return Err(invalid(entry, "binds a foreign contract or empty event"));
+        }
+    }
+    Ok(())
+}
+inventory::submit! {bilibi_module_registry::Consumer::new::<PageFamily>(PAGE_FAMILIES,"base/agent_api",validate_families)}
+inventory::submit! {bilibi_module_registry::Consumer::new::<PageBinding>(PAGE_BINDINGS,"base/agent_api",validate_bindings)}
+
 fn invalid(entry: &Entry, reason: &str) -> RegistryError {
     RegistryError::Contribution(format!(
         "page writes {} at {}:{} {reason}",
@@ -46,6 +91,7 @@ pub struct PageContracts {
     registry: Arc<Registry>,
     plans: Arc<Plans>,
     sessions: Arc<Sessions>,
+    extensions: BTreeMap<(&'static str, &'static str), &'static str>,
     writes: BTreeMap<&'static str, &'static PageWrites>,
 }
 
@@ -99,7 +145,38 @@ impl PageContracts {
             }
             writes.insert(declared.service, declared);
         }
+        let families = catalog.entries::<PageFamily>(PAGE_FAMILIES)?;
+        let mut extensions = BTreeMap::new();
+        for entry in catalog.entries::<PageBinding>(PAGE_BINDINGS)? {
+            let binding = entry.get::<PageBinding>()?;
+            let accepted = families.iter().any(|family| {
+                family.get::<PageFamily>().is_ok_and(|f| {
+                    f.service == binding.service && binding.event.starts_with(f.event_prefix)
+                })
+            });
+            let owned = registry.operations.get(binding.contract).is_some_and(|op| {
+                op.provenance.module == entry.provenance.module
+                    && matches!(op.definition.handler, Handler::SafeWrite(_))
+            });
+            if !accepted
+                || !owned
+                || !pages.contains(binding.service)
+                || !writes.contains_key(binding.service)
+                || extensions
+                    .insert((binding.service, binding.event), binding.contract)
+                    .is_some()
+                || writes
+                    .get(binding.service)
+                    .is_some_and(|w| w.contracts.iter().any(|(event, _)| *event == binding.event))
+            {
+                return Err(invalid(
+                    entry,
+                    "has no opted-in page, duplicates an event, or names no owner write",
+                ));
+            }
+        }
         Ok(Self {
+            extensions,
             db,
             registry,
             plans,
@@ -111,6 +188,9 @@ impl PageContracts {
     /// What the host lets a page event write. An undeclared service or
     /// event may write nothing.
     pub fn permit(&self, service: &str, event: &str) -> Permit {
+        if let Some(key) = self.extensions.get(&(service, event)) {
+            return Permit::Contracts(vec![*key]);
+        }
         let Some(writes) = self.writes.get(service) else {
             return Permit::Contracts(Vec::new());
         };
@@ -171,9 +251,13 @@ impl PageContracts {
     /// The page must have declared this event as this contract.
     fn declared(&self, call: &Call<'_>, input: Value) -> Result<PlannedOperation> {
         let declared = self
-            .writes
-            .get(call.service)
-            .is_some_and(|writes| writes.contracts.contains(&(call.event, call.contract)));
+            .extensions
+            .get(&(call.service, call.event))
+            .is_some_and(|key| *key == call.contract)
+            || self
+                .writes
+                .get(call.service)
+                .is_some_and(|writes| writes.contracts.contains(&(call.event, call.contract)));
         if !declared {
             eprintln!(
                 "error: page {} event {} calls {} without declaring it in its page writes",

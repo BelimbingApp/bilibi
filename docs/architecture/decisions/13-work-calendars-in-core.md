@@ -4,7 +4,7 @@
 **Status:** Proposed
 **Agents:** claude-code/opus-5.5 (author)
 **Scope:** Where business calendars live, which day types exist, and what a calendar decides (`core/work_calendar`)
-**Last Updated:** 2026-10-28
+**Last Updated:** 2026-10-29
 
 > Source: [issue 135](https://github.com/BelimbingApp/bilibi/issues/135). Bilimbi has no calendar module. Belimbing keeps work calendars in People Settings and resolves dates to Normal, Rest, Off or Holiday (`AttendanceCalendarResolver`), and expects "a future cross-cutting Calendar service … once a second module needs it".
 
@@ -35,4 +35,4 @@
 ## Consequences
 
 - Installation-wide holiday sets (kept by the platform operator, read-only to tenants) are deferred to [#210](https://github.com/BelimbingApp/bilibi/issues/210): a change to one cannot record `changed` in other tenants from the operator's transaction, so they need a cross-tenant fan-out designed on its own.
-- Pages, the month view and a day-type tile in `base/ui` follow in [#209](https://github.com/BelimbingApp/bilibi/issues/209); the contracts they will call exist now.
+- The administration pages and the month view ([#209](https://github.com/BelimbingApp/bilibi/issues/209)) call these contracts and draw each day with the day tile in `base/ui`, so a Domain's roster shows the four types the same way.

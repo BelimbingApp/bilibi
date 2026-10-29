@@ -359,6 +359,7 @@ impl Executor {
                     return Err(Error::Unauthorized);
                 }
                 bilibi_authz::authorize_key(&**client, &scope, bound.capability).await?;
+                let scope = scope.in_job();
                 let sealed = Box::new(scope.clone());
                 (Identity::User(Box::new(scope)), sealed)
             }

@@ -9,12 +9,18 @@ license.workspace = true
 bilibi-database.workspace = true
 bilibi-module-registry.workspace = true
 bilibi-audit.workspace = true
+bilibi-notifications.workspace = true
+bilibi-principal-directory.workspace = true
+bilibi-step-up.workspace = true
+bilibi-agent-api.workspace = true
 bilibi-authz = { path = "../authz" }
 bilibi-tenancy = { path = "../tenancy" }
 bilibi-queue = { path = "../queue" }
 bilibi-schedule = { path = "../schedule" }
 bilibi-settings = { path = "../settings" }
 bilibi-ui.workspace = true
+bilibi-menu.workspace = true
+bilibi-system.workspace = true
 bilibi-datetime = { path = "../datetime" }
 bilibi-locale = { path = "../locale" }
 askama.workspace = true

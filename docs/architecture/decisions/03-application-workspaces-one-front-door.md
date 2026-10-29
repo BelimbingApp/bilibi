@@ -66,7 +66,7 @@ Direct Domain and Extension clones remain supported for focused contributions. T
 | `./bilibi new <name>` | Create an application from the trial under the refusal rules above | Not applicable; the application already exists |
 | `./bilibi setup` | Check prerequisites and install repository safeguards | Also obtain missing sources; preserve existing work |
 | `./bilibi status` | Show component paths, branches and changes; say no saved application recipe exists and point to `new` | Also show differences from saved versions |
-| `./bilibi update` | Pull safe Platform changes, move clean official mounts detached at a release to a newer recommended one (never a downgrade), leave branches and other mounts alone, and regenerate composition | Pull the application and restore sources to saved commits; never advance the saved record |
+| `./bilibi update` | Fast-forward safe Platform, official and user-trusted component branches, move clean official mounts detached at a release to a newer recommended one (never a downgrade), leave unsafe and other mounts alone, and regenerate composition | Pull the application and restore sources to saved commits; never advance the saved record |
 | `./bilibi help` | Say which kind of repository this is, then list the commands grouped by when to use them, in plain words; no command and `-h` also work | Same |
 | `./bilibi check` | Refuse and point to `new` | Ask about new commits, save accepted versions and run strict checks |
 | `./bilibi build` | Refuse and point to `new` | Ask about new commits, save accepted versions and build the verified composition |

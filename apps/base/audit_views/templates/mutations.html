@@ -6,9 +6,7 @@
 {% call ui::page() %}
 {% call ui::header(subtitle="Review recorded data changes, newest first.") %}Data Mutations{% endcall %}
 {{ toolbar|safe }}
-<div class="mt-4">
 {{ table|safe }}
 {{ pagination|safe }}
-</div>
 {% endcall %}
 </div>

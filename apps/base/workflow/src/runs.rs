@@ -24,7 +24,7 @@ pub use coordination::{Completion, RunCommand};
 mod leases;
 pub use leases::{Claim, ClaimOptions, Claimed, WorkCommand, WorkView};
 #[path = "human.rs"]
-pub mod human;
+pub(crate) mod human;
 pub use human::{ActionRequest, ActionResult, AvailableAction, AvailableActions};
 
 const TERMINAL_WORK: [&str; 4] = ["completed", "failed", "waived", "blocked"];
@@ -883,4 +883,54 @@ async fn finish_run(
         .await?;
     }
     Ok(())
+}
+
+impl Engine {
+    pub(crate) async fn lock_approval_run(
+        &self,
+        sql: &Transaction<'_>,
+        scope: &Scope,
+        request: &crate::approval_store::ApprovalRequest,
+    ) -> Result<()> {
+        let (run, _, items, _) = self
+            .locked_run(
+                sql,
+                scope,
+                request.run_id.ok_or(Error::Invalid)?,
+                Operation::ReadRun,
+            )
+            .await?;
+        if run.definition_key != request.case
+            || run.subject_type != request.subject_type
+            || run.subject_id != request.subject_id
+            || run.input["approval_request"] != request.id
+            || run.status != "running"
+            || items.len() != 1
+            || items[0].fact.status != "available"
+        {
+            return Err(Error::Conflict);
+        }
+        Ok(())
+    }
+    pub(crate) async fn finish_approval_run_in(
+        &self,
+        tx: &mut MutationTransaction<'_>,
+        scope: &Scope,
+        request: &crate::approval_store::ApprovalRequest,
+        outcome: crate::ApprovalOutcome,
+    ) -> Result<()> {
+        let engine = self.clone();
+        let scope = scope.clone();
+        let request = request.clone();
+        tx.mutate(move |sql|Box::pin(async move {
+            let row=sql.query_one("SELECT state FROM base_workflow_approval_requests WHERE tenant_id=$1 AND id=$2 FOR UPDATE",&[&scope.tenant(),&request.id]).await?;
+            if row.get::<_,String>(0)!=outcome.as_str() {return Err(Error::Forbidden);}
+            let (run,_,items,dependencies)=engine.locked_run(sql,&scope,request.run_id.ok_or(Error::Invalid)?,Operation::ReadRun).await?;
+            if run.input["approval_request"]!=request.id || run.definition_key!=request.case || items.len()!=1 || items[0].fact.status!="available" {return Err(Error::Conflict);}
+            let mut changes=Vec::new();
+            let finish=coordination::Finish::completed(&items[0],outcome.as_str(),&json!({"approval_request":request.id,"revision":request.revision}),Some(&format!("approval:{}",request.id)));
+            coordination::finish_item(sql,&run,&items[0],finish,1,&dependencies,&mut changes).await?;
+            Ok(((),changes))
+        })).await
+    }
 }

@@ -12,7 +12,7 @@
 //! emptied is erased; and an export filed under another company is deleted. Explicit disposable DB only (`seed` first); prints
 //! real outcomes for inspection. No assertions or test harness.
 use bilibi_authz::grants::Grants;
-use bilibi_base::workflow::{engine::Engine, engine::Request, Operation};
+use bilibi_base::workflow::{Engine, Operation, Request};
 use bilibi_database::{pool, MutationBoundary};
 use bilibi_party_ids::{OrganisationId, PersonId};
 use bilibi_personal_data::Identifier;

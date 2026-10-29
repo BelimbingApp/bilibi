@@ -51,3 +51,7 @@ The existing authorization rule is shared by browser and agent: the list require
 Creation requires the tenant's name and primary company name; optional additional companies, parent and active/suspended status are reviewed together. The contract declares its Base Step-up operation. Every tenant, company and primary assignment is returned as a `Change` on one transaction, attributed to the person with the agent connection in the committed action. Failure leaves none of those rows behind.
 
 `ClientIdentity` is bounded printable transport evidence, separate from `SelfReport`. The host attaches it with `Scope::with_client_identity`; `mutation_context` carries it to write audits. It changes no actor, grant or permission.
+
+`Authentication::account_identity(client, scope, account)` supplies live account and Person evidence for a routing or independence check in the scope's tenant. It seals no credential and grants no authority. Callers must still apply company reach, owner visibility and capability checks; never turn this evidence into an acting scope.
+
+`Authentication::reprove` preserves the queued-job channel as well as agent, impersonator and presented 2FA evidence. Refreshing identity must never turn background work into a browser action.

@@ -119,7 +119,7 @@ impl JobContracts {
             return Err(Error::WritesNotEnabled);
         };
         owner
-            .preview(tx.sql() as &dyn OperationClient, &scope, input)
+            .preview(&crate::TransactionRead(tx.sql()), &scope, input)
             .await?;
         Ok(owner.commit(tx, &scope, input).await?.envelope(key))
     }

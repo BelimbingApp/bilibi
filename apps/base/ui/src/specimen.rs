@@ -7,9 +7,10 @@ use crate::inline_specimen::InlineSamples;
 use crate::section::sections;
 use crate::{
     choices, error_sentence, ActionLink, AddMore, BadgeKind, Button, ButtonVariant, Card, Choice,
-    Chrome, ClientEntry, CodeInput, Combobox, ErrorSummary, Field, FileInput, Html, IconButton,
-    IconContext, IconKind, InputKind, LocationAction, MultiSelect, PageVariant, RadioGroup,
-    Restricted, RestrictedField, SecretInput, StatItem, UploadSpec, Uploads,
+    Chrome, ClientEntry, CodeInput, Combobox, DayKind, DayMonth, DayTile, ErrorSummary, Field,
+    FileInput, Html, IconButton, IconContext, IconKind, InputKind, LocationAction, MultiSelect,
+    PageVariant, RadioGroup, Restricted, RestrictedField, SecretInput, StatItem, UploadSpec,
+    Uploads,
 };
 use askama::Template;
 
@@ -42,6 +43,9 @@ pub struct ComponentsSpecimen {
     /// The file inputs in every state the host can leave them in: empty,
     /// arriving, complete, refused per entry and refused as a whole.
     uploads: Uploads,
+    /// One day tile of each kind, then a month of them (`day_month`).
+    day_tiles: Html,
+    day_month: Html,
     /// The browser location action in both button variants and disabled.
     location_secondary: LocationAction,
     location_primary: LocationAction,
@@ -54,6 +58,7 @@ sections! {
         records: "ui_components_specimen/records.html",
         buttons: "ui_components_specimen/buttons.html",
         links: "ui_components_specimen/links.html",
+        day_tiles: "ui_components_specimen/day_tiles.html",
         code_input: "ui_components_specimen/code_input.html",
         text_inputs: "ui_components_specimen/text_inputs.html",
         text_inputs_basic: "ui_components_specimen/text_inputs_basic.html",
@@ -574,6 +579,8 @@ impl ComponentsSpecimen {
             inline: InlineSamples::new()?,
             flex: crate::flex_sample::FlexSpecimens::new()?,
             charts: specimen_charts()?,
+            day_tiles: specimen_day_tiles()?,
+            day_month: specimen_day_month()?,
             uploads: specimen_uploads(),
             location_secondary: LocationAction::new(
                 "specimen-location",
@@ -619,8 +626,88 @@ impl ComponentsSpecimen {
     }
 }
 
-/// The states the specimen shows, produced the way the host produces them:
-/// through registration and chunk appends, never by hand.
+/// One tile of each day kind, the working one with a lunch break.
+fn specimen_day_tiles() -> askama::Result<Html> {
+    let mut row = Html::EMPTY;
+    for (id, kind, date, description, lines) in [
+        (
+            "specimen-day-working",
+            DayKind::Working,
+            "Mon 14",
+            "Monday 14 September: working, 09:00-13:00 and 14:00-18:00",
+            vec!["09:00-13:00", "14:00-18:00"],
+        ),
+        (
+            "specimen-day-off",
+            DayKind::Off,
+            "Sat 19",
+            "Saturday 19 September: off",
+            vec![],
+        ),
+        (
+            "specimen-day-rest",
+            DayKind::Rest,
+            "Sun 20",
+            "Sunday 20 September: rest",
+            vec![],
+        ),
+        (
+            "specimen-day-holiday",
+            DayKind::Holiday,
+            "Wed 16",
+            "Wednesday 16 September: holiday, Malaysia Day (week: working)",
+            vec!["Malaysia Day"],
+        ),
+    ] {
+        row.push(&Html::render(&DayTile {
+            id,
+            kind,
+            date,
+            description,
+            outside: false,
+            lines: lines.into_iter().map(str::to_owned).collect(),
+        })?);
+    }
+    Ok(row)
+}
+
+/// A sample September starting on a Tuesday: Monday to Friday working with a
+/// lunch break, Saturday off, Sunday rest, one holiday, and the neighbouring
+/// months' dates filling the first and last weeks.
+fn specimen_day_month() -> askama::Result<Html> {
+    let mut tiles = Vec::with_capacity(35);
+    // One leading date of August, 30 of September, four of October.
+    let dates = std::iter::once((31, true))
+        .chain((1..=30).map(|day| (day, false)))
+        .chain((1..=4).map(|day| (day, true)));
+    for (position, (day, outside)) in dates.enumerate() {
+        let (kind, lines) = match (position % 7, day, outside) {
+            (_, 16, false) => (DayKind::Holiday, vec!["Malaysia Day".to_owned()]),
+            (5, _, _) => (DayKind::Off, Vec::new()),
+            (6, _, _) => (DayKind::Rest, Vec::new()),
+            _ => (
+                DayKind::Working,
+                vec!["09:00-13:00".to_owned(), "14:00-18:00".to_owned()],
+            ),
+        };
+        let date = day.to_string();
+        let description = format!("{day}: {}", kind.name());
+        tiles.push(Html::render(&DayTile {
+            id: "",
+            kind,
+            date: &date,
+            description: &description,
+            outside,
+            lines,
+        })?);
+    }
+    Html::render(&DayMonth {
+        id: "specimen-day-month-grid",
+        caption: "September",
+        tiles,
+    })
+}
+
 /// Sample charts: one of each kind over neutral example data, a series with a
 /// gap and negative values, then a chart with no data and a pie refused for
 /// having too many slices (its data still shown).
@@ -910,6 +997,8 @@ fn specimen_charts() -> askama::Result<Vec<Html>> {
     charts.iter().map(Html::render).collect()
 }
 
+/// The states the specimen shows, produced the way the host produces them:
+/// through registration and chunk appends, never by hand.
 fn specimen_uploads() -> Uploads {
     let mut uploads = Uploads::new([
         UploadSpec::new("statement", 5 * 1024 * 1024).accept([".csv", ".txt", "text/csv"]),

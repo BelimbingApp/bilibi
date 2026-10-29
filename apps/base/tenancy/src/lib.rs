@@ -510,6 +510,23 @@ impl Authentication {
             .confirm_password(client, scope.tenant(), scope.user(), password)
             .await
     }
+    /// Scoped live account evidence for routing and independent controls. This
+    /// proves identity only; it seals no credential and grants no authority.
+    pub async fn account_identity(
+        &self,
+        client: &dyn ProofClient,
+        scope: &Scope,
+        account: i64,
+    ) -> Result<AccountIdentity> {
+        if account <= 0 {
+            return Err(Error::Invalid);
+        }
+        self.verifier
+            .get()
+            .ok_or(Error::Unauthorized)?
+            .verify(client, scope.tenant(), account)
+            .await
+    }
     /// Authentication edge only: IDs must come from a durable credential/session.
     /// This method establishes identity; it grants no capabilities.
     pub async fn authenticate(
@@ -673,6 +690,7 @@ impl Authentication {
                 .await?;
         }
         fresh.step_up.clone_from(&scope.step_up);
+        fresh.job = scope.job;
         Ok(fresh)
     }
 }

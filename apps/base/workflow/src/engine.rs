@@ -58,6 +58,7 @@ impl Request {
 }
 #[derive(Clone)]
 pub struct Engine {
+    pub(crate) approval: Arc<crate::approval_store::Services>,
     pub(crate) db: Db,
     pub(crate) boundary: Arc<MutationBoundary>,
     pub(crate) authentication: Arc<Authentication>,
@@ -73,6 +74,7 @@ impl Engine {
         queue: Arc<bilibi_queue::Queue>,
     ) -> Self {
         Self {
+            approval: Arc::new(crate::approval_store::Services::default()),
             db,
             boundary,
             authentication,
@@ -232,6 +234,12 @@ impl Engine {
         if context.tenant != scope.tenant()
             || context.actor.kind != "user"
             || context.actor.id != scope.user().to_string()
+            || context
+                .impersonator
+                .as_ref()
+                .map(|p| (p.kind.as_str(), p.id.clone()))
+                != scope.impersonator().map(|p| ("user", p.user().to_string()))
+            || context.agent_connection != scope.agent().map(|a| a.connection())
             || id <= 0
         {
             return Err(Error::Forbidden);

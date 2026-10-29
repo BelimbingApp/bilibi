@@ -566,3 +566,94 @@ listener for 30 seconds so the operator can stop that example process and
 observe lease recovery on restart. `maintenance` also repairs expired work
 created by `start-worker`/`claim-race` and releases due timers without executing
 the work. These are real database/app commands, with no unit-test runner.
+
+## Shared approvals
+
+Workflow gives owners one approval list, company rules, temporary cover, reasons and history. [ADR 15](../../../docs/architecture/decisions/15-shared-approval-cases-in-workflow.md) records the architectural choice and the later owner migrations.
+
+For example, a request can need a manager, then Finance and a technical reviewer together, then a director above an amount. Workflow records those decisions. The owner still posts the journal, books the leave or starts its controlled work. **Approval grants permission to proceed; it does not replace the owner's business checks.**
+
+Existing Finance, People and Supply Chain approval methods remain authoritative until their coordinated conversion. This Platform slice adds no second approval to their work and does not implement erasure.
+
+### Owner declaration
+
+Contribute an `ApprovalCase` for an owned subject using `declare_approval_case!`. The declaration emits its fixed wait process, unbound human actions, static operation contracts and shared-page bindings with the owner's provenance. `examples/reference/mod.rs` is the executable declaration and adapter example; it is linked only by disposable reference executables.
+
+| Declaration | Meaning |
+| --- | --- |
+| `decisions` | Static action, operation contract and business capability for each kind of decision |
+| `default_policy` | Pure owner defaults, validated at boot and published only by an explicit action |
+| `facts` | The typed routing facts the owner proves: Boolean, Code, Identifier, exact Decimal or Money with a currency |
+| `required_capabilities` | Approval permissions every unconditional base policy must require |
+| Safety floors | Independence, distinct people across steps, required approval reasons, impersonation restrictions, cover and Step-up |
+| Management contracts | Separate permissions and static contracts for rules, recall, cover and exception review |
+
+During its service factory, the owner binds one `ApprovalAdapter` with `Engine::bind_approval_case`, then binds the macro's generated contracts. Duplicate, foreign, late and missing adapters refuse startup. Contributions perform no I/O. Boot creates neither policies nor requests.
+
+The adapter proves company reach and subject visibility, returns the immutable revision, facts and complete preparer and beneficiary identities, resolves declared reporting relationships and rechecks saved decisions against live hard floors. Its `candidate` read must prove another account's company reach and subject visibility before routing or notification; names are not permission. Its `cover_candidate` read also proves the proposed cover account reaches the company before arranging cover. Its `maintenance` method supplies only safe routing facts to the named maintenance principal.
+
+`apply_in` receives the current `MutationTransaction`. Call the owner's existing `_in` methods there. Capture every owner change once, open no inner transaction and perform no external I/O. Approval, rejection and recall all call this adapter before the request becomes terminal, so reservations and final effects cannot be lost.
+
+### Company rules
+
+**Approval rules** (`/workflow/approval-rules`) publishes immutable policy versions after showing their plain explanation and collecting a reason. Settings holds only the current policy ID; Workflow owns the snapshot, digest, publisher and reason. Initialize a policy explicitly through the owner's reviewed contract or an installation operation.
+
+Policies contain ordered All/Any steps. All needs every seat, each filled by a different accountable person; Any needs one. Each seat can select permission holders, effective role members, a named account or an owner-proved reporting relationship. The selected person still needs the seat's business capability and company reach. Rules may add steps for typed conditions; they cannot remove the owner's minimum controls.
+
+Money comparisons are exact and name the currency. A policy using amount thresholds must cover the submitted currency. A different currency never falls through by numerical comparison or an implicit exchange rate. Missing facts and unavailable routing refuse execution.
+
+New policy versions affect new requests. Pending requests keep their routing snapshot and original owner safety floors, while current stronger floors also apply immediately. An incompatible owner declaration refuses the round until recall and fresh submission. A change to the owner's revision needs a fresh, linked request and fresh decisions.
+
+### Submission and decisions
+
+An owner calls `submit_approval_in` in its submission transaction with an idempotency key and optional previous request. The stored participant rows retain the complete historical account and Person sets; impersonators and agents remain attributable. Resubmission never reopens an old request or carries its decisions forward.
+
+Every decision enters through `execute_action` or `execute_action_in`, using the contributed action and its capability. The typed continuation uses the same human-action idempotency namespace, then checks the subject, request, step, seat and routing versions. Intermediate decisions leave the aggregate work waiting. A valid rejection ends the whole request and requires a trimmed reason. The owner's reason limits distinguish characters from bytes.
+
+The final vote and the owner's effect commit together with decisions, exceptions, run completion, audit and notification or queue intents. An owner failure leaves that vote unaccepted and preserves earlier committed steps. A retry of a committed action replays its result. Generic signals, worker completion, waivers and operator commands cannot supply approval proof.
+
+Lock order is owner locks, live policy pointer, human-action idempotency, approval request, aggregate run/work, then decision requirements. Policy publication takes the corresponding exclusive pointer lock. Cover changes use that same policy lock. The database boundary's `coordinate` continuation prevents commit after an owner error or cancellation, including a caught error after an earlier successful owner write.
+
+### Independence and cover
+
+A decision's identity is its person's sealed scope, with any impersonator and represented Person. An agent connection is evidence about that person, never a second approver. System principals and queued jobs cannot vote. Distinct-seat checks include cover grantors, so one person cannot fill two seats through different accounts, impersonation or several cover arrangements.
+
+Strict separation is the default. A case may explicitly permit an operator to allow preparer overlap. Each accepted overlapping decision records an exception tied to the immutable policy change and its reason. A current beneficiary never gains approval authority through that exception.
+
+Cover has an inclusive start, exclusive end, scope, reason and revocation history. It is one hop only. A delegate needs its own business permission and company reach, and the grantor must remain eligible. Expiry and revocation affect future decisions; completed decisions retain who covered for whom.
+
+Recall is available only while waiting, to the initiating person when the owner permits it. It calls the owner's close handler in the same transaction. Correct a completed effect through the owner's reversal or cancellation operation.
+
+### Waiting list and exceptions
+
+**Waiting for my approval** (`/workflow/approvals`) scans bounded aggregate work candidates and applies live owner visibility, capability, selector and independence checks. Filters and cursors stay in `ListState`. Returned counts describe eligible rows on the page; hidden candidates do not contribute a total. Capability removal hides the request on the next read and refuses an already-open decision.
+
+The shared read contracts are `base.workflow.approvals.list`, `.history`, `.delegations` and `.exceptions`. Their read permission admits the projection only, and the five approval pages require the same `workflow.approvals.view` in addition to the owner's checks. Decision and management writes use static per-case contracts; there is no permission to approve everything. The shared page opts into owner-contributed bindings through Agent API's page-family contract, without a host list or module endpoint.
+
+**Approval exceptions** (`/workflow/approval-exceptions`) records permitted separation exceptions and owner-authorized control overrides. `record_control_exception_in` records evidence of an override the owner already authorized; it never fabricates a second person's prior approval. Reviews require the owner's live review permission and visibility, and independence from every preparer and deciding identity. The register skips a row whose owner can no longer prove its facts or visibility, while a review of that row still fails closed. A request's exception can be reviewed only after its round is terminal. One append-only review acknowledges inspection and performs no business effect.
+
+Approval reasons and cover notes can contain personal data. Keep labels and notifications minimal. Future Privacy integration must include these stores and their free text under its retention, holds and audited erasure contracts; immutable evidence has no Workflow-specific erasure bypass.
+
+### Reminders
+
+The existing Workflow maintenance schedule sweeps saved UTC stage deadlines through Queue. Its durable execution lease and per-tenant keyset cursor bound recovery passes and keep unavailable owners from starving later requests. It can remind or reassign, and **never approves because time elapsed**. Notice receipts and notification intents share one transaction; retries do not repeat a saved notice. Escalation changes responsibility and routing versions while preserving the original activation time and history. A seat that has already decided leaving the routed set is not a reassignment.
+
+Before relying on reminders, explicitly review and enable `base/workflow-maintenance` in Schedule and grant `workflow.approvals.maintain` to the named principal `workflow-approval-maintenance` in each tenant. No grant is installed at boot. Missing owners, routing or grants defer that request while later rows remain reachable. Review maintenance logs when work is late.
+
+### Reference proof
+
+Use the disposable setup described above, then initialize and submit the approval reference:
+
+```sh
+cargo run -p bilibi-workflow --example owner -- approval-init 4
+cargo run -p bilibi-workflow --example owner -- approval-submit 1 1
+cargo run -p bilibi-workflow --example owner -- approval-inbox 4
+```
+
+The reference adds no real owner. Its facts and failure controls live in `workflow_reference_approval_facts`; use them only in the disposable database. Run `apps/web/examples/w7-workflow-reference.rs` at a private `BIND_ADDR` and matching `APP_ORIGIN` to exercise the shared pages in a browser.
+
+### Upgrade notes for agents
+
+Workflow's implementation modules are private. Move type imports under `definitions`, `engine`, `pending`, `process` and `runs` to their existing `bilibi_workflow` crate-root exports. Import the remaining public types directly: `outbox::{Listener, TransitionListener, TransitionEvent, DeliveryOutcome, DeliverySummary}` moves to the crate root, `history::Fact` becomes `HistoryFact`, and `history::Page` becomes `HistoryPage`. Existing root imports remain unchanged. `OwnedSubject`, `DependencyDefinition` and `MaintenanceSummary` are root public types. Use `SERVICE` for the Engine service ID. No existing business owner is converted to shared approval by this change.
+
+Use `ApprovalPolicyChange` for a reviewed publication and `ApprovalCover` for a temporary arrangement. The reference CLI also supports `approval-policy`, `approval-recall`, `approval-history`, `approval-exception` and `approval-review`; its actor argument accepts `4/agent/CONNECTION`, `4/impersonator/1` or `4/job` for disposable identity checks. The protected reference case demonstrates required reasons, independent people across steps, no cover and 2FA.

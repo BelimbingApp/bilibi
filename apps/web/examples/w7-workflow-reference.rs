@@ -21,10 +21,10 @@ async fn main() -> Result<()> {
         return Err(Error::Invalid);
     }
     let db = bilibi_database::pool(&std::env::var("DATABASE_URL").map_err(|_| Error::Invalid)?)?;
+    bilibi_web::migrate(&db).await?;
     bilibi_walkthrough_fixture::install(&db).await?;
     let origin = std::env::var("APP_ORIGIN").map_err(|_| Error::Invalid)?;
     let bind = std::env::var("BIND_ADDR").map_err(|_| Error::Invalid)?;
-    bilibi_web::migrate(&db).await?;
     let listener = tokio::net::TcpListener::bind(bind)
         .await
         .map_err(|_| Error::Internal)?;

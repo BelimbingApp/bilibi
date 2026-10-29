@@ -15,6 +15,7 @@ use bilibi_workflow::{
 };
 use serde_json::json;
 use tokio_postgres::Transaction;
+mod followup;
 struct Owner;
 impl SubjectAdapter for Owner {
     fn maintenance_load<'a>(
@@ -104,22 +105,22 @@ impl SubjectAdapter for Owner {
 // can see the first receipt survive and the second effect roll back.
 struct SecondListener;
 static SECOND_LISTENER: SecondListener = SecondListener;
-impl bilibi_workflow::outbox::TransitionListener for Owner {
+impl bilibi_workflow::TransitionListener for Owner {
     fn handle<'a>(
         &'a self,
         tx: &'a Transaction<'_>,
         scope: &'a bilibi_authz::SystemScope,
-        event: &'a bilibi_workflow::outbox::TransitionEvent,
+        event: &'a bilibi_workflow::TransitionEvent,
     ) -> OwnerFuture<'a, Vec<Change>> {
         Box::pin(async move { listener_effect(tx, scope, event, "first").await })
     }
 }
-impl bilibi_workflow::outbox::TransitionListener for SecondListener {
+impl bilibi_workflow::TransitionListener for SecondListener {
     fn handle<'a>(
         &'a self,
         tx: &'a Transaction<'_>,
         scope: &'a bilibi_authz::SystemScope,
-        event: &'a bilibi_workflow::outbox::TransitionEvent,
+        event: &'a bilibi_workflow::TransitionEvent,
     ) -> OwnerFuture<'a, Vec<Change>> {
         Box::pin(async move {
             let changes = listener_effect(tx, scope, event, "second").await?;
@@ -137,7 +138,7 @@ impl bilibi_workflow::outbox::TransitionListener for SecondListener {
 async fn listener_effect(
     tx: &Transaction<'_>,
     scope: &bilibi_authz::SystemScope,
-    event: &bilibi_workflow::outbox::TransitionEvent,
+    event: &bilibi_workflow::TransitionEvent,
     listener: &str,
 ) -> Result<Vec<Change>> {
     let id:i64=tx.query_one("INSERT INTO workflow_reference_listener_effects(tenant_id,event_key,listener) VALUES($1,$2,$3) RETURNING id",&[&scope.tenant(),&event.event_key,&listener]).await?.get(0);
@@ -389,9 +390,18 @@ pub static DRIFTED_V1: Contribution = Contribution::Process(Process {
 });
 inventory::submit! { bilibi_module_registry::Module {
     id:"extensions/workflow_reference",layer:bilibi_module_registry::Layer::Extensions,
-    dependencies:&["base/workflow"],services:&[],
+    dependencies:&["base/workflow","base/tenancy","base/step_up","base/notifications","base/queue","base/database"],services:&[bilibi_module_registry::Service{id:"extensions/workflow_reference.approvals",factory:|services|{
+        let engine=services.get::<bilibi_workflow::Engine>("base/workflow.engine")?;
+        let adapter=std::sync::Arc::new(ApprovalOwner{parties:services.get("base/tenancy.parties")?,notices:services.get("base/notifications.sink")?,queue:services.get("base/queue.store")?});
+        engine.bind_approval_case("extensions/workflow_reference",APPROVAL_CASE.key,adapter.clone())?;
+        engine.bind_approval_case("extensions/workflow_reference",STRICT_CASE.key,adapter)?;
+        approval_contracts::bind(engine.clone())?;
+        strict_contracts::bind(engine)?;Ok(std::sync::Arc::new(()))
+    }},bilibi_module_registry::Service{id:"extensions/workflow_reference.followup",factory:|services|Ok(std::sync::Arc::new(bilibi_queue::execution::HandlerService(std::sync::Arc::new(followup::Followup{db:services.get::<bilibi_database::Db>("base/database.pool")?.as_ref().clone(),parties:services.get("base/tenancy.parties")?,engine:services.get(bilibi_workflow::SERVICE)?}))))}],
     migrations:&[("extensions-workflow-reference-001-records","CREATE TABLE workflow_reference_records(id bigint PRIMARY KEY,tenant_id bigint NOT NULL REFERENCES tenants(id),status text NOT NULL DEFAULT 'pending',version bigint NOT NULL DEFAULT 0,action_count integer NOT NULL DEFAULT 0,facade_value integer NOT NULL DEFAULT 0)"),
-    ("extensions-workflow-reference-002-listeners","CREATE TABLE workflow_reference_listener_effects(id bigserial PRIMARY KEY,tenant_id bigint NOT NULL,event_key text NOT NULL,listener text NOT NULL); CREATE TABLE workflow_reference_listener_gate(singleton boolean PRIMARY KEY CHECK(singleton),fail_second boolean NOT NULL DEFAULT true,wait_seconds integer NOT NULL DEFAULT 0); INSERT INTO workflow_reference_listener_gate(singleton) VALUES(true)")],
+    ("extensions-workflow-reference-002-listeners","CREATE TABLE workflow_reference_listener_effects(id bigserial PRIMARY KEY,tenant_id bigint NOT NULL,event_key text NOT NULL,listener text NOT NULL); CREATE TABLE workflow_reference_listener_gate(singleton boolean PRIMARY KEY CHECK(singleton),fail_second boolean NOT NULL DEFAULT true,wait_seconds integer NOT NULL DEFAULT 0); INSERT INTO workflow_reference_listener_gate(singleton) VALUES(true)"),
+    ("extensions-workflow-reference-003-approval-facts","CREATE TABLE workflow_reference_approval_facts(record_id bigint PRIMARY KEY,tenant_id bigint NOT NULL,company_id bigint NOT NULL,prepared_by bigint NOT NULL,manager_id bigint NOT NULL DEFAULT 1,amount text NOT NULL DEFAULT '12500.00',currency text NOT NULL DEFAULT 'MYR',resource_type text NOT NULL DEFAULT 'controlled',revision text NOT NULL DEFAULT '1',closed boolean NOT NULL DEFAULT false,fail_effect boolean NOT NULL DEFAULT false)"),
+    ("extensions-workflow-reference-004-followups","CREATE TABLE workflow_reference_followups(id bigserial PRIMARY KEY,tenant_id bigint NOT NULL,record_id bigint NOT NULL,revision text NOT NULL,UNIQUE(tenant_id,record_id,revision))")],
 } }
 // The reference flow's production seed: `seed` inserts it without the
 // operator's `initialize`, once per version.
@@ -403,7 +413,7 @@ Provenance {module:"extensions/workflow_reference",source:file!(),line:line!()},
 macro_rules! register {($id:literal,$value:expr)=>{inventory::submit! { Registration::new(CONTRIBUTIONS,$id,Provenance {module:"extensions/workflow_reference",source:file!(),line:line!()},&$value) }};}
 register!(
     "reference.listener.first",
-    Contribution::Listener(bilibi_workflow::outbox::Listener {
+    Contribution::Listener(bilibi_workflow::Listener {
         key: "reference.first",
         subjects: &["reference.record"],
         adapter: &OWNER
@@ -411,7 +421,7 @@ register!(
 );
 register!(
     "reference.listener.second",
-    Contribution::Listener(bilibi_workflow::outbox::Listener {
+    Contribution::Listener(bilibi_workflow::Listener {
         key: "reference.second",
         subjects: &["reference.record"],
         adapter: &SECOND_LISTENER
@@ -550,3 +560,358 @@ register!(
         }],
     })
 );
+
+// A private approval case mirrors Bilimbi Workflow's reference owner. It is
+// linked only by disposable examples; no business Domain is converted.
+pub(super) const APPROVAL_CASE: bilibi_workflow::ApprovalCase = bilibi_workflow::ApprovalCase {
+    key: "reference.approval",
+    label: "Reference request",
+    subject: "reference.record",
+    process: "reference.approval",
+    default_policy: default_approval_policy,
+    decisions: &[bilibi_workflow::ApprovalDecisionAction {
+        label: "Reference approval",
+        key: "reference.approval.decide",
+        capability: "companies.update",
+        contract: "extensions.workflow_reference.approval.decide",
+    }],
+    recall_capability: "companies.update",
+    delegation_capability: "companies.update",
+    policy_capability: "admin.workflow.definition.manage",
+    review_capability: "companies.update",
+    policy_contract: "extensions.workflow_reference.approval.policy",
+    recall_contract: "extensions.workflow_reference.approval.recall",
+    delegation_contract: "extensions.workflow_reference.approval.delegate",
+    revoke_contract: "extensions.workflow_reference.approval.revoke",
+    review_contract: "extensions.workflow_reference.approval.review",
+    facts: &[
+        ("amount", bilibi_workflow::ApprovalFactKind::Money),
+        ("resource_type", bilibi_workflow::ApprovalFactKind::Code),
+    ],
+    relationships: &["manager"],
+    required_capabilities: &["companies.update"],
+    distinct_stages: false,
+    approval_reason: false,
+    reason_characters: 500,
+    reason_bytes: 4000,
+    allow_preparer: true,
+    delegation: true,
+    forbid_impersonation: false,
+    step_up: None,
+};
+bilibi_workflow::declare_approval_case!(approval_contracts,"extensions/workflow_reference",APPROVAL_CASE,
+    policy:"extensions.workflow_reference.approval.policy",recall:"extensions.workflow_reference.approval.recall",
+    delegation:"extensions.workflow_reference.approval.delegate",revoke:"extensions.workflow_reference.approval.revoke",review:"extensions.workflow_reference.approval.review",step_up:&[],decision_input:||serde_json::json!({"type":"object","properties":{}}),
+    decisions:[(DECIDE,"extensions.workflow_reference.approval.decide","reference.approval.decide","companies.update")]);
+struct ApprovalOwner {
+    notices: std::sync::Arc<bilibi_notifications::NotificationBoundary>,
+    queue: std::sync::Arc<bilibi_queue::Queue>,
+    parties: std::sync::Arc<bilibi_tenancy::PartyProofs>,
+}
+impl bilibi_workflow::ApprovalAdapter for ApprovalOwner {
+    fn authorize_company<'a>(
+        &'a self,
+        sql: &'a Transaction<'_>,
+        scope: &'a Scope,
+        company: i64,
+        access: bilibi_workflow::ApprovalAccess,
+    ) -> OwnerFuture<'a, ()> {
+        Box::pin(async move {
+            // Disposable owner has one company. Prove it via the company
+            // boundary rather than treating its numeric id as reach.
+            let capability = match access {
+                bilibi_workflow::ApprovalAccess::Policy => "admin.workflow.definition.manage",
+                bilibi_workflow::ApprovalAccess::Read => "companies.view",
+                _ => "companies.update",
+            };
+            self.parties
+                .organisation_target(
+                    sql,
+                    scope,
+                    company.try_into().map_err(|_| Error::Invalid)?,
+                    capability,
+                )
+                .await?;
+            Ok(())
+        })
+    }
+    fn inspect<'a>(
+        &'a self,
+        sql: &'a Transaction<'_>,
+        scope: &'a Scope,
+        subject: &'a Subject,
+        access: bilibi_workflow::ApprovalAccess,
+    ) -> OwnerFuture<'a, bilibi_workflow::ApprovalSubject> {
+        Box::pin(async move {
+            let row=sql.query_opt("SELECT company_id,prepared_by,amount,currency,resource_type,revision,closed FROM workflow_reference_approval_facts WHERE tenant_id=$1 AND record_id=$2",&[&scope.tenant(),&subject.id]).await?.ok_or(Error::NotFound)?;
+            let company: i64 = row.get(0);
+            <Self as bilibi_workflow::ApprovalAdapter>::authorize_company(
+                self, sql, scope, company, access,
+            )
+            .await?;
+            if matches!(
+                access,
+                bilibi_workflow::ApprovalAccess::Submit
+                    | bilibi_workflow::ApprovalAccess::Decide
+                    | bilibi_workflow::ApprovalAccess::Recall
+            ) && (row.get::<_, bool>(6) || subject.status != "pending")
+            {
+                return Err(Error::Conflict);
+            }
+            let preparer: i64 = row.get(1);
+            let mut preparers = bilibi_workflow::ApprovalIdentities::default();
+            preparers.accounts.insert(preparer);
+            Ok(bilibi_workflow::ApprovalSubject {
+                company,
+                revision: row.get(5),
+                preparers,
+                beneficiaries: Default::default(),
+                facts: std::collections::BTreeMap::from([
+                    (
+                        "amount".into(),
+                        bilibi_workflow::ApprovalFact::Money {
+                            currency: row.get(3),
+                            value: row.get(2),
+                        },
+                    ),
+                    (
+                        "resource_type".into(),
+                        bilibi_workflow::ApprovalFact::Code { value: row.get(4) },
+                    ),
+                ]),
+                label: format!("Reference request {}", subject.id),
+                url: format!("/workflow/reference/{}", subject.id),
+                summary: vec![
+                    bilibi_workflow::ApprovalSummary {
+                        label: "Amount".into(),
+                        value: format!("{} {}", row.get::<_, String>(3), row.get::<_, String>(2)),
+                    },
+                    bilibi_workflow::ApprovalSummary {
+                        label: "Resource type".into(),
+                        value: row.get(4),
+                    },
+                ],
+            })
+        })
+    }
+    fn cover_candidate<'a>(
+        &'a self,
+        sql: &'a Transaction<'_>,
+        scope: &'a Scope,
+        company: i64,
+        account: i64,
+        identity: &'a bilibi_tenancy::AccountIdentity,
+    ) -> OwnerFuture<'a, bool> {
+        Box::pin(async move {
+            Ok(identity.organisation.is_some_and(|c| c.get() == company)
+                || bilibi_authz::effective_capabilities_of(sql, scope, account)
+                    .await?
+                    .allowed
+                    .contains("admin.company.tenant-wide.manage"))
+        })
+    }
+    fn candidate<'a>(
+        &'a self,
+        sql: &'a Transaction<'_>,
+        scope: &'a Scope,
+        _subject: &'a Subject,
+        company: i64,
+        account: i64,
+        identity: &'a bilibi_tenancy::AccountIdentity,
+    ) -> OwnerFuture<'a, bool> {
+        <Self as bilibi_workflow::ApprovalAdapter>::cover_candidate(
+            self, sql, scope, company, account, identity,
+        )
+    }
+    fn maintenance<'a>(
+        &'a self,
+        sql: &'a Transaction<'_>,
+        scope: &'a bilibi_authz::SystemScope,
+        subject: &'a Subject,
+    ) -> OwnerFuture<'a, bilibi_workflow::ApprovalSubject> {
+        Box::pin(async move {
+            let row=sql.query_opt("SELECT company_id,prepared_by,amount,currency,resource_type,revision FROM workflow_reference_approval_facts WHERE tenant_id=$1 AND record_id=$2",&[&scope.tenant(),&subject.id]).await?.ok_or(Error::NotFound)?;
+            let mut preparers = bilibi_workflow::ApprovalIdentities::default();
+            preparers.accounts.insert(row.get(1));
+            Ok(bilibi_workflow::ApprovalSubject {
+                company: row.get(0),
+                revision: row.get(5),
+                preparers,
+                beneficiaries: Default::default(),
+                facts: std::collections::BTreeMap::from([
+                    (
+                        "amount".into(),
+                        bilibi_workflow::ApprovalFact::Money {
+                            currency: row.get(3),
+                            value: row.get(2),
+                        },
+                    ),
+                    (
+                        "resource_type".into(),
+                        bilibi_workflow::ApprovalFact::Code { value: row.get(4) },
+                    ),
+                ]),
+                label: format!("Reference request {}", subject.id),
+                url: format!("/workflow/reference/{}", subject.id),
+                summary: vec![
+                    bilibi_workflow::ApprovalSummary {
+                        label: "Amount".into(),
+                        value: format!("{} {}", row.get::<_, String>(3), row.get::<_, String>(2)),
+                    },
+                    bilibi_workflow::ApprovalSummary {
+                        label: "Resource type".into(),
+                        value: row.get(4),
+                    },
+                ],
+            })
+        })
+    }
+    fn relationship<'a>(
+        &'a self,
+        sql: &'a Transaction<'_>,
+        scope: &'a Scope,
+        subject: &'a Subject,
+        key: &'a str,
+        account: i64,
+    ) -> OwnerFuture<'a, bool> {
+        Box::pin(async move {
+            if key != "manager" {
+                return Err(Error::Invalid);
+            }
+            Ok(sql.query_one("SELECT manager_id=$3 FROM workflow_reference_approval_facts WHERE tenant_id=$1 AND record_id=$2",&[&scope.tenant(),&subject.id,&account]).await?.get(0))
+        })
+    }
+    fn authorize_control<'a>(
+        &'a self,
+        sql: &'a Transaction<'_>,
+        scope: &'a Scope,
+        _: &'a Subject,
+        kind: &'a str,
+        reference: &'a str,
+    ) -> OwnerFuture<'a, ()> {
+        Box::pin(async move {
+            if kind != "reference_override" || reference != "reference.control" {
+                return Err(Error::Forbidden);
+            }
+            bilibi_authz::authorize_key(sql, scope, "companies.update").await
+        })
+    }
+    fn validate_saved<'a>(
+        &'a self,
+        sql: &'a Transaction<'_>,
+        scope: &'a Scope,
+        subject: &'a Subject,
+        _: &'a bilibi_workflow::ApprovalIdentities,
+    ) -> OwnerFuture<'a, ()> {
+        Box::pin(async move {
+            let closed:bool=sql.query_one("SELECT closed FROM workflow_reference_approval_facts WHERE tenant_id=$1 AND record_id=$2",&[&scope.tenant(),&subject.id]).await?.get(0);
+            if closed {
+                Err(Error::Conflict)
+            } else {
+                Ok(())
+            }
+        })
+    }
+    fn apply_in<'a>(
+        &'a self,
+        tx: &'a mut bilibi_database::MutationTransaction<'_>,
+        scope: &'a Scope,
+        subject: &'a Subject,
+        outcome: bilibi_workflow::ApprovalOutcome,
+        reason: &'a str,
+        _: &'a serde_json::Value,
+    ) -> OwnerFuture<'a, ()> {
+        let scope = scope.clone();
+        let subject = subject.clone();
+        let reason = reason.to_owned();
+        Box::pin(async move {
+            let reference_id = subject.id;
+            let reference_revision:String=tx.sql().query_one("SELECT revision FROM workflow_reference_approval_facts WHERE tenant_id=$1 AND record_id=$2",&[&scope.tenant(),&reference_id]).await?.get(0);
+            let effect_scope = scope.clone();
+            tx.mutate(move |sql|Box::pin(async move {
+                let status=match outcome {bilibi_workflow::ApprovalOutcome::Approved=>"approved",bilibi_workflow::ApprovalOutcome::Rejected=>"rejected",bilibi_workflow::ApprovalOutcome::Recalled=>"recalled"};
+                let row=sql.query_one("UPDATE workflow_reference_records SET status=$3,version=version+1,action_count=action_count+CASE WHEN $3='approved' THEN 1 ELSE 0 END WHERE tenant_id=$1 AND id=$2 RETURNING version,action_count",&[&effect_scope.tenant(),&subject.id,&status]).await?;
+                if sql.query_one("SELECT fail_effect FROM workflow_reference_approval_facts WHERE tenant_id=$1 AND record_id=$2",&[&effect_scope.tenant(),&subject.id]).await?.get::<_,bool>(0) {return Err(Error::Invalid);}
+                Ok(((),vec![Change{kind:"reference.approval_effect".into(),id:subject.id,old:json!({"version":subject.version,"status":subject.status}),new:json!({"version":row.get::<_,i64>(0),"status":status,"count":row.get::<_,i32>(1),"reason":reason})}]))
+            })).await?;
+            self.notices
+                .record(tx, &scope, "Reference approval updated")
+                .await?;
+            if scope.impersonator().is_none()
+                && outcome == bilibi_workflow::ApprovalOutcome::Approved
+            {
+                self.queue
+                    .enqueue_for(
+                        tx,
+                        &scope,
+                        "extensions/workflow_reference-followup",
+                        json!({"record":reference_id,"revision":reference_revision}),
+                    )
+                    .await?;
+            }
+            Ok(())
+        })
+    }
+}
+
+/// Owner defaults are ordinary immutable data; explicit publication remains an
+/// operator action. This example uses no company-specific people or amounts.
+pub(super) fn default_approval_policy(
+    case: &bilibi_workflow::ApprovalCase,
+) -> bilibi_workflow::ApprovalPolicy {
+    use bilibi_workflow::{
+        ApprovalMode, ApprovalPolicy, ApprovalSeat, ApprovalSelector, ApprovalStage,
+    };
+    ApprovalPolicy {
+        stages: vec![ApprovalStage {
+            key: "review".into(),
+            label: "Review".into(),
+            mode: ApprovalMode::All,
+            seats: vec![ApprovalSeat {
+                key: "reviewer".into(),
+                label: "Reviewer".into(),
+                capability: case.decisions[0].capability.into(),
+                selector: ApprovalSelector::Capability,
+                delegation: case.delegation,
+                reminder_hours: Some(24),
+                escalation_hours: None,
+                escalation: None,
+            }],
+        }],
+        rules: vec![],
+        distinct_stages: case.distinct_stages,
+        approval_reason: case.approval_reason,
+        allow_preparer: false,
+    }
+}
+const STRICT_STEP_UP: &str = "extensions.workflow_reference.strict.approve";
+pub(super) const STRICT_CASE: bilibi_workflow::ApprovalCase = bilibi_workflow::ApprovalCase {
+    key: "reference.strict_approval",
+    label: "Protected reference request",
+    process: "reference.strict_approval",
+    decisions: &[bilibi_workflow::ApprovalDecisionAction {
+        label: "Protected reference approval",
+        key: "reference.strict.decide",
+        capability: "companies.update",
+        contract: "extensions.workflow_reference.strict.decide",
+    }],
+    policy_contract: "extensions.workflow_reference.strict.policy",
+    recall_contract: "extensions.workflow_reference.strict.recall",
+    delegation_contract: "extensions.workflow_reference.strict.delegate",
+    revoke_contract: "extensions.workflow_reference.strict.revoke",
+    review_contract: "extensions.workflow_reference.strict.review",
+    distinct_stages: true,
+    approval_reason: true,
+    allow_preparer: false,
+    delegation: false,
+    forbid_impersonation: true,
+    step_up: Some(STRICT_STEP_UP),
+    ..APPROVAL_CASE
+};
+bilibi_step_up::declare!(
+    "extensions/workflow_reference",
+    bilibi_step_up::Operation::new(STRICT_STEP_UP, "Approve a protected reference request").floor()
+);
+bilibi_workflow::declare_approval_case!(strict_contracts,"extensions/workflow_reference",STRICT_CASE,
+    policy:"extensions.workflow_reference.strict.policy",recall:"extensions.workflow_reference.strict.recall",delegation:"extensions.workflow_reference.strict.delegate",revoke:"extensions.workflow_reference.strict.revoke",review:"extensions.workflow_reference.strict.review",step_up:&[STRICT_STEP_UP],decision_input:||serde_json::json!({"type":"object","properties":{}}),
+    decisions:[(DECIDE,"extensions.workflow_reference.strict.decide","reference.strict.decide","companies.update")]);

@@ -35,6 +35,7 @@ You may already have questions: how do modules find each other, what stops one f
 
 - **Status marks:** *built* means the code exists and was checked. *planned* means it is not built yet.
 - **Authority:** where this page and the code differ, **the code wins.** Fix this page.
+- **Approval:** [ADR 15](decisions/15-shared-approval-cases-in-workflow.md) records shared approval cases within Workflow; business owners retain execution.
 - **Decisions:** each architectural decision has its own record in [`decisions/`](decisions/README.md). Start with [01 Agent-first operations](decisions/01-agent-first-operations.md).
 - **Agents** also read [`AGENTS.md`](../../AGENTS.md).
 

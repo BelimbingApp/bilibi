@@ -41,9 +41,43 @@ pub type OperationFuture<'a> = Pin<Box<dyn Future<Output = Result<json::Output>>
 
 /// Object-safe read adapter, including list queries. Owners can pass this same
 /// client to Tenancy proof providers without opening an unrelated connection.
-pub trait OperationClient: bilibi_tenancy::ReadClient {}
+pub trait OperationClient: bilibi_tenancy::ReadClient {
+    /// The write door's existing transaction, when present. Owners whose
+    /// proof adapters take Transaction borrow it instead of taking a second
+    /// pooled connection. Use only reads during preview.
+    fn transaction(&self) -> Option<&tokio_postgres::Transaction<'_>> {
+        None
+    }
+}
 impl<T: GenericClient + Sync> OperationClient for T {}
 
+// Reviewed previews retain the actual transaction behind the read adapter.
+// This is deliberately not GenericClient, so the blanket read implementation
+// cannot erase its transaction provenance.
+struct TransactionRead<'a, 'b>(&'a tokio_postgres::Transaction<'b>);
+impl bilibi_tenancy::ProofClient for TransactionRead<'_, '_> {
+    fn query_opt<'a>(
+        &'a self,
+        sql: &'a str,
+        params: &'a [&'a (dyn tokio_postgres::types::ToSql + Sync)],
+    ) -> bilibi_tenancy::ProofFuture<'a, Option<tokio_postgres::Row>> {
+        Box::pin(async move { Ok(self.0.query_opt(sql, params).await?) })
+    }
+}
+impl bilibi_tenancy::ReadClient for TransactionRead<'_, '_> {
+    fn query<'a>(
+        &'a self,
+        sql: &'a str,
+        params: &'a [&'a (dyn tokio_postgres::types::ToSql + Sync)],
+    ) -> bilibi_tenancy::ProofFuture<'a, Vec<tokio_postgres::Row>> {
+        Box::pin(async move { Ok(self.0.query(sql, params).await?) })
+    }
+}
+impl OperationClient for TransactionRead<'_, '_> {
+    fn transaction(&self) -> Option<&tokio_postgres::Transaction<'_>> {
+        Some(self.0)
+    }
+}
 /// The client a read handler gets from [`Registry::call`]: one pooled
 /// connection, taken on the handler's first query and kept until the call
 /// ends. The dispatcher holds none while the handler runs, so a handler whose
