@@ -1664,10 +1664,22 @@ impl Engine {
             .clone()
             .and_then(|v| v.as_object().cloned())
             .unwrap_or_default();
+        // Someone who already decided leaves the other seats' holders without any change in responsibility.
+        let distinct_stages = policy.distinct_stages || live_policy.distinct_stages || case.distinct_stages;
+        let mut decided = std::collections::BTreeSet::new();
+        for row in tx.sql().query("SELECT identities FROM base_workflow_approval_decisions WHERE tenant_id=$1 AND request_id=$2 AND ($3 OR stage_key=$4)",&[&tenant,&id,&distinct_stages,&stage.key]).await? {
+            decided.extend(serde_json::from_value::<ApprovalIdentities>(row.get(0)).map_err(|_|Error::Invalid)?.accounts);
+        }
         if previous.is_none()
-            || seat_routes
-                .iter()
-                .any(|(key, now)| seats.get(key) != Some(now))
+            || seat_routes.iter().any(|(key, now)| {
+                let before = seats.get(key).and_then(Value::as_array).map(|holders| {
+                    json!(holders
+                        .iter()
+                        .filter(|a| a.as_i64().is_none_or(|a| !decided.contains(&a)))
+                        .collect::<Vec<_>>())
+                });
+                before.as_ref() != Some(now)
+            })
         {
             seats.extend(seat_routes);
             let route_scope = scope.clone();
