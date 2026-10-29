@@ -88,7 +88,7 @@ pub(crate) async fn calendars(
                 "SELECT c.code,c.name,c.status,",
                 zone_in_force!(),
                 ",\
-             ARRAY(SELECT s.code FROM core_work_calendar_includes i JOIN core_work_calendar_holiday_sets s ON s.tenant_id=i.tenant_id AND s.id=i.holiday_set_id WHERE i.tenant_id=c.tenant_id AND i.calendar_id=c.id ORDER BY s.code LIMIT $5),\
+             ARRAY(SELECT s.code FROM core_work_calendar_includes i JOIN core_work_calendar_holiday_sets s ON s.tenant_id=i.set_tenant_id AND s.id=i.holiday_set_id WHERE i.tenant_id=c.tenant_id AND i.calendar_id=c.id ORDER BY s.code LIMIT $5),\
              (SELECT count(*) FROM core_work_calendar_includes i WHERE i.tenant_id=c.tenant_id AND i.calendar_id=c.id) \
              FROM core_work_calendars c WHERE c.tenant_id=$1 AND (c.code ILIKE $2 OR c.name ILIKE $2) ORDER BY c.code LIMIT $3 OFFSET $4"
             ),

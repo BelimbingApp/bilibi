@@ -85,7 +85,7 @@ Agents and the [pages](#pages) use these contracts (ADR 01); writes are reviewed
 | Operation | Kind | Does |
 | --- | --- | --- |
 | `core.work_calendar.list` | read (list) | One page of calendars, by code, with the total; each with the zone of the rule version in force today and its included sets (the first 400 and their total); `search` matches code or name |
-| `core.work_calendar.holiday_set.list` | read (list) | One page of holiday sets, the same way |
+| `core.work_calendar.holiday_set.list` | read (list) | One page of the tenant's holiday sets and the installation-wide ones (`installation`), the same way |
 | `core.work_calendar.get` | read | One calendar: versions, sets, a page of exceptions, version |
 | `core.work_calendar.holiday_set.get` | read | One set with a page of its holidays (optionally from and to a date) and the calendars including it |
 | `core.work_calendar.days` | read | Resolved dates of a range |
@@ -141,8 +141,7 @@ A holiday change to an installation-wide set records `changed` for the operator'
 
 ## Not here
 
-Shifts, rosters and attendance; pay rates by day type and leave-day counting; SLA, voice-menu and routing logic; holiday feeds, file import and iCalendar; per-person calendars; meeting and booking calendars. Calendar pages, the month view and the day-type tile come in a later change ([#209](https://github.com/BelimbingApp/bilibi/issues/209)).
-Shifts, rosters and attendance; pay rates by day type and leave-day counting; SLA, voice-menu and routing logic; holiday feeds, file import and iCalendar; per-person calendars; meeting and booking calendars. Installation-wide holiday sets come in a later change ([#210](https://github.com/BelimbingApp/bilibi/issues/210)).
+Shifts, rosters and attendance; pay rates by day type and leave-day counting; SLA, voice-menu and routing logic; holiday feeds, file import and iCalendar; per-person calendars; meeting and booking calendars.
 
 ## Walkthrough
 
