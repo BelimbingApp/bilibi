@@ -643,7 +643,7 @@ body:has(dialog:modal) #flash-group > #connection-server-error {
  * itself; the toolbar's `mb-2` collapses into this margin, so without it the
  * notch touched the search box. The component marks its frame
  * `data-unframed`; no page carries the notch's height. */
-[data-card]:has(> * > [data-table-frame][data-unframed]) {
+[data-card]:has(> * > [data-table-frame][data-unframed]:nth-child(1 of :not(.sr-only))) {
   margin-top: calc(--spacing(3.5) + --spacing(3));
 }
 
