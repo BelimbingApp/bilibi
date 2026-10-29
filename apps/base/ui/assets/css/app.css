@@ -308,6 +308,18 @@
   --color-cat-6: var(--color-lime-500);
   --color-cat-7: var(--color-indigo-500);
   --color-cat-8: var(--color-rose-400);
+
+  /* Day types: a work calendar's rest, off and holiday dates (Belimbing's
+     day-type tints), shared by every calendar surface so a month view, a
+     roster and a leave calendar mark non-working days alike. Quiet tints and
+     never a status colour: a holiday is not a warning. A working day stays
+     on the plain surface. */
+  --color-day-rest: var(--color-stone-100);
+  --color-day-rest-ink: var(--color-stone-600);
+  --color-day-off: var(--color-stone-200);
+  --color-day-off-ink: var(--color-stone-600);
+  --color-day-holiday: var(--color-orange-100);
+  --color-day-holiday-ink: var(--color-orange-800);
 }
 
 /*
@@ -378,6 +390,12 @@
     --color-cat-6: var(--color-lime-400);
     --color-cat-7: var(--color-indigo-400);
     --color-cat-8: var(--color-rose-400);
+    --color-day-rest: color-mix(in srgb, var(--color-stone-50) 6%, transparent);
+    --color-day-rest-ink: var(--color-stone-400);
+    --color-day-off: color-mix(in srgb, var(--color-stone-50) 10%, transparent);
+    --color-day-off-ink: var(--color-stone-400);
+    --color-day-holiday: color-mix(in srgb, var(--color-orange-600) 14%, transparent);
+    --color-day-holiday-ink: var(--color-orange-300);
   }
 }
 
@@ -438,6 +456,12 @@
   --color-cat-6: var(--color-lime-400);
   --color-cat-7: var(--color-indigo-400);
   --color-cat-8: var(--color-rose-400);
+  --color-day-rest: color-mix(in srgb, var(--color-stone-50) 6%, transparent);
+  --color-day-rest-ink: var(--color-stone-400);
+  --color-day-off: color-mix(in srgb, var(--color-stone-50) 10%, transparent);
+  --color-day-off-ink: var(--color-stone-400);
+  --color-day-holiday: color-mix(in srgb, var(--color-orange-600) 14%, transparent);
+  --color-day-holiday-ink: var(--color-orange-300);
 }
 
 [data-phx-session],
@@ -639,12 +663,24 @@ body:has(dialog:modal) #flash-group > #connection-server-error {
 
 /* The notch of an unframed `flex_table/1` rises its own height (`h-3.5`) out
  * of the card it sits in, so that it stands on the page body rather than on
- * a strip of the card. The card leaves it that height plus a gap above
- * itself; the toolbar's `mb-2` collapses into this margin, so without it the
+ * a strip of the card. When the table opens the card, the card leaves it that
+ * height plus a gap above itself; the toolbar's `mb-2` collapses into this margin, so without it the
  * notch touched the search box. The component marks its frame
  * `data-unframed`; no page carries the notch's height. */
-[data-card]:has(> * > [data-table-frame][data-unframed]) {
+[data-card]:has(> * > [data-table-frame][data-unframed]:nth-child(1 of :not(.sr-only))) {
   margin-top: calc(--spacing(3.5) + --spacing(3));
+}
+
+/* A table following visible content needs room for its raised notch. Ignore
+ * screen-reader-only headings: the card already reserves space for those. */
+[data-table-frame][data-unframed]:nth-child(n + 2 of :not(.sr-only)) {
+  margin-top: calc(--spacing(3.5) + --spacing(2));
+}
+
+/* The shared header already leaves 12 px below its action row. A page's
+ * stack spacing must not add a second gap before an adjacent list toolbar. */
+[data-page="list"] > [data-page-header]:has(+ [data-filter-toolbar]) {
+  margin-bottom: 0;
 }
 
 /* A compact row of `flex_table/1` is as short as eighteen pixels, so a badge

@@ -30,7 +30,7 @@
 {#- The filter toolbar; toolbar is a bilibi_ui::FilterToolbar. The form raises
     its event on change and on submit, so Enter filters in place. -#}
 {% macro filter_toolbar(toolbar) %}
-<form id="{{ toolbar.id }}" data-event="{{ toolbar.event }}" data-change class="ui-compact-controls mb-2 flex flex-wrap items-start gap-x-3 gap-y-2{% if !toolbar.class.is_empty() %} {{ toolbar.class }}{% endif %}"{% if !toolbar.target.is_empty() %} data-target="{{ toolbar.target }}"{% endif %}>
+<form id="{{ toolbar.id }}" data-filter-toolbar data-event="{{ toolbar.event }}" data-change class="ui-compact-controls mb-2 flex flex-wrap items-start gap-x-3 gap-y-2{% if !toolbar.class.is_empty() %} {{ toolbar.class }}{% endif %}"{% if !toolbar.target.is_empty() %} data-target="{{ toolbar.target }}"{% endif %}>
 {% for control in toolbar.controls %}{% if control.is_search() %}<div class="min-w-52 flex-1 basis-64">{% call toolbar_label(id=control.id, label=control.label) %}{% endcall %}<div class="relative">{% call ui::icon(name="search", class="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-ink-faint") %}{% endcall %}{% call forms::input(field=control.field) %}{% endcall %}</div>{% if !control.hint.is_empty() %}<p class="mt-1.5 text-xs text-ink-subtle">{{ control.hint }}</p>{% endif %}</div>
 {% elif let Some(multi) = control.multi() %}<div class="w-full min-w-0 sm:w-auto sm:min-w-36">{% call forms::multi_select(control=multi) %}{% endcall %}</div>
 {% elif control.is_date() %}<div class="w-full min-w-0 sm:w-auto">{% call toolbar_label(id=control.id, label=control.label) %}{% endcall %}{% call forms::input(field=control.field) %}{% endcall %}</div>

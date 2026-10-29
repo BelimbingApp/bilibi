@@ -401,7 +401,7 @@ pub const MAX_PAGE_SIZE: i64 = 100;
 pub const MAX_CHOICES: i64 = 50;
 
 /// A nested collection: at most a page of rows, and how many there are.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Rows<T> {
     pub rows: Vec<T>,
     pub total: i64,
@@ -441,6 +441,11 @@ pub struct CalendarEntry {
     pub code: String,
     pub name: String,
     pub status: String,
+    /// The zone of the rule version in force today (the first version's
+    /// before it starts).
+    pub timezone: String,
+    /// Codes of the holiday sets it includes, the first [`MAX_ROWS`].
+    pub holiday_sets: Rows<String>,
 }
 /// A holiday set as a listing shows it.
 #[derive(Clone, Debug, Eq, PartialEq)]

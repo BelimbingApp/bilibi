@@ -12,11 +12,13 @@
 //! every tenant includes them, and the `publish` job tells each one of a
 //! change.
 mod agent_operations;
+mod contributions;
 mod model;
 mod publish;
 mod resolve;
 mod store;
 mod timetable;
+mod web;
 
 pub use model::{
     Calendar, CalendarEntry, Choice, Day, DayType, Exception, FieldError, Holiday, HolidaySet,
@@ -237,28 +239,24 @@ inventory::submit! { Contribution::new(DEFINITIONS, DEFAULT, provenance!(), &Set
 inventory::submit! {
     bilibi_module_registry::Module {
         id: "core/work_calendar", layer: bilibi_module_registry::Layer::Core,
-        dependencies: &["base/agent_api", "base/authz", "base/database", "base/datetime", "base/events", "base/party_ids", "base/queue", "base/settings", "base/tenancy", "core/geonames"],
-        migrations: &[
-            ("core-work-calendar-001-work-calendar", include_str!("../migrations/001-work-calendar.sql")),
-            ("core-work-calendar-002-installation-holiday-sets", include_str!("../migrations/002-installation-holiday-sets.sql")),
-        ],
-        services: &[
-            Service { id: SERVICE, factory: |services| {
-                let calendars = Arc::new(WorkCalendars {
-                    db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
-                    authentication: services.get("base/tenancy.authentication")?,
-                    settings: services.get("base/settings.store")?,
-                    geonames: services.get(bilibi_geonames::SERVICE)?,
-                    events: services.get(bilibi_events::SERVICE)?,
-                    queue: services.get("base/queue.store")?,
-                    boundary: services.get("base/database.mutations")?,
-                });
-                agent_operations::bind(calendars.clone())?;
-                Ok(calendars)
-            }},
-            Service { id: publish::HANDLER, factory: |services| {
-                Ok(Arc::new(HandlerService(Arc::new(publish::PublishJob { calendars: services.get(SERVICE)? }))))
-            }},
-        ],
+        dependencies: &["base/agent_api", "base/authz", "base/database", "base/datetime", "base/events", "base/grid", "base/menu", "base/party_ids", "base/settings", "base/tenancy", "base/ui", "core/geonames"],
+        migrations: &[("core-work-calendar-001-work-calendar", include_str!("../migrations/001-work-calendar.sql"))],
+        services: &[Service { id: SERVICE, factory: |services| {
+            let calendars = Arc::new(WorkCalendars {
+                db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
+                authentication: services.get("base/tenancy.authentication")?,
+                settings: services.get("base/settings.store")?,
+                geonames: services.get(bilibi_geonames::SERVICE)?,
+                events: services.get(bilibi_events::SERVICE)?,
+            });
+            agent_operations::bind(calendars.clone())?;
+            Ok(calendars)
+        }}, Service { id: web::SERVICE, factory: |services| Ok(Arc::new(bilibi_ui::page::PageService::<Scope, Error>(Arc::new(web::Pages {
+            db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
+            calendars: services.get(SERVICE)?,
+            settings: services.get("base/settings.store")?,
+            geonames: services.get(bilibi_geonames::SERVICE)?,
+            contracts: services.get(bilibi_agent_api::page::SERVICE)?,
+        }))))}],
     }
 }

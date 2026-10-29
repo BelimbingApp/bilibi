@@ -62,8 +62,9 @@ pub use chart::{Chart, ChartKind, Series, MAX_CATEGORIES, MAX_SERIES, MAX_SLICES
 pub use components::{button_class, card_body_class, card_flat, stat_strip_columns};
 pub use components::{
     ActionLink, BackLink, Badge, BadgeKind, Button, ButtonVariant, Card, Chrome, CreateButton,
-    Fact, Facts, Fold, Header, Icon, IconButton, IconContext, IconKind, Page, PageVariant,
-    SectionHeading, StatItem, StatKind, StatStrip, DEMOTED_ACTION_CLASS, NO_COUNT,
+    DayKind, DayMonth, DayTile, Fact, Facts, Fold, Header, Icon, IconButton, IconContext, IconKind,
+    Page, PageVariant, SectionHeading, StatItem, StatKind, StatStrip, DEMOTED_ACTION_CLASS,
+    NO_COUNT, WEEKDAYS,
 };
 pub use error_page::{
     copy_for, debug_document, error_document, DebugFrame, DebugReport, ErrorCopy,

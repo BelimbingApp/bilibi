@@ -145,7 +145,7 @@ impl ReadHandler for Read {
                     let listing = listing(input)?;
                     let page = calendars.calendars(scope, &listing).await?;
                     json!({
-                        "calendars": page.rows.iter().map(|c| json!({"code": c.code, "name": c.name, "status": c.status})).collect::<Vec<_>>(),
+                        "calendars": page.rows.iter().map(|c| json!({"code": c.code, "name": c.name, "status": c.status, "timezone": c.timezone, "holiday_sets": {"rows": c.holiday_sets.rows, "total": c.holiday_sets.total}})).collect::<Vec<_>>(),
                         "total": page.total, "page": listing.page, "page_size": listing.page_size,
                     })
                 }
@@ -554,6 +554,8 @@ inventory::submit! { Contribution::new(DEFINITIONS, "core/work_calendar", crate:
     operations: &[
         read!("core.work_calendar.list", "List work calendars", "This tenant's work calendars (code, name, status), a page at a time, with the total.", LIST, LIST_OP, list_schema),
         read!("core.work_calendar.holiday_set.list", "List holiday sets", "This tenant's holiday sets and the installation-wide ones (code, name, country, division, installation), a page at a time, with the total.", LIST, SETS_OP, sets_schema),
+        read!("core.work_calendar.list", "List work calendars", "This tenant's work calendars (code, name, status, the zone in force today and the holiday sets each includes), a page at a time, with the total.", LIST, LIST_OP, list_schema),
+        read!("core.work_calendar.holiday_set.list", "List holiday sets", "This tenant's holiday sets (code, name, country, division), a page at a time, with the total.", LIST, SETS_OP, sets_schema),
         read!("core.work_calendar.get", "Get a work calendar", "One calendar: its weekly rule versions, included holiday sets and dated exceptions, with the version to write against.", VIEW, GET_OP, get_schema),
         read!("core.work_calendar.days", "Resolve calendar days", "Each date in a range (at most 731 days) as working, rest, off or holiday, with its opening periods and why.", VIEW, DAYS_OP, days_schema),
         read!("core.work_calendar.business_time", "Business-time arithmetic", "Ask a calendar: is it open at an instant, when does it next open, what instant is a duration of business time later, how much business time lies between two instants, which is the nth working day after a date.", VIEW, BUSINESS_OP, business_schema),
