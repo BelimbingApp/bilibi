@@ -281,9 +281,10 @@ def component_update(folder, facts, platform_version, platform_head, tested):
     if changes(folder):
         return True, f'local changes; review {action(folder, "status", "--short")} and commit your work before retrying'
     if facts:
-        repository = facts['repository'].removesuffix('.git').rstrip('/')
-        origin = git(folder, 'remote', 'get-url', 'origin').removesuffix('.git').rstrip('/')
-    official = bool(facts) and repository.startswith('https://github.com/BelimbingApp/') and origin == repository
+        repository = facts['repository']
+        origin = git(folder, 'remote', 'get-url', 'origin')
+    official = (bool(facts) and repository.startswith('https://github.com/BelimbingApp/')
+                and trust_key(origin) == trust_key(repository))
     if not official:
         if branch:
             return trusted_branch(folder, branch)
