@@ -1,23 +1,7 @@
-//! The layouts an account saves, the one its workspace opens with, and the
-//! layouts a company publishes (Bilimbi `Tiling.SavedLayouts` and
-//! `Tiling.SharedLayouts`).
+//! Company workspaces, mirroring Bilimbi `Tiling.SharedLayouts`.
 //!
-//! All three live in Settings rows, the way the dashboard keeps its widget
-//! order, so every write is audited like any other: `ui.workspace.layouts` is
-//! the account's list and `ui.workspace.default` names one of them by slug,
-//! both at user scope; `ui.workspace.shared_layouts` is the company's list. A
-//! layout is a plain JSON object, `{"slug","label","layout","tree"}`, with
-//! `roles` on a shared one; `tree` is [`Layout::encode`] output kept as
-//! written, so a layout that points at a page the account can no longer open
-//! is still listed and the workspace decides what to show in that tile. The
-//! slug is derived from the label once and never changes, so a link to
-//! `/workspace/<slug>` survives a rename.
-//!
-//! Publishing and deleting a shared layout check `ui.workspace.publish`, the
-//! capability the shared-workspaces screen already requires; the screen only
-//! presents that result. An empty role list shares with the whole company;
-//! role codes limit who sees a layout, and a viewer may open or copy one while
-//! every tile still applies that viewer's own route access.
+//! Published trees live in company settings and are filtered by role. Every
+//! tile still checks the viewer's own access to its page.
 use crate::layout::Layout;
 use bilibi_database::{Db, Error, MutationBoundary, Result};
 use bilibi_module_registry::{Contribution, Provenance};
@@ -29,8 +13,6 @@ use serde_json::{json, Value};
 use std::{collections::BTreeSet, sync::Arc};
 use tokio_postgres::GenericClient;
 
-pub const LAYOUTS: &str = "ui.workspace.layouts";
-pub const DEFAULT: &str = "ui.workspace.default";
 pub const SHARED: &str = "ui.workspace.shared_layouts";
 /// The capability that publishes, deletes and manages a company's shared
 /// layouts; the route of the shared-workspaces screen requires it too.
@@ -38,7 +20,7 @@ pub const PUBLISH: &str = "ui.workspace.publish";
 pub const MAX_LABEL: usize = 60;
 const MAX_ENTRIES: usize = 100;
 const MAX_TREE: usize = 2048;
-/// Slugs the workspace's own routes take, so a saved layout never shadows them.
+/// Slugs the workspace's own routes take, so a shared layout never shadows them.
 const RESERVED_SLUGS: &[&str] = &["shared-layouts", "shared"];
 
 macro_rules! provenance {
@@ -70,12 +52,6 @@ impl Mode {
         match self {
             Self::Dwindle => "dwindle",
             Self::Master => "master",
-        }
-    }
-    pub fn other(self) -> Self {
-        match self {
-            Self::Dwindle => Self::Master,
-            Self::Master => Self::Dwindle,
         }
     }
 }
@@ -143,8 +119,6 @@ pub enum Refusal {
     Label,
     /// The tree does not decode to at least one tile.
     Tree,
-    /// No saved layout has this slug.
-    NotFound,
     /// A role code is not lower-case letters, digits and underscores.
     Roles,
     /// The actor may not publish or delete shared layouts.
@@ -173,22 +147,6 @@ impl From<Refusal> for LayoutError {
 }
 pub type Outcome<T> = std::result::Result<T, LayoutError>;
 
-/// The account's saved layouts and its default, read together.
-#[derive(Clone, Debug, Default)]
-pub struct Saved {
-    pub entries: Vec<Entry>,
-    /// The slug `/workspace` opens, only when a saved layout still has it.
-    pub default: Option<String>,
-}
-impl Saved {
-    pub fn fetch(&self, slug: &str) -> Option<&Entry> {
-        self.entries.iter().find(|entry| entry.slug == slug)
-    }
-    pub fn label<'a>(&'a self, slug: &'a str) -> &'a str {
-        self.fetch(slug).map_or(slug, |entry| entry.label.as_str())
-    }
-}
-
 /// A role an audience can be limited to: its display name and the code
 /// stored in a shared layout.
 #[derive(Clone, Debug, PartialEq)]
@@ -210,152 +168,6 @@ impl Layouts {
             settings,
             boundary,
         }
-    }
-
-    // ---- The account's own layouts ------------------------------------
-
-    pub async fn saved(
-        &self,
-        client: &(impl GenericClient + Sync),
-        scope: &Scope,
-    ) -> Result<Saved> {
-        let mut values = self
-            .settings
-            .resolve_many(client, scope, USER, &[LAYOUTS, DEFAULT])
-            .await?;
-        let entries = entries(&values.remove(LAYOUTS).ok_or(Error::Internal)?.value);
-        let default = values
-            .remove(DEFAULT)
-            .ok_or(Error::Internal)?
-            .value
-            .as_str()
-            .filter(|slug| entries.iter().any(|entry| entry.slug == *slug))
-            .map(str::to_owned);
-        Ok(Saved { entries, default })
-    }
-
-    /// Saves `tree` under `label`. A label already in use replaces that
-    /// layout's tree and keeps its slug; a new label gets a slug of its own.
-    /// Without a mode, a replacement keeps its mode and a new layout starts in
-    /// dwindle mode.
-    pub async fn save(
-        &self,
-        scope: &Scope,
-        label: &str,
-        tree: &str,
-        mode: Option<Mode>,
-    ) -> Outcome<Entry> {
-        let label = clean_label(label)?;
-        let tree = clean_tree(tree)?;
-        let mut entries = self
-            .saved(&**self.db.get().await.map_err(Error::from)?, scope)
-            .await?
-            .entries;
-        let entry = match entries.iter_mut().find(|entry| entry.label == label) {
-            Some(entry) => {
-                entry.tree = tree;
-                if let Some(mode) = mode {
-                    entry.layout = mode;
-                }
-                entry.clone()
-            }
-            None => {
-                let entry = Entry {
-                    slug: unique_slug(&slug(&label), &entries),
-                    label,
-                    layout: mode.unwrap_or(Mode::Dwindle),
-                    tree,
-                    roles: Vec::new(),
-                };
-                entries.push(entry.clone());
-                entry
-            }
-        };
-        self.put_saved(scope, &entries).await?;
-        Ok(entry)
-    }
-
-    /// Gives the layout with `slug` a new label; the slug stays.
-    pub async fn rename(&self, scope: &Scope, slug: &str, label: &str) -> Outcome<Entry> {
-        let label = clean_label(label)?;
-        let mut entries = self
-            .saved(&**self.db.get().await.map_err(Error::from)?, scope)
-            .await?
-            .entries;
-        let entry = entries
-            .iter_mut()
-            .find(|entry| entry.slug == slug)
-            .ok_or(Refusal::NotFound)?;
-        entry.label = label;
-        let entry = entry.clone();
-        self.put_saved(scope, &entries).await?;
-        Ok(entry)
-    }
-
-    /// Sets the tiling mode and its converted tree for one saved layout.
-    pub async fn set_layout(
-        &self,
-        scope: &Scope,
-        slug: &str,
-        mode: Mode,
-        tree: &str,
-    ) -> Outcome<Entry> {
-        let tree = clean_tree(tree)?;
-        let mut entries = self
-            .saved(&**self.db.get().await.map_err(Error::from)?, scope)
-            .await?
-            .entries;
-        let entry = entries
-            .iter_mut()
-            .find(|entry| entry.slug == slug)
-            .ok_or(Refusal::NotFound)?;
-        entry.layout = mode;
-        entry.tree = tree;
-        let entry = entry.clone();
-        self.put_saved(scope, &entries).await?;
-        Ok(entry)
-    }
-
-    /// Forgets the layout with `slug`, and the default if it named it.
-    pub async fn delete(&self, scope: &Scope, slug: &str) -> Outcome<()> {
-        let saved = self
-            .saved(&**self.db.get().await.map_err(Error::from)?, scope)
-            .await?;
-        let entries: Vec<_> = saved
-            .entries
-            .into_iter()
-            .filter(|entry| entry.slug != slug)
-            .collect();
-        self.put_saved(scope, &entries).await?;
-        if saved.default.as_deref() == Some(slug) {
-            self.set_default(scope, None).await?;
-        }
-        Ok(())
-    }
-
-    /// Makes the layout with `slug` the one `/workspace` opens; `None` clears
-    /// it. Clearing removes the override: an absent row already reads as the
-    /// definition's default.
-    pub async fn set_default(&self, scope: &Scope, slug: Option<&str>) -> Outcome<()> {
-        match slug {
-            None => self.write(scope, USER, DEFAULT, None).await?,
-            Some(slug) => {
-                let saved = self
-                    .saved(&**self.db.get().await.map_err(Error::from)?, scope)
-                    .await?;
-                if saved.fetch(slug).is_none() {
-                    return Err(Refusal::NotFound.into());
-                }
-                self.write(scope, USER, DEFAULT, Some(json!(slug))).await?;
-            }
-        }
-        Ok(())
-    }
-
-    async fn put_saved(&self, scope: &Scope, entries: &[Entry]) -> Result<()> {
-        let value: Vec<_> = entries.iter().map(|entry| entry.write(false)).collect();
-        self.write(scope, USER, LAYOUTS, Some(Value::Array(value)))
-            .await
     }
 
     // ---- The company's shared layouts ---------------------------------
@@ -501,8 +313,6 @@ impl Layouts {
     }
 }
 
-const USER: Target = Target::User { company: None };
-
 /// Where the company's shared layouts live. The Core identity binder proves
 /// an account's organisation from its affiliation; an unlinked account has
 /// none, and the tenant stands in for the company so publishing stays usable.
@@ -637,25 +447,6 @@ fn valid_entries(value: &Value) -> bool {
     })
 }
 
-/// Empty is the declared default: no layout opens with the workspace.
-fn valid_default(value: &Value) -> bool {
-    value
-        .as_str()
-        .is_some_and(|slug| slug.is_empty() || valid_slug(slug))
-}
-
-inventory::submit! { Contribution::new(DEFINITIONS, LAYOUTS, provenance!(), &Setting::Definition(Definition {
-    value_type: ValueType::Array, scopes: &[ScopeKind::User], default: || json!([]),
-    nullable: false, encrypted: false, minimum: None, maximum: None,
-    validator: Some(Validator { accepts: valid_entries, message: "must be a bounded list of saved workspace layouts with unique slugs" }),
-    editor: None,
-})) }
-inventory::submit! { Contribution::new(DEFINITIONS, DEFAULT, provenance!(), &Setting::Definition(Definition {
-    value_type: ValueType::String, scopes: &[ScopeKind::User], default: || json!(""),
-    nullable: false, encrypted: false, minimum: None, maximum: None,
-    validator: Some(Validator { accepts: valid_default, message: "must be the slug of a saved workspace layout" }),
-    editor: None,
-})) }
 // Company scope is the home; tenant scope stands in for an account without a
 // proven organisation (see `shared_target`). Shared layouts never inherit
 // from a wider scope than the one written.

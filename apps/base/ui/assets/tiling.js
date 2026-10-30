@@ -10,8 +10,8 @@
 //   * the `Ctrl+.` tiling mode, a Hyprland submap: single-key commands with
 //     Escape to leave, so nothing collides with what the operating system or
 //     the browser reserves. The mode names itself in the shell's `#app-mode`
-//     status region. A tile's own menu holds only the split flip and close,
-//     so the mode is where the other tile operations live; each key is
+//     status region. Each tile offers move, flip and close controls;
+//     the mode provides the other operations, and each key is
 //     documented in apps/base/tiling/README.md, and a key added here is added
 //     there;
 //   * moving real focus into the tile the server has focused after a
@@ -341,13 +341,13 @@
       this.pendingFocus = false;
       this.appliedFocus = focused;
 
-      // A tile with no frame shows a refusal; its menu is what it has to focus.
+      // A tile with no frame shows a refusal; focus its move control.
       const frame = this.el.querySelector(`iframe[data-tile-frame="${focused}"]`);
       if (frame) {
         frame.focus();
         try { frame.contentWindow?.focus?.(); } catch { /* not reachable */ }
       } else {
-        this.tileElement(focused)?.querySelector('button[data-tile-menu]')?.focus();
+        this.tileElement(focused)?.querySelector('button[data-role="tile-grip"]')?.focus();
       }
     },
 
@@ -445,12 +445,6 @@
           }
           return true;
         default:
-          // `1` to `9`: the n-th saved layout, opened at its own address.
-          if (/^[1-9]$/.test(event.key)) {
-            this.expectFocus();
-            this.emit('open_layout', {n: Number(event.key)});
-            return true;
-          }
           return false;
       }
     },
@@ -489,7 +483,7 @@
       }
     },
 
-    // An open menu or panel: the account and display panels, a tile menu. The
+    // An open menu or panel, such as the account and display panels. The
     // sidebar toggle and an expanded sidebar branch also say `aria-expanded`,
     // and Escape has never collapsed either on a wide screen, so they do not
     // count.
@@ -595,9 +589,8 @@
       if (!tile || event.button !== 0) return;
 
       this.focusTile(tile.dataset.tile);
-      if (!event.target.closest('[data-tile-grip]')) return;
+      if (!event.target.closest('[data-role="tile-grip"]')) return;
 
-      // The grip is not a control, so the browser would start a text selection.
       event.preventDefault();
       this.tileDrag = {id: tile.dataset.tile, x: event.clientX, y: event.clientY, active: false, over: null};
       window.addEventListener('pointermove', this.onTilePointerMove);
@@ -660,10 +653,18 @@
     },
 
     swallowClick(event) {
-      if (!this.swallowNextClick) return;
-      this.swallowNextClick = false;
-      event.preventDefault();
-      event.stopPropagation();
+      if (this.swallowNextClick) {
+        this.swallowNextClick = false;
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      const grip = event.target.closest?.('[data-role="tile-grip"]');
+      if (grip) {
+        this.focusTile(grip.closest('[data-tile]')?.dataset.tile);
+        this.setMode('tiling');
+        this.announce('Tiling mode. Use H, J, K or L with Shift to move the tile.');
+      }
     },
 
     tileElement(id) {

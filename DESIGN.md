@@ -226,9 +226,9 @@ Width is a shared decision. Every page uses `PageVariant`. All three share one c
 - Each tile is a same-origin frame of a normal page. Framed pages render without chrome.
 - The tree is in the address. Back, Forward and copied links work.
 - Pages open by splitting the tile with the most room.
-- Layouts save per account by name, with a master mode.
+- Pin a named layout to the top bar; its address preserves the tree and tiling mode. Switch between dwindle and master mode in the workspace.
 - Keyboard mode: `Ctrl+.` enters, single keys move, swap, resize, flip and close. Escape leaves.
-- Tiles can follow a record selected in another tile.
+- Each tile has Move, Flip and Close controls. Tiles can follow a record selected in another tile.
 - Below `lg` one tile shows at a time.
 - Inside a tile, pages never write `history` themselves.
 

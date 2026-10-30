@@ -3,10 +3,9 @@
 The tiled workspace at `/workspace` (Bilimbi `Base.Tiling`): several pages
 side by side in one browser tab, arranged by a Hyprland-style dwindle or
 master tree, with keyboard control, drag resizing, drag-to-swap, monocle and
-layouts saved per account or published for a company. `src/layout.rs` is the
+layouts pinned per account or published for a company. `src/layout.rs` is the
 pure tree and its compact URL form; `src/web.rs` is the page, which holds only
-the tree, the focused tile, monocle, the names the tiles report and the
-account's layouts; `src/layouts.rs` keeps the layouts; `src/shared_web.rs` is
+the tree, the focused tile, monocle, the names the tiles report and shared layouts; `src/layouts.rs` keeps published layouts; `src/shared_web.rs` is
 the shared-workspaces screen. This module owns no tables.
 
 ## Tiles are pages
@@ -39,44 +38,13 @@ open shows the refusal instead of a frame.
   above to switch; the tree is kept, so widening restores the tiling. The
   sidebar's tile control opens the page normally there (`assets/shell.js`).
 
-## Saved, default and shared layouts
+## Pinned and shared layouts
 
-`src/layouts.rs` (Bilimbi `SavedLayouts` and `SharedLayouts`) keeps an
-account's layouts and its default in the `ui.workspace.layouts` and
-`ui.workspace.default` settings at user scope, and a company's published
-layouts in `ui.workspace.shared_layouts`, all through the shared Settings API
-so every write is audited. A layout is `{slug, label, layout, tree}`, the tree
-as `Layout::encode` writes it and the mode saved with it; a shared one adds
-`roles`, the role codes it is limited to (none is the whole company). The slug
-comes from the label once and never changes, so `/workspace/<slug>` survives a
-rename; `shared-layouts` and `shared` are reserved.
+Pin the current tiles with **Pin this layout** in the top bar. Give the pin a name; the default joins the tile titles. The pin stores the workspace address, including its tree and tiling mode, and opens that snapshot from the top bar. Unpin it from the top bar like any other page.
 
-- The topbar's bookmark opens the **Saved layouts** dialog: save the current
-  tiles under a name (a name in use replaces that layout and keeps its slug),
-  update the layout on screen, rename in place, switch a layout between dwindle
-  and master (the stored tree is converted; the one on screen follows when it
-  is open), open it, make it the default or stop, and delete it after a
-  confirmation. Below, the layouts shared with the account can be opened or
-  copied; a copy of the one on screen takes the tiles as they are now.
-- `/workspace/{slug}` opens a saved layout and `/workspace` alone opens the
-  default one at that layout's own address, else an empty workspace. The page
-  moves between its routes by returning `LiveBody.path` (never a redirect), so
-  saving, opening, copying and deleting keep the frames on screen, and Back
-  between a saved address and an ad-hoc one is a params update like any other.
-  An unknown slug says so and opens the empty workspace.
-- `/workspace/shared-layouts` (menu: System › Shared workspaces, behind
-  `ui.workspace.publish`) publishes the tiles the dialog's "Share current
-  tiles" link hands over in `?t=`, for everyone or for chosen roles, and lists
-  what is published with Open and Delete. The screen only presents the
-  outcome: `Layouts::publish` and `unpublish` check the same capability on the
-  sealed scope. `/workspace/shared/{shared}` opens a shared layout for an
-  account whose roles may see it; every tile still applies that account's own
-  route access. Audiences are role codes, with a code-less tenant role known by
-  its name.
-- Shared layouts live at company scope. The Core identity binder proves an
-  account's organisation from its affiliation; for an unlinked account
-  `shared_target` in `src/layouts.rs` lets the tenant stand in for the company.
-  Remove that fallback when every account carries its organisation.
+The workspace mode control switches between dwindle and master. The mode travels in the address alongside the tree, so a pinned master layout reopens in master mode.
+
+The shared-workspaces control lists layouts published for the account. `/workspace/shared-layouts` (System › Shared workspaces) lets an authorized person publish the current tree for the company or selected roles. Each tile checks the viewer's access to its page. Shared layouts live in `ui.workspace.shared_layouts` at company scope through Settings; the tenant stands in when an account has no linked organisation.
 
 ## Keys
 
@@ -98,13 +66,11 @@ frame's document too, so the keys work wherever focus is.
 | `o` | Open the focused tile's page alone |
 | `n` | Add a page |
 | `q` | Close the focused tile |
-| `1` to `9` | Open one of the first nine saved layouts |
 | `Esc` | Leave tiling mode (an open menu takes it first) |
 
 
 With a pointer: drag a divider to resize (a focused divider also moves with
-its arrow keys), drag a tile's grip onto another tile to swap them, and use
-the tile menu for the split flip and close. Pressing anywhere in a tile,
+its arrow keys), drag a tile's grip onto another tile to swap them, and use the tile controls to flip or close it. Activating Move enters keyboard mode; Shift with H, J, K or L moves the focused tile. Pressing anywhere in a tile,
 inside its page included, focuses it.
 
 ## Following selections
@@ -145,11 +111,6 @@ focus the record tile and press `w`, then click another company's name in the
 list tile: the record tile goes there and the list stays put. With nothing
 following, the same click opens the company in the list's own tile.
 
-Then open the bookmark, save
-the tiles as "Orders desk" (the address becomes `/workspace/orders-desk`),
-reload it, make it the default and open `/workspace`; press `Ctrl+.` then `1`.
-Sharing needs a second account: on a disposable database holding the
-walkthrough fixture (`cargo run -p bilibi-walkthrough-fixture`), sign in as
-`admin@example.test`, use "Share current tiles" to publish it for the
-`manager` role and open it as `manager@example.test` from the dialog's "Shared
-with you", then copy it.
+Pin a three-tile layout, give it a name, and open it from the top bar. Remove it with the pin's unpin action. Switch to master mode and pin again to check that the mode survives reopening.
+
+To share a layout, use the shared-workspaces control and choose “Share current tiles”.

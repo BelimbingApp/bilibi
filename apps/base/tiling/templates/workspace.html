@@ -54,12 +54,18 @@
 </div>
 {% endcall %}
 {%- endif %}
-{#- The saved layouts dialog; its body is `workspace_layouts.html`, rendered
-    by the page so the two FlexTables inside it keep their typed models. -#}
-{%- if let Some(layouts) = layouts %}
-{% call dialog::modal(id="workspace-layouts", title="Saved layouts", cancel_event="close_layouts", width=bilibi_ui::ModalWidth::Wide, description="Layouts are saved for your account. In tiling mode, the keys 1 to 9 open the first nine.", owns_flash=true, messages=flash) %}{{ layouts|safe }}{% endcall %}
+{%- if let Some(field) = pin_field %}
+{% call dialog::modal(id="workspace-pin-dialog", title="Pin this layout", cancel_event="close_pin") %}
+<form id="workspace-pin-form" data-event="pin_layout" class="mt-3 space-y-3">
+{% call form::input(field=field) %}{% endcall %}
+<div class="flex justify-end gap-2">
+{% call ui::button(button_type="button", event="close_pin") %}Cancel{% endcall %}
+{% call ui::button(variant=bilibi_ui::ButtonVariant::Primary, button_type="submit") %}Pin layout{% endcall %}
+</div>
+</form>
+{% endcall %}
 {%- endif %}
-{%- if let Some(consequence) = delete_consequence %}
-{% call dialog::confirm_dialog(id="workspace-delete-layout", consequence=consequence, detail="Its address stops working. The pages it showed are unaffected. This cannot be undone.", confirm="Delete", working="Deleting…", confirm_event="confirm_delete_layout", cancel_event="cancel_delete_layout") %}{% endcall %}
+{%- if let Some(layouts) = layouts %}
+{% call dialog::modal(id="workspace-layouts", title="Shared workspaces", cancel_event="close_layouts", width=bilibi_ui::ModalWidth::Wide, owns_flash=true, messages=flash) %}{{ layouts|safe }}{% endcall %}
 {%- endif %}
 </div>

@@ -285,9 +285,6 @@ impl Layout {
     pub fn is_empty(&self) -> bool {
         self.root.is_none()
     }
-    pub fn root(&self) -> Option<&Node> {
-        self.root.as_ref()
-    }
     /// The leaves in tree order: left before right, top before bottom.
     pub fn leaves(&self) -> Vec<&Leaf> {
         let mut out = Vec::new();
