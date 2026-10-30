@@ -33,6 +33,129 @@ pub const FRAME_LIMIT: usize = LIVE_EVENT_LIMIT * 2;
 const CHUNK_HEADER: usize = 8;
 type Service<C> = bilibi_ui::page::PageService<C, Error>;
 
+/// The live boundary's limits, shared by both sides and read from Session's
+/// operator settings (`session.live.*`): open sockets per session and on this
+/// server, and messages per session per minute. A socket is counted from its
+/// upgrade until it closes; a message is counted before it is decoded, so an
+/// excess one reaches no route admission, Authz decision, owner or session
+/// activity. Counts are per server, as the HTTP throttles' are.
+#[derive(Default)]
+pub struct Limits {
+    sockets: std::sync::Mutex<Sockets>,
+    messages: std::sync::Mutex<HashMap<String, (u64, u32)>>,
+}
+#[derive(Default)]
+struct Sockets {
+    total: u32,
+    per_session: HashMap<String, u32>,
+}
+/// One admitted socket; dropping it frees its place.
+pub struct Slot {
+    limits: Arc<Limits>,
+    token: String,
+}
+impl Drop for Slot {
+    fn drop(&mut self) {
+        let mut sockets = self
+            .limits
+            .sockets
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        sockets.total = sockets.total.saturating_sub(1);
+        if let Some(count) = sockets.per_session.get_mut(&self.token) {
+            *count -= 1;
+            if *count == 0 {
+                sockets.per_session.remove(&self.token);
+            }
+        }
+    }
+}
+/// The operator's live limits: sockets per session, sockets in total and
+/// messages per session per minute.
+pub struct Policy {
+    pub per_session: u32,
+    pub total: u32,
+    pub messages: u32,
+}
+impl Policy {
+    pub async fn read(app: &App) -> Result<Self> {
+        use bilibi_base::session::{
+            LIVE_MESSAGES_PER_MINUTE_KEY, LIVE_SOCKETS_PER_SESSION_KEY, LIVE_SOCKETS_TOTAL_KEY,
+        };
+        let client = app.db.get().await?;
+        let mut values = [0u32; 3];
+        for (value, key) in values.iter_mut().zip([
+            LIVE_SOCKETS_PER_SESSION_KEY,
+            LIVE_SOCKETS_TOTAL_KEY,
+            LIVE_MESSAGES_PER_MINUTE_KEY,
+        ]) {
+            *value = app
+                .settings
+                .get_global(&**client, key)
+                .await?
+                .as_u64()
+                .and_then(|limit| u32::try_from(limit).ok())
+                .ok_or(Error::Internal)?;
+        }
+        let [per_session, total, messages] = values;
+        Ok(Self {
+            per_session,
+            total,
+            messages,
+        })
+    }
+}
+/// The refusal of a socket over either limit.
+pub const TOO_MANY_SOCKETS: &str =
+    "Too many pages are open. Close some tabs, then reload this page.";
+/// The refusal of a message over the session's budget; nothing acted.
+const TOO_MANY_MESSAGES: &str = "Too many actions at once. Wait a moment and try again.";
+/// Refused messages in a row after which a socket is closed: a page that
+/// keeps sending past its budget is not an ordinary one.
+const REFUSALS_BEFORE_CLOSE: u32 = 100;
+impl Limits {
+    /// A place for one more socket of the session `token`, or `None` when the
+    /// session or this server already holds its limit.
+    pub fn admit(self: &Arc<Self>, token: &str, policy: &Policy) -> Option<Slot> {
+        let mut sockets = self.sockets.lock().unwrap_or_else(|p| p.into_inner());
+        let held = sockets.per_session.get(token).copied().unwrap_or(0);
+        if held >= policy.per_session || sockets.total >= policy.total {
+            return None;
+        }
+        sockets.total += 1;
+        sockets.per_session.insert(token.to_owned(), held + 1);
+        Some(Slot {
+            limits: self.clone(),
+            token: token.to_owned(),
+        })
+    }
+    /// Whether the session `token` may send one more message this minute.
+    /// Memory is bounded: a full map keeps only the current minute's keys.
+    fn message(&self, token: &str, per_minute: u32) -> bool {
+        const MAX_KEYS: usize = 16_384;
+        let minute = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() / 60)
+            .unwrap_or(0);
+        let mut windows = self.messages.lock().unwrap_or_else(|p| p.into_inner());
+        if windows.len() >= MAX_KEYS {
+            windows.retain(|_, (window, _)| *window == minute);
+            if windows.len() >= MAX_KEYS && !windows.contains_key(token) {
+                return false;
+            }
+        }
+        let entry = windows.entry(token.to_owned()).or_insert((minute, 0));
+        if entry.0 != minute {
+            *entry = (minute, 0);
+        }
+        if entry.1 >= per_minute {
+            return false;
+        }
+        entry.1 += 1;
+        true
+    }
+}
+
 /// A path resolved to one side's page route.
 pub struct Resolved<C: 'static> {
     pub route: &'static Route,
@@ -1257,7 +1380,12 @@ pub async fn run<S: Side>(
     identity: Identity,
     mut socket: WebSocket,
     framed: bool,
+    slot: Slot,
+    policy: Policy,
 ) {
+    // Held for the socket's life: its place among the session's sockets.
+    let _slot = slot;
+    let mut refused = 0u32;
     let (sender, mut wakes) = mpsc::channel(64);
     let mut session = Session::<S> {
         identity,
@@ -1293,6 +1421,16 @@ pub async fn run<S: Side>(
         let result = tokio::select! {
             message = socket.recv() => match message {
                 Some(Ok(Message::Text(text))) => {
+                    // Over the session's budget: refused before it is read,
+                    // so nothing is admitted, decided, mounted or extended.
+                    if !app.live.message(&token, policy.messages) {
+                        refused += 1;
+                        if refused > REFUSALS_BEFORE_CLOSE {break;}
+                        let message = json!({"type":"error", "target":"page", "message":TOO_MANY_MESSAGES, "clear":false, "request_id":Value::Null});
+                        if socket.send(Message::Text(message.to_string().into())).await.is_err() {break;}
+                        continue;
+                    }
+                    refused = 0;
                     if text.len() > LIVE_EVENT_LIMIT {
                         // Deserialize metadata only: ignored payloads are skipped,
                         // not allocated as a Value or delivered to a page handler.

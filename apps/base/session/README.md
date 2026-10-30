@@ -28,6 +28,8 @@ so a change applies to the next request. The throttle never exceeds half the
 lifetime (`Policy::from_minutes`). The 24-hour absolute expiry set at sign-in
 remains.
 
+The live socket limits are operator settings here too, read by Web's live transport when a socket opens (`docs/live-pages.md`): `session.live.sockets_per_session` (default 16), `session.live.sockets_total` (default 5,000) and `session.live.messages_per_minute` (default 240).
+
 ## Impersonation
 
 `sessions.impersonator_id` names the operator behind an impersonated session

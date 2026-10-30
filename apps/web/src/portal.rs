@@ -145,11 +145,17 @@ pub async fn upgrade(
     origin(&app, &headers)?;
     let token = token(&headers)?;
     let portal = app.security.guard_portal(&token).await?;
+    let policy = live::Policy::read(&app).await?;
+    let Some(slot) = app.live.admit(&token, &policy) else {
+        return Ok((StatusCode::TOO_MANY_REQUESTS, live::TOO_MANY_SOCKETS).into_response());
+    };
     let identity = live::Identity::of(portal.scope());
     Ok(ws
         .max_message_size(live::FRAME_LIMIT)
         .max_frame_size(live::FRAME_LIMIT)
-        .on_upgrade(move |socket| live::run::<Portal>(app, token, identity, socket, false)))
+        .on_upgrade(move |socket| {
+            live::run::<Portal>(app, token, identity, socket, false, slot, policy)
+        }))
 }
 
 /// A visitor with no customer session goes to the portal sign-in, which

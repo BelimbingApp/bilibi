@@ -14,7 +14,10 @@ use tokio_postgres::GenericClient;
 mod contributions;
 mod expiry;
 mod web;
-pub use contributions::{LIFETIME_KEY, LIST, MANAGE, TOUCH_KEY};
+pub use contributions::{
+    LIFETIME_KEY, LIST, LIVE_MESSAGES_PER_MINUTE_KEY, LIVE_SOCKETS_PER_SESSION_KEY,
+    LIVE_SOCKETS_TOTAL_KEY, MANAGE, TOUCH_KEY,
+};
 
 /// The operator list's page sizes, Bilimbi's.
 pub const PAGE_SIZES: [u64; 4] = [25, 50, 100, 300];

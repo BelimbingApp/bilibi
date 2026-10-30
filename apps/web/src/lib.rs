@@ -59,6 +59,8 @@ pub struct App {
     pub perf: Arc<bilibi_base::perf::Recorder>,
     /// Messages a live redirect carries to the page it lands on.
     pub landing: Arc<landing::Landing>,
+    /// The live boundary's socket and message counts (`live::Limits`).
+    pub(crate) live: Arc<live::Limits>,
     api: Arc<api::Edge>,
     webhooks: Arc<webhooks::Boundary>,
 }
@@ -146,6 +148,7 @@ impl App {
             mutations,
             perf,
             landing: Arc::default(),
+            live: Arc::default(),
             api,
             webhooks,
             services: Arc::new(services),
@@ -659,6 +662,10 @@ async fn upgrade(
     // that names the old company. A socket opened without the parameter binds
     // the session's company, as before.
     let scope = app.security.guard(&token).await?;
+    let policy = live::Policy::read(&app).await?;
+    let Some(slot) = app.live.admit(&token, &policy) else {
+        return Ok((StatusCode::TOO_MANY_REQUESTS, live::TOO_MANY_SOCKETS).into_response());
+    };
     let identity = match options.get("company") {
         Some(company) => {
             live::Identity::rendered(&scope, company.parse::<i64>().ok().filter(|id| *id > 0))
@@ -677,6 +684,8 @@ async fn upgrade(
                 identity,
                 socket,
                 options.get("framed").is_some_and(|v| v == "true"),
+                slot,
+                policy,
             )
         }))
 }

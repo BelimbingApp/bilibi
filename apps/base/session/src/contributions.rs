@@ -1,6 +1,6 @@
 //! What Session contributes (Bilimbi `Session.Contributions`): its two
-//! capabilities and the system roles that list sessions, the two operator
-//! settings, the Diagnostics menu entry, the `/system/sessions` page and the
+//! capabilities and the system roles that list sessions, the operator
+//! settings (lifetime, activity touch and the live socket limits), the Diagnostics menu entry, the `/system/sessions` page and the
 //! dashboard stats widget. The scheduled sweep is declared in `expiry.rs`.
 use bilibi_authz::{CapabilityDefinition, RoleDefinition, VocabularyContribution, VOCABULARY};
 use bilibi_dashboard::Widget;
@@ -15,6 +15,14 @@ pub const LIST: &str = "admin.system.session.list";
 pub const MANAGE: &str = "admin.system.session.manage";
 pub const LIFETIME_KEY: &str = "session.lifetime_minutes";
 pub const TOUCH_KEY: &str = "session.last_activity_touch_minutes";
+/// The live socket boundary (Web's live transport, staff and portal alike):
+/// open sockets per session, open sockets on one server, and messages one
+/// session may send per minute. Each socket holds state, a refresh timer and
+/// a subscription, and each message can reach Authz and an owner, so one
+/// session is bounded before any of that work.
+pub const LIVE_SOCKETS_PER_SESSION_KEY: &str = "session.live.sockets_per_session";
+pub const LIVE_SOCKETS_TOTAL_KEY: &str = "session.live.sockets_total";
+pub const LIVE_MESSAGES_PER_MINUTE_KEY: &str = "session.live.messages_per_minute";
 pub const PATH: &str = "/system/sessions";
 /// The dashboard entry id is stored in each account's arrangement: never rename.
 pub const WIDGET_ID: &str = "base-dashboard-session-stats";
@@ -88,3 +96,24 @@ inventory::submit! { Contribution::new(EMBEDS, EMBED, provenance!(), &Embed {
     slot: "dashboard.sessions", context: EmbedContext::Dashboard,
     service: "base/session.pages", operation: "dashboard-stats", access: Access::SignedIn,
 }) }
+inventory::submit! { Contribution::new(DEFINITIONS, LIVE_SOCKETS_PER_SESSION_KEY, provenance!(), &Setting::Definition(Definition {
+    value_type: ValueType::Integer, scopes: GLOBAL, default: || json!(16), nullable: false, encrypted: false,
+    minimum: Some(1.0), maximum: Some(1_000.0), validator: None,
+    editor: Some(Editor { group: "Session", label: "Open live pages per sign-in",
+        help: "Most live pages (browser tabs) one sign-in may keep open on each server. One more is refused until another closes.",
+        capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
+})) }
+inventory::submit! { Contribution::new(DEFINITIONS, LIVE_SOCKETS_TOTAL_KEY, provenance!(), &Setting::Definition(Definition {
+    value_type: ValueType::Integer, scopes: GLOBAL, default: || json!(5_000), nullable: false, encrypted: false,
+    minimum: Some(1.0), maximum: Some(1_000_000.0), validator: None,
+    editor: Some(Editor { group: "Session", label: "Open live pages per server",
+        help: "Most live pages all sign-ins together may keep open on each server.",
+        capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
+})) }
+inventory::submit! { Contribution::new(DEFINITIONS, LIVE_MESSAGES_PER_MINUTE_KEY, provenance!(), &Setting::Definition(Definition {
+    value_type: ValueType::Integer, scopes: GLOBAL, default: || json!(240), nullable: false, encrypted: false,
+    minimum: Some(10.0), maximum: Some(100_000.0), validator: None,
+    editor: Some(Editor { group: "Session", label: "Live page actions per minute",
+        help: "Most clicks, form changes and navigations one sign-in may send per minute, across its live pages, on each server. Excess ones are refused without acting.",
+        capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
+})) }
