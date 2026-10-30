@@ -20,13 +20,14 @@ const NOTIFICATION_KIND: &str = "notification";
 /// Which of `rows` (record ID, its person) a hold keeps.
 async fn held(
     holds: &Holds,
+    grant: &Erasure,
     kind: &str,
     rows: &[(i64, Option<i64>)],
 ) -> bilibi_database::Result<Vec<i64>> {
     let ids: Vec<i64> = rows.iter().map(|(id, _)| *id).collect();
     let persons: Vec<i64> = rows.iter().filter_map(|(_, person)| *person).collect();
-    let records = holds.records(kind, &ids).await?;
-    let people: BTreeMap<i64, i64> = holds.persons(&persons).await?;
+    let records = holds.records(grant, kind, &ids).await?;
+    let people: BTreeMap<i64, i64> = holds.persons(grant, &persons).await?;
     Ok(rows
         .iter()
         .filter(|(id, person)| {
@@ -72,7 +73,7 @@ impl Sweeper for ClosedAccounts {
                 .await?;
             let keys: Vec<(i64, Option<i64>)> =
                 rows.iter().map(|row| (row.get(0), row.get(1))).collect();
-            let kept = held(holds, USER_KIND, &keys).await?;
+            let kept = held(holds, grant, USER_KIND, &keys).await?;
             let due: Vec<(i64, String, String)> = rows
                 .iter()
                 .filter(|row| !kept.contains(&row.get::<_, i64>(0)))
@@ -102,7 +103,7 @@ impl Sweeper for ClosedAccounts {
                 .map(|row| row.get(0))
                 .collect();
             let keep_identities: Vec<i64> = holds
-                .records(crate::privacy::EXTERNAL_IDENTITY_KIND, &identities)
+                .records(grant, crate::privacy::EXTERNAL_IDENTITY_KIND, &identities)
                 .await?
                 .into_keys()
                 .collect();
@@ -180,7 +181,7 @@ impl Sweeper for Notifications {
                 .await?;
             let keys: Vec<(i64, Option<i64>)> =
                 rows.iter().map(|row| (row.get(0), row.get(1))).collect();
-            let kept = held(holds, NOTIFICATION_KIND, &keys).await?;
+            let kept = held(holds, grant, NOTIFICATION_KIND, &keys).await?;
             let due: Vec<i64> = keys
                 .iter()
                 .map(|(id, _)| *id)

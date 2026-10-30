@@ -71,7 +71,10 @@ impl Agg {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ColumnError {
     Malformed,
-    UnknownSegment { segment: String, table: String },
+    UnknownSegment {
+        segment: String,
+        table: String,
+    },
     ForbiddenTable(String),
     SecondManyLink(String),
     NoField,
@@ -83,6 +86,8 @@ pub enum ColumnError {
     AggregateNeedsOrderedValue,
     LatestNeedsTimeField,
     TooManyColumns,
+    /// A sum or average of a field the reader sees masked (ADR 05).
+    MaskedAggregate,
 }
 impl fmt::Display for ColumnError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -104,6 +109,7 @@ impl fmt::Display for ColumnError {
             Self::AggregateNeedsOrderedValue => write!(f, "min and max need an ordered value"),
             Self::LatestNeedsTimeField => write!(f, "latest needs a table with a time field"),
             Self::TooManyColumns => write!(f, "too many columns"),
+            Self::MaskedAggregate => write!(f, "a masked field is not summed or averaged"),
         }
     }
 }

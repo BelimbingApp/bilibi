@@ -5,8 +5,8 @@ use bilibi_ui::{
     choices,
     list_state::{InvalidPageSize, ParamNames},
     lists::RecordLink,
-    BuiltinColumn, Card, CreateButton, Filter, FilterToolbar, Header, IconButton, IconContext,
-    ListSpec, ListState, Pagination, SortDir, TableEmpty, ToolbarControl,
+    BuiltinColumn, Card, CreateButton, Filter, FilterToolbar, Header, ListSpec, ListState,
+    Pagination, SortDir, TableEmpty, ToolbarControl,
 };
 use serde_json::json;
 use std::{collections::BTreeMap, sync::LazyLock};
@@ -16,6 +16,7 @@ static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
     ListSpec {
         sortable: BTreeMap::from([
             ("name".into(), SortDir::Asc),
+            ("code".into(), SortDir::Asc),
             ("kind".into(), SortDir::Asc),
             ("state".into(), SortDir::Asc),
             ("created_at".into(), SortDir::Desc),
@@ -77,6 +78,7 @@ fn columns(pages: &Pages, masked: &std::collections::HashSet<String>) -> Result<
         "persons",
         [
             BuiltinColumn::new("name", "Name").sortable("name"),
+            BuiltinColumn::new("code", "Code").sortable("code"),
             BuiltinColumn::new("email", "Email"),
             BuiltinColumn::new("phone", "Phone"),
         ]
@@ -87,6 +89,7 @@ fn columns(pages: &Pages, masked: &std::collections::HashSet<String>) -> Result<
     .map(|columns| {
         columns.with_defaults(&[
             "name",
+            "code",
             "work.work_email:list",
             "work.title:list",
             "work.company.name:list",
@@ -127,9 +130,9 @@ impl Index {
             self.columns.from_params(scope, &query).await?;
             self.masked = masked;
         }
-        self.list.search = self.list.search.trim().chars().take(200).collect();
+        self.list.search = self.list.search.trim().chars().take(255).collect();
         let search = |list: &ListState| Search {
-            search: list.search.trim().chars().take(200).collect(),
+            search: list.search.trim().chars().take(255).collect(),
             kind: match list.filters["kind"].as_str() {
                 "human" => Some(PersonKind::Human),
                 "agent" => Some(PersonKind::Agent),
@@ -180,13 +183,8 @@ impl Index {
                 ..CreateButton::default()
             })?);
         }
-        let mut pin = IconButton::new("bilimbi-pin", "Pin Contacts to sidebar");
-        pin.id = "persons-pin";
-        pin.context = IconContext::Inline;
-        pin.nav_pin = "nav-admin-contacts";
         let mut body = render(Header {
             title: Html::text("Contacts"),
-            title_actions: render(pin)?,
             actions,
             ..Header::default()
         })?;
@@ -199,7 +197,7 @@ impl Index {
                     "search",
                     "Search contacts",
                     &form["search"],
-                    "Search by name, email, phone, role, or company...",
+                    "Search by code, name, email, phone, role, or company...",
                 ),
                 ToolbarControl::select(
                     "persons-kind",
@@ -231,6 +229,7 @@ impl Index {
                 continue;
             };
             row.dom_id = Some(format!("person-{}", person.id.get()));
+            row.slots.insert("code".into(), Html::text(&person.code));
             row.slots.insert(
                 "name".into(),
                 render(RecordLink {

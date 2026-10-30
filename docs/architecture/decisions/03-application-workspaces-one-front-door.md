@@ -61,7 +61,7 @@ Direct Domain and Extension clones remain supported for focused contributions. T
 
 | Command | Platform root | Application root |
 | --- | --- | --- |
-| `./bilibi start` | Check prerequisites, run missing setup, start local sources with the development seed, and open the sign-in page in the browser when one is available (`BILIBI_OPEN_BROWSER=0` turns it off) | Same, using editable sources |
+| `./bilibi start` | Check prerequisites, run missing setup, start local sources with the development seed, and open the sign-in page in the browser on the first start of a checkout when one is available (`BILIBI_OPEN_BROWSER=0` turns it off) | Same, using editable sources |
 | `./bilibi add <component>` | Verify the commit safeguard, then mount an official Domain or Extension | Same, inside `sources/platform/` |
 | `./bilibi new <name>` | Create an application from the trial under the refusal rules above | Not applicable; the application already exists |
 | `./bilibi setup` | Check prerequisites and install repository safeguards | Also obtain missing sources; preserve existing work |

@@ -146,7 +146,7 @@ impl Handler for Previews {
                 .iter()
                 .map(|row| row.get(0))
                 .collect();
-            let held = holds.records(KIND, &rows).await?;
+            let held = holds.records(grant, KIND, &rows).await?;
             let mut erase = Vec::new();
             for id in rows {
                 match held.get(&id) {

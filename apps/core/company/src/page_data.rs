@@ -1,8 +1,7 @@
 //! Company page read models and audited writes missing from the original slice
 //! (Bilimbi `Bilimbi.Core.Company`).
 use crate::{
-    guard, organisation, CompanyFieldValues, CompanyService, CreateOutcome, Edit, NewCompany,
-    UPDATE,
+    organisation, CompanyFieldValues, CompanyService, CreateOutcome, Edit, NewCompany, UPDATE,
 };
 use bilibi_database::{Change, Error, Result};
 use bilibi_tenancy::Scope;
@@ -54,12 +53,6 @@ impl CompanyService {
         credential: &str,
         edit: &Edit,
     ) -> std::result::Result<(), crate::WriteError> {
-        if crate::field_contributions::field(&edit.field)?.is_some() {
-            return self
-                .save_extension_fact(credential, edit)
-                .await
-                .map_err(Into::into);
-        }
         if ![
             "parent_id",
             "legal_entity_type_id",
@@ -166,44 +159,6 @@ impl CompanyService {
             Ok(((),vec![Change {kind:"company".into(),id,old:json!({&field:old}),new:json!({&field:value})}]))
         })).await?;
         tx.commit().await.map_err(Into::into)
-    }
-
-    async fn save_extension_fact(&self, credential: &str, edit: &Edit) -> Result<()> {
-        if edit.id <= 0 || edit.version <= 0 {
-            return Err(Error::Invalid);
-        }
-        let value = if edit.value.is_empty() {
-            Value::Null
-        } else {
-            Value::String(edit.value.clone())
-        };
-        let fields = [(edit.field.clone(), value)].into_iter().collect();
-        let errors = crate::field_contributions::validate_update(&fields);
-        if !errors.is_empty() {
-            return Err(Error::Invalid);
-        }
-        let mut client = self.db.get().await?;
-        let current_scope = guard(&**client, credential, &self.sessions).await?;
-        let mut tx = self
-            .mutations
-            .begin(
-                &mut client,
-                current_scope.mutation_context("company.update"),
-            )
-            .await?;
-        let current_scope = guard(tx.sql(), credential, &self.sessions).await?;
-        organisation::authorize_target(tx.sql(), &current_scope, edit.id, UPDATE).await?;
-        let restricted =
-            crate::field_contributions::effective_restrictions(tx.sql(), &current_scope).await?;
-        if restricted.contains(&edit.field) {
-            return Err(Error::Forbidden);
-        }
-        organisation::require_writable(tx.sql(), &current_scope, edit.id, true)
-            .await
-            .map_err(write_error)?;
-        crate::field_contributions::update(&mut tx, &current_scope, edit.id, edit.version, &fields)
-            .await?;
-        tx.commit().await
     }
 }
 

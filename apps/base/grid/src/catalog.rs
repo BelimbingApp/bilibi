@@ -282,13 +282,11 @@ impl Catalog {
         self.user
     }
     /// The personal kind a column's values are masked by, when it reads a
-    /// masked field's value (a value, list, minimum or maximum). A count, sum
-    /// or average of it shows no value and is not masked.
+    /// masked field's value (a value, list, minimum or maximum). A count shows
+    /// no value and is not masked; a sum or average never resolves
+    /// ([`Catalog::resolve`]).
     pub fn mask(&self, column: &Column) -> Option<&'static str> {
-        if matches!(
-            column.agg,
-            Some(crate::column::Agg::Count | crate::column::Agg::Sum | crate::column::Agg::Avg)
-        ) {
+        if column.agg == Some(Agg::Count) {
             return None;
         }
         let field = column.field.as_ref()?;
@@ -310,9 +308,15 @@ impl Catalog {
         self.tables.get(id)
     }
 
-    /// Resolves one column spec against a root table of this catalog.
+    /// Resolves one column spec against a root table of this catalog. A sum
+    /// or average of a field this account sees masked is refused: over one
+    /// linked row it is the hidden value, and narrow rollups give it away.
     pub fn resolve(&self, root: &Table, spec: &str) -> Result<Column, ColumnError> {
-        column::resolve(spec, root, &|id| self.table(id))
+        let column = column::resolve(spec, root, &|id| self.table(id))?;
+        if matches!(column.agg, Some(Agg::Sum | Agg::Avg)) && self.mask(&column).is_some() {
+            return Err(ColumnError::MaskedAggregate);
+        }
+        Ok(column)
     }
 
     /// Resolves every spec, or reports the first that fails. Duplicates collapse to

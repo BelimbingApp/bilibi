@@ -202,15 +202,29 @@ impl Sessions {
     }
     /// Opaque token lookup is the bootstrap exception to tenant scoping. One
     /// lookup checks session expiry, then Tenancy and the owner re-prove identity.
+    /// A staff session. A customer's session (ADR 16) never resolves here,
+    /// whichever cookie carried it: the host reads it only through
+    /// [`Self::check_portal`] under `/portal`.
     pub async fn check(&self, client: &(impl GenericClient + Sync), token: &str) -> Result<Scope> {
-        self.resolve(client, token, false).await
+        self.resolve(client, token, false, AccountKind::Staff).await
+    }
+    /// A customer's portal session; a staff session never resolves here.
+    pub async fn check_portal(
+        &self,
+        client: &(impl GenericClient + Sync),
+        token: &str,
+    ) -> Result<Scope> {
+        self.resolve(client, token, false, AccountKind::Customer)
+            .await
     }
     /// `check`, then holds the row until `client`'s transaction ends, so a
     /// sign-out or termination waits for a write the session is making (Agent
     /// API's page caller). A key-share lock: the session's own step-up and
     /// activity updates still go ahead.
     pub async fn hold(&self, client: &(impl GenericClient + Sync), token: &str) -> Result<Scope> {
-        let scope = self.resolve(client, token, false).await?;
+        let scope = self
+            .resolve(client, token, false, AccountKind::Staff)
+            .await?;
         client
             .query_opt(
                 "SELECT id FROM sessions WHERE id=$1 AND tenant_id=$2 AND user_id=$3 AND expires_at>clock_timestamp() FOR KEY SHARE",
@@ -227,7 +241,16 @@ impl Sessions {
         client: &(impl GenericClient + Sync),
         token: &str,
     ) -> Result<Scope> {
-        self.resolve(client, token, true).await
+        self.resolve(client, token, true, AccountKind::Staff).await
+    }
+    /// [`Self::activity`] for a customer's portal session.
+    pub async fn activity_portal(
+        &self,
+        client: &(impl GenericClient + Sync),
+        token: &str,
+    ) -> Result<Scope> {
+        self.resolve(client, token, true, AccountKind::Customer)
+            .await
     }
     /// Records the signing-in client once, bounded; neither value is ever
     /// interpreted, only listed.
@@ -593,6 +616,7 @@ impl Sessions {
         client: &(impl GenericClient + Sync),
         token: &str,
         activity: bool,
+        kind: AccountKind,
     ) -> Result<Scope> {
         if token.is_empty() || token.len() > 256 {
             return Err(Error::Unauthorized);
@@ -611,9 +635,9 @@ impl Sessions {
                 row.get(2),
             )
             .await?;
-        // Staff sessions only (ADR 16): a customer's session never opens a
-        // staff page, embed, socket or edge, whichever cookie carried it.
-        if scope.actor().kind() != AccountKind::Staff {
+        // The host's kind check (ADR 16): a token is honoured only for the
+        // audience its cookie serves.
+        if scope.actor().kind() != kind {
             return Err(Error::Unauthorized);
         }
         if activity {

@@ -1,0 +1,4 @@
+# The staff page composes the shared Base UI macros in place; the typed models
+# in bilibi_ui remain the alternative.
+[general]
+dirs = ["templates", "../../base/ui/templates"]
