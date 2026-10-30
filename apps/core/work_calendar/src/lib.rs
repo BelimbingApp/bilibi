@@ -177,14 +177,37 @@ impl WorkCalendars {
         authorize_key(&**client, &scope, LIST).await?;
         store::holiday_sets(&**client, scope.tenant(), listing).await
     }
+    /// The names of the holiday sets `codes` names (at most [`MAX_ROWS`]),
+    /// by code, for the record page. Needs `admin.work-calendar.list`.
+    pub(crate) async fn holiday_set_names(
+        &self,
+        scope: &Scope,
+        codes: &[String],
+    ) -> Result<Vec<(String, String)>> {
+        let client = self.db.get().await?;
+        let scope = self.authentication.reprove(&**client, scope).await?;
+        authorize_key(&**client, &scope, LIST).await?;
+        store::holiday_set_names(&**client, scope.tenant(), codes).await
+    }
     /// One calendar with its rule versions and holiday sets (the first
     /// [`MAX_ROWS`] of each) and page `page` of its exceptions, each with its
     /// total. Needs `admin.work-calendar.view`.
     pub async fn calendar(&self, scope: &Scope, code: &str, page: i64) -> Result<Calendar> {
+        self.calendar_page(scope, code, page, MAX_ROWS).await
+    }
+    /// [`Self::calendar`] with `page_size` (1 to [`MAX_ROWS`]) exceptions a
+    /// page, for the record page.
+    pub(crate) async fn calendar_page(
+        &self,
+        scope: &Scope,
+        code: &str,
+        page: i64,
+        page_size: i64,
+    ) -> Result<Calendar> {
         let client = self.db.get().await?;
         let scope = self.authentication.reprove(&**client, scope).await?;
         authorize_key(&**client, &scope, VIEW).await?;
-        store::calendar(&**client, scope.tenant(), code, page).await
+        store::calendar(&**client, scope.tenant(), code, page, page_size).await
     }
     /// One holiday set with page `page` of its holidays from `from` to `to`
     /// (all dates when omitted) and the first [`MAX_ROWS`] calendars

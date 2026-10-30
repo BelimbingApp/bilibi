@@ -13,6 +13,7 @@ case ${1:-help} in
         else
             [[ $# == 1 ]] || { echo "Usage: ./bilibi $command" >&2; exit 1; }
         fi
+        export BILIBI_FRONT_DOOR=1
         activate_cargo
         if [[ $command == setup ]] || ! development_prerequisites; then
             bash "$root/scripts/setup.sh"

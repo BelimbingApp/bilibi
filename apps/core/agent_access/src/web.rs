@@ -23,8 +23,8 @@ use bilibi_ui::{
         PageFuture, PageRequest,
     },
     params, ActionLink, Badge, BadgeKind, BuiltinColumn, Button, ButtonVariant, CodeInput,
-    EmptyState, Field, FlashMap, FlexRow, FlexTable, Html, IconButton, InputKind, ListColumns,
-    StatusKind, TableEmpty, NO_FLASH,
+    EmptyState, FlashMap, FlexRow, FlexTable, Html, IconButton, ListColumns, StatusKind,
+    TableEmpty, NO_FLASH,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -677,13 +677,6 @@ struct ConnectionsPage {
     columns: ListColumns,
     pending: Option<i64>,
     flash: Option<Flash>,
-    copied: Option<Copied>,
-}
-/// What the browser reported after a copy click.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Copied {
-    Yes,
-    Failed,
 }
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -697,10 +690,6 @@ enum ConnectionsEvent {
     },
     CancelRevoke,
     ConfirmRevoke,
-    ConnectionCopied {
-        text: String,
-        copied: bool,
-    },
     #[serde(rename = "clear-flash")]
     ClearFlash {
         key: String,
@@ -739,10 +728,24 @@ struct ConnectionsView {
     /// Impersonation and an agent facet see the table's refusal, not the prompt.
     show_setup: bool,
     /// The paste-ready text, shown whole so the person sees what the agent is told.
-    prompt: Option<Field>,
-    /// The same text for the Copy button's `data-copy-text`.
     prompt_text: String,
-    copied: Option<bool>,
+    /// A copy reachable only from this computer or network gets the extra
+    /// help; the same test as the AI status panel's `local_only`.
+    local_help: bool,
+    /// Offer the ChatGPT plugin ZIP; see `offers_plugin`.
+    plugin: bool,
+    plugin_href: &'static str,
+    /// The MCP address and the name a tool saves it under, for the manual steps.
+    address: String,
+    server_name: String,
+}
+/// What a person on their own account sees below the table.
+struct Setup {
+    prompt: String,
+    address: String,
+    server_name: String,
+    local_only: bool,
+    plugin: bool,
 }
 impl ConnectionsPage {
     /// The address takes no query. Older links carried `?client_id=` and still open the tab.
@@ -763,17 +766,22 @@ impl ConnectionsPage {
             .map_err(|_| Error::Internal)?,
             pending: None,
             flash: None,
-            copied: None,
         })
     }
     /// Only the person may set up their own connection.
-    async fn prompt(&self, scope: &Scope) -> Result<Option<String>> {
+    async fn setup(&self, scope: &Scope) -> Result<Option<Setup>> {
         if super::self_service(scope).is_err() {
             return Ok(None);
         }
         let client = self.pages.db.get().await?;
         let instance = Instance::resolve(&self.pages.settings, &**client).await?;
-        Ok(Some(setup_prompt::prompt(&instance)))
+        Ok(Some(Setup {
+            prompt: setup_prompt::prompt(&instance),
+            address: setup_prompt::address(&instance),
+            server_name: setup_prompt::server_name(&instance),
+            local_only: !instance.public_address(),
+            plugin: super::offers_plugin(scope, &instance.origin),
+        }))
     }
     async fn view(&self, scope: &Scope) -> Result<String> {
         let client = self.pages.db.get().await?;
@@ -894,7 +902,8 @@ impl ConnectionsPage {
             .id("connections-empty")
         }));
         let render = |rendered: askama::Result<Html>| rendered.map_err(|_| Error::Internal);
-        let prompt = self.prompt(scope).await?;
+        let setup = self.setup(scope).await?;
+        let prompt = setup.as_ref().map(|setup| setup.prompt.clone());
         let show_setup = prompt.is_some();
         html(ConnectionsView {
             flash: flash_map(self.flash),
@@ -906,28 +915,16 @@ impl ConnectionsPage {
             table: render(Html::render(&table))?,
             pending: self.pending,
             show_setup,
-            prompt: prompt.as_ref().map(|text| {
-                let mut field = Field::named("prompt")
-                    .id("ai-prompt")
-                    .kind(InputKind::Textarea)
-                    .label("Prompt for your AI app")
-                    .value(text)
-                    .readonly();
-                field.attrs.rows = Some("14".into());
-                field
-            }),
             prompt_text: prompt.unwrap_or_default(),
-            copied: self.copied.map(|copied| copied == Copied::Yes),
+            local_help: setup.as_ref().is_some_and(|setup| setup.local_only),
+            plugin: setup.as_ref().is_some_and(|setup| setup.plugin),
+            plugin_href: super::PLUGIN_DOWNLOAD,
+            address: setup
+                .as_ref()
+                .map(|setup| setup.address.clone())
+                .unwrap_or_default(),
+            server_name: setup.map(|setup| setup.server_name).unwrap_or_default(),
         })
-    }
-    /// A copy report counts only for the prompt this page shows.
-    async fn copied(&mut self, scope: &Scope, text: &str, copied: bool) -> Result<()> {
-        let shown = self
-            .prompt(scope)
-            .await?
-            .is_some_and(|prompt| prompt == text);
-        self.copied = shown.then_some(if copied { Copied::Yes } else { Copied::Failed });
-        Ok(())
     }
     async fn confirm(&mut self, scope: &Scope) -> Result<()> {
         let Some(id) = self.pending.take() else {
@@ -954,9 +951,7 @@ impl LiveState<Scope, Error> for ConnectionsPage {
         Box::pin(async move {
             match request.input {
                 LiveInput::Refresh => {}
-                LiveInput::Params(_) => {
-                    self.copied = None;
-                }
+                LiveInput::Params(_) => {}
                 LiveInput::Event(value) => {
                     match serde_json::from_value::<ConnectionsEvent>(value.clone())
                         .map_err(|_| Error::Invalid)?
@@ -978,9 +973,6 @@ impl LiveState<Scope, Error> for ConnectionsPage {
                         }
                         ConnectionsEvent::CancelRevoke => self.pending = None,
                         ConnectionsEvent::ConfirmRevoke => self.confirm(request.scope).await?,
-                        ConnectionsEvent::ConnectionCopied { text, copied } => {
-                            self.copied(request.scope, &text, copied).await?
-                        }
                         ConnectionsEvent::ClearFlash { key } => clear_flash(&mut self.flash, &key),
                     }
                 }

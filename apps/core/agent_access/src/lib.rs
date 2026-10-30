@@ -36,6 +36,9 @@ use tokio_postgres::{Row, Transaction};
 
 /// The built-in public client: no secret and no installation registration.
 pub const CLIENT_ID: &str = "bilibi-native";
+/// The ChatGPT plugin ZIP, served by `core/agent_plugins`. It lives here so the
+/// AI connections page and the status bar link the address the download owns.
+pub const PLUGIN_DOWNLOAD: &str = "/settings/chatgpt-plugin/download";
 pub const DEVICE_GRANT: &str = "urn:ietf:params:oauth:grant-type:device_code";
 pub const OAUTH_SCOPE: &str = "bilibi";
 /// Protocol contracts, not operator settings.
@@ -304,6 +307,25 @@ fn self_service(scope: &Scope) -> std::result::Result<(), OAuthError> {
         return Err(OAuthError::AccessDenied);
     }
     Ok(())
+}
+/// `https://host[:port]` with nothing else: no credentials, path, query or
+/// fragment (Bilimbi `PluginPackage.files`). A trailing `/` is accepted.
+pub fn https_origin(origin: &str) -> bool {
+    let Some(authority) = origin.strip_prefix("https://") else {
+        return false;
+    };
+    let authority = authority.strip_suffix('/').unwrap_or(authority);
+    !authority.is_empty()
+        && !authority.starts_with(':')
+        && !authority.contains(['/', '?', '#', '@', '\\'])
+        && !authority
+            .chars()
+            .any(|c| c.is_control() || c.is_whitespace())
+}
+/// Whether to offer the plugin download: the person's own staff session and an
+/// HTTPS `APP_ORIGIN`, the two checks the download makes on every request.
+fn offers_plugin(scope: &Scope, origin: &str) -> bool {
+    self_service(scope).is_ok() && https_origin(origin)
 }
 fn future(expires_at: SystemTime) -> std::result::Result<(), OAuthError> {
     if expires_at > SystemTime::now() {

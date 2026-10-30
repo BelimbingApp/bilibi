@@ -886,8 +886,15 @@ pub async fn preview_create_with_fields(
     authorize_proof(client, scope, CREATE).await?;
     let restricted = crate::field_contributions::effective_restrictions_read(client, scope).await?;
     let mut field_errors = crate::field_contributions::validate_create(fields);
-    field_errors
-        .extend(crate::field_contributions::validate_choice_snapshot(client, scope, fields).await);
+    field_errors.extend(
+        crate::field_contributions::validate_choice_snapshot(
+            client,
+            scope,
+            fields,
+            &crate::CompanyFieldValues::new(),
+        )
+        .await,
+    );
     field_errors.extend(crate::field_contributions::validate_restrictions(
         fields,
         &restricted,

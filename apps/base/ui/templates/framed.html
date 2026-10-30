@@ -1,5 +1,5 @@
 <div id="app"{% if live %} data-live{% endif %}>
-<div id="app-shell" data-hook="FramedDisplay" data-framed="true" data-tenant-id="{{ tenant_id }}" data-user-id="{{ user_id }}" data-company-id="{% if let Some(id) = company_id %}{{ id }}{% endif %}" data-theme-choice="{{ preferences.theme }}" data-display-mode="{{ preferences.mode }}" class="flex h-screen flex-col overflow-hidden bg-canvas">
+<div id="app-shell" data-hook="FramedDisplay" data-framed="true" data-csrf="{{ csrf }}" data-impersonating="{{ impersonating }}" data-tenant-id="{{ tenant_id }}" data-user-id="{{ user_id }}" data-company-id="{% if let Some(id) = company_id %}{{ id }}{% endif %}" data-theme-choice="{{ preferences.theme }}" data-display-mode="{{ preferences.mode }}" class="flex h-screen flex-col overflow-hidden bg-canvas">
 <main id="app-content" class="relative min-h-0 min-w-0 flex-1 overflow-y-auto px-1 py-2 sm:px-3">{{ body|safe }}</main>
 </div>
 </div>

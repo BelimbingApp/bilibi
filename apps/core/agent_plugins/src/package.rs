@@ -9,7 +9,7 @@
 //! harness gets three plugins that do not collide, each naming the server it
 //! reaches. Bilimbi has one installation and names its package `bilimbi`.
 use crate::PluginError;
-use bilibi_agent_access::OAUTH_SCOPE;
+use bilibi_agent_access::{https_origin, OAUTH_SCOPE};
 use bilibi_agent_api::{mcp, Registry, BUSINESS_CONTEXT, INSTANCE_INSTRUCTIONS};
 use bilibi_system::Instance;
 use bilibi_tenancy::SelfReport;
@@ -31,21 +31,6 @@ const SKILL_NAME_LIMIT: usize = 64;
 /// name the MCP server gives itself in `initialize`, from `Instance::slug`.
 pub fn package_name(instance: &Instance) -> String {
     format!("{NAME}-{}", instance.slug())
-}
-
-/// `https://host[:port]` with nothing else: no credentials, path, query or
-/// fragment (Bilimbi `PluginPackage.files`). A trailing `/` is accepted.
-pub fn https_origin(origin: &str) -> bool {
-    let Some(authority) = origin.strip_prefix("https://") else {
-        return false;
-    };
-    let authority = authority.strip_suffix('/').unwrap_or(authority);
-    !authority.is_empty()
-        && !authority.starts_with(':')
-        && !authority.contains(['/', '?', '#', '@', '\\'])
-        && !authority
-            .chars()
-            .any(|c| c.is_control() || c.is_whitespace())
 }
 
 /// Where and how an agent connects: the canonical origin and automatic

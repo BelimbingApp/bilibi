@@ -15,20 +15,19 @@ pub(super) struct Month {
     month: Option<Date>,
     name: Option<String>,
 }
-/// `YYYY-MM` as the first day of that month, in the years a holiday set's
-/// page offers (1900 to 2999), so a month's whole weeks and the days a
-/// holiday's substitute reaches stay well inside the date range. Any other
-/// is no month, and the page shows today's.
+/// The years the page offers, as a holiday set's page does: a month's whole
+/// weeks and the days a holiday's substitute reaches stay well inside the
+/// date range.
+const YEARS: std::ops::RangeInclusive<i16> = 1900..=2999;
+/// `YYYY-MM` as the first day of that month, in [`YEARS`]. Any other is no
+/// month, and the page shows today's; the links never lead there.
 fn parse(query: &HashMap<String, String>) -> Option<Date> {
     let text = query.get("month")?;
     let (year, month) = text.split_once('-')?;
     if year.len() != 4 || month.len() != 2 {
         return None;
     }
-    let year = year
-        .parse()
-        .ok()
-        .filter(|year| (1900..=2999).contains(year))?;
+    let year = year.parse().ok().filter(|year| YEARS.contains(year))?;
     Date::new(year, month.parse().ok()?, 1).ok()
 }
 fn address(month: Date) -> String {
@@ -93,8 +92,13 @@ impl Month {
             None => today.first_of_month(),
         };
         self.month = Some(first);
-        // The calendar read is the view check; the days follow from it.
-        let calendar = self.pages.calendars.calendar(scope, &self.code, 1).await?;
+        // The calendar read is the view check; the days follow from it. Its
+        // exceptions are not drawn here, so one is read.
+        let calendar = self
+            .pages
+            .calendars
+            .calendar_page(scope, &self.code, 1, 1)
+            .await?;
         self.name = Some(calendar.name.clone());
         // Whole weeks, Monday to Sunday, as the grid lays them: the
         // neighbouring months' dates are resolved too and shown dimmed.
@@ -133,27 +137,34 @@ impl Month {
                 ..ActionLink::default()
             })
         };
-        let previous = first.checked_sub(1.month()).map_err(|_| Error::Invalid)?;
-        let next = first.checked_add(1.month()).map_err(|_| Error::Invalid)?;
-        let mut actions = render(BackLink {
+        let offered = |month: &Date| YEARS.contains(&month.year());
+        let previous = first.checked_sub(1.month()).ok().filter(offered);
+        let next = first.checked_add(1.month()).ok().filter(offered);
+        // One link apiece on a wrapping line, each read on its own.
+        let mut parts = vec![render(BackLink {
             href: &base,
             id: "work-calendar-month-back",
             title: "Back to calendar",
             ..BackLink::default()
-        })?;
-        actions.push(&link(
-            "work-calendar-month-previous",
-            previous,
-            "Previous month",
-        )?);
-        if first != today.first_of_month() {
-            actions.push(&link(
+        })?];
+        if let Some(previous) = previous {
+            parts.push(link(
+                "work-calendar-month-previous",
+                previous,
+                "Previous month",
+            )?);
+        }
+        if first != today.first_of_month() && offered(&today) {
+            parts.push(link(
                 "work-calendar-month-today",
                 today.first_of_month(),
                 "This month",
             )?);
         }
-        actions.push(&link("work-calendar-month-next", next, "Next month")?);
+        if let Some(next) = next {
+            parts.push(link("work-calendar-month-next", next, "Next month")?);
+        }
+        let actions = render(Cluster { parts })?;
         let subtitle = if zone.is_empty() {
             caption.clone()
         } else {

@@ -56,9 +56,10 @@ operations use the plan service below, sharing its audited transaction.
 
 The [schema dialect](src/schema.rs) accepts object/properties/required,
 string/enum/maxLength/format, integer/number/enum/minimum/maximum, boolean and
-array/items, plus title/description annotations. Every node needs a type and
+array/items, plus title/description annotations. Scalar nodes may declare
+`nullable: true` to accept JSON `null`; null remains invalid everywhere else. Every node needs a type and
 root input must be an object. Input objects refuse unknown fields. Validation
-returns dotted field paths, including array indexes. Null is not implicit.
+returns dotted field paths, including array indexes. Null is never implicit.
 String formats are date, date-time with offset, and email. Nesting is bounded
 at discovery. Output schemas describe data without runtime enforcement, as in
 Bilimbi.

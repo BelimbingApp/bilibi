@@ -20,6 +20,18 @@ Professional, compact, warm, trustworthy. Dense enough for operations, calm enou
 - The interface is the brand. It is not a marketing site and not generic enterprise gray.
 - Less, but better. Every surface, label and control must earn its place.
 
+## Principles
+
+**One thing one door, one door many keys.**
+
+**One thing one door.** Each kind of record has exactly one list and one record page, reached from one menu item. Its stages (draft, waiting for approval, posted, rejected, archived) and its sources (typed in, imported, created by another module) are columns and filters on that list, never separate pages or menu items. One action creates it ("+ Journal"), wherever it is started. Approvals may also surface in a shared queue such as "Waiting for my approval", but that queue links back to the record's one home.
+
+*Example:* journals. Posted entries and manual journals waiting for approval are one Journals list with a status filter, not "Journal entries" and "Manual journals".
+
+**One door many keys.** Inside that door, people can reach the same action in several ways: the button on the list, a row action from another list ("Add as customer" on Contacts or Companies), multi-select, drag and drop between tiles, the keyboard, or their AI assistant. Every way runs the same operation, with the same permission checks, preview, rules and history, so no way is more powerful or less safe than another.
+
+*Example:* adding customers. "+ Customer" with the multi-select, "Add as customer" on a contact or company, dragging rows onto the Customers tile, or asking the AI assistant all end in the one add-customer operation.
+
 ## Character
 
 *Ledger geometry:* compact scale, hairline rules, tabular numerals, warm stone base.
@@ -112,7 +124,7 @@ Width is a shared decision. Every page uses `PageVariant`. All three share one c
 
 - **Text fields float the label.** Empty, it rests where the value goes. On focus, once filled, or when the browser autofills, it moves up small in muted ink. It never leaves the box.
 - **Selects, textareas, date-like inputs and the combobox pin it small at the top.** They always show something (a prompt, a mask, a selection) that a resting label would cover.
-- **Multi-selects:** one box holds the inset label and `(N selected)` count, with removable selected chips beneath. The default keeps complete chips on one line and shows “…” for overflow; `wrap_chips` expands the box onto multiple lines. The chevron stays beside the label. Empty fields show the label, `(0 selected)` and a selection prompt. The dropdown always exposes every option.
+- **Multi-selects:** one box holds the inset label and `(N selected)` count, with removable selected chips beneath. The default keeps complete chips on one line and shows “…” for overflow; `wrap_chips` expands the box onto multiple lines. The chevron stays beside the label. Empty fields show the label, `(0 selected)` and a selection prompt. For a small fixed set, `MultiSelect` exposes every option. For records, `SearchMultiSelect` sends a debounced query to the owner and shows bounded server results, disabled notes and an optional trailing create action.
 - **Choice chevrons:** selects and multi-selects use the same 16 px outline chevron, aligned 11 px inside the field's right edge.
 - **Colour choices use `ColourInput`.** Each named choice and the selected value are one chip: that status role's banner surface, border and text colour, with the name inside, including the default choice. Chips follow the light and dark themes. The pinned label, keyboard controls and native select keep it usable with assistive technology and without JavaScript.
 - **Compact.** A single-value inset box is 40 px with a 14 px value (`text-base`); the floated or pinned label is 11 px. A multi-select starts at 48 px to hold its label and chip row, and grows when wrapping is enabled. Inset fields sit 12 px apart.
@@ -186,9 +198,10 @@ Width is a shared decision. Every page uses `PageVariant`. All three share one c
 
 ## Shell
 
-*Two shells, both minimal.*
+*Three shells, all minimal.*
 
 - **Credential layout:** a centered card for sign-in and password recovery. No navigation. When the sign-in policy requires 2FA, a second card shows enrolled methods, explicit start/resend, code entry and Cancel before opening the workspace. Reading it sends no challenge.
+- **Portal layout** (ADR 16, `templates/portal.html`): what a tenant's customers see on `/portal`. A top bar, at least 28 px high and taller on touch screens, with the tenant's portal title and logo, the customer's name, My account and Sign out; the portal menu as one row of links below it, in its owners' `order` (not alphabetical), the longest route that is the page or its ancestor marked current; pages take their width from `PageVariant` like staff pages. The tab reads "page · portal title" with the tenant's logo as its icon. No sidebar, pins, tiles, search, bell, company switcher or status bar. Its anonymous pages use the credential layout branded with the tenant's title and logo (`templates/portal_card.html`), never Bilibi's name. *built; title and logo come with Core Customer Access*
 - **Workspace shell:** `h-7` top bar, sidebar menu, status bar.
   - Top bar: sidebar toggle, brand mark, the current company, search, notification bell, timezone and clock selector, theme selector.
   - The company label is always visible, so the reader knows whose records a page shows. A person who may work in more than one company gets a switcher there: the list of their companies, marking the current one and their own, with a type-to-find box past eight. Choosing one reloads the page in that company; other open tabs reload at their next action. A person with one company, or none, sees a plain label. The account menu names the current company and, when different, the person's own company. *built* (`templates/company_bar.html`)

@@ -10,8 +10,8 @@ use bilibi_ui::{
     list_state::{InvalidPageSize, ParamNames, FILTERS_FORM},
     lists::RecordLink,
     Badge, BadgeKind, BuiltinColumn, Card, ColumnsOutcome, ConfirmDialog, CreateButton,
-    FilterToolbar, FlexRow, FlexTable, Header, IconButton, IconContext, IconKind, ListColumns,
-    ListSpec, ListState, PageCounts, Pagination, SortDir, TableEmpty, ToolbarControl,
+    FilterToolbar, FlexRow, FlexTable, Header, IconButton, IconKind, ListColumns, ListSpec,
+    ListState, PageCounts, Pagination, SortDir, TableEmpty, ToolbarControl,
 };
 use std::sync::LazyLock;
 
@@ -261,12 +261,6 @@ impl Index {
         }
         let header = render(Header {
             title: Html::text("Addresses"),
-            title_actions: render(IconButton {
-                context: IconContext::Inline,
-                id: "addresses-pin",
-                nav_pin: "nav-admin-address",
-                ..IconButton::new("bilimbi-pin", "Pin Addresses to sidebar")
-            })?,
             actions,
             ..Header::default()
         })?;

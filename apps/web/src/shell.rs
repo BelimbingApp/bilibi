@@ -60,6 +60,8 @@ pub async fn render(
             user_id: scope.map_or(0, Scope::user),
             company_id: scope.and_then(|scope| scope.current_company().map(|id| id.get())),
             preferences: &preferences,
+            csrf: scope.map_or("", |scope| scope.csrf.as_str()),
+            impersonating: scope.is_some_and(|scope| scope.impersonator().is_some()),
         }
         .render()
     } else if let Some(scope) = scope {
@@ -315,7 +317,7 @@ fn search_pages(app: &App, tree: &[menu::Node], may: impl Fn(&Route) -> bool) ->
     let settings = bilibi_ui::SettingsTab::pages();
     let mut pages = Vec::new();
     let mut account = Vec::new();
-    for bound in app.routes.iter() {
+    for bound in app.routes.staff.iter() {
         let route = bound.route;
         if route.method != Method::Get || route.path.contains('{') || !may(route) {
             continue;
@@ -447,6 +449,8 @@ async fn permits(app: &App, scope: &Scope, access: Access) -> Result<bool> {
         Access::OperatorCapability(key) => authz::authorize_operator(client, scope, key)
             .await
             .map(|_| ()),
+        // Boot pairs portal access with the portal context only.
+        Access::Portal(_) => Err(Error::Forbidden),
     };
     match result {
         Ok(()) => Ok(true),
@@ -695,6 +699,7 @@ pub async fn pins(
 
 fn served_routes(app: &App) -> Vec<&'static str> {
     app.routes
+        .staff
         .iter()
         .filter(|bound| bound.route.method == Method::Get)
         .map(|bound| bound.route.path)

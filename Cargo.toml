@@ -3,7 +3,7 @@ members = ["apps/base", "apps/core", "apps/domains", "apps/extensions", "apps/in
 resolver = "2"
 
 [workspace.package]
-version = "0.1.1"
+version = "0.2.1"
 edition = "2021"
 rust-version = "1.99"
 license = "MIT"

@@ -5,8 +5,8 @@ use bilibi_ui::{
     choices,
     list_state::{InvalidPageSize, ParamNames},
     lists::RecordLink,
-    BuiltinColumn, Card, CreateButton, Filter, FilterToolbar, Header, IconButton, IconContext,
-    ListSpec, ListState, Pagination, SortDir, TableEmpty, ToolbarControl,
+    BuiltinColumn, Card, CreateButton, Filter, FilterToolbar, Header, ListSpec, ListState,
+    Pagination, SortDir, TableEmpty, ToolbarControl,
 };
 use serde_json::json;
 use std::{collections::BTreeMap, sync::LazyLock};
@@ -180,13 +180,8 @@ impl Index {
                 ..CreateButton::default()
             })?);
         }
-        let mut pin = IconButton::new("bilimbi-pin", "Pin Contacts to sidebar");
-        pin.id = "persons-pin";
-        pin.context = IconContext::Inline;
-        pin.nav_pin = "nav-admin-contacts";
         let mut body = render(Header {
             title: Html::text("Contacts"),
-            title_actions: render(pin)?,
             actions,
             ..Header::default()
         })?;
