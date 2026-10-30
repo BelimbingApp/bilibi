@@ -5,8 +5,9 @@ side by side in one browser tab, arranged by a Hyprland-style dwindle
 tree, with keyboard control, drag resizing, drag-to-swap, monocle and
 layouts pinned per account or published for a company. `src/layout.rs` is the
 pure tree and its compact URL form; `src/web.rs` is the page, which holds only
-the tree, the focused tile, monocle, the names the tiles report and shared layouts; `src/layouts.rs` keeps published layouts; `src/shared_web.rs` is
-the shared-workspaces screen. This module owns no tables.
+the tree, the focused tile, monocle, the names the tiles report and shared
+layouts; `src/layouts.rs` keeps published layouts; `src/shared_web.rs` is the
+shared-workspaces screen. This module owns no tables.
 
 ## Tiles are pages
 
@@ -67,15 +68,17 @@ frame's document too, so the keys work wherever focus is.
 
 
 With a pointer: drag a divider to resize (a focused divider also moves with
-its arrow keys), drag a tile's grip onto another tile to swap them, and use the tile controls to flip or close it. Activating Move enters keyboard mode; Shift with H, J, K or L moves the focused tile. Pressing anywhere in a tile,
-inside its page included, focuses it.
+its arrow keys), drag a tile's Move control onto another tile to swap them, and
+use the tile's Flip and Close controls. Clicking Move enters tiling mode, where
+`H` `J` `K` `L` move the tile. Pressing anywhere in a tile, inside its page
+included, focuses it.
 
 ## Following selections
 
 Tiles talk through the follow channel (`apps/base/ui/src/workspace.rs`). A
 tile showing one record's page follows selections after `w`: the tree keeps
 that page's route pattern (`/companies/42>/companies/:id` in the URL form),
-the tile's grip shows a link mark, and the tile carries `data-follow="on"`
+the tile shows a link mark, and the tile carries `data-follow="on"`
 (`"off"` on a tile that could follow). When a page in any tile announces a
 record of the module that owns the pattern, the workspace fills the id in,
 records the new path with a replaced address, and the hook sends the frame
@@ -99,7 +102,7 @@ Run the app (`./bilibi start`, or the manual commands in the root
 README), sign in, and use a sidebar row's "Open in a tile" control, or open
 `/workspace` and add pages. Then: navigate inside a tile and reload (the tile
 keeps its page); press `Ctrl+.` and use the keys above; drag a divider and a
-grip; press Back (it undoes the last workspace change, then leaves); narrow the
+tile's Move control; press Back (it undoes the last workspace change, then leaves); narrow the
 window below 1024px (one tile and a tab strip). With the workspace open, a
 sidebar tile control adds a tile and the tiles on screen keep their pages.
 
