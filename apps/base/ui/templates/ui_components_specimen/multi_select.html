@@ -14,9 +14,3 @@
 {% call form::radio_group(group=controls.locked_region) %}{% endcall %}
 <p class="mt-3 border-t border-line pt-3 text-xs text-ink-muted">Locked, so every choice is inert. The card heading names the group on screen and an <code>aria-label</code> names it for assistive tech, so it passes no label of its own, and the hint says who decided.</p>
 {% endcall %}
-
-{% call ui::card(id="specimen-search-multi-card", title="Searchable multi-select", inner_class="p-4") %}
-<p class="mb-2 text-xs text-ink-muted">The specimen driver stands in for the owner. Type to search, select several, or create a company.</p>
-{{ search_multi }}
-<p id="specimen-search-multi-status" role="status" class="text-xs text-ink-muted"></p>
-{% endcall %}

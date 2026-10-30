@@ -12,11 +12,11 @@ List toolbars put search first and filter boxes to its right, wrapping below sea
 
 ## Searchable multi-select
 
-Use `SearchMultiSelect` for a server-searched set of records. Supply selected `SearchMultiOption`s separately from a bounded list of results; the control renders at most 50 hits. An option may carry detail or be disabled with a note and an optional local link. `.create("Create company", "create-company")` adds the trailing action. `.wrap_chips()` shows all selected chips; the default limits the row to one line and offers an overflow button that reveals the remaining chips.
+Use `SearchMultiSelect` for a server-searched set of records. Supply selected `SearchMultiOption`s separately from a bounded list of results; the control renders at most 50 hits. An option may carry detail or be disabled with a note and an optional local link shown beside the note. `.create("Create company", "create-company")` adds the trailing action. `.wrap_chips()` shows all selected chips; the default limits the row to one line and offers an overflow button that reveals the remaining chips.
 
 The owner handles the configured search event with `query`, pick and remove events with `value` (pick toggles that value), and the create event with `query`. Search is debounced 300 ms; results for an older query cannot be selected while the person types. Keep selection in the mounted owner across searches, check each event against current authorization and availability, and recheck on save. The control posts selected values under its array name; the empty value denotes no selection. Bound the owner's query and database result count before rendering. The control never downloads or filters the full record set.
 
-The component specimen’s driver stands in for the owner; the Design Library’s searchable multi-select card exercises a mounted owner and server-side search. Source: [`src/search_multi.rs`](src/search_multi.rs), [`templates/search_multi.html`](templates/search_multi.html), and `SearchMultiSelect` in [`assets/hooks.js`](assets/hooks.js).
+The Design Library’s searchable multi-select card exercises a mounted owner and server-side search. Source: [`src/search_multi.rs`](src/search_multi.rs), [`templates/search_multi.html`](templates/search_multi.html), and `SearchMultiSelect` in [`assets/hooks.js`](assets/hooks.js).
 
 ## Charts
 
