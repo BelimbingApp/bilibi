@@ -370,6 +370,13 @@ impl Index {
                 bilibi_agent_api::Error::Forbidden
                 | bilibi_agent_api::Error::Backend(Error::Forbidden),
             ) => "You do not have permission to export contacts.".to_owned(),
+            // The person's company is a sentence of its own (a switched
+            // session, no company), not a fault of the columns or filters.
+            Err(bilibi_agent_api::Error::InvalidInput(fields))
+                if fields.contains_key("company") =>
+            {
+                fields["company"].join(" ")
+            }
             Err(_) => "The export could not be started with these columns or filters.".to_owned(),
         };
         // A flash shows only with a redirect, so the page keeps the refusal.

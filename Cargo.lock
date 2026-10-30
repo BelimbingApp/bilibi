@@ -569,6 +569,7 @@ dependencies = [
  "bilibi-notifications",
  "bilibi-party-ids",
  "bilibi-queue",
+ "bilibi-schedule",
  "bilibi-settings",
  "bilibi-tenancy",
  "bilibi-ui",

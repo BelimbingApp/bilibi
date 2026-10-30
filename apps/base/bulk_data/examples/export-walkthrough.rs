@@ -503,6 +503,65 @@ async fn main() -> Result<(), Failure> {
         .map(|run| (run.expired, run.downloadable));
     println!("the Imports list shows it (expired, downloadable): {listed:?}");
 
+    println!("\n== the scheduled sweep purges expired files with no later export");
+    let swept_export = manager
+        .exports(
+            "a file to expire",
+            json!({"search": "Exp Carol"}),
+            &["name"],
+        )
+        .await
+        .unwrap_or_default();
+    let stored = sql
+        .query_one(
+            "SELECT public_id, storage_root FROM base_artifacts WHERE owner_id='base.bulk_data' AND subject=$1",
+            &[&format!("export:{swept_export}")],
+        )
+        .await?;
+    let (public, root): (String, String) = (stored.get(0), stored.get(1));
+    let path = std::path::Path::new(&root).join(&public);
+    sql.execute(
+        "UPDATE base_artifacts SET expires_at=created_at+interval '1 microsecond' WHERE public_id=$1",
+        &[&public],
+    )
+    .await?;
+    // What the hourly `base/bulk_data-file-sweep` task runs, with no upload
+    // or export in between.
+    let artifacts = app
+        .services
+        .get::<bilibi_artifacts::Artifacts>("base/artifacts.store")?;
+    let mut client = db.get().await?;
+    let report = artifacts
+        .sweep_expired(&mut client, &bilibi_bulk_data::FILES)
+        .await?;
+    let purged: bool = sql
+        .query_one(
+            "SELECT purged_at IS NOT NULL FROM base_artifacts WHERE public_id=$1",
+            &[&public],
+        )
+        .await?
+        .get(0);
+    println!(
+        "sweep: {} purged, {} failed; this file purged {purged}, still on disk {}",
+        report.purged.len(),
+        report.failed.len(),
+        path.exists()
+    );
+    for row in sql
+        .query(
+            "SELECT event, actor_type, coalesce(system_principal, '') FROM base_audit_actions WHERE event IN ('artifacts.delete','artifacts.purge') AND payload->>'artifact_id'=$1 ORDER BY id",
+            &[&public],
+        )
+        .await?
+    {
+        println!(
+            "  audit {} by {} {}",
+            row.get::<_, String>(0),
+            row.get::<_, String>(1),
+            row.get::<_, String>(2)
+        );
+    }
+
     println!("\n== an export whose job ends before it runs is finished by the next one");
     let _ = stop.send(true);
     let _ = worker.await;

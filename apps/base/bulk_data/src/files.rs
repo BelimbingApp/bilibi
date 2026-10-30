@@ -6,7 +6,9 @@
 //! Only the person who started the run or export reaches its files, in the
 //! company it was filed under. Both kinds expire after `bulk_data.file_days`;
 //! each upload and each export first purges the company's expired ones
-//! (Artifacts' bounded batch, as Reports' prepared exports do).
+//! (Artifacts' bounded batch, as Reports' prepared exports do), and an hourly
+//! scheduled sweep purges the rest in every tenant, so expired bytes go even
+//! from a company where nobody uploads or exports again.
 use crate::{BulkData, Pass, CREATE, EXPORTED, VIEW};
 use bilibi_artifacts::{Operation, Owner, Reference};
 use bilibi_authz::authorize_proof;
@@ -174,5 +176,70 @@ impl BulkData {
                 error.code()
             ),
         }
+    }
+}
+
+pub(crate) const SWEEP: &str = "base/bulk_data.file-sweep";
+const SWEEP_WORKER: &str = "base/bulk_data-file-sweep";
+
+fn no_arguments(args: serde_json::Value) -> bilibi_database::Result<serde_json::Value> {
+    match args.as_object() {
+        Some(object) if object.is_empty() => Ok(args),
+        _ => Err(Error::Invalid),
+    }
+}
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_queue::WORKERS, SWEEP_WORKER, crate::provenance!(), &bilibi_queue::Worker { max_attempts: 3, validate: |args| bilibi_schedule::worker::validate(args, no_arguments) }) }
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_queue::execution::HANDLERS, SWEEP_WORKER, crate::provenance!(), &bilibi_queue::execution::HandlerBinding { service: SWEEP, capability: bilibi_schedule::EXECUTE }) }
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_schedule::DEFINITIONS, "base/bulk_data-file-sweep", crate::provenance!(), &bilibi_schedule::Definition {
+    name: "Purge expired import and export files", expression: "41 * * * *", timezone: "Etc/UTC",
+    task_name: "Base Bulk Data file sweep", worker: SWEEP_WORKER, args: || serde_json::json!({}),
+    overlap: bilibi_schedule::Overlap::Forbid, misfire: bilibi_schedule::Misfire::Coalesce, owner_route: None,
+}) }
+
+/// The hourly sweep: one bounded batch of expired run files in every tenant,
+/// purged by Artifacts as its sweeper. A file that cannot be purged is logged
+/// by its content-free code; Artifacts records the attempt and holds it for
+/// an operator after its limit, as for any purge.
+pub(crate) struct Sweep {
+    pub schedule: Arc<bilibi_schedule::Schedule>,
+    pub artifacts: Arc<bilibi_artifacts::Artifacts>,
+    pub db: bilibi_database::Db,
+}
+impl bilibi_queue::execution::Handler for Sweep {
+    fn perform<'a>(
+        &'a self,
+        execution: &'a bilibi_queue::execution::Execution,
+        args: serde_json::Value,
+    ) -> bilibi_queue::execution::HandlerFuture<'a> {
+        Box::pin(self.schedule.run(execution, args, |_| async {
+            let swept = async {
+                let mut object = self
+                    .db
+                    .get()
+                    .await
+                    .map_err(|_| bilibi_artifacts::Error::Invalid)?;
+                let client: &mut tokio_postgres::Client = &mut object;
+                self.artifacts.sweep_expired(client, &FILES).await
+            }
+            .await;
+            match swept {
+                Ok(report) => {
+                    for (_, error) in &report.failed {
+                        eprintln!(
+                            "warning: an expired bulk-data file could not be purged: {}",
+                            error.code()
+                        );
+                    }
+                    bilibi_queue::execution::Outcome::Completed
+                }
+                Err(error) => {
+                    eprintln!(
+                        "warning: expired bulk-data files could not be swept: {}",
+                        error.code()
+                    );
+                    bilibi_queue::execution::Outcome::Retry("files_unavailable")
+                }
+            }
+        }))
     }
 }

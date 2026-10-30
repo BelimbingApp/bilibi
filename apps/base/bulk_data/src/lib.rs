@@ -113,15 +113,27 @@ fn distinct_ids(key: &str, ids: &[String], max: i64) -> std::result::Result<(), 
 fn typed(id: &str) -> Value {
     id.parse::<i64>().map_or_else(|_| json!(id), Value::from)
 }
-/// The company a run is filed under: the one the person works in now (the
-/// shell's company choice), so its files and results belong to it.
-fn current_company(scope: &Scope, doing: &str) -> std::result::Result<OrganisationId, WriteError> {
-    scope.current_company().ok_or_else(|| {
+/// The company a run is filed under: the person's own, through their
+/// affiliation. Its queued job runs as the person without the session's
+/// company choice, and Artifacts keeps a person's files under their own
+/// company, so a session switched to another company is refused in words
+/// rather than reading or filing one company's records under another.
+/// Running in a switched company needs Queue and Artifacts to carry and
+/// re-prove that choice (a Platform change of its own).
+fn own_company(scope: &Scope, doing: &str) -> std::result::Result<OrganisationId, WriteError> {
+    let own = scope.actor().organisation().ok_or_else(|| {
         refused(
             "company",
-            &format!("Your account works in no company, so it cannot {doing}."),
+            &format!("Your account is not filed under a company, so it cannot {doing}."),
         )
-    })
+    })?;
+    if scope.current_company() != Some(own) {
+        return Err(refused(
+            "company",
+            &format!("You are working in another company. Imports, exports and bulk updates run in your own company: switch back to it to {doing}."),
+        ));
+    }
+    Ok(own)
 }
 fn refused(key: &str, message: &str) -> WriteError {
     WriteError::Invalid(FieldErrors::from([(
@@ -184,15 +196,6 @@ pub struct BulkData {
     notifications: Arc<NotificationBoundary>,
     types: BTreeMap<&'static str, Registered>,
     changes: broadcast::Sender<bilibi_ui::page::Change>,
-}
-
-fn company(scope: &Scope) -> std::result::Result<OrganisationId, WriteError> {
-    scope.actor().organisation().ok_or_else(|| {
-        refused(
-            "company",
-            "Your account is not filed under a company, so it cannot import.",
-        )
-    })
 }
 
 /// Content-free audit evidence of a run.
@@ -304,10 +307,16 @@ impl BulkData {
         bilibi_authz::authorize_key(&*client, scope, CREATE).await?;
         bilibi_authz::authorize_key(&*client, scope, registered.definition.import.capability)
             .await?;
-        let Some(company) = scope.actor().organisation() else {
-            return Ok(Err(
-                "Your account is not filed under a company, so it cannot import.".into(),
-            ));
+        let company = match own_company(scope, "import") {
+            Ok(company) => company,
+            Err(WriteError::Invalid(fields)) => {
+                return Ok(Err(fields
+                    .into_values()
+                    .flatten()
+                    .next()
+                    .unwrap_or_default()))
+            }
+            Err(_) => return Err(Error::Internal),
         };
         let max_bytes = self
             .settings
@@ -773,7 +782,7 @@ impl BulkData {
                 let (name, existing) = self
                     .saveable(tx.sql(), scope, record_type, name, mapping)
                     .await?;
-                let company = company(scope)?.get();
+                let company = own_company(scope, "import")?.get();
                 let columns = json!(mapping.columns());
                 let value = serde_json::to_value(mapping).map_err(|_| Error::Internal)?;
                 let record_type = record_type.clone();
@@ -892,7 +901,7 @@ impl BulkData {
     ) -> std::result::Result<(String, Option<SavedMapping>), WriteError> {
         let registered = self.registered(record_type)?;
         bilibi_authz::authorize_key(client, scope, registered.definition.import.capability).await?;
-        let company = company(scope)?.get();
+        let company = own_company(scope, "import")?.get();
         let name = name.trim().to_owned();
         if name.is_empty() || name.chars().count() > 120 || name.chars().any(char::is_control) {
             return Err(refused("name", "must be 1 to 120 characters"));
@@ -936,7 +945,7 @@ impl BulkData {
         id: i64,
         version: i64,
     ) -> std::result::Result<SavedMapping, WriteError> {
-        let company = company(scope)?.get();
+        let company = own_company(scope, "import")?.get();
         let saved = client
             .query_opt(
                 "SELECT id,record_type,name,columns,mapping,version FROM base_bulk_data_mappings WHERE tenant_id=$1 AND company_id=$2 AND id=$3 FOR UPDATE",
@@ -987,7 +996,7 @@ pub(crate) use provenance;
 
 inventory::submit! { bilibi_module_registry::Module {
     id: "base/bulk_data", layer: bilibi_module_registry::Layer::Base,
-    dependencies: &["base/module_registry", "base/agent_api", "base/artifacts", "base/authz", "base/database", "base/datetime", "base/grid", "base/locale", "base/menu", "base/notifications", "base/queue", "base/settings", "base/tenancy", "base/ui"],
+    dependencies: &["base/module_registry", "base/agent_api", "base/artifacts", "base/authz", "base/database", "base/datetime", "base/grid", "base/locale", "base/menu", "base/notifications", "base/queue", "base/schedule", "base/settings", "base/tenancy", "base/ui"],
     migrations: &[
         ("base-bulk-data-001-imports", include_str!("../migrations/001-imports.sql")),
         ("base-bulk-data-002-exports", include_str!("../migrations/002-exports.sql")),
@@ -1017,6 +1026,13 @@ inventory::submit! { bilibi_module_registry::Module {
         }},
         bilibi_module_registry::Service { id: export::SERVICE, factory: |services| {
             Ok(Arc::new(bilibi_queue::execution::HandlerService(Arc::new(export::ExportJob(services.get(SERVICE)?)))))
+        }},
+        bilibi_module_registry::Service { id: files::SWEEP, factory: |services| {
+            Ok(Arc::new(bilibi_queue::execution::HandlerService(Arc::new(files::Sweep {
+                schedule: services.get("base/schedule.store")?,
+                artifacts: services.get("base/artifacts.store")?,
+                db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
+            }))))
         }},
         bilibi_module_registry::Service { id: web::PAGES, factory: |services| {
             Ok(Arc::new(bilibi_ui::page::PageService::<Scope, Error>(Arc::new(web::Pages::new(services)?))))

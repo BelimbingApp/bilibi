@@ -270,7 +270,7 @@ impl BulkData {
         let (registered, export) = self.exportable(record_type)?;
         bilibi_authz::authorize_key(client, scope, VIEW).await?;
         bilibi_authz::authorize_key(client, scope, export.capability).await?;
-        crate::current_company(scope, "export")?;
+        crate::own_company(scope, "export")?;
         if ids.is_empty() {
             self.ready_filter(export.list, filter)?;
         } else {
@@ -329,7 +329,7 @@ impl BulkData {
         self.ready_export(tx.sql(), scope, record_type, filter, ids, columns)
             .await?;
         let (registered, _) = self.exportable(record_type)?;
-        let company = crate::current_company(scope, "export")?.get();
+        let company = crate::own_company(scope, "export")?.get();
         self.finish_stranded(tx, scope, company).await?;
         let (tenant, user, kind) = (scope.tenant(), scope.user(), registered.key);
         let (filter, columns) = (filter.clone(), json!(columns));
