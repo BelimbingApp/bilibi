@@ -156,6 +156,15 @@ edges, run by a trusted admin or seed adapter holding
 wins, including inactive flags; boot never calls it and a changed contribution
 never overwrites rows.
 
+A production owner seeds its own flow instead of waiting for an operator to run
+`initialize`: contribute a versioned production `Seed` whose action is
+`SeedAction::Service { service: bilibi_workflow::FLOW_SEEDS, operation: "<flow
+code>" }`, from a module that depends on `base/workflow`. The host's explicit
+`seed` command inserts that one flow with the same insert-only rule, once per
+seed version; give a new flow its own version. An unknown flow code refuses
+the seed. Seed inserts are not audit rows, like every production seed. The
+`owner` example's `seed` command shows it on a migrated disposable database.
+
 ## Human actions
 
 Use `Engine::available_actions` and `execute_action`, never a hand-rolled

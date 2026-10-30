@@ -1333,7 +1333,12 @@
     "vendor/product-icons/text-indent-left.svg": "1b202a0e4d4b857a9960681eda617f1aea326245e038c666f63b04164b088a8e",
     "vendor/product-icons/text-indent-right.svg": "77a8cf495f87a0ffd31b6dfe60491d80e197b2c87fa7d0bf95b7f8f958eb920a",
     "vendor/product-icons/vaadin-invoice.svg": "e9822ca79e59e9745141796cf5fcffdc946438cfb9a0947f4843ca3a489e071f",
-    "static/logo.svg": "d18bdf44fd897f7883b350826b4620653d7795f07e35c9e0b1accca45c7d1b03"
+    "static/logo.svg": "d18bdf44fd897f7883b350826b4620653d7795f07e35c9e0b1accca45c7d1b03",
+    "vendor/product-icons/clarity-pinboard-line.svg": "4eb56a308bb7446983330899147ecacffaa4c2c12b58d1bfee6cb3338f6f7728",
+    "vendor/product-icons/CLARITY-LICENSE": "144757b53192e700f7fd7d7de1ef2d2e97f968556d4fbd3e7ca9bfce90a4482e",
+    "vendor/product-icons/hugeicons-move-02.svg": "a19e0aa630b38c01254c32905cad5e091de25afd27ff27787d8fab6fd393131d",
+    "vendor/product-icons/HUGEICONS-LICENSE": "6e2dddec58190205b66a1ac9fa7555f3cfb3fcde332e9cfad81b153283a25c28",
+    "vendor/product-icons/iconoir-flip.svg": "ff94c83091dc59a8380a48b06596198b1e6319f789808d75928b4e6f049172f9"
   },
   "domain_sources": {
     "supply_chain": "4b4f95c8effbd719077b35b9f792f3de413d8dba",

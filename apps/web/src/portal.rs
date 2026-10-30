@@ -23,6 +23,9 @@ use bilibi_ui::{
 };
 use std::collections::HashMap;
 
+/// The portal home, where a customer lands after signing in.
+pub const HOME: &str = "/portal";
+
 /// The customer's session cookie. `Path=/portal`, so the browser never sends
 /// it to a staff path, where a customer is therefore anonymous.
 pub const COOKIE: &str = "bilibi_portal";
@@ -144,10 +147,11 @@ pub async fn dispatch(
         .unwrap_or("Bilibi");
     // The portal has no live socket yet (`/portal/live` is reserved for it),
     // so a portal page renders static; the staff socket would refuse it.
-    let html = layout(&app, &portal, uri.path(), false, &page.html).await?;
+    let site = site_title(&app, &portal).await?;
+    let html = layout(&app, &portal, &site, uri.path(), false, &page.html).await?;
     let html = Html::render(&PortalDocument {
         title,
-        site: &portal.scope().tenant_name,
+        site: &site,
         logo: None,
         body: &html,
     })
@@ -157,14 +161,25 @@ pub async fn dispatch(
     Ok(response)
 }
 
-/// The portal layout around an owner's page: the tenant's title, the portal
+/// The title of the customer's portal: its site's (Core Customer Access),
+/// or the tenant's name while the tenant has none.
+async fn site_title(app: &App, portal: &PortalScope) -> Result<String> {
+    let access: std::sync::Arc<bilibi_customer_access::CustomerAccess> =
+        app.services.get(bilibi_customer_access::SERVICE)?;
+    Ok(access
+        .site_of(portal)
+        .await?
+        .map_or_else(|| portal.scope().tenant_name.clone(), |site| site.title))
+}
+
+/// The portal layout around an owner's page: the portal's title, the portal
 /// menu the customer may see (decided like the staff menu, against the
 /// customer's effective capabilities, which hold portal keys only) and the
-/// account's links. The tenant's own portal title and logo come with Core
-/// Customer Access; until then the title is the tenant's name.
+/// account's links. No portal has a logo yet.
 async fn layout(
     app: &App,
     portal: &PortalScope,
+    title: &str,
     path: &str,
     live: bool,
     body: &str,
@@ -196,7 +211,7 @@ async fn layout(
         links[index].active = true;
     }
     Html::render(&PortalLayout {
-        title: &scope.tenant_name,
+        title,
         logo: None,
         links: &links,
         user: &scope.user_name,

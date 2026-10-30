@@ -145,10 +145,38 @@ fn bare(response: &Response) -> bool {
         .is_none_or(|kind| kind.starts_with("text/plain"))
 }
 
+/// A referrer that is a credential link loses its token and its query.
+fn redacted_referer(value: &str) -> String {
+    match value.parse::<Uri>() {
+        Ok(uri) if crate::credential_path(uri.path()) => format!(
+            "{}://{}{}",
+            uri.scheme_str().unwrap_or("http"),
+            uri.authority().map_or("", |authority| authority.as_str()),
+            crate::redacted(uri.path())
+        ),
+        _ => value.to_owned(),
+    }
+}
+
 fn describe(app: &App, seen: &Seen) -> DebugReport {
+    // A credential link's token, and the address its query carries, stay
+    // out of the report (`crate::redacted`).
+    let credential = crate::credential_path(seen.uri.path());
     let query = axum::extract::Query::<Vec<(String, String)>>::try_from_uri(&seen.uri)
         .map(|query| query.0)
-        .unwrap_or_default();
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(key, value)| {
+            (
+                key,
+                if credential {
+                    "[redacted]".into()
+                } else {
+                    value
+                },
+            )
+        })
+        .collect();
     let mut route = Vec::new();
     let mut params = Vec::new();
     match &seen.matched {
@@ -156,7 +184,12 @@ fn describe(app: &App, seen: &Seen) -> DebugReport {
             route.push(("Matched route".into(), format!("{} {pattern}", seen.method)));
             for (pattern, actual) in pattern.split('/').zip(seen.uri.path().split('/')) {
                 if let Some(name) = pattern.strip_prefix('{').and_then(|p| p.strip_suffix('}')) {
-                    params.push((name.to_owned(), actual.to_owned()));
+                    let value = if name == "token" && credential {
+                        "[redacted]"
+                    } else {
+                        actual
+                    };
+                    params.push((name.to_owned(), value.to_owned()));
                 }
             }
             if let Some(bound) = app.routes.staff.iter().find(|bound| {
@@ -185,12 +218,17 @@ fn describe(app: &App, seen: &Seen) -> DebugReport {
         .iter()
         .filter_map(|name| {
             let value = seen.headers.get(*name)?.to_str().ok()?;
-            Some(((*name).to_owned(), value.to_owned()))
+            let value = if *name == "referer" {
+                redacted_referer(value)
+            } else {
+                value.to_owned()
+            };
+            Some(((*name).to_owned(), value))
         })
         .collect();
     DebugReport {
         method: seen.method.to_string(),
-        path: seen.uri.path().to_owned(),
+        path: crate::redacted(seen.uri.path()).into_owned(),
         query,
         params,
         headers,

@@ -339,7 +339,10 @@ pub async fn summarize(
     let mut measures = Vec::with_capacity(spec.measures.len());
     let mut aggregates = Vec::new();
     for (i, measure) in spec.measures.iter().enumerate() {
-        let column = resolve(&catalog, root, &measure.column, &mut hops)?;
+        let column = match measure.agg {
+            Agg::Count => resolve_any(&catalog, root, &measure.column, &mut hops)?,
+            _ => resolve(&catalog, root, &measure.column, &mut hops)?,
+        };
         let fits = match measure.agg {
             Agg::Count => true,
             Agg::Sum | Agg::Avg => column.ty.number(),
@@ -577,7 +580,24 @@ fn reader_today(timezone: &str) -> Result<Date, QueryError> {
     Ok(Timestamp::now().to_zoned(zone).date())
 }
 
+/// A column a grouping, filter, sort or value aggregate may use. A field the
+/// reader sees masked (ADR 05) is refused: its group keys, minimum or maximum
+/// would show the full value, and a filter or sort on it would say what it
+/// holds.
 fn resolve(
+    catalog: &Catalog,
+    root: &Table,
+    spec: &str,
+    hops: &mut usize,
+) -> Result<Column, QueryError> {
+    let column = resolve_any(catalog, root, spec, hops)?;
+    if catalog.mask(&column).is_some() {
+        return Err(unsupported(&column, "a masked field shows no value here"));
+    }
+    Ok(column)
+}
+/// Any readable column, masked or not: only for a count, which shows no value.
+fn resolve_any(
     catalog: &Catalog,
     root: &Table,
     spec: &str,

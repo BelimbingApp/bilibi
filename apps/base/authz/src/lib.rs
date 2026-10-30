@@ -70,6 +70,23 @@ impl Decision {
 pub async fn authorize_key(client: &impl GenericClient, scope: &Scope, key: &str) -> Result<()> {
     decide(client, scope, key).await?.require()
 }
+/// A portal facade's capability check (ADR 16): `key` must be a portal
+/// capability, so a Domain cannot ask a customer for a staff key by mistake;
+/// then it is decided and logged as [`authorize_key`] decides it.
+pub async fn authorize_portal(
+    client: &impl GenericClient,
+    portal: &bilibi_tenancy::PortalScope,
+    key: &str,
+) -> Result<()> {
+    let audience = vocabulary()?
+        .capabilities
+        .get(key)
+        .map(|owned| owned.definition.audience);
+    if audience != Some(Audience::Portal) {
+        return Err(Error::Invalid);
+    }
+    authorize_key(client, portal.scope(), key).await
+}
 /// Opens for any one of `keys` (a route or menu entry that serves a combined
 /// page, `Access::AnyOf`). Candidates come from the live effective set, which
 /// already drops direct denies, so a key the account does not hold writes no
@@ -542,7 +559,7 @@ pub async fn restrictions_for(
 inventory::submit! { bilibi_module_registry::Module {
     id:"base/authz",layer:bilibi_module_registry::Layer::Base,
     dependencies:&["base/module_registry","base/database","base/tenancy","base/audit","base/menu","base/settings","base/ui","base/locale","base/datetime","base/step_up"],
-    migrations:&[("base-authz-012-external-roles",include_str!("../migrations/012-external-roles.sql")),("007-authz-policy",include_str!("../migrations/007-policy.sql")),("base-authz-008-decision-log-restrictions",include_str!("../migrations/008-decision-log-restrictions.sql")),("base-authz-009-roles-admin",include_str!("../migrations/009-roles-admin.sql")),("base-authz-010-decision-log-retention",include_str!("../migrations/010-decision-log-retention.sql")),("base-authz-011-role-company",include_str!("../migrations/011-role-company.sql"))],
+    migrations:&[("base-authz-012-external-roles",include_str!("../migrations/012-external-roles.sql")),("007-authz-policy",include_str!("../migrations/007-policy.sql")),("base-authz-008-decision-log-restrictions",include_str!("../migrations/008-decision-log-restrictions.sql")),("base-authz-009-roles-admin",include_str!("../migrations/009-roles-admin.sql")),("base-authz-010-decision-log-retention",include_str!("../migrations/010-decision-log-retention.sql")),("base-authz-011-role-company",include_str!("../migrations/011-role-company.sql")),("base-authz-013-field-masks",include_str!("../migrations/013-field-masks.sql"))],
     services:&[bilibi_module_registry::Service {id:"base/authz.grants",factory:|services| Ok(Arc::new(grants::Grants::new(
         services.get::<bilibi_database::Db>("base/database.pool")?.as_ref().clone(),
         services.get("base/database.mutations")?, vocabulary::Vocabulary::from_inventory()?, services.get("base/tenancy.authentication")?,

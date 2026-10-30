@@ -529,6 +529,7 @@ dependencies = [
  "bilibi-notifications",
  "bilibi-party-ids",
  "bilibi-perf",
+ "bilibi-personal-data",
  "bilibi-picklists",
  "bilibi-ports",
  "bilibi-principal-directory",
@@ -636,6 +637,7 @@ dependencies = [
  "bilibi-agent-plugins",
  "bilibi-company",
  "bilibi-currency",
+ "bilibi-customer-access",
  "bilibi-geonames",
  "bilibi-party",
  "bilibi-person",
@@ -672,6 +674,38 @@ dependencies = [
  "rust_decimal",
  "serde",
  "serde_json",
+ "tokio",
+ "tokio-postgres",
+]
+
+[[package]]
+name = "bilibi-customer-access"
+version = "0.2.1"
+dependencies = [
+ "askama",
+ "bilibi-affiliation",
+ "bilibi-agent-api",
+ "bilibi-authz",
+ "bilibi-company",
+ "bilibi-database",
+ "bilibi-datetime",
+ "bilibi-locale",
+ "bilibi-mail",
+ "bilibi-menu",
+ "bilibi-module-registry",
+ "bilibi-party-ids",
+ "bilibi-person",
+ "bilibi-records",
+ "bilibi-settings",
+ "bilibi-tenancy",
+ "bilibi-ui",
+ "bilibi-user",
+ "getrandom 0.4.3",
+ "inventory",
+ "jiff",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
  "tokio",
  "tokio-postgres",
 ]
@@ -812,6 +846,7 @@ dependencies = [
  "bilibi-database",
  "bilibi-datetime",
  "bilibi-module-registry",
+ "bilibi-personal-data",
  "bilibi-settings",
  "bilibi-tenancy",
  "bilibi-ui",
@@ -1046,6 +1081,20 @@ dependencies = [
  "serde_json",
  "thiserror",
  "tokio",
+ "tokio-postgres",
+]
+
+[[package]]
+name = "bilibi-personal-data"
+version = "0.2.1"
+dependencies = [
+ "bilibi-database",
+ "bilibi-module-registry",
+ "bilibi-party-ids",
+ "bilibi-tenancy",
+ "inventory",
+ "serde",
+ "serde_json",
  "tokio-postgres",
 ]
 
@@ -1530,6 +1579,7 @@ dependencies = [
  "bilibi-base",
  "bilibi-company",
  "bilibi-core",
+ "bilibi-customer-access",
  "bilibi-database",
  "bilibi-domains",
  "bilibi-extensions",
@@ -1556,6 +1606,7 @@ dependencies = [
  "tokio",
  "tokio-postgres",
  "tower-http",
+ "url",
  "uuid",
 ]
 

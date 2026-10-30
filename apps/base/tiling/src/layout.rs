@@ -1,4 +1,4 @@
-//! The pure dwindle and master trees behind a tiled workspace (Bilimbi
+//! The pure dwindle tree behind a tiled workspace (Bilimbi
 //! `Tiling.Layout`).
 //!
 //! A layout is a binary space partition: a leaf is one tile showing a page at
@@ -189,13 +189,6 @@ impl Node {
             },
         }
     }
-    fn flip(&mut self) {
-        if let Self::Split(split) = self {
-            split.direction = split.direction.other();
-            split.first.flip();
-            split.second.flip();
-        }
-    }
 }
 
 /// A rectangle as fractions of the workspace.
@@ -284,9 +277,6 @@ impl Layout {
     }
     pub fn is_empty(&self) -> bool {
         self.root.is_none()
-    }
-    pub fn root(&self) -> Option<&Node> {
-        self.root.as_ref()
     }
     /// The leaves in tree order: left before right, top before bottom.
     pub fn leaves(&self) -> Vec<&Leaf> {
@@ -548,115 +538,6 @@ impl Layout {
                 leaves: Vec::new(),
                 handles: Vec::new(),
             },
-        }
-    }
-
-    // ---- Master layout -------------------------------------------------
-
-    /// Whether the tree is already one master beside a single-axis stack.
-    pub fn is_master(&self) -> bool {
-        fn stack(node: &Node, direction: Direction) -> bool {
-            match node {
-                Node::Leaf(_) => true,
-                Node::Split(split) => {
-                    split.direction == direction
-                        && matches!(*split.first, Node::Leaf(_))
-                        && stack(&split.second, direction)
-                }
-            }
-        }
-        match &self.root {
-            None | Some(Node::Leaf(_)) => true,
-            Some(Node::Split(split)) => {
-                matches!(*split.first, Node::Leaf(_))
-                    && stack(&split.second, split.direction.other())
-            }
-        }
-    }
-
-    /// Arranges the existing tiles as one master and an evenly divided stack.
-    /// The first tile becomes master; leaf ids survive, so changing modes never
-    /// reloads a frame. A master tree keeps its orientation and master share.
-    pub fn master(&mut self) {
-        let tiles = self.leaves().into_iter().cloned().collect();
-        self.master_rebuild(tiles);
-    }
-
-    fn master_rebuild(&mut self, mut tiles: Vec<Leaf>) {
-        if tiles.len() <= 1 {
-            self.root = tiles.pop().map(Node::Leaf);
-            return;
-        }
-        let (direction, ratio, root_id) = match &self.root {
-            Some(Node::Split(split)) if matches!(*split.first, Node::Leaf(_)) => {
-                (split.direction, split.ratio, Some(split.id.clone()))
-            }
-            Some(Node::Split(split)) => (Direction::H, 0.55, Some(split.id.clone())),
-            _ => (Direction::H, 0.55, None),
-        };
-        let first = tiles.remove(0);
-        let stack = self.master_stack(tiles, direction.other());
-        let id = root_id.unwrap_or_else(|| self.next_id('s'));
-        self.root = Some(Node::Split(Split {
-            id,
-            direction,
-            ratio,
-            first: Box::new(Node::Leaf(first)),
-            second: Box::new(stack),
-        }));
-    }
-
-    fn master_stack(&mut self, mut leaves: Vec<Leaf>, direction: Direction) -> Node {
-        if leaves.len() == 1 {
-            return Node::Leaf(leaves.remove(0));
-        }
-        let count = leaves.len();
-        let first = leaves.remove(0);
-        let second = self.master_stack(leaves, direction);
-        Node::Split(Split {
-            id: self.next_id('s'),
-            direction,
-            ratio: 1.0 / count as f64,
-            first: Box::new(Node::Leaf(first)),
-            second: Box::new(second),
-        })
-    }
-
-    /// Opens a tile at the end of the master stack and returns its id.
-    pub fn master_open(&mut self, path: &str) -> String {
-        let leaf = self.new_leaf(path);
-        let id = leaf.id.clone();
-        let mut tiles: Vec<Leaf> = self.leaves().into_iter().cloned().collect();
-        tiles.push(leaf);
-        self.master_rebuild(tiles);
-        id
-    }
-
-    /// Closes a master tile and divides the remaining stack evenly.
-    pub fn master_close(&mut self, id: &str) {
-        if self.fetch_leaf(id).is_none() {
-            return;
-        }
-        let tiles = self
-            .leaves()
-            .into_iter()
-            .filter(|leaf| leaf.id != id)
-            .cloned()
-            .collect();
-        self.master_rebuild(tiles);
-    }
-
-    /// Turns a side-by-side master into a top-and-bottom one, or back.
-    pub fn toggle_master_orientation(&mut self) {
-        if let Some(root) = &mut self.root {
-            root.flip();
-        }
-    }
-
-    /// Makes the named tile master by exchanging it with the first tile.
-    pub fn promote_master(&mut self, id: &str) {
-        if let Some(first) = self.leaves().first().map(|leaf| leaf.id.clone()) {
-            self.swap(&first, id);
         }
     }
 

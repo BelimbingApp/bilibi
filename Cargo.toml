@@ -91,9 +91,11 @@ bilibi-authz-agent = { path = "apps/base/authz_agent" }
 bilibi-system = { path = "apps/base/system" }
 bilibi-tenancy = { path = "apps/base/tenancy" }
 bilibi-tiling = { path = "apps/base/tiling" }
+bilibi-personal-data = { path = "apps/base/personal_data" }
 bilibi-workflow = { path = "apps/base/workflow" }
 bilibi-address = { path = "apps/core/address" }
 bilibi-currency = { path = "apps/core/currency" }
+bilibi-customer-access = { path = "apps/core/customer_access" }
 bilibi-affiliation = { path = "apps/core/affiliation" }
 bilibi-agent-access = { path = "apps/core/agent_access" }
 bilibi-agent-plugins = { path = "apps/core/agent_plugins" }

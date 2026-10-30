@@ -294,6 +294,7 @@ impl LiveState<Scope, Error> for Reactive {
 
 // Shared facts mirror Bilimbi’s record detail module; columns extend its list vocabulary.
 bilibi_ui::record_fields! { pub(crate) mod fields {
+    CODE: bilibi_ui::RecordField::new("code", "Code"),
     NAME: bilibi_ui::RecordField::new("name", "Name"),
     KIND: bilibi_ui::RecordField::new("kind", "Kind"),
     IDENTITY: bilibi_ui::RecordField::new("identity", "Identity"),

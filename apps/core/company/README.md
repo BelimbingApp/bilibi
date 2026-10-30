@@ -21,8 +21,8 @@ Additive over the frozen original migration: every existing company keeps its
 id, tenant and `/companies/{id}` URL, and `OrganisationId` is that id.
 `companies` gains Bilimbi's columns (`parent_id`, `code`, `legal_name`,
 `registration_number`, `legal_entity_type_id`, `jurisdiction`, `website`,
-`scope_activities`, `metadata`, `updated_at`). `code` is backfilled from the
-name as Belimbing slugs it (`organisation::slug_code`) and is **unique within
+`scope_activities`, `metadata`, `updated_at`). Creation offers a code from the
+name using `bilibi_party::slug_code`, shared with Person. The code stays fixed after creation and is **unique within
 a tenant**: Bilimbi's compatibility constraint spans tenants, which would let
 one tenant learn another's codes. A parent is a company of the same tenant
 (`(tenant_id, parent_id)` foreign key) and never the row itself.
@@ -640,3 +640,5 @@ The operator can edit these tenant settings under Companies in the shared Settin
 | `company.duplicates.ignored_words` | `sdn`, `bhd`, `ltd`, `inc`, `llc`, `gmbh` | Up to 200 words |
 | `company.duplicates.public_mail_domains` | Common public mail providers | Up to 200 domains |
 | `company.hierarchy.max_depth` | 10 | 2–20 levels |
+
+For the fixed code and name of an already authorized linked record, and bounded code lookup across Company and Person, use the [shared party identity facade](../../base/tenancy/README.md#linked-party-identities-and-code-lookup). Company's adapter owns its tenant-scoped SQL and excludes removed companies; contact and legal-identifier reads keep their existing permissions.

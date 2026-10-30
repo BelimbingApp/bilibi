@@ -4,6 +4,7 @@ mod contributions;
 mod directory;
 mod files;
 mod identity;
+mod identity_directory;
 mod model;
 mod records;
 mod step_up;
@@ -20,8 +21,8 @@ pub use identity::{
     read as read_person, search as search_persons, BindingIdentity,
 };
 pub use model::{
-    validate as validate_person, DuplicateQuery, FieldError, Page, Person, PersonId, PersonInput,
-    PersonKind, Search, Update,
+    validate as validate_person, CreatePreview, DuplicateQuery, FieldError, Page, Person, PersonId,
+    PersonInput, PersonKind, Search, Update,
 };
 use std::sync::{Arc, OnceLock};
 use tokio::sync::broadcast;
@@ -192,6 +193,7 @@ inventory::submit! {
         services: &[bilibi_module_registry::Service { id: SERVICE, factory: |services| {
             let parties = services.get::<bilibi_tenancy::PartyProofs>("base/tenancy.parties")?;
             parties.bind_persons(Arc::new(identity::Provider))?;
+            parties.bind_person_identities(Arc::new(identity_directory::Provider))?;
             files::bind(parties)?;
             let directory = services.get::<bilibi_principal_directory::PrincipalDirectory>("base/principal_directory.directory")?;
             directory.bind("core/person", Arc::new(directory::Provider(bilibi_principal_directory::PrincipalKind::Person)))?;
