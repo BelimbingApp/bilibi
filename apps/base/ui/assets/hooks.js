@@ -844,8 +844,9 @@
       this.popup = this.el.querySelector('[data-search-popup]')
       this.open = false
       this.active = -1
+      this.current = () => this.el.dataset.query.trim() === this.input.value.trim()
       this.options = () => [...this.list.querySelectorAll('[role="option"]')]
-        .filter(option => !option.hidden && !option.parentElement.hidden && (option.hasAttribute("data-create") || this.el.dataset.query === this.input.value))
+        .filter(option => !option.hidden && !option.parentElement.hidden && (option.hasAttribute("data-create") || this.current()))
       this.paint = () => {
         this.input.setAttribute("aria-expanded", String(this.open))
         this.popup.hidden = !this.open
@@ -856,12 +857,12 @@
           const label = `${this.el.dataset.createLabel} ${query}`
           if (create.textContent !== label) create.textContent = label
         }
-        this.popup.toggleAttribute('data-stale', this.el.dataset.query !== this.input.value)
+        this.popup.toggleAttribute('data-stale', !this.current())
         const options = this.options()
         const status = this.el.querySelector('[data-result-status]')
         const count = options.filter(option => !option.hasAttribute('data-create')).length
         const selection = this.el.querySelector('.ui-multi-heading span').textContent
-        const message = this.el.dataset.query === this.input.value ? `${count} ${count === 1 ? 'result' : 'results'} available, ${selection}` : `Searching, ${selection}`
+        const message = this.current() ? `${count} ${count === 1 ? 'result' : 'results'} available, ${selection}` : `Searching, ${selection}`
         if (status.textContent !== message) status.textContent = message
         if (this.active >= options.length) this.active = -1
         this.list.querySelectorAll('[role="option"]').forEach(option => {
