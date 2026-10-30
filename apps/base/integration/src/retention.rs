@@ -49,7 +49,7 @@ impl Handler for Retention {
     fn perform<'a>(&'a self, execution: &'a Execution, args: Value) -> HandlerFuture<'a> {
         Box::pin(self.schedule.run(execution, args, |_| async {
             let pruned = async {
-                let client = self.db.get().await?;
+                let mut client = self.db.get().await?;
                 let days = self
                     .settings
                     .get_global(&**client, RETENTION_DAYS)
@@ -58,7 +58,7 @@ impl Handler for Retention {
                     .filter(|days| (1..=RETENTION_MAX).contains(days))
                     .ok_or(Error::Invalid)?;
                 self.integration
-                    .prune_payloads(&**client, days, SystemTime::now())
+                    .prune_payloads(&mut client, days, SystemTime::now())
                     .await
             }
             .await;

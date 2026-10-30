@@ -432,9 +432,12 @@ impl LiveState<Scope, Error> for Index {
         Box::pin(async move {
             let scope = request.scope;
             let client = self.pages.db.get().await?;
+            // A masked field keeps its column and shows its partial value.
+            let masks = bilibi_authz::fields::masks_for(&**client, scope, "addresses").await?;
             let masked = bilibi_authz::restrictions_for(&**client, scope, "addresses").await?;
-            self.columns
-                .set_available(super::fields::ALL, |field| !masked.contains(field.id));
+            self.columns.set_available(super::fields::ALL, |field| {
+                !masked.contains(field.id) || masks.contains_key(field.id)
+            });
 
             let mut requery = true;
             match request.input {

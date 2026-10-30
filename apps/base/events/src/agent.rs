@@ -152,11 +152,19 @@ impl WriteHandler for Replay {
                 .map_err(refusal)?;
             let mut facts = review.to_json();
             facts["subscriber"] = json!(subscriber);
+            let erased = if review.erased > 0 {
+                format!(
+                    "; {} events a personal-data erasure changed are left out",
+                    review.erased
+                )
+            } else {
+                String::new()
+            };
             facts["summary"] = json!(if review.pending == 0 {
-                format!("Nothing to replay to {subscriber}: every event in the batch is delivered")
+                format!("Nothing to replay to {subscriber}: every event in the batch is delivered{erased}")
             } else {
                 format!(
-                    "Hand {} events to {subscriber} ({} new deliveries); delivered events are skipped",
+                    "Hand {} events to {subscriber} ({} new deliveries); delivered events are skipped{erased}",
                     review.pending, review.created
                 )
             });
@@ -208,7 +216,7 @@ fn deliveries_output() -> Value {
     json!({"type":"object","description":"Deliveries in event then subscriber order: event, version, subject, key, subscriber, mounted, attempts, last failure code and receipt time."})
 }
 fn replay_output() -> Value {
-    json!({"type":"object","description":"The batch looked at (from, through, next), deliveries created and events now pending for the subscriber; pending 0 means nothing was written."})
+    json!({"type":"object","description":"The batch looked at (from, through, next), deliveries created and events now pending for the subscriber; pending 0 means nothing was written. erased counts events a personal-data erasure changed, which get no delivery."})
 }
 
 inventory::submit! { Contribution::new(DEFINITIONS, "base/events", Provenance { module: "base/events", source: file!(), line: line!() }, &Definitions {

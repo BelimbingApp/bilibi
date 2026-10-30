@@ -1,7 +1,13 @@
 //! Durable mutation and action evidence. Capture runs inside the owner's
 //! transaction and fails closed: a refused audit row refuses the business commit.
 pub mod console;
+mod erasure;
+mod privacy;
 mod read;
+pub use erasure::{
+    due_evidence, erase_deferred, erase_record, holds_values, verify, ChainBreak, ChainReport,
+    Cleared, DueEvidence, Minimums,
+};
 pub use read::{
     list_actions, list_mutations, recent_mutations, subject_history, toggle_retained, ActionEntry,
     ActionPage, ActionQuery, ActionSort, MutationEntry, MutationPage, MutationQuery, MutationSort,
@@ -538,10 +544,11 @@ pub async fn recent_actions(
 inventory::submit! {
     bilibi_module_registry::Module {
         id: "base/audit", layer: bilibi_module_registry::Layer::Base,
-        dependencies: &["base/module_registry", "base/database", "base/tenancy"],
+        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/personal_data"],
         migrations: &[("006-audit-evidence", include_str!("../migrations/006-evidence.sql")),
             ("base-audit-007-agent-self-report", include_str!("../migrations/007-agent-self-report.sql")),
-            ("base-audit-008-client-identity", include_str!("../migrations/008-client-identity.sql"))],
+            ("base-audit-008-client-identity", include_str!("../migrations/008-client-identity.sql")),
+            ("base-audit-009-erasure", include_str!("../migrations/009-erasure.sql"))],
         services: &[bilibi_module_registry::Service { id: "base/audit.capture", factory: |services| {
             let db = services.get::<Db>("base/database.pool")?.as_ref().clone();
             let capture = Arc::new(AuditCapture::new(RedactionPolicy::from_inventory(), db));

@@ -57,6 +57,19 @@ pub(super) struct Index {
     /// Set while the new-contact dialog is open, including after `/contacts/new`.
     draft: Option<super::create::Draft>,
 }
+/// The contact fields withheld from this reader: restricted and not masked. A
+/// masked contact keeps its column and shows its partial value.
+async fn withheld(
+    client: &tokio_postgres::Client,
+    scope: &Scope,
+) -> Result<std::collections::HashSet<String>> {
+    let masks = bilibi_authz::fields::masks_for(client, scope, "persons").await?;
+    Ok(bilibi_authz::restrictions_for(client, scope, "persons")
+        .await?
+        .into_iter()
+        .filter(|field| !masks.contains_key(field))
+        .collect())
+}
 // Bilimbi Person.IndexLive: contact columns with discovered work details. Identity
 // filters and URL sorts remain the approved Person model's additional controls.
 fn columns(pages: &Pages, masked: &std::collections::HashSet<String>) -> Result<PageColumns> {
@@ -94,7 +107,7 @@ impl Index {
         framed: bool,
     ) -> Result<Self> {
         let client = pages.db.get().await?;
-        let masked = bilibi_authz::restrictions_for(&**client, scope, "persons").await?;
+        let masked = withheld(&client, scope).await?;
         let mut columns = columns(&pages, &masked)?;
         columns.from_params(scope, query).await?;
         let open = query.get("new").map(String::as_str) == Some("1")
@@ -110,7 +123,7 @@ impl Index {
     }
     async fn view(&mut self, scope: &Scope) -> Result<LiveBody> {
         let client = self.pages.db.get().await?;
-        let masked = bilibi_authz::restrictions_for(&**client, scope, "persons").await?;
+        let masked = withheld(&client, scope).await?;
         if masked != self.masked {
             let query = self.columns.params();
             self.columns = columns(&self.pages, &masked)?;

@@ -6,6 +6,7 @@
 {% call dialog::modal(id="field-restrictions-dialog", title=title, cancel_event="close_dialog", description="Change which roles cannot see this field, or remove the restriction.", owns_flash=true, messages=flash) %}
 <form id="field-restrictions-form" data-event="validate" data-change class="mt-4 space-y-4">
 {{ roles }}
+{{ mode }}
 <p id="field-restrictions-outcome" class="rounded-md bg-surface-sunken px-3 py-2 text-sm text-ink">{{ outcome }}</p>
 <div class="flex flex-wrap items-center justify-between gap-2">
 {% call ui::button(id="field-restrictions-remove", button_type="button", variant=bilibi_ui::ButtonVariant::Danger, event="request_remove", name="key", value=key) %}Remove restriction{% endcall %}

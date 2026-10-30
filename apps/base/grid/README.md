@@ -28,7 +28,9 @@ Depend on `base/grid`, submit one `GridContribution` to `TABLES`
 - `Field`s: `Field::new`/`choice`; `column` names the source key when it differs
   from the id; `hidden` fields exist only for joins; `protected` keeps a field
   out of operator restriction (the key, label, time, hidden and join fields are
-  protected implicitly).
+  protected implicitly); `personal(PersonalKind::…)` marks a field that holds a
+  person's data, and `base/privacy` then refuses boot unless the owning module
+  contributes a personal-data store (`apps/base/personal_data/README.md`).
 - `LinkDecl`s: `One` (a foreign key to the target's **key**, or an edge yielding at
   most one row per parent) or `Many` (the reverse, or an attachment table), joined
   `on` two declared fields or through an edge `Source` selecting `from_key` and
@@ -75,7 +77,9 @@ naming the table and field (the owner must fix it; callers' `?` maps it to an
 internal error and logs the cause).
 
 `restriction_catalog` and `restrictable` give the Authz screens the protected-field
-catalog as **data**: Authz does not depend on Grid.
+catalog as **data**: Authz does not depend on Grid. Each field carries its personal kind, so only personal fields can be masked.
+
+**Masked fields (ADR 05) stay in the scoped catalog, with partial values.** A field restricted in mask mode for the actor (`authz::fields::masked`) is not removed: projected cells show its partial value by kind (`a•••@example.com`, `•••• 1234`), a `list` rollup masks each item, and a count is unchanged. A sum or average of a masked field does not resolve (`MaskedAggregate`): over one linked row it is the hidden value, and narrow rollups give it away. Trend and change-since lenses add nothing to a masked column. `Catalog::mask(column)` names a column's mask. Text search skips masked fields, so a match cannot say what one holds. Grouped summaries and filtered row pages refuse a masked field as a grouping, filter, sort or value aggregate (`Unsupported`); only its count is allowed. `query::reveal(db, scope, &Reveal, table, field, key)` reads one masked field of one record in full, through the same scoped source; a withheld or unrestricted field is `Forbidden`. It needs a sealed `Reveal` grant for that reader and field, which only `base/privacy` issues, after the capability, reason and Step-up, recording the reveal.
 
 ## Column paths
 

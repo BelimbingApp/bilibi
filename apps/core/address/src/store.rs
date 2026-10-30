@@ -6,7 +6,7 @@ use bilibi_authz::{authorize_key, restrictions_for};
 use bilibi_database::{Change, Error, MutationTransaction, Result};
 use bilibi_tenancy::Scope;
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use tokio_postgres::{types::ToSql, GenericClient};
 
 /// Attachments read for one address or one owner; more is a data defect.
@@ -24,8 +24,11 @@ impl ValidAddress {
     }
 }
 
-async fn fields(client: &impl GenericClient, scope: &Scope) -> Result<HashSet<String>> {
-    restrictions_for(client, scope, "addresses").await
+async fn fields(client: &impl GenericClient, scope: &Scope) -> Result<Restrictions> {
+    Ok(Restrictions {
+        fields: restrictions_for(client, scope, "addresses").await?,
+        masks: bilibi_authz::fields::masks_for(client, scope, "addresses").await?,
+    })
 }
 async fn raw(
     client: &impl GenericClient,
@@ -287,12 +290,16 @@ pub async fn billing_address(
         &format!("SELECT {COLUMNS} FROM addresses WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL"),
         &[&scope.tenant(), &attachment.address_id.get()],
     ).await? else { return Ok(None); };
-    let masked = bilibi_authz::fields::restricted_read(client, scope)
-        .await?
-        .remove("addresses")
-        .unwrap_or_default();
+    // A masked phone keeps its partial value, as on every other read.
+    let restrictions = Restrictions {
+        fields: bilibi_authz::fields::restricted_read(client, scope)
+            .await?
+            .remove("addresses")
+            .unwrap_or_default(),
+        masks: bilibi_authz::fields::masks_for_read(client, scope, "addresses").await?,
+    };
     Ok(Some(AttachedAddress {
-        address: Address::from_row(&row)?.redact(&masked),
+        address: Address::from_row(&row)?.redact(&restrictions),
         attachment,
     }))
 }
@@ -376,7 +383,7 @@ async fn lock_owner(
     }
     Ok(())
 }
-fn restricted_input(input: &AddressInput, masked: &HashSet<String>) -> Result<()> {
+fn restricted_input(input: &AddressInput, masked: &Restrictions) -> Result<()> {
     if input.phone.is_some() && masked.contains("phone") {
         return Err(Error::Forbidden);
     }

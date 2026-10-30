@@ -48,6 +48,7 @@ pub struct PdfOptions {
     data_version: Option<String>,
     password: Option<Secret>,
     owner_password: Option<Secret>,
+    retention: Option<crate::Retention>,
 }
 const UNVERSIONED: &str = "unversioned";
 impl PdfOptions {
@@ -79,6 +80,14 @@ impl PdfOptions {
             }
         }
         Ok(())
+    }
+    /// Publish the PDF records-grade, as `put_retained` does.
+    pub fn retained(mut self, retention: crate::Retention) -> Self {
+        self.retention = Some(retention);
+        self
+    }
+    pub(crate) fn retention(&self) -> Option<&crate::Retention> {
+        self.retention.as_ref()
     }
     pub(crate) fn passwords(&self) -> Option<(&Secret, Option<&Secret>)> {
         self.password

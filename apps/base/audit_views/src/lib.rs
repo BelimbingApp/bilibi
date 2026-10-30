@@ -17,6 +17,7 @@ mod actions;
 mod activity;
 mod diff;
 mod history;
+mod integrity;
 mod mutations;
 mod present;
 
@@ -90,6 +91,19 @@ inventory::submit! {
         operation: "actions", access: Access::Capability(LIST), framed: true,
     })
 }
+bilibi_menu::contribute!(
+    "base/audit_views",
+    bilibi_menu::MenuItem::page("admin.audit.integrity", "Verify audit log", integrity::PATH)
+        .under("admin.audit")
+        .requires(bilibi_menu::Requirement::Capability(LIST))
+        .order(30)
+);
+inventory::submit! {
+    Contribution::new(ROUTES, "base/audit_views.integrity", provenance!(), &Route {
+        method: Method::Get, path: integrity::PATH, service: "base/audit_views.integrity",
+        operation: "integrity", access: Access::OperatorCapability(LIST), framed: true,
+    })
+}
 inventory::submit! {
     Contribution::new(ROUTES, "base/audit_views.mutations", provenance!(), &Route {
         method: Method::Get, path: "/audit/mutations", service: "base/audit_views.mutations",
@@ -139,6 +153,11 @@ inventory::submit! {
                     boundary: services.get("base/database.mutations")?,
                     display: services.get("base/datetime.display")?,
                     locales: services.get("base/locale.locales")?,
+                }))))
+            } },
+            Service { id: "base/audit_views.integrity", factory: |services| {
+                Ok(Arc::new(PageService::<Scope, Error>(Arc::new(integrity::Pages {
+                    db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
                 }))))
             } },
             Service { id: "base/audit_views.mutations", factory: |services| {

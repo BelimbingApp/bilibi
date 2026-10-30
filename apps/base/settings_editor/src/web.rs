@@ -500,7 +500,7 @@ impl Editor {
                 };
                 if let Err(error) = result {
                     // Dropping the transaction rolls every step back.
-                    return self.refused(error, Some(field.editor.label));
+                    return self.refused(error, Some(field));
                 }
             }
             if let Err(error) = tx.commit().await {
@@ -535,7 +535,7 @@ impl Editor {
             if let Err(error) = self.require_change_step_up(scope, field).await {
                 return match error {
                     Error::StepUpRequired { .. } | Error::Unauthorized => Err(error),
-                    error => self.refused(error, Some(field.editor.label)),
+                    error => self.refused(error, Some(field)),
                 };
             }
         }
@@ -555,7 +555,7 @@ impl Editor {
                     .delete(&mut tx, scope, target, field.key)
                     .await
                 {
-                    return self.refused(error, Some(field.editor.label));
+                    return self.refused(error, Some(field));
                 }
             }
             if let Err(error) = tx.commit().await {
@@ -600,13 +600,14 @@ impl Editor {
                 self.flash(StatusKind::Error, message);
                 Ok(())
             }
-            error => self.refused(error, Some(field.editor.label)),
+            error => self.refused(error, Some(field)),
         }
     }
 
     /// A refused or failed write is a flash, never a page-clearing error; only
     /// a lost session propagates.
-    fn refused(&mut self, error: Error, label: Option<&str>) -> Result<()> {
+    fn refused(&mut self, error: Error, field: Option<&form::Field>) -> Result<()> {
+        let label = field.map(|field| field.editor.label);
         let message = match error {
             Error::Unauthorized => return Err(Error::Unauthorized),
             Error::Forbidden if self.picked.company().is_some() => COMPANY_ARCHIVED.to_owned(),
@@ -615,9 +616,16 @@ impl Editor {
                 self.pick(Picked::Global);
                 COMPANY_GONE.to_owned()
             }
-            Error::Invalid => match label {
-                Some(label) => format!("{label}: the value was refused; nothing was changed."),
-                None => UNAVAILABLE.to_owned(),
+            // A value its own definition accepts is refused by a rule over
+            // related settings: say which.
+            Error::Invalid => match (label, field) {
+                (Some(label), Some(field)) => {
+                    match self.core.settings.constraint_messages(field.key).first() {
+                        Some(rule) => format!("{label}: {rule} Nothing was changed."),
+                        None => format!("{label}: the value was refused; nothing was changed."),
+                    }
+                }
+                _ => UNAVAILABLE.to_owned(),
             },
             _ => UNAVAILABLE.to_owned(),
         };

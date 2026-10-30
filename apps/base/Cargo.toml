@@ -29,9 +29,11 @@ bilibi-module-registry = { path = "module_registry" }
 bilibi-notifications = { path = "notifications" }
 bilibi-party-ids = { path = "party_ids" }
 bilibi-perf = { path = "perf" }
+bilibi-personal-data = { path = "personal_data" }
 bilibi-picklists = { path = "picklists" }
 bilibi-ports = { path = "ports" }
 bilibi-principal-directory = { path = "principal_directory" }
+bilibi-privacy = { path = "privacy" }
 bilibi-queue = { path = "queue" }
 bilibi-records = { path = "records" }
 bilibi-reports = { path = "reports" }

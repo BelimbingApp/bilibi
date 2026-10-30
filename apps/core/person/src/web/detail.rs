@@ -10,6 +10,14 @@ use bilibi_ui::{
     ConfirmDialog, Fact, Facts, Field, Header, InlineChoice, InlineEdit, InlineField, InputKind,
     PageVariant, Restricted, SectionHeading,
 };
+use std::collections::BTreeMap;
+
+/// The reveal dialog of one masked contact: the reason typed so far and its errors.
+struct Reveal {
+    field: String,
+    reason: String,
+    errors: Vec<String>,
+}
 
 #[derive(Template)]
 #[template(path = "person_detail.html")]
@@ -35,6 +43,12 @@ pub(super) struct Detail {
     /// The person's name, the reviewed input and its plan code.
     pending_retire: Option<(String, Value, String)>,
     pub(super) notice: String,
+    reveal: Option<Reveal>,
+    /// Contacts revealed in this view (ADR 05), with the record version they
+    /// were read at. Never stored; a new view masks again, and a value is
+    /// shown only while the reader still may reveal it and the record has not
+    /// changed.
+    revealed: BTreeMap<String, (String, i64)>,
 }
 impl Detail {
     pub fn new(pages: Pages, id: PersonId, _framed: bool) -> Self {
@@ -45,6 +59,8 @@ impl Detail {
             statuses: CommitStates::default(),
             pending_retire: None,
             notice: String::new(),
+            reveal: None,
+            revealed: BTreeMap::new(),
         }
     }
     fn inline(
@@ -68,8 +84,27 @@ impl Detail {
         }
         field
     }
-    pub async fn contacts(&self, scope: &Scope, person: &Person, prefix: &str) -> Result<Html> {
+    /// The contact facts. `revealable` is the record page's own view: an
+    /// embedded panel shows masked contacts without the reveal control.
+    pub async fn contacts(
+        &self,
+        scope: &Scope,
+        person: &Person,
+        prefix: &str,
+        revealable: bool,
+    ) -> Result<Html> {
         let editable = person.retired_at.is_none() && self.pages.allowed(scope, UPDATE).await?;
+        let can_reveal = revealable
+            && self
+                .pages
+                .allowed(scope, bilibi_privacy::FIELD_REVEAL)
+                .await?;
+        let revealed = |key: &str| {
+            self.revealed
+                .get(key)
+                .filter(|(_, version)| can_reveal && *version == person.version)
+                .map(|(value, _)| value.as_str())
+        };
         let mut items = Vec::new();
         for (key, label, value) in [
             (
@@ -85,7 +120,26 @@ impl Detail {
         ] {
             items.push(Fact {
                 title: super::fields::get(key).label,
-                value: if person.restricted.iter().any(|r| r == key) {
+                value: if person.masked.iter().any(|m| m == key) {
+                    // A partial value, or the full one revealed in this view.
+                    let full = revealed(key);
+                    let shown = full.unwrap_or(value);
+                    let mut cell = Html::text(if shown.is_empty() { "—" } else { shown });
+                    if can_reveal && !shown.is_empty() && full.is_none() {
+                        cell.push(&render(bilibi_ui::IconButton {
+                            id: &format!("{prefix}-{key}-reveal"),
+                            kind: bilibi_ui::IconKind::Neutral,
+                            event: "open_reveal",
+                            name: "field",
+                            value: key,
+                            ..bilibi_ui::IconButton::new(
+                                "hero-eye",
+                                &format!("Reveal {}", label.to_lowercase()),
+                            )
+                        })?);
+                    }
+                    cell
+                } else if person.restricted.iter().any(|r| r == key) {
                     render(Restricted::new(format!("{prefix}-{key}-restricted")))?
                 } else {
                     render(InlineEdit {
@@ -249,7 +303,49 @@ impl Detail {
             body: identity,
             ..Card::default()
         })?;
-        let dialog = if let Some((name, _, _)) = &self.pending_retire {
+        let dialog = if let Some(reveal) = &self.reveal {
+            let mut actions = render(Button {
+                button_type: "button",
+                event: "close_reveal",
+                body: Html::text("Cancel"),
+                ..Button::default()
+            })?;
+            actions.push(&render(Button {
+                button_type: "submit",
+                variant: ButtonVariant::Primary,
+                body: Html::text("Reveal"),
+                ..Button::default()
+            })?);
+            let field = Field::in_form("reveal", "reason")
+                .id("person-reveal-reason")
+                .label("Why you need the full value")
+                .hint("A case or ticket reference. The reveal is recorded with it.")
+                .value(reveal.reason.clone())
+                .errors(reveal.errors.clone())
+                .required();
+            let title = format!(
+                "Reveal {}",
+                if reveal.field == "email" {
+                    "personal email"
+                } else {
+                    "personal phone"
+                }
+            );
+            render(bilibi_ui::Modal {
+                id: "person-reveal-modal",
+                title: &title,
+                cancel_event: "close_reveal",
+                description: "You see this contact masked. Revealing it shows the full value in this view only.",
+                body: render(bilibi_ui::Form {
+                    id: "person-reveal-form",
+                    event: "reveal",
+                    body: render(field)?,
+                    actions,
+                    ..bilibi_ui::Form::default()
+                })?,
+                ..bilibi_ui::Modal::default()
+            })?
+        } else if let Some((name, _, _)) = &self.pending_retire {
             render(ConfirmDialog {
             id: "person-retire-confirm", consequence: &format!("{name} will be retired."),
             detail: "Their details, history and affiliations are kept. The contact cannot be edited or linked again.",
@@ -262,7 +358,9 @@ impl Detail {
             person: &person,
             header,
             identity,
-            contacts: self.contacts(scope, &person, "person-contact").await?,
+            contacts: self
+                .contacts(scope, &person, "person-contact", true)
+                .await?,
             panels: self
                 .panels()
                 .into_iter()
@@ -299,12 +397,15 @@ impl Detail {
                     .and_then(|v| v.parse::<i64>().ok())
                     .ok_or(Error::Invalid)?;
                 let person = self.pages.persons.read(scope, self.id).await?;
-                // Never carry a restricted contact into a replacement input.
+                // Never carry a restricted contact into a replacement input: a
+                // masked one holds only its partial value. Left out, the owner
+                // keeps the stored value.
+                let masked = |key: &str| person.masked.iter().any(|m| m == key);
                 let mut identity = PersonInput {
+                    email: person.email.clone().filter(|_| !masked("email")),
+                    phone: person.phone.clone().filter(|_| !masked("phone")),
                     name: person.name,
                     kind: person.kind,
-                    email: person.email,
-                    phone: person.phone,
                 };
                 match field {
                     "name" => identity.name = submitted.into(),
@@ -434,6 +535,59 @@ impl Detail {
                     Err(ContractError::PlanExpired) => "The confirmation expired. Retire the contact again.".into(),
                     Err(_) => "The contact was not retired. Review your permission and reload before trying again.".into(),
                 };
+                }
+            }
+            "open_reveal" => {
+                let field = value["field"].as_str().unwrap_or_default();
+                if ["email", "phone"].contains(&field) {
+                    self.reveal = Some(Reveal {
+                        field: field.into(),
+                        reason: String::new(),
+                        errors: Vec::new(),
+                    });
+                }
+            }
+            "close_reveal" => self.reveal = None,
+            "reveal" => {
+                let Some(open) = self.reveal.take() else {
+                    return Ok(());
+                };
+                let reason = bilibi_ui::params::form_values(value, "reveal")
+                    .get("reason")
+                    .cloned()
+                    .unwrap_or_default();
+                let version = self.pages.persons.read(scope, self.id).await?.version;
+                // The privacy contract checks the capability, reason and Step-up
+                // and records the reveal before it answers.
+                match self
+                    .pages
+                    .contracts
+                    .submit(
+                        &self.pages.call(scope, credential, "reveal", "base.privacy.field.reveal"),
+                        json!({"table": "persons", "field": open.field, "record": self.id.get(), "reason": reason}),
+                    )
+                    .await
+                {
+                    Ok(result) => {
+                        let full = result["result"]["value"].as_str().unwrap_or_default().to_owned();
+                        self.revealed.insert(open.field, (full, version));
+                        self.notice =
+                            "Revealed for this view. The reveal is recorded with your reason."
+                                .into();
+                    }
+                    Err(ContractError::Backend(
+                        error @ (Error::Unauthorized | Error::StepUpRequired { .. }),
+                    )) => return Err(error),
+                    Err(ContractError::InvalidInput(_) | ContractError::Backend(Error::Invalid)) => {
+                        self.reveal = Some(Reveal {
+                            errors: vec!["Give a reason of up to 255 characters.".into()],
+                            reason,
+                            ..open
+                        });
+                    }
+                    Err(_) => {
+                        self.notice = "The contact could not be revealed. Your access may have changed; reload and try again.".into();
+                    }
                 }
             }
             // The host's success flash (a created contact) dismisses with this event.
