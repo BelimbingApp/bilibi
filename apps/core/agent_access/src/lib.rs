@@ -175,6 +175,7 @@ pub struct ConnectionSummary {
     pub observed_clients: BTreeMap<String, String>,
     pub expires_at: SystemTime,
     pub revoked_at: Option<SystemTime>,
+    pub created_at: SystemTime,
 }
 /// Form fields of a PKCE code redemption, as the host decodes them.
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -187,6 +188,30 @@ pub struct CodeExchange {
     pub resource: String,
 }
 
+// Revoke only the live, matching grants the person reviewed, in the approval transaction.
+async fn replace_connections(
+    sql: &Transaction<'_>,
+    tenant: i64,
+    user: i64,
+    name: &str,
+    ids: &[i64],
+) -> Result<Vec<Change>> {
+    let rows = sql.query(
+        "UPDATE core_agent_connections SET revoked_at=now(),updated_at=now() WHERE tenant_id=$1 AND user_id=$2 AND agent_id=$3 AND id=ANY($4) AND revoked_at IS NULL AND expires_at>now() RETURNING id",
+        &[&tenant, &user, &name, &ids],
+    ).await?;
+    Ok(rows
+        .iter()
+        .map(|row| {
+            change(
+                "agent_connection",
+                row.get(0),
+                json!({"revoked":false}),
+                json!({"revoked":true,"reason":"revoked by owner"}),
+            )
+        })
+        .collect())
+}
 /// `core/agent_access.grants`: the owner API behind the device, consent,
 /// token and connection pages and the host OAuth endpoints.
 pub struct AgentAccess {
@@ -377,8 +402,9 @@ impl AgentAccess {
         params: &AuthorizeParams,
         resource: &str,
         expires_at: SystemTime,
+        replace: &[i64],
     ) -> std::result::Result<String, OAuthError> {
-        self.authorize_reviewed(scope, params, resource, expires_at, None)
+        self.authorize_reviewed(scope, params, resource, expires_at, None, replace)
             .await
     }
     /// Keep the app's currently declared facts equal to what the person saw.
@@ -389,6 +415,7 @@ impl AgentAccess {
         resource: &str,
         expires_at: SystemTime,
         reviewed: Option<&AuthorizationRequest>,
+        replace: &[i64],
     ) -> std::result::Result<String, OAuthError> {
         self_service(scope)?;
         let request = self.authorization_request(params, resource).await?;
@@ -416,8 +443,10 @@ impl AgentAccess {
         let organisation = scope.actor().organisation().map(OrganisationId::get);
         let person = scope.actor().person().map(PersonId::get);
         let resource = resource.to_owned();
+        let replace = replace.to_vec();
         tx.mutate(move |sql| {
             Box::pin(async move {
+                let mut changes = replace_connections(sql, tenant, user, &request.client_name, &replace).await?;
                 let row = sql.query_one(
                     "INSERT INTO core_agent_connections(tenant_id,user_id,organisation_id,person_id,agent_id,client_id,resource,oauth_scope,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,date_trunc('second',$9::timestamptz)) RETURNING id,expires_at::text",
                     &[&tenant,&user,&organisation,&person,&request.client_name,&request.client_id,&resource,&OAUTH_SCOPE,&expires_at],
@@ -427,10 +456,11 @@ impl AgentAccess {
                     "INSERT INTO core_agent_authorization_codes(connection_id,code_hash,code_challenge,redirect_uri,expires_at) VALUES($1,$2,$3,$4,now()+make_interval(secs => $5::double precision)) RETURNING id,expires_at::text",
                     &[&connection,&code_hash,&request.code_challenge,&request.redirect_uri,&code_seconds],
                 ).await?;
-                Ok(((), vec![
+                changes.extend(vec![
                     change("agent_connection", connection, json!({}), json!({"agent_id":request.client_name,"client_id":request.client_id,"resource":resource,"oauth_scope":OAUTH_SCOPE,"expires_at":row.get::<_,String>(1)})),
                     change("agent_authorization_code", auth.get(0), json!({}), json!({"connection_id":connection,"redirect_uri":request.redirect_uri,"expires_at":auth.get::<_,String>(1)})),
-                ]))
+                ]);
+                Ok(((), changes))
             })
         })
         .await?;
@@ -578,6 +608,7 @@ impl AgentAccess {
         user_code: &str,
         decision: Decision,
         expires_at: SystemTime,
+        replace: &[i64],
     ) -> std::result::Result<(), OAuthError> {
         self_service(scope)?;
         future(expires_at)?;
@@ -608,6 +639,7 @@ impl AgentAccess {
         let (tenant, user) = (scope.tenant(), scope.user());
         let organisation = scope.actor().organisation().map(OrganisationId::get);
         let person = scope.actor().person().map(PersonId::get);
+        let replace = replace.to_vec();
         tx.mutate(move |sql| {
             Box::pin(async move {
                 if decision == Decision::Deny {
@@ -626,6 +658,7 @@ impl AgentAccess {
                         )],
                     ));
                 }
+                let mut changes = replace_connections(sql, tenant, user, &agent_id, &replace).await?;
                 let row = sql.query_one(
                     "INSERT INTO core_agent_connections(tenant_id,user_id,organisation_id,person_id,agent_id,expires_at) VALUES($1,$2,$3,$4,$5,date_trunc('second',$6::timestamptz)) RETURNING id,expires_at::text",
                     &[&tenant,&user,&organisation,&person,&agent_id,&expires_at],
@@ -636,13 +669,11 @@ impl AgentAccess {
                     &[&device_id, &connection],
                 )
                 .await?;
-                Ok((
-                    (),
-                    vec![
+                changes.extend(vec![
                         change("agent_connection", connection, json!({}), json!({"agent_id":agent_id,"client_id":CLIENT_ID,"expires_at":row.get::<_,String>(1)})),
                         change("agent_device", device_id, json!({"status":"pending"}), json!({"status":"approved","connection_id":connection})),
-                    ],
-                ))
+                    ]);
+                Ok(((), changes))
             })
         })
         .await?;
@@ -981,7 +1012,7 @@ impl AgentAccess {
         tx.commit().await?;
         Ok(())
     }
-    /// The person's own connections, newest first, including ended ones.
+    /// The person's own connections, live first and newest first within each group.
     pub async fn list_connections(
         &self,
         scope: &Scope,
@@ -990,7 +1021,7 @@ impl AgentAccess {
         let client = self.db.get().await?;
         let rows = client
             .query(
-                "SELECT id,agent_id,seen_agent_ids,expires_at,revoked_at,self_reported_agents,observed_clients FROM core_agent_connections WHERE tenant_id=$1 AND user_id=$2 ORDER BY id DESC",
+                "SELECT id,agent_id,seen_agent_ids,expires_at,revoked_at,self_reported_agents,observed_clients,created_at FROM core_agent_connections WHERE tenant_id=$1 AND user_id=$2 ORDER BY (revoked_at IS NULL AND expires_at>now()) DESC, id DESC",
                 &[&scope.tenant(), &scope.user()],
             )
             .await?;
@@ -1004,6 +1035,7 @@ impl AgentAccess {
                 revoked_at: row.get(4),
                 self_reported_agents: serde_json::from_value(row.get(5)).unwrap_or_default(),
                 observed_clients: serde_json::from_value(row.get(6)).unwrap_or_default(),
+                created_at: row.get(7),
             })
             .collect())
     }

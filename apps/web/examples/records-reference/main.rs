@@ -527,7 +527,7 @@ async fn agent_token(
     let start = access.start_device(CLIENT_ID, "records-reference").await?;
     let expiry = access.connection_expiry().await?;
     access
-        .decide(scope, &start.user_code, Decision::Approve, expiry)
+        .decide(scope, &start.user_code, Decision::Approve, expiry, &[])
         .await?;
     // Time travel on the disposable row: the client may poll now.
     db.get()
@@ -866,7 +866,9 @@ async fn mcp_token(
         state: None,
     };
     let expiry = access.connection_expiry().await?;
-    let code = access.authorize(scope, &params, &resource, expiry).await?;
+    let code = access
+        .authorize(scope, &params, &resource, expiry, &[])
+        .await?;
     let exchange = CodeExchange {
         code,
         client_id,
