@@ -89,16 +89,20 @@ pub struct Replay {
     pub pending: usize,
     /// The first event not looked at, when `limit` cut the batch short.
     pub next: Option<i64>,
+    /// Events the subscriber had no delivery for that a personal-data erasure
+    /// changed (ADR 05): no delivery is created for them, since their payload
+    /// no longer holds the facts the subscriber reads.
+    pub erased: usize,
 }
 impl Replay {
     pub fn to_json(&self) -> Value {
-        json!({"from": self.from, "through": self.through, "created": self.created, "pending": self.pending, "next": self.next})
+        json!({"from": self.from, "through": self.through, "created": self.created, "pending": self.pending, "next": self.next, "erased": self.erased})
     }
 }
 
 const SUBSCRIBERS: &str = "SELECT d.subscriber,count(*) FILTER (WHERE d.delivered_at IS NULL),count(*) FILTER (WHERE d.delivered_at IS NULL AND d.last_error IS NOT NULL),min(e.id) FILTER (WHERE d.delivered_at IS NULL) FROM base_events_deliveries d JOIN base_events e ON e.id=d.event_id WHERE e.tenant_id=$1 GROUP BY d.subscriber";
 const LAST_DELIVERED: &str = "SELECT DISTINCT ON (d.subscriber) d.subscriber,e.id,(extract(epoch FROM e.recorded_at)*1000000)::bigint,(extract(epoch FROM d.delivered_at)*1000000)::bigint FROM base_events_deliveries d JOIN base_events e ON e.id=d.event_id WHERE e.tenant_id=$1 AND d.delivered_at IS NOT NULL ORDER BY d.subscriber,e.id DESC";
-const MISSED: &str = "SELECT count(*),min(e.id) FROM base_events e WHERE e.tenant_id=$1 AND e.name=ANY($2) AND NOT EXISTS (SELECT 1 FROM base_events_deliveries d WHERE d.event_id=e.id AND d.subscriber=$3)";
+const MISSED: &str = "SELECT count(*),min(e.id) FROM base_events e WHERE e.tenant_id=$1 AND e.name=ANY($2) AND e.erased_at IS NULL AND NOT EXISTS (SELECT 1 FROM base_events_deliveries d WHERE d.event_id=e.id AND d.subscriber=$3)";
 
 fn instant(micros: i64) -> Result<Timestamp> {
     Timestamp::from_microsecond(micros).map_err(|_| Error::Internal)
@@ -283,18 +287,29 @@ impl Events {
             .require(scope, STEP_UP_REPLAY, &format!("subscriber:{key}"))
             .await?;
         let (first, through) = (review.from, review.through);
-        let (created, pending): (usize, Vec<(i64, String, String)>) = tx.mutate(move |sql| Box::pin(async move {
+        type Done = (usize, Vec<(i64, String, String)>, usize);
+        let (created, pending, erased): Done = tx.mutate(move |sql| Box::pin(async move {
+            // Share-locked so an erasure of these events waits, or has
+            // committed and stamped them; an erased event gets no delivery.
+            let live: Vec<i64> = sql.query(
+                "SELECT id FROM base_events WHERE id=ANY($1) AND erased_at IS NULL ORDER BY id FOR SHARE",
+                &[&ids],
+            ).await?.iter().map(|row| row.get(0)).collect();
             let created = sql.execute(
                 "INSERT INTO base_events_deliveries(event_id,subscriber) SELECT unnest($1::bigint[]),$2 ON CONFLICT DO NOTHING",
-                &[&ids, &key],
+                &[&live, &key],
             ).await? as usize;
+            let erased = sql.query_one(
+                "SELECT count(*) FROM base_events e WHERE e.id=ANY($1) AND e.erased_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM base_events_deliveries d WHERE d.event_id=e.id AND d.subscriber=$2)",
+                &[&ids, &key],
+            ).await?.get::<_, i64>(0) as usize;
             let pending: Vec<(i64, String, String)> = sql.query(
                 "SELECT e.id,e.publisher,e.subject FROM base_events e JOIN base_events_deliveries d ON d.event_id=e.id AND d.subscriber=$2 WHERE e.id=ANY($1) AND d.delivered_at IS NULL ORDER BY e.id",
                 &[&ids, &key],
             ).await?.iter().map(|row| (row.get(0), row.get(1), row.get(2))).collect();
             let change = Change { kind: "base/events.replay".into(), id: first.unwrap_or(1), old: Value::Null,
-                new: json!({"subscriber": key, "from": first, "through": through, "created": created, "pending": pending.len()}) };
-            Ok(((created, pending), vec![change]))
+                new: json!({"subscriber": key, "from": first, "through": through, "created": created, "pending": pending.len(), "erased": erased}) };
+            Ok(((created, pending, erased), vec![change]))
         })).await?;
         // Delivering a subject's last pending event walks its earlier ones first.
         let mut last = BTreeMap::new();
@@ -312,6 +327,7 @@ impl Events {
         Ok(Replay {
             created,
             pending: pending.len(),
+            erased,
             ..review
         })
     }
@@ -368,7 +384,8 @@ async fn batch(
         .collect();
     let next = (ids.len() as i64 > limit).then(|| ids.pop()).flatten();
     let row = client.query_one(
-        "SELECT count(*) FILTER (WHERE d.event_id IS NULL),count(*) FILTER (WHERE d.delivered_at IS NULL) FROM unnest($1::bigint[]) AS i(id) LEFT JOIN base_events_deliveries d ON d.event_id=i.id AND d.subscriber=$2",
+        "SELECT count(*) FILTER (WHERE d.event_id IS NULL AND e.erased_at IS NULL),count(*) FILTER (WHERE d.delivered_at IS NULL AND (d.event_id IS NOT NULL OR e.erased_at IS NULL)),count(*) FILTER (WHERE d.event_id IS NULL AND e.erased_at IS NOT NULL) \
+         FROM unnest($1::bigint[]) AS i(id) JOIN base_events e ON e.id=i.id LEFT JOIN base_events_deliveries d ON d.event_id=i.id AND d.subscriber=$2",
         &[&ids, &key],
     ).await?;
     let replay = Replay {
@@ -377,6 +394,7 @@ async fn batch(
         created: row.get::<_, i64>(0) as usize,
         pending: row.get::<_, i64>(1) as usize,
         next,
+        erased: row.get::<_, i64>(2) as usize,
     };
     Ok((replay, ids))
 }
