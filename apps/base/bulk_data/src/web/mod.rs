@@ -1,8 +1,9 @@
 //! The Imports pages (issue 133): `/imports` (the person's runs), `/imports/new`
 //! (choose what the rows are and the file) and `/imports/{id}` (map the
-//! columns, check, import, follow progress and read each row's result), and
-//! `/exports/{id}` (one CSV export: its state and the download); `/imports`
-//! lists the person's exports too. No
+//! columns, check, import, follow progress and read each row's result),
+//! `/exports/{id}` (one CSV export: its state and the download) and
+//! `/updates/{id}` (one bulk update: progress, Stop, each record's result).
+//! `/imports` lists the person's exports and bulk updates too. No
 //! Bilimbi counterpart; the list follows the Events page, which follows
 //! Bilimbi `Session.Web.IndexLive`, and the run reads first like a record.
 //!
@@ -13,6 +14,7 @@ mod detail;
 mod export;
 mod index;
 mod new;
+mod update;
 
 use crate::{BulkData, Run, RunState, CREATE, VIEW};
 use askama::Template;
@@ -158,6 +160,7 @@ impl Page<Scope, Error> for Pages {
             "new" => Some("New Import"),
             "detail" => Some("Import"),
             "export" => Some("Export"),
+            "update" => Some("Bulk update"),
             _ => None,
         }
     }
@@ -180,6 +183,12 @@ impl Page<Scope, Error> for Pages {
                 }
                 "export" => (
                     export::ExportPage::new(self.clone(), request.path)?
+                        .render(scope)
+                        .await?,
+                    None,
+                ),
+                "update" => (
+                    update::UpdatePage::new(self.clone(), request.path, request.query)?
                         .render(scope)
                         .await?,
                     None,
@@ -208,6 +217,11 @@ impl Page<Scope, Error> for Pages {
                     request.query,
                 )?),
                 "export" => Box::new(export::ExportPage::new(self.clone(), request.path)?),
+                "update" => Box::new(update::UpdatePage::new(
+                    self.clone(),
+                    request.path,
+                    request.query,
+                )?),
                 _ => return Ok(None),
             }))
         })
@@ -238,6 +252,10 @@ inventory::submit! { Contribution::new(ROUTES, "base/bulk_data.export", provenan
     method: Method::Get, path: "/exports/{id}", service: PAGES, operation: "export",
     access: Access::Capability(VIEW), framed: true,
 }) }
+inventory::submit! { Contribution::new(ROUTES, "base/bulk_data.update", provenance!(), &Route {
+    method: Method::Get, path: "/updates/{id}", service: PAGES, operation: "update",
+    access: Access::Capability(VIEW), framed: true,
+}) }
 inventory::submit! { Contribution::new(DOWNLOADS, "base/bulk_data.export-file", provenance!(), &Download {
     path: "/exports/{id}/file", service: EXPORT_FILES, operation: "export-file", access: Access::Capability(VIEW),
 }) }
@@ -248,6 +266,7 @@ inventory::submit! { Contribution::new(PAGE_WRITES, PAGES, provenance!(), &PageW
         ("start", "base.bulk_data.import.start"),
         ("cancel", "base.bulk_data.import.cancel"),
         ("save_mapping", "base.bulk_data.mapping.save"),
+        ("cancel_update", "base.bulk_data.update.cancel"),
     ],
     pending: Pending::Events { events: &["receive"], reason: "Receiving a CSV stores it as a private artifact and opens its run: Artifacts takes bytes outside a contract, whose input is bounded at 1 MiB. Agent-supplied files come later (issue 133)." },
 }) }

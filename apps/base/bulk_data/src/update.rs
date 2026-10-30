@@ -1,0 +1,1002 @@
+//! Bulk updates (issue 133): one field set on many records of one record
+//! type, the records ticked on a list or every record its filters match, each
+//! through the type's own update contract as the person who started it. No
+//! Bilimbi or Belimbing counterpart.
+//!
+//! A page (or an agent) starts an update with the field, its value and the
+//! selection. A queued job, as that person (ADR 10), first resolves the
+//! records once, with the version each has then; the filter's values are
+//! dropped once resolved. It then writes each record in its own short
+//! transaction (`Execution::begin`) with the record's result beside it: it
+//! reads the record through the owner's read, keeps the fields it does not
+//! set, and calls the owner's update with the resolved version, so a record
+//! changed since is refused by the owner's version fence and reported, never
+//! overwritten. The type's bulk-update capability is checked again for every
+//! record. A pass works in bounded slices and queues its own continuation
+//! from the next unrecorded record, so a retried or resumed attempt never
+//! writes a record twice. Cancelling keeps what was written.
+use crate::export::{maybe_stamp, stamp};
+use crate::import::{bounded, error_of, refusal, text_id};
+use crate::store::instant;
+use crate::{
+    mapping::convert, record::Registered, refused, BulkData, Counts, Field, Outcome, WriteError,
+    UPDATE_MAX_RECORDS, VIEW,
+};
+use bilibi_agent_api::Error as ContractError;
+use bilibi_database::{Change, Error, MutationTransaction, Result};
+use bilibi_notifications::Notice;
+use bilibi_queue::execution::{Execution, Handler, HandlerFuture, Outcome as JobOutcome};
+use bilibi_tenancy::Scope;
+use jiff::Timestamp;
+use serde::Serialize;
+use serde_json::{json, Map, Value};
+use std::{
+    collections::HashSet,
+    sync::Arc,
+    time::{Duration, Instant},
+};
+use tokio_postgres::{GenericClient, Row};
+
+pub(crate) const SERVICE: &str = "base/bulk_data.update-job";
+pub(crate) const WORKER: &str = "base/bulk_data-update";
+/// How long one attempt works before it queues its continuation.
+const SLICE: Duration = Duration::from_secs(120);
+/// Records asked of the list contract per page while resolving a filter.
+const PAGE: i64 = 100;
+const COLUMNS: &str = "id,record_type,company_id,field,value,chosen,filter,ids,jsonb_array_length(targets) AS records,state,next_row,error,job_id,trace_id,version,floor(extract(epoch FROM created_at))::bigint AS created,floor(extract(epoch FROM finished_at))::bigint AS finished";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UpdateState {
+    /// The job is finding the records, once.
+    Resolving,
+    /// The job is updating the records.
+    Running,
+    Completed,
+    /// Stopped by its person; records already updated stay.
+    Cancelled,
+    /// It ended before updating anything; `error` says why.
+    Failed,
+}
+impl UpdateState {
+    fn parse(text: &str) -> Result<Self> {
+        Ok(match text {
+            "resolving" => Self::Resolving,
+            "running" => Self::Running,
+            "completed" => Self::Completed,
+            "cancelled" => Self::Cancelled,
+            "failed" => Self::Failed,
+            _ => return Err(Error::Internal),
+        })
+    }
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Resolving => "resolving",
+            Self::Running => "running",
+            Self::Completed => "completed",
+            Self::Cancelled => "cancelled",
+            Self::Failed => "failed",
+        }
+    }
+    /// Its job still has work to do.
+    pub fn working(self) -> bool {
+        matches!(self, Self::Resolving | Self::Running)
+    }
+}
+
+/// One bulk update, as its person reads it.
+#[derive(Clone, Debug, Serialize)]
+pub struct UpdateRun {
+    pub id: i64,
+    pub record_type: String,
+    #[serde(skip)]
+    pub company: i64,
+    /// The field set, and the value it is set to.
+    pub field: String,
+    pub value: Value,
+    /// How the records were chosen: `selected` ticked records, or every
+    /// record the list's filters matched.
+    pub selection: &'static str,
+    /// The records found when the job started; `None` until then.
+    pub records: Option<i32>,
+    #[serde(skip)]
+    filter: Option<Value>,
+    #[serde(skip)]
+    ids: Option<Vec<String>>,
+    pub state: UpdateState,
+    /// Records done so far.
+    pub progress: i32,
+    /// Results so far: updated, left as they were (already set), or not
+    /// updated (`create` is always 0).
+    pub counts: Counts,
+    pub error: Option<String>,
+    #[serde(skip)]
+    pub job_id: Option<i64>,
+    /// Its job ended without finishing (its person lost access, or every
+    /// attempt failed): cancel it and start again.
+    pub stopped: bool,
+    pub trace_id: Option<String>,
+    pub version: i64,
+    #[serde(serialize_with = "stamp")]
+    pub created_at: Timestamp,
+    #[serde(serialize_with = "maybe_stamp")]
+    pub finished_at: Option<Timestamp>,
+}
+impl UpdateRun {
+    fn from_row(row: &Row) -> Result<Self> {
+        let ids: Option<Value> = row.get("ids");
+        let filter: Option<Value> = row.get("filter");
+        Ok(Self {
+            id: row.get("id"),
+            record_type: row.get("record_type"),
+            company: row.get("company_id"),
+            field: row.get("field"),
+            value: row.get("value"),
+            selection: if row.get::<_, &str>("chosen") == "selected" {
+                "selected"
+            } else {
+                "filter"
+            },
+            records: row.get("records"),
+            filter,
+            ids: ids
+                .map(serde_json::from_value)
+                .transpose()
+                .map_err(|_| Error::Internal)?,
+            state: UpdateState::parse(row.get("state"))?,
+            progress: row.get("next_row"),
+            counts: Counts::default(),
+            error: row.get("error"),
+            job_id: row.get("job_id"),
+            stopped: false,
+            trace_id: row.get("trace_id"),
+            version: row.get("version"),
+            created_at: instant(row.get("created")),
+            finished_at: row.get::<_, Option<i64>>("finished").map(instant),
+        })
+    }
+    /// Content-free audit evidence: never the filter's values.
+    fn evidence(&self) -> Value {
+        json!({"record_type": self.record_type, "field": self.field, "records": self.records, "done": self.progress, "state": self.state.as_str(), "version": self.version})
+    }
+}
+
+/// One record's result.
+#[derive(Clone, Debug, Serialize)]
+pub struct UpdateRow {
+    pub row: i32,
+    pub record_id: String,
+    pub outcome: Outcome,
+    pub message: Option<String>,
+}
+
+/// The person's own update.
+pub(crate) async fn load(
+    client: &impl GenericClient,
+    scope: &Scope,
+    id: i64,
+    lock: bool,
+) -> Result<UpdateRun> {
+    let sql = format!(
+        "SELECT {COLUMNS} FROM base_bulk_data_updates WHERE tenant_id=$1 AND id=$2 AND started_by=$3{}",
+        if lock { " FOR UPDATE" } else { "" }
+    );
+    client
+        .query_opt(&sql, &[&scope.tenant(), &id, &scope.user()])
+        .await?
+        .map(|row| UpdateRun::from_row(&row))
+        .transpose()?
+        .ok_or(Error::NotFound)
+}
+
+/// The records an update resolved, each with its version then; read once
+/// per attempt, not with every load.
+async fn targets(
+    client: &impl GenericClient,
+    scope: &Scope,
+    id: i64,
+) -> Result<Vec<(String, Option<i64>)>> {
+    let row = client
+        .query_one(
+            "SELECT targets FROM base_bulk_data_updates WHERE tenant_id=$1 AND id=$2 AND started_by=$3",
+            &[&scope.tenant(), &id, &scope.user()],
+        )
+        .await?;
+    match row.get::<_, Option<Value>>(0) {
+        Some(targets) => serde_json::from_value(targets).map_err(|_| Error::Internal),
+        None => Ok(Vec::new()),
+    }
+}
+
+async fn count(client: &impl GenericClient, tenant: i64, run: &mut UpdateRun) -> Result<()> {
+    for row in client
+        .query(
+            "SELECT outcome, count(*) FROM base_bulk_data_update_rows WHERE tenant_id=$1 AND update_id=$2 GROUP BY outcome",
+            &[&tenant, &run.id],
+        )
+        .await?
+    {
+        let n: i64 = row.get(1);
+        match Outcome::parse(row.get(0)) {
+            Some(Outcome::Update) => run.counts.update = n,
+            Some(Outcome::Skip) => run.counts.skip = n,
+            Some(Outcome::Error) => run.counts.error = n,
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// Locks the update and answers how many records are done, while it is
+/// still running.
+async fn running(tx: &MutationTransaction<'_>, scope: &Scope, id: i64) -> Result<Option<i32>> {
+    let row = tx
+        .sql()
+        .query_opt(
+            "SELECT state, next_row FROM base_bulk_data_updates WHERE tenant_id=$1 AND id=$2 AND started_by=$3 FOR UPDATE",
+            &[&scope.tenant(), &id, &scope.user()],
+        )
+        .await?
+        .ok_or(Error::NotFound)?;
+    Ok((row.get::<_, &str>(0) == "running").then(|| row.get(1)))
+}
+
+/// What the bulk update was asked to take.
+pub(crate) enum Chosen<'a> {
+    /// Ticked records, by id.
+    Ids(&'a [String]),
+    /// The list contract's filters, without `page` or `page_size`.
+    Filter(&'a Value),
+}
+
+/// A refusal in words: the update ends without updating anything.
+struct Failed(String);
+
+/// An id as the owner's contracts take it: a number when it is one.
+fn typed(id: &str) -> Value {
+    id.parse::<i64>().map_or_else(|_| json!(id), Value::from)
+}
+
+impl BulkData {
+    fn updatable(
+        &self,
+        key: &str,
+    ) -> std::result::Result<(&Registered, &'static crate::BulkUpdate), WriteError> {
+        let registered = self.registered(key)?;
+        let bulk = registered
+            .definition
+            .bulk_update
+            .as_ref()
+            .ok_or_else(|| refused("record_type", "cannot be updated in bulk"))?;
+        Ok((registered, bulk))
+    }
+
+    /// Whether the person may update this record type in bulk: its
+    /// bulk-update capability and the Imports pages, where updates are
+    /// followed. Pages ask before offering it.
+    pub async fn may_update(
+        &self,
+        client: &impl GenericClient,
+        scope: &Scope,
+        key: &str,
+    ) -> Result<bool> {
+        let Ok((_, bulk)) = self.updatable(key) else {
+            return Ok(false);
+        };
+        let held = bilibi_authz::effective_capabilities(client, scope).await?;
+        Ok(held.contains(VIEW) && held.contains(bulk.capability))
+    }
+
+    /// The fields this person may set in bulk on a record type: those the
+    /// owner offers, less any restricted for them. Empty when they may not.
+    pub async fn update_fields(
+        &self,
+        client: &impl GenericClient,
+        scope: &Scope,
+        key: &str,
+    ) -> Result<Vec<Field>> {
+        if !self.may_update(client, scope, key).await? {
+            return Ok(Vec::new());
+        }
+        let Ok((registered, _)) = self.updatable(key) else {
+            return Ok(Vec::new());
+        };
+        let restricted =
+            bilibi_authz::restrictions_for(client, scope, registered.definition.table).await?;
+        Ok(registered
+            .bulk_fields
+            .iter()
+            .filter(|field| !restricted.contains(&field.name))
+            .cloned()
+            .collect())
+    }
+
+    /// Checks an update request before it starts, and answers the value as
+    /// the update contract takes it.
+    pub(crate) async fn ready_update(
+        &self,
+        client: &(impl GenericClient + Sync),
+        scope: &Scope,
+        record_type: &str,
+        field: &str,
+        value: &str,
+        chosen: &Chosen<'_>,
+    ) -> std::result::Result<Value, WriteError> {
+        let (_, bulk) = self.updatable(record_type)?;
+        bilibi_authz::authorize_key(client, scope, VIEW).await?;
+        bilibi_authz::authorize_key(client, scope, bulk.capability).await?;
+        crate::own_company(scope, "update records in bulk")?;
+        let offered = self.update_fields(client, scope, record_type).await?;
+        let Some(field) = offered.iter().find(|offered| offered.name == field) else {
+            return Err(refused(
+                "field",
+                "is not a field you may set on these records",
+            ));
+        };
+        let value = match convert(field, value) {
+            Ok(Some(value)) => value,
+            Ok(None) => return Err(refused("value", "give the value to set")),
+            Err(message) => return Err(refused("value", &message)),
+        };
+        let max = self
+            .settings
+            .get_global(client, UPDATE_MAX_RECORDS)
+            .await?
+            .as_i64()
+            .ok_or(Error::Internal)?;
+        match chosen {
+            Chosen::Ids(ids) => {
+                if ids.is_empty() || ids.len() as i64 > max {
+                    return Err(refused("ids", &format!("tick between 1 and {max} records")));
+                }
+                let mut seen = HashSet::new();
+                if ids
+                    .iter()
+                    .any(|id| id.trim().is_empty() || id.len() > 100 || !seen.insert(id.as_str()))
+                {
+                    return Err(refused("ids", "name each record once"));
+                }
+            }
+            Chosen::Filter(filter) => {
+                let Some(object) = filter.as_object() else {
+                    return Err(refused("filter", "must be an object of the list's filters"));
+                };
+                if object.contains_key("page") || object.contains_key("page_size") {
+                    return Err(refused(
+                        "filter",
+                        "names page or page_size, which the update sets itself",
+                    ));
+                }
+                let list = self
+                    .jobs
+                    .readable(bulk.list)
+                    .map_err(|_| WriteError::Backend(Error::Internal))?;
+                let mut paged = (*filter).clone();
+                paged["page"] = json!(1);
+                paged["page_size"] = json!(PAGE);
+                if let Err(errors) = bilibi_agent_api::schema::validate(&list.input, &paged) {
+                    return Err(WriteError::Invalid(
+                        errors
+                            .into_iter()
+                            .map(|(path, messages)| (format!("filter.{path}"), messages))
+                            .collect(),
+                    ));
+                }
+            }
+        }
+        Ok(value)
+    }
+
+    /// Opens an update and queues its job, on the caller's transaction.
+    pub(crate) async fn start_update(
+        &self,
+        tx: &mut MutationTransaction<'_>,
+        scope: &Scope,
+        record_type: &str,
+        field: &str,
+        value: &str,
+        chosen: &Chosen<'_>,
+    ) -> std::result::Result<UpdateRun, WriteError> {
+        let value = self
+            .ready_update(tx.sql(), scope, record_type, field, value, chosen)
+            .await?;
+        let (registered, _) = self.updatable(record_type)?;
+        let company = crate::own_company(scope, "update records in bulk")?.get();
+        let (tenant, user, kind, field) = (
+            scope.tenant(),
+            scope.user(),
+            registered.key,
+            field.to_owned(),
+        );
+        let (chosen, filter, ids) = match chosen {
+            Chosen::Ids(ids) => ("selected", None, Some(json!(ids))),
+            Chosen::Filter(filter) => ("filter", Some((*filter).clone()), None),
+        };
+        let trace = tx.context().trace_id.clone();
+        let opened = tx
+            .mutate(move |sql| {
+                Box::pin(async move {
+                    let row = sql.query_one(&format!("INSERT INTO base_bulk_data_updates(tenant_id,company_id,record_type,started_by,field,value,chosen,filter,ids,trace_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING {COLUMNS}"), &[&tenant, &company, &kind, &user, &field, &value, &chosen, &filter, &ids, &trace]).await?;
+                    let run = UpdateRun::from_row(&row)?;
+                    Ok((run.clone(), vec![Change { kind: "base/bulk_data.update".into(), id: run.id, old: Value::Null, new: run.evidence() }]))
+                })
+            })
+            .await?;
+        let job = self
+            .queue
+            .enqueue_for(tx, scope, WORKER, json!({"update": opened.id}))
+            .await?;
+        let id = opened.id;
+        let old = opened.evidence();
+        let run = tx
+            .mutate(move |sql| {
+                Box::pin(async move {
+                    let row = sql.query_one(&format!("UPDATE base_bulk_data_updates SET job_id=$3,version=version+1,updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2 RETURNING {COLUMNS}"), &[&tenant, &id, &job.id()]).await?;
+                    let run = UpdateRun::from_row(&row)?;
+                    Ok((run.clone(), vec![Change { kind: "base/bulk_data.update".into(), id, old, new: run.evidence() }]))
+                })
+            })
+            .await?;
+        Ok(run)
+    }
+
+    /// Checks that the person's update may be stopped.
+    pub(crate) async fn cancellable_update(
+        &self,
+        client: &impl GenericClient,
+        scope: &Scope,
+        id: i64,
+        version: i64,
+        lock: bool,
+    ) -> std::result::Result<UpdateRun, WriteError> {
+        bilibi_authz::authorize_key(client, scope, VIEW).await?;
+        let run = load(client, scope, id, lock).await?;
+        let (_, bulk) = self.updatable(&run.record_type)?;
+        bilibi_authz::authorize_key(client, scope, bulk.capability).await?;
+        if run.version != version {
+            return Err(WriteError::Stale);
+        }
+        if !run.state.working() {
+            return Err(refused("update_id", "has already ended"));
+        }
+        Ok(run)
+    }
+
+    /// Stops the person's update; records already updated stay.
+    pub(crate) async fn cancel_update(
+        &self,
+        tx: &mut MutationTransaction<'_>,
+        scope: &Scope,
+        id: i64,
+        version: i64,
+    ) -> std::result::Result<UpdateRun, WriteError> {
+        let old = self
+            .cancellable_update(tx.sql(), scope, id, version, true)
+            .await?;
+        let tenant = scope.tenant();
+        let run = tx
+            .mutate(move |sql| {
+                Box::pin(async move {
+                    let row = sql.query_one(&format!("UPDATE base_bulk_data_updates SET state='cancelled',filter=NULL,ids=NULL,finished_at=clock_timestamp(),version=version+1,updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2 RETURNING {COLUMNS}"), &[&tenant, &id]).await?;
+                    let run = UpdateRun::from_row(&row)?;
+                    Ok((run.clone(), vec![Change { kind: "base/bulk_data.update".into(), id, old: old.evidence(), new: run.evidence() }]))
+                })
+            })
+            .await?;
+        Ok(run)
+    }
+
+    /// The person's own update, with its counts.
+    pub async fn update(
+        &self,
+        client: &impl GenericClient,
+        scope: &Scope,
+        id: i64,
+    ) -> Result<UpdateRun> {
+        bilibi_authz::authorize_key(client, scope, VIEW).await?;
+        let mut run = load(client, scope, id, false).await?;
+        count(client, scope.tenant(), &mut run).await?;
+        if let (true, Some(job)) = (run.state.working(), run.job_id) {
+            run.stopped = bilibi_queue::store::states(client, scope.tenant(), &[job])
+                .await?
+                .iter()
+                .any(|status| status.state.terminal());
+        }
+        Ok(run)
+    }
+
+    /// The person's newest updates, with their counts.
+    pub async fn updates(
+        &self,
+        client: &impl GenericClient,
+        scope: &Scope,
+        limit: i64,
+    ) -> Result<Vec<UpdateRun>> {
+        bilibi_authz::authorize_key(client, scope, VIEW).await?;
+        let mut runs = Vec::new();
+        for row in client
+            .query(
+                &format!("SELECT {COLUMNS} FROM base_bulk_data_updates WHERE tenant_id=$1 AND started_by=$2 ORDER BY id DESC LIMIT $3"),
+                &[&scope.tenant(), &scope.user(), &limit.clamp(1, 100)],
+            )
+            .await?
+        {
+            let mut run = UpdateRun::from_row(&row)?;
+            count(client, scope.tenant(), &mut run).await?;
+            runs.push(run);
+        }
+        Ok(runs)
+    }
+
+    /// One page of an update's results in record order, and how many there
+    /// are, optionally only one outcome.
+    pub async fn update_rows(
+        &self,
+        client: &impl GenericClient,
+        scope: &Scope,
+        id: i64,
+        outcome: Option<Outcome>,
+        offset: i64,
+        limit: i64,
+    ) -> Result<(Vec<UpdateRow>, i64)> {
+        let run = self.update(client, scope, id).await?;
+        let outcome = outcome.map(Outcome::as_str);
+        let total: i64 = client
+            .query_one(
+                "SELECT count(*) FROM base_bulk_data_update_rows WHERE tenant_id=$1 AND update_id=$2 AND ($3::text IS NULL OR outcome=$3)",
+                &[&scope.tenant(), &run.id, &outcome],
+            )
+            .await?
+            .get(0);
+        let rows = client
+            .query(
+                "SELECT row_number,record_id,outcome,message FROM base_bulk_data_update_rows WHERE tenant_id=$1 AND update_id=$2 AND ($3::text IS NULL OR outcome=$3) ORDER BY row_number OFFSET $4 LIMIT $5",
+                &[&scope.tenant(), &run.id, &outcome, &offset.max(0), &limit.clamp(1, 300)],
+            )
+            .await?
+            .iter()
+            .map(|row| {
+                Ok(UpdateRow {
+                    row: row.get(0),
+                    record_id: row.get(1),
+                    outcome: Outcome::parse(row.get(2)).ok_or(Error::Internal)?,
+                    message: row.get(3),
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok((rows, total))
+    }
+
+    /// The job's work: resolve the records once, then update them in
+    /// bounded slices.
+    pub(crate) async fn work_update(&self, execution: &Execution, id: i64) -> Result<()> {
+        let scope = execution.scope().ok_or(Error::Forbidden)?.clone();
+        if scope.principal().is_some() {
+            return Err(Error::Forbidden);
+        }
+        let mut object = self.db.get().await?;
+        let client: &mut tokio_postgres::Client = &mut object;
+        let mut run = load(&*client, &scope, id, false).await?;
+        let Ok((registered, bulk)) = self.updatable(&run.record_type) else {
+            return self
+                .end_update(
+                    execution,
+                    client,
+                    &scope,
+                    id,
+                    Err(Failed(
+                        "This kind of record can no longer be updated in bulk.".into(),
+                    )),
+                )
+                .await;
+        };
+        if run.state == UpdateState::Resolving {
+            match self
+                .resolve(execution, client, &scope, registered, bulk, &run)
+                .await?
+            {
+                Ok(targets) => {
+                    let tenant = scope.tenant();
+                    let mut tx = execution
+                        .begin(client, "base.bulk_data.update.resolve")
+                        .await?;
+                    let old = load(tx.sql(), &scope, id, true).await?;
+                    if old.state != UpdateState::Resolving {
+                        return Ok(());
+                    }
+                    let targets = json!(targets);
+                    let old_evidence = old.evidence();
+                    tx.mutate(move |sql| {
+                        Box::pin(async move {
+                            let row = sql.query_one(&format!("UPDATE base_bulk_data_updates SET targets=$3,filter=NULL,ids=NULL,state='running',version=version+1,updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2 RETURNING {COLUMNS}"), &[&tenant, &id, &targets]).await?;
+                            let run = UpdateRun::from_row(&row)?;
+                            Ok(((), vec![Change { kind: "base/bulk_data.update".into(), id, old: old_evidence, new: run.evidence() }]))
+                        })
+                    })
+                    .await?;
+                    tx.commit().await?;
+                    self.wake(tenant, scope.user());
+                    run = load(&*client, &scope, id, false).await?;
+                }
+                Err(failed) => {
+                    return self
+                        .end_update(execution, client, &scope, id, Err(failed))
+                        .await
+                }
+            }
+        }
+        if run.state != UpdateState::Running {
+            return Ok(());
+        }
+        let fields: Vec<Field> = registered.bulk_fields.clone();
+        let targets = targets(&*client, &scope, id).await?;
+        let started = Instant::now();
+        let mut next = usize::try_from(run.progress).map_err(|_| Error::Internal)?;
+        while next < targets.len() && started.elapsed() < SLICE {
+            let (record, version) = targets[next].clone();
+            let row = next as i32 + 1;
+            if !self
+                .write_one(
+                    execution, client, &scope, registered, bulk, &fields, &run, row, &record,
+                    version,
+                )
+                .await?
+            {
+                return Ok(());
+            }
+            next += 1;
+        }
+        if next < targets.len() {
+            self.continue_update(execution, client, &scope, id).await
+        } else {
+            self.end_update(execution, client, &scope, id, Ok(())).await
+        }
+    }
+
+    /// The records the update takes, each with its version now, or why it
+    /// cannot start, in words.
+    async fn resolve(
+        &self,
+        execution: &Execution,
+        client: &tokio_postgres::Client,
+        scope: &Scope,
+        registered: &Registered,
+        bulk: &crate::BulkUpdate,
+        run: &UpdateRun,
+    ) -> Result<std::result::Result<Vec<(String, Option<i64>)>, Failed>> {
+        for capability in [VIEW, bulk.capability] {
+            match bilibi_authz::authorize_key(client, scope, capability).await {
+                Ok(()) => {}
+                Err(Error::Forbidden | Error::Unauthorized) => {
+                    return Ok(Err(Failed(
+                        "You no longer have permission to update these records.".into(),
+                    )))
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        let max = self
+            .settings
+            .get_global(client, UPDATE_MAX_RECORDS)
+            .await?
+            .as_i64()
+            .ok_or(Error::Internal)?;
+        let mut targets = Vec::new();
+        if let Some(ids) = &run.ids {
+            for id in ids {
+                let mut input = Map::new();
+                input.insert(bulk.get_id.into(), typed(id));
+                let version = match self
+                    .jobs
+                    .read(client, execution, bulk.get, &Value::Object(input))
+                    .await
+                {
+                    Ok(answer) => answer["result"]["version"].as_i64(),
+                    Err(error) => {
+                        if refusal(&error, &[]).is_none() {
+                            return Err(error_of(error));
+                        }
+                        // Not found, or not theirs: reported on its row.
+                        None
+                    }
+                };
+                targets.push((id.clone(), version));
+            }
+        } else {
+            let filter = run.filter.clone().ok_or(Error::Internal)?;
+            let id_property = registered.definition.import.id;
+            let mut seen = HashSet::new();
+            for page in 1_i64.. {
+                let mut input = filter.clone();
+                input["page"] = json!(page);
+                input["page_size"] = json!(PAGE);
+                let listed = match self.jobs.read(client, execution, bulk.list, &input).await {
+                    Ok(listed) => listed,
+                    Err(error) => {
+                        if refusal(&error, &[]).is_none() {
+                            return Err(error_of(error));
+                        }
+                        return Ok(Err(Failed(
+                            "The list could not be read with these filters.".into(),
+                        )));
+                    }
+                };
+                let records = listed["result"].as_array().ok_or(Error::Internal)?;
+                for record in records {
+                    let id = record
+                        .get(id_property)
+                        .and_then(text_id)
+                        .ok_or(Error::Internal)?;
+                    if seen.insert(id.clone()) {
+                        targets.push((id, record["version"].as_i64()));
+                    }
+                }
+                if targets.len() as i64 > max {
+                    return Ok(Err(Failed(format!(
+                        "More than {max} records match, the most one bulk update takes. Narrow the filters and start again."
+                    ))));
+                }
+                if (records.len() as i64) < PAGE {
+                    break;
+                }
+            }
+        }
+        if targets.is_empty() {
+            return Ok(Err(Failed(
+                "No records matched, so nothing was changed.".into(),
+            )));
+        }
+        Ok(Ok(targets))
+    }
+
+    /// One record: its current values read through the owner, then the
+    /// owner's update with the resolved version and the result beside it,
+    /// in one transaction. False when the update was cancelled or ended.
+    #[allow(clippy::too_many_arguments)]
+    async fn write_one(
+        &self,
+        execution: &Execution,
+        client: &mut tokio_postgres::Client,
+        scope: &Scope,
+        registered: &Registered,
+        bulk: &crate::BulkUpdate,
+        fields: &[Field],
+        run: &UpdateRun,
+        row: i32,
+        record: &str,
+        version: Option<i64>,
+    ) -> Result<bool> {
+        // What the row will do, read before the write's transaction.
+        let planned: std::result::Result<Option<Value>, String> = match version {
+            None => Err("Not found, or not a record you may change.".into()),
+            Some(version) => {
+                let mut input = Map::new();
+                input.insert(bulk.get_id.into(), typed(record));
+                match self
+                    .jobs
+                    .read(&*client, execution, bulk.get, &Value::Object(input))
+                    .await
+                {
+                    Ok(answer) => {
+                        let current = &answer["result"];
+                        if current.get(&run.field) == Some(&run.value) {
+                            Ok(None)
+                        } else {
+                            let mut values = Map::new();
+                            for name in &registered.bulk_update_fields {
+                                if let Some(value) = current.get(name).filter(|value| {
+                                    !value.is_null() && value.get("restricted").is_none()
+                                }) {
+                                    values.insert(name.clone(), value.clone());
+                                }
+                            }
+                            values.insert(run.field.clone(), run.value.clone());
+                            let mut input = Map::new();
+                            input.insert(bulk.update_id.into(), typed(record));
+                            input.insert(bulk.update_version.into(), json!(version));
+                            if bulk.update_fields.is_empty() {
+                                input.extend(values);
+                            } else {
+                                input.insert(bulk.update_fields.into(), Value::Object(values));
+                            }
+                            Ok(Some(Value::Object(input)))
+                        }
+                    }
+                    Err(error) => match refusal(&error, fields) {
+                        Some(message) => Err(message),
+                        None => return Err(error_of(error)),
+                    },
+                }
+            }
+        };
+        let tenant = scope.tenant();
+        let mut tx = execution.begin(client, bulk.update).await?;
+        let Some(progress) = running(&tx, scope, run.id).await? else {
+            return Ok(false);
+        };
+        if progress >= row {
+            // Another attempt recorded this record already.
+            return Ok(true);
+        }
+        let permitted = match bilibi_authz::authorize_key(tx.sql(), scope, bulk.capability).await {
+            Ok(()) => true,
+            Err(Error::Forbidden) => false,
+            Err(error) => return Err(error),
+        };
+        let (outcome, message) = if !permitted {
+            (
+                Outcome::Error,
+                Some(format!(
+                    "You no longer have permission to update {} in bulk.",
+                    registered.definition.label.to_lowercase()
+                )),
+            )
+        } else {
+            match planned {
+                Err(message) => (Outcome::Error, Some(message)),
+                Ok(None) => (Outcome::Skip, Some("Already set to this value.".into())),
+                Ok(Some(input)) => match self
+                    .jobs
+                    .commit(&mut tx, execution, bulk.update, &input)
+                    .await
+                {
+                    Ok(_) => (Outcome::Update, None),
+                    Err(error) => {
+                        let message = match &error {
+                            ContractError::Backend(Error::Conflict) => {
+                                "The record changed after the update started, so it was not overwritten.".to_owned()
+                            }
+                            _ => match refusal(&error, fields) {
+                                Some(message) => message,
+                                None => return Err(error_of(error)),
+                            },
+                        };
+                        // The owner's refusal may have poisoned the
+                        // transaction: record the result in a fresh one.
+                        drop(tx);
+                        tx = execution.begin(client, "base.bulk_data.update.row").await?;
+                        let Some(progress) = running(&tx, scope, run.id).await? else {
+                            return Ok(false);
+                        };
+                        if progress >= row {
+                            return Ok(true);
+                        }
+                        (Outcome::Error, Some(message))
+                    }
+                },
+            }
+        };
+        let (update, record) = (run.id, record.to_owned());
+        let message = message.map(bounded);
+        tx.mutate(move |sql| {
+            Box::pin(async move {
+                let id: i64 = sql.query_one("INSERT INTO base_bulk_data_update_rows(tenant_id,update_id,row_number,record_id,outcome,message) VALUES($1,$2,$3,$4,$5,$6) RETURNING id", &[&tenant, &update, &row, &record, &outcome.as_str(), &message]).await?.get(0);
+                sql.execute("UPDATE base_bulk_data_updates SET next_row=$3,updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2", &[&tenant, &update, &row]).await?;
+                Ok(((), vec![Change { kind: "base/bulk_data.update_row".into(), id, old: Value::Null, new: json!({"update": update, "row": row, "record_id": record, "outcome": outcome.as_str()}) }]))
+            })
+        })
+        .await?;
+        tx.commit().await?;
+        self.wake(tenant, scope.user());
+        Ok(true)
+    }
+
+    /// Queues the rest as its own job, from the next record.
+    async fn continue_update(
+        &self,
+        execution: &Execution,
+        client: &mut tokio_postgres::Client,
+        scope: &Scope,
+        id: i64,
+    ) -> Result<()> {
+        let mut tx = execution
+            .begin(client, "base.bulk_data.update.continue")
+            .await?;
+        let old = load(tx.sql(), scope, id, true).await?;
+        if old.state != UpdateState::Running {
+            return Ok(());
+        }
+        let job = self
+            .queue
+            .enqueue_for(&mut tx, scope, WORKER, json!({"update": id}))
+            .await?;
+        let tenant = scope.tenant();
+        let old = old.evidence();
+        tx.mutate(move |sql| {
+            Box::pin(async move {
+                let row = sql.query_one(&format!("UPDATE base_bulk_data_updates SET job_id=$3,version=version+1,updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2 RETURNING {COLUMNS}"), &[&tenant, &id, &job.id()]).await?;
+                let run = UpdateRun::from_row(&row)?;
+                Ok(((), vec![Change { kind: "base/bulk_data.update".into(), id, old, new: run.evidence() }]))
+            })
+        })
+        .await?;
+        tx.commit().await
+    }
+
+    /// Records how the update ended and tells its person.
+    async fn end_update(
+        &self,
+        execution: &Execution,
+        client: &mut tokio_postgres::Client,
+        scope: &Scope,
+        id: i64,
+        result: std::result::Result<(), Failed>,
+    ) -> Result<()> {
+        let mut tx = execution
+            .begin(client, "base.bulk_data.update.finish")
+            .await?;
+        let old = load(tx.sql(), scope, id, true).await?;
+        if !old.state.working() {
+            return Ok(());
+        }
+        let tenant = scope.tenant();
+        let label = self.label(&old.record_type).to_lowercase();
+        let (state, error) = match result {
+            Ok(()) => ("completed", None),
+            Err(Failed(why)) => ("failed", Some(why)),
+        };
+        let old_evidence = old.evidence();
+        let mut run = tx
+            .mutate(move |sql| {
+                Box::pin(async move {
+                    let row = sql.query_one(&format!("UPDATE base_bulk_data_updates SET state=$3,error=$4,filter=NULL,ids=NULL,finished_at=clock_timestamp(),version=version+1,updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2 RETURNING {COLUMNS}"), &[&tenant, &id, &state, &error]).await?;
+                    let run = UpdateRun::from_row(&row)?;
+                    Ok((run.clone(), vec![Change { kind: "base/bulk_data.update".into(), id, old: old_evidence, new: run.evidence() }]))
+                })
+            })
+            .await?;
+        count(tx.sql(), tenant, &mut run).await?;
+        let notice = match run.state {
+            UpdateState::Completed => {
+                Notice::new(format!("Bulk update of {label} finished")).body(format!(
+                    "{} updated, {} already set, {} not updated.",
+                    run.counts.update, run.counts.skip, run.counts.error
+                ))
+            }
+            _ => Notice::new(format!("Bulk update of {label} did not start"))
+                .body(run.error.clone().unwrap_or_default()),
+        }
+        .kind("bulk_data.update")
+        .url(format!("/updates/{id}"));
+        self.notifications
+            .notify(&mut tx, scope, &[scope.user()], &notice)
+            .await?;
+        tx.commit().await?;
+        self.wake(tenant, scope.user());
+        Ok(())
+    }
+}
+
+pub(crate) struct UpdateJob(pub Arc<BulkData>);
+
+impl Handler for UpdateJob {
+    fn perform<'a>(&'a self, execution: &'a Execution, args: Value) -> HandlerFuture<'a> {
+        Box::pin(async move {
+            let Some(id) = args["update"].as_i64() else {
+                return JobOutcome::Cancel("worker_args_refused");
+            };
+            match self.0.work_update(execution, id).await {
+                Ok(()) => JobOutcome::Completed,
+                Err(Error::Unauthorized | Error::Forbidden) => JobOutcome::Cancel("actor_refused"),
+                Err(Error::NotFound) => JobOutcome::Cancel("update_missing"),
+                Err(Error::Conflict) => JobOutcome::Retry("lease_lost"),
+                Err(_) => JobOutcome::Retry("update_unavailable"),
+            }
+        })
+    }
+}
+
+/// Queue's argument check: an update id, nothing else.
+pub(crate) fn arguments(args: Value) -> Result<Value> {
+    let object = args.as_object().ok_or(Error::Invalid)?;
+    if object.len() == 1
+        && object
+            .get("update")
+            .and_then(Value::as_i64)
+            .is_some_and(|id| id > 0)
+    {
+        Ok(args)
+    } else {
+        Err(Error::Invalid)
+    }
+}

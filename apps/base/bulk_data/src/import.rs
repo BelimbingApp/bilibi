@@ -108,7 +108,7 @@ struct Work<'a> {
 
 /// A refusal one row can carry, in words; `None` when the cause is the
 /// system (the database), so the attempt stops and is retried.
-fn refusal(error: &ContractError, offered: &[Field]) -> Option<String> {
+pub(crate) fn refusal(error: &ContractError, offered: &[Field]) -> Option<String> {
     Some(match error {
         ContractError::InvalidInput(fields) => fields
             .iter()
@@ -144,7 +144,7 @@ fn refusal(error: &ContractError, offered: &[Field]) -> Option<String> {
     })
 }
 
-fn bounded(text: String) -> String {
+pub(crate) fn bounded(text: String) -> String {
     if text.len() <= 2000 {
         return text;
     }
@@ -373,7 +373,7 @@ impl Work<'_> {
     }
 }
 
-fn error_of(error: ContractError) -> Error {
+pub(crate) fn error_of(error: ContractError) -> Error {
     match error {
         ContractError::Backend(error) => error,
         _ => Error::Internal,

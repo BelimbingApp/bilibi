@@ -9,7 +9,8 @@
 //! its result recorded beside it, so the owner's validation, permissions and
 //! audit apply as when the person edits one record. An export takes a list's
 //! filtered records and shown columns out to CSV the same way, reading as the
-//! person (`export`). Bulk updates are a later phase.
+//! person (`export`), and a bulk update sets one field on many records
+//! through the owner's update contract (`update`).
 mod agent;
 mod contributions;
 mod csv;
@@ -19,15 +20,18 @@ mod import;
 mod mapping;
 mod record;
 mod store;
+mod update;
 mod web;
 
 pub use export::{ExportRun, ExportState, EXPORTED};
 pub use files::{RunFiles, ARTIFACT_OWNER, FILES};
 pub use mapping::{FieldMap, Mapping, Policy};
 pub use record::{
-    Duplicates, Export, Field, Import, Kind, Lookup, RecordType, Reference, RECORD_TYPES,
+    BulkUpdate, Duplicates, Export, Field, Import, Kind, Lookup, RecordType, Reference,
+    RECORD_TYPES,
 };
 pub use store::{Counts, Outcome, Pass, RowResult, Run, RunState, SavedMapping};
+pub use update::{UpdateRow, UpdateRun, UpdateState};
 
 use bilibi_agent_api::job::JobContracts;
 use bilibi_artifacts::Artifacts;
@@ -58,6 +62,8 @@ pub const MAX_ROWS: &str = "bulk_data.import_max_rows";
 pub const EXPORT_MAX_ROWS: &str = "bulk_data.export_max_rows";
 /// Days an uploaded import file and an exported file are kept.
 pub const FILE_DAYS: &str = "bulk_data.file_days";
+/// The most records one bulk update takes.
+pub const UPDATE_MAX_RECORDS: &str = "bulk_data.update_max_records";
 pub(crate) const WORKER: &str = "base/bulk_data-import";
 
 /// A record type the person may import, with what they may fill.
@@ -184,6 +190,32 @@ pub enum Action {
         /// Grid column specs, in the order shown.
         columns: Vec<String>,
     },
+    /// Set one field on the ticked records, or on every record the list's
+    /// filters match, each through the owner's update contract.
+    Update {
+        record_type: String,
+        field: String,
+        /// The value as text, converted as an import converts a cell.
+        value: String,
+        /// Ticked records' ids, or `None` for the filters.
+        ids: Option<Vec<String>>,
+        /// The list contract's filters, without `page` or `page_size`.
+        filter: Value,
+    },
+    /// Stop a bulk update; records already updated stay.
+    CancelUpdate {
+        update: i64,
+        version: i64,
+    },
+}
+
+impl Action {
+    fn chosen<'a>(ids: &'a Option<Vec<String>>, filter: &'a Value) -> update::Chosen<'a> {
+        match ids {
+            Some(ids) => update::Chosen::Ids(ids),
+            None => update::Chosen::Filter(filter),
+        }
+    }
 }
 
 pub struct BulkData {
@@ -218,6 +250,24 @@ impl BulkData {
         self.types
             .get(key)
             .ok_or_else(|| refused("record_type", "is not a record type that can be imported"))
+    }
+    /// A field's label on a record type: what a bulk update sets.
+    pub fn field_label<'a>(&'a self, key: &str, field: &'a str) -> &'a str {
+        self.types
+            .get(key)
+            .and_then(|registered| {
+                registered
+                    .bulk_fields
+                    .iter()
+                    .find(|offered| offered.name == field)
+            })
+            .map_or(field, |offered| offered.label.as_str())
+    }
+    /// A record type's record page, with `{id}`, when it has one.
+    pub fn record_path(&self, key: &str) -> Option<&'static str> {
+        self.types
+            .get(key)
+            .and_then(|registered| registered.definition.path)
     }
     /// What a record type's records are called; its key when unmounted.
     pub fn label<'a>(&'a self, key: &'a str) -> &'a str {
@@ -596,24 +646,60 @@ impl BulkData {
         scope: &Scope,
         action: &Action,
     ) -> std::result::Result<Value, WriteError> {
-        if let Action::Export {
-            record_type,
-            filter,
-            ids,
-            columns,
-        } = action
-        {
-            self.ready_export(client, scope, record_type, filter, ids, columns)
-                .await?;
-            let label = self.label(record_type).to_lowercase();
-            let what = if ids.is_empty() {
-                label
-            } else {
-                format!("{} ticked {label}", ids.len())
-            };
-            return Ok(
-                json!({"summary": format!("Export {what} with the shown columns to CSV"), "record_type": record_type, "columns": columns, "filter": filter, "ids": ids}),
-            );
+        match action {
+            Action::Export {
+                record_type,
+                filter,
+                ids,
+                columns,
+            } => {
+                self.ready_export(client, scope, record_type, filter, ids, columns)
+                    .await?;
+                let label = self.label(record_type).to_lowercase();
+                let what = if ids.is_empty() {
+                    label
+                } else {
+                    format!("{} ticked {label}", ids.len())
+                };
+                return Ok(
+                    json!({"summary": format!("Export {what} with the shown columns to CSV"), "record_type": record_type, "columns": columns, "filter": filter, "ids": ids}),
+                );
+            }
+            Action::Update {
+                record_type,
+                field,
+                value,
+                ids,
+                filter,
+            } => {
+                let set = self
+                    .ready_update(
+                        client,
+                        scope,
+                        record_type,
+                        field,
+                        value,
+                        &Action::chosen(ids, filter),
+                    )
+                    .await?;
+                let label = self.label(record_type).to_lowercase();
+                let which = match ids {
+                    Some(ids) => format!("{} ticked {label}", ids.len()),
+                    None => format!("every {label} record the list's filters match"),
+                };
+                return Ok(
+                    json!({"summary": format!("Set {} to {} on {which}, each through its own update, in the background", self.field_label(record_type, field).to_lowercase(), set.as_str().map_or_else(|| set.to_string(), str::to_owned)), "record_type": record_type, "field": field, "value": set, "ids": ids, "filter": filter}),
+                );
+            }
+            Action::CancelUpdate { update, version } => {
+                let run = self
+                    .cancellable_update(client, scope, *update, *version, false)
+                    .await?;
+                return Ok(
+                    json!({"summary": format!("Stop the bulk update of {}; records already updated stay", self.label(&run.record_type).to_lowercase()), "update_id": update}),
+                );
+            }
+            _ => {}
         }
         bilibi_authz::authorize_key(client, scope, CREATE).await?;
         match action {
@@ -669,7 +755,9 @@ impl BulkData {
                 )
             }
             // Answered before the import capability is asked.
-            Action::Export { .. } => Err(WriteError::Backend(Error::Internal)),
+            Action::Export { .. } | Action::Update { .. } | Action::CancelUpdate { .. } => {
+                Err(WriteError::Backend(Error::Internal))
+            }
             Action::DeleteMapping { mapping, version } => {
                 let saved = self.deletable(client, scope, *mapping, *version).await?;
                 Ok(
@@ -695,6 +783,26 @@ impl BulkData {
             } => Some(json!(
                 self.start_export(tx, scope, record_type, filter, ids, columns)
                     .await?
+            )),
+            Action::Update {
+                record_type,
+                field,
+                value,
+                ids,
+                filter,
+            } => Some(json!(
+                self.start_update(
+                    tx,
+                    scope,
+                    record_type,
+                    field,
+                    value,
+                    &Action::chosen(ids, filter)
+                )
+                .await?
+            )),
+            Action::CancelUpdate { update, version } => Some(json!(
+                self.cancel_update(tx, scope, *update, *version).await?
             )),
             _ => None,
         };
@@ -798,7 +906,9 @@ impl BulkData {
                 json!(saved)
             }
             // Applied before the import capability is asked.
-            Action::Export { .. } => return Err(WriteError::Backend(Error::Internal)),
+            Action::Export { .. } | Action::Update { .. } | Action::CancelUpdate { .. } => {
+                return Err(WriteError::Backend(Error::Internal))
+            }
             Action::DeleteMapping { mapping, version } => {
                 let saved = self.deletable(tx.sql(), scope, *mapping, *version).await?;
                 let id = saved.id;
@@ -1000,6 +1110,7 @@ inventory::submit! { bilibi_module_registry::Module {
     migrations: &[
         ("base-bulk-data-001-imports", include_str!("../migrations/001-imports.sql")),
         ("base-bulk-data-002-exports", include_str!("../migrations/002-exports.sql")),
+        ("base-bulk-data-003-updates", include_str!("../migrations/003-updates.sql")),
     ],
     services: &[
         bilibi_module_registry::Service { id: SERVICE, factory: |services| {
@@ -1033,6 +1144,9 @@ inventory::submit! { bilibi_module_registry::Module {
                 artifacts: services.get("base/artifacts.store")?,
                 db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
             }))))
+        }},
+        bilibi_module_registry::Service { id: update::SERVICE, factory: |services| {
+            Ok(Arc::new(bilibi_queue::execution::HandlerService(Arc::new(update::UpdateJob(services.get(SERVICE)?)))))
         }},
         bilibi_module_registry::Service { id: web::PAGES, factory: |services| {
             Ok(Arc::new(bilibi_ui::page::PageService::<Scope, Error>(Arc::new(web::Pages::new(services)?))))

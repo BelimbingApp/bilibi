@@ -125,13 +125,13 @@ pub struct ExportRun {
     #[serde(serialize_with = "maybe_stamp")]
     pub finished_at: Option<Timestamp>,
 }
-fn stamp<S: serde::Serializer>(
+pub(crate) fn stamp<S: serde::Serializer>(
     at: &Timestamp,
     serializer: S,
 ) -> std::result::Result<S::Ok, S::Error> {
     serializer.collect_str(at)
 }
-fn maybe_stamp<S: serde::Serializer>(
+pub(crate) fn maybe_stamp<S: serde::Serializer>(
     at: &Option<Timestamp>,
     serializer: S,
 ) -> std::result::Result<S::Ok, S::Error> {

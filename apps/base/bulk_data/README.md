@@ -1,6 +1,6 @@
-# Bulk data: CSV import and export
+# Bulk data: CSV import, export and bulk updates
 
-`base/bulk_data` lets people bring a module's records in from a CSV file through that module's own write contracts, and take a list's records out to CSV through its own list contract, for any module that opts in ([ADR 10](../../../docs/architecture/decisions/10-queued-jobs-call-contracts.md), issue 133). Bulk updates and `FlexTable` row selection are later slices. No Bilimbi or Belimbing counterpart.
+`base/bulk_data` lets people bring a module's records in from a CSV file through that module's own write contracts, take a list's records out to CSV through its own list contract, and set one field on many records through its own update contract, for any module that opts in ([ADR 10](../../../docs/architecture/decisions/10-queued-jobs-call-contracts.md), issue 133). Lists tick rows with `FlexTable`'s `Selection` (`apps/base/ui`). No Bilimbi or Belimbing counterpart.
 
 ## Opting a record type in
 
@@ -15,6 +15,11 @@ inventory::submit! { Contribution::new(bilibi_bulk_data::RECORD_TYPES, "core/per
         references: &[],
     },
     export: Some(Export { capability: EXPORT, list: "core.person.list" }),
+    bulk_update: Some(BulkUpdate {
+        capability: BULK_UPDATE, list: "core.person.list", get: "core.person.get", get_id: "person_id",
+        update: "core.person.update", update_id: "person_id", update_version: "version", update_fields: "identity",
+        fields: &["kind"],
+    }),
 }) }
 ```
 
@@ -27,12 +32,13 @@ inventory::submit! { Contribution::new(bilibi_bulk_data::RECORD_TYPES, "core/per
 | `import.duplicates` | Optional. The owner's read answering candidates for the match `fields`, and its update contract with the id, version and fields properties. A field the file leaves out keeps the record's value |
 | `import.references` | Create fields holding another record's id: a `parent` record type whose earlier import names it by source key, and/or a `lookup` read that must find exactly one record |
 | `export` | Optional; `None` keeps the type out of export. The owner's tenant capability to export it (verb `export`) and its list read contract, which takes integer `page` and `page_size` and returns the records with their `import.id` |
+| `bulk_update` | Optional; `None` keeps the type out of bulk updates. The owner's tenant capability (verb `bulk-update`), its paged list read (records with `import.id` and `version`), its read of one record by `get_id`, its update contract with the id, version and fields properties, and the `fields` people may set: scalar properties of the update's fields (choices, dates, flags, numbers, or an owner's id) |
 
 - **Mappable fields are data:** the create contract's top-level string, number, integer and boolean properties, with its `enum` as choices and `required` as required.
-- **Boot refuses** an unknown or foreign contract, a write a job cannot call (step-up declared, or `Channel::Job` left out), a list read a job cannot call or that does not page, an undeclared or foreign capability, and a match field, reference, lookup property or parent that does not exist.
+- **Boot refuses** an unknown or foreign contract, a write a job cannot call (step-up declared, or `Channel::Job` left out), a list read a job cannot call or that does not page, an undeclared or foreign capability, a match field, reference, lookup property or parent that does not exist, and a bulk field that is not a scalar of the update's fields.
 - A lookup read must match exactly (Core Person's duplicates read matches email exactly); a scoring read such as Core Company's duplicates is not a lookup. Several matches are always a row error.
 
-Adopters: Core Person (`core/person.contacts`, matched on email or phone; exported from the Contacts list with `admin.person.export`) and Core Affiliation (`core/affiliation.affiliations`, the contact by source key of a contacts import or by email; the organisation as a column of ids or one fixed value).
+Adopters: Core Person (`core/person.contacts`, matched on email or phone; exported from the Contacts list with `admin.person.export`; kind set in bulk with `admin.person.bulk-update`) and Core Affiliation (`core/affiliation.affiliations`, the contact by source key of a contacts import or by email; the organisation as a column of ids or one fixed value).
 
 ## A run
 
@@ -56,7 +62,7 @@ A run is visible only to the person who started it.
 
 ## An export
 
-- **Start** from the list (Contacts: **Export CSV**) or `base.bulk_data.export.start`: the list's filters (its list contract's input without `page` and `page_size`, checked against that contract's schema) or the ticked `ids`, and the columns it shows (Grid specs, 1 to 64, each once). It needs `admin.import.view` and the type's export capability, and is filed under the person's own company. Its job runs as the person without the session's company choice, and Artifacts keeps a person's files under their own company, so a session switched to another company is refused in words (imports likewise); running in a switched company needs Queue and Artifacts to carry that choice.
+- **Start** from the list (Contacts: **Export CSV** in the header for the filtered list, or in the selection bar for the ticked rows) or `base.bulk_data.export.start`: the list's filters (its list contract's input without `page` and `page_size`, checked against that contract's schema) or the ticked `ids`, and the columns it shows (Grid specs, 1 to 64, each once). It needs `admin.import.view` and the type's export capability, and is filed under the person's own company. Its job runs as the person without the session's company choice, and Artifacts keeps a person's files under their own company, so a session switched to another company is refused in words (imports likewise); running in a switched company needs Queue and Artifacts to carry that choice.
 - **Runs** in the background as the person (`base/bulk_data-export`, up to 5 attempts): it first purges the company's expired run files, rechecks the capabilities, pages through the list contract, then projects the records through Grid in the list's order (ticked ids go straight to Grid, in the order given). A field restricted for the person is blank; another tenant's or company's record never appears, since the list contract and Grid both read as the person.
 - **No gaps**: offset pages are not a snapshot, so the list is read in full until two reads in a row agree (at most three reads). A record moved, added or dropped while it is paged is never skipped; a list that keeps changing fails in words.
 - **Bounded memory**: the file is written a row at a time and stops once it is larger than `artifacts.max_bytes`, so an export never holds more than that much of its file (plus one Grid batch of 100 rows).
@@ -68,6 +74,23 @@ A run is visible only to the person who started it.
 - **Round trip**: an import drops the apostrophe an export puts before a formula-like cell (`'+60 12…`), so a file exported, edited and imported back keeps its values; any other apostrophe stays.
 - **Retention**: an hourly scheduled task (`base/bulk_data-file-sweep`, enabled on the Schedule board like every task) purges expired run files in every tenant through `Artifacts::sweep_expired`, so they go even where nobody uploads or exports again; each upload and each export also purges the company's expired files first. A file that cannot be purged is logged by its code, and Artifacts holds it for an operator after its attempt limit.
 - **`/exports/{id}`** shows its state (Preparing, Ready, Expired, No longer available, Not finished, Stopped) and the download while it may be taken; the person gets a notice when it ends. An export is visible only to the person who started it.
+
+## A bulk update
+
+| State | Meaning |
+| --- | --- |
+| `resolving` | The job is finding the records, once, with the version each has now |
+| `running`, `completed` | Records are being updated, or all are done; the person gets a notice |
+| `cancelled` | Stopped by its person; records already updated stay and are listed |
+| `failed` | Ended before updating anything (too many records, none matched, access lost), in words |
+| `stopped` (read only) | The job ended without finishing; records already updated stay |
+
+- **Start** from the list's selection bar (Contacts: tick rows, or tick the page and **Select all N matching**, then **Set kind…**) or `base.bulk_data.update.start`: the field, the value as text (converted as an import converts a cell), and the ticked `ids` or the list's `filter`. It needs `admin.import.view`, the type's bulk-update capability and a company; fields restricted for the person are not offered. More than `bulk_data.update_max_records` records are refused.
+- **Resolve once**: the job reads the list (or each ticked record) as the person and keeps each record's id and version; the filter's values are then dropped. Records of another tenant or company are never found.
+- **Each record** is one transaction: the owner's read of it, then its update contract with the resolved version and every other field as read (a hidden field is left out, so the owner keeps it), with the result beside it. A record already set is left alone (`skip`); one changed since it was resolved is refused by the owner's version fence and reported, never overwritten. Every record shares the update's trace ID.
+- **Access**: each record rechecks the type's bulk-update capability; a revoked grant refuses the rest in words.
+- **Slices**: an attempt works for two minutes, then queues the rest from the next unrecorded record; a retried or resumed attempt never writes a record twice.
+- **`/updates/{id}`** shows what it sets, its state and how many records are done, **Stop update** (with a confirmation) while it works, and each record's result in a `FlexTable`. `/imports` lists the person's newest exports and bulk updates under its imports. A bulk update is visible only to the person who started it.
 
 ## Contracts
 
@@ -83,17 +106,22 @@ Capabilities `admin.import.view` (pages and reads) and `admin.import.create` (st
 | `base.bulk_data.mapping.save`, `.delete` | write | Saved mappings |
 | `base.bulk_data.export.get`, `.list` | read | One of the person's exports, with its download path once ready; their newest exports |
 | `base.bulk_data.export.start` | write | Start an export of a list (filters as JSON object text) or of ticked ids |
+| `base.bulk_data.update.fields` | read | The fields of a record type the person may set in bulk |
+| `base.bulk_data.update.get`, `.rows`, `.list` | read | One bulk update, its records' results, the person's newest |
+| `base.bulk_data.update.start`, `.cancel` | write | Start a bulk update of ticked ids or a list's filters; stop one |
 
 Receiving the file is the page's `receive` event, a listed allowance: Artifacts takes bytes outside a contract, and a plan's input is bounded at 1 MiB. Agents work on runs their person uploaded until agent-supplied files land.
 
 ## Storage and audit
 
-`base_bulk_data_runs`, `base_bulk_data_rows` and `base_bulk_data_mappings` (migration `base-bulk-data-001-imports`), and `base_bulk_data_exports` (`base-bulk-data-002-exports`), every statement carrying the tenant. Changes are audited as `base/bulk_data.run`, `.row`, `.mapping` and `.export`, never with a file's data or an export's filter values; the owner audits each record it writes. An export keeps its filters only while it runs: a search can quote a person's name or email.
+`base_bulk_data_runs`, `base_bulk_data_rows` and `base_bulk_data_mappings` (migration `base-bulk-data-001-imports`), `base_bulk_data_exports` (`base-bulk-data-002-exports`), and `base_bulk_data_updates` and `base_bulk_data_update_rows` (`base-bulk-data-003-updates`), every statement carrying the tenant. Changes are audited as `base/bulk_data.run`, `.row`, `.mapping`, `.export`, `.update` and `.update_row`, never with a file's data or a filter's values; the owner audits each record it writes. An export keeps its filters only while it runs, and a bulk update only until it has found its records: a search can quote a person's name or email.
 
-Settings (operator UI, group Bulk data): `bulk_data.import_max_bytes`, `bulk_data.import_max_rows`, `bulk_data.export_max_rows` and `bulk_data.file_days`. The uploaded file (kind `import-source`) and the exported file (kind `export`, subject `export:{id}`) are private artifacts of owner `base.bulk_data` that expire after `bulk_data.file_days`.
+Settings (operator UI, group Bulk data): `bulk_data.import_max_bytes`, `bulk_data.import_max_rows`, `bulk_data.export_max_rows`, `bulk_data.update_max_records` and `bulk_data.file_days`. The uploaded file (kind `import-source`) and the exported file (kind `export`, subject `export:{id}`) are private artifacts of owner `base.bulk_data` that expire after `bulk_data.file_days`.
 
 ## Walkthrough
 
 On a disposable database, set `DATABASE_URL`, `BILIBI_BULK_DATA_DEMO=disposable`, `BILIBI_SETTINGS_KEY` and `BILIBI_USER_SIGNING_KEY`, then run `cargo run -p bilibi-bulk-data --example import-walkthrough` from a scratch directory: an unseeded database names no private document folder, so it keeps uploads under `./data/artifacts`. It migrates, installs the walkthrough fixture and, as its manager (`manager@example.test`, whose fixture role holds the import capabilities), imports 1,000 contacts through the contracts and a real Queue executor: a saved mapping reused, a dry run that writes nothing and reports errors and duplicates, the three duplicate policies and a row matching two contacts, affiliations finding their contacts by source key, a revoked grant, a worker stopped mid-run, a file refused for each reason, tenant isolation and the audit trail under the run's trace ID.
 
 `cargo run -p bilibi-bulk-data --example export-walkthrough`, with the same variables, exports the fixture's contacts as its manager: the filtered rows and shown columns, link columns, a restricted field left blank and a formula-like name opened as text, refusals before it starts, the row limit failing it in words, a grant revoked before the job runs, ticked records only (another tenant's left out), another tenant refused, a file refused after a field is restricted or the grant revoked (and allowed again once restored), an expired file purged from disk before the next export and then shown expired, an export of only restricted columns refused, an export whose job was ended by a revoked grant finished by the next export (filter dropped, its person told), the size limit failing an export in words, a list renamed while it is read, the audit trail without filter values, the file's expiry and the person's notices.
+
+`cargo run -p bilibi-bulk-data --example update-walkthrough`, with the same variables, changes 500 contacts' kind as the manager: refusals before it starts (no capability, a field not offered, a value outside the choices, more records than the limit), ticked records with another tenant's among them, every match with one contact edited meanwhile (reported, not overwritten) and the audit under the update's trace, already-set records, a grant revoked mid-run, a stop mid-run, a worker stopped mid-run (none written twice), another tenant refused, and no filter values in the audit trail.
