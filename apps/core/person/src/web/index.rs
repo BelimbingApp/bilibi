@@ -216,6 +216,7 @@ impl Index {
                 continue;
             };
             row.dom_id = Some(format!("person-{}", person.id.get()));
+            row.slots.insert("code".into(), Html::text(&person.code));
             row.slots.insert(
                 "name".into(),
                 render(RecordLink {
