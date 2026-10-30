@@ -224,7 +224,9 @@ inventory::submit! { Contribution::new(VOCABULARY, "base/privacy.vocabulary", pr
 }) }
 bilibi_step_up::declare!(
     "base/privacy",
-    bilibi_step_up::Operation::new(STEP_UP_ERASURE, "Approve a personal-data erasure").floor()
+    // The owner's rule: a fresh 2FA check on every erasure decision, on every
+    // deployment; no tenant, installation floor or development setting relaxes it.
+    bilibi_step_up::Operation::new(STEP_UP_ERASURE, "Approve a personal-data erasure").always()
 );
 bilibi_step_up::declare!(
     "base/privacy",
