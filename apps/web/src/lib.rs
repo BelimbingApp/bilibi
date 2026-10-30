@@ -360,7 +360,6 @@ pub fn router(app: App) -> Router {
         .layer(DefaultBodyLimit::max(16 * 1024))
         .layer(middleware::from_fn_with_state(app.clone(), errors::pages))
         .layer(middleware::from_fn(response_headers))
-        .layer(middleware::from_fn(browser_activity))
         .layer(
             tower_http::compression::CompressionLayer::new()
                 .quality(tower_http::CompressionLevel::Precise(4))
@@ -371,23 +370,6 @@ pub fn router(app: App) -> Router {
         )
         .layer(middleware::from_fn_with_state(perf, perf::requests))
         .with_state(app)
-}
-
-// The local launcher uses recent browser page requests to avoid opening a duplicate tab.
-// This host mirrors Bilimbi's web endpoint; the marker is local launcher plumbing.
-async fn browser_activity(request: axum::extract::Request, next: Next) -> Response {
-    if request.method() == axum::http::Method::GET
-        && request
-            .headers()
-            .get(header::ACCEPT)
-            .and_then(|v| v.to_str().ok())
-            .is_some_and(|v| v.contains("text/html"))
-    {
-        if let Some(path) = std::env::var_os("BILIBI_DEV_BROWSER_ACTIVITY") {
-            let _ = std::fs::write(path, b"");
-        }
-    }
-    next.run(request).await
 }
 
 /// Only text pages and assets compress; any response with a

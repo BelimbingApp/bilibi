@@ -34,7 +34,6 @@ class StatusHandler(BaseHTTPRequestHandler):
         if self.path != '/__bilibi_dev/status':
             self.send_error(404)
             return
-        (DEV / 'browser-activity').touch()
         current = status.read()
         current['elapsed'] = (current.get('finished_at') or time.time()) - current['started_at']
         body = json.dumps(current).encode()
@@ -58,7 +57,7 @@ SOCKET = DEV / "control.sock"
 PID = DEV / "app.pid"
 # start-app.sh prepares these after the owner starts. Transfer only these values
 # over the private control socket; never persist credentials or log the payload.
-APP_ENVIRONMENT = {'DATABASE_URL', 'APP_ORIGIN', 'BIND_ADDR', 'BILIBI_DEV_BROWSER_ACTIVITY'}
+APP_ENVIRONMENT = {'DATABASE_URL', 'APP_ORIGIN', 'BIND_ADDR'}
 
 
 def reply(connection, result):

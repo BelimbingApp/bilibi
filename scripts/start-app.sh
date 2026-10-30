@@ -181,15 +181,17 @@ if [[ -t 1 && -z ${NO_COLOR-} ]]; then
 else
     highlight() { printf '%s%s' "$1" "$2"; }
 fi
-export BILIBI_DEV_BROWSER_ACTIVITY="$root/.local/dev/browser-activity"
 echo "$(highlight 'Open ' "$APP_ORIGIN") — sign in as ai@agent.my / bilibi-dev (the platform operator's administrator)."
 echo "After changing BILIBI_DEV_HOST in $BILIBI_DEV_ENV_FILE, restart the launcher to use the new address."
-# Open the sign-in page in the browser once the app answers: on WSL through
-# Windows, on a Linux desktop through xdg-open. Without either, the printed
-# address is enough. BILIBI_OPEN_BROWSER=0 turns this off. The waiter stops
-# when this launcher does; exec below keeps the launcher's process ID.
+# Open the sign-in page in the browser once the app answers, on the first start
+# of this checkout only: later starts would add a tab beside the one already
+# open. On WSL through Windows, on a Linux desktop through xdg-open. Without
+# either, the printed address is enough. BILIBI_OPEN_BROWSER=0 turns this off.
+# The waiter stops when this launcher does; exec below keeps the launcher's
+# process ID.
+opened="$root/.local/dev/browser-opened"
 opener=()
-if [[ ${BILIBI_OPEN_BROWSER:-1} != 0 ]] && command -v curl >/dev/null; then
+if [[ ${BILIBI_OPEN_BROWSER:-1} != 0 && ! -e $opened ]] && command -v curl >/dev/null; then
     if [[ -n ${WSL_DISTRO_NAME-} ]] && command -v wslview >/dev/null; then
         opener=(wslview)
     elif [[ -n ${WSL_DISTRO_NAME-} && -x /mnt/c/Windows/explorer.exe ]]; then
@@ -199,21 +201,15 @@ if [[ ${BILIBI_OPEN_BROWSER:-1} != 0 ]] && command -v curl >/dev/null; then
     fi
 fi
 if (( ${#opener[@]} )); then
-    echo 'Your browser opens when the app is ready if no Bilibi tab is open. Use ./bilibi start --no-open to skip it.'
+    echo 'Your browser opens the sign-in page when the app is ready. BILIBI_OPEN_BROWSER=0 turns this off.'
     launcher=$$
     (
-        # Give an existing waiting page time to poll before deciding to open.
-        sleep 4
-        recent_browser() {
-            [[ -e $BILIBI_DEV_BROWSER_ACTIVITY ]] && [[ $(($(date +%s) - $(stat -c %Y "$BILIBI_DEV_BROWSER_ACTIVITY"))) -lt 10 ]]
-        }
-        recent_browser && exit 0
         # -f: Caddy answers 502 until the app is up.
         until curl -skf -o /dev/null --max-time 2 "$APP_ORIGIN/login"; do
             kill -0 "$launcher" 2>/dev/null || exit 0
             sleep 2
         done
-        recent_browser && exit 0
+        : > "$opened"
         exec "${opener[@]}" "$APP_ORIGIN/login"
     ) >/dev/null 2>&1 &
 fi
