@@ -272,11 +272,41 @@ async fn main() -> Result<(), Failure> {
     {
         manager.report("every match with a limit of 2", &manager.settle(id).await);
     }
+    // Unticked records are left out before the limit counts: 9 match,
+    // 7 are unticked, the 2 left are within the limit of 2.
+    let unticked = ids(&[
+        "Bulk 003", "Bulk 004", "Bulk 005", "Bulk 006", "Bulk 007", "Bulk 008", "Bulk 009",
+    ])
+    .await;
+    if let Some(id) = manager
+        .start(
+            "9 matching, 7 unticked, with a limit of 2",
+            json!({"field": "kind", "value": "human", "filter": "{\"search\":\"Bulk 00\"}", "except_ids": unticked}),
+        )
+        .await
+    {
+        manager.report(
+            "9 matching, 7 unticked, with a limit of 2",
+            &manager.settle(id).await,
+        );
+    }
     sql.execute(
         "DELETE FROM base_settings WHERE key='bulk_data.update_max_records'",
         &[],
     )
     .await?;
+    manager
+        .start(
+            "neither ticked ids nor filters",
+            json!({"field": "kind", "value": "agent"}),
+        )
+        .await;
+    manager
+        .start(
+            "ticked ids and filters both",
+            json!({"field": "kind", "value": "agent", "ids": ["1"], "filter": "{}"}),
+        )
+        .await;
 
     println!("\n== ticked records, one of them another tenant's");
     let mut ticked = ids(&["Bulk 001", "Bulk 002", "Bulk Other Tenant"]).await;

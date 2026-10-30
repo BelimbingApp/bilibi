@@ -31,7 +31,6 @@ use jiff::Timestamp;
 use serde::Serialize;
 use serde_json::{json, Map, Value};
 use std::{
-    collections::HashSet,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -41,8 +40,8 @@ pub(crate) const SERVICE: &str = "base/bulk_data.update-job";
 pub(crate) const WORKER: &str = "base/bulk_data-update";
 /// How long one attempt works before it queues its continuation.
 const SLICE: Duration = Duration::from_secs(120);
-/// Records asked of the list contract per page while resolving a filter.
-const PAGE: i64 = 100;
+/// Records written between wakes of the person's open pages.
+const WAKE_EVERY: usize = 25;
 const COLUMNS: &str = "id,record_type,company_id,field,value,chosen,filter,ids,except_ids,jsonb_array_length(targets) AS records,state,next_row,error,job_id,trace_id,version,floor(extract(epoch FROM created_at))::bigint AS created,floor(extract(epoch FROM finished_at))::bigint AS finished";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -170,6 +169,16 @@ impl UpdateRun {
     }
 }
 
+/// What a person may do in bulk with a record type's list
+/// ([`BulkData::offers`]).
+#[derive(Clone, Debug, Default)]
+pub struct Offers {
+    /// They may export it.
+    pub export: bool,
+    /// The fields they may set in bulk; empty when they may set none.
+    pub fields: Vec<Field>,
+}
+
 /// One record's result.
 #[derive(Clone, Debug, Serialize)]
 pub struct UpdateRow {
@@ -217,21 +226,53 @@ async fn targets(
     }
 }
 
-async fn count(client: &impl GenericClient, tenant: i64, run: &mut UpdateRun) -> Result<()> {
+/// Each update's results so far, counted in one query for them all.
+async fn count(client: &impl GenericClient, tenant: i64, runs: &mut [UpdateRun]) -> Result<()> {
+    let ids: Vec<i64> = runs.iter().map(|run| run.id).collect();
     for row in client
         .query(
-            "SELECT outcome, count(*) FROM base_bulk_data_update_rows WHERE tenant_id=$1 AND update_id=$2 GROUP BY outcome",
-            &[&tenant, &run.id],
+            "SELECT update_id, outcome, count(*) FROM base_bulk_data_update_rows WHERE tenant_id=$1 AND update_id=ANY($2) GROUP BY update_id, outcome",
+            &[&tenant, &ids],
         )
         .await?
     {
-        let n: i64 = row.get(1);
-        match Outcome::parse(row.get(0)) {
+        let (id, n): (i64, i64) = (row.get(0), row.get(2));
+        let Some(run) = runs.iter_mut().find(|run| run.id == id) else {
+            continue;
+        };
+        match Outcome::parse(row.get(1)) {
             Some(Outcome::Update) => run.counts.update = n,
             Some(Outcome::Skip) => run.counts.skip = n,
             Some(Outcome::Error) => run.counts.error = n,
             _ => {}
         }
+    }
+    Ok(())
+}
+
+/// Marks updates whose job Queue ended while they still had work as
+/// `stopped`, with one look at Queue for them all.
+async fn mark_stopped(
+    client: &impl GenericClient,
+    tenant: i64,
+    runs: &mut [UpdateRun],
+) -> Result<()> {
+    let jobs: Vec<i64> = runs
+        .iter()
+        .filter(|run| run.state.working())
+        .filter_map(|run| run.job_id)
+        .collect();
+    if jobs.is_empty() {
+        return Ok(());
+    }
+    let ended: std::collections::HashSet<i64> = bilibi_queue::store::states(client, tenant, &jobs)
+        .await?
+        .into_iter()
+        .filter(|status| status.state.terminal())
+        .map(|status| status.id)
+        .collect();
+    for run in runs.iter_mut() {
+        run.stopped = run.state.working() && run.job_id.is_some_and(|job| ended.contains(&job));
     }
     Ok(())
 }
@@ -262,11 +303,6 @@ pub(crate) enum Chosen<'a> {
     },
 }
 
-/// An id as the owner's contracts take it: a number when it is one.
-fn typed(id: &str) -> Value {
-    id.parse::<i64>().map_or_else(|_| json!(id), Value::from)
-}
-
 impl BulkData {
     fn updatable(
         &self,
@@ -290,11 +326,10 @@ impl BulkData {
         scope: &Scope,
         key: &str,
     ) -> Result<bool> {
-        let Ok((_, bulk)) = self.updatable(key) else {
-            return Ok(false);
-        };
         let held = bilibi_authz::effective_capabilities(client, scope).await?;
-        Ok(held.contains(VIEW) && held.contains(bulk.capability))
+        Ok(self
+            .updatable(key)
+            .is_ok_and(|(_, bulk)| held.contains(VIEW) && held.contains(bulk.capability)))
     }
 
     /// The fields this person may set in bulk on a record type: those the
@@ -305,20 +340,45 @@ impl BulkData {
         scope: &Scope,
         key: &str,
     ) -> Result<Vec<Field>> {
-        if !self.may_update(client, scope, key).await? {
-            return Ok(Vec::new());
-        }
         let Ok((registered, _)) = self.updatable(key) else {
             return Ok(Vec::new());
         };
         let restricted =
             bilibi_authz::restrictions_for(client, scope, registered.definition.table).await?;
-        Ok(registered
-            .bulk_fields
-            .iter()
-            .filter(|field| !restricted.contains(&field.name))
-            .cloned()
-            .collect())
+        Ok(self.offers(client, scope, key, &restricted).await?.fields)
+    }
+
+    /// What a person may do in bulk with a record type's list: export it,
+    /// and set which fields, from one look at their capabilities. A list
+    /// page passes the table's restricted fields it already read.
+    pub async fn offers(
+        &self,
+        client: &impl GenericClient,
+        scope: &Scope,
+        key: &str,
+        restricted: &std::collections::HashSet<String>,
+    ) -> Result<Offers> {
+        let held = bilibi_authz::effective_capabilities(client, scope).await?;
+        let Ok(registered) = self.registered(key) else {
+            return Ok(Offers::default());
+        };
+        let definition = registered.definition;
+        let pages = held.contains(VIEW);
+        let export = pages
+            && definition
+                .export
+                .as_ref()
+                .is_some_and(|export| held.contains(export.capability));
+        let fields = match &definition.bulk_update {
+            Some(bulk) if pages && held.contains(bulk.capability) => registered
+                .bulk_fields
+                .iter()
+                .filter(|field| !restricted.contains(&field.name))
+                .cloned()
+                .collect(),
+            _ => Vec::new(),
+        };
+        Ok(Offers { export, fields })
     }
 
     /// Checks an update request before it starts, and answers the value as
@@ -332,12 +392,17 @@ impl BulkData {
         value: &str,
         chosen: &Chosen<'_>,
     ) -> std::result::Result<Value, WriteError> {
-        let (_, bulk) = self.updatable(record_type)?;
+        let (registered, bulk) = self.updatable(record_type)?;
         bilibi_authz::authorize_key(client, scope, VIEW).await?;
         bilibi_authz::authorize_key(client, scope, bulk.capability).await?;
         crate::own_company(scope, "update records in bulk")?;
-        let offered = self.update_fields(client, scope, record_type).await?;
-        let Some(field) = offered.iter().find(|offered| offered.name == field) else {
+        let restricted =
+            bilibi_authz::restrictions_for(client, scope, registered.definition.table).await?;
+        let Some(field) = registered
+            .bulk_fields
+            .iter()
+            .find(|offered| offered.name == field && !restricted.contains(&offered.name))
+        else {
             return Err(refused(
                 "field",
                 "is not a field you may set on these records",
@@ -356,45 +421,16 @@ impl BulkData {
             .ok_or(Error::Internal)?;
         match chosen {
             Chosen::Ids(ids) => {
-                if ids.is_empty() || ids.len() as i64 > max {
-                    return Err(refused("ids", &format!("tick between 1 and {max} records")));
+                if ids.is_empty() {
+                    return Err(refused("ids", "tick at least one record"));
                 }
-                let mut seen = HashSet::new();
-                if ids
-                    .iter()
-                    .any(|id| id.trim().is_empty() || id.len() > 100 || !seen.insert(id.as_str()))
-                {
-                    return Err(refused("ids", "name each record once"));
-                }
+                crate::distinct_ids("ids", ids, max)?;
             }
             Chosen::Filter { filter, except } => {
-                if !except.is_empty() {
-                    crate::distinct_ids("except_ids", except, max)?;
-                }
-                let Some(object) = filter.as_object() else {
-                    return Err(refused("filter", "must be an object of the list's filters"));
-                };
-                if object.contains_key("page") || object.contains_key("page_size") {
-                    return Err(refused(
-                        "filter",
-                        "names page or page_size, which the update sets itself",
-                    ));
-                }
-                let list = self
-                    .jobs
-                    .readable(bulk.list)
-                    .map_err(|_| WriteError::Backend(Error::Internal))?;
-                let mut paged = (*filter).clone();
-                paged["page"] = json!(1);
-                paged["page_size"] = json!(PAGE);
-                if let Err(errors) = bilibi_agent_api::schema::validate(&list.input, &paged) {
-                    return Err(WriteError::Invalid(
-                        errors
-                            .into_iter()
-                            .map(|(path, messages)| (format!("filter.{path}"), messages))
-                            .collect(),
-                    ));
-                }
+                // Leaving records out adds no work, so it is bounded only by
+                // what a list's selection may hold, not by the record limit.
+                crate::distinct_ids("except_ids", except, bilibi_ui::Selection::MAX_KEYS as i64)?;
+                self.ready_filter(bulk.list, filter)?;
             }
         }
         Ok(value)
@@ -512,18 +548,15 @@ impl BulkData {
         id: i64,
     ) -> Result<UpdateRun> {
         bilibi_authz::authorize_key(client, scope, VIEW).await?;
-        let mut run = load(client, scope, id, false).await?;
-        count(client, scope.tenant(), &mut run).await?;
-        if let (true, Some(job)) = (run.state.working(), run.job_id) {
-            run.stopped = bilibi_queue::store::states(client, scope.tenant(), &[job])
-                .await?
-                .iter()
-                .any(|status| status.state.terminal());
-        }
+        let mut runs = [load(client, scope, id, false).await?];
+        count(client, scope.tenant(), &mut runs).await?;
+        mark_stopped(client, scope.tenant(), &mut runs).await?;
+        let [run] = runs;
         Ok(run)
     }
 
-    /// The person's newest updates, with their counts.
+    /// The person's newest updates, with their counts, marked as their
+    /// pages show them.
     pub async fn updates(
         &self,
         client: &impl GenericClient,
@@ -531,18 +564,17 @@ impl BulkData {
         limit: i64,
     ) -> Result<Vec<UpdateRun>> {
         bilibi_authz::authorize_key(client, scope, VIEW).await?;
-        let mut runs = Vec::new();
-        for row in client
+        let mut runs = client
             .query(
                 &format!("SELECT {COLUMNS} FROM base_bulk_data_updates WHERE tenant_id=$1 AND started_by=$2 ORDER BY id DESC LIMIT $3"),
                 &[&scope.tenant(), &scope.user(), &limit.clamp(1, 100)],
             )
             .await?
-        {
-            let mut run = UpdateRun::from_row(&row)?;
-            count(client, scope.tenant(), &mut run).await?;
-            runs.push(run);
-        }
+            .iter()
+            .map(UpdateRun::from_row)
+            .collect::<Result<Vec<_>>>()?;
+        count(client, scope.tenant(), &mut runs).await?;
+        mark_stopped(client, scope.tenant(), &mut runs).await?;
         Ok(runs)
     }
 
@@ -663,7 +695,12 @@ impl BulkData {
                 return Ok(());
             }
             next += 1;
+            // Open pages follow along every so many records, not every one.
+            if next % WAKE_EVERY == 0 {
+                self.wake(scope.tenant(), scope.user());
+            }
         }
+        self.wake(scope.tenant(), scope.user());
         if next < targets.len() {
             self.continue_update(execution, client, &scope, id).await
         } else {
@@ -703,7 +740,7 @@ impl BulkData {
         if let Some(ids) = &run.ids {
             for id in ids {
                 let mut input = Map::new();
-                input.insert(bulk.get_id.into(), typed(id));
+                input.insert(bulk.get_id.into(), crate::typed(id));
                 let version = match self
                     .jobs
                     .read(client, execution, bulk.get, &Value::Object(input))
@@ -731,6 +768,7 @@ impl BulkData {
                     registered,
                     bulk.list,
                     &filter,
+                    &run.except,
                     max,
                     Instant::now(),
                 )
@@ -740,11 +778,7 @@ impl BulkData {
                 Err(failed) => return Ok(Err(failed)),
             };
             for (id, version) in listed {
-                let id = text_id(&id).ok_or(Error::Internal)?;
-                // Records unticked after "Select all" are left out.
-                if !run.except.contains(&id) {
-                    targets.push((id, version));
-                }
+                targets.push((text_id(&id).ok_or(Error::Internal)?, version));
             }
         }
         if targets.is_empty() {
@@ -777,7 +811,7 @@ impl BulkData {
             None => Err("Not found, or not a record you may change.".into()),
             Some(version) => {
                 let mut input = Map::new();
-                input.insert(bulk.get_id.into(), typed(record));
+                input.insert(bulk.get_id.into(), crate::typed(record));
                 match self
                     .jobs
                     .read(&*client, execution, bulk.get, &Value::Object(input))
@@ -798,7 +832,7 @@ impl BulkData {
                             }
                             values.insert(run.field.clone(), run.value.clone());
                             let mut input = Map::new();
-                            input.insert(bulk.update_id.into(), typed(record));
+                            input.insert(bulk.update_id.into(), crate::typed(record));
                             input.insert(bulk.update_version.into(), json!(version));
                             if bulk.update_fields.is_empty() {
                                 input.extend(values);
@@ -883,7 +917,6 @@ impl BulkData {
         })
         .await?;
         tx.commit().await?;
-        self.wake(tenant, scope.user());
         Ok(true)
     }
 
@@ -951,7 +984,7 @@ impl BulkData {
                 })
             })
             .await?;
-        count(tx.sql(), tenant, &mut run).await?;
+        count(tx.sql(), tenant, std::slice::from_mut(&mut run)).await?;
         let notice = match run.state {
             UpdateState::Completed => {
                 Notice::new(format!("Bulk update of {label} finished")).body(format!(

@@ -310,17 +310,40 @@ impl Write {
                 columns: serde_json::from_value(input["columns"].clone())
                     .map_err(|_| Error::Invalid)?,
             },
-            Self::Update => Action::Update {
-                record_type: input["record_type"]
-                    .as_str()
-                    .ok_or(Error::Invalid)?
-                    .to_owned(),
-                field: input["field"].as_str().ok_or(Error::Invalid)?.to_owned(),
-                value: input["value"].as_str().ok_or(Error::Invalid)?.to_owned(),
-                ids: ids(input)?,
-                filter: filter(input)?,
-                except: except(input)?,
-            },
+            Self::Update => {
+                // Which records is said, never assumed: ticked ids, or the
+                // list's filters ({} for every record), not both and not
+                // neither, so a forgotten selection does not update every
+                // record of the type.
+                let (ids, except) = (ids(input)?, except(input)?);
+                let given = |key: &str| input.get(key).is_some_and(|value| !value.is_null());
+                let refusal = match (&ids, given("filter")) {
+                    (Some(_), true) => Some("give ticked ids or the list's filters, not both"),
+                    (Some(_), false) if !except.is_empty() => {
+                        Some("leave records out of the list's filters, not out of ticked ids")
+                    }
+                    (None, false) => {
+                        Some("give the list's filters ({} for every record) or ticked ids")
+                    }
+                    _ => None,
+                };
+                if let Some(message) = refusal {
+                    return Err(bilibi_agent_api::Error::InvalidInput(
+                        [("filter".to_owned(), vec![message.to_owned()])].into(),
+                    ));
+                }
+                Action::Update {
+                    record_type: input["record_type"]
+                        .as_str()
+                        .ok_or(Error::Invalid)?
+                        .to_owned(),
+                    field: input["field"].as_str().ok_or(Error::Invalid)?.to_owned(),
+                    value: input["value"].as_str().ok_or(Error::Invalid)?.to_owned(),
+                    ids,
+                    filter: filter(input)?,
+                    except,
+                }
+            }
             Self::CancelUpdate => Action::CancelUpdate {
                 update: id(input, "update_id")?,
                 version: id(input, "version")?,
@@ -427,7 +450,7 @@ fn update_schema() -> Value {
         "value": {"type": "string", "maxLength": 1000, "description": "The value to set, as text: one of the field's choices, yes or no, a date YYYY-MM-DD, a number or a record's id."},
         "ids": ids_schema(),
         "except_ids": except_schema(),
-        "filter": {"type": "string", "maxLength": 4000, "description": "Without ids: the record type's list contract filters as JSON object text (without page and page_size); every matching record is updated. {} for every record."}
+        "filter": {"type": "string", "maxLength": 4000, "description": "Give this or ids, not both. The record type's list contract filters as JSON object text (without page and page_size); every matching record, less any except_ids, is updated. Send {} to update every record: leaving both out is refused."}
     }})
 }
 fn update_get_schema() -> Value {

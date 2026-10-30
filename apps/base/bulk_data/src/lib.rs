@@ -31,7 +31,7 @@ pub use record::{
     RECORD_TYPES,
 };
 pub use store::{Counts, Outcome, Pass, RowResult, Run, RunState, SavedMapping};
-pub use update::{UpdateRow, UpdateRun, UpdateState};
+pub use update::{Offers, UpdateRow, UpdateRun, UpdateState};
 
 use bilibi_agent_api::job::JobContracts;
 use bilibi_artifacts::Artifacts;

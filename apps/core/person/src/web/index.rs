@@ -9,10 +9,7 @@ use bilibi_ui::{
     InputKind, ListSpec, ListState, Pagination, Selection, SortDir, TableEmpty, ToolbarControl,
 };
 use serde_json::json;
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    sync::LazyLock,
-};
+use std::{collections::BTreeMap, sync::LazyLock};
 
 const SIZES: [u64; 4] = [25, 50, 100, 300];
 static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
@@ -60,20 +57,16 @@ pub(super) struct Index {
     draft: Option<super::create::Draft>,
     /// Why the last Export or bulk update did not start, shown above the list.
     refused: Option<String>,
-    /// Ticked contacts by id, and whether every contact the filters match
-    /// is ticked instead (issue 133), less those unticked since
-    /// (`excluded`); cleared when the filters or sort change.
-    selected: BTreeSet<String>,
-    all_matching: bool,
-    excluded: BTreeSet<String>,
+    /// The ticked contacts (issue 133), which `Selection::apply` keeps:
+    /// by id, or every match less those unticked since; cleared when the
+    /// filters or sort change.
+    selection: Selection,
     /// The keys of the rows on screen, which the page tick takes.
     page_keys: Vec<String>,
     /// The field a bulk update sets while its dialog is open, and why the
     /// last try was refused.
     bulk: Option<(bilibi_bulk_data::Field, Option<String>)>,
 }
-/// The most contacts one selection holds; a bulk action refuses more.
-const MAX_TICKED: usize = 10_000;
 // Bilimbi Person.IndexLive: contact columns with discovered work details. Identity
 // filters and URL sorts remain the approved Person model's additional controls.
 fn columns(pages: &Pages, masked: &std::collections::HashSet<String>) -> Result<PageColumns> {
@@ -122,9 +115,11 @@ impl Index {
             framed,
             draft: open.then(super::create::Draft::new),
             refused: None,
-            selected: BTreeSet::new(),
-            all_matching: false,
-            excluded: BTreeSet::new(),
+            selection: Selection {
+                event: "select".into(),
+                noun: "contacts".into(),
+                ..Selection::default()
+            },
             page_keys: Vec::new(),
             bulk: None,
         })
@@ -139,31 +134,10 @@ impl Index {
             self.masked = masked;
         }
         self.list.search = self.list.search.trim().chars().take(200).collect();
-        let search = |list: &ListState| Search {
-            search: list.search.trim().chars().take(200).collect(),
-            kind: match list.filters["kind"].as_str() {
-                "human" => Some(PersonKind::Human),
-                "agent" => Some(PersonKind::Agent),
-                _ => None,
-            },
-            include_retired: list.filters["retired"] == "all",
-            page: list.page as i64,
-            page_size: list.page_size as i64,
-            sort: list.sort_by.clone().unwrap_or_else(|| "name".into()),
-            descending: list.sort_dir == Some(SortDir::Desc),
-        };
-        let mut page = self
-            .pages
-            .persons
-            .search(scope, &search(&self.list))
-            .await?;
+        let mut page = self.pages.persons.search(scope, &self.search()).await?;
         let total_pages = (page.total as u64).div_ceil(self.list.page_size);
         if self.list.clamp_to_last_page(total_pages, true) {
-            page = self
-                .pages
-                .persons
-                .search(scope, &search(&self.list))
-                .await?;
+            page = self.pages.persons.search(scope, &self.search()).await?;
         }
         let keys: Vec<_> = page.entries.iter().map(|p| json!(p.id.get())).collect();
         let display = self.pages.display(scope).await?;
@@ -181,16 +155,14 @@ impl Index {
             self.columns.rows = rows;
         }
         let mut actions = Html::EMPTY;
-        let may_export = self
+        // What the person may do in bulk, from one look at their grants and
+        // the restrictions this page already read.
+        let offers = self
             .pages
             .bulk
-            .may_export(&**client, scope, EXPORT_TYPE)
+            .offers(&**client, scope, EXPORT_TYPE, &self.masked)
             .await?;
-        let bulk_fields = self
-            .pages
-            .bulk
-            .update_fields(&**client, scope, EXPORT_TYPE)
-            .await?;
+        let (may_export, bulk_fields) = (offers.export, offers.fields);
         if may_export {
             actions.push(&render(Button {
                 id: "persons-export",
@@ -312,14 +284,10 @@ impl Index {
                     ..Button::default()
                 })?);
             }
+            self.selection.matching = page.total as u64;
             table.selection = Some(Selection {
-                event: "select".into(),
-                selected: self.selected.clone(),
-                all_matching: self.all_matching,
-                excluded: self.excluded.clone(),
-                matching: page.total as u64,
-                noun: "contacts".into(),
                 actions: bar,
+                ..self.selection.clone()
             });
         }
         table.caption = "Contacts";
@@ -384,36 +352,50 @@ const EXPORT_TYPE: &str = "core/person.contacts";
 impl Index {
     /// The list contract's filters for the list as shown.
     fn list_filter(&self) -> Value {
-        let list = &self.list;
-        let mut filter = json!({
-            "sort": list.sort_by.clone().unwrap_or_else(|| "name".into()),
-            "descending": list.sort_dir == Some(SortDir::Desc),
-            "include_retired": list.filters["retired"] == "all",
-        });
-        let search: String = list.search.trim().chars().take(200).collect();
-        if !search.is_empty() {
-            filter["search"] = json!(search);
-        }
-        if let kind @ ("human" | "agent") = list.filters["kind"].as_str() {
-            filter["kind"] = json!(kind);
+        let mut filter = serde_json::to_value(self.search()).unwrap_or_default();
+        if let Some(object) = filter.as_object_mut() {
+            object.remove("page");
+            object.remove("page_size");
+            object.retain(|_, value| !value.is_null() && value.as_str() != Some(""));
         }
         filter
+    }
+
+    /// The list as it is shown: its search, filters, sort and page. The
+    /// screen reads it, and bulk actions send it less the page, so an export
+    /// or update takes exactly the records the list shows.
+    fn search(&self) -> Search {
+        let list = &self.list;
+        Search {
+            search: list.search.trim().chars().take(200).collect(),
+            kind: match list.filters["kind"].as_str() {
+                "human" => Some(PersonKind::Human),
+                "agent" => Some(PersonKind::Agent),
+                _ => None,
+            },
+            include_retired: list.filters["retired"] == "all",
+            page: list.page as i64,
+            page_size: list.page_size as i64,
+            sort: list.sort_by.clone().unwrap_or_else(|| "name".into()),
+            descending: list.sort_dir == Some(SortDir::Desc),
+        }
     }
 
     /// Puts what a bulk action takes into its input: the ticked ids, or
     /// the list's filters less the contacts unticked since "Select all".
     /// False when nothing is ticked.
     fn chosen(&self, input: &mut Value) -> bool {
-        if self.all_matching {
+        let selection = &self.selection;
+        if selection.all_matching {
             input["filter"] = json!(self.list_filter().to_string());
-            if !self.excluded.is_empty() {
-                input["except_ids"] = json!(self.excluded);
+            if !selection.excluded.is_empty() {
+                input["except_ids"] = json!(selection.excluded);
             }
             true
-        } else if self.selected.is_empty() {
+        } else if selection.selected.is_empty() {
             false
         } else {
-            input["ids"] = json!(self.selected);
+            input["ids"] = json!(selection.selected);
             true
         }
     }
@@ -484,63 +466,6 @@ impl Index {
         self.view(scope).await
     }
 
-    /// Changes the selection (`select` event).
-    fn select(&mut self, op: &str, key: Option<&str>) {
-        match op {
-            "row" => {
-                let Some(key) = key.filter(|key| !key.is_empty() && key.len() <= 40) else {
-                    return;
-                };
-                if self.all_matching {
-                    // An exception to "every match": unticked, or ticked again.
-                    if !self.excluded.remove(key) && self.excluded.len() < MAX_TICKED {
-                        self.excluded.insert(key.to_owned());
-                    }
-                } else if !self.selected.remove(key) && self.selected.len() < MAX_TICKED {
-                    self.selected.insert(key.to_owned());
-                }
-            }
-            "page" if self.all_matching => {
-                // The page's rows become exceptions, or stop being ones.
-                if self.page_keys.iter().any(|key| self.excluded.contains(key)) {
-                    for key in &self.page_keys {
-                        self.excluded.remove(key);
-                    }
-                } else {
-                    for key in &self.page_keys {
-                        if self.excluded.len() < MAX_TICKED {
-                            self.excluded.insert(key.clone());
-                        }
-                    }
-                }
-            }
-            "page" => {
-                let all = !self.page_keys.is_empty()
-                    && self.page_keys.iter().all(|key| self.selected.contains(key));
-                if all {
-                    for key in &self.page_keys {
-                        self.selected.remove(key);
-                    }
-                } else {
-                    for key in &self.page_keys {
-                        if self.selected.len() < MAX_TICKED {
-                            self.selected.insert(key.clone());
-                        }
-                    }
-                }
-            }
-            "all" => {
-                self.all_matching = true;
-                self.excluded.clear();
-            }
-            _ => {
-                self.all_matching = false;
-                self.selected.clear();
-                self.excluded.clear();
-            }
-        }
-    }
-
     /// The dialog that sets one field on the ticked contacts.
     fn bulk_dialog(
         &self,
@@ -548,11 +473,7 @@ impl Index {
         refused: Option<&str>,
         matching: u64,
     ) -> Result<Html> {
-        let count = if self.all_matching {
-            matching.saturating_sub(self.excluded.len() as u64)
-        } else {
-            self.selected.len() as u64
-        };
+        let count = self.selection.count();
         let mut control = Field::in_form("bulk", "value")
             .id("persons-bulk-value")
             .label(field.label.clone())
@@ -575,9 +496,9 @@ impl Index {
             }
             bilibi_bulk_data::Kind::Text => control,
         };
-        let which = if self.all_matching && !self.excluded.is_empty() {
+        let which = if self.selection.all_matching && !self.selection.excluded.is_empty() {
             format!("{count} of the {matching} contacts the filters match")
-        } else if self.all_matching {
+        } else if self.selection.all_matching {
             format!("every one of the {count} contacts the filters match")
         } else {
             format!("the {count} ticked contacts")
@@ -650,9 +571,7 @@ impl Index {
             Ok(result) => match result["result"]["id"].as_i64() {
                 Some(id) => {
                     self.bulk = None;
-                    self.selected.clear();
-                    self.excluded.clear();
-                    self.all_matching = false;
+                    self.selection.clear();
                     return Ok(LiveBody {
                         redirect: Some(format!("/updates/{id}")),
                         flash: Some((
@@ -743,16 +662,19 @@ impl LiveState<Scope, Error> for Index {
                         let event = event(value)?;
                         return self.export(request.scope, request.credential, event).await;
                     }
-                    "select" => {
-                        self.select(value["op"].as_str().unwrap_or(""), value["key"].as_str())
-                    }
+                    "select" => self.selection.apply(
+                        value["op"].as_str().unwrap_or(""),
+                        value["key"].as_str(),
+                        &self.page_keys,
+                    ),
                     "bulk_open" => {
                         let fields = {
                             let client = self.pages.db.get().await?;
                             self.pages
                                 .bulk
-                                .update_fields(&**client, request.scope, EXPORT_TYPE)
+                                .offers(&**client, request.scope, EXPORT_TYPE, &self.masked)
                                 .await?
+                                .fields
                         };
                         let wanted = value["field"].as_str().unwrap_or("");
                         self.bulk = fields
@@ -798,9 +720,7 @@ impl LiveState<Scope, Error> for Index {
                 },
             }
             if self.list_filter() != filter || self.list.sort_by != sort {
-                self.selected.clear();
-                self.excluded.clear();
-                self.all_matching = false;
+                self.selection.clear();
             }
             self.view(request.scope).await
         })

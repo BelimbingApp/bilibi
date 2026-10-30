@@ -816,7 +816,11 @@ impl BulkData {
         // Ticked records keep the order they were given in, and Grid reads
         // only those the person may.
         let ids: Vec<Value> = match &run.ids {
-            Some(ticked) => ticked.iter().map(|id| crate::typed(id)).collect(),
+            Some(ticked) => ticked
+                .iter()
+                .map(String::as_str)
+                .map(crate::typed)
+                .collect(),
             None => match self
                 .read_list(
                     execution,
@@ -824,19 +828,13 @@ impl BulkData {
                     registered,
                     export.list,
                     &run.filter,
+                    &run.except,
                     max,
                     started,
                 )
                 .await?
             {
-                // Records unticked after "Select all" are left out.
-                Ok(listed) => listed
-                    .into_iter()
-                    .map(|(id, _)| id)
-                    .filter(|id| {
-                        crate::import::text_id(id).is_none_or(|id| !run.except.contains(&id))
-                    })
-                    .collect(),
+                Ok(listed) => listed.into_iter().map(|(id, _)| id).collect(),
                 Err(failed) => return Ok(Err(failed)),
             },
         };
@@ -928,10 +926,15 @@ impl BulkData {
         registered: &Registered,
         list: &str,
         filter: &Value,
+        leave_out: &[String],
         max: i64,
         started: std::time::Instant,
     ) -> Result<std::result::Result<Listed, Failed>> {
         let id_property = registered.definition.import.id;
+        // Records unticked after "Select all" are left out before the limit
+        // counts, so what is left is what the limit judges.
+        let left_out: std::collections::HashSet<&str> =
+            leave_out.iter().map(String::as_str).collect();
         let mut previous: Option<Listed> = None;
         for _ in 0..READS {
             let mut read: Listed = Vec::new();
@@ -964,7 +967,11 @@ impl BulkData {
                 let records = listed["result"].as_array().ok_or(Error::Internal)?;
                 for record in records {
                     let id = record.get(id_property).ok_or(Error::Internal)?;
-                    if seen.insert(id.to_string()) {
+                    let text = crate::import::text_id(id).ok_or(Error::Internal)?;
+                    if left_out.contains(text.as_str()) {
+                        continue;
+                    }
+                    if seen.insert(text) {
                         read.push((id.clone(), record["version"].as_i64()));
                     }
                 }
