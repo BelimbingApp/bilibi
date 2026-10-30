@@ -60,7 +60,7 @@ bilibi_grid::contribute!("core/person", "person.grid", &GRID);
 // for a reader no held role restricts them for (as the Contacts search does).
 static SEARCH: bilibi_search::Searchable =
     bilibi_search::Searchable::new("persons", "name", "search_vector", "/contacts/{id}")
-        .subtitle(&["code", "email", "phone"])
+        .subtitle(&["code", "email"])
         .prefix(&["code", "email", "phone"])
         .state("identity", &["retired"])
         .updated("updated_at");
