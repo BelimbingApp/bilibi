@@ -51,7 +51,9 @@ mod specimen;
 mod statusbar;
 pub mod upload;
 pub mod workspace;
-pub use portal::{PortalCard, PortalDocument, PortalLayout, PortalLink};
+pub use portal::{
+    PortalCard, PortalCardLink, PortalDocument, PortalForm, PortalLayout, PortalLink,
+};
 pub use shell::{
     company_bar, navigation, navigation_unpinned, version_badges, AppShell, CompanyChoice,
     DisplayPreferences, Framed, NavNode, ShellContext, VersionBadge,

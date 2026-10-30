@@ -94,6 +94,7 @@ bilibi-tiling = { path = "apps/base/tiling" }
 bilibi-workflow = { path = "apps/base/workflow" }
 bilibi-address = { path = "apps/core/address" }
 bilibi-currency = { path = "apps/core/currency" }
+bilibi-customer-access = { path = "apps/core/customer_access" }
 bilibi-affiliation = { path = "apps/core/affiliation" }
 bilibi-agent-access = { path = "apps/core/agent_access" }
 bilibi-agent-plugins = { path = "apps/core/agent_plugins" }

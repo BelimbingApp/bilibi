@@ -68,3 +68,30 @@ pub struct PortalCard<'a> {
     pub body: Html,
     pub flash: crate::FlashMap<'a>,
 }
+
+/// One demoted link under a portal card's form ("Forgot your password?").
+#[derive(Clone, Copy, Debug)]
+pub struct PortalCardLink<'a> {
+    pub id: &'a str,
+    pub href: &'a str,
+    pub label: &'a str,
+}
+
+/// The body of a portal credential card (sign-in, forgotten password, reset,
+/// invitation), inside a [`PortalCard`]: heading, intro, the outcome notice,
+/// the form posting back to its own address and the links under it. The host
+/// renders the fields from the shared form models; a password is never
+/// echoed back. With no fields the card is a notice only.
+#[derive(Template)]
+#[template(path = "portal_form.html")]
+pub struct PortalForm<'a> {
+    pub id: &'a str,
+    pub heading: &'a str,
+    pub intro: &'a str,
+    pub success: &'a str,
+    pub error: &'a str,
+    pub fields: Vec<Html>,
+    pub submit: &'a str,
+    pub working: &'a str,
+    pub links: &'a [PortalCardLink<'a>],
+}

@@ -195,7 +195,7 @@ fn cookie<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
         .split(';')
         .find_map(|cookie| cookie.trim().strip_prefix(name)?.strip_prefix('='))
 }
-fn secure(app: &App) -> &'static str {
+pub(crate) fn secure(app: &App) -> &'static str {
     if app.origin.starts_with("https://") {
         "; Secure"
     } else {
@@ -341,7 +341,7 @@ pub(crate) async fn provider_signed_out(
 
 // ---- validation, worded as the source changesets are --------------------
 
-fn validate_email(value: &str) -> Vec<String> {
+pub(crate) fn validate_email(value: &str) -> Vec<String> {
     if value.is_empty() {
         vec![BLANK.into()]
     } else if value.chars().any(char::is_whitespace)
@@ -355,14 +355,14 @@ fn validate_email(value: &str) -> Vec<String> {
         Vec::new()
     }
 }
-fn validate_required(value: &str) -> Vec<String> {
+pub(crate) fn validate_required(value: &str) -> Vec<String> {
     if value.is_empty() {
         vec![BLANK.into()]
     } else {
         Vec::new()
     }
 }
-fn validate_new_password(value: &str) -> Vec<String> {
+pub(crate) fn validate_new_password(value: &str) -> Vec<String> {
     if value.is_empty() {
         return vec![BLANK.into()];
     }
@@ -371,7 +371,7 @@ fn validate_new_password(value: &str) -> Vec<String> {
         Err(violation) => vec![violation.to_string()],
     }
 }
-fn validate_confirmation(value: &str, password: &str) -> Vec<String> {
+pub(crate) fn validate_confirmation(value: &str, password: &str) -> Vec<String> {
     if value.is_empty() {
         vec![BLANK.into()]
     } else if value != password {
@@ -380,8 +380,28 @@ fn validate_confirmation(value: &str, password: &str) -> Vec<String> {
         Vec::new()
     }
 }
-fn bounded(value: &str) -> String {
+pub(crate) fn bounded(value: &str) -> String {
     value.trim().chars().take(254).collect()
+}
+
+/// Answer to a sender over its password recovery budget; it names no account.
+pub(crate) const RECOVERY_THROTTLED: &str = "Too many requests. Wait a minute and try again.";
+/// Whether this sender may make another forgotten-password or reset request
+/// this minute (`user.recovery.per_sender_per_minute`, staff and portal
+/// together), checked before the request reaches any password work: each
+/// costs a hash even for an unknown address.
+pub(crate) async fn recovery_allowed(
+    app: &App,
+    headers: &HeaderMap,
+    peer: Option<&Extension<ConnectInfo<SocketAddr>>>,
+) -> std::result::Result<bool, HttpError> {
+    let sender = api::client_address(peer.map(|Extension(ConnectInfo(peer))| *peer), headers)
+        .map_or_else(|| "unknown".into(), |ip| ip.to_string());
+    let per_minute = app.user.recovery_per_sender().await?;
+    Ok(app
+        .api
+        .throttle
+        .allow(&format!("recovery:{sender}"), per_minute))
 }
 
 // ---- sign-in -----------------------------------------------------------------
@@ -758,6 +778,7 @@ pub struct ForgotSubmission {
 pub async fn forgot(
     State(app): State<App>,
     headers: HeaderMap,
+    peer: Option<Extension<ConnectInfo<SocketAddr>>>,
     Form(submission): Form<ForgotSubmission>,
 ) -> std::result::Result<Response, HttpError> {
     origin(&app, &headers)?;
@@ -768,6 +789,10 @@ pub async fn forgot(
     form.email_errors = validate_email(&form.email);
     if !form.email_errors.is_empty() {
         return forgot_card(&app, &form, StatusCode::UNPROCESSABLE_ENTITY).await;
+    }
+    if !recovery_allowed(&app, &headers, peer.as_ref()).await? {
+        form.email_errors = vec![RECOVERY_THROTTLED.into()];
+        return forgot_card(&app, &form, StatusCode::TOO_MANY_REQUESTS).await;
     }
     match app.user.request_password_reset(&form.email).await {
         // The confirmation is the same whether or not the account exists.
@@ -824,6 +849,7 @@ pub async fn reset(
     State(app): State<App>,
     headers: HeaderMap,
     Path(token): Path<String>,
+    peer: Option<Extension<ConnectInfo<SocketAddr>>>,
     Form(submission): Form<ResetSubmission>,
 ) -> std::result::Result<Response, HttpError> {
     origin(&app, &headers)?;
@@ -840,6 +866,10 @@ pub async fn reset(
         && form.confirmation_errors.is_empty())
     {
         return reset_card(&app, &form, StatusCode::UNPROCESSABLE_ENTITY).await;
+    }
+    if !recovery_allowed(&app, &headers, peer.as_ref()).await? {
+        form.email_errors = vec![RECOVERY_THROTTLED.into()];
+        return reset_card(&app, &form, StatusCode::TOO_MANY_REQUESTS).await;
     }
     let outcome = app
         .user

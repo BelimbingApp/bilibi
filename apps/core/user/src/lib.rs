@@ -8,6 +8,8 @@ mod company_context;
 pub use company_context::{ChoiceRefusal, Switched};
 pub mod contributions;
 mod credential_attempts;
+mod customers;
+pub use customers::{customer_email_taken, validate_customer, NewCustomer};
 pub mod database_queries;
 mod directory;
 mod factor_choice;
