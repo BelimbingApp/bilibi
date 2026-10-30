@@ -4,6 +4,7 @@ mod contributions;
 mod directory;
 mod files;
 mod identity;
+mod identity_directory;
 mod model;
 mod records;
 mod step_up;
@@ -192,6 +193,7 @@ inventory::submit! {
         services: &[bilibi_module_registry::Service { id: SERVICE, factory: |services| {
             let parties = services.get::<bilibi_tenancy::PartyProofs>("base/tenancy.parties")?;
             parties.bind_persons(Arc::new(identity::Provider))?;
+            parties.bind_person_identities(Arc::new(identity_directory::Provider))?;
             files::bind(parties)?;
             let directory = services.get::<bilibi_principal_directory::PrincipalDirectory>("base/principal_directory.directory")?;
             directory.bind("core/person", Arc::new(directory::Provider(bilibi_principal_directory::PrincipalKind::Person)))?;
@@ -207,6 +209,7 @@ inventory::submit! {
                 person_panels: web::person_panels()?,
                 persons: services.get(SERVICE)?, contracts: services.get(bilibi_agent_api::page::SERVICE)?, views: services.get(bilibi_grid::PAGE_VIEWS)?,
                 display: services.get("base/datetime.display")?, locales: services.get("base/locale.locales")?,
+                bulk: services.get(bilibi_bulk_data::SERVICE)?,
             }))))
         }}],
     }

@@ -183,3 +183,5 @@ Companies and contacts have linked postal addresses, owned by [Core Address](../
 `PersonService::provision_in` is the same creation for a system principal (`Context::system`) that has authorized it itself, such as company sign-in creating an account. It checks no capability and refuses a user context.
 
 `PersonService::update_provisioned_contact_in` updates a provisioned Person in the same caller-owned system transaction as account provisioning. The caller proves its ownership; the owner retains validation, retirement checks, audit capture and notifications.
+
+For the fixed code and name of an already authorized linked record, and bounded code lookup across Person and Company, use the [shared party identity facade](../../base/tenancy/README.md#linked-party-identities-and-code-lookup). Person supplies only identity and retirement status there; personal contacts still require the existing view permission and field masks.

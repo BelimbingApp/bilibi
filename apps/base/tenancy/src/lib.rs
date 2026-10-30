@@ -1,12 +1,14 @@
 //! Sealed identities for a single unit of work. No Base query of Core tables.
 //! Mirrors Bilimbi `Base.Tenancy`; Core Tenant Administration composes its pages.
 mod admin;
+mod party_identity;
 pub use admin::{
     platform_operator, provision_platform_operator, provision_tenant, CreateOutcome, CreatedTenant,
     NewTenant, TenantErrors, TenantIdentity, TenantStatus, Tenants, CREATE, LIST, NAME_MAX,
 };
 use bilibi_database::{Context, Error, Result};
 use bilibi_party_ids::{AffiliationId, OrganisationId, PersonId};
+pub use party_identity::{PartyIdentity, PartyIdentityProvider, PARTY_CODE_LOOKUP_LIMIT};
 use std::{
     future::Future,
     pin::Pin,
@@ -1140,6 +1142,8 @@ inventory::submit! {
 /// targets trusted.
 #[derive(Default)]
 pub struct PartyProofs {
+    company_identities: OnceLock<Arc<dyn PartyIdentityProvider>>,
+    person_identities: OnceLock<Arc<dyn PartyIdentityProvider>>,
     organisations: OnceLock<Arc<dyn OrganisationProvider>>,
     persons: OnceLock<Arc<dyn PersonProvider>>,
     directory: OnceLock<Arc<dyn OrganisationDirectory>>,
