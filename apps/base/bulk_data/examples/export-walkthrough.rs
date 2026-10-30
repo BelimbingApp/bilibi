@@ -182,7 +182,7 @@ async fn main() -> Result<(), Failure> {
     db.get()
         .await?
         .batch_execute(
-            "WITH p AS (INSERT INTO persons(tenant_id,name,kind) VALUES(2,'Other Manager','human') RETURNING id), \
+            "WITH p AS (INSERT INTO persons(tenant_id,code,name,kind) VALUES(2,'other_manager','Other Manager','human') RETURNING id), \
                   a AS (INSERT INTO person_affiliations(tenant_id,person_id,organisation_id) SELECT 2,id,100 FROM p RETURNING id,person_id) \
              UPDATE users SET person_id=a.person_id, affiliation_id=a.id, organisation_id=100 FROM a WHERE users.tenant_id=2 AND users.email='manager@other.example.test'",
         )
@@ -223,14 +223,14 @@ async fn main() -> Result<(), Failure> {
     // Alice working at Company 001; and another tenant's contact by the same
     // name.
     sql.batch_execute(
-        "INSERT INTO persons(tenant_id,name,kind,email,phone) VALUES
-           (1,'Exp Alice','human','alice@exp.test','+60 12-000 0001'),
-           (1,'Exp Bob','human','bob@exp.test','+60 12-000 0002'),
-           (1,'Exp Carol','human','carol@exp.test',NULL),
-           (1,'=HYPERLINK(\"http://evil.test\",\"Exp Click\")','human','click@exp.test',NULL),
-           (1,'Exp Agent','agent',NULL,NULL),
-           (2,'Exp Other Tenant','human','other@exp.test',NULL);
-         INSERT INTO persons(tenant_id,name,kind,email,retired_at) VALUES(1,'Exp Retired','human','retired@exp.test',now());
+        "INSERT INTO persons(tenant_id,code,name,kind,email,phone) VALUES
+           (1,'exp_alice','Exp Alice','human','alice@exp.test','+60 12-000 0001'),
+           (1,'exp_bob','Exp Bob','human','bob@exp.test','+60 12-000 0002'),
+           (1,'exp_carol','Exp Carol','human','carol@exp.test',NULL),
+           (1,'exp_click','=HYPERLINK(\"http://evil.test\",\"Exp Click\")','human','click@exp.test',NULL),
+           (1,'exp_agent','Exp Agent','agent',NULL,NULL),
+           (2,'exp_other_tenant','Exp Other Tenant','human','other@exp.test',NULL);
+         INSERT INTO persons(tenant_id,code,name,kind,email,retired_at) VALUES(1,'exp_retired','Exp Retired','human','retired@exp.test',now());
          INSERT INTO person_affiliations(tenant_id,person_id,organisation_id)
            SELECT 1,id,1 FROM persons WHERE tenant_id=1 AND name='Exp Alice';",
     )
@@ -760,7 +760,7 @@ async fn main() -> Result<(), Failure> {
 
     println!("\n== a list that moves while it is read is never read with a gap");
     sql.batch_execute(
-        "INSERT INTO persons(tenant_id,name,kind) SELECT 1, 'Churn ' || lpad(n::text, 3, '0'), 'human' FROM generate_series(1,250) n",
+        "INSERT INTO persons(tenant_id,code,name,kind) SELECT 1, 'churn_' || n, 'Churn ' || lpad(n::text, 3, '0'), 'human' FROM generate_series(1,250) n",
     )
     .await?;
     let quiet = manager
