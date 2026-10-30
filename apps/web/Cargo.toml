@@ -10,6 +10,7 @@ bilibi-database.workspace = true
 bilibi-security.workspace = true
 bilibi-ui.workspace = true
 bilibi-user.workspace = true
+bilibi-customer-access.workspace = true
 bilibi-company.workspace = true
 axum.workspace = true
 tower-http.workspace = true

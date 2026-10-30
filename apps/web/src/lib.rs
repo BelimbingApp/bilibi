@@ -13,6 +13,7 @@ mod media;
 mod pdf;
 mod perf;
 mod portal;
+mod portal_auth;
 mod routes;
 mod scim;
 mod shell;
@@ -340,6 +341,23 @@ pub fn router(app: App) -> Router {
             post(auth::sso_backchannel),
         )
         .route("/logout", post(logout))
+        .route("/portal/sign-in", get(portal_auth::sign_in_root))
+        .route(
+            "/portal/sign-in/{site}",
+            get(portal_auth::sign_in_page).post(portal_auth::sign_in),
+        )
+        .route(
+            "/portal/forgot/{site}",
+            get(portal_auth::forgot_page).post(portal_auth::forgot),
+        )
+        .route(
+            "/portal/reset/{site}/{token}",
+            get(portal_auth::reset_page).post(portal_auth::reset),
+        )
+        .route(
+            "/portal/accept/{site}/{token}",
+            get(portal_auth::accept_page).post(portal_auth::accept),
+        )
         .route("/portal/sign-out", post(portal::sign_out))
         .route(impersonation::LEAVE, post(impersonation::leave))
         .route(impersonation::ENTER, post(impersonation::enter))

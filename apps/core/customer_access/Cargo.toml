@@ -1,0 +1,33 @@
+[package]
+name = "bilibi-customer-access"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+askama.workspace = true
+bilibi-affiliation.workspace = true
+bilibi-agent-api.workspace = true
+bilibi-authz.workspace = true
+bilibi-company.workspace = true
+bilibi-database.workspace = true
+bilibi-datetime.workspace = true
+bilibi-locale.workspace = true
+bilibi-mail.workspace = true
+bilibi-menu.workspace = true
+bilibi-module-registry.workspace = true
+bilibi-party-ids.workspace = true
+bilibi-person.workspace = true
+bilibi-settings.workspace = true
+bilibi-tenancy.workspace = true
+bilibi-ui.workspace = true
+bilibi-user.workspace = true
+getrandom = "0.4.3"
+inventory.workspace = true
+jiff.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tokio.workspace = true
+tokio-postgres.workspace = true

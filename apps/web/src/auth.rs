@@ -193,7 +193,7 @@ fn cookie<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
         .split(';')
         .find_map(|cookie| cookie.trim().strip_prefix(name)?.strip_prefix('='))
 }
-fn secure(app: &App) -> &'static str {
+pub(crate) fn secure(app: &App) -> &'static str {
     if app.origin.starts_with("https://") {
         "; Secure"
     } else {
@@ -292,7 +292,7 @@ pub(crate) async fn provider_signed_out(
 
 // ---- validation, worded as the source changesets are --------------------
 
-fn validate_email(value: &str) -> Vec<String> {
+pub(crate) fn validate_email(value: &str) -> Vec<String> {
     if value.is_empty() {
         vec![BLANK.into()]
     } else if value.chars().any(char::is_whitespace)
@@ -306,14 +306,14 @@ fn validate_email(value: &str) -> Vec<String> {
         Vec::new()
     }
 }
-fn validate_required(value: &str) -> Vec<String> {
+pub(crate) fn validate_required(value: &str) -> Vec<String> {
     if value.is_empty() {
         vec![BLANK.into()]
     } else {
         Vec::new()
     }
 }
-fn validate_new_password(value: &str) -> Vec<String> {
+pub(crate) fn validate_new_password(value: &str) -> Vec<String> {
     if value.is_empty() {
         return vec![BLANK.into()];
     }
@@ -322,7 +322,7 @@ fn validate_new_password(value: &str) -> Vec<String> {
         Err(violation) => vec![violation.to_string()],
     }
 }
-fn validate_confirmation(value: &str, password: &str) -> Vec<String> {
+pub(crate) fn validate_confirmation(value: &str, password: &str) -> Vec<String> {
     if value.is_empty() {
         vec![BLANK.into()]
     } else if value != password {
@@ -331,7 +331,7 @@ fn validate_confirmation(value: &str, password: &str) -> Vec<String> {
         Vec::new()
     }
 }
-fn bounded(value: &str) -> String {
+pub(crate) fn bounded(value: &str) -> String {
     value.trim().chars().take(254).collect()
 }
 
