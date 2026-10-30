@@ -40,7 +40,12 @@ def redact(raw):
     text = re.sub(r'(\b(?:Bearer|Basic)[ \t]+)\S+', r'\1[redacted]', text)
     text = re.sub(r'(\b(?:Password|PASSWORD|Secret|SECRET|Token|TOKEN|API_KEY|Authorization|AUTHORIZATION)[ \t]*[:=][ \t]*)\S+', r'\1[redacted]', text)
     # If redaction was needed, discard colour so escape codes cannot split secrets.
-    return (coloured if text == plain else text)[-LIMIT:]
+    result = coloured if text == plain else text
+    start = max(len(result) - LIMIT, 0)
+    for sequence in re.finditer(r'\x1b\[[0-9;]*m', result[:start + 32]):
+        if sequence.start() < start < sequence.end():
+            start = sequence.end()
+    return result[start:]
 
 
 def write(phase, *, started=None, failed=False, finished=False, output=''):

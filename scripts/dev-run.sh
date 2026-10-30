@@ -52,7 +52,7 @@ step discovery 'module discovery' python3 scripts/discover-modules.py
 step css 'the CSS build' ./scripts/build-assets.sh
 started=$(date +%s)
 result=0
-CARGO_TERM_COLOR=always python3 scripts/dev-status.py run build cargo build -p bilibi-web --timings || result=$?
+CARGO_TERM_COLOR=$([[ -n ${NO_COLOR-} ]] && echo never || echo always) python3 scripts/dev-status.py run build cargo build -p bilibi-web --timings || result=$?
 echo "Rust build took $(($(date +%s)-started))s (exit $result). Timing report: target/cargo-timings/cargo-timing.html"
 if [[ $result != 0 ]]; then
     build_failed "the Rust build failed (see above). $retry"
