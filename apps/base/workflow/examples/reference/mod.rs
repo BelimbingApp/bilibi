@@ -403,6 +403,13 @@ inventory::submit! { bilibi_module_registry::Module {
     ("extensions-workflow-reference-003-approval-facts","CREATE TABLE workflow_reference_approval_facts(record_id bigint PRIMARY KEY,tenant_id bigint NOT NULL,company_id bigint NOT NULL,prepared_by bigint NOT NULL,manager_id bigint NOT NULL DEFAULT 1,amount text NOT NULL DEFAULT '12500.00',currency text NOT NULL DEFAULT 'MYR',resource_type text NOT NULL DEFAULT 'controlled',revision text NOT NULL DEFAULT '1',closed boolean NOT NULL DEFAULT false,fail_effect boolean NOT NULL DEFAULT false)"),
     ("extensions-workflow-reference-004-followups","CREATE TABLE workflow_reference_followups(id bigserial PRIMARY KEY,tenant_id bigint NOT NULL,record_id bigint NOT NULL,revision text NOT NULL,UNIQUE(tenant_id,record_id,revision))")],
 } }
+// The reference flow's production seed: `seed` inserts it without the
+// operator's `initialize`, once per version.
+inventory::submit! { Registration::new(bilibi_module_registry::contributions::SEEDS, "reference.flow.seed",
+Provenance {module:"extensions/workflow_reference",source:file!(),line:line!()},
+&bilibi_module_registry::contributions::Seed { version: "workflow-reference-approval-flow-v1",
+    mode: bilibi_module_registry::contributions::SeedMode::Production,
+    action: bilibi_module_registry::contributions::SeedAction::Service { service: bilibi_workflow::FLOW_SEEDS, operation: "reference.approval" } }) }
 macro_rules! register {($id:literal,$value:expr)=>{inventory::submit! { Registration::new(CONTRIBUTIONS,$id,Provenance {module:"extensions/workflow_reference",source:file!(),line:line!()},&$value) }};}
 register!(
     "reference.listener.first",

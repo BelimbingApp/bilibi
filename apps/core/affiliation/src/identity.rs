@@ -5,11 +5,13 @@ use bilibi_authz::{authorize_key, restrictions_for};
 use bilibi_database::{Change, Error, MutationTransaction, Result};
 use bilibi_tenancy::{ProofClient, Scope};
 use serde_json::Value;
-use std::collections::HashSet;
 use tokio_postgres::GenericClient;
 
-async fn fields(client: &impl GenericClient, scope: &Scope) -> Result<HashSet<String>> {
-    restrictions_for(client, scope, "person_affiliations").await
+async fn fields(client: &impl GenericClient, scope: &Scope) -> Result<Restrictions> {
+    Ok(Restrictions {
+        fields: restrictions_for(client, scope, "person_affiliations").await?,
+        masks: bilibi_authz::fields::masks_for(client, scope, "person_affiliations").await?,
+    })
 }
 async fn raw(
     client: &impl GenericClient,
@@ -88,7 +90,7 @@ fn check_context(tx: &MutationTransaction<'_>, scope: &Scope) -> Result<()> {
     }
     Ok(())
 }
-fn restricted_input(input: &AffiliationInput, fields: &HashSet<String>) -> Result<()> {
+fn restricted_input(input: &AffiliationInput, fields: &Restrictions) -> Result<()> {
     if (input.work_email.is_some() && fields.contains("work_email"))
         || (input.work_phone.is_some() && fields.contains("work_phone"))
     {
@@ -253,7 +255,7 @@ async fn save(
     old: Affiliation,
     input: AffiliationInput,
     unlink: bool,
-    masked: HashSet<String>,
+    masked: Restrictions,
 ) -> Result<Affiliation> {
     let tenant = scope.tenant();
     let affiliation = tx.mutate(move |sql| Box::pin(async move {

@@ -7,7 +7,7 @@ root exports from the private `src/identity.rs` (`read_person`,
 `PersonId`; an identity is never an employee or login account. Core works with
 People absent. `/contacts` and `/contacts/{id}` (Bilimbi's Contacts) provide the capability-gated directory and inline record/contact editor. Creating a contact opens a dialog on the list; `/contacts/new` redirects there with that dialog open. The earlier `/persons` addresses answer with a permanent redirect to the Contacts addresses (`Moved` contributions in `src/contributions.rs`).
 
-Every person has a fixed Core `code`, unique within their tenant, including retired identities. It is generated on creation with Company’s `bilibi_party::slug_code`; duplicate names receive a numeric suffix. A name without ASCII slug characters starts with `person`. The owner truncates the base to 230 characters to leave room for a suffix. Suffix allocation uses indexed lookups, starting above existing Person IDs when a base code is taken. Creation serializes code allocation per tenant, so concurrent creates cannot share a code. Renames and retirement retain the code; a database trigger refuses a code edit. Codes are generated, never accepted as create or update input. `preview_person` uses the caller’s `ReadClient` connection and returns `CreatePreview` with the normalized `identity` and proposed `code`; commit checks availability again. Both Contacts and global search find a person by code. Downstream records should display this Core code rather than assign a customer or supplier code.
+Every person has a fixed Core `code`, unique within their tenant, including retired identities. It is generated on creation with Company’s `bilibi_party::slug_code`; duplicate names receive a numeric suffix. A name without ASCII slug characters starts with `person`. The owner truncates the base to 230 characters to leave room for a suffix. Suffix allocation uses indexed lookups, starting above existing Person IDs when a base code is taken. Creation serializes code allocation per tenant, so concurrent creates cannot share a code. Renames and retirement retain the code; a database trigger refuses a code edit, except the one a personal-data erasure makes (`erased-<id>`, below). Codes are generated, never accepted as create or update input. `preview_person` uses the caller’s `ReadClient` connection and returns `CreatePreview` with the normalized `identity` and proposed `code`; commit checks availability again. Both Contacts and global search find a person by code. Downstream records should display this Core code rather than assign a customer or supplier code.
 
 The module migration creates tenant-scoped bigint identities, fixed codes, personal
 email/phone, explicit human/agent kind, version and creation/change metadata.
@@ -98,6 +98,16 @@ request tenant. Agent candidates must have `kind=agent`. Base never reads Core
 tables directly; the providers contain the owning queries.
 
 `bilibi_person::read_person(client, scope, id)` accepts `&dyn bilibi_tenancy::ReadClient`. Composed reads, including billing-address owner checks, keep the caller's connection and the same `admin.person.view` check and contact masks. Retired Persons remain readable.
+
+## Personal data
+
+**Erasure anonymises the person to a stub that keeps its ID, kind and links, and marks it erased (`erased_at`).** Store `core/person.people` under [`base/personal_data`](../../base/personal_data/README.md), [ADR 05](../../../docs/architecture/decisions/05-personal-data-registry.md).
+
+- Declares kind `person` (name, code, email, phone; the record is a person) and erases `person`, `base/media/attachment` and `base/media/asset` evidence.
+- The code, made from the name, becomes `erased-<id>`: unique (a generated code never has a hyphen), and the only change the fixed-code trigger admits.
+- Files are read and removed only through the grant-checked Media and Artifacts paths: a retired person's documents and those filed under another company are reached; no capability opens them otherwise. Each document deletion is recorded as it happens.
+- Other people sharing an email or phone are counted, never touched.
+- **Masking.** A masked `email` or `phone` holds its partial value, named in `masked`. The record page offers Reveal (the page contract `base.privacy.field.reveal`) to readers holding `privacy.field.reveal`; the full value stays only in that view while the record is unchanged and the reader may still reveal. Embedded contact panels show no Reveal. Saving another field leaves a masked contact as stored.
 
 ## Runtime walkthrough without unit tests
 

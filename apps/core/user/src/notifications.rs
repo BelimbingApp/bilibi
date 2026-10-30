@@ -335,4 +335,22 @@ impl bilibi_notifications::NotificationSink for Notifications {
     fn committed(&self, tenant: i64, recipients: &[i64]) {
         self.changed(tenant, recipients);
     }
+    fn eligible<'a>(
+        &'a self,
+        tx: &'a MutationTransaction<'_>,
+        recipients: &'a [i64],
+    ) -> bilibi_notifications::EligibleFuture<'a> {
+        Box::pin(async move {
+            Ok(tx
+                .sql()
+                .query(
+                    "SELECT id FROM users WHERE tenant_id=$1 AND id=ANY($2) AND deleted_at IS NULL AND status='active' ORDER BY id",
+                    &[&tx.context().tenant, &recipients],
+                )
+                .await?
+                .iter()
+                .map(|row| row.get(0))
+                .collect())
+        })
+    }
 }

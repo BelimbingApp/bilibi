@@ -64,6 +64,8 @@ record kind reaches this only when its owner's Grid table names it in `record_ty
 without it is not withheld in the audit views, so declare `record_types` with
 every restrictable table.
 
+A field the reader sees **masked** (ADR 05, `bilibi_authz::fields::masked_by_record_type`) shows partial old and new values instead. When the two partial values read the same although the stored values differ (two emails at one domain), the row shows the `Restricted` marker, so the change is never hidden.
+
 ## Record History (`record.history` embed)
 
 The demoted labelled "History" disclosure a record page places in its header
@@ -113,3 +115,7 @@ restricts the company tax ID and revenue for staff, which the Companies rows
 show the same way); open `/companies/1` and press History for the trail.
 
 Actions, Data Mutations and record history show "Client identity" separately from "Model (as reported)". Both are evidence; neither replaces the account attribution or grants permissions.
+
+## Verify audit log
+
+**`/audit/integrity` (platform operators with `admin.audit.log.list`) recomputes both evidence chains and says where one breaks, including a committed row with no link** (ADR 05; `base/audit` README, Hash chain). Rows are linked as they commit, so there is nothing to seal first. Each check is recorded as `audit.chain.verified`.

@@ -6,6 +6,7 @@ mod files;
 mod identity;
 mod identity_directory;
 mod model;
+mod privacy;
 mod records;
 mod step_up;
 mod web;
@@ -185,16 +186,18 @@ impl PersonService {
 inventory::submit! {
     bilibi_module_registry::Module {
         id: "core/person", layer: bilibi_module_registry::Layer::Core,
-        dependencies: &["base/database", "base/tenancy", "base/authz", "base/grid", "base/search", "base/agent_api", "base/principal_directory", "base/ui", "base/menu", "base/datetime", "base/locale", "base/media", "base/artifacts", "base/step_up", "base/records", "base/bulk_data", "core/party"],
+        dependencies: &["base/audit", "base/database", "base/tenancy", "base/authz", "base/grid", "base/search", "base/agent_api", "base/principal_directory", "base/ui", "base/menu", "base/datetime", "base/locale", "base/media", "base/artifacts", "base/step_up", "base/records", "base/bulk_data", "base/personal_data", "base/privacy", "core/party"],
         migrations: &[
             ("001-core-person", include_str!("../migrations/001-person.sql")),
             ("core-person-002-search", include_str!("../migrations/002-search.sql")),
+            ("core-person-003-erasure", include_str!("../migrations/003-erasure.sql")),
         ],
         services: &[bilibi_module_registry::Service { id: SERVICE, factory: |services| {
             let parties = services.get::<bilibi_tenancy::PartyProofs>("base/tenancy.parties")?;
             parties.bind_persons(Arc::new(identity::Provider))?;
             parties.bind_person_identities(Arc::new(identity_directory::Provider))?;
             files::bind(parties)?;
+            privacy::bind(services.get("base/media.store")?, services.get("base/artifacts.store")?)?;
             let directory = services.get::<bilibi_principal_directory::PrincipalDirectory>("base/principal_directory.directory")?;
             directory.bind("core/person", Arc::new(directory::Provider(bilibi_principal_directory::PrincipalKind::Person)))?;
             directory.bind("core/person", Arc::new(directory::Provider(bilibi_principal_directory::PrincipalKind::Agent)))?;

@@ -93,6 +93,29 @@ entry and names them instead. They never ask who may read: this crate sits
 below Authz, so the screens in `base/audit_views` own the capability vocabulary,
 the checks and which fields are withheld.
 
+## Personal-data erasure
+
+**One narrow exception to append-only evidence, opened only by a sealed `base/personal_data` grant** ([ADR 05](../../../docs/architecture/decisions/05-personal-data-registry.md), migration `base-audit-009-erasure`).
+
+- `erase_record(tx, &Erasure, kind, id, person, &Minimums)` clears the personal fields that the kind's owner declared (`RECORD_KINDS`) in every mutation row of that record, and the subject identifier only when declared. An undeclared kind is `Invalid`; the caller never names fields.
+- **The database holds the same authority:** the fields must be declared in `base_personal_data_kinds` (written by the kind's owning module's migration; `Internal` when code and row disagree). The cause must be confirmed, for the person named, by the checker its owner registered in `base_audit_erasure_causes` (`base/privacy`: the request's own person while it runs or still owes cleanup, or a sweep still running). The target must be a record the calling transaction itself changed, or a due deferral the sweep is finishing. Anything else is refused, even when called directly as the owner role, so a request never authorises erasure of another person's or an untouched record.
+- A store whose live record has nothing left to clear calls `holds_values(tx, kind, id)` first: it writes its erasure change (which lets the history be cleared) only while that history still holds a declared value, so a repeat erasure of a clean record writes nothing. A declared field `*` matches every top-level key.
+- Declarations and checkers change only in a transaction that also records a migration in the ledger (checked at commit). This guards against mistakes, such as an ad hoc `UPDATE`; it is not a boundary against code running as the application's database role, which can also write the ledger.
+- `Minimums` are legal minimums per company: a row of a listed company stays while newer than that company's days; a row of no company follows the strictest. Kept rows get one open `base_audit_erasure_deferrals` row naming the person; the erasure's own rows (its trace) are always cleared.
+- `due_evidence(client, tenant, after, limit)` lists due deferrals; the caller leaves out held records and persons under the hold guard and passes the rest to `erase_deferred(tx, &Erasure, ids, &Minimums)` (sweep grants only), which erases them with today's minimums.
+- Each call writes one append-only `base_audit_erasures` row in the same statement: request or sweep, kind, ID, fields, rows erased and kept, actor.
+- No session setting opens the path: the guard admits a change only while `base_audit_erase_values` runs as the evidence's owner (call stack and `current_user`), and `EXECUTE` is revoked from `PUBLIC`. Every other update, delete and truncate is refused.
+- Audit's own store, `base/audit.history`, exports the evidence history of the subject's person record.
+
+## Hash chain
+
+**Every mutation and action row is linked to the one before it over its ID, tenant, time, actor, event, record and field names; values are excluded, so approved erasure keeps the chain whole.**
+
+- **Scope of the guarantee:** a removed row, or a changed ID, tenant, time, actor, event, record or field name, is detected. A changed value is not: values are outside the hash so that erasure can clear them, and only the evidence guard (no update outside the erasure functions) protects them.
+- A deferred constraint trigger links each row as its transaction commits, in commit order (advisory lock 841332), so no committed row is ever unlinked; rows from before migration 009 are linked by it.
+- `verify(client)` recomputes both chains and names the first `missing`, `changed` or `tail` break, or `unsealed` when a committed row has no link (its trigger was bypassed).
+- `base/audit_views` offers **Verify audit log** at `/audit/integrity` to platform operators; every check is recorded as `audit.chain.verified`.
+
 ## Runtime evidence
 
 Demonstrated without unit tests on a disposable database upgraded from the

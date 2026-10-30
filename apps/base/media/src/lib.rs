@@ -23,7 +23,10 @@ mod storage;
 mod upload;
 mod web;
 
-pub use attachments::{Attachment, AttachmentState, AttachmentSubject, Cleanup};
+pub use attachments::{
+    Attachment, AttachmentErasure, AttachmentState, AttachmentSubject, Cleanup, ErasedAttachment,
+    Removal, ASSET_KIND, ATTACHMENT_KIND,
+};
 pub use owner::{Subject, SubjectAction, SubjectOwner, Subjects, SUBJECTS};
 pub use quarantine::{
     QuarantinePage, QuarantineQuery, QuarantinedFile, MANAGE as QUARANTINE_MANAGE,
@@ -771,6 +774,15 @@ fn safe_external_url(url: &str) -> bool {
         && url.bytes().all(|b| b.is_ascii_graphic())
 }
 
+// Erasure clears the evidence of both records (ADR 05); only the asset's
+// filename is personal.
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_personal_data::RECORD_KINDS, "base/media.attachment",
+bilibi_module_registry::Provenance { module: "base/media", source: file!(), line: line!() },
+&bilibi_personal_data::RecordKind { kind: ATTACHMENT_KIND, fields: &[], subject_identifier: false, person: false }) }
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_personal_data::RECORD_KINDS, "base/media.asset",
+bilibi_module_registry::Provenance { module: "base/media", source: file!(), line: line!() },
+&bilibi_personal_data::RecordKind { kind: ASSET_KIND, fields: &["original_filename"], subject_identifier: false, person: false }) }
+
 macro_rules! provenance {
     () => {
         bilibi_module_registry::Provenance {
@@ -789,11 +801,12 @@ pub const SERVICE: &str = "base/media.store";
 inventory::submit! {
     bilibi_module_registry::Module {
         id: "base/media", layer: bilibi_module_registry::Layer::Base,
-        dependencies: &["base/agent_api", "base/audit", "base/authz", "base/database", "base/datetime", "base/locale", "base/menu", "base/notifications", "base/queue", "base/schedule", "base/settings", "base/system", "base/tenancy", "base/ui"],
+        dependencies: &["base/agent_api", "base/audit", "base/authz", "base/database", "base/datetime", "base/locale", "base/menu", "base/notifications", "base/personal_data", "base/queue", "base/schedule", "base/settings", "base/system", "base/tenancy", "base/ui"],
         migrations: &[
             ("base-media-001", include_str!("../migrations/001-media.sql")),
             ("base-media-002", include_str!("../migrations/002-attachments.sql")),
             ("base-media-003", include_str!("../migrations/003-scan.sql")),
+            ("base-media-004-erasure", include_str!("../migrations/004-erasure.sql")),
         ],
         services: &[
             Service { id: SERVICE, factory: |services| {

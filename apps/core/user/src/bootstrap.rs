@@ -37,7 +37,8 @@ use tokio_postgres::GenericClient;
 pub const CREATE_OWNER_PRINCIPAL: &str = "create-owner";
 /// The bootstrap transaction's action; its retained
 /// `user.bootstrap.completed` action (Bilimbi's, and the seed's) carries the
-/// account, email and role.
+/// account and role. Unlike Bilimbi's it carries no email: an action payload
+/// is never erased (ADR 05), and the receipt's email is.
 pub const BOOTSTRAP_ACTION: &str = "user.bootstrap";
 pub const BOOTSTRAP_COMPLETED: &str = "user.bootstrap.completed";
 
@@ -429,7 +430,7 @@ impl UserService {
             &who,
             None,
             BOOTSTRAP_COMPLETED,
-            json!({"user_id": user, "email": email, "role": "core_admin", "created": true}),
+            json!({"user_id": user, "role": "core_admin", "created": true}),
             true,
         )
         .await?;
