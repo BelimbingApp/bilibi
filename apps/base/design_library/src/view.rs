@@ -121,6 +121,49 @@ impl View<'_> {
             },
         })
     }
+    /// The mounted page owns search and selection; the control only draws them.
+    fn search_multi(&self) -> askama::Result<Html> {
+        let query = self.state.picker_query.to_lowercase();
+        let option = |row: state::Company| {
+            let value = row.id.to_string();
+            let item = bilibi_ui::SearchMultiOption::new(value, row.name).detail(row.code);
+            if row.id == 3 {
+                item.disabled("Already a customer", Some("#component-search-multi".into()))
+            } else {
+                item
+            }
+        };
+        let selected = self
+            .state
+            .picker_selected
+            .iter()
+            .map(|id| option(state::Company::new(*id)))
+            .collect();
+        let results = (1..=120)
+            .map(state::Company::new)
+            .filter(|row| {
+                format!("{} {}", row.name, row.code)
+                    .to_lowercase()
+                    .contains(&query)
+            })
+            .take(10)
+            .map(option)
+            .collect();
+        render(
+            bilibi_ui::SearchMultiSelect::new(
+                "design-library-search-multi",
+                "picker[companies]",
+                "Companies",
+                "search-multi-query",
+                "search-multi-pick",
+                "search-multi-remove",
+            )
+            .query(&self.state.picker_query)
+            .selected(selected)
+            .results(results)
+            .create("Create company", "search-multi-create"),
+        )
+    }
     /// The file input specimen, rendered from the uploads the state holds.
     fn file_input(&self) -> askama::Result<Html> {
         render(

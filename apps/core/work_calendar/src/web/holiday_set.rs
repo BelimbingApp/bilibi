@@ -25,11 +25,13 @@ fn holiday_columns() -> Vec<BuiltinColumn> {
         BuiltinColumn::new("name", "Name"),
     ]
 }
+/// The years the page offers.
+const YEARS: std::ops::RangeInclusive<i16> = 1900..=2999;
 fn year(query: &HashMap<String, String>) -> Option<i16> {
     query
         .get("year")
         .and_then(|year| year.parse().ok())
-        .filter(|year| (1900..=2999).contains(year))
+        .filter(|year| YEARS.contains(year))
 }
 /// The calendars a set is included in: their links in a list sentence.
 #[derive(Template)]
@@ -217,13 +219,32 @@ impl Record {
                     "add": [{"date": field("date"), "name": field("name")}],
                 });
                 let added = format!("{} is added.", field("name"));
+                let year = field("date")
+                    .parse::<Date>()
+                    .ok()
+                    .map(|date| date.year())
+                    .filter(|year| YEARS.contains(year));
                 match self
                     .pages
                     .submit(scope, credential, name, contract, input)
                     .await?
                 {
                     Ok(_) => {
-                        self.flash.put(StatusKind::Success, added);
+                        // The page moves to the holiday's year, so what was
+                        // added is shown.
+                        let message = match year {
+                            Some(year) if Some(year) != self.year => {
+                                self.year = Some(year);
+                                format!("{added} Showing {year}.")
+                            }
+                            Some(_) => added,
+                            None => format!(
+                                "{added} This page shows the years {} to {}, so it is not listed.",
+                                YEARS.start(),
+                                YEARS.end()
+                            ),
+                        };
+                        self.flash.put(StatusKind::Success, message);
                         self.errors.clear();
                         self.draft.clear();
                     }
@@ -509,12 +530,14 @@ impl Record {
                 ..ActionLink::default()
             })
         };
-        let years = render(Cluster {
-            parts: vec![
-                link("holiday-set-year-previous", year - 1)?,
-                link("holiday-set-year-next", year + 1)?,
-            ],
-        })?;
+        let mut parts = Vec::new();
+        if YEARS.contains(&(year - 1)) {
+            parts.push(link("holiday-set-year-previous", year - 1)?);
+        }
+        if YEARS.contains(&(year + 1)) {
+            parts.push(link("holiday-set-year-next", year + 1)?);
+        }
+        let years = render(Cluster { parts })?;
         let mut cards = Vec::new();
         if manage {
             let value = |key: &str| self.draft.get(key).cloned().unwrap_or_default();

@@ -84,7 +84,7 @@ Agents and the [pages](#pages) use these contracts (ADR 01); writes are reviewed
 
 | Operation | Kind | Does |
 | --- | --- | --- |
-| `core.work_calendar.list` | read (list) | One page of calendars, by code, with the total; each with the zone of the rule version in force today and its included sets (the first 400 and their total); `search` matches code or name |
+| `core.work_calendar.list` | read (list) | One page of calendars, by code, with the total; each with the zone of the rule version in force today (each version's first date read in its own zone) and its included sets (the first 400 and their total); `search` matches code or name |
 | `core.work_calendar.holiday_set.list` | read (list) | One page of the tenant's holiday sets and the installation-wide ones (`installation`), the same way |
 | `core.work_calendar.get` | read | One calendar: versions, sets, a page of exceptions, version |
 | `core.work_calendar.holiday_set.get` | read | One set with a page of its holidays (optionally from and to a date) and the calendars including it |
@@ -108,12 +108,13 @@ Under Administration, behind `admin.work-calendar.list` (menu and lists) and `.v
 | Page | Path | What |
 | --- | --- | --- |
 | Work Calendars | `/work-calendars` | Code, name, status, zone today, included sets; search; New Calendar opens a dialog (code, name, zone, first date, substitution, week) and lands on the calendar |
-| Calendar | `/work-calendars/{code}` | Name and substitution edited in place; Retire (confirmed) or Reactivate; weekly hours by version with Set week from a date; included sets with Include and Leave out; exceptions with Add and Remove (confirmed), 400 a page (`?page=`) |
-| Month | `/work-calendars/{code}/month?month=YYYY-MM` | Each date of the month as a day tile (`base/ui` `DayTile`): type, opening periods, reason; previous and next month are links |
+| Calendar | `/work-calendars/{code}` | Name and substitution edited in place; Retire (confirmed) or Reactivate; weekly hours by version with Set week from a date; included sets with Include and Leave out; exceptions with Add and Remove (confirmed), 50 a page (`?page=`); Include searches every set by code or name |
+| Month | `/work-calendars/{code}/month?month=YYYY-MM` | Each date of the month as a day tile (`base/ui` `DayTile`): type, opening periods, reason; previous and next month are links, from January 1900 to December 2999 |
 | Holiday Sets | `/holiday-sets` | Code, name, country, division; search; New Holiday Set opens a dialog whose divisions follow the country |
-| Holiday Set | `/holiday-sets/{code}?year=YYYY` | Name, country and division edited in place; the calendars that include it; one year's holidays with Add, rename in the row and Remove (confirmed) |
+| Holiday Set | `/holiday-sets/{code}?year=YYYY` | Name, country and division edited in place; the calendars that include it; one year's holidays with Add, rename in the row and Remove (confirmed); a holiday added for another year moves the page to that year |
 
 - A new calendar's zone starts as the current company's `localization.timezone` (else the tenant's); the default month, year and dates are today there.
+- "Today" for the version in force (the record's In force and Zone today, the list's zone) is the calendar's date in that version's zone, never the database session's date, so the pages agree whatever zone the database runs in.
 - A write against a version that moved on since the page read it says so and asks for a reload; nothing is overwritten.
 - Grid table `work_calendars` (keyed by code): code, name, status, substitution, zone today and included sets, behind `.list`.
 

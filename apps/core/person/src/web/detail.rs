@@ -188,6 +188,11 @@ impl Detail {
         )?;
         let items = vec![
             Fact {
+                title: super::fields::CODE.label,
+                value: Html::text(&person.code),
+                ..Fact::default()
+            },
+            Fact {
                 title: super::fields::NAME.label,
                 value: render(InlineEdit {
                     field: self.inline(

@@ -13,6 +13,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let other = OrganisationId::new(3)?;
     let dates = EffectiveDates::new(Some("2026-10-14".to_owned().try_into()?), None)?;
     let person = Person {
+        code: "morgan_contact".into(),
         id: person_id,
         version: 1,
         identity: PersonInput {

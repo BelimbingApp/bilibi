@@ -702,7 +702,7 @@
   // the step is a params update in place (Bilimbi's handle_params on a live
   // patch) and the DOM it keeps, frames included, is reconciled, not rebuilt.
   // The step names the historical path too: the server keeps the state when
-  // that path is still this page's (a saved layout's address under the
+  // that path is still this page's (a shared layout's address under the
   // workspace) and mounts the page it names otherwise.
   // A step that only changes the fragment (an in-page link followed or undone)
   // leaves the page as it is: remounting it would drop what was typed.

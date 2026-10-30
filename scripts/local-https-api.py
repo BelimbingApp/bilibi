@@ -337,6 +337,13 @@ def allowed_clients():
             match = re.search(r"\bvia ([0-9.]+)", route.stdout)
             if match:
                 clients.append(match.group(1))
+            # A WSL program that resolves *.localhost through /etc/hosts (Node
+            # does) reaches Caddy from WSL's own address, which changes after
+            # a WSL restart. The machine's own addresses are never remote.
+            own = subprocess.run(["ip", "-4", "-o", "addr", "show", "scope", "global"],
+                                 capture_output=True, text=True)
+            clients.extend(address for address in re.findall(r"\binet ([0-9.]+)/", own.stdout)
+                           if address not in clients)
     return clients
 
 

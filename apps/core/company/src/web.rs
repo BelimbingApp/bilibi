@@ -11,6 +11,7 @@ pub(super) mod relationships;
 mod setup;
 mod views;
 use crate::{lifecycle::Operation, CreateOutcome, Edit, FieldError, Params};
+use bilibi_agent_api::page::{Call, PageContracts};
 use bilibi_database::{Db, Error, Result};
 use bilibi_grid::{PageColumns, PageViews};
 use bilibi_tenancy::Scope;
@@ -71,6 +72,7 @@ pub struct Pages {
     pub datetime: Arc<bilibi_datetime::DisplayPolicy>,
     pub locales: Arc<bilibi_locale::Locales>,
     pub picklists: Arc<bilibi_picklists::PickLists>,
+    pub contracts: Arc<PageContracts>,
     pub record_panels: Vec<RecordPanel>,
 }
 /// A panel another module contributes for a company record (Address's
@@ -162,6 +164,7 @@ impl Pages {
         Ok(CompanyPage {
             db: self.db.clone(),
             company: self.company.clone(),
+            contracts: self.contracts.clone(),
             datetime: self.datetime.clone(),
             locales: self.locales.clone(),
             picklists: self.picklists.clone(),
@@ -367,6 +370,7 @@ struct Pending {
 struct CompanyPage {
     db: Db,
     company: Arc<crate::CompanyService>,
+    contracts: Arc<PageContracts>,
     datetime: Arc<bilibi_datetime::DisplayPolicy>,
     locales: Arc<bilibi_locale::Locales>,
     picklists: Arc<bilibi_picklists::PickLists>,
@@ -511,7 +515,7 @@ impl CompanyPage {
                     .map(|company| company.id)
                     .collect::<Vec<_>>();
                 let extension_values =
-                    crate::field_contributions::read(&client, scope, &company_ids).await?;
+                    crate::field_contributions::read(&**client, scope, &company_ids).await?;
                 views::list(
                     &**client,
                     scope,
@@ -713,6 +717,67 @@ impl CompanyPage {
                     ("search".into(), "".into()),
                     ("status".into(), "".into()),
                 ]))
+            }
+            "save_contributed_field" if self.operation == "detail" => {
+                let id = get("id").parse().map_err(|_| Error::Invalid)?;
+                let field = get("field").to_owned();
+                let version = get("version").parse::<i64>().map_err(|_| Error::Invalid)?;
+                if self.id != Some(id)
+                    || crate::field_contributions::field(&field)
+                        .map_err(|_| Error::Internal)?
+                        .is_none()
+                {
+                    return Err(Error::Invalid);
+                }
+                let mut fields = serde_json::Map::new();
+                let submitted = get("value");
+                fields.insert(
+                    field.clone(),
+                    if submitted.is_empty() {
+                        Value::Null
+                    } else {
+                        Value::String(submitted.into())
+                    },
+                );
+                let input = serde_json::json!({
+                    "company_id": id,
+                    "version": version,
+                    "fields": fields,
+                });
+                let result = self
+                    .contracts
+                    .submit(
+                        &Call {
+                            scope,
+                            credential,
+                            service: "core/company.pages",
+                            event: "save_contributed_field",
+                            contract: "core.company.update",
+                        },
+                        input,
+                    )
+                    .await;
+                let status = match result {
+                    Ok(_) => CommitStatus::Saved,
+                    Err(bilibi_agent_api::Error::Backend(Error::Unauthorized)) => {
+                        return Err(Error::Unauthorized)
+                    }
+                    Err(bilibi_agent_api::Error::Backend(Error::Forbidden | Error::NotFound)) => {
+                        self.notice = "You no longer have permission to change this company, or the company is archived.".into();
+                        CommitStatus::Error(self.notice.clone())
+                    }
+                    Err(bilibi_agent_api::Error::Backend(Error::Conflict)) => CommitStatus::Error(
+                        "The record changed. Your draft is kept; reload before saving.".into(),
+                    ),
+                    Err(bilibi_agent_api::Error::InvalidInput(errors)) => CommitStatus::Error(
+                        errors.into_values().flatten().collect::<Vec<_>>().join(" "),
+                    ),
+                    Err(bilibi_agent_api::Error::Backend(Error::Invalid)) => CommitStatus::Error(
+                        "The value was not saved. Check its format, length and references.".into(),
+                    ),
+                    Err(_) => CommitStatus::failure(),
+                };
+                self.statuses.put(field, status);
             }
             "save_field" if self.operation == "detail" => {
                 let id = get("id").parse().map_err(|_| Error::Invalid)?;

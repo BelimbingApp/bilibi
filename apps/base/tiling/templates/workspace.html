@@ -16,7 +16,7 @@
 {%- import "forms.html" as form -%}
 <div data-shared-ui class="flex h-full min-h-0 flex-col">
 {% call feedback::flash_group(messages=flash) %}{% endcall %}
-<div id="workspace" data-hook="Tiling" data-history="params" data-focused="{{ focused }}" data-follows="{{ follows }}" data-monocle="{{ monocle }}" data-layout="{{ mode }}" data-tile-count="{{ tiles.len() }}" class="flex min-h-0 flex-1 flex-col">
+<div id="workspace" data-hook="Tiling" data-history="params" data-focused="{{ focused }}" data-follows="{{ follows }}" data-monocle="{{ monocle }}" data-tile-count="{{ tiles.len() }}" class="flex min-h-0 flex-1 flex-col">
 {%- if !tiles.is_empty() %}
 {% call tabstrip::tabs(id="workspace-tabs", items=tabs, label="Tiles", class="shrink-0 lg:hidden") %}{% endcall %}
 {%- endif %}
@@ -28,7 +28,7 @@
 {%- for tile in tiles %}
 <div id="tile-{{ tile.id }}" class="workspace-tile group absolute p-0.5" data-place="{{ tile.place }}" data-tile="{{ tile.id }}" data-title="{{ tile.title }}" data-focused="{{ tile.focused }}"{% if let Some(follow) = tile.follow %} data-follow="{{ follow }}"{% endif %}{% if tile.hidden %} hidden{% endif %}>
 <div class="relative flex h-full min-h-0 flex-col overflow-hidden rounded-md border bg-surface group-data-[drop-target=true]:ring-2 group-data-[drop-target=true]:ring-brand-strong group-data-[dragging=true]:opacity-60 {% if tile.focused %}border-brand-strong ring-1 ring-brand-strong{% else %}border-line{% endif %}">
-{% call tiling::tile_controls(id="tile-{}-controls"|format(tile.id), tile_id=tile.id, title=tile.title, focused=tile.focused, master_layout=mode == "master", master_tile=tile.master, following=tile.following) %}{% endcall %}
+{% call tiling::tile_controls(id="tile-{}-controls"|format(tile.id), tile_id=tile.id, title=tile.title, focused=tile.focused, following=tile.following) %}{% endcall %}
 {%- if tile.open() %}
 {#- The frame's `src` is written once: a frame navigates itself afterwards,
     and the patcher never rewrites an existing iframe's `src`. -#}
@@ -45,7 +45,7 @@
 </div>
 </div>
 {%- if picker_open %}
-{% call dialog::modal(id="workspace-picker", title="Add a page", cancel_event="close_picker", description=picker_description, owns_flash=true, messages=flash) %}
+{% call dialog::modal(id="workspace-picker", title="Add a page", cancel_event="close_picker", description="The page opens in a new tile beside the selected one.", owns_flash=true, messages=flash) %}
 <div id="workspace-picker-pages" class="-mx-1 max-h-96 space-y-0.5 overflow-y-auto">
 {%- for page in pages %}
 <button type="button" id="workspace-pick-{{ page.id }}" data-event="add_tile" data-value-path="{{ page.route }}" class="block w-full rounded-md px-2 py-1.5 text-left transition hover:bg-surface-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-strong/40"><span class="block text-sm text-ink">{{ page.label }}</span>{% if !page.trail.is_empty() %}<span class="block text-xs text-ink-muted">{{ page.trail }}</span>{% endif %}</button>
@@ -54,12 +54,18 @@
 </div>
 {% endcall %}
 {%- endif %}
-{#- The saved layouts dialog; its body is `workspace_layouts.html`, rendered
-    by the page so the two FlexTables inside it keep their typed models. -#}
-{%- if let Some(layouts) = layouts %}
-{% call dialog::modal(id="workspace-layouts", title="Saved layouts", cancel_event="close_layouts", width=bilibi_ui::ModalWidth::Wide, description="Layouts are saved for your account. In tiling mode, the keys 1 to 9 open the first nine.", owns_flash=true, messages=flash) %}{{ layouts|safe }}{% endcall %}
+{%- if let Some(field) = pin_field %}
+{% call dialog::modal(id="workspace-pin-dialog", title="Pin this layout", cancel_event="close_pin") %}
+<form id="workspace-pin-form" data-event="pin_layout" class="mt-3 space-y-3">
+{% call form::input(field=field) %}{% endcall %}
+<div class="flex justify-end gap-2">
+{% call ui::button(button_type="button", event="close_pin") %}Cancel{% endcall %}
+{% call ui::button(variant=bilibi_ui::ButtonVariant::Primary, button_type="submit") %}Pin layout{% endcall %}
+</div>
+</form>
+{% endcall %}
 {%- endif %}
-{%- if let Some(consequence) = delete_consequence %}
-{% call dialog::confirm_dialog(id="workspace-delete-layout", consequence=consequence, detail="Its address stops working. The pages it showed are unaffected. This cannot be undone.", confirm="Delete", working="Deleting…", confirm_event="confirm_delete_layout", cancel_event="cancel_delete_layout") %}{% endcall %}
+{%- if let Some(layouts) = layouts %}
+{% call dialog::modal(id="workspace-layouts", title="Shared workspaces", cancel_event="close_layouts", width=bilibi_ui::ModalWidth::Wide, owns_flash=true, messages=flash) %}{{ layouts|safe }}{% endcall %}
 {%- endif %}
 </div>

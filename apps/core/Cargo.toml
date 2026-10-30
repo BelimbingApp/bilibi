@@ -13,6 +13,7 @@ bilibi-agent-access = { path = "agent_access" }
 bilibi-agent-plugins = { path = "agent_plugins" }
 bilibi-company = { path = "company" }
 bilibi-currency = { path = "currency" }
+bilibi-customer-access = { path = "customer_access" }
 bilibi-geonames = { path = "geonames" }
 bilibi-party = { path = "party" }
 bilibi-person = { path = "person" }
