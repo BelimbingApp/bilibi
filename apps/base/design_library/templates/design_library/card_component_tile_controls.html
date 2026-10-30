@@ -4,7 +4,7 @@
 {% import "tiling.html" as tile %}
 
               <p class="text-xs text-ink-muted">
-                A workspace tile has no title bar: the page's own heading names it. Its controls float over the top right corner, a grip for dragging the tile onto another to swap them and a menu with the two operations a pointer needs. A focused tile keeps them in sight; on any other tile they appear when the pointer is over it or focus reaches them, so hover the second example. The menu closes when focus leaves it or Escape is pressed. Every other tile operation is a key of the tiling mode.
+                A workspace tile has no title bar: the page's own heading names it. Its controls float over the top right corner as one flat row: move, which drags the tile onto another to swap them, flip the split direction, and close. A focused tile keeps them in sight; on any other tile they appear when the pointer is over it or focus reaches them, so hover the second example. Every other tile operation is a key of the tiling mode.
               </p>
               <div id="design-library-tile-controls-focused" class="group relative h-20 rounded-md border border-brand-strong ring-1 ring-brand-strong">
                 {% call tile::tile_controls(id="design-library-tile-controls-a", title="Companies", focused=true, tile_id="design-library-tile-controls-a") %}{% endcall %}
@@ -13,11 +13,8 @@
                 {% call tile::tile_controls(id="design-library-tile-controls-b", title="Users", tile_id="design-library-tile-controls-b") %}{% endcall %}
               </div>
               <p class="text-xs text-ink-muted">
-                Two states stay visible on a tile that is not focused: the master tile of a master layout, whose menu turns the whole arrangement, and a tile that follows the records other tiles select.
+                A tile that follows the records other tiles select shows that state even when it is not focused.
               </p>
-              <div id="design-library-tile-controls-master" class="group relative h-20 rounded-md border border-line">
-                {% call tile::tile_controls(id="design-library-tile-controls-c", title="Employees", master_layout=true, master_tile=true, tile_id="design-library-tile-controls-c") %}{% endcall %}
-              </div>
               <div id="design-library-tile-controls-following" class="group relative h-20 rounded-md border border-line">
                 {% call tile::tile_controls(id="design-library-tile-controls-d", title="A company record", following=true, tile_id="design-library-tile-controls-d") %}{% endcall %}
               </div>

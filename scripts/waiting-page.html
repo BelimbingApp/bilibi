@@ -37,7 +37,6 @@ p{margin:.5rem 0 0;font-size:.875rem;line-height:1.5rem;color:var(--muted)}
 .dot{width:.5rem;height:.5rem;border-radius:50%;background:var(--warn);animation:pulse 1.4s ease-in-out infinite}
 @keyframes pulse{50%{opacity:.3}}
 @media (prefers-reduced-motion:reduce){.dot{animation:none}}
-button{margin-left:auto;font:inherit;font-size:.75rem;font-weight:500;color:var(--strong);background:none;border:0;padding:0;text-decoration:underline;cursor:pointer}
 .instance{display:flex;align-items:center;gap:.5rem;margin:0 0 .75rem;font-size:.75rem;color:var(--muted)}
 .instance[hidden]{display:none}
 .role{display:inline-block;padding:.125rem .5rem;border-radius:999px;font-weight:600;letter-spacing:.04em;color:var(--role-ink);background:var(--role-surface)}
@@ -59,9 +58,9 @@ button{margin-left:auto;font:inherit;font-size:.75rem;font-weight:500;color:var(
 <div class="body">
 <p class="instance" id="waiting-instance" hidden><span class="role" id="waiting-role"></span><span id="waiting-site"></span></p>
 <h1 id="waiting-heading">Bilibi is starting</h1>
-<p id="waiting-text">The app is restarting or rebuilding. This page reloads on its own as soon as it is ready, so you will land back on what you asked for.</p>
-<p class="hint" id="waiting-hint">Taking longer than usual. If you started the app yourself, check the terminal running <code>scripts/start-app.sh</code> for a build error.</p>
-<div class="status"><span class="dot" aria-hidden="true"></span><span id="waiting-state">Checking again in a moment…</span><button id="waiting-retry" type="button">Try now</button></div>
+<p id="waiting-text">You can continue when it's ready; this page will reload automatically.</p>
+<p class="hint" id="waiting-hint">Taking longer than usual. If you started Bilibi, check the <code>./bilibi start</code> terminal for errors.</p>
+<div class="status"><span class="dot" aria-hidden="true"></span><span id="waiting-state">Checking again in a moment…</span></div>
 </div>
 </div>
 <p class="foot">Business application platform</p>
@@ -99,10 +98,6 @@ button{margin-left:auto;font:inherit;font-size:.75rem;font-weight:500;color:var(
         schedule();
       });
   }
-  document.getElementById('waiting-retry').addEventListener('click', function () {
-    clearTimeout(timer);
-    check();
-  });
   document.addEventListener('visibilitychange', function () {
     if (!document.hidden && !busy) { clearTimeout(timer); check(); }
   });

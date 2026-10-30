@@ -19,9 +19,8 @@ use bilibi_system::Instance;
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, Subscription},
-    ActionLink, Field, Html, InputKind, StatusbarTag,
+    ActionLink, Html, StatusbarTag,
 };
-use serde::Deserialize;
 use std::{
     collections::HashMap,
     time::{Duration, SystemTime},
@@ -35,19 +34,6 @@ const MANAGE: &str = "/settings/ai-connections";
 
 pub(crate) struct AiStatus {
     pages: Pages,
-    /// What the browser reported after a copy click, for the text this panel
-    /// shows: `Prompt` or `Address`, and whether the copy worked.
-    copied: Option<(Copied, bool)>,
-}
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Copied {
-    Prompt,
-    Address,
-}
-#[derive(Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
-enum AiEvent {
-    Copied { text: String, copied: bool },
 }
 
 /// One live connection as the panel lists it.
@@ -81,13 +67,15 @@ struct AiStatusView {
     connected: bool,
     connections: Vec<ConnectionView>,
     activity: Vec<ActivityView>,
-    prompt: Option<Field>,
+    /// Only the person's own account gets the connect steps.
+    show_connect: bool,
     prompt_text: String,
     address: String,
     /// Internet AI apps cannot reach this Bilibi: say to use a local program.
     local_only: bool,
-    /// The copy outcome to show: (what was copied, it worked).
-    copied: Option<(&'static str, bool)>,
+    /// Offer the ChatGPT plugin ZIP; see `offers_plugin`.
+    plugin: bool,
+    plugin_href: &'static str,
     manage: &'static str,
     /// The link to `/settings/ai-connections` beside the connections heading.
     manage_link: Html,
@@ -95,10 +83,7 @@ struct AiStatusView {
 
 impl AiStatus {
     pub(crate) fn new(pages: Pages) -> Self {
-        Self {
-            pages,
-            copied: None,
-        }
+        Self { pages }
     }
     pub(crate) async fn view(&self, scope: &Scope) -> Result<String> {
         let client = self.pages.db.get().await?;
@@ -186,16 +171,7 @@ impl AiStatus {
             }
         };
         let prompt = own_account.then(|| setup_prompt::prompt(&instance));
-        let address = format!("{}/mcp", instance.origin);
-        let copied = self.copied.map(|(what, ok)| {
-            (
-                match what {
-                    Copied::Prompt => "prompt",
-                    Copied::Address => "address",
-                },
-                ok,
-            )
-        });
+        let address = setup_prompt::address(&instance);
         let render = |rendered: askama::Result<Html>| rendered.map_err(|_| Error::Internal);
         html(AiStatusView {
             tag: render(Html::render(&StatusbarTag {
@@ -227,40 +203,14 @@ impl AiStatus {
             connected,
             connections,
             activity,
-            prompt: prompt.as_ref().map(|text| {
-                let mut field = Field::named("prompt")
-                    .id("app-ai-prompt")
-                    .kind(InputKind::Textarea)
-                    .label("Prompt for your AI app")
-                    .value(text)
-                    .readonly();
-                field.attrs.rows = Some("5".into());
-                field
-            }),
+            show_connect: prompt.is_some(),
             prompt_text: prompt.unwrap_or_default(),
             local_only: !instance.public_address(),
+            plugin: own_account && crate::offers_plugin(scope, &instance.origin),
+            plugin_href: crate::PLUGIN_DOWNLOAD,
             address,
-            copied,
             manage: MANAGE,
         })
-    }
-    /// A copy report counts only for a text this panel shows.
-    async fn copied(&mut self, scope: &Scope, text: &str, copied: bool) {
-        self.copied = None;
-        if crate::self_service(scope).is_err() {
-            return;
-        }
-        let Ok(client) = self.pages.db.get().await else {
-            return;
-        };
-        let Ok(instance) = Instance::resolve(&self.pages.settings, &**client).await else {
-            return;
-        };
-        if text == setup_prompt::prompt(&instance) {
-            self.copied = Some((Copied::Prompt, copied));
-        } else if text == format!("{}/mcp", instance.origin) {
-            self.copied = Some((Copied::Address, copied));
-        }
     }
 }
 
@@ -270,13 +220,7 @@ impl LiveState<Scope, Error> for AiStatus {
             match request.input {
                 LiveInput::Refresh => {}
                 LiveInput::Params(_) => return Err(Error::Invalid),
-                LiveInput::Event(value) => {
-                    match AiEvent::deserialize(value).map_err(|_| Error::Invalid)? {
-                        AiEvent::Copied { text, copied } => {
-                            self.copied(request.scope, &text, copied).await
-                        }
-                    }
-                }
+                LiveInput::Event(_) => return Err(Error::Invalid),
             }
             Ok(LiveBody {
                 html: self.view(request.scope).await?,
@@ -293,7 +237,7 @@ impl LiveState<Scope, Error> for AiStatus {
 }
 
 /// "just now", "5 min ago", "3 hours ago", "yesterday", "4 days ago".
-fn ago(at: SystemTime, now: SystemTime) -> String {
+pub(crate) fn ago(at: SystemTime, now: SystemTime) -> String {
     let secs = now.duration_since(at).unwrap_or(Duration::ZERO).as_secs();
     match secs {
         0..=59 => "just now".to_owned(),

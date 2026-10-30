@@ -29,3 +29,5 @@ The module's README is the contract: [`apps/base/records/README.md`](../../../ap
 - A module offers its records for reference with one access check and one declaration; a holder needs only two text columns.
 - Names, links and checks follow the reader's permissions in one place, and an unmounted owner leaves holders working.
 - Moving Media subjects and Finance attachment sources onto record kinds is possible later and is not part of this decision.
+
+A Company or Person keeps its fixed Core code when another module links it as a customer or supplier. Display and search that owner’s code; the receiving module stores the record reference and its own business terms, rather than assigning another party code. Core Person generates tenant-unique codes with Company’s shared name slug, retaining duplicate names with numeric suffixes.

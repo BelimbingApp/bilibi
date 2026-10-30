@@ -21,8 +21,8 @@ Additive over the frozen original migration: every existing company keeps its
 id, tenant and `/companies/{id}` URL, and `OrganisationId` is that id.
 `companies` gains Bilimbi's columns (`parent_id`, `code`, `legal_name`,
 `registration_number`, `legal_entity_type_id`, `jurisdiction`, `website`,
-`scope_activities`, `metadata`, `updated_at`). `code` is backfilled from the
-name as Belimbing slugs it (`organisation::slug_code`) and is **unique within
+`scope_activities`, `metadata`, `updated_at`). Creation offers a code from the
+name using `bilibi_party::slug_code`, shared with Person. The code stays fixed after creation and is **unique within
 a tenant**: Bilimbi's compatibility constraint spans tenants, which would let
 one tenant learn another's codes. A parent is a company of the same tenant
 (`(tenant_id, parent_id)` foreign key) and never the row itself.
@@ -174,7 +174,13 @@ current company](#the-current-company)), `core.company.duplicates` and
 [Company hierarchies](#company-hierarchies)) and `core.company.create`
 (a reviewed safe write: preview shares
 create's validation and code check without reserving it, commit writes
-through the plan's transaction) plus the `core.company` guide. A restricted
+through the plan's transaction), plus `core.company.update` (a reviewed
+custom-field-only write using the supplied Company version, a nonempty `fields`
+patch, null to clear an optional field, and commit-time reach, restriction,
+version and value checks). Preview requires Company view permission before it
+shows before/after values;
+the result returns the Company ID, new version and path for Get readback. The
+`core.company` guide documents both. A restricted
 field arrives as `{"restricted": true}`. The handlers read through a pool
 bound once by the service factory.
 
@@ -191,8 +197,10 @@ the tenant-scoped source and a direct `One` link with an `On` join from
 `companies`; its `RecordFields` contribution supplies the direct
 `extension_table.field` Grid path and detail label. Company
 uses the static field declaration for create and detail controls, and calls the
-owner's scoped read callback for Company pages and agent reads. The owner must
-bind the sealed scope's tenant in every read and write. Direct links let Company
+owner's scoped read callback for Company pages and agent reads. The callback
+receives the read-only `OperationClient`, so reviewed previews use the plan's
+existing transaction rather than checking out a second database connection.
+The owner must bind the sealed scope's tenant in every read and write. Direct links let Company
 join each contributor source once for list sorting and filtering. Each contributor table must enforce a unique Company key (for example, `UNIQUE (tenant_id, company_id)`); otherwise the join can duplicate Company rows and inflate counts.
 
 Create and update callbacks run inside Company's mutation transaction through a
@@ -208,7 +216,19 @@ either record identity, including when the target field is protected from new
 restrictions. Grid prunes the corresponding dotted path from each fresh scoped
 catalog.
 
-The same fields appear in the reviewed `core.company.create` schema (`format: date` for dates) and are accepted by its preview and commit handlers. A choice field names a standalone tenant pick-list declared by that same Extension; dependent lists are rejected at discovery because Company has no parent selector for them. Company stores only the stable code and uses `base/picklists` for fresh tenant-scoped choices, defaults, localized labels and transactional write checks. The agent schema describes the stable code and pick-list key without freezing tenant values. Create and inline updates recheck assignments in Company's mutation transaction; retired current values remain readable with a retired marker, while retired codes cannot be newly assigned. Grid projects the stored code and renders its current pick-list label. Choice sorting and filtering are described below. Date fields use native date controls on create and detail; detail displays dates as `DD/MM/YYYY` while the editor and agent API use canonical `YYYY-MM-DD`. List and detail agent output uses
+Contributed inline saves call `core.company.update` through `PageContracts`,
+the same operation agents use. Only the remaining built-in fact, activity,
+lifecycle and create events retain the page's pending write allowance. Empty
+controls send `null` to clear an optional field; agent text and choice inputs
+also normalize an empty string to `null`. The page and agent therefore share
+the operation's value semantics.
+
+The same fields appear in the reviewed `core.company.create` and
+`core.company.update` schemas (`format: date` for dates) and are accepted by
+their preview and commit handlers. The update schema nests only installed
+field IDs under `fields`, declares optional fields nullable for explicit
+clearing, and never allows built-in Company facts in that patch. Unknown keys,
+empty patches and invalid values are refused. A choice field names a standalone tenant pick-list declared by that same Extension; dependent lists are rejected at discovery because Company has no parent selector for them. Company stores only the stable code and uses `base/picklists` for fresh tenant-scoped choices, defaults, localized labels and transactional write checks. The agent schema describes the stable code and pick-list key without freezing tenant values. Create, inline updates and reviewed agent updates recheck assignments in Company's mutation transaction; retired current values remain readable with a retired marker, unchanged retired choices may be retained, and retired codes cannot be newly assigned. Grid projects the stored code and renders its current pick-list label. Choice sorting and filtering are described below. Date fields use native date controls on create and detail; detail displays dates as `DD/MM/YYYY` while the editor and agent API use canonical `YYYY-MM-DD`. List and detail agent output uses
 the same field IDs, with restricted values replaced by the shared restricted
 marker. Runtime tenant-defined fields, JSON storage and reference fields are
 not part of this static contract.
@@ -216,6 +236,10 @@ not part of this static contract.
 ### Upgrade notes for field contributors
 
 `CompanyFieldKind` now includes `Date` and `Choice`. Update exhaustive matches. Date contributions use canonical `YYYY-MM-DD` calendar dates backed by PostgreSQL `DATE` columns. A choice contribution names a standalone tenant pick-list declared by the same Extension; add the `base/picklists` dependency, declare the list with stable codes, and contribute its Production reconcile seed. Company stores those codes and resolves their current labels through the PickLists facade; do not add a field-owned options table or freeze tenant codes into the agent schema.
+
+Read callbacks now receive `&dyn bilibi_agent_api::OperationClient` instead of
+`&Client`. Use its read methods and do not check out another pool connection;
+the adapter keeps reviewed preview reads on the plan's existing transaction.
 
 Existing callers of `CompanyService::create_with_context` must pass the new
 `CompanyFieldValues` argument between `new` and `activities` (use an empty map

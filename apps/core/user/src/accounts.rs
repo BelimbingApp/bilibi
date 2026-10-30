@@ -731,7 +731,8 @@ fn reachable_pages(decide: &dyn Fn(&str) -> bool) -> Vec<LandingPage> {
             .iter()
             .filter(|item| item.parent == parent && item.parent.is_none_or(|id| ids.contains(id)))
         {
-            if !item.requirement.allowed(decide) {
+            // A landing page is a staff page; the portal menu is never one.
+            if !item.requirement.allowed(decide) || item.id == bilibi_menu::PORTAL_ROOT {
                 continue;
             }
             if let Some(route) = item.route.filter(|route| route.starts_with('/')) {

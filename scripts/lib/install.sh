@@ -56,7 +56,7 @@ fail() {
 setup_unexpected_error() {
     local status=$? command=$BASH_COMMAND
     trap - ERR EXIT
-    printf 'setup: %s failed: "%s" exited %s\nNext: fix the cause in the log, then rerun ./scripts/setup.sh (it skips what is done)\nLog: %s\n' \
+    printf 'setup: %s failed: "%s" exited %s\nNext: fix the cause in the log, then rerun ./bilibi setup (it skips what is done)\nLog: %s\n' \
         "$SETUP_STEP" "$command" "$status" "$SETUP_LOG" >&2
     exit 1
 }
@@ -96,7 +96,7 @@ need_root() {
     [[ $(id -u) -eq 0 ]] && return 0
     command -v sudo >/dev/null || fail sudo 'sudo is not installed and you are not root' 'install sudo, or rerun as root'
     if [[ -t 0 ]]; then SUDO=(sudo); else SUDO=(sudo -n); fi
-    "${SUDO[@]}" -v >>"$SETUP_LOG" 2>&1 || fail sudo 'sudo needs a password it cannot get' 'run ./scripts/setup.sh from a terminal, or rerun as root'
+    "${SUDO[@]}" -v >>"$SETUP_LOG" 2>&1 || fail sudo 'sudo needs a password it cannot get' 'run ./bilibi setup from a terminal, or rerun as root'
 }
 as_root() { need_root; log "${SUDO[@]}" "$@"; }
 

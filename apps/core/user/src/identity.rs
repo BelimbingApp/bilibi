@@ -221,6 +221,13 @@ impl Audience {
             Self::Customer { .. } => AccountKind::Customer,
         }
     }
+    /// The one tenant a customer form looks in; staff are found anywhere.
+    pub(crate) fn tenant(self) -> Option<i64> {
+        match self {
+            Self::Staff => None,
+            Self::Customer { tenant } => Some(tenant),
+        }
+    }
 }
 
 /// Bilimbi's sign-in: a staff email is unique platform-wide, so no tenant is
@@ -242,10 +249,7 @@ pub(crate) async fn password_identity(
         return Err(CredentialError::Rejected);
     }
     let client = users.db.get().await.map_err(Error::from)?;
-    let tenant = match audience {
-        Audience::Staff => None,
-        Audience::Customer { tenant } => Some(tenant),
-    };
+    let tenant = audience.tenant();
     let row = client
         .query_opt(
             "SELECT u.id,u.tenant_id,u.password_hash,t.status='active' AND t.deleted_at IS NULL FROM users u JOIN tenants t ON t.id=u.tenant_id WHERE lower(u.email)=$1 AND u.deleted_at IS NULL AND u.status='active' AND u.kind=$2 AND ($3::bigint IS NULL OR u.tenant_id=$3)",

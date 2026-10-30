@@ -6,11 +6,13 @@
 .dev-status .status{justify-content:flex-end}
 .dev-progress{margin-top:1rem;font-size:.875rem;font-variant-numeric:tabular-nums}
 .dev-output{margin:1rem 0 0;padding:.75rem;border:1px solid var(--line);border-radius:.375rem;max-height:24rem;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;background:var(--canvas);color:var(--ink)}
+.dev-output .ansi-green{color:#166534}.dev-output .ansi-yellow{color:#92400e}.dev-output .ansi-red{color:#b91c1c}.dev-output .ansi-bold{font-weight:700}
+@media (prefers-color-scheme:dark){.dev-output .ansi-green{color:#86efac}.dev-output .ansi-yellow{color:#fcd34d}.dev-output .ansi-red{color:#fca5a5}}
 .dev-output:focus-visible{outline:2px solid var(--strong);outline-offset:2px}
 </style>
 <template id="dev-status-template">
 <div class="dev-progress" id="dev-progress" role="status" aria-live="polite"></div>
-<p id="dev-next" hidden>Fix the error and save a file. The launcher rebuilds by itself.</p>
+<p id="dev-next" hidden>Fix the error and save a file to rebuild automatically.</p>
 <pre class="dev-output" id="dev-output" aria-label="Latest build output" tabindex="0" hidden></pre>
 </template>
 <script>
@@ -28,28 +30,60 @@
   // Announce progress changes without re-announcing the whole diagnostic tail.
   document.querySelector('.card').removeAttribute('role');
   document.querySelector('.card').removeAttribute('aria-live');
+  function renderOutput(text) {
+    var fragment = document.createDocumentFragment(), colour = '', bold = false, offset = 0;
+    var codes = /\x1b\[([0-9;]*)m/g, match;
+    function append(value) {
+      if (!value) return;
+      var span = document.createElement('span');
+      if (colour) span.classList.add('ansi-' + colour);
+      if (bold) span.classList.add('ansi-bold');
+      span.textContent = value;
+      fragment.appendChild(span);
+    }
+    while ((match = codes.exec(text))) {
+      append(text.slice(offset, match.index));
+      (match[1] || '0').split(';').forEach(function (code) {
+        if (code === '0') { colour = ''; bold = false; }
+        else if (code === '1') bold = true;
+        else if (code === '22') bold = false;
+        else if (code === '31' || code === '91') colour = 'red';
+        else if (code === '32' || code === '92') colour = 'green';
+        else if (code === '33' || code === '93') colour = 'yellow';
+        else if (code === '39' || /^(3[0-7]|9[0-7])$/.test(code)) colour = '';
+      });
+      offset = codes.lastIndex;
+    }
+    append(text.slice(offset));
+    output.replaceChildren(fragment);
+  }
   function render() {
     if (!latest && !unavailable) return;
     waiting.classList.add('dev-status');
     if (unavailable) {
-      progress.textContent = 'The dev launcher is not running. Run ./scripts/start-app.sh to start it.';
+      document.getElementById('waiting-heading').textContent = 'Bilibi could not start';
+      document.getElementById('waiting-text').textContent = 'Run ./bilibi start to start Bilibi.';
+      progress.textContent = '';
       progress.setAttribute('role', 'alert');
       progress.setAttribute('aria-live', 'assertive');
       next.hidden = true;
+      output.hidden = true;
       return;
     }
     var elapsed = Math.max(0, Math.floor(latest.elapsed + (latest.finished_at ? 0 : (performance.now() - received) / 1000)));
     var duration = (elapsed >= 60 ? Math.floor(elapsed / 60) + 'm ' : '') + elapsed % 60 + 's';
     var label = labels[latest.phase] || 'Starting';
-    progress.textContent = latest.failed ? (failures[latest.phase] || label + ' failed') + (latest.phase === 'serve' ? '.' : ' (' + duration + ').') : label + ' (' + duration + ')…';
+    progress.textContent = latest.failed ? (failures[latest.phase] || label + ' failed') + ' (' + duration + ').' : label + ' (' + duration + ')…';
     progress.setAttribute('role', latest.failed ? 'alert' : 'status');
     progress.setAttribute('aria-live', latest.failed ? 'assertive' : 'polite');
     document.getElementById('waiting-heading').textContent = latest.failed ? 'Bilibi could not start' : 'Bilibi is starting';
+    document.getElementById('waiting-text').textContent = latest.failed ? '' : "You can continue when it's ready; this page will reload automatically.";
     next.hidden = !latest.failed;
     var tail = latest.output || '';
-    if (output.textContent !== tail) {
+    if (output.dataset.tail !== tail) {
       var atEnd = output.hidden || output.scrollHeight - output.clientHeight - output.scrollTop < 24;
-      output.textContent = tail;
+      renderOutput(tail);
+      output.dataset.tail = tail;
       output.hidden = !tail;
       if (atEnd) output.scrollTop = output.scrollHeight;
     }
@@ -65,7 +99,6 @@
       .finally(function () { busy = false; });
   }
   setInterval(function () { render(); poll(); }, 1000);
-  document.getElementById('waiting-retry').addEventListener('click', poll);
   document.addEventListener('visibilitychange', function () { if (!document.hidden) poll(); });
   poll();
 })();
