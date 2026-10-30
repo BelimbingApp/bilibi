@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 bilibi-database.workspace = true
 bilibi-module-registry.workspace = true
+bilibi-personal-data.workspace = true
 bilibi-tenancy = { path = "../tenancy" }
 bilibi-authz = { path = "../authz" }
 bilibi-datetime = { path = "../datetime" }

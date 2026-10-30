@@ -1,15 +1,34 @@
 use bilibi_database::{Error, Result};
 pub use bilibi_party::{PersonId, PersonInput, PersonKind};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashSet, time::SystemTime};
+use std::{
+    collections::{BTreeMap, HashSet},
+    time::SystemTime,
+};
 use tokio_postgres::Row;
 
 pub const COLUMNS: &str =
-    "id,code,name,kind,email,phone,system_key,retired_at,version,created_at,updated_at";
+    "id,code,name,kind,email,phone,system_key,retired_at,erased_at,version,created_at,updated_at";
 pub const CONTACT_FIELDS: &[&str] = &["email", "phone"];
 
+/// What this reader may not see of persons: every restricted field, and of
+/// those, the ones it sees masked with their personal kinds (ADR 05).
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Restrictions {
+    pub(crate) fields: HashSet<String>,
+    pub(crate) masks: BTreeMap<String, &'static str>,
+}
+impl Restrictions {
+    /// Whether the field is restricted at all: withheld or masked. Writes,
+    /// searches and duplicate checks refuse such a field either way.
+    pub(crate) fn contains(&self, field: &str) -> bool {
+        self.fields.contains(field)
+    }
+}
+
 /// A read model: restricted contacts are removed before it leaves the owner.
-/// `restricted` distinguishes a hidden contact from a genuinely absent value.
+/// `restricted` distinguishes a hidden contact from a genuinely absent value;
+/// `masked` names the contacts that hold a partial value instead.
 #[derive(Clone, Debug, Serialize)]
 pub struct Person {
     pub id: PersonId,
@@ -20,10 +39,14 @@ pub struct Person {
     pub phone: Option<String>,
     pub system_key: Option<String>,
     pub retired_at: Option<SystemTime>,
+    /// When an erasure anonymised the person (ADR 05).
+    pub erased_at: Option<SystemTime>,
     pub version: i64,
     pub created_at: SystemTime,
     pub updated_at: SystemTime,
     pub restricted: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub masked: Vec<String>,
 }
 impl Person {
     pub(crate) fn from_row(row: &Row) -> Result<Self> {
@@ -40,20 +63,28 @@ impl Person {
             phone: row.get("phone"),
             system_key: row.get("system_key"),
             retired_at: row.get("retired_at"),
+            erased_at: row.get("erased_at"),
             version: row.get("version"),
             created_at: row.get("created_at"),
             updated_at: row.get("updated_at"),
             restricted: Vec::new(),
+            masked: Vec::new(),
         })
     }
-    pub(crate) fn redact(mut self, fields: &HashSet<String>) -> Self {
+    pub(crate) fn redact(mut self, restrictions: &Restrictions) -> Self {
         for field in CONTACT_FIELDS {
-            if fields.contains(*field) {
-                match *field {
-                    "email" => self.email = None,
-                    "phone" => self.phone = None,
-                    _ => unreachable!(),
-                }
+            let value = match *field {
+                "email" => &mut self.email,
+                "phone" => &mut self.phone,
+                _ => unreachable!(),
+            };
+            if let Some(kind) = restrictions.masks.get(*field) {
+                *value = value
+                    .take()
+                    .map(|text| bilibi_authz::fields::partial(kind, &text));
+                self.masked.push((*field).into());
+            } else if restrictions.contains(field) {
+                *value = None;
                 self.restricted.push((*field).into());
             }
         }
@@ -67,6 +98,7 @@ impl Person {
             ("created_at", Some(self.created_at)),
             ("updated_at", Some(self.updated_at)),
             ("retired_at", self.retired_at),
+            ("erased_at", self.erased_at),
         ] {
             value[key] = match instant.and_then(|t| jiff::Timestamp::try_from(t).ok()) {
                 Some(stamp) => serde_json::Value::String(stamp.to_string()),

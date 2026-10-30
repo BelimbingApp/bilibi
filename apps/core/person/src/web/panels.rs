@@ -60,7 +60,7 @@ impl LiveState<Scope, Error> for Contact {
                     link,
                     contacts: self
                         .detail
-                        .contacts(request.scope, &person, &self.anchor)
+                        .contacts(request.scope, &person, &self.anchor, false)
                         .await?,
                 })?
                 .to_string(),

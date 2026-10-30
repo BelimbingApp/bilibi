@@ -667,7 +667,12 @@ impl Panel {
                 ("from", "From"),
                 ("to", "To"),
             ] {
-                let value = if entry.affiliation.restricted.iter().any(|r| r == column) {
+                let value = if entry.affiliation.masked.iter().any(|m| m == column) {
+                    // A partial value is read-only: it is not the stored value.
+                    render(InlineEdit {
+                        field: self.inline(entry, column, label, false),
+                    })?
+                } else if entry.affiliation.restricted.iter().any(|r| r == column) {
                     render(Restricted::new(self.dom(&format!(
                         "{key}-{}-restricted",
                         column.replace('_', "-")
@@ -1020,8 +1025,17 @@ impl Panel {
                 let version: i64 = get("version").parse().map_err(|_| Error::Invalid)?;
                 let current = self.owned(scope, get("id")).await?;
                 let status_key = format!("{}-{field}", current.id.get());
-                // Never carry a hidden work contact into a replacement input.
+                // Never carry a hidden work contact into a replacement input:
+                // a masked one holds only its partial value. Left out, the
+                // owner keeps the stored value.
                 let mut input = current.affiliation.clone();
+                let masked = |key: &str| current.masked.iter().any(|m| m == key);
+                if masked("work_email") {
+                    input.work_email = None;
+                }
+                if masked("work_phone") {
+                    input.work_phone = None;
+                }
                 let text = Some(submitted.to_owned()).filter(|v| !v.trim().is_empty());
                 let shaped = match field {
                     "title" => {
