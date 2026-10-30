@@ -26,7 +26,7 @@ use crate::list_state::SortDir;
 use crate::lists::{Column, SortView, TableEmpty};
 use crate::Html;
 use askama::Template;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// The row heights a table takes, shortest first. A compact row holds one line
 /// of small text (18 at its shortest); a normal row what a page draws at full
@@ -614,6 +614,37 @@ pub fn key_id(key: &str) -> String {
     id
 }
 
+/// Rows ticked for a bulk action: a tick per row, one for the page in the
+/// heading, and a bar above the table that counts them, offers every row the
+/// filters match and carries the page's bulk actions. The selection lives on
+/// the server; each tick raises `event` with an `op`: `row` (with its `key`),
+/// `page`, `all` or `clear`. No Bilimbi counterpart (issue 133).
+#[derive(Clone, Debug, Default)]
+pub struct Selection {
+    pub event: String,
+    /// The keys of the ticked rows, on this page or another.
+    pub selected: BTreeSet<String>,
+    /// Every row the list's filters match is selected, not only `selected`.
+    pub all_matching: bool,
+    /// How many rows the filters match.
+    pub matching: u64,
+    /// What the rows are called, plural and lower case: "contacts".
+    pub noun: String,
+    /// The page's bulk actions, shown while something is selected.
+    pub actions: Html,
+}
+
+impl Selection {
+    /// How many rows a bulk action would take.
+    pub fn count(&self) -> u64 {
+        if self.all_matching {
+            self.matching
+        } else {
+            self.selected.len() as u64
+        }
+    }
+}
+
 /// The planner's estimate for the statement that scales bars and bands over
 /// the whole table; `heavy` shows the warning above it.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -662,6 +693,8 @@ pub struct FlexTable<'a> {
     pub actions: bool,
     /// Shown when there are no rows.
     pub empty: Option<TableEmpty>,
+    /// Row ticks and the selection bar; `None` draws neither.
+    pub selection: Option<Selection>,
 }
 
 impl<'a> FlexTable<'a> {
@@ -686,6 +719,7 @@ impl<'a> FlexTable<'a> {
             class: "",
             actions: false,
             empty: None,
+            selection: None,
         }
     }
 
@@ -778,7 +812,35 @@ impl<'a> FlexTable<'a> {
     }
 
     pub fn colspan(&self) -> usize {
-        self.columns.len() + usize::from(self.actions)
+        self.columns.len() + usize::from(self.actions) + usize::from(self.selection.is_some())
+    }
+
+    /// Whether a row is ticked, by itself or with every matching row.
+    pub fn ticked(&self, row: &FlexRow) -> bool {
+        self.selection
+            .as_ref()
+            .is_some_and(|s| s.all_matching || s.selected.contains(&row.key))
+    }
+
+    /// The page tick's `aria-checked`: `true` when every row here is
+    /// ticked, `mixed` when some are.
+    pub fn page_ticked(&self) -> &'static str {
+        let ticked = self.rows.iter().filter(|row| self.ticked(row)).count();
+        if ticked > 0 && ticked == self.rows.len() {
+            "true"
+        } else if ticked > 0 {
+            "mixed"
+        } else {
+            "false"
+        }
+    }
+
+    /// Whether the bar offers every row the filters match: the whole page
+    /// is ticked and more rows match than it shows.
+    pub fn offers_all(&self) -> bool {
+        self.selection.as_ref().is_some_and(|s| {
+            !s.all_matching && self.page_ticked() == "true" && s.matching > s.selected.len() as u64
+        })
     }
 
     pub fn row_dom_id(&self, row: &FlexRow) -> String {
