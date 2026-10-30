@@ -1,6 +1,6 @@
 # Core Customer Access
 
-A tenant's customers sign in to its portal (`/portal/...`), never to the staff application ([ADR 16](../../../docs/architecture/decisions/16-customer-accounts-and-portal.md)). This module owns the portal site, the invitations that admit a customer, the staff controls over the accounts they made, and the portal's own home and account pages. Bilimbi has no counterpart.
+A tenant's customers sign in to its portal (`/portal/...`), never to the staff application ([ADR 16](../../../docs/architecture/decisions/16-customer-accounts-and-portal.md)). This module owns the portal site, the invitations that admit a customer, the requests people make for an account, the staff controls over the accounts invitations made, and the portal's own home and account pages. Bilimbi has no counterpart.
 
 ## Contract
 
@@ -10,8 +10,8 @@ A tenant's customers sign in to its portal (`/portal/...`), never to the staff a
 | Staff page | `/customer-access` (`admin.customer-access.view`; writes need `admin.customer-access.manage`) |
 | Portal pages | `/portal` and `/portal/account` (`portal.account.view`) |
 | Portal role | `portal_customer`, given to every customer an invitation admits |
-| Setting | `customer_portal.invitation_days` (tenant, default 7) |
-| Tables | `customer_portal_sites`, `customer_invitations`; customer accounts stay in Core User's `users` |
+| Settings | `customer_portal.invitation_days` (tenant, default 7), `customer_portal.registration_days` (installation, default 3) |
+| Tables | `customer_portal_sites`, `customer_invitations`, `customer_registrations`; customer accounts stay in Core User's `users` |
 
 ## Portal site
 
@@ -31,6 +31,14 @@ A tenant's customers sign in to its portal (`/portal/...`), never to the staff a
 - **Resend** sends a new link to an invitation's Person and address through the same contract as a new invitation, which revokes the old link.
 - A Person that retired, an affiliation that ended or a company that was archived since the invitation makes the link invalid.
 
+## Requests for an account
+
+- **Off until staff turn it on** (`registration` on the site, issue 137 behaviour 7). While off, or while the portal is off, `/portal/register/{address}` and `/portal/verify/...` answer 404 and the sign-in card has no link to them.
+- Someone gives a name, an email and an optional company name. The answer is the same for known and unknown addresses. An unverified earlier request from the address is replaced; one already waiting for staff stays as it is and no new mail is sent. Requests are bounded per sender with password recovery (`user.recovery.per_sender_per_minute`).
+- The emailed link (`/portal/verify/{address}/{token}`, hashed, single use) shows a button; pressing it confirms the address, so a mail scanner that opens links confirms nothing. An unconfirmed request expires after `customer_portal.registration_days`; a confirmed one waits.
+- Nothing is written to Person or Company. Staff **approve** a confirmed request by choosing the Person (matching or creating it first) and, for a business customer, its affiliation: this sends the ordinary invitation with the request's name and confirmed address, through the same checks. **Reject** closes it; the person is not told and may ask again.
+- Each step is audited: the request and its confirmation as `system · customer_access`, the decision as the staff member.
+
 ## Customer accounts
 
 - The staff page lists the tenant's customer accounts (`bilibi_user::customer_accounts`, the one read of `users` that lists customers; staff reads never do).
@@ -48,15 +56,18 @@ A tenant's customers sign in to its portal (`/portal/...`), never to the staff a
 | `core.customer_access.account.list` | read | view |
 | `core.customer_access.account.revoke` | safe write | manage |
 | `core.customer_access.account.restore` | safe write | manage |
+| `core.customer_access.registration.list` | read | view |
+| `core.customer_access.registration.approve` | safe write | manage |
+| `core.customer_access.registration.reject` | safe write | manage |
 
 The staff page writes through the same contracts.
 
 ## What the host does
 
-The host (`apps/web`) serves the credential pages under `/portal` (`sign-in`, `forgot`, `reset`, `accept`) and asks this facade which site an address names (`portal_site`), whether an invitation link is open (`open_invitation`) and to redeem it (`accept`).
+The host (`apps/web`) serves the credential pages under `/portal` (`sign-in`, `forgot`, `reset`, `accept`, `register`, `verify`) and asks this facade which site an address names (`portal_site`, `registration_site`), whether an invitation or confirmation link is open (`open_invitation`, `verification_open`), and to redeem an invitation (`accept`), take a request (`register`) or confirm one (`verify`).
 
 ## Not yet
 
-- Self-registration, a portal-access panel on a contact's record page, and a portal logo.
+- A portal-access panel on a contact's record page, and a portal logo.
 - A second sign-in step for customers: a tenant that requires one for portal sign-in refuses customers with a message.
 - Changing the password in place on `/portal/account`; it links to the emailed reset.
