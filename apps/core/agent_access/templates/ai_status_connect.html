@@ -1,23 +1,19 @@
 {#- The connect steps inside the AI panel (ai_status.html): the prompt and the
-    address, each with its copy button, and the local-only note. One
-    ClipboardCopy hook covers both buttons; the server tells them apart by the
-    copied text. -#}
-<div id="app-ai-copy-values" data-hook="ClipboardCopy" data-copy-event="copied" class="space-y-3">
-<p class="text-ink-muted">Paste this prompt into your AI app's chat. It will ask you to sign in here and approve the connection.</p>
-<div class="space-y-1">
-{% call forms::input(field=field) %}{% endcall %}
-<span data-copy-text="{{ prompt_text }}">{% call ui::button(id="app-ai-copy-prompt", button_type="button") %}Copy prompt{% endcall %}</span>
-</div>
+    address, each with its copy icon, and the local-only note. One
+    ClipboardCopy hook covers both icons; each shows its own check. -#}
+<div id="app-ai-copy-values" data-hook="ClipboardCopy" class="space-y-3">
+<p class="text-ink-muted">Paste this prompt into your AI app's chat. Then sign in here and approve the connection.</p>
+{% call ui::copy_box(id="app-ai-prompt", label="Prompt for your AI app", text=prompt_text, copy_label="Copy prompt") %}{% endcall %}
 <div class="space-y-1">
 <p class="text-ink-muted">Apps that ask for a connector or MCP address take this one:</p>
-<div class="flex flex-wrap items-center gap-2"><code id="app-ai-address" class="min-w-0 break-all rounded-sm bg-surface-muted px-1.5 py-0.5 text-ink">{{ address }}</code><span data-copy-text="{{ address }}">{% call ui::button(id="app-ai-copy-address", button_type="button") %}Copy address{% endcall %}</span></div>
+<div class="flex flex-wrap items-center gap-1"><code id="app-ai-address" class="min-w-0 break-all rounded-sm bg-surface-muted px-1.5 py-0.5 text-ink">{{ address }}</code>{% call ui::copy_button(id="app-ai-copy-address", text=address, label="Copy address") %}{% endcall %}</div>
 </div>
-{% if let Some((what, ok)) = copied %}
-{% if ok %}
-{% call fb::alert(kind=bilibi_ui::StatusKind::Success, id="app-ai-copied") %}Copied the {{ what }}. Paste it into your AI app.{% endcall %}
-{% else %}
-{% call fb::alert(kind=bilibi_ui::StatusKind::Error, id="app-ai-copy-failed") %}Your browser did not allow copying. Select the {{ what }} and copy it yourself.{% endcall %}
-{% endif %}
+<p id="app-ai-manual" class="text-ink-muted">If the prompt does not work, <a href="{{ manage }}#ai-manual" class="font-medium text-link hover:underline">add the connection yourself</a>.</p>
+{% if plugin %}
+<div id="app-ai-plugin" class="space-y-1">
+{% call ui::button(id="app-ai-plugin-download", href=plugin_href) %}Download plugin{% endcall %}
+<p class="text-ink-muted">The ChatGPT plugin connects from OpenAI's cloud, so it needs a public address. A local or private Bilibi needs OpenAI's Secure MCP Tunnel.</p>
+</div>
 {% endif %}
 {% if local_only %}
 {% call fb::alert(kind=bilibi_ui::StatusKind::Info, id="app-ai-local-only") %}This Bilibi cannot be reached from the internet, so AI websites and bots cannot connect to it. Use an AI program on this computer, such as Claude Code, Codex or Pi.{% endcall %}

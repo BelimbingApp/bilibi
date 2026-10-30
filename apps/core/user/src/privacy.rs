@@ -151,7 +151,7 @@ impl Handler for Accounts {
                 )
                 .await?;
             let ids: Vec<i64> = users.iter().map(|row| row.get(0)).collect();
-            let held_users = holds.records(USER_KIND, &ids).await?;
+            let held_users = holds.records(grant, USER_KIND, &ids).await?;
             let mut erased = Erased::default();
             for row in users {
                 let (user, name, email, status, done): (i64, String, String, String, bool) =
@@ -175,7 +175,7 @@ impl Handler for Accounts {
                     .iter()
                     .map(|row| row.get(0))
                     .collect();
-                let held_notices = holds.records(NOTIFICATION_KIND, &notices).await?;
+                let held_notices = holds.records(grant, NOTIFICATION_KIND, &notices).await?;
                 for (notice, hold) in &held_notices {
                     erased
                         .kept
@@ -201,6 +201,7 @@ impl Handler for Accounts {
                     .collect();
                 let held_scim = holds
                     .records(
+                        grant,
                         SCIM_KIND,
                         &scim_rows.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
                     )
@@ -223,7 +224,9 @@ impl Handler for Accounts {
                     .iter()
                     .map(|row| row.get(0))
                     .collect();
-                let held_identities = holds.records(EXTERNAL_IDENTITY_KIND, &identities).await?;
+                let held_identities = holds
+                    .records(grant, EXTERNAL_IDENTITY_KIND, &identities)
+                    .await?;
                 // Ending an account removes every sign-in link it has (the
                 // sign-in factor's lifecycle), so a hold on one keeps the
                 // whole account, as a hold on the account does.
@@ -246,19 +249,23 @@ impl Handler for Accounts {
                     .map(|row| row.get::<_, bool>(0));
                 let bootstrap = match receipt {
                     None => false,
-                    Some(clean) => match holds.records(BOOTSTRAP_KIND, &[1]).await?.get(&1) {
-                        Some(hold) => {
-                            erased.kept.push(Kept::held(BOOTSTRAP_KIND, 1, *hold));
-                            false
+                    Some(clean) => {
+                        match holds.records(grant, BOOTSTRAP_KIND, &[1]).await?.get(&1) {
+                            Some(hold) => {
+                                erased.kept.push(Kept::held(BOOTSTRAP_KIND, 1, *hold));
+                                false
+                            }
+                            None => {
+                                !clean || bilibi_audit::holds_values(tx, BOOTSTRAP_KIND, 1).await?
+                            }
                         }
-                        None => !clean || bilibi_audit::holds_values(tx, BOOTSTRAP_KIND, 1).await?,
-                    },
+                    }
                 };
                 // Earlier resets recorded the name and email under their own
                 // kind: an erasure change of that kind lets the database clear
                 // that history too.
                 let reset = match holds
-                    .records(TWO_FACTOR_RESET_KIND, &[user])
+                    .records(grant, TWO_FACTOR_RESET_KIND, &[user])
                     .await?
                     .get(&user)
                 {

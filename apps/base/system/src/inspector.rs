@@ -10,8 +10,8 @@ use bilibi_ui::{
     forms::Choice,
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
     params, Badge, BadgeKind, BuiltinColumn, Card, Filter, FilterToolbar, FlexRow, FlexTable,
-    Header, Html, IconButton, IconContext, ListColumns, ListSpec, ListState, PageCounts,
-    Pagination, TableEmpty, ToolbarControl,
+    Header, Html, ListColumns, ListSpec, ListState, PageCounts, Pagination, TableEmpty,
+    ToolbarControl,
 };
 use serde_json::Value;
 use std::{
@@ -166,12 +166,6 @@ impl Inspector {
         let mut body = render(Header {
             title: Html::text("Menu Inspector"),
             subtitle: "See every menu item and whether you can use it.",
-            title_actions: render(IconButton {
-                id: "menu-inspector-pin",
-                context: IconContext::Inline,
-                nav_pin: "nav-admin-system-menu-inspector",
-                ..IconButton::new("bilimbi-pin", "Pin Menu Inspector to sidebar")
-            })?,
             ..Header::default()
         })?;
         let mut options = vec![Choice::new("All sources", "")];

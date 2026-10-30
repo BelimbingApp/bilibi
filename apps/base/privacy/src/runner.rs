@@ -363,7 +363,7 @@ async fn answer(
                     .erasure(scope.tenant(), Cause::Request(id), Some(request.person));
             let minimums = privacy.evidence_minimums(&client, scope).await?;
             if state == "pending" {
-                let holds = Holds::acquire(scope.tenant(), Some(request.person)).await?;
+                let holds = Holds::acquire(scope, &grant).await?;
                 let mut tx = execution
                     .begin(&mut client, "privacy.request.erase")
                     .await?;
@@ -394,7 +394,7 @@ async fn answer(
             } else if finished {
                 return Ok(());
             }
-            let holds = Holds::acquire(scope.tenant(), Some(request.person)).await?;
+            let holds = Holds::acquire(scope, &grant).await?;
             let progress = Steps {
                 db: privacy.db.clone(),
                 execution,
@@ -1075,7 +1075,7 @@ impl Privacy {
                 continue;
             }
             let subject = requests::subject_for(&request, key);
-            let holds = Holds::acquire(tenant, Some(request.person)).await?;
+            let holds = Holds::acquire(scope, &grant).await?;
             let mut tx = self
                 .boundary
                 .begin(client, scope.mutation_context("privacy.request.resume"))
@@ -1089,7 +1089,7 @@ impl Privacy {
             tx.commit().await?;
             holds.release().await?;
             answer.lock().map_err(|_| Error::Internal)?.add(&erased);
-            let holds = Holds::acquire(tenant, Some(request.person)).await?;
+            let holds = Holds::acquire(scope, &grant).await?;
             let steps = Resumed {
                 privacy: self,
                 scope,

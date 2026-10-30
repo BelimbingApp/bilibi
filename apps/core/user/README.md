@@ -84,7 +84,7 @@ absence of a row); time-display mode and locale are the existing
 `ui.timezone.mode` and `ui.locale` values written through their owners
 (`base/datetime`, `base/locale`). Pins are `user_pins`: one row per normalized
 URL per account (path with trailing slash, fragment and host dropped, query
-sorted; `url_hash` is md5 of it), at most 100, written under a lock on the
+sorted; `url_hash` is md5 of it), up to 8192 bytes per URL and at most 100 pins, written under a lock on the
 account's row. A URL that would leave the site, or an icon name the UI catalogue does not know, is refused. Pins to a page this
 deployment no longer serves stay stored and are not drawn.
 

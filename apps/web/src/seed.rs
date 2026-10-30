@@ -48,7 +48,7 @@ enum Bootstrap {
 }
 
 /// `bilibi-web seed [--at-startup]`. The plain command reports everything
-/// and fails on a refusal. `--at-startup`, as `scripts/start-app.sh` runs it
+/// and fails on a refusal. `--at-startup`, as `./bilibi start` runs it
 /// on every launch, prints only what changed and reports a refusal without
 /// failing, so the server still starts.
 pub async fn seed(db: &Db, at_startup: bool) -> Result<()> {

@@ -528,9 +528,18 @@ impl PortalScope {
     pub fn affiliation(&self) -> Option<AffiliationId> {
         self.scope.actor.affiliation
     }
-    /// The underlying scope, for audit (`mutation_context`) and for portal
-    /// capability checks. A staff facade given it refuses: Authz never grants
-    /// a staff capability to a customer.
+    /// The audit attribution of a write the customer makes: the customer
+    /// itself, never an impersonator, agent or system principal (`seal`
+    /// refuses those). A Domain's portal facade opens its
+    /// `MutationTransaction` with this.
+    pub fn mutation_context(&self, action: impl Into<String>) -> Context {
+        self.scope.mutation_context(action)
+    }
+    /// The underlying scope, for the host and Core (sessions, step-up, the
+    /// portal layout). A Domain's portal facade asks for its capability with
+    /// `bilibi_authz::authorize_portal` and opens writes with
+    /// [`PortalScope::mutation_context`] instead. A staff facade given this
+    /// scope refuses: Authz never grants a staff capability to a customer.
     pub fn scope(&self) -> &Scope {
         &self.scope
     }

@@ -29,7 +29,7 @@ use tokio_postgres::{Client, GenericClient};
 
 /// The audit record kind person changes use.
 const PERSON_KIND: &str = "person";
-const FIELDS: [&str; 3] = ["name", "email", "phone"];
+const FIELDS: [&str; 4] = ["name", "code", "email", "phone"];
 /// The kind a kept document is listed under.
 const DOCUMENT_KIND: &str = "core.person document";
 
@@ -301,7 +301,7 @@ impl Handler for People {
             }
             let id = old.id.get();
             let mut erased = Erased::default();
-            match holds.record(PERSON_KIND, id).await? {
+            match holds.record(grant, PERSON_KIND, id).await? {
                 Some(hold) => erased.kept.push(Kept::held(PERSON_KIND, id, hold)),
                 None => {
                     erased.count(PERSON_KIND, Action::Anonymised, 1);
@@ -310,7 +310,10 @@ impl Handler for People {
                     // written while its history holds values, since the
                     // database clears evidence only of a record this
                     // transaction changed; otherwise it is not a write.
-                    let live = old.name != ERASED || old.email.is_some() || old.phone.is_some();
+                    let live = old.name != ERASED
+                        || old.code != format!("erased-{id}")
+                        || old.email.is_some()
+                        || old.phone.is_some();
                     if live || bilibi_audit::holds_values(tx, PERSON_KIND, id).await? {
                         let tenant = scope.tenant();
                         let before = old.json();
@@ -318,13 +321,14 @@ impl Handler for People {
                         Box::pin(async move {
                             let row = sql
                                 .query_one(
-                                    &format!("UPDATE persons SET name=$3,email=NULL,phone=NULL,erased_at=coalesce(erased_at,now()),version=version+1,updated_at=now() WHERE tenant_id=$1 AND id=$2 RETURNING {COLUMNS}"),
+                                    &format!("UPDATE persons SET name=$3,code='erased-'||id,email=NULL,phone=NULL,erased_at=coalesce(erased_at,now()),version=version+1,updated_at=now() WHERE tenant_id=$1 AND id=$2 RETURNING {COLUMNS}"),
                                     &[&tenant, &id, &ERASED],
                                 )
                                 .await?;
                             // `[erased]` where a value was: erasure, not absence.
                             let mut after = Person::from_row(&row)?.json();
-                            for field in FIELDS {
+                            // The code's new value is its `erased-<id>` stub.
+                            for field in FIELDS.into_iter().filter(|f| *f != "code") {
                                 if !before[field].is_null() {
                                     after[field] = json!(ERASED);
                                 }
@@ -416,7 +420,7 @@ impl Handler for People {
                 .erasable_documents(client, scope, grant, &FILES, &id)
                 .await
                 .map_err(artifact_error)?;
-            let person_hold = holds.person_hold().await?;
+            let person_hold = holds.person_hold(grant).await?;
             for (company, document) in documents {
                 let kept = |reason, until, hold| Kept {
                     kind: DOCUMENT_KIND.into(),

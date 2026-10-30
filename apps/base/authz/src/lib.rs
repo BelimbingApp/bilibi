@@ -70,6 +70,23 @@ impl Decision {
 pub async fn authorize_key(client: &impl GenericClient, scope: &Scope, key: &str) -> Result<()> {
     decide(client, scope, key).await?.require()
 }
+/// A portal facade's capability check (ADR 16): `key` must be a portal
+/// capability, so a Domain cannot ask a customer for a staff key by mistake;
+/// then it is decided and logged as [`authorize_key`] decides it.
+pub async fn authorize_portal(
+    client: &impl GenericClient,
+    portal: &bilibi_tenancy::PortalScope,
+    key: &str,
+) -> Result<()> {
+    let audience = vocabulary()?
+        .capabilities
+        .get(key)
+        .map(|owned| owned.definition.audience);
+    if audience != Some(Audience::Portal) {
+        return Err(Error::Invalid);
+    }
+    authorize_key(client, portal.scope(), key).await
+}
 /// Opens for any one of `keys` (a route or menu entry that serves a combined
 /// page, `Access::AnyOf`). Candidates come from the live effective set, which
 /// already drops direct denies, so a key the account does not hold writes no

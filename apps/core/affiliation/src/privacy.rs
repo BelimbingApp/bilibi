@@ -117,7 +117,7 @@ impl Handler for Affiliations {
             let mut erased = Erased::default();
             let mut count = 0;
             let ids: Vec<i64> = rows.iter().map(|row| row.get(0)).collect();
-            let held = holds.records(KIND, &ids).await?;
+            let held = holds.records(grant, KIND, &ids).await?;
             for row in rows {
                 let id: i64 = row.get(0);
                 if let Some(hold) = held.get(&id) {

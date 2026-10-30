@@ -113,20 +113,20 @@ impl WriteHandler for Write {
     }
     fn preview<'a>(
         &'a self,
-        _client: &'a dyn OperationClient,
+        client: &'a dyn OperationClient,
         scope: &'a Scope,
         input: &'a Value,
     ) -> OperationFuture<'a> {
         Box::pin(async move {
-            let client = db()?.get().await.map_err(Error::from)?;
             let value = match self {
                 Self::Create => {
-                    let person = identity::preview(&**client, scope, &parse::<PersonInput>(input)?)
+                    let person = identity::preview(client, scope, &parse::<PersonInput>(input)?)
                         .await
                         .map_err(invalid)?;
                     json!({"summary":"Create person without an account or access grants", "identity":person})
                 }
                 Self::Update => {
+                    let client = db()?.get().await.map_err(Error::from)?;
                     let update = Update {
                         version: version(input)?,
                         identity: parse(&input["identity"])?,
@@ -140,6 +140,7 @@ impl WriteHandler for Write {
                     json!({"summary":"Update person", "person_id":old.id, "version":old.version, "before":old, "identity":identity})
                 }
                 Self::Retire => {
+                    let client = db()?.get().await.map_err(Error::from)?;
                     let old =
                         identity::preview_retire(&**client, scope, id(input)?, version(input)?)
                             .await
@@ -189,8 +190,8 @@ fn identity_schema() -> Value {
 }
 fn list_schema() -> Value {
     json!({"type":"object","properties":{
-        "search":{"type":"string","maxLength":200},"kind":{"type":"string","enum":["human","agent"]},
-        "sort":{"type":"string","enum":["name","kind","state","created_at"]},"descending":{"type":"boolean"},
+        "search":{"type":"string","maxLength":255},"kind":{"type":"string","enum":["human","agent"]},
+        "sort":{"type":"string","enum":["name","code","kind","state","created_at"]},"descending":{"type":"boolean"},
         "include_retired":{"type":"boolean"},"page":{"type":"integer","minimum":1,"maximum":1000000},"page_size":{"type":"integer","minimum":1,"maximum":300}
     }})
 }
@@ -213,20 +214,20 @@ fn retire_schema() -> Value {
     json!({"type":"object","required":["person_id","version"],"properties":{"person_id":id_schema(),"version":id_schema()}})
 }
 fn one_output() -> Value {
-    json!({"type":"object","description":"Person identity/contact facts; hidden contacts read as {\"restricted\":true}. No credentials or grants."})
+    json!({"type":"object","description":"Person fixed Core code and identity/contact facts; hidden contacts read as {\"restricted\":true}. No credentials or grants."})
 }
 fn many_output() -> Value {
     json!({"type":"array","description":"Bounded Person identities with contacts redacted under your current role restrictions."})
 }
 inventory::submit! { Contribution::new(DEFINITIONS, "core/person.agent", Provenance { module: "core/person", source: file!(), line: line!() }, &Definitions {
     operations: &[
-        Operation { key:"core.person.list", title:"List persons", summary:"Search identities and visible contacts in your tenant.", keywords:&["people","contact","find"], capability:LIST, input:list_schema, output:many_output, handler:Handler::Read(&Read::List),channels:Channels::Every,step_up:&[] },
+        Operation { key:"core.person.list", title:"List persons", summary:"Search identities by fixed Core code, name and visible contacts in your tenant.", keywords:&["people","contact","find"], capability:LIST, input:list_schema, output:many_output, handler:Handler::Read(&Read::List),channels:Channels::Every,step_up:&[] },
         Operation { key:"core.person.get", title:"Read a person", summary:"Read one identity and its visible personal contacts.", keywords:&["identity","contact"], capability:VIEW, input:get_schema, output:one_output, handler:Handler::Read(&Read::Get),channels:Channels::Every,step_up:&[] },
         Operation { key:"core.person.duplicates", title:"Find duplicate candidates", summary:"Find exact name, email or phone candidates, including retired identities. Does not merge or infer identity.", keywords:&["contact","reuse","lookup"], capability:LIST, input:duplicate_schema, output:many_output, handler:Handler::Read(&Read::Duplicates),channels:Channels::Every,step_up:&[] },
-        Operation { key:"core.person.create", title:"Create a person", summary:"Record a human or agent contact without creating an account, credentials, employment or grants.", keywords:&["contact","add","human","agent"], capability:CREATE, input:identity_schema, output:one_output, handler:Handler::SafeWrite(&Write::Create),channels:Channels::Every,step_up:&[] },
+        Operation { key:"core.person.create", title:"Create a person", summary:"Generate a fixed tenant-unique Core code and record a human or agent contact without creating an account, credentials, employment or grants.", keywords:&["contact","add","human","agent"], capability:CREATE, input:identity_schema, output:one_output, handler:Handler::SafeWrite(&Write::Create),channels:Channels::Every,step_up:&[] },
         Operation { key:"core.person.update", title:"Update a person", summary:"Replace identity and visible contact facts using the current version.", keywords:&["contact","edit"], capability:UPDATE, input:update_schema, output:one_output, handler:Handler::SafeWrite(&Write::Update),channels:Channels::Every,step_up:&[] },
         Operation { key:"core.person.retire", title:"Retire a person", summary:"Retain the contact and history while refusing new identity bindings. Protected system identities cannot retire.", keywords:&["contact","archive"], capability:RETIRE, input:retire_schema, output:one_output, handler:Handler::SafeWrite(&Write::Retire),channels:Channels::Every,step_up:&[crate::step_up::RETIRE] },
     ],
     guides: &[Guide { key:"core.person", title:"Contacts and personal details", summary:"Identity, duplicate candidates, agents and optional account binding without People.", keywords:&["contact","human","agent","account"], capability:LIST,
-        body:"Postal addresses are saved and linked through core.address, not a scalar field here. Search address or read guide core.address. Use core.address.company.list or core.address.person.list to find existing addresses; create_and_attach or attach links an office, billing or other address to its company or contact. A namecard flow can create the contact first and then attach the office address in a separate reviewed write.\n\nA Person is a human or agent identity with optional personal email and phone, independent of any company, employment or login account. Search with core.person.list and core.person.duplicates before creating; duplicate email and name are allowed and never imply the same person. Duplicate lookup matches exact case-insensitive trimmed name/email or exact trimmed phone and includes retired records. It never probes a contact field you may not see.\n\nCreate through safe-write review and plan-code commit. Employee numbers, employment lifecycle, account IDs, grants and reserved system keys are refused. Agent kind grants no login or capability. The operator explicitly provisions the protected platform-orchestrator identity through its owner API, never by a magic numeric ID.\n\nUpdate sends person_id, current version and identity (name, kind, optional email/phone). Empty strings clear visible contacts; omitted visible contacts also clear. A hidden contact must be omitted and is preserved. Read results mark hidden contacts as restricted. Retirement retains identity/history and prevents new account bindings. Optional account links belong to User and require its live Person/Company/Affiliation proof; Person creation never creates a link. Work contacts and dated company affiliations belong to Affiliation: record a namecard contact (a new person and their company position at once) with core.affiliation.contact.create, and affiliate an existing person with core.affiliation.create. Business roles toward a company (customer, prospect, vendor) are core.company.relationship.assign with target_kind person. Never invent an employee number, employment status or login from a namecard; HR belongs to People, which is not needed for contacts." }],
+        body:"Postal addresses are saved and linked through core.address, not a scalar field here. Search address or read guide core.address. Use core.address.company.list or core.address.person.list to find existing addresses; create_and_attach or attach links an office, billing or other address to its company or contact. A namecard flow can create the contact first and then attach the office address in a separate reviewed write.\n\nEach Person has one fixed Core code, generated from their name with the same slug generator as Company. Duplicate names receive a numeric suffix. The create preview and every read return code; core.person.list searches and sorts by code. Renaming or retiring never changes or frees it. Code is generated, so never send code in create or update inputs.\n\nA Person is a human or agent identity with optional personal email and phone, independent of any company, employment or login account. Search with core.person.list and core.person.duplicates before creating; duplicate email and name are allowed and never imply the same person. Duplicate lookup matches exact case-insensitive trimmed name/email or exact trimmed phone and includes retired records. It never probes a contact field you may not see.\n\nCreate through safe-write review and plan-code commit. Employee numbers, employment lifecycle, account IDs, grants and reserved system keys are refused. Agent kind grants no login or capability. The operator explicitly provisions the protected platform-orchestrator identity through its owner API, never by a magic numeric ID.\n\nUpdate sends person_id, current version and identity (name, kind, optional email/phone). Empty strings clear visible contacts; omitted visible contacts also clear. A hidden contact must be omitted and is preserved. Read results mark hidden contacts as restricted. Retirement retains identity/history and prevents new account bindings. Optional account links belong to User and require its live Person/Company/Affiliation proof; Person creation never creates a link. Work contacts and dated company affiliations belong to Affiliation: record a namecard contact (a new person and their company position at once) with core.affiliation.contact.create, and affiliate an existing person with core.affiliation.create. Business roles toward a company (customer, prospect, vendor) are core.company.relationship.assign with target_kind person. Never invent an employee number, employment status or login from a namecard; HR belongs to People, which is not needed for contacts." }],
 }) }

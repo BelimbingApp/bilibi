@@ -10,6 +10,16 @@ Multi-selects show the inset label and selected count above removable chips insi
 
 List toolbars put search first and filter boxes to its right, wrapping below search on narrow screens. `FilterToolbar::new` preserves the order of filters while placing search first.
 
+Page headers include a pin for the current address in signed-in pages, including workspace tiles. The shell keeps its state with the account. Dialogs do not show it.
+
+## Searchable multi-select
+
+Use `SearchMultiSelect` for a server-searched set of records. Supply selected `SearchMultiOption`s separately from a bounded list of results; the control renders at most 50 hits. An option may carry detail or be disabled with a note and an optional local link shown beside the note. `.create("Create company", "create-company")` adds the trailing action. `.wrap_chips()` shows all selected chips; the default limits the row to one line and offers an overflow button that reveals the remaining chips.
+
+The owner handles the configured search event with `query`, pick and remove events with `value` (pick toggles that value), and the create event with `query`. Search is debounced 300 ms; results for an older query cannot be selected while the person types; the control compares the echoed query with the input ignoring surrounding spaces, so the owner may trim it. Keep selection in the mounted owner across searches, check each event against current authorization and availability, and recheck on save. The control posts selected values under its array name; the empty value denotes no selection. Bound the owner's query and database result count before rendering. The control never downloads or filters the full record set.
+
+The Design Library’s searchable multi-select card exercises a mounted owner and server-side search. Source: [`src/search_multi.rs`](src/search_multi.rs), [`templates/search_multi.html`](templates/search_multi.html), and `SearchMultiSelect` in [`assets/hooks.js`](assets/hooks.js).
+
 ## Charts
 
 Use `Chart::new_with_display_values` when values have a stored decimal scale: pass owner-formatted strings indexed by series and category alongside the numeric values used for geometry. The Data table, mark titles and KPI use those strings; absent strings fall back to the numeric value. Missing numeric values remain gaps. `Chart::new` is suitable when the float itself is the intended display value. Pie and donut totals are calculated from numeric values and displayed to 15 significant digits.
@@ -115,7 +125,7 @@ Render with `Html::render(&clock_in)` or `forms::location_action(control=clock_i
 
 ## Day tiles
 
-A work calendar's resolved day is a `DayTile` (Belimbing's `x-ui.day-tile`; no Bilimbi counterpart): the date as shown, its `DayKind` (`Working`, `Rest`, `Off`, `Holiday`) as a tint and as a word, and plain `lines` such as opening hours or a holiday's name. `description` is the whole day in words for the tooltip and for assistive technology, so the tint is never the only signal. `DayMonth` lays whole weeks of tiles under `WEEKDAYS`, Monday first, as a table that scrolls sideways inside its card on a phone; a neighbouring month's date is `outside` and dimmed. A Domain's roster or leave calendar maps its own day type onto `DayKind` and reuses both. The tints are the `day-*` colour roles (`DESIGN.md`); the running specimen is `/assets/ui-components.html#specimen-day-tiles`.
+A work calendar's resolved day is a `DayTile` (Belimbing's `x-ui.day-tile`; no Bilimbi counterpart): the date as shown, its `DayKind` (`Working`, `Rest`, `Off`, `Holiday`) as a tint and as a word, and plain `lines` such as opening hours or a holiday's name. `description` is the whole day in words for the tooltip and for assistive technology, so the tint is never the only signal. `DayMonth` lays whole weeks of tiles under `WEEKDAYS`, Monday first, as a table that scrolls sideways inside its card when narrower than seven tiles; on a phone (below `sm`) it becomes a list of the month's own dates, each after its weekday. A neighbouring month's date is `outside`: dimmed in the grid, left out of the list. A Domain's roster or leave calendar maps its own day type onto `DayKind` and reuses both. The tints are the `day-*` colour roles (`DESIGN.md`); the running specimen is `/assets/ui-components.html#specimen-day-tiles`.
 
 ## Record references
 
