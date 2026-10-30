@@ -26,17 +26,21 @@ CAPTURE = {'discovery', 'css', 'build', 'migrate', 'seed'}
 
 def redact(raw):
     text = raw.decode('utf-8', errors='replace')
-    # Strip terminal controls for a plain text browser log (never render HTML).
+    # Keep SGR colours for the browser; strip every other terminal control.
     text = re.sub(r'\x1b\][^\x07]*?(?:\x07|\x1b\\)', '', text)
-    text = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', text)
-    text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text).replace('\r\n', '\n').replace('\r', '\n')
+    text = re.sub(r'\x1b\[([0-?]*[ -/]*)([@-~])', lambda m: m.group(0) if m.group(2) == 'm' and re.fullmatch(r'[0-9;]*', m.group(1)) else '', text)
+    text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1a\x1c-\x1f\x7f]', '', text).replace('\r\n', '\n').replace('\r', '\n')
+    coloured = text
+    text = re.sub(r'\x1b\[[0-9;]*m', '', text)
+    plain = text
     for key, value in os.environ.items():
         if value and (key == 'DATABASE_URL' or len(value) >= 8 and re.search(r'PASSWORD|SECRET|TOKEN|CREDENTIAL|AUTHORIZATION|COOKIE|(?:^|_)KEY(?:_ID)?$', key)):
             text = text.replace(value, '[redacted]')
     text = re.sub(r'(\b[a-z][a-z0-9+.-]*://)[^\s/@]+:[^\s/@]+@', r'\1[redacted]@', text, flags=re.I)
     text = re.sub(r'(\b(?:Bearer|Basic)[ \t]+)\S+', r'\1[redacted]', text)
     text = re.sub(r'(\b(?:Password|PASSWORD|Secret|SECRET|Token|TOKEN|API_KEY|Authorization|AUTHORIZATION)[ \t]*[:=][ \t]*)\S+', r'\1[redacted]', text)
-    return text[-LIMIT:]
+    # If redaction was needed, discard colour so escape codes cannot split secrets.
+    return (coloured if text == plain else text)[-LIMIT:]
 
 
 def write(phase, *, started=None, failed=False, finished=False, output=''):

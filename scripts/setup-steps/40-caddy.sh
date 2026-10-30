@@ -31,7 +31,7 @@ if [[ ! -f $caddyfile ]] || grep -q "Set this path to your site's directory" "$c
         "${SUDO[@]}" tee "$caddyfile" >/dev/null
     config_changed=1
 elif ! grep -q "$marker" "$caddyfile" && ! grep -q ':443' "$caddyfile"; then
-    note "$caddyfile is yours and has no :443 server, so local HTTPS will not work; scripts/start-app.sh falls back to HTTP."
+    note "$caddyfile is yours and has no :443 server, so local HTTPS will not work; ./bilibi start falls back to HTTP."
 fi
 
 admin_up() { curl -fsS --max-time 2 http://localhost:2019/config/ >/dev/null 2>&1; }

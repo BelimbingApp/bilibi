@@ -22,7 +22,7 @@ case $(cat "$state" 2>/dev/null || true) in
     ended) echo 'Files changed: building and starting Bilibi again.' ;;
 esac
 echo build > "$state"
-retry='Fix the error and save a file to try again, or press Ctrl-C and run ./scripts/start-app.sh again.'
+retry='Fix the error and save a file to try again, or press Ctrl-C and run ./bilibi start again.'
 # Ctrl-C: cargo-watch passes SIGINT on and exits; stop quietly.
 trap 'exit 130' INT
 trap 'python3 scripts/dev-status.py fail' ERR
@@ -52,7 +52,7 @@ step discovery 'module discovery' python3 scripts/discover-modules.py
 step css 'the CSS build' ./scripts/build-assets.sh
 started=$(date +%s)
 result=0
-python3 scripts/dev-status.py run build cargo build -p bilibi-web --timings || result=$?
+CARGO_TERM_COLOR=always python3 scripts/dev-status.py run build cargo build -p bilibi-web --timings || result=$?
 echo "Rust build took $(($(date +%s)-started))s (exit $result). Timing report: target/cargo-timings/cargo-timing.html"
 if [[ $result != 0 ]]; then
     build_failed "the Rust build failed (see above). $retry"

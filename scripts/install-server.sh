@@ -232,7 +232,7 @@ swap('<p class="instance" id="waiting-instance" hidden><span class="role" id="wa
 swap('<h1 id="waiting-heading">Bilibi is starting</h1>', f'<h1 id="waiting-heading">Bilibi is updating</h1>')
 swap('<p id="waiting-text">The app is restarting or rebuilding. This page reloads on its own as soon as it is ready, so you will land back on what you asked for.</p>',
      f'<p id="waiting-text">Bilibi is switching to a new release or restarting. Back in about a minute. This page reloads on its own, so you will land back on what you asked for.</p>')
-swap('<p class="hint" id="waiting-hint">Taking longer than usual. If you started the app yourself, check the terminal running <code>scripts/start-app.sh</code> for a build error.</p>',
+swap('<p class="hint" id="waiting-hint">Taking longer than usual. If you started the app yourself, check the terminal running <code>./bilibi start</code> for a build error.</p>',
      f'<p class="hint" id="waiting-hint">Taking longer than usual. The server owner can check the service with <code>systemctl status bilibi@{html.escape(instance)}</code> and <code>journalctl -u bilibi@{html.escape(instance)}</code>.</p>')
 open(out, "w", encoding="utf-8").write(page)
 PY

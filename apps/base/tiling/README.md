@@ -132,7 +132,7 @@ Company list and record pages do.
 
 ## Try it
 
-Run the app (`./scripts/start-app.sh`, or the manual commands in the root
+Run the app (`./bilibi start`, or the manual commands in the root
 README), sign in, and use a sidebar row's "Open in a tile" control, or open
 `/workspace` and add pages. Then: navigate inside a tile and reload (the tile
 keeps its page); press `Ctrl+.` and use the keys above; drag a divider and a

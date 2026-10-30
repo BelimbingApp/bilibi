@@ -109,7 +109,7 @@ Run commands from the clone's root. `./bilibi help` shows the same list. Your br
 
 `check`, `build` and `release` work only in an application; here they say how to make one.
 
-`new` copies the [app maker](https://github.com/BelimbingApp/bilibi-app-maker). The [application workspace guide](docs/application-workspaces.md) covers the next step, Git ownership and migration; [ADR 03](docs/architecture/decisions/03-application-workspaces-one-front-door.md) records the decision. `scripts/setup.sh` and `scripts/start-app.sh` remain available directly. Direct setup also installs the safeguard; after installing tools directly, load `$HOME/.cargo/env` before using the direct launcher.
+`new` copies the [app maker](https://github.com/BelimbingApp/bilibi-app-maker). The [application workspace guide](docs/application-workspaces.md) covers the next step, Git ownership and migration; [ADR 03](docs/architecture/decisions/03-application-workspaces-one-front-door.md) records the decision. `./bilibi start` installs the tools and safeguards the app needs.
 
 Run `./bilibi update` before `./bilibi start` to bring an existing clone up to date. It fast-forwards your branch from its upstream. A published branch whose changes already reached the default branch, including an exact squash merge, can safely return to that default branch. Other local commits and source edits stop the update with a concrete next step. Recognised generated composition and its reproduced dependency lock are regenerated; real edits are never discarded or silently stashed. Update never downgrades a component. Clean official component branches fast-forward from their upstreams under the same safeguards. A component from a repository outside the official list (your own or your company's) is asked about once: `<owner>/<repo> isn't in Bilibi's official list. Trust it for updates? (y/n)`. Yes records it in `.local/update-trust.txt` (delete its line to stop trusting it) and its branch then moves under the same safeguards. Without a terminal, update never asks: it skips the component and prints how to trust it. A dirty, unpublished, diverged, symlinked or untrusted component stays where it is, with its path and reason printed; this does not stop the other components.
 
@@ -143,7 +143,7 @@ Servers never read `.env`: `install-server.sh` writes each server instance its o
 
 The launcher sets `BILIBI_ENV=development` unless you already set it, so the install seed identifies a fresh local copy as Dev. A saved role in Instance settings takes precedence. It starts a private database, builds, migrates, seeds and rebuilds on change. While the HTTPS app is down, its waiting page shows the current build step and elapsed time. A failed build shows the latest diagnostics; fix the error and save a file to rebuild. Cargo output stays in the terminal, and a previous successful build keeps serving until its replacement is ready. Restart it after changing an environment variable.
 
-`start-app.sh` stores three keys for this checkout when they are not already set. `BILIBI_SETTINGS_KEY` is `.local/dev/settings.key`. `BILIBI_USER_SIGNING_KEY` is `.local/dev/user-signing.key`. `BILIBI_MEDIA_SIGNING_KEY` is `.local/dev/media-signing.key`. The first run creates a missing file as 64 hex characters (32 random bytes) with mode 0600. Later runs read that same file. The launcher leaves an existing key file as it is. Replacing `settings.key` would make every secret setting and authenticator key unreadable. `.local/` is not committed. Restart the launcher after you change one of these files.
+`./bilibi start` stores three keys for this checkout when they are not already set. `BILIBI_SETTINGS_KEY` is `.local/dev/settings.key`. `BILIBI_USER_SIGNING_KEY` is `.local/dev/user-signing.key`. `BILIBI_MEDIA_SIGNING_KEY` is `.local/dev/media-signing.key`. The first run creates a missing file as 64 hex characters (32 random bytes) with mode 0600. Later runs read that same file. The launcher leaves an existing key file as it is. Replacing `settings.key` would make every secret setting and authenticator key unreadable. `.local/` is not committed. Restart the launcher after you change one of these files.
 
 ## Configuration
 
@@ -153,11 +153,11 @@ The launcher sets `BILIBI_ENV=development` unless you already set it, so the ins
 | `APP_ORIGIN` | The exact browser origin, no trailing slash. Staging and Production refuse to start unless it is HTTPS; see [HTTPS for OAuth](docs/server-install.md#https-for-oauth) |
 | `BIND_ADDR` | Listen address, default `127.0.0.1:3000` |
 | `MAIL_HOST` | SMTP relay. Unset: write mail to `.local/mailbox/` |
-| `BILIBI_USER_SIGNING_KEY` | 64 hex characters, for email verification links. Unset: `start-app.sh` supplies one |
-| `BILIBI_SETTINGS_KEY` | 64 hex characters. Encrypts secret settings and authenticator keys. 2FA setup refuses without it. Unset: `start-app.sh` supplies one |
-| `BILIBI_MEDIA_SIGNING_KEY` | 64 hex characters, for signed file links. Unset: `start-app.sh` supplies one |
+| `BILIBI_USER_SIGNING_KEY` | 64 hex characters, for email verification links. Unset: `./bilibi start` supplies one |
+| `BILIBI_SETTINGS_KEY` | 64 hex characters. Encrypts secret settings and authenticator keys. 2FA setup refuses without it. Unset: `./bilibi start` supplies one |
+| `BILIBI_MEDIA_SIGNING_KEY` | 64 hex characters, for signed file links. Unset: `./bilibi start` supplies one |
 | `BILIBI_SSO_ALLOW_PRIVATE_ENDPOINTS` | `1` lets company sign-in reach identity providers on private networks and literal-loopback HTTP. Unset: public HTTPS only. See [company sign-in](apps/core/user/sso.md) |
-| `BILIBI_ENV` | `development`, `staging` or `production`. Initial role for the install seed. Unset means `production`; `start-app.sh` defaults to `development`. Later role changes use Instance settings. Other values refuse installation |
+| `BILIBI_ENV` | `development`, `staging` or `production`. Initial role for the install seed. Unset means `production`; `./bilibi start` defaults to `development`. Later role changes use Instance settings. Other values refuse installation |
 
 Every page, consent page and agent answer says which Bilibi it is, so nobody mistakes a test copy for the live system. The status bar always shows the stored server role; Staging also shows a top-bar badge. Dev and Staging show a sign-in badge; reviews and agent plans name every instance, production included. The name and colour are the Instance settings (`instance.label`, `instance.colour`), read through `bilibi_base::system::Instance::resolve` ([Base System](apps/base/system/README.md)).
 
