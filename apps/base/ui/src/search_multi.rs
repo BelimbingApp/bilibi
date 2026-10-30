@@ -37,8 +37,8 @@ impl SearchMultiOption {
         self.disabled = true;
         self.note = note.into();
         self.note_href = href.filter(|url| {
-            (url.starts_with('/') && !url.starts_with("//") && !url.starts_with("/\\"))
-                || url.starts_with('#')
+            ((url.starts_with('/') && !url.starts_with("//")) || url.starts_with('#'))
+                && !url.contains(|ch: char| ch == '\\' || ch.is_control())
         });
         self
     }
