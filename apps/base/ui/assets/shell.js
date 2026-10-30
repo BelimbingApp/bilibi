@@ -1001,9 +1001,8 @@
     },
 
     // The glyph drawn before a pin's label: its sidebar row's icon, else the
-    // `<template data-pin-icon>` the shell or the page's pin control rendered
-    // for the icon name the pin was stored with. A pin with neither shows
-    // its label alone.
+    // `<template data-pin-icon>` the shell rendered for the icon name the pin
+    // was stored with. A pin with neither shows its label alone.
     pinnedIcon(pin, item) {
       const fromSidebar = item?.querySelector('.app-nav-icon');
       if (fromSidebar) return fromSidebar.cloneNode(true);
