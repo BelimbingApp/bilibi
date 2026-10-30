@@ -1,0 +1,19 @@
+{#- The customer portal's layout (ADR 16, `src/portal.rs`): the tenant's
+    title and logo, the portal menu as one row of links and the account's
+    links in the top bar. None of the staff shell's chrome: no sidebar, pins,
+    tiles, search, bell, company switcher or status bar. -#}
+{% import "components.html" as ui %}
+<div id="app"{% if live %} data-live{% endif %}>
+<div id="portal-shell" data-shared-ui class="flex min-h-svh flex-col bg-canvas">
+<header id="portal-topbar" class="flex min-h-7 shrink-0 items-center justify-between gap-3 border-b border-line bg-surface px-3">
+<a href="/portal" id="portal-brand" class="flex min-w-0 items-center gap-2 transition hover:opacity-90">{% if let Some(logo) = logo %}<img src="{{ logo }}" alt="" class="shrink-0 object-contain size-5" width="20" height="20" decoding="async" loading="eager" aria-hidden="true">{% endif %}<span id="portal-title" class="min-w-0 truncate text-sm font-semibold text-ink-strong">{{ title }}</span></a>
+<div id="portal-account" class="flex min-w-0 shrink-0 items-center gap-3 text-xs">
+<span class="flex min-w-0 items-center gap-1.5" title="{{ email }}"><span class="grid size-4 shrink-0 place-items-center rounded-full bg-action text-[0.5rem] leading-none font-medium text-action-ink" aria-hidden="true">{{ initials() }}</span><span id="portal-user" class="min-w-0 truncate max-sm:sr-only">{{ user }}</span></span>
+<a id="portal-account-link" href="/portal/account" title="My account" class="ui-touch-target inline-flex min-h-6 items-center gap-1 rounded-sm px-1 text-link hover:bg-surface-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-strong">{% call ui::icon(name=bilibi_ui::Icons::shell("settings"), class="size-4") %}{% endcall %}<span class="max-sm:sr-only">My account</span></a>
+<form method="post" action="/portal/sign-out" class="flex"><input type="hidden" name="csrf" value="{{ csrf }}"><button id="portal-sign-out" type="submit" title="Sign out" class="ui-touch-target inline-flex min-h-6 items-center gap-1 rounded-sm px-1 text-link hover:bg-surface-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-strong">{% call ui::icon(name=bilibi_ui::Icons::shell("logout"), class="size-4") %}{% endcall %}<span class="max-sm:sr-only">Sign out</span></button></form>
+</div>
+</header>
+{% if !links.is_empty() %}<nav id="portal-nav" aria-label="Portal" class="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-line bg-surface px-3 py-0.5">{% for link in links %}<a href="{{ link.route }}" id="portal-nav-{{ link.id }}"{% if link.active %} aria-current="page"{% endif %} class="ui-touch-target inline-flex min-h-6 shrink-0 items-center gap-1 rounded-sm px-1.5 text-sm transition {% if link.active %}bg-brand-surface text-brand-strong{% else %}text-link hover:bg-surface-muted hover:text-ink{% endif %}">{% call ui::icon(name=link.icon, class="size-4 shrink-0") %}{% endcall %}<span>{{ link.label }}</span></a>{% endfor %}</nav>{% endif %}
+<main id="app-content" class="min-h-0 min-w-0 flex-1 px-1 py-2 sm:px-4 sm:py-1">{{ body|safe }}</main>
+</div>
+</div>

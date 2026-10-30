@@ -7,7 +7,7 @@ root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 host=${BILIBI_DEV_HOST:-bilibi.localhost}
 port=${BILIBI_DEV_PORT:-4300}
 for tool in mkcert openssl python3 ss flock; do
-    command -v "$tool" >/dev/null || { echo "Missing prerequisite: $tool. Run ./scripts/setup.sh" >&2; exit 1; }
+    command -v "$tool" >/dev/null || { echo "Missing prerequisite: $tool. Run ./bilibi setup" >&2; exit 1; }
 done
 if [[ ! "$port" =~ ^[0-9]{4,5}$ ]] || (( 10#$port < 1024 || 10#$port > 65535 )); then
     echo 'BILIBI_DEV_PORT must be 1024..65535.' >&2

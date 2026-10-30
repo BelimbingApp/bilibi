@@ -299,14 +299,7 @@ impl Pages {
     /// Today in that zone: the default month, year and first date.
     async fn today(&self, scope: &Scope) -> Result<Date> {
         let zone = self.zone(scope).await?;
-        let zone = jiff::tz::TimeZone::get(&zone).map_err(|_| Error::Internal)?;
-        Ok(jiff::Timestamp::now().to_zoned(zone).date())
-    }
-    /// The date the rule version "in force today" is read on, as the
-    /// calendars list and its contract read it.
-    async fn rule_date(&self) -> Result<Date> {
-        let client = self.db.get().await?;
-        crate::store::today(&**client).await
+        Ok(crate::resolve::today(&zone, jiff::Timestamp::now()))
     }
     async fn state(
         &self,

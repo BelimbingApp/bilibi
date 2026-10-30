@@ -56,9 +56,10 @@ operations use the plan service below, sharing its audited transaction.
 
 The [schema dialect](src/schema.rs) accepts object/properties/required,
 string/enum/maxLength/format, integer/number/enum/minimum/maximum, boolean and
-array/items, plus title/description annotations. Every node needs a type and
+array/items, plus title/description annotations. Scalar nodes may declare
+`nullable: true` to accept JSON `null`; null remains invalid everywhere else. Every node needs a type and
 root input must be an object. Input objects refuse unknown fields. Validation
-returns dotted field paths, including array indexes. Null is not implicit.
+returns dotted field paths, including array indexes. Null is never implicit.
 String formats are date, date-time with offset, and email. Nesting is bounded
 at discovery. Output schemas describe data without runtime enforcement, as in
 Bilimbi.
@@ -148,7 +149,7 @@ Every preview and every successful commit carries `instance` (`bilibi_system::In
 
 - `environment` is `development`, `staging` or `production` (the saved `instance.role` setting); `role` is its display word (Dev, Staging or Production); `origin` is the canonical `APP_ORIGIN`; `label` is the operator's `instance.label` setting, which defaults to the role word.
 - MCP names it too: `initialize` (`serverInfo.title` and the instructions) and the `plan` and `commit` tool descriptions in `tools/list`. `GET /.well-known/bilibi` carries the same object.
-- The plugin skill (`core/agent_plugins`) tells the agent to open every review and confirmation with it, as a full-width banner in an HTML review. Bilibi draws no plan review page itself; the harness does.
+- MCP initialization, the `plan` and `commit` tool descriptions, and the plugin skill (`core/agent_plugins`) share `REVIEW_INSTRUCTIONS`: open every review and confirmation with a full-width instance banner in HTML, or a prominent opening block in text-only hosts such as Codex CLI. Show what will change, including all returned preview facts and expiry, then wait for the person’s explicit approval of that exact plan before committing. Bilibi draws no plan review page itself; the harness does. No plugin is needed to receive this rule.
 
 An owner's commit may answer `Error::StepUpRequired` (Base Step-up). The whole commit rolls back, and the plan code stays usable until it expires. The edges answer `step_up_required` with the operation and reason. The client asks its human for a current 2FA code and commits the same plan again with `step_up_code`. That code is used once, for that operation, and opens the agent connection's window (`apps/base/step_up/README.md`).
 
@@ -269,7 +270,7 @@ Each gap is a `Pending` declaration in the owning module, with its reason. Remov
 
 ## Agent connection context
 
-MCP initialization and generated plugin workflow skills use `BUSINESS_CONTEXT` from [src/lib.rs](src/lib.rs): Bilibi is the person's business system, and agents search its operations and guides before answering or claiming a field or action is missing. `INSTANCE_INSTRUCTIONS` tells agents to announce the label, role and canonical address in their first answer and every plan review and confirmation. MCP `serverInfo.title` names all three; plan and commit results carry them in `instance` through `bilibi_system::Instance::agent_json`.
+MCP initialization and generated plugin workflow skills use `BUSINESS_CONTEXT` from [src/lib.rs](src/lib.rs): Bilibi is the person's business system, and agents search its operations and guides before answering or claiming a field or action is missing. `REVIEW_INSTRUCTIONS` supplies the same review and approval rule to initialization, plan/commit descriptions and the plugin workflow. `INSTANCE_INSTRUCTIONS` tells agents to announce the label, role and canonical address in their first answer and every plan review and confirmation. MCP `serverInfo.title` names all three; plan and commit results carry them in `instance` through `bilibi_system::Instance::agent_json`.
 
 ## Tenant provisioning
 

@@ -96,6 +96,8 @@ pub struct SystemRole {
     pub definition: RoleDefinition,
     /// Multiple modules may extend a named seed role explicitly.
     pub capabilities: BTreeSet<&'static str>,
+    /// Each contribution that defined or extended the role, for boot errors.
+    pub sources: Vec<Provenance>,
 }
 #[derive(Default, Debug)]
 pub struct Vocabulary {
@@ -162,7 +164,9 @@ impl Vocabulary {
                 let existing = result.roles.entry(role.code).or_insert_with(|| SystemRole {
                     definition: *role,
                     capabilities: BTreeSet::new(),
+                    sources: Vec::new(),
                 });
+                existing.sources.push(entry.provenance);
                 if existing.definition.name != role.name
                     || existing.definition.grant_all != role.grant_all
                 {
@@ -232,12 +236,23 @@ impl Vocabulary {
         let portal = |key: &str| self.capabilities[key].definition.audience == Audience::Portal;
         for role in self.roles.values() {
             let portal_keys = role.capabilities.iter().filter(|key| portal(key)).count();
-            if (portal_keys > 0 && portal_keys < role.capabilities.len())
-                || (portal_keys > 0 && role.definition.grant_all)
-            {
+            let mixed = portal_keys > 0 && portal_keys < role.capabilities.len();
+            let grant_all = portal_keys > 0 && role.definition.grant_all;
+            if mixed || grant_all {
+                let at = role
+                    .sources
+                    .iter()
+                    .map(|source| format!("{}:{}", source.source, source.line))
+                    .collect::<Vec<_>>()
+                    .join(", ");
                 return Err(invalid(format!(
-                    "system role {} mixes portal and staff audiences",
-                    role.definition.code
+                    "system role {} {} (contributed at {at})",
+                    role.definition.code,
+                    if mixed {
+                        "mixes portal and staff audiences"
+                    } else {
+                        "is grant-all with portal capabilities"
+                    }
                 )));
             }
         }
@@ -305,7 +320,9 @@ impl Vocabulary {
     /// Validate capability references without importing their owners. A typo in
     /// navigation/route/settings metadata must fail at boot, not hide a page.
     pub fn validate_references(&self, catalog: &bilibi_module_registry::Catalog) -> Result<()> {
-        use bilibi_module_registry::contributions::{Access, Embed, Route, EMBEDS, ROUTES};
+        use bilibi_module_registry::contributions::{
+            Access, Download, Embed, Route, DOWNLOADS, EMBEDS, ROUTES,
+        };
         let check = |key: &str| {
             if self.capabilities.contains_key(key) {
                 Ok(())
@@ -313,20 +330,46 @@ impl Vocabulary {
                 Err(invalid(format!("undeclared capability reference {key}")))
             }
         };
-        let access = |value: Access| match value {
-            Access::Capability(key) | Access::OperatorCapability(key) => check(key),
-            Access::AnyOf(keys) => keys.iter().try_for_each(|key| check(key)),
+        // A portal access names a portal capability and a staff access never
+        // does (ADR 16), so a typo cannot open a portal page to staff or a
+        // staff page to customers.
+        let audience = |entry: &Entry, key: &str, portal: bool| {
+            check(key)?;
+            if (self.capabilities[key].definition.audience == Audience::Portal) == portal {
+                Ok(())
+            } else {
+                Err(invalid(format!(
+                    "{} at {}:{} names {key}, which is {} capability",
+                    entry.id,
+                    entry.provenance.source,
+                    entry.provenance.line,
+                    if portal { "not a portal" } else { "a portal" }
+                )))
+            }
+        };
+        let access = |entry: &Entry, value: Access| match value.base() {
+            Access::Capability(key) | Access::OperatorCapability(key) => {
+                audience(entry, key, false)
+            }
+            Access::AnyOf(keys) => keys.iter().try_for_each(|key| audience(entry, key, false)),
+            Access::Portal(key) => audience(entry, key, true),
             _ => Ok(()),
         };
         for entry in catalog.entries::<Route>(ROUTES)? {
-            access(entry.get::<Route>()?.access)?;
+            access(entry, entry.get::<Route>()?.access)?;
         }
         for entry in catalog.entries::<Embed>(EMBEDS)? {
-            access(entry.get::<Embed>()?.access)?;
+            access(entry, entry.get::<Embed>()?.access)?;
         }
+        for entry in catalog.entries::<Download>(DOWNLOADS)? {
+            access(entry, entry.get::<Download>()?.access)?;
+        }
+        let menu = bilibi_menu::Menu::from_catalog(catalog)?;
         for entry in catalog.entries::<bilibi_menu::MenuItem>(bilibi_menu::ITEMS)? {
-            for key in entry.get::<bilibi_menu::MenuItem>()?.requirement.keys() {
-                check(key)?;
+            let item = entry.get::<bilibi_menu::MenuItem>()?;
+            let portal = menu.in_portal(item.id);
+            for key in item.requirement.keys() {
+                audience(entry, key, portal)?;
             }
         }
         for entry in catalog.entries::<bilibi_settings::Setting>(bilibi_settings::DEFINITIONS)? {

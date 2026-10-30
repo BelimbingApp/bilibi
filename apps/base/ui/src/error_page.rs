@@ -99,6 +99,21 @@ pub fn copy_for(status: u16) -> ErrorCopy {
     }
 }
 
+/// [`copy_for`] on a portal page (ADR 16): the same words, with the way back
+/// into the portal (or its sign-in) instead of the staff application.
+pub fn portal_copy_for(status: u16) -> ErrorCopy {
+    let (action, href) = if status == 401 {
+        ("Go to sign in", "/portal/sign-in")
+    } else {
+        ("Return to the portal", "/portal")
+    };
+    ErrorCopy {
+        action,
+        href,
+        ..copy_for(status)
+    }
+}
+
 #[derive(Template)]
 #[template(path = "error_card.html")]
 struct ErrorCard {
@@ -109,6 +124,7 @@ struct ErrorCard {
 #[template(path = "error_document.html")]
 struct ErrorDocument<'a> {
     title: &'a str,
+    staff: bool,
     body: Html,
 }
 
@@ -123,6 +139,27 @@ pub fn error_document(status: u16) -> askama::Result<String> {
     })?;
     ErrorDocument {
         title: &format!("{} · Bilibi", copy.heading),
+        staff: true,
+        body,
+    }
+    .render()
+}
+
+/// The production document for `status` on a portal page: the portal card,
+/// with no Bilibi branding and the way back into the portal. A failed request
+/// may have no session, so the card names no tenant.
+pub fn portal_error_document(status: u16) -> askama::Result<String> {
+    let copy = portal_copy_for(status);
+    let card = Html::render(&ErrorCard { copy })?;
+    let body = Html::render(&crate::PortalCard {
+        title: "Customer portal",
+        logo: None,
+        body: card,
+        flash: NO_FLASH,
+    })?;
+    ErrorDocument {
+        title: copy.heading,
+        staff: false,
         body,
     }
     .render()

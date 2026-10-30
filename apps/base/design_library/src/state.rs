@@ -63,6 +63,9 @@ pub struct State {
     pub confirm_rows: Vec<&'static str>,
     pub outcome: String,
     pub outcome_kind: String,
+    pub picker_query: String,
+    pub picker_selected: Vec<u64>,
+    pub picker_notice: String,
     pub icon_search: String,
     pub icon_copy: Option<(String, bool)>,
     pub notice: String,
@@ -151,6 +154,9 @@ impl State {
             confirm_rows: vec!["sole", "llc"],
             outcome: String::new(),
             outcome_kind: String::new(),
+            picker_query: String::new(),
+            picker_selected: vec![1],
+            picker_notice: String::new(),
             icon_search: String::new(),
             icon_copy: None,
             notice: String::new(),
@@ -391,6 +397,33 @@ impl State {
                     CommitStatus::Saved
                 };
                 self.statuses.put(id, status);
+            }
+            "search-multi-query" => {
+                let values =
+                    bilibi_ui::params::string_values_checked(event, bilibi_ui::params::FIELD_LIMIT)
+                        .map_err(Error::refused)?;
+                self.picker_query = values.get("query").cloned().unwrap_or_default();
+            }
+            "search-multi-pick" | "search-multi-remove" => {
+                if let Some(id) = get("value")
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .filter(|id| (1..=120).contains(id) && *id != 3)
+                {
+                    if self.picker_selected.contains(&id) {
+                        self.picker_selected.retain(|item| *item != id);
+                    } else if ty == "search-multi-pick" {
+                        self.picker_selected.push(id);
+                    }
+                }
+            }
+            "search-multi-create" => {
+                let values =
+                    bilibi_ui::params::string_values_checked(event, bilibi_ui::params::FIELD_LIMIT)
+                        .map_err(Error::refused)?;
+                self.picker_notice = format!(
+                    "Create requested: {}",
+                    values.get("query").map_or("", String::as_str)
+                );
             }
             "preview-combobox-cancel" => self.notice = "Inline edit cancelled.".into(),
             "edit_field" | "cancel_edit_field" => {}

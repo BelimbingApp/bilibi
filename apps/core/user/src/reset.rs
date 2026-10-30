@@ -1,7 +1,9 @@
-//! Password change, forgotten-password request and reset. The address alone
-//! names the account (unique platform-wide), and a reset is issued and redeemed
-//! only for an account whose standing (`identity::standing`) is live.
+//! Password change, forgotten-password request and reset. On the staff form
+//! the address alone names the account (unique platform-wide); on a portal
+//! (ADR 16) it names one of that tenant's customers. A reset is issued and
+//! redeemed only for an account whose standing (`identity::standing`) is live.
 use crate::{
+    identity::Audience,
     password::{self, check_policy},
     CredentialError, UserService,
 };
@@ -75,6 +77,15 @@ fn encode_component(value: &str) -> String {
             _ => format!("%{byte:02X}"),
         })
         .collect()
+}
+
+/// Whether `site` can be a portal address segment, so a reset link never
+/// carries anything else into a path.
+pub(crate) fn site_shaped(site: &str) -> bool {
+    (1..=63).contains(&site.len())
+        && site
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
 }
 
 impl UserService {
@@ -157,12 +168,22 @@ impl UserService {
     /// dummy password verification to reduce account-dependent timing clues.
     /// Mail delivery is asynchronous and is never awaited here.
     pub async fn request_password_reset(&self, email: &str) -> Result<(), CredentialError> {
+        self.request_reset(Audience::Staff, None, email).await
+    }
+    /// [`UserService::request_password_reset`] for one audience; a customer's
+    /// link opens its portal's reset page at `site`.
+    pub(crate) async fn request_reset(
+        &self,
+        audience: Audience,
+        site: Option<&str>,
+        email: &str,
+    ) -> Result<(), CredentialError> {
         let email = normalize_email(email)?;
         let client = self.db.get().await.map_err(Error::from)?;
         let candidates = client
             .query(
-                "SELECT u.id,u.tenant_id,u.name,u.email FROM users u JOIN tenants t ON t.id=u.tenant_id WHERE lower(u.email)=$1 AND u.kind='staff' AND u.deleted_at IS NULL AND u.status='active' AND t.deleted_at IS NULL AND t.status='active' LIMIT 2",
-                &[&email],
+                "SELECT u.id,u.tenant_id,u.name,u.email FROM users u JOIN tenants t ON t.id=u.tenant_id WHERE lower(u.email)=$1 AND u.kind=$2 AND ($3::bigint IS NULL OR u.tenant_id=$3) AND u.deleted_at IS NULL AND u.status='active' AND t.deleted_at IS NULL AND t.status='active' LIMIT 2",
+                &[&email, &audience.kind().as_str(), &audience.tenant()],
             )
             .await
             .map_err(Error::from)?;
@@ -186,12 +207,15 @@ impl UserService {
         let Some(token) = issue_reset_token(&**client, tenant, user).await? else {
             return finish_reset_request().await;
         };
+        let link = match site {
+            Some(site) => self.portal_reset_link(site, &address, &token),
+            None => self.reset_link(&address, &token),
+        };
         let message = Message::text(
             Address::new(Some(&name), &address).map_err(|_| Error::Invalid)?,
             "Reset your Bilibi password",
             format!(
-                "Reset your Bilibi password by opening this link:\n\n{}\n\nIf you did not request this, you can ignore this email.\n",
-                self.reset_link(&address, &token)
+                "Reset your Bilibi password by opening this link:\n\n{link}\n\nIf you did not request this, you can ignore this email.\n"
             ),
         );
         let (mailer, db, hash) = (self.mailer.clone(), self.db.clone(), digest(&token));
@@ -279,11 +303,31 @@ impl UserService {
         )
     }
 
+    /// Where a portal's emailed link points: the host's reset page of the
+    /// portal at `site` (ADR 16).
+    pub(crate) fn portal_reset_link(&self, site: &str, email: &str, token: &str) -> String {
+        format!(
+            "{}/portal/reset/{site}/{token}?email={}",
+            self.origin,
+            encode_component(email)
+        )
+    }
+
     /// Consumes the one-time token, replaces the password and ends every
     /// session of the account. Unknown, frozen, expired and reused tokens are
     /// indistinguishable.
     pub async fn reset_password(
         &self,
+        email: &str,
+        token: &str,
+        new: &str,
+    ) -> Result<(), CredentialError> {
+        self.reset(Audience::Staff, email, token, new).await
+    }
+    /// [`UserService::reset_password`] for one audience.
+    pub(crate) async fn reset(
+        &self,
+        audience: Audience,
         email: &str,
         token: &str,
         new: &str,
@@ -295,8 +339,8 @@ impl UserService {
         let mut client = self.db.get().await.map_err(Error::from)?;
         let account = client
             .query(
-                "SELECT u.id,u.tenant_id,r.token_hash FROM users u JOIN tenants t ON t.id=u.tenant_id LEFT JOIN password_reset_tokens r ON r.tenant_id=u.tenant_id AND r.user_id=u.id AND r.expires_at>now() WHERE lower(u.email)=$1 AND u.kind='staff' AND u.deleted_at IS NULL AND u.status='active' AND t.deleted_at IS NULL AND t.status='active' LIMIT 2",
-                &[&email],
+                "SELECT u.id,u.tenant_id,r.token_hash FROM users u JOIN tenants t ON t.id=u.tenant_id LEFT JOIN password_reset_tokens r ON r.tenant_id=u.tenant_id AND r.user_id=u.id AND r.expires_at>now() WHERE lower(u.email)=$1 AND u.kind=$2 AND ($3::bigint IS NULL OR u.tenant_id=$3) AND u.deleted_at IS NULL AND u.status='active' AND t.deleted_at IS NULL AND t.status='active' LIMIT 2",
+                &[&email, &audience.kind().as_str(), &audience.tenant()],
             )
             .await
             .map_err(Error::from)?;

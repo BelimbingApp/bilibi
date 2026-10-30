@@ -33,9 +33,9 @@ use bilibi_ui::{
         PageFuture, PageRequest,
     },
     params, Alert, Badge, BadgeKind, BuiltinColumn, Card, ColumnType, ColumnsOutcome,
-    FilterToolbar, FlashMap, FlexRow, FlexTable, Header, Html, IconButton, IconContext, IconKind,
-    Instant, ListColumns, ListSpec, ListState, PageCounts, Pagination, RowMode, StatusKind,
-    TableEmpty, ToolbarControl, NO_FLASH,
+    FilterToolbar, FlashMap, FlexRow, FlexTable, Header, Html, IconButton, IconKind, Instant,
+    ListColumns, ListSpec, ListState, PageCounts, Pagination, RowMode, StatusKind, TableEmpty,
+    ToolbarControl, NO_FLASH,
 };
 use jiff::Timestamp;
 use serde_json::{json, Value};
@@ -361,12 +361,6 @@ impl Index {
         let header = render(Header {
             title: Html::text("Quarantined Files"),
             subtitle: "Files a malware scan held back. Nobody can open them until a scan calls them clean.",
-            title_actions: render(IconButton {
-                context: IconContext::Inline,
-                id: "media-quarantine-pin",
-                nav_pin: "nav-admin-system-media-quarantine",
-                ..IconButton::new("bilimbi-pin", "Pin Quarantined Files to sidebar")
-            })?,
             ..Header::default()
         })?;
         let notice = if scanning {
