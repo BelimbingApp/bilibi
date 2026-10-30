@@ -886,6 +886,116 @@ async fn main() -> Result<()> {
     )
     .await?;
 
+    println!("== a hold on an attachment's asset keeps it through erasure");
+    let lea: i64 = client
+        .query_one(
+            "INSERT INTO persons(tenant_id,code,name,kind,email) VALUES(1,'lea_assetheld','Lea Assetheld','human','lea-assetheld@example.test') RETURNING id",
+            &[],
+        )
+        .await?
+        .get(0);
+    let lea_id = lea.to_string();
+    let lea_subject = AttachmentSubject {
+        kind: person_files::ATTACHMENT_SUBJECT,
+        id: &lea_id,
+    };
+    let scan = media
+        .upload_attachment(
+            &mut client,
+            &admin,
+            lea_subject,
+            Upload {
+                filename: "lea-licence.txt".into(),
+                bytes: b"Lea licence scan\n".to_vec(),
+            },
+            Rules::default(),
+        )
+        .await?;
+    {
+        let mut tx = boundary
+            .begin(
+                &mut client,
+                admin.mutation_context("privacy.walkthrough.attach"),
+            )
+            .await?;
+        media
+            .submit_attachments(&mut tx, &admin, lea_subject, &[scan.public_id.as_str()])
+            .await?;
+        tx.commit().await?;
+    }
+    let asset: i64 = client
+        .query_one(
+            "SELECT media_asset_id FROM base_media_attachments WHERE public_id=$1",
+            &[&scan.public_id],
+        )
+        .await?
+        .get(0);
+    let asset_hold = privacy
+        .place_hold(
+            &mut client,
+            &admin,
+            HoldTarget::Record {
+                kind: "base/media/asset".into(),
+                id: asset,
+            },
+            "Licence under review",
+        )
+        .await?;
+    println!(
+        "hold {} on base/media/asset:{asset} only; the attachment and Lea are not held",
+        asset_hold.id
+    );
+    let lea_request = privacy
+        .receive(
+            &mut client,
+            &second,
+            NewRequest {
+                kind: RequestKind::Erasure,
+                person: PersonId::new(lea)?,
+                identifiers: vec![],
+                company: one,
+            },
+        )
+        .await?;
+    let lea_request = privacy
+        .verify(
+            &mut client,
+            &second,
+            lea_request.id,
+            lea_request.version,
+            "Email from own address",
+            &[],
+        )
+        .await?;
+    tokio::time::sleep(Duration::from_secs(31)).await;
+    let lea_request = erasure_approval::decide(
+        &app,
+        &privacy,
+        &mut client,
+        &second,
+        &admin.clone().presenting_step_up(&code(&admin_key, 1)),
+        &lea_request,
+        true,
+    )
+    .await?;
+    summary(&settle(&privacy, &client, &admin, lea_request.id, 90).await?);
+    rows(
+        &client,
+        "Lea's attachment",
+        &format!("SELECT row_to_json(a)::text FROM (SELECT a.state,a.erased_at IS NOT NULL AS erased,a.bytes_removed_at IS NOT NULL AS bytes_removed,EXISTS (SELECT 1 FROM base_media_assets m WHERE m.id=a.media_asset_id) AS asset_row FROM base_media_attachments a WHERE a.public_id='{}') a", scan.public_id),
+    )
+    .await?;
+    println!(
+        "files still holding Lea's licence bytes: {}",
+        holding(std::path::Path::new(&root), b"Lea licence scan")
+    );
+    rows(
+        &client,
+        "Lea",
+        &format!("SELECT row_to_json(p)::text FROM (SELECT name,code,email,erased_at IS NOT NULL AS erased FROM persons WHERE id={lea}) p"),
+    )
+    .await?;
+
     println!("== an approver affiliated with another company cannot start a request");
     // Account 6 now works for Company 002; the request is filed under Company 001.
     client
@@ -1140,6 +1250,10 @@ async fn agent(
 }
 /// Counts files under `root` whose bytes still hold the attachment's text.
 fn walk(root: &std::path::Path) -> usize {
+    holding(root, b"Ada passpor")
+}
+/// Counts files under `root` whose bytes contain `needle`.
+fn holding(root: &std::path::Path, needle: &[u8]) -> usize {
     let Ok(entries) = std::fs::read_dir(root) else {
         return 0;
     };
@@ -1148,10 +1262,10 @@ fn walk(root: &std::path::Path) -> usize {
         .map(|entry| {
             let path = entry.path();
             if path.is_dir() {
-                walk(&path)
+                holding(&path, needle)
             } else {
                 std::fs::read(&path).map_or(0, |b| {
-                    usize::from(b.windows(11).any(|w| w == b"Ada passpor"))
+                    usize::from(b.windows(needle.len()).any(|w| w == needle))
                 })
             }
         })

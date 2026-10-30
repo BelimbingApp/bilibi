@@ -7,7 +7,6 @@ use bilibi_database::pool;
 use bilibi_database::Db;
 use bilibi_module_registry::Services;
 use bilibi_party_ids::PersonId;
-use bilibi_personal_data::Holds;
 use bilibi_privacy::{HoldTarget, Privacy, SERVICE};
 use bilibi_tenancy::Authentication;
 use bilibi_tenancy::Scope;
@@ -197,24 +196,6 @@ async fn main() -> Result<()> {
             .await,
     );
 
-    println!("== what an erasure sees: only the records it asks about");
-    let holds = Holds::acquire(1, Some(person)).await?;
-    println!(
-        "person 1 erasure: person hold={:?} person:2 held={:?} person:3 held={:?}",
-        holds.person_hold().await?,
-        holds.record("person", 2).await?,
-        holds.record("person", 3).await?
-    );
-    holds.release().await?;
-    let holds = Holds::acquire(1, PersonId::new(9).ok()).await?;
-    println!(
-        "person 9 erasure: person hold={:?} person:2 held={:?} person:3 held={:?}",
-        holds.person_hold().await?,
-        holds.record("person", 2).await?,
-        holds.record("person", 3).await?
-    );
-    holds.release().await?;
-
     println!("== two placements of the same hold at once");
     let target = HoldTarget::Record {
         kind: "person".into(),
@@ -226,12 +207,17 @@ async fn main() -> Result<()> {
     );
     println!("first: {first}; second: {second}");
 
-    println!("== a hold placed while an erasure runs waits for it");
-    let guard = Holds::acquire(1, PersonId::new(3).ok()).await?;
-    println!(
-        "erasure guard open; person 3 held now: {:?}",
-        guard.person_hold().await?
-    );
+    // An erasure's or sweep's hold session can be opened only by Privacy,
+    // from its own sealed grant (`Holds::acquire(scope, &grant)`), so this
+    // walkthrough holds the same shared tenant guard on its own connection
+    // to stand in for one; the failures walkthrough runs real erasures and
+    // sweeps against holds.
+    println!("== a hold placed while an erasure holds the guard waits for it");
+    let guard = db.get().await?;
+    guard
+        .batch_execute("BEGIN; SELECT pg_advisory_xact_lock_shared(841330, 1)")
+        .await?;
+    println!("erasure guard open on tenant 1");
     let started = std::time::Instant::now();
     let placing = {
         let (privacy, db, admin) = (privacy.clone(), db.clone(), admin.clone());
@@ -254,7 +240,7 @@ async fn main() -> Result<()> {
         "after 1.5 s the placement finished: {}",
         placing.is_finished()
     );
-    guard.release().await?;
+    guard.batch_execute("COMMIT").await?;
     let released = std::time::Instant::now();
     let (outcome, done) = placing.await?;
     println!(
@@ -262,12 +248,6 @@ async fn main() -> Result<()> {
         done.saturating_duration_since(released).as_millis(),
         done.saturating_duration_since(started).as_millis()
     );
-    let next = Holds::acquire(1, PersonId::new(3).ok()).await?;
-    println!(
-        "the next erasure of person 3 sees the hold: {:?}",
-        next.person_hold().await?
-    );
-    next.release().await?;
 
     println!("== release, release twice, list, history");
     show(
@@ -284,12 +264,6 @@ async fn main() -> Result<()> {
             .await
             .map(|h| h.id),
     );
-    let holds = Holds::acquire(1, Some(person)).await?;
-    println!(
-        "person 1 after release: person hold={:?}",
-        holds.person_hold().await?
-    );
-    holds.release().await?;
     let page = privacy.holds(&**client, &admin, "", 0, 2).await?;
     println!("list tenant 1, first page of 2: total {}", page.total);
     for hold in page.holds {

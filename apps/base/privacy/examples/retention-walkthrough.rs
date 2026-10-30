@@ -321,6 +321,20 @@ async fn main() -> Result<()> {
     classes(&privacy, &client, &admin, "tenant 1").await?;
     classes(&privacy, &client, &other, "tenant 2").await?;
 
+    println!("== #250: a rule's settings live at one scope, so no parent value can break it");
+    for (label, target) in [("tenant", Target::Tenant), ("global", Target::Global)] {
+        let mut tx = boundary
+            .begin(&mut client, admin.mutation_context("settings.save"))
+            .await?;
+        show(
+            &format!("a {label} legal minimum of 400 days for closed accounts"),
+            settings
+                .put(&mut tx, &admin, target, &accounts_minimum, json!(400))
+                .await,
+        );
+        tx.rollback().await?;
+    }
+
     println!("== records past their period (dates stand in for time passing)");
     client
         .batch_execute(

@@ -37,6 +37,59 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 #[path = "support/erasure.rs"]
 mod erasure_approval;
 
+// #254: a walkthrough publisher and subscriber in containers of their own,
+// as two Domains would be mounted (an example links its own descriptors), and
+// the publisher's declaration of where its event names a person.
+const NOTED: &str = "wt_publisher/notes.noted";
+const LEDGER: &str = "wt_subscriber/ledger.notes";
+inventory::submit! { bilibi_module_registry::Module {
+    id: "wt_publisher/notes", layer: bilibi_module_registry::Layer::Domains,
+    dependencies: &["base/events"], migrations: &[], services: &[],
+} }
+inventory::submit! { bilibi_module_registry::Module {
+    id: "wt_subscriber/ledger", layer: bilibi_module_registry::Layer::Domains,
+    dependencies: &["base/events"], migrations: &[], services: &[],
+} }
+inventory::submit! { bilibi_module_registry::Contribution::new(
+    bilibi_base::events::EVENTS, NOTED,
+    bilibi_module_registry::Provenance { module: "wt_publisher/notes", source: file!(), line: line!() },
+    &bilibi_base::events::EventType { version: 1 },
+) }
+inventory::submit! { bilibi_module_registry::Contribution::new(
+    bilibi_base::events::PERSONAL_EVENTS, NOTED,
+    bilibi_module_registry::Provenance { module: "wt_publisher/notes", source: file!(), line: line!() },
+    &bilibi_base::events::PersonalEvent { person: Some("/person"), fields: &["/name"] },
+) }
+inventory::submit! { bilibi_module_registry::Contribution::new(
+    bilibi_base::events::SUBSCRIBERS, LEDGER,
+    bilibi_module_registry::Provenance { module: "wt_subscriber/ledger", source: file!(), line: line!() },
+    &bilibi_base::events::Subscriber {
+        events: &[bilibi_base::events::On { event: NOTED, versions: &[1] }],
+        handler: &Ledger,
+    },
+) }
+/// What the subscriber was handed, as it received it.
+static RECEIVED: std::sync::Mutex<Vec<Value>> = std::sync::Mutex::new(Vec::new());
+struct Ledger;
+impl bilibi_base::events::Subscribe for Ledger {
+    fn handle<'a>(
+        &'a self,
+        _: &'a tokio_postgres::Transaction<'_>,
+        _: &'a bilibi_authz::SystemScope,
+        event: &'a bilibi_base::events::Event,
+    ) -> bilibi_base::events::SubscriberFuture<'a> {
+        Box::pin(async move {
+            if let Ok(mut received) = RECEIVED.lock() {
+                received.push(event.payload.clone());
+            }
+            Ok(Vec::new())
+        })
+    }
+}
+fn received_payloads() -> Vec<Value> {
+    RECEIVED.lock().map(|r| r.clone()).unwrap_or_default()
+}
+
 fn now_step() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -176,7 +229,10 @@ async fn rows(client: &Client, label: &str, sql: &str) -> Result<()> {
 async fn new_person(client: &Client, name: &str, email: &str) -> Result<PersonId> {
     let id: i64 = client
         .query_one(
-            "INSERT INTO persons(tenant_id,name,kind,email) VALUES(1,$1,'human',$2) RETURNING id",
+            // A code made from the name, as Core Person makes it, so erasure
+            // must clear it too.
+            "INSERT INTO persons(tenant_id,code,name,kind,email) \
+             SELECT 1, trim(both '_' from lower(regexp_replace($1,'[^A-Za-z0-9]+','_','g'))) || '_' || (coalesce(max(id),0)+1), $1, 'human', $2 FROM persons RETURNING id",
             &[&name, &email],
         )
         .await?
@@ -1899,7 +1955,125 @@ async fn main() -> Result<()> {
     .await?;
 
     println!(
-        "== H-07: Step-up set to every time, proved once on the web session, approves an erasure"
+        "== #254: a declared event is erased only after every subscriber has it; a replay skips it"
+    );
+    let events = app
+        .services
+        .get::<bilibi_base::events::Events>(bilibi_base::events::SERVICE)?;
+    let pia = new_person(&client, "Pia Pending", "pia-pending@example.test").await?;
+    for (n, subject) in [(1, "note:1"), (2, "note:2")] {
+        let mut tx = boundary
+            .begin(
+                &mut client,
+                admin.scope.mutation_context("walkthrough.notes.record"),
+            )
+            .await?;
+        events
+            .record(
+                &mut tx,
+                bilibi_base::events::NewEvent {
+                    name: NOTED,
+                    subject,
+                    key: &format!("pia-note-{n}"),
+                    payload: json!({"person": pia.get(), "name": "Pia Pending"}),
+                },
+            )
+            .await?;
+        tx.commit().await?;
+    }
+    let note: Vec<i64> = client
+        .query(
+            "SELECT id FROM base_events WHERE event_key LIKE 'pia-note-%' ORDER BY id",
+            &[],
+        )
+        .await?
+        .iter()
+        .map(|row| row.get(0))
+        .collect();
+    // As if the subscriber had been unmounted when note 2 was recorded.
+    client
+        .execute(
+            "DELETE FROM base_events_deliveries WHERE subscriber=$1 AND event_id=(SELECT id FROM base_events WHERE event_key='pia-note-2')",
+            &[&LEDGER],
+        )
+        .await?;
+    rows(&client, "events", "SELECT event_key||' payload='||payload::text||' erased='||(erased_at IS NOT NULL)||' pending='||(SELECT count(*) FROM base_events_deliveries d WHERE d.event_id=e.id AND d.delivered_at IS NULL) FROM base_events e WHERE event_key LIKE 'pia-note-%' ORDER BY id").await?;
+    println!(
+        "the tenant has not yet allowed delivery: the subscriber received {} payloads",
+        received_payloads().len()
+    );
+    let erasure = received(
+        &privacy,
+        &mut client,
+        &admin.scope,
+        RequestKind::Erasure,
+        pia,
+        "pia-pending@example.test",
+    )
+    .await?;
+    let erasure = erasure_approval::decide(
+        &app,
+        &privacy,
+        &mut client,
+        &admin.scope,
+        &second.step_up().await,
+        &erasure,
+        true,
+    )
+    .await?;
+    let waiting = settle(&privacy, &client, &admin.scope, erasure.id, 20).await?;
+    summary(&waiting);
+    rows(&client, "while delivery is pending", "SELECT event_key||' payload='||payload::text||' erased='||(erased_at IS NOT NULL) FROM base_events WHERE event_key LIKE 'pia-note-%' ORDER BY id").await?;
+    grants
+        .set_system(
+            &admin.scope,
+            bilibi_base::events::PRINCIPAL,
+            bilibi_base::events::DELIVER,
+            Some(true),
+        )
+        .await?;
+    // Requeue note 1's waiting delivery only.
+    let requeued = events
+        .replay(
+            &admin.scope,
+            LEDGER,
+            bilibi_base::events::ReplayFrom::Event(note[0]),
+            1,
+        )
+        .await?;
+    println!(
+        "delivery allowed; pending deliveries requeued: {}",
+        requeued.pending
+    );
+    for _ in 0..60 {
+        if !received_payloads().is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+    println!("the subscriber received: {:?}", received_payloads());
+    summary(&settle(&privacy, &client, &admin.scope, erasure.id, 180).await?);
+    rows(&client, "after erasure", "SELECT event_key||' payload='||payload::text||' erased='||(erased_at IS NOT NULL) FROM base_events WHERE event_key LIKE 'pia-note-%' ORDER BY id").await?;
+    let review = events
+        .replay(
+            &admin.scope,
+            LEDGER,
+            bilibi_base::events::ReplayFrom::Event(note[0]),
+            100,
+        )
+        .await?;
+    println!(
+        "replay to the subscriber after erasure: created={} pending={} erased={}",
+        review.created, review.pending, review.erased
+    );
+    rows(&client, "deliveries of note 2", &format!("SELECT count(*)::text FROM base_events_deliveries WHERE subscriber='{LEDGER}' AND event_id=(SELECT id FROM base_events WHERE event_key='pia-note-2')")).await?;
+    println!(
+        "payloads the subscriber holds: {}",
+        received_payloads().len()
+    );
+
+    println!(
+        "== H-07 / #255: an erasure decision needs a fresh 2FA check; no tenant or installation setting relaxes it"
     );
     let step_up = app
         .services
@@ -1911,16 +2085,36 @@ async fn main() -> Result<()> {
                 admin.scope.mutation_context("step_up.mode.save"),
             )
             .await?;
-        step_up
-            .set_mode(
-                &mut tx,
-                &admin.scope,
-                bilibi_privacy::STEP_UP_ERASURE,
-                Some(bilibi_step_up::Mode::EveryTime),
-            )
-            .await?;
-        tx.commit().await?;
+        show(
+            "tenant turns the erasure check off",
+            step_up
+                .set_mode(
+                    &mut tx,
+                    &admin.scope,
+                    bilibi_privacy::STEP_UP_ERASURE,
+                    Some(bilibi_step_up::Mode::Off),
+                )
+                .await,
+        );
+        show(
+            "installation lowers its floor for it",
+            step_up
+                .set_floor(
+                    &mut tx,
+                    &admin.scope,
+                    bilibi_privacy::STEP_UP_ERASURE,
+                    Some(false),
+                )
+                .await,
+        );
+        tx.rollback().await?;
     }
+    show(
+        "the check applies (development included)",
+        step_up
+            .required(&admin.scope, bilibi_privacy::STEP_UP_ERASURE)
+            .await,
+    );
     let hal = new_person(&client, "Hal Everytime", "hal-everytime@example.test").await?;
     let erasure = received(
         &privacy,
@@ -1935,28 +2129,28 @@ async fn main() -> Result<()> {
     let erasure = privacy
         .submit_erasure(&mut client, &second.scope, erasure.id, erasure.version)
         .await?;
+    show(
+        "approve with no proof at all",
+        erasure_approval::vote(&app, &admin.scope, &erasure, true).await,
+    );
+    let erasure = privacy.request(&**client, &admin.scope, erasure.id).await?;
+    println!(
+        "after the refusal: status={} round={:?}",
+        erasure.status, erasure.approval_request
+    );
     let target = format!("approval:{}", erasure.approval_request.unwrap_or_default());
-    let method = step_up.enrolled_methods(&admin.scope).await?[0].id;
+    // The browser's Step-up page: a fresh code marks the web session.
     let code = admin.code().await;
     show(
-        "web Step-up dialog verifies a code on the session",
-        step_up
-            .verify(
-                &admin.scope,
-                method,
-                &code,
-                bilibi_step_up::Purpose {
-                    operation: bilibi_privacy::STEP_UP_ERASURE,
-                    target: &target,
-                    channel: admin.scope.channel(),
-                },
-            )
+        "web Step-up page accepts a fresh code on the session",
+        app.user
+            .step_up(&admin.scope, &code)
             .await
-            .map(|spent| format!("{spent:?}")),
+            .map_err(|error| format!("{error:?}")),
     );
     let decided = erasure_approval::vote(&app, &admin.scope, &erasure, true).await;
     show(
-        "approve with the session's proof (no code presented)",
+        "approve with that fresh check (no code presented)",
         match decided {
             Ok(()) => privacy
                 .request(&**client, &admin.scope, erasure.id)
@@ -1972,18 +2166,6 @@ async fn main() -> Result<()> {
     )
     .await?;
     summary(&settle(&privacy, &client, &admin.scope, erasure.id, 180).await?);
-    {
-        let mut tx = boundary
-            .begin(
-                &mut client,
-                admin.scope.mutation_context("step_up.mode.save"),
-            )
-            .await?;
-        step_up
-            .set_mode(&mut tx, &admin.scope, bilibi_privacy::STEP_UP_ERASURE, None)
-            .await?;
-        tx.commit().await?;
-    }
 
     println!("== H-09: each company's retention settings bind its own records");
     for (company, days) in [(1, 1), (2, 3650)] {

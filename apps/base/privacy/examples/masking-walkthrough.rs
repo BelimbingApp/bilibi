@@ -19,6 +19,39 @@ use std::collections::HashMap;
 bilibi_walkthrough_fixture::walkthrough_vocabulary!();
 bilibi_walkthrough_fixture::walkthrough_module_roles!();
 
+// A walkthrough-only table under Core Person (which answers for its personal
+// data): one numeric personal value per contact, as a Domain might hold. Over
+// one linked row its sum or average would be the value itself.
+static SCORES: bilibi_grid::GridContribution = bilibi_grid::GridContribution {
+    record_fields: &[],
+    tables: &[bilibi_grid::TableDecl::new(
+        "walkthrough_scores",
+        "Scores",
+        "admin.person.list",
+        bilibi_grid::Source::tenant(
+            "SELECT id,person_id,score FROM walkthrough_scores WHERE tenant_id=$1",
+        ),
+        "id",
+        &[
+            bilibi_grid::Field::new("id", "ID", bilibi_grid::FieldType::Integer).protected(),
+            bilibi_grid::Field::new("person_id", "Person", bilibi_grid::FieldType::Integer)
+                .protected(),
+            bilibi_grid::Field::new("score", "Score", bilibi_grid::FieldType::Integer)
+                .personal(bilibi_grid::PersonalKind::Identifier),
+        ],
+    )],
+    links: &[bilibi_grid::LinkDecl::on(
+        "scores",
+        "Scores",
+        bilibi_grid::LinkKind::Many,
+        "persons",
+        "id",
+        "walkthrough_scores",
+        "person_id",
+    )],
+};
+bilibi_grid::contribute!("core/person", "person.walkthrough_scores", &SCORES);
+
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 /// A signed-in browser session, as the host proves one for a reviewed write.
@@ -206,6 +239,13 @@ async fn main() -> Result<()> {
     let modules = bilibi_module_registry::discover()?;
     bilibi_database::migrate(&db, &modules).await?;
     bilibi_walkthrough_fixture::install(&db).await?;
+    db.get()
+        .await?
+        .batch_execute(
+            "CREATE TABLE walkthrough_scores(id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, tenant_id bigint NOT NULL, person_id bigint NOT NULL, score integer NOT NULL); \
+             INSERT INTO walkthrough_scores(tenant_id,person_id,score) VALUES(1,1,4217)",
+        )
+        .await?;
     let app = bilibi_web::App::new(db.clone(), "http://localhost:35576")?;
     async fn login(app: &bilibi_web::App, email: &str) -> Result<(Scope, String)> {
         let login = app
@@ -341,6 +381,70 @@ async fn main() -> Result<()> {
             .await
             .map(|p| p.rows.into_iter().map(|r| r.cells).collect::<Vec<_>>()),
         );
+    }
+
+    println!("== #252: a masked numeric field over one linked row: no sum, average or series");
+    show(
+        "mask walkthrough_scores.score for viewer and staff",
+        restrictions
+            .put_mode(&admin, "walkthrough_scores", "score", &[2, 3], Mode::Mask)
+            .await
+            .map(|s| s.mode),
+    );
+    for (label, scope) in [("admin", &admin), ("viewer", &viewer)] {
+        for spec in [
+            "scores:count",
+            "scores.score:sum",
+            "scores.score:avg",
+            "scores.score:max",
+        ] {
+            show(
+                &format!("{label} projects Ada's {spec}"),
+                bilibi_grid::query::project(&db, scope, "persons", &[json!(1)], &[spec])
+                    .await
+                    .map(|p| {
+                        p.rows
+                            .into_iter()
+                            .map(|r| r.cells.into_values().collect::<Vec<_>>())
+                            .collect::<Vec<_>>()
+                    }),
+            );
+        }
+        show(
+            &format!("{label} summarises the sum of scores by person"),
+            bilibi_grid::summarize(
+                &db,
+                scope,
+                "walkthrough_scores",
+                &bilibi_grid::SummarySpec {
+                    filters: vec![],
+                    groupings: vec![bilibi_grid::Grouping {
+                        column: "person_id".into(),
+                        bucket: None,
+                    }],
+                    measures: vec![bilibi_grid::Measure {
+                        column: "score".into(),
+                        agg: bilibi_grid::Agg::Sum,
+                    }],
+                    timezone: "UTC".into(),
+                    max_groups: 10,
+                    bounds: Default::default(),
+                },
+            )
+            .await
+            .map(|summary| format!("{:?}", summary.lines).contains("4217")),
+        );
+    }
+    for (label, scope) in [("admin", &admin), ("viewer", &viewer)] {
+        let catalog = bilibi_grid::Catalog::for_scope(&**client, scope).await?;
+        let offered: Vec<String> = catalog
+            .table("persons")
+            .map(|root| catalog.suggest(root, "score", &[], 50))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|column| column.spec)
+            .collect();
+        println!("{label}'s column suggestions for \"score\": {offered:?}");
     }
 
     println!("== pages: the record and history");
