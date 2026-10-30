@@ -43,7 +43,7 @@ pub(crate) const WORKER: &str = "base/bulk_data-update";
 const SLICE: Duration = Duration::from_secs(120);
 /// Records asked of the list contract per page while resolving a filter.
 const PAGE: i64 = 100;
-const COLUMNS: &str = "id,record_type,company_id,field,value,chosen,filter,ids,jsonb_array_length(targets) AS records,state,next_row,error,job_id,trace_id,version,floor(extract(epoch FROM created_at))::bigint AS created,floor(extract(epoch FROM finished_at))::bigint AS finished";
+const COLUMNS: &str = "id,record_type,company_id,field,value,chosen,filter,ids,except_ids,jsonb_array_length(targets) AS records,state,next_row,error,job_id,trace_id,version,floor(extract(epoch FROM created_at))::bigint AS created,floor(extract(epoch FROM finished_at))::bigint AS finished";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -103,6 +103,9 @@ pub struct UpdateRun {
     filter: Option<Value>,
     #[serde(skip)]
     ids: Option<Vec<String>>,
+    /// With the filters, records left out until the update has resolved.
+    #[serde(skip)]
+    except: Vec<String>,
     pub state: UpdateState,
     /// Records done so far.
     pub progress: i32,
@@ -143,6 +146,12 @@ impl UpdateRun {
                 .map(serde_json::from_value)
                 .transpose()
                 .map_err(|_| Error::Internal)?,
+            except: row
+                .get::<_, Option<Value>>("except_ids")
+                .map(serde_json::from_value)
+                .transpose()
+                .map_err(|_| Error::Internal)?
+                .unwrap_or_default(),
             state: UpdateState::parse(row.get("state"))?,
             progress: row.get("next_row"),
             counts: Counts::default(),
@@ -245,8 +254,12 @@ async fn running(tx: &MutationTransaction<'_>, scope: &Scope, id: i64) -> Result
 pub(crate) enum Chosen<'a> {
     /// Ticked records, by id.
     Ids(&'a [String]),
-    /// The list contract's filters, without `page` or `page_size`.
-    Filter(&'a Value),
+    /// The list contract's filters, without `page` or `page_size`, less the
+    /// records unticked after "Select all N matching".
+    Filter {
+        filter: &'a Value,
+        except: &'a [String],
+    },
 }
 
 /// An id as the owner's contracts take it: a number when it is one.
@@ -354,7 +367,10 @@ impl BulkData {
                     return Err(refused("ids", "name each record once"));
                 }
             }
-            Chosen::Filter(filter) => {
+            Chosen::Filter { filter, except } => {
+                if !except.is_empty() {
+                    crate::distinct_ids("except_ids", except, max)?;
+                }
                 let Some(object) = filter.as_object() else {
                     return Err(refused("filter", "must be an object of the list's filters"));
                 };
@@ -405,15 +421,20 @@ impl BulkData {
             registered.key,
             field.to_owned(),
         );
-        let (chosen, filter, ids) = match chosen {
-            Chosen::Ids(ids) => ("selected", None, Some(json!(ids))),
-            Chosen::Filter(filter) => ("filter", Some((*filter).clone()), None),
+        let (chosen, filter, ids, except) = match chosen {
+            Chosen::Ids(ids) => ("selected", None, Some(json!(ids)), None),
+            Chosen::Filter { filter, except } => (
+                "filter",
+                Some((*filter).clone()),
+                None,
+                (!except.is_empty()).then(|| json!(except)),
+            ),
         };
         let trace = tx.context().trace_id.clone();
         let opened = tx
             .mutate(move |sql| {
                 Box::pin(async move {
-                    let row = sql.query_one(&format!("INSERT INTO base_bulk_data_updates(tenant_id,company_id,record_type,started_by,field,value,chosen,filter,ids,trace_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING {COLUMNS}"), &[&tenant, &company, &kind, &user, &field, &value, &chosen, &filter, &ids, &trace]).await?;
+                    let row = sql.query_one(&format!("INSERT INTO base_bulk_data_updates(tenant_id,company_id,record_type,started_by,field,value,chosen,filter,ids,except_ids,trace_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING {COLUMNS}"), &[&tenant, &company, &kind, &user, &field, &value, &chosen, &filter, &ids, &except, &trace]).await?;
                     let run = UpdateRun::from_row(&row)?;
                     Ok((run.clone(), vec![Change { kind: "base/bulk_data.update".into(), id: run.id, old: Value::Null, new: run.evidence() }]))
                 })
@@ -474,7 +495,7 @@ impl BulkData {
         let run = tx
             .mutate(move |sql| {
                 Box::pin(async move {
-                    let row = sql.query_one(&format!("UPDATE base_bulk_data_updates SET state='cancelled',filter=NULL,ids=NULL,finished_at=clock_timestamp(),version=version+1,updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2 RETURNING {COLUMNS}"), &[&tenant, &id]).await?;
+                    let row = sql.query_one(&format!("UPDATE base_bulk_data_updates SET state='cancelled',filter=NULL,ids=NULL,except_ids=NULL,finished_at=clock_timestamp(),version=version+1,updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2 RETURNING {COLUMNS}"), &[&tenant, &id]).await?;
                     let run = UpdateRun::from_row(&row)?;
                     Ok((run.clone(), vec![Change { kind: "base/bulk_data.update".into(), id, old: old.evidence(), new: run.evidence() }]))
                 })
@@ -605,7 +626,7 @@ impl BulkData {
                     let old_evidence = old.evidence();
                     tx.mutate(move |sql| {
                         Box::pin(async move {
-                            let row = sql.query_one(&format!("UPDATE base_bulk_data_updates SET targets=$3,filter=NULL,ids=NULL,state='running',version=version+1,updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2 RETURNING {COLUMNS}"), &[&tenant, &id, &targets]).await?;
+                            let row = sql.query_one(&format!("UPDATE base_bulk_data_updates SET targets=$3,filter=NULL,ids=NULL,except_ids=NULL,state='running',version=version+1,updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2 RETURNING {COLUMNS}"), &[&tenant, &id, &targets]).await?;
                             let run = UpdateRun::from_row(&row)?;
                             Ok(((), vec![Change { kind: "base/bulk_data.update".into(), id, old: old_evidence, new: run.evidence() }]))
                         })
@@ -719,7 +740,11 @@ impl BulkData {
                 Err(failed) => return Ok(Err(failed)),
             };
             for (id, version) in listed {
-                targets.push((text_id(&id).ok_or(Error::Internal)?, version));
+                let id = text_id(&id).ok_or(Error::Internal)?;
+                // Records unticked after "Select all" are left out.
+                if !run.except.contains(&id) {
+                    targets.push((id, version));
+                }
             }
         }
         if targets.is_empty() {
@@ -920,7 +945,7 @@ impl BulkData {
         let mut run = tx
             .mutate(move |sql| {
                 Box::pin(async move {
-                    let row = sql.query_one(&format!("UPDATE base_bulk_data_updates SET state=$3,error=$4,filter=NULL,ids=NULL,finished_at=clock_timestamp(),version=version+1,updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2 RETURNING {COLUMNS}"), &[&tenant, &id, &state, &error]).await?;
+                    let row = sql.query_one(&format!("UPDATE base_bulk_data_updates SET state=$3,error=$4,filter=NULL,ids=NULL,except_ids=NULL,finished_at=clock_timestamp(),version=version+1,updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2 RETURNING {COLUMNS}"), &[&tenant, &id, &state, &error]).await?;
                     let run = UpdateRun::from_row(&row)?;
                     Ok((run.clone(), vec![Change { kind: "base/bulk_data.update".into(), id, old: old_evidence, new: run.evidence() }]))
                 })

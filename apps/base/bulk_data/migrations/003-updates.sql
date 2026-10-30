@@ -19,6 +19,8 @@ CREATE TABLE base_bulk_data_updates (
     chosen text NOT NULL CHECK (chosen IN ('selected', 'filter')),
     filter jsonb CHECK (filter IS NULL OR jsonb_typeof(filter) = 'object'),
     ids jsonb CHECK (ids IS NULL OR (jsonb_typeof(ids) = 'array' AND jsonb_array_length(ids) >= 1)),
+    -- With a filter, the records left out (unticked after "Select all").
+    except_ids jsonb CHECK (except_ids IS NULL OR (jsonb_typeof(except_ids) = 'array' AND jsonb_array_length(except_ids) >= 1)),
     targets jsonb CHECK (targets IS NULL OR jsonb_typeof(targets) = 'array'),
     state text NOT NULL DEFAULT 'resolving'
         CHECK (state IN ('resolving', 'running', 'completed', 'cancelled', 'failed')),
@@ -49,3 +51,9 @@ CREATE TABLE base_bulk_data_update_rows (
     UNIQUE (update_id, row_number)
 );
 CREATE INDEX base_bulk_data_update_rows_outcome_idx ON base_bulk_data_update_rows (tenant_id, update_id, outcome, row_number);
+
+-- An export of a list's filters may leave records out too: those unticked
+-- after "Select all N matching" on the list.
+ALTER TABLE base_bulk_data_exports
+    ADD COLUMN except_ids jsonb CHECK (except_ids IS NULL OR (jsonb_typeof(except_ids) = 'array' AND jsonb_array_length(except_ids) >= 1)),
+    ADD CHECK (except_ids IS NULL OR ids IS NULL);

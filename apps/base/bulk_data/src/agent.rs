@@ -81,6 +81,17 @@ fn ids(input: &Value) -> bilibi_agent_api::Result<Option<Vec<String>>> {
         .collect::<bilibi_agent_api::Result<Vec<_>>>()
         .map(Some)
 }
+/// With the filters, records left out (unticked after "Select all").
+fn except(input: &Value) -> bilibi_agent_api::Result<Vec<String>> {
+    let Some(ids) = input.get("except_ids") else {
+        return Ok(Vec::new());
+    };
+    ids.as_array()
+        .ok_or(Error::Invalid)?
+        .iter()
+        .map(|id| crate::import::text_id(id).ok_or(Error::Invalid.into()))
+        .collect()
+}
 fn page(input: &Value) -> (i64, i64) {
     let page = input["page"].as_i64().unwrap_or(1).max(1);
     let size = input["page_size"].as_i64().unwrap_or(25).clamp(1, 100);
@@ -295,6 +306,7 @@ impl Write {
                     .to_owned(),
                 filter: filter(input)?,
                 ids: ids(input)?.unwrap_or_default(),
+                except: except(input)?,
                 columns: serde_json::from_value(input["columns"].clone())
                     .map_err(|_| Error::Invalid)?,
             },
@@ -307,6 +319,7 @@ impl Write {
                 value: input["value"].as_str().ok_or(Error::Invalid)?.to_owned(),
                 ids: ids(input)?,
                 filter: filter(input)?,
+                except: except(input)?,
             },
             Self::CancelUpdate => Action::CancelUpdate {
                 update: id(input, "update_id")?,
@@ -401,6 +414,9 @@ fn save_schema() -> Value {
 fn delete_schema() -> Value {
     json!({"type": "object", "required": ["mapping_id", "version"], "properties": {"mapping_id": id_schema(), "version": id_schema()}})
 }
+fn except_schema() -> Value {
+    json!({"type": "array", "description": "With filter: ids of records to leave out, as text (those unticked after selecting every match).", "items": {"type": "string", "maxLength": 100}})
+}
 fn ids_schema() -> Value {
     json!({"type": "array", "description": "Ticked records' ids as text, instead of filter: at least one, each once, and no more than the setting allows.", "items": {"type": "string", "maxLength": 100}})
 }
@@ -410,6 +426,7 @@ fn update_schema() -> Value {
         "field": {"type": "string", "maxLength": 100, "description": "A field base.bulk_data.update.fields offers for the record type."},
         "value": {"type": "string", "maxLength": 1000, "description": "The value to set, as text: one of the field's choices, yes or no, a date YYYY-MM-DD, a number or a record's id."},
         "ids": ids_schema(),
+        "except_ids": except_schema(),
         "filter": {"type": "string", "maxLength": 4000, "description": "Without ids: the record type's list contract filters as JSON object text (without page and page_size); every matching record is updated. {} for every record."}
     }})
 }
@@ -434,6 +451,7 @@ fn export_schema() -> Value {
     json!({"type": "object", "required": ["record_type", "columns"], "properties": {
         "record_type": {"type": "string", "maxLength": 200},
         "ids": ids_schema(),
+        "except_ids": except_schema(),
         "filter": {"type": "string", "maxLength": 4000, "description": "The record type's list contract filters as JSON object text (that contract's input without page and page_size), as the list shows them, such as {\"search\":\"tan\",\"kind\":\"human\"}. Omit for every record, or with ids."},
         "columns": {"type": "array", "description": "Grid column specs in the order the list shows them (1 to 64), such as name, email or work.company.name:list.", "items": {"type": "string", "maxLength": 200}}
     }})
@@ -451,7 +469,7 @@ fn list_output() -> Value {
     json!({"type": "array", "description": "Import runs or row results."})
 }
 
-const GUIDE: &str = "# Importing records from CSV\n\nA person uploads a CSV file on the Imports page (`/imports/new`), choosing what the rows are (`base.bulk_data.types` lists the record types they may import, with the fields a column can fill). That opens a run in state `draft`. Agents cannot upload files yet.\n\n1. Read the run with `base.bulk_data.import.get`: its `columns` are the file's header, `saved_mappings` the mappings saved for this record type whose columns the file has (`base.bulk_data.mapping.list` gives their content), and `parent_imports` the person's completed imports a reference field may name.\n2. Build a mapping: for each field, `column` (a header name) or a fixed `value`. A required field must be mapped. A reference field's column is either looked up (the type says by what) or, with `parent_run`, names a row of that earlier import by its source key. `source_key` names the column a later child import will use. `duplicates` says what a row matching one existing record does: `skip` (default), `update` or `create`.\n3. Plan `base.bulk_data.import.preview` with the run's `version` and the mapping. After commit the dry run works in the background and writes nothing; read the run until its state is `previewed`, then `base.bulk_data.import.rows` with `pass: preview` (and `outcome: error`) says what each row would do and why a row fails.\n4. Plan `base.bulk_data.import.start` with the current version and mapping. Rows are written through the record type's own contracts as the person, each in its own transaction, under one trace ID. Read the run until `completed`; the person gets a notice.\n\nA run in `previewing` or `running` can be stopped with `base.bulk_data.import.cancel`: rows already written stay. State `stopped` means the job ended without finishing (the person lost access, or it failed every attempt): cancel it and start again. The file of failed rows downloads from `/imports/{id}/failed-rows` (`?pass=preview` for the dry run's).\n\nSave a mapping for reuse with `base.bulk_data.mapping.save` (by name, shared in the company; saving a name again replaces it).\n\n# Exporting a list to CSV\n\nPlan `base.bulk_data.export.start` with the record type, the list contract's filters as JSON object text (without page and page_size) and the Grid columns to show. The export reads the list as the person in the background, so a field restricted for them is blank, and files a CSV (UTF-8 with a byte-order mark, formula-like cells prefixed with `'`). Read it with `base.bulk_data.export.get` until its state is `completed` (or `failed`, with the reason); the person downloads the file from `/exports/{id}/file`. A list longer than `bulk_data.export_max_rows` fails: narrow the filters. Files are kept for `bulk_data.file_days`. Pass `ids` instead of `filter` to export only ticked records.\n\n# Updating many records at once\n\n`base.bulk_data.update.fields` lists the fields a record type lets you set in bulk. Plan `base.bulk_data.update.start` with the record type, the field, the value as text, and either `ids` (ticked records) or `filter` (the list contract's filters as JSON object text; every matching record). The records are found once when the job starts, with the version each has then, and each is updated through the record type's own update contract as the person, in its own transaction; a record changed since is refused by its version check and reported, never overwritten. Read it with `base.bulk_data.update.get` until `completed` (or `failed`, with the reason) and each record's result with `base.bulk_data.update.rows`; the person gets a notice. `base.bulk_data.update.cancel` stops it; records already updated stay. More records than `bulk_data.update_max_records` are refused.";
+const GUIDE: &str = "# Importing records from CSV\n\nA person uploads a CSV file on the Imports page (`/imports/new`), choosing what the rows are (`base.bulk_data.types` lists the record types they may import, with the fields a column can fill). That opens a run in state `draft`. Agents cannot upload files yet.\n\n1. Read the run with `base.bulk_data.import.get`: its `columns` are the file's header, `saved_mappings` the mappings saved for this record type whose columns the file has (`base.bulk_data.mapping.list` gives their content), and `parent_imports` the person's completed imports a reference field may name.\n2. Build a mapping: for each field, `column` (a header name) or a fixed `value`. A required field must be mapped. A reference field's column is either looked up (the type says by what) or, with `parent_run`, names a row of that earlier import by its source key. `source_key` names the column a later child import will use. `duplicates` says what a row matching one existing record does: `skip` (default), `update` or `create`.\n3. Plan `base.bulk_data.import.preview` with the run's `version` and the mapping. After commit the dry run works in the background and writes nothing; read the run until its state is `previewed`, then `base.bulk_data.import.rows` with `pass: preview` (and `outcome: error`) says what each row would do and why a row fails.\n4. Plan `base.bulk_data.import.start` with the current version and mapping. Rows are written through the record type's own contracts as the person, each in its own transaction, under one trace ID. Read the run until `completed`; the person gets a notice.\n\nA run in `previewing` or `running` can be stopped with `base.bulk_data.import.cancel`: rows already written stay. State `stopped` means the job ended without finishing (the person lost access, or it failed every attempt): cancel it and start again. The file of failed rows downloads from `/imports/{id}/failed-rows` (`?pass=preview` for the dry run's).\n\nSave a mapping for reuse with `base.bulk_data.mapping.save` (by name, shared in the company; saving a name again replaces it).\n\n# Exporting a list to CSV\n\nPlan `base.bulk_data.export.start` with the record type, the list contract's filters as JSON object text (without page and page_size) and the Grid columns to show. The export reads the list as the person in the background, so a field restricted for them is blank, and files a CSV (UTF-8 with a byte-order mark, formula-like cells prefixed with `'`). Read it with `base.bulk_data.export.get` until its state is `completed` (or `failed`, with the reason); the person downloads the file from `/exports/{id}/file`. A list longer than `bulk_data.export_max_rows` fails: narrow the filters. Files are kept for `bulk_data.file_days`. Pass `ids` instead of `filter` to export only ticked records.\n\n# Updating many records at once\n\n`base.bulk_data.update.fields` lists the fields a record type lets you set in bulk. Plan `base.bulk_data.update.start` with the record type, the field, the value as text, and either `ids` (ticked records) or `filter` (the list contract's filters as JSON object text; every matching record, less any `except_ids`). The records are found once when the job starts, with the version each has then, and each is updated through the record type's own update contract as the person, in its own transaction; a record changed since is refused by its version check and reported, never overwritten. Read it with `base.bulk_data.update.get` until `completed` (or `failed`, with the reason) and each record's result with `base.bulk_data.update.rows`; the person gets a notice. `base.bulk_data.update.cancel` stops it; records already updated stay. More records than `bulk_data.update_max_records` are refused.";
 
 macro_rules! provenance {
     () => {

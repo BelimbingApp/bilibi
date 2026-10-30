@@ -85,7 +85,7 @@ A run is visible only to the person who started it.
 | `failed` | Ended before updating anything (too many records, none matched, access lost), in words |
 | `stopped` (read only) | The job ended without finishing; records already updated stay |
 
-- **Start** from the list's selection bar (Contacts: tick rows, or tick the page and **Select all N matching**, then **Set kind…**) or `base.bulk_data.update.start`: the field, the value as text (converted as an import converts a cell), and the ticked `ids` or the list's `filter`. It needs `admin.import.view` and the type's bulk-update capability, and is filed under the company the person works in now; fields restricted for the person are not offered. More than `bulk_data.update_max_records` records are refused.
+- **Start** from the list's selection bar (Contacts: tick rows, or tick the page and **Select all N matching**, then **Set kind…**) or `base.bulk_data.update.start`: the field, the value as text (converted as an import converts a cell), and the ticked `ids` or the list's `filter` (with `except_ids`, the rows unticked after "Select all N matching", which the bar counts as "599 of 600"). It needs `admin.import.view` and the type's bulk-update capability, and is filed under the company the person works in now; fields restricted for the person are not offered. More than `bulk_data.update_max_records` records are refused.
 - **Resolve once**: the job reads the list (until two full reads agree, as an export does) or each ticked record, as the person, and keeps each record's id and version; the filter's values are then dropped. Records of another tenant or company are never found.
 - **Each record** is one transaction: the owner's read of it, then its update contract with the resolved version and every other field as read (a hidden field is left out, so the owner keeps it), with the result beside it. A record already set is left alone (`skip`); one changed since it was resolved is refused by the owner's version fence and reported, never overwritten. Every record shares the update's trace ID.
 - **Access**: each record rechecks the type's bulk-update capability; a revoked grant refuses the rest in words.
@@ -105,10 +105,10 @@ Capabilities `admin.import.view` (pages and reads) and `admin.import.create` (st
 | `base.bulk_data.import.cancel` | write | Stop a working run |
 | `base.bulk_data.mapping.save`, `.delete` | write | Saved mappings |
 | `base.bulk_data.export.get`, `.list` | read | One of the person's exports, with its download path once ready; their newest exports |
-| `base.bulk_data.export.start` | write | Start an export of a list (filters as JSON object text) or of ticked ids |
+| `base.bulk_data.export.start` | write | Start an export of a list (filters as JSON object text, optionally `except_ids` to leave out) or of ticked ids |
 | `base.bulk_data.update.fields` | read | The fields of a record type the person may set in bulk |
 | `base.bulk_data.update.get`, `.rows`, `.list` | read | One bulk update, its records' results, the person's newest |
-| `base.bulk_data.update.start`, `.cancel` | write | Start a bulk update of ticked ids or a list's filters; stop one |
+| `base.bulk_data.update.start`, `.cancel` | write | Start a bulk update of ticked ids or a list's filters (optionally `except_ids` to leave out); stop one |
 
 Receiving the file is the page's `receive` event, a listed allowance: Artifacts takes bytes outside a contract, and a plan's input is bounded at 1 MiB. Agents work on runs their person uploaded until agent-supplied files land.
 

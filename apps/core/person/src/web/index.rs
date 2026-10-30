@@ -61,9 +61,11 @@ pub(super) struct Index {
     /// Why the last Export or bulk update did not start, shown above the list.
     refused: Option<String>,
     /// Ticked contacts by id, and whether every contact the filters match
-    /// is ticked instead (issue 133); cleared when the filters or sort change.
+    /// is ticked instead (issue 133), less those unticked since
+    /// (`excluded`); cleared when the filters or sort change.
     selected: BTreeSet<String>,
     all_matching: bool,
+    excluded: BTreeSet<String>,
     /// The keys of the rows on screen, which the page tick takes.
     page_keys: Vec<String>,
     /// The field a bulk update sets while its dialog is open, and why the
@@ -122,6 +124,7 @@ impl Index {
             refused: None,
             selected: BTreeSet::new(),
             all_matching: false,
+            excluded: BTreeSet::new(),
             page_keys: Vec::new(),
             bulk: None,
         })
@@ -261,6 +264,8 @@ impl Index {
                 continue;
             };
             row.dom_id = Some(format!("person-{}", person.id.get()));
+            // The tick reads "Select row: <name>" to a screen reader.
+            row.label = Some(person.name.clone());
             row.slots.insert(
                 "name".into(),
                 render(RecordLink {
@@ -311,7 +316,7 @@ impl Index {
                 event: "select".into(),
                 selected: self.selected.clone(),
                 all_matching: self.all_matching,
-                excluded: Default::default(),
+                excluded: self.excluded.clone(),
                 matching: page.total as u64,
                 noun: "contacts".into(),
                 actions: bar,
@@ -395,9 +400,22 @@ impl Index {
         filter
     }
 
-    /// The ticked contacts' ids, or `None` when every matching one is.
-    fn ticked(&self) -> Option<Vec<String>> {
-        (!self.all_matching).then(|| self.selected.iter().cloned().collect())
+    /// Puts what a bulk action takes into its input: the ticked ids, or
+    /// the list's filters less the contacts unticked since "Select all".
+    /// False when nothing is ticked.
+    fn chosen(&self, input: &mut Value) -> bool {
+        if self.all_matching {
+            input["filter"] = json!(self.list_filter().to_string());
+            if !self.excluded.is_empty() {
+                input["except_ids"] = json!(self.excluded);
+            }
+            true
+        } else if self.selected.is_empty() {
+            false
+        } else {
+            input["ids"] = json!(self.selected);
+            true
+        }
     }
 
     /// Starts a CSV export of the list as filtered (or of the ticked
@@ -414,10 +432,12 @@ impl Index {
                 .map(|column| column.spec.clone())
                 .collect::<Vec<_>>(),
         });
-        match (event, self.ticked()) {
-            ("export_selected", Some(ids)) if ids.is_empty() => return self.view(scope).await,
-            ("export_selected", Some(ids)) => input["ids"] = json!(ids),
-            _ => input["filter"] = json!(self.list_filter().to_string()),
+        if event == "export_selected" {
+            if !self.chosen(&mut input) {
+                return self.view(scope).await;
+            }
+        } else {
+            input["filter"] = json!(self.list_filter().to_string());
         }
         let call = self
             .pages
@@ -472,20 +492,32 @@ impl Index {
                     return;
                 };
                 if self.all_matching {
-                    // Unticking one leaves the page's others ticked.
-                    self.all_matching = false;
-                    self.selected = self.page_keys.iter().cloned().collect();
-                    self.selected.remove(key);
+                    // An exception to "every match": unticked, or ticked again.
+                    if !self.excluded.remove(key) && self.excluded.len() < MAX_TICKED {
+                        self.excluded.insert(key.to_owned());
+                    }
                 } else if !self.selected.remove(key) && self.selected.len() < MAX_TICKED {
                     self.selected.insert(key.to_owned());
                 }
             }
+            "page" if self.all_matching => {
+                // The page's rows become exceptions, or stop being ones.
+                if self.page_keys.iter().any(|key| self.excluded.contains(key)) {
+                    for key in &self.page_keys {
+                        self.excluded.remove(key);
+                    }
+                } else {
+                    for key in &self.page_keys {
+                        if self.excluded.len() < MAX_TICKED {
+                            self.excluded.insert(key.clone());
+                        }
+                    }
+                }
+            }
             "page" => {
                 let all = !self.page_keys.is_empty()
-                    && (self.all_matching
-                        || self.page_keys.iter().all(|key| self.selected.contains(key)));
+                    && self.page_keys.iter().all(|key| self.selected.contains(key));
                 if all {
-                    self.all_matching = false;
                     for key in &self.page_keys {
                         self.selected.remove(key);
                     }
@@ -497,10 +529,14 @@ impl Index {
                     }
                 }
             }
-            "all" => self.all_matching = true,
+            "all" => {
+                self.all_matching = true;
+                self.excluded.clear();
+            }
             _ => {
                 self.all_matching = false;
                 self.selected.clear();
+                self.excluded.clear();
             }
         }
     }
@@ -513,7 +549,7 @@ impl Index {
         matching: u64,
     ) -> Result<Html> {
         let count = if self.all_matching {
-            matching
+            matching.saturating_sub(self.excluded.len() as u64)
         } else {
             self.selected.len() as u64
         };
@@ -539,7 +575,9 @@ impl Index {
             }
             bilibi_bulk_data::Kind::Text => control,
         };
-        let which = if self.all_matching {
+        let which = if self.all_matching && !self.excluded.is_empty() {
+            format!("{count} of the {matching} contacts the filters match")
+        } else if self.all_matching {
             format!("every one of the {count} contacts the filters match")
         } else {
             format!("the {count} ticked contacts")
@@ -598,13 +636,9 @@ impl Index {
             .cloned()
             .unwrap_or_default();
         let mut input = json!({"record_type": EXPORT_TYPE, "field": field.name, "value": text});
-        match self.ticked() {
-            Some(ids) if ids.is_empty() => {
-                self.bulk = None;
-                return self.view(scope).await;
-            }
-            Some(ids) => input["ids"] = json!(ids),
-            None => input["filter"] = json!(self.list_filter().to_string()),
+        if !self.chosen(&mut input) {
+            self.bulk = None;
+            return self.view(scope).await;
         }
         let call = self.pages.call(
             scope,
@@ -617,6 +651,7 @@ impl Index {
                 Some(id) => {
                     self.bulk = None;
                     self.selected.clear();
+                    self.excluded.clear();
                     self.all_matching = false;
                     return Ok(LiveBody {
                         redirect: Some(format!("/updates/{id}")),
@@ -764,6 +799,7 @@ impl LiveState<Scope, Error> for Index {
             }
             if self.list_filter() != filter || self.list.sort_by != sort {
                 self.selected.clear();
+                self.excluded.clear();
                 self.all_matching = false;
             }
             self.view(request.scope).await

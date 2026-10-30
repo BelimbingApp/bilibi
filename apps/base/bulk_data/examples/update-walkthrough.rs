@@ -359,6 +359,38 @@ async fn main() -> Result<(), Failure> {
         audited.0, audited.1
     );
 
+    println!("\n== every match but two unticked");
+    let unticked = ids(&["Bulk 010", "Bulk 011"]).await;
+    if let Some(id) = manager
+        .start(
+            "498 back to human",
+            json!({"field": "kind", "value": "human", "filter": "{\"search\":\"Bulk\"}", "except_ids": unticked}),
+        )
+        .await
+    {
+        manager.report("every match but two", &manager.settle(id).await);
+        let kinds: Vec<String> = sql
+            .query(
+                "SELECT kind FROM persons WHERE tenant_id=1 AND name IN ('Bulk 010','Bulk 011') ORDER BY name",
+                &[],
+            )
+            .await?
+            .iter()
+            .map(|row| row.get(0))
+            .collect();
+        println!("  the two left out are still {kinds:?}");
+    }
+    // Back to agent for the sections that follow.
+    if let Some(id) = manager
+        .start(
+            "back to agent",
+            json!({"field": "kind", "value": "agent", "filter": "{\"search\":\"Bulk\"}"}),
+        )
+        .await
+    {
+        manager.settle(id).await;
+    }
+
     println!("\n== the same again: already set");
     if let Some(id) = manager
         .start(

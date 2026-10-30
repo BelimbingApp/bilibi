@@ -100,8 +100,8 @@ impl From<Error> for WriteError {
         }
     }
 }
-/// Ticked ids as a contract takes them: at most `max`, each once, none
-/// blank or longer than 100 characters.
+/// Ticked or left-out ids as a contract takes them: at most `max`, each
+/// once, none blank or longer than 100 characters.
 fn distinct_ids(key: &str, ids: &[String], max: i64) -> std::result::Result<(), WriteError> {
     if ids.len() as i64 > max {
         return Err(refused(key, &format!("name at most {max} records")));
@@ -187,6 +187,9 @@ pub enum Action {
         filter: Value,
         /// Ticked records' ids; empty for every record the filters match.
         ids: Vec<String>,
+        /// With the filters, records left out: those unticked after
+        /// "Select all N matching".
+        except: Vec<String>,
         /// Grid column specs, in the order shown.
         columns: Vec<String>,
     },
@@ -201,6 +204,9 @@ pub enum Action {
         ids: Option<Vec<String>>,
         /// The list contract's filters, without `page` or `page_size`.
         filter: Value,
+        /// With the filters, records left out: those unticked after
+        /// "Select all N matching".
+        except: Vec<String>,
     },
     /// Stop a bulk update; records already updated stay.
     CancelUpdate {
@@ -210,10 +216,14 @@ pub enum Action {
 }
 
 impl Action {
-    fn chosen<'a>(ids: &'a Option<Vec<String>>, filter: &'a Value) -> update::Chosen<'a> {
+    fn chosen<'a>(
+        ids: &'a Option<Vec<String>>,
+        filter: &'a Value,
+        except: &'a [String],
+    ) -> update::Chosen<'a> {
         match ids {
             Some(ids) => update::Chosen::Ids(ids),
-            None => update::Chosen::Filter(filter),
+            None => update::Chosen::Filter { filter, except },
         }
     }
 }
@@ -651,18 +661,25 @@ impl BulkData {
                 record_type,
                 filter,
                 ids,
+                except,
                 columns,
             } => {
-                self.ready_export(client, scope, record_type, filter, ids, columns)
-                    .await?;
+                let request = export::Request {
+                    record_type,
+                    filter,
+                    ids,
+                    except,
+                    columns,
+                };
+                self.ready_export(client, scope, &request).await?;
                 let label = self.label(record_type).to_lowercase();
-                let what = if ids.is_empty() {
-                    label
-                } else {
-                    format!("{} ticked {label}", ids.len())
+                let what = match (ids.is_empty(), except.is_empty()) {
+                    (true, true) => label,
+                    (true, false) => format!("{label} but {} unticked", except.len()),
+                    _ => format!("{} ticked {label}", ids.len()),
                 };
                 return Ok(
-                    json!({"summary": format!("Export {what} with the shown columns to CSV"), "record_type": record_type, "columns": columns, "filter": filter, "ids": ids}),
+                    json!({"summary": format!("Export {what} with the shown columns to CSV"), "record_type": record_type, "columns": columns, "filter": filter, "ids": ids, "except_ids": except}),
                 );
             }
             Action::Update {
@@ -671,6 +688,7 @@ impl BulkData {
                 value,
                 ids,
                 filter,
+                except,
             } => {
                 let set = self
                     .ready_update(
@@ -679,16 +697,22 @@ impl BulkData {
                         record_type,
                         field,
                         value,
-                        &Action::chosen(ids, filter),
+                        &Action::chosen(ids, filter, except),
                     )
                     .await?;
                 let label = self.label(record_type).to_lowercase();
                 let which = match ids {
                     Some(ids) => format!("{} ticked {label}", ids.len()),
-                    None => format!("every {label} record the list's filters match"),
+                    None if except.is_empty() => {
+                        format!("every {label} record the list's filters match")
+                    }
+                    None => format!(
+                        "every {label} record the list's filters match but {} unticked",
+                        except.len()
+                    ),
                 };
                 return Ok(
-                    json!({"summary": format!("Set {} to {} on {which}, each through its own update, in the background", self.field_label(record_type, field).to_lowercase(), set.as_str().map_or_else(|| set.to_string(), str::to_owned)), "record_type": record_type, "field": field, "value": set, "ids": ids, "filter": filter}),
+                    json!({"summary": format!("Set {} to {} on {which}, each through its own update, in the background", self.field_label(record_type, field).to_lowercase(), set.as_str().map_or_else(|| set.to_string(), str::to_owned)), "record_type": record_type, "field": field, "value": set, "ids": ids, "filter": filter, "except_ids": except}),
                 );
             }
             Action::CancelUpdate { update, version } => {
@@ -779,10 +803,21 @@ impl BulkData {
                 record_type,
                 filter,
                 ids,
+                except,
                 columns,
             } => Some(json!(
-                self.start_export(tx, scope, record_type, filter, ids, columns)
-                    .await?
+                self.start_export(
+                    tx,
+                    scope,
+                    &export::Request {
+                        record_type,
+                        filter,
+                        ids,
+                        except,
+                        columns,
+                    }
+                )
+                .await?
             )),
             Action::Update {
                 record_type,
@@ -790,6 +825,7 @@ impl BulkData {
                 value,
                 ids,
                 filter,
+                except,
             } => Some(json!(
                 self.start_update(
                     tx,
@@ -797,7 +833,7 @@ impl BulkData {
                     record_type,
                     field,
                     value,
-                    &Action::chosen(ids, filter)
+                    &Action::chosen(ids, filter, except)
                 )
                 .await?
             )),

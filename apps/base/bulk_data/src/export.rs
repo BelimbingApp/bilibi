@@ -51,7 +51,7 @@ const MAX_COLUMNS: usize = 64;
 const BUDGET: std::time::Duration = std::time::Duration::from_secs(600);
 /// Full reads of the list before one must agree with the read before it.
 const READS: usize = 3;
-const COLUMNS: &str = "id,record_type,company_id,filter,ids,columns,state,row_count,error,artifact,access,job_id,version,floor(extract(epoch FROM created_at))::bigint AS created,floor(extract(epoch FROM finished_at))::bigint AS finished,floor(extract(epoch FROM expires_at))::bigint AS expires";
+const COLUMNS: &str = "id,record_type,company_id,filter,ids,except_ids,columns,state,row_count,error,artifact,access,job_id,version,floor(extract(epoch FROM created_at))::bigint AS created,floor(extract(epoch FROM finished_at))::bigint AS finished,floor(extract(epoch FROM expires_at))::bigint AS expires";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -96,6 +96,9 @@ pub struct ExportRun {
     pub selected: Option<usize>,
     #[serde(skip)]
     ids: Option<Vec<String>>,
+    /// With the filters, records left out (unticked after "Select all").
+    #[serde(skip)]
+    except: Vec<String>,
     /// Grid column specs, in the order the list showed them.
     pub columns: Vec<String>,
     pub state: ExportState,
@@ -148,9 +151,15 @@ impl ExportRun {
             .map(serde_json::from_value)
             .transpose()
             .map_err(|_| Error::Internal)?;
+        let except: Option<Vec<String>> = row
+            .get::<_, Option<Value>>("except_ids")
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(|_| Error::Internal)?;
         Ok(Self {
             selected: ids.as_ref().map(Vec::len),
             ids,
+            except: except.unwrap_or_default(),
             id: row.get("id"),
             record_type: row.get("record_type"),
             company: row.get("company_id"),
@@ -221,6 +230,21 @@ struct Made {
 /// A refusal in words: the export ends without a file.
 pub(crate) struct Failed(pub String);
 
+/// What an export is asked to take: a record type's list filters (less any
+/// records left out) or ticked ids, and the columns the list shows.
+#[derive(Clone, Copy)]
+pub(crate) struct Request<'a> {
+    pub record_type: &'a str,
+    /// The list contract's filters, without `page` or `page_size`.
+    pub filter: &'a Value,
+    /// Ticked records' ids; empty for every record the filters match.
+    pub ids: &'a [String],
+    /// With the filters, records left out (unticked after "Select all").
+    pub except: &'a [String],
+    /// Grid column specs, in the order shown.
+    pub columns: &'a [String],
+}
+
 /// The records a list contract answers for a filter, each id with its
 /// version, in the list's order.
 pub(crate) type Listed = Vec<(Value, Option<i64>)>;
@@ -262,15 +286,30 @@ impl BulkData {
         &self,
         client: &(impl GenericClient + Sync),
         scope: &Scope,
-        record_type: &str,
-        filter: &Value,
-        ids: &[String],
-        columns: &[String],
+        request: &Request<'_>,
     ) -> std::result::Result<(), WriteError> {
+        let Request {
+            record_type,
+            filter,
+            ids,
+            except,
+            columns,
+        } = *request;
         let (registered, export) = self.exportable(record_type)?;
         bilibi_authz::authorize_key(client, scope, VIEW).await?;
         bilibi_authz::authorize_key(client, scope, export.capability).await?;
         crate::own_company(scope, "export")?;
+        if !except.is_empty() {
+            if !ids.is_empty() {
+                return Err(refused(
+                    "except_ids",
+                    "leave records out of the list's filters, not out of ticked ids",
+                ));
+            }
+            // Leaving records out adds no work, so it is bounded only by
+            // what a list's selection may hold, not by the row limit.
+            crate::distinct_ids("except_ids", except, bilibi_ui::Selection::MAX_KEYS as i64)?;
+        }
         if ids.is_empty() {
             self.ready_filter(export.list, filter)?;
         } else {
@@ -321,24 +360,28 @@ impl BulkData {
         &self,
         tx: &mut bilibi_database::MutationTransaction<'_>,
         scope: &Scope,
-        record_type: &str,
-        filter: &Value,
-        ids: &[String],
-        columns: &[String],
+        request: &Request<'_>,
     ) -> std::result::Result<ExportRun, WriteError> {
-        self.ready_export(tx.sql(), scope, record_type, filter, ids, columns)
-            .await?;
+        self.ready_export(tx.sql(), scope, request).await?;
+        let Request {
+            record_type,
+            filter,
+            ids,
+            except,
+            columns,
+        } = *request;
         let (registered, _) = self.exportable(record_type)?;
         let company = crate::own_company(scope, "export")?.get();
         self.finish_stranded(tx, scope, company).await?;
         let (tenant, user, kind) = (scope.tenant(), scope.user(), registered.key);
         let (filter, columns) = (filter.clone(), json!(columns));
         let ids = (!ids.is_empty()).then(|| json!(ids));
+        let except = (!except.is_empty()).then(|| json!(except));
         let trace = tx.context().trace_id.clone();
         let opened = tx
             .mutate(move |sql| {
                 Box::pin(async move {
-                    let row = sql.query_one(&format!("INSERT INTO base_bulk_data_exports(tenant_id,company_id,record_type,started_by,filter,ids,columns,trace_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING {COLUMNS}"), &[&tenant, &company, &kind, &user, &filter, &ids, &columns, &trace]).await?;
+                    let row = sql.query_one(&format!("INSERT INTO base_bulk_data_exports(tenant_id,company_id,record_type,started_by,filter,ids,except_ids,columns,trace_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING {COLUMNS}"), &[&tenant, &company, &kind, &user, &filter, &ids, &except, &columns, &trace]).await?;
                     let run = ExportRun::from_row(&row)?;
                     Ok((run.clone(), vec![Change { kind: "base/bulk_data.export".into(), id: run.id, old: Value::Null, new: run.evidence() }]))
                 })
@@ -786,7 +829,14 @@ impl BulkData {
                 )
                 .await?
             {
-                Ok(listed) => listed.into_iter().map(|(id, _)| id).collect(),
+                // Records unticked after "Select all" are left out.
+                Ok(listed) => listed
+                    .into_iter()
+                    .map(|(id, _)| id)
+                    .filter(|id| {
+                        crate::import::text_id(id).is_none_or(|id| !run.except.contains(&id))
+                    })
+                    .collect(),
                 Err(failed) => return Ok(Err(failed)),
             },
         };
