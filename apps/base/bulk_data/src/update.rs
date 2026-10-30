@@ -15,7 +15,7 @@
 //! record. A pass works in bounded slices and queues its own continuation
 //! from the next unrecorded record, so a retried or resumed attempt never
 //! writes a record twice. Cancelling keeps what was written.
-use crate::export::{maybe_stamp, stamp};
+use crate::export::{maybe_stamp, stamp, Failed};
 use crate::import::{bounded, error_of, refusal, text_id};
 use crate::store::instant;
 use crate::{
@@ -248,9 +248,6 @@ pub(crate) enum Chosen<'a> {
     /// The list contract's filters, without `page` or `page_size`.
     Filter(&'a Value),
 }
-
-/// A refusal in words: the update ends without updating anything.
-struct Failed(String);
 
 /// An id as the owner's contracts take it: a number when it is one.
 fn typed(id: &str) -> Value {
@@ -703,42 +700,26 @@ impl BulkData {
                 targets.push((id.clone(), version));
             }
         } else {
+            // Read until two full reads agree, so a record the list moved
+            // while it was paged is never left out of the update.
             let filter = run.filter.clone().ok_or(Error::Internal)?;
-            let id_property = registered.definition.import.id;
-            let mut seen = HashSet::new();
-            for page in 1_i64.. {
-                let mut input = filter.clone();
-                input["page"] = json!(page);
-                input["page_size"] = json!(PAGE);
-                let listed = match self.jobs.read(client, execution, bulk.list, &input).await {
-                    Ok(listed) => listed,
-                    Err(error) => {
-                        if refusal(&error, &[]).is_none() {
-                            return Err(error_of(error));
-                        }
-                        return Ok(Err(Failed(
-                            "The list could not be read with these filters.".into(),
-                        )));
-                    }
-                };
-                let records = listed["result"].as_array().ok_or(Error::Internal)?;
-                for record in records {
-                    let id = record
-                        .get(id_property)
-                        .and_then(text_id)
-                        .ok_or(Error::Internal)?;
-                    if seen.insert(id.clone()) {
-                        targets.push((id, record["version"].as_i64()));
-                    }
-                }
-                if targets.len() as i64 > max {
-                    return Ok(Err(Failed(format!(
-                        "More than {max} records match, the most one bulk update takes. Narrow the filters and start again."
-                    ))));
-                }
-                if (records.len() as i64) < PAGE {
-                    break;
-                }
+            let listed = match self
+                .read_list(
+                    execution,
+                    client,
+                    registered,
+                    bulk.list,
+                    &filter,
+                    max,
+                    Instant::now(),
+                )
+                .await?
+            {
+                Ok(listed) => listed,
+                Err(failed) => return Ok(Err(failed)),
+            };
+            for (id, version) in listed {
+                targets.push((text_id(&id).ok_or(Error::Internal)?, version));
             }
         }
         if targets.is_empty() {
