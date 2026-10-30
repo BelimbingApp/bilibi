@@ -21,6 +21,7 @@ bilibi-party-ids.workspace = true
 bilibi-queue.workspace = true
 bilibi-schedule.workspace = true
 bilibi-settings.workspace = true
+bilibi-system.workspace = true
 bilibi-tenancy.workspace = true
 bilibi-ui.workspace = true
 inventory.workspace = true

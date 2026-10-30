@@ -49,9 +49,10 @@ const MAX_COLUMNS: usize = 64;
 /// words, well inside Queue's 15-minute attempt timeout, so a list too big
 /// to read never retries from the start until its attempts run out.
 const BUDGET: std::time::Duration = std::time::Duration::from_secs(600);
-/// Full reads of the list before one must agree with the read before it.
+/// Full reads of the list before one must hold the same records as the
+/// read before it.
 const READS: usize = 3;
-const COLUMNS: &str = "id,record_type,company_id,filter,ids,columns,state,row_count,error,artifact,access,job_id,version,floor(extract(epoch FROM created_at))::bigint AS created,floor(extract(epoch FROM finished_at))::bigint AS finished,floor(extract(epoch FROM expires_at))::bigint AS expires";
+const COLUMNS: &str = "id,record_type,company_id,filter,ids,except_ids,columns,state,row_count,error,artifact,access,job_id,version,floor(extract(epoch FROM created_at))::bigint AS created,floor(extract(epoch FROM finished_at))::bigint AS finished,floor(extract(epoch FROM expires_at))::bigint AS expires";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -96,6 +97,9 @@ pub struct ExportRun {
     pub selected: Option<usize>,
     #[serde(skip)]
     ids: Option<Vec<String>>,
+    /// With the filters, records left out (unticked after "Select all").
+    #[serde(skip)]
+    except: Vec<String>,
     /// Grid column specs, in the order the list showed them.
     pub columns: Vec<String>,
     pub state: ExportState,
@@ -125,13 +129,13 @@ pub struct ExportRun {
     #[serde(serialize_with = "maybe_stamp")]
     pub finished_at: Option<Timestamp>,
 }
-fn stamp<S: serde::Serializer>(
+pub(crate) fn stamp<S: serde::Serializer>(
     at: &Timestamp,
     serializer: S,
 ) -> std::result::Result<S::Ok, S::Error> {
     serializer.collect_str(at)
 }
-fn maybe_stamp<S: serde::Serializer>(
+pub(crate) fn maybe_stamp<S: serde::Serializer>(
     at: &Option<Timestamp>,
     serializer: S,
 ) -> std::result::Result<S::Ok, S::Error> {
@@ -148,9 +152,15 @@ impl ExportRun {
             .map(serde_json::from_value)
             .transpose()
             .map_err(|_| Error::Internal)?;
+        let except: Option<Vec<String>> = row
+            .get::<_, Option<Value>>("except_ids")
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(|_| Error::Internal)?;
         Ok(Self {
             selected: ids.as_ref().map(Vec::len),
             ids,
+            except: except.unwrap_or_default(),
             id: row.get("id"),
             record_type: row.get("record_type"),
             company: row.get("company_id"),
@@ -221,6 +231,21 @@ struct Made {
 /// A refusal in words: the export ends without a file.
 pub(crate) struct Failed(pub String);
 
+/// What an export is asked to take: a record type's list filters (less any
+/// records left out) or ticked ids, and the columns the list shows.
+#[derive(Clone, Copy)]
+pub(crate) struct Request<'a> {
+    pub record_type: &'a str,
+    /// The list contract's filters, without `page` or `page_size`.
+    pub filter: &'a Value,
+    /// Ticked records' ids; empty for every record the filters match.
+    pub ids: &'a [String],
+    /// With the filters, records left out (unticked after "Select all").
+    pub except: &'a [String],
+    /// Grid column specs, in the order shown.
+    pub columns: &'a [String],
+}
+
 /// The records a list contract answers for a filter, each id with its
 /// version, in the list's order.
 pub(crate) type Listed = Vec<(Value, Option<i64>)>;
@@ -262,15 +287,30 @@ impl BulkData {
         &self,
         client: &(impl GenericClient + Sync),
         scope: &Scope,
-        record_type: &str,
-        filter: &Value,
-        ids: &[String],
-        columns: &[String],
+        request: &Request<'_>,
     ) -> std::result::Result<(), WriteError> {
+        let Request {
+            record_type,
+            filter,
+            ids,
+            except,
+            columns,
+        } = *request;
         let (registered, export) = self.exportable(record_type)?;
         bilibi_authz::authorize_key(client, scope, VIEW).await?;
         bilibi_authz::authorize_key(client, scope, export.capability).await?;
         crate::own_company(scope, "export")?;
+        if !except.is_empty() {
+            if !ids.is_empty() {
+                return Err(refused(
+                    "except_ids",
+                    "leave records out of the list's filters, not out of ticked ids",
+                ));
+            }
+            // Leaving records out adds no work, so it is bounded only by
+            // what a list's selection may hold, not by the row limit.
+            crate::distinct_ids("except_ids", except, bilibi_ui::Selection::MAX_KEYS as i64)?;
+        }
         if ids.is_empty() {
             self.ready_filter(export.list, filter)?;
         } else {
@@ -321,24 +361,28 @@ impl BulkData {
         &self,
         tx: &mut bilibi_database::MutationTransaction<'_>,
         scope: &Scope,
-        record_type: &str,
-        filter: &Value,
-        ids: &[String],
-        columns: &[String],
+        request: &Request<'_>,
     ) -> std::result::Result<ExportRun, WriteError> {
-        self.ready_export(tx.sql(), scope, record_type, filter, ids, columns)
-            .await?;
+        self.ready_export(tx.sql(), scope, request).await?;
+        let Request {
+            record_type,
+            filter,
+            ids,
+            except,
+            columns,
+        } = *request;
         let (registered, _) = self.exportable(record_type)?;
         let company = crate::own_company(scope, "export")?.get();
         self.finish_stranded(tx, scope, company).await?;
         let (tenant, user, kind) = (scope.tenant(), scope.user(), registered.key);
         let (filter, columns) = (filter.clone(), json!(columns));
         let ids = (!ids.is_empty()).then(|| json!(ids));
+        let except = (!except.is_empty()).then(|| json!(except));
         let trace = tx.context().trace_id.clone();
         let opened = tx
             .mutate(move |sql| {
                 Box::pin(async move {
-                    let row = sql.query_one(&format!("INSERT INTO base_bulk_data_exports(tenant_id,company_id,record_type,started_by,filter,ids,columns,trace_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING {COLUMNS}"), &[&tenant, &company, &kind, &user, &filter, &ids, &columns, &trace]).await?;
+                    let row = sql.query_one(&format!("INSERT INTO base_bulk_data_exports(tenant_id,company_id,record_type,started_by,filter,ids,except_ids,columns,trace_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING {COLUMNS}"), &[&tenant, &company, &kind, &user, &filter, &ids, &except, &columns, &trace]).await?;
                     let run = ExportRun::from_row(&row)?;
                     Ok((run.clone(), vec![Change { kind: "base/bulk_data.export".into(), id: run.id, old: Value::Null, new: run.evidence() }]))
                 })
@@ -773,7 +817,11 @@ impl BulkData {
         // Ticked records keep the order they were given in, and Grid reads
         // only those the person may.
         let ids: Vec<Value> = match &run.ids {
-            Some(ticked) => ticked.iter().map(|id| crate::typed(id)).collect(),
+            Some(ticked) => ticked
+                .iter()
+                .map(String::as_str)
+                .map(crate::typed)
+                .collect(),
             None => match self
                 .read_list(
                     execution,
@@ -781,6 +829,7 @@ impl BulkData {
                     registered,
                     export.list,
                     &run.filter,
+                    &run.except,
                     max,
                     started,
                 )
@@ -868,8 +917,11 @@ impl BulkData {
     /// version, in the list's order. Offset pages are not a snapshot: a
     /// record moved, added or dropped while they are read can shift another
     /// past a page boundary unseen. So the list is read in full until two
-    /// reads in a row agree, at most [`READS`] times; a list that keeps
-    /// changing is refused in words rather than read with a gap.
+    /// reads in a row hold the same records, at most [`READS`] times; a list
+    /// whose members keep changing is refused in words rather than read with
+    /// a gap. Edits that leave a record in the list do not count: the last
+    /// read's versions are the snapshot, and a bulk update's version fence
+    /// reports a record edited after it.
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn read_list(
         &self,
@@ -878,11 +930,16 @@ impl BulkData {
         registered: &Registered,
         list: &str,
         filter: &Value,
+        leave_out: &[String],
         max: i64,
         started: std::time::Instant,
     ) -> Result<std::result::Result<Listed, Failed>> {
         let id_property = registered.definition.import.id;
-        let mut previous: Option<Listed> = None;
+        // Records unticked after "Select all" are left out before the limit
+        // counts, so what is left is what the limit judges.
+        let left_out: std::collections::HashSet<&str> =
+            leave_out.iter().map(String::as_str).collect();
+        let mut previous: Option<std::collections::HashSet<String>> = None;
         for _ in 0..READS {
             let mut read: Listed = Vec::new();
             let mut seen = std::collections::HashSet::new();
@@ -914,7 +971,11 @@ impl BulkData {
                 let records = listed["result"].as_array().ok_or(Error::Internal)?;
                 for record in records {
                     let id = record.get(id_property).ok_or(Error::Internal)?;
-                    if seen.insert(id.to_string()) {
+                    let text = crate::import::text_id(id).ok_or(Error::Internal)?;
+                    if left_out.contains(text.as_str()) {
+                        continue;
+                    }
+                    if seen.insert(text) {
                         read.push((id.clone(), record["version"].as_i64()));
                     }
                 }
@@ -927,10 +988,10 @@ impl BulkData {
                     break;
                 }
             }
-            if previous.as_ref() == Some(&read) {
+            if previous.as_ref() == Some(&seen) {
                 return Ok(Ok(read));
             }
-            previous = Some(read);
+            previous = Some(seen);
         }
         Ok(Err(Failed(
             "The list kept changing while it was read, so it could not be read without gaps. Try again when it is quieter.".into(),
